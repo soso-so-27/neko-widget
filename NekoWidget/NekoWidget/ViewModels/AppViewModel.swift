@@ -221,6 +221,9 @@ final class AppViewModel: ObservableObject {
     private var hasStarted = false
     private var todayPhotoSelectionState: TodayPhotoSelectionState?
     private var hasFinishedSnapshotLoad = false
+    /// nil while loading; false when any candidate/curation store failed.
+    /// Direct Widget presentation must obey the same cold-start gate as URLs.
+    @Published private(set) var widgetPhotoLibraryLoadSucceeded: Bool?
     /// Loading and failure are different: loading must preserve scanner state
     /// internally, while public candidate surfaces stay hidden. Failure also
     /// makes the internal candidate view empty so managed outputs fail closed.
@@ -2345,6 +2348,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func openPendingDeepLinkIfNeeded() {
+        widgetPhotoLibraryLoadSucceeded = true
         guard let route = candidatePhotoRouteGate.finishLoading(
             succeeded: true
         ) else { return }
@@ -2352,6 +2356,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func discardPendingDeepLink(reason: String) {
+        widgetPhotoLibraryLoadSucceeded = false
         guard candidatePhotoRouteGate.hasPendingRoute else { return }
         _ = candidatePhotoRouteGate.finishLoading(succeeded: false)
         selectedAssetIdentifier = nil

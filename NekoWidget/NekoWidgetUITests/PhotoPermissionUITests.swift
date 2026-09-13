@@ -1,6 +1,217 @@
 import XCTest
 
 final class OfficialWindowUITests: XCTestCase {
+    /// These tests send an actual URL event into the production presentation
+    /// host. Source resolution and pixels stay offline; they do not establish
+    /// live PhotoKit authorization, private binding validity, or WidgetKit tap
+    /// timing before iOS delivers the URL to the app.
+    @MainActor
+    func testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce() {
+        continueAfterFailure = false
+        for route in widgetPhotoRoutes() {
+            let app = widgetPhotoApplication()
+            app.launch()
+            XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 10))
+            app.terminate()
+            XCTAssertEqual(app.state, .notRunning)
+            app.open(route.url)
+            assertWidgetPhotoOpening(route, in: app)
+            capture("widget-url-cold-loading-\(route.name)", app)
+            resolveWidgetPhoto(in: app)
+            capture("widget-url-cold-\(route.name)", app)
+            closeWidgetPhotoOnce(in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testWidgetURLsWarmOpenReplaceLoadingAndDisplayedPhotosWithoutStacking() {
+        continueAfterFailure = false
+        let app = widgetPhotoApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-list"].waitForExistence(timeout: 10))
+        let routes = widgetPhotoRoutes()
+        // Replace a destination while its lookup is still held, then replace
+        // already displayed photos. Only the last selection may survive.
+        app.open(routes[3].url)
+        assertWidgetPhotoOpening(routes[3], in: app)
+        for route in routes {
+            app.open(route.url)
+            assertWidgetPhotoOpening(route, in: app)
+            resolveWidgetPhoto(in: app)
+        }
+        capture("widget-url-warm-last-photo", app)
+        closeWidgetPhotoOnce(in: app)
+
+        app.buttons["widget-photo-fixture-settings-open"].tap()
+        let editSettings = app.buttons["widget-photo-fixture-settings-edit"]
+        XCTAssertTrue(editSettings.waitForExistence(timeout: 5))
+        editSettings.tap()
+        XCTAssertEqual(app.staticTexts["widget-photo-fixture-settings-draft"].label, "変更回数：1")
+        app.open(routes[1].url)
+        assertWidgetPhotoOpening(routes[1], in: app)
+        XCTAssertFalse(editSettings.exists, "The existing settings sheet must be covered while loading")
+        resolveWidgetPhoto(in: app)
+        XCTAssertFalse(app.staticTexts["widget-photo-fixture-settings-draft"].exists)
+        capture("widget-url-above-settings", app)
+        app.buttons["widget-photo-close"].tap()
+        XCTAssertTrue(editSettings.waitForExistence(timeout: 5))
+        XCTAssertTrue(editSettings.isHittable)
+        XCTAssertEqual(app.staticTexts["widget-photo-fixture-settings-draft"].label, "変更回数：1",
+                       "One close must restore the same settings draft")
+        XCTAssertFalse(app.buttons["widget-photo-close"].exists)
+        app.buttons["widget-photo-fixture-settings-close"].tap()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
+
+        app.buttons["widget-photo-fixture-existing-open"].tap()
+        let editExistingPhoto = app.buttons["widget-photo-fixture-existing-edit"]
+        XCTAssertTrue(editExistingPhoto.waitForExistence(timeout: 5))
+        editExistingPhoto.tap()
+        XCTAssertEqual(app.staticTexts["widget-photo-fixture-existing-draft"].label, "変更回数：1")
+        app.open(routes[0].url)
+        assertWidgetPhotoOpening(routes[0], in: app)
+        XCTAssertFalse(editExistingPhoto.exists,
+                       "An existing full-screen photo must be covered while the Widget loads")
+        resolveWidgetPhoto(in: app)
+        XCTAssertFalse(app.staticTexts["widget-photo-fixture-existing-draft"].exists)
+        capture("widget-url-above-existing-fullscreen-photo", app)
+        app.buttons["widget-photo-close"].tap()
+        XCTAssertTrue(editExistingPhoto.waitForExistence(timeout: 5))
+        XCTAssertTrue(editExistingPhoto.isHittable)
+        XCTAssertEqual(app.staticTexts["widget-photo-fixture-existing-draft"].label, "変更回数：1",
+                       "One close must restore the existing full-screen photo and its draft")
+        XCTAssertFalse(app.buttons["widget-photo-close"].exists)
+        app.buttons["widget-photo-fixture-existing-close"].tap()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
+
+        app.open(routes[3].url)
+        assertWidgetPhotoOpening(routes[3], in: app)
+        resolveWidgetPhoto(in: app)
+        app.buttons["official-photo-information"].tap()
+        let closeInformation = app.buttons["official-photo-information-close"]
+        XCTAssertTrue(closeInformation.waitForExistence(timeout: 5))
+        let windowURL = URL(string: "nekowidget://official-window")!
+        app.open(windowURL)
+        let fallback = app.staticTexts["widget-photo-fixture-other-url"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 5))
+        XCTAssertEqual(fallback.label, windowURL.absoluteString)
+        XCTAssertTrue(fallback.isHittable,
+                      "A non-photo destination may present after the Widget photo dismisses")
+        XCTAssertFalse(closeInformation.exists,
+                       "The photo's child information sheet must dismiss with the Widget")
+        XCTAssertFalse(app.buttons["widget-photo-close"].exists)
+        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists)
+        app.buttons["widget-photo-fixture-other-close"].tap()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto() {
+        continueAfterFailure = false
+        let app = widgetPhotoApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 10))
+        for route in widgetPhotoRoutes(missing: true) {
+            app.open(route.url)
+            assertWidgetPhotoOpening(route, in: app)
+            app.buttons["widget-photo-fixture-resolve"].tap()
+            let unavailable = app.staticTexts.matching(NSPredicate(
+                format: "label == %@ OR label == %@", "写真を表示できません", "この写真は表示できません"
+            )).firstMatch
+            XCTAssertTrue(unavailable.waitForExistence(timeout: 10), route.name)
+            XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists,
+                           "Missing \(route.name) must not borrow the seeded valid photo")
+            XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+            assertWidgetBackgroundHidden(in: app)
+            capture("widget-url-missing-\(route.name)", app)
+            closeWidgetPhotoOnce(in: app)
+        }
+    }
+
+    private struct WidgetPhotoTestRoute {
+        let name: String
+        let url: URL
+        let key: String
+    }
+
+    private func widgetPhotoRoutes(missing: Bool = false) -> [WidgetPhotoTestRoute] {
+        let localID = missing ? "unavailable-fixture-photo" : "app-store-screenshot-fixture-1"
+        let photoID = missing ? "removed-photo" : "fixture-photo"
+        let windowID = "11111111-1111-4111-8111-111111111111"
+        let digest = String(repeating: missing ? "b" : "a", count: 64)
+        return [
+            WidgetPhotoTestRoute(name: "personal",
+                url: URL(string: "nekowidget://photo?id=\(localID)&shownAt=2026-09-14T00:00:00Z")!,
+                key: "personal|\(localID)"),
+            WidgetPhotoTestRoute(name: "private",
+                url: URL(string: "nekowidget://family-window?window=\(windowID)&source=\(digest)&action=view-photo")!,
+                key: "family|\(windowID)|\(digest)"),
+            WidgetPhotoTestRoute(name: "official",
+                url: URL(string: "nekowidget://official-window?photo=\(photoID)")!,
+                key: "official|official-cats|\(photoID)"),
+            WidgetPhotoTestRoute(name: "public-channel",
+                url: URL(string: "nekowidget://public-window?window=nap-cats&photo=\(photoID)")!,
+                key: "official|nap-cats|\(photoID)")
+        ]
+    }
+
+    @MainActor
+    private func widgetPhotoApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        // The second flag reuses existing app/delegate service suppression.
+        // The first selects the host fixture before the photo-window branch.
+        app.launchArguments = ["--widget-photo-opening-ui-fixture", "--photo-window-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        return app
+    }
+
+    @MainActor
+    private func assertWidgetPhotoOpening(_ route: WidgetPhotoTestRoute, in app: XCUIApplication) {
+        let selectedRoute = app.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "widget-photo-fixture-route", route.key
+        )).firstMatch
+        XCTAssertTrue(selectedRoute.waitForExistence(timeout: 10), route.name)
+        let resolve = app.buttons["widget-photo-fixture-resolve"]
+        XCTAssertTrue(resolve.waitForExistence(timeout: 5))
+        XCTAssertTrue(resolve.isHittable)
+        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists,
+                       "The previous photo must disappear while the new selection loads")
+        XCTAssertEqual(app.buttons.matching(identifier: "widget-photo-close").count, 1)
+        assertWidgetBackgroundHidden(in: app)
+    }
+
+    @MainActor
+    private func resolveWidgetPhoto(in app: XCUIApplication) {
+        app.buttons["widget-photo-fixture-resolve"].tap()
+        let photo = app.images["photo-detail-zoom-surface"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 10))
+        XCTAssertTrue(photo.isHittable)
+        XCTAssertEqual(app.buttons.matching(identifier: "widget-photo-close").count, 1)
+        assertWidgetBackgroundHidden(in: app)
+    }
+
+    @MainActor
+    private func assertWidgetBackgroundHidden(in app: XCUIApplication) {
+        XCTAssertFalse(app.buttons["widget-photo-fixture-home"].exists)
+        XCTAssertFalse(app.buttons["widget-photo-fixture-list"].exists)
+        XCTAssertFalse(app.navigationBars["確認用ホーム"].exists)
+        XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
+        XCTAssertFalse(app.navigationBars["おひるね"].exists)
+    }
+
+    @MainActor
+    private func closeWidgetPhotoOnce(in app: XCUIApplication) {
+        app.buttons["widget-photo-close"].tap()
+        let home = app.buttons["widget-photo-fixture-home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5))
+        XCTAssertTrue(home.isHittable)
+        XCTAssertTrue(app.buttons["widget-photo-fixture-list"].isHittable)
+        XCTAssertFalse(app.buttons["widget-photo-close"].exists)
+        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists)
+        XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
+        XCTAssertFalse(app.navigationBars["おひるね"].exists)
+    }
+
     @MainActor
     func testPhotoToCatWindowReceiveAndReturnKeepsOriginalPreview() {
         continueAfterFailure = false

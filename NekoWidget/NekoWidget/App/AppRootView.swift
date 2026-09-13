@@ -23,14 +23,18 @@ struct AppRootView: View {
     @State private var onboardingScanErrorMessage: String?
 
     var body: some View {
-        Group {
-            if OnboardingPresentationPersistence.requiresPresentation(
-                completedVersion: onboardingCompletedVersion
-            ) {
-                onboardingContent
-            } else {
-                regularContent
+        WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
+            Group {
+                if OnboardingPresentationPersistence.requiresPresentation(
+                    completedVersion: onboardingCompletedVersion
+                ) {
+                    onboardingContent
+                } else {
+                    regularContent
+                }
             }
+        } photo: { opening, close in
+            widgetPhotoDestination(opening, close: close)
         }
         .task {
             widgetInstallationChecker.refresh()
@@ -53,20 +57,6 @@ struct AppRootView: View {
         }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             UIApplication.shared.isIdleTimerDisabled = isScanning && scenePhase == .active
-        }
-        .onOpenURL { url in
-            if let route = OfficialWindowRoute(url: url) {
-                officialWindowPresentationID = UUID()
-                officialWindowRoute = route
-                return
-            }
-            Task { @MainActor in
-                // App Intent state lives in the App Group. Apply it before
-                // routing so the opened photo and the global total cannot show
-                // the pre-tap value while waiting for a library scan.
-                await viewModel.syncLikesForPresentation(trigger: "deeplink")
-                viewModel.handleURL(url)
-            }
         }
         .onChange(of: momentNotificationTapMailbox.pendingTap, initial: true) { _, tap in
             guard let tap else { return }
@@ -153,6 +143,66 @@ struct AppRootView: View {
         }
     }
 
+    private func handleNonPhotoURL(_ url: URL) {
+        if let route = OfficialWindowRoute(url: url) {
+            officialWindowPresentationID = UUID()
+            officialWindowRoute = route
+            return
+        }
+        Task { @MainActor in
+            await viewModel.syncLikesForPresentation(trigger: "deeplink")
+            viewModel.handleURL(url)
+        }
+    }
+
+    @ViewBuilder
+    private func widgetPhotoDestination(_ opening: WidgetPhotoOpening,
+                                        close: @escaping () -> Void) -> some View {
+        switch opening.destination {
+        case let .family(localWindowID, sourceDigest):
+            FamilyWidgetPhotoView(localWindowID: localWindowID,
+                                  sourceDigest: sourceDigest, onClose: close)
+        case let .official(route):
+            NavigationStack {
+                Group {
+                    if let definition = OfficialWindowConfiguration.definition(for: route.windowID) {
+                        OfficialWindowView(initialPhotoID: route.photoID, store: .forWindow(definition))
+                    } else {
+                        ContentUnavailableView("このまどは利用できません", systemImage: "rectangle.slash")
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
+                }
+            }
+        case let .personal(localIdentifier, shownAt):
+            NavigationStack {
+                Group {
+                    switch viewModel.widgetPhotoLibraryLoadSucceeded {
+                    case nil:
+                        ProgressView("写真を確認しています…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .some(false):
+                        ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                               description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                    case .some(true):
+                        mainTabContent.widgetPhotoDestination(
+                            for: localIdentifier, shownAt: shownAt
+                        )
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
+                }
+            }
+            .task {
+                // Refresh an App Intent's saved state in place; opening the
+                // photograph no longer waits for this independent update.
+                await viewModel.syncLikesForPresentation(trigger: "deeplink")
+            }
+        }
+    }
+
     @ViewBuilder
     private var regularContent: some View {
         if hasPhotoAccess {
@@ -208,7 +258,7 @@ struct AppRootView: View {
         }
     }
 
-    private var mainTabContent: some View {
+    private var mainTabContent: MainTabView {
         let visibleSnapshot = hasPhotoAccess
             ? viewModel.presentationSnapshot
             : .empty

@@ -31,6 +31,61 @@ enum FamilyWindowInitialPresentation: Equatable, Sendable {
     case settings
 }
 
+fileprivate struct FamilyWidgetPhotoRequest: Equatable {
+    let localWindowID: String
+    let sourceDigest: String
+}
+
+private struct FamilyWidgetPhotoTarget: Equatable {
+    let spaceID: String
+    let item: MomentInboxItem
+    let imageURL: URL
+    let lifecycleToken: SharingLifecycleGate.Token
+
+    var displayUntil: Date {
+        item.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration)
+    }
+}
+
+// Activation uses detached protected-storage work. Finish an earlier activation
+// before starting its replacement, even when the earlier viewer was closed.
+private actor FamilyWidgetPhotoActivationGate {
+    static let shared = FamilyWidgetPhotoActivationGate()
+    private var isHeld = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func activate(localWindowID: String) async throws -> PairingInstallationGuard.BootstrapResult {
+        if isHeld {
+            await withCheckedContinuation { waiters.append($0) }
+        } else {
+            isHeld = true
+        }
+        defer {
+            if waiters.isEmpty { isHeld = false }
+            else { waiters.removeFirst().resume() }
+        }
+        try Task.checkCancellation()
+        return try await PairingInstallationGuard.activatePrivateWindowAsync(localWindowID: localWindowID)
+    }
+}
+
+/// The app root installs this destination immediately for an exact Widget tap.
+/// The ordinary received-photo viewer owns its actions, without an overview or
+/// another presentation between the Widget and its photo.
+struct FamilyWidgetPhotoView: View {
+    let localWindowID: String
+    let sourceDigest: String
+    let onClose: () -> Void
+
+    var body: some View {
+        FamilyWindowView(
+            widgetPhoto: FamilyWidgetPhotoRequest(localWindowID: localWindowID, sourceDigest: sourceDigest),
+            onClose: onClose
+        )
+        .id(localWindowID + "|" + sourceDigest)
+    }
+}
+
 private enum FamilyWindowSection: String, CaseIterable, Identifiable {
     case received
     case sent
@@ -50,6 +105,8 @@ struct FamilyWindowView: View {
     @AccessibilityFocusState private var notificationAccessibilityFocus: String?
     private let initialPresentation: FamilyWindowInitialPresentation
     private let initialSetupPath: PairingSetupPath?
+    private let widgetPhotoRequest: FamilyWidgetPhotoRequest?
+    private let closeWidgetPhoto: (() -> Void)?
     @Binding private var pendingMemorySourceDigest: String?
     @Binding private var pendingNotificationRoute: MomentNotificationRoute?
     @StateObject private var model = MomentSharingViewModel()
@@ -95,6 +152,9 @@ struct FamilyWindowView: View {
     @State private var photoSelectionMessage: String?
     @State private var selectedDeliveryMessage: String?
     @State private var showsUnavailableSupportDetails = false
+    @State private var widgetPhotoTarget: FamilyWidgetPhotoTarget?
+    @State private var isResolvingWidgetPhoto = true
+    @State private var widgetPhotoResolutionID = UUID()
 #if DEBUG
     @State private var showsSettingsFixtureExplanation = false
     private static var isSettingsFixture: Bool {
@@ -112,6 +172,8 @@ struct FamilyWindowView: View {
     ) {
         self.initialPresentation = initialPresentation
         self.initialSetupPath = initialSetupPath
+        self.widgetPhotoRequest = nil
+        self.closeWidgetPhoto = nil
         _pendingMemorySourceDigest = pendingMemorySourceDigest
         _pendingNotificationRoute = pendingNotificationRoute
 #if DEBUG
@@ -121,7 +183,19 @@ struct FamilyWindowView: View {
 #endif
     }
 
+    fileprivate init(widgetPhoto: FamilyWidgetPhotoRequest, onClose: @escaping () -> Void) {
+        initialPresentation = .content
+        initialSetupPath = nil
+        widgetPhotoRequest = widgetPhoto
+        closeWidgetPhoto = onClose
+        _pendingMemorySourceDigest = .constant(nil)
+        _pendingNotificationRoute = .constant(nil)
+    }
+
     var body: some View {
+        if widgetPhotoRequest != nil {
+            widgetPhotoContent
+        } else {
 #if DEBUG
         if Self.isSettingsFixture {
             // The shipping settings view, without baseContent's bootstrap,
@@ -141,6 +215,163 @@ struct FamilyWindowView: View {
 #else
         guidanceDialogs
 #endif
+        }
+    }
+
+    private var widgetPhotoContent: some View {
+        Group {
+            if let target = widgetPhotoTarget, widgetPhotoIsCurrent(target) {
+                photoActionDialogs(receivedPhotoDetail(target.item.id), isDetail: true)
+            } else {
+                NavigationStack {
+                    Group {
+                        if isResolvingWidgetPhoto {
+                            ProgressView("写真を確認しています…")
+                        } else {
+                            ContentUnavailableView("この写真は表示できません", systemImage: "photo",
+                                description: Text("写真が削除されたか、表示期間が終了しました。"))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.black)
+                    .navigationTitle("写真")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("閉じる", systemImage: "xmark") { closeWidgetPhoto?() }
+                                .labelStyle(.iconOnly)
+                                .accessibilityIdentifier("photo-detail-close")
+                        }
+                    }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("family-widget-direct-photo")
+        .task(id: widgetPhotoRequest) { await resolveWidgetPhoto() }
+        .task(id: widgetPhotoTarget?.displayUntil) {
+            guard let deadline = widgetPhotoTarget?.displayUntil else { return }
+            do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            invalidateWidgetPhoto()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { reloadWidgetPhoto() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
+            reloadWidgetPhoto()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)) { _ in
+            reloadWidgetPhoto()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sharingMediaSyncRequested)) { _ in
+            reloadWidgetPhoto()
+        }
+        .onChange(of: model.isShowingLastKnownState) { _, unavailable in
+            if unavailable { invalidateWidgetPhoto() }
+        }
+        .onDisappear {
+            widgetPhotoResolutionID = UUID()
+            invalidateWidgetPhoto()
+        }
+    }
+
+    private func resolveWidgetPhoto() async {
+        guard let request = widgetPhotoRequest else { return }
+        let resolutionID = UUID()
+        widgetPhotoResolutionID = resolutionID
+        isResolvingWidgetPhoto = true
+        do {
+            guard SharingAPIConfiguration.current.isReviewVisible,
+                  SharingAPIConfiguration.current.isMediaAvailable else {
+                throw MomentSharingError.stateUnavailable
+            }
+            let bootstrap = try await FamilyWidgetPhotoActivationGate.shared.activate(
+                localWindowID: request.localWindowID
+            )
+            try Task.checkCancellation()
+            guard widgetPhotoResolutionID == resolutionID,
+                  let catalog = try PrivateWindowCatalogStore.load(),
+                  catalog.activeWindowID == request.localWindowID,
+                  let window = catalog.windows.first(where: { $0.localWindowID == request.localWindowID }),
+                  let spaceID = window.spaceID,
+                  bootstrap.state.phase == .paired, bootstrap.state.spaceID == spaceID,
+                  let momentID = try WidgetCacheBuilder.retainedFamilyMomentID(
+                    forSourceDigest: request.sourceDigest,
+                    localWindowID: request.localWindowID,
+                    validating: bootstrap.lifecycleToken
+                  ),
+                  model.reloadContentFromDisk(), model.pairingState?.spaceID == spaceID,
+                  let item = uniqueReceivedMoment(momentID),
+                  let imageURL = model.imageURL(for: item)
+            else { throw MomentSharingError.stateUnavailable }
+            let target = FamilyWidgetPhotoTarget(spaceID: spaceID, item: item,
+                imageURL: imageURL, lifecycleToken: bootstrap.lifecycleToken)
+            guard widgetPhotoIsCurrent(target) else { throw MomentSharingError.stateUnavailable }
+            widgetPhotoTarget = target
+            isResolvingWidgetPhoto = false
+
+            // Publish the validated cache before unrelated registration or relay
+            // work. Closing/replacing the root destination cancels this task.
+            await Task.yield()
+            try Task.checkCancellation()
+            guard widgetPhotoResolutionID == resolutionID, widgetPhotoIsCurrent(target) else { return }
+            await MomentPushSubscriptionService.shared.reconcileRegistration()
+            try Task.checkCancellation()
+            guard widgetPhotoResolutionID == resolutionID, widgetPhotoIsCurrent(target) else { return }
+            await model.synchronize(isManual: false)
+            try Task.checkCancellation()
+            guard widgetPhotoResolutionID == resolutionID else { return }
+            reloadWidgetPhoto()
+        } catch {
+            guard !Task.isCancelled, widgetPhotoResolutionID == resolutionID else { return }
+            invalidateWidgetPhoto()
+        }
+    }
+
+    private func widgetPhotoIsCurrent(_ target: FamilyWidgetPhotoTarget) -> Bool {
+        guard let request = widgetPhotoRequest,
+              Date() < target.displayUntil,
+              SharingAPIConfiguration.current.isMediaAvailable,
+              !model.isShowingLastKnownState, model.isPaired,
+              model.hasCurrentMediaSharingConsent, !model.isReportOnly,
+              model.pairingState?.spaceID == target.spaceID,
+              PrivateWindowCatalogStore.activeEntry()?.localWindowID == request.localWindowID,
+              (try? SharingLifecycleGate.validate(target.lifecycleToken)) != nil,
+              let current = uniqueReceivedMoment(target.item.id),
+              current.senderParticipantID == target.item.senderParticipantID,
+              current.committedAt == target.item.committedAt,
+              current.receivedAt == target.item.receivedAt
+        else { return false }
+        return true
+    }
+
+    private func uniqueReceivedMoment(_ momentID: String) -> MomentInboxItem? {
+        let matches = model.receivedMoments.filter { $0.id == momentID }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    private func reloadWidgetPhoto() {
+        guard let target = widgetPhotoTarget else { return }
+        guard model.reloadContentFromDisk(), widgetPhotoIsCurrent(target) else {
+            invalidateWidgetPhoto()
+            return
+        }
+    }
+
+    private func invalidateWidgetPhoto() {
+        widgetPhotoTarget = nil
+        isResolvingWidgetPhoto = false
+        reportTarget = nil
+        blockTarget = nil
+        deleteReceivedTarget = nil
+        widgetMemoryTarget = nil
+        memoryRemovalTarget = nil
+    }
+
+    private var isShowingReceivedPhotoDetail: Bool {
+        widgetPhotoRequest != nil || selectedMomentForDetail != nil
     }
 
     private var baseContent: some View {
@@ -341,7 +572,7 @@ struct FamilyWindowView: View {
         .confirmationDialog(
             "この写真を通報しますか？",
             isPresented: Binding(
-                get: { isDetail == (selectedMomentForDetail != nil) && reportTarget != nil },
+                get: { isDetail == isShowingReceivedPhotoDetail && reportTarget != nil },
                 set: { if !$0 { reportTarget = nil } }
             ),
             titleVisibility: .visible
@@ -357,7 +588,7 @@ struct FamilyWindowView: View {
         .confirmationDialog(
             "この写真を削除しますか？",
             isPresented: Binding(
-                get: { isDetail == (selectedMomentForDetail != nil) && deleteReceivedTarget != nil },
+                get: { isDetail == isShowingReceivedPhotoDetail && deleteReceivedTarget != nil },
                 set: { if !$0 { deleteReceivedTarget = nil } }
             ),
             titleVisibility: .visible,
@@ -381,7 +612,7 @@ struct FamilyWindowView: View {
         .alert(
             "この相手をブロックしますか？",
             isPresented: Binding(
-                get: { isDetail == (selectedMomentForDetail != nil) && blockTarget != nil },
+                get: { isDetail == isShowingReceivedPhotoDetail && blockTarget != nil },
                 set: { if !$0 { blockTarget = nil } }
             ),
             presenting: blockTarget
@@ -405,7 +636,7 @@ struct FamilyWindowView: View {
         .confirmationDialog(
             memorySaveDialogTitle,
             isPresented: Binding(
-                get: { isDetail == (selectedMomentForDetail != nil) && widgetMemoryTarget != nil },
+                get: { isDetail == isShowingReceivedPhotoDetail && widgetMemoryTarget != nil },
                 set: {
                     if !$0 {
                         widgetMemoryTarget = nil
@@ -447,7 +678,7 @@ struct FamilyWindowView: View {
         .confirmationDialog(
             "思い出から外しますか？",
             isPresented: Binding(
-                get: { isDetail == (selectedMomentForDetail != nil) && memoryRemovalTarget != nil },
+                get: { isDetail == isShowingReceivedPhotoDetail && memoryRemovalTarget != nil },
                 set: { if !$0 { memoryRemovalTarget = nil } }
             ),
             titleVisibility: .visible,
@@ -561,7 +792,8 @@ struct FamilyWindowView: View {
                 if let item = model.receivedMoments.first(where: { $0.id == momentID }),
                    !model.isShowingLastKnownState {
                     MomentPhotoDetailBody(
-                        imageURL: model.imageURL(for: item),
+                        imageURL: widgetPhotoRequest == nil
+                            ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
                         caption: model.caption(for: item),
                         captionIdentifier: "family-window-received-caption-full"
                     ) {
@@ -619,7 +851,10 @@ struct FamilyWindowView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる", systemImage: "xmark") { selectedMomentForDetail = nil }
+                    Button("閉じる", systemImage: "xmark") {
+                        if let closeWidgetPhoto { closeWidgetPhoto() }
+                        else { selectedMomentForDetail = nil }
+                    }
                         .labelStyle(.iconOnly)
                         .accessibilityLabel("閉じる")
                         .accessibilityIdentifier("photo-detail-close")

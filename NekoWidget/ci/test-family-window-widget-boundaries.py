@@ -1161,9 +1161,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("photos: [initialPhoto]", today_detail)
         self.assertIn(
-            "showsWidgetTiming: widgetOpenedPhotoIdentifier == localIdentifier",
+            "openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier",
             today_detail,
         )
+        self.assertIn("showsWidgetTiming: openedFromWidget", today_detail)
+        self.assertIn("widgetShownAt: shownAt", today_detail)
 
         collection_detail = section(
             main,

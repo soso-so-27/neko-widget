@@ -116,6 +116,8 @@
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
 		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
 		100000000000000000000133 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000233 /* MainTabView.swift */; };
+		A16600000000000000000001 /* WidgetPhotoOpening.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16600000000000000000011 /* WidgetPhotoOpening.swift */; };
+		A16600000000000000000002 /* WidgetPhotoOpeningFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */; };
 		100000000000000000000134 /* PhotoAssetImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000234 /* PhotoAssetImageView.swift */; };
 		100000000000000000000135 /* PhotoPermissionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000235 /* PhotoPermissionView.swift */; };
 		100000000000000000000136 /* ScanStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000236 /* ScanStatusView.swift */; };
@@ -307,6 +309,8 @@
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
 		F00000000000000000000233 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		A16600000000000000000011 /* WidgetPhotoOpening.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPhotoOpening.swift; sourceTree = "<group>"; };
+		A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPhotoOpeningFixture.swift; sourceTree = "<group>"; };
 		F00000000000000000000234 /* PhotoAssetImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAssetImageView.swift; sourceTree = "<group>"; };
 		F00000000000000000000235 /* PhotoPermissionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionView.swift; sourceTree = "<group>"; };
 		F00000000000000000000236 /* ScanStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStatusView.swift; sourceTree = "<group>"; };
@@ -670,6 +674,8 @@
 				F00000000000000000000231 /* HomeView.swift */,
 				F00000000000000000000232 /* LikedPhotosView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
+				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
+				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
 				F00000000000000000000234 /* PhotoAssetImageView.swift */,
 				F00000000000000000000235 /* PhotoPermissionView.swift */,
 				F00000000000000000000236 /* ScanStatusView.swift */,
@@ -1032,6 +1038,8 @@
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,
+				A16600000000000000000001 /* WidgetPhotoOpening.swift in Sources */,
+				A16600000000000000000002 /* WidgetPhotoOpeningFixture.swift in Sources */,
 				100000000000000000000134 /* PhotoAssetImageView.swift in Sources */,
 				100000000000000000000135 /* PhotoPermissionView.swift in Sources */,
 				100000000000000000000136 /* ScanStatusView.swift in Sources */,

@@ -318,16 +318,36 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func detailView(for localIdentifier: String) -> some View {
+        photoDetail(for: localIdentifier,
+                    shownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
+                    openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier)
+    }
+
+    @ViewBuilder
+    func widgetPhotoDestination(for localIdentifier: String, shownAt: Date?) -> some View {
+        if hasPhotoAccess,
+           catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
+           !excludedCatCandidateIdentifiers.contains(localIdentifier) {
+            photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true)
+        } else {
+            ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                   description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
+                .accessibilityIdentifier("unavailable-widget-photo")
+        }
+    }
+
+    private func photoDetail(for localIdentifier: String, shownAt: Date?,
+                             openedFromWidget: Bool) -> some View {
         let initialPhoto = photo(for: localIdentifier)
-        PhotoBrowserView(
+        return PhotoBrowserView(
             // A proposed photo and a Widget tap are one-photo entry points.
             // The grid uses a separate route whose browser can page through
             // the detected cat-photo collection.
             photos: [initialPhoto],
             libraryPhotos: libraryPhotos,
             initialPhoto: initialPhoto,
-            widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
-            showsWidgetTiming: widgetOpenedPhotoIdentifier == localIdentifier,
+            widgetShownAt: shownAt,
+            showsWidgetTiming: openedFromWidget,
             setMemorySaved: setMemorySaved,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in
