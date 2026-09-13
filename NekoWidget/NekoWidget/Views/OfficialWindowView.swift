@@ -634,7 +634,7 @@ struct OfficialWindowView: View {
             if preview.failed {
                 setFeedback("公開中の写真を確認できませんでした。もう一度試せます。", failed: true)
             } else if interactive {
-                setFeedback(photos == previousPhotos ? "新しい写真はありませんでした" : "写真を確認しました", transient: true)
+                setFeedback(hasSamePublishedPhotos(as: previousPhotos) ? "新しい写真はありませんでした" : "写真を確認しました", transient: true)
             }
             return
         }
@@ -644,7 +644,7 @@ struct OfficialWindowView: View {
             guard store.snapshot().subscriptionID == requestedSubscription else { return }
             state = store.snapshot()
             displayDate = Date()
-            setFeedback(interactive ? (photos == previousPhotos ? "新しい写真はありませんでした" : "写真を更新しました") : nil,
+            setFeedback(interactive ? (hasSamePublishedPhotos(as: previousPhotos) ? "新しい写真はありませんでした" : "写真を更新しました") : nil,
                         transient: interactive)
         } catch is CancellationError {
             return
@@ -671,9 +671,31 @@ struct OfficialWindowView: View {
         }
     }
 
+    private func hasSamePublishedPhotos(as previous: [OfficialCatPhoto]) -> Bool {
+        // A renewed display deadline is not a new photo. Keep every public
+        // content field in this UI comparison; the store still checks full values.
+        photos.elementsEqual(previous) { current, old in
+            current.id == old.id && current.sha256 == old.sha256
+                && current.catID == old.catID && current.catName == old.catName
+                && current.credit == old.credit && current.caption == old.caption
+                && current.photographedOn == old.photographedOn && current.publishedAt == old.publishedAt
+                && current.imageFilename == old.imageFilename
+                && current.width == old.width && current.height == old.height
+        }
+    }
+
     private func dismissUnavailablePhoto() {
-        if let selectedPhoto, !photos.contains(selectedPhoto) {
+        guard let selectedPhoto else { return }
+        guard let current = photos.first(where: {
+            $0.id == selectedPhoto.id && $0.sha256 == selectedPhoto.sha256
+        }) else {
             self.selectedPhoto = nil
+            return
+        }
+        // Only an available photo with the same verified image can renew this
+        // selection. Withdrawal, expiry and an image replacement still dismiss it.
+        if current != selectedPhoto {
+            self.selectedPhoto = current
         }
     }
 }
@@ -922,8 +944,10 @@ final class OfficialWindowFixtureModel: ObservableObject {
         guard request.isSubscribed else { return }
         let count = CommandLine.arguments.contains("--official-window-recent-photos") ? 3 : 1
         let items = try (0..<count).map { try fixturePhoto(index: $0) }
+        let editionOffset = CommandLine.arguments.contains("--official-window-renew-expiry") ? Double(attempts) : 0
         let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: store.windowID, enabled: true,
-                                           generatedAt: fixtureDate, validUntil: fixtureDate.addingTimeInterval(86400),
+                                           generatedAt: fixtureDate.addingTimeInterval(editionOffset),
+                                           validUntil: fixtureDate.addingTimeInterval(86400 + editionOffset * 60),
                                            photos: items.map(\.photo))
         try store.accept(catalog, for: request)
         if failImage { throw URLError(.networkConnectionLost) }
@@ -960,12 +984,13 @@ final class OfficialWindowFixtureModel: ObservableObject {
             throw OfficialWindowError.invalidImage
         }
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let renewal = CommandLine.arguments.contains("--official-window-renew-expiry") ? Double(max(0, attempts - 1)) * 60 : 0
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
             catID: "fixture-cat", catName: store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫", credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
             caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
-            expiresAt: fixtureDate.addingTimeInterval(CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400),
+            expiresAt: fixtureDate.addingTimeInterval((CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400) + renewal),
             imageFilename: hash + ".jpg", sha256: hash,
             width: cgImage.width, height: cgImage.height
         )

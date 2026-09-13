@@ -1,6 +1,6 @@
 # 公式まどの配信準備
 
-公式まどと追加の公開まどのcatalog・JPEGを、専用のCloudflare Workerで配信する。既存の非公開まど、R2、D1、アカウント、課金処理へのbindingは持たない。追加の公開まど対応は2026-09-13時点で未配備。
+公式まどと追加の公開まどのcatalog・JPEGを、専用のCloudflare Workerで配信する。既存の非公開まど、R2、D1、アカウント、課金処理へのbindingは持たない。既存previewでは2026-09-13に「おひるね」も配備済み。現在の更新・期限保守・取り下げは [運用手順](OPERATIONS.md) を参照。以下の過去の確認記録は当時の状態として読む。
 
 写真の原本が未指定でも、合成画像A → B → 停止まで同じローカルURLで確認できる。合成画像は実在の猫や投稿者の写真として扱わない。ここまでのコマンドは公開・デプロイしない。
 
@@ -63,7 +63,7 @@ bundle生成に `--feed-url` を加えると `OfficialWindow.xcconfig` も生成
 
 ## 更新・取り下げ・停止
 
-### 複数の公開まどをローカルでまとめる（未配備）
+### 複数の公開まどをローカルでまとめる
 
 既存publisherの `--channel-id` で、承認済み入力から窓ごとの出力を用意します。`--assets` は従来の `official-cats` 出力、`--additional-assets` は追加窓の出力を繰り返し指定します。次は入力形式の例で、テーマ公開・提供者募集・自動更新を実行する指示ではありません。
 
@@ -75,7 +75,7 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 - 同じchannelの二重指定、追加分による `official-cats` の上書き、slug以外のchannel、未知ファイル、hash不一致、期限切れ、入力内への出力を拒否します。全入力の検証前に出力先を作りません。
 - URLのchannelとcatalogの `channelID` が一致する場合だけ配信します。同じ写真IDやJPEG hashでも、別窓や旧rootから写真を補いません。停止・撤回写真は404、期限切れ／不正／取得不能catalogは503。存在しないchannelのcatalogも取得不能として503です。未知のパスは404。`/windows/official-cats/` を旧URLの別名にはしません。
 - Aだけ止める場合、Aを `--channel-id window-a --paused` で再生成し、現在のBとlegacy出力も含めて新しいbundleを作ります。追加指定から窓を外すと次のbundleにその窓のファイルは入りません。他窓の期限は自動延長しません。
-- dry-run・実配備の順序は既存手順どおりです。この変更は確認用の既存配信へ反映していません。新しい写真・窓の供給や配信頻度も未設定です。
+- dry-run・実配備の順序は既存手順どおりです。この複数まど対応は既存previewへ反映済みです。写真の継続供給と自動配信の稼働は別です。
 
 - 更新: 元の入力を変えてpublisherで新しい版を生成し、bundle → dry-run → 配備の順で差し替える。未来の写真は、その公開時刻以降の再生成が必要。
 - 取り下げ: 対象を入力から外して新しい版を作る。公開フォルダーにも旧JPEGを残さない。Workerも現在のcatalogにないJPEGを拒否する。

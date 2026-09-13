@@ -182,7 +182,8 @@ final class OfficialWindowUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["--official-window-ui-fixture", "--official-window-recent-photos", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = ["--official-window-ui-fixture", "--official-window-recent-photos",
+                               "--official-window-renew-expiry", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let subscribe = app.buttons["official-window-subscribe"]
         XCTAssertTrue(subscribe.waitForExistence(timeout: 15))
@@ -207,9 +208,14 @@ final class OfficialWindowUITests: XCTestCase {
         let recoveredPhoto = app.images["photo-detail-zoom-surface"]
         XCTAssertTrue(recoveredPhoto.waitForExistence(timeout: 10), "Same-file retry must load the detail's photo, not just its background overview")
         XCTAssertTrue(recoveredPhoto.isHittable)
-        XCTAssertTrue(app.navigationBars["確認用の猫"].exists)
+        XCTAssertTrue(app.navigationBars["確認用の猫"].exists,
+                      "Renewing this photo's expiry during its retry must keep its full-screen viewer open")
         capture("official-photo-retry-recovered", app)
         app.buttons["閉じる"].tap()
+        // The next edition renews the same IDs, bytes and original publication
+        // dates. It must not be described as newly received photos.
+        app.buttons["official-window-refresh"].tap()
+        XCTAssertTrue(app.staticTexts["新しい写真はありませんでした"].waitForExistence(timeout: 10))
         for _ in 0..<5 { if preview.isHittable { break }; app.swipeDown() }
         capture("official-window-photo", app)
         app.buttons["official-window-photo-fixture-photo"].tap()
