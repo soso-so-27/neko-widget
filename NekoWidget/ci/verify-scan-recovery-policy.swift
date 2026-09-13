@@ -154,6 +154,80 @@ private func verifyTodayPhotoSelectionIsStablePerLocalDay() throws {
     )
 }
 
+private func verifyWidgetCaptureSpacingPreservesSelection() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 1, hour: 8))!
+    let now = start.addingTimeInterval(86400)
+    let selector = WeightedPhotoSelector(calendar: calendar)
+    func captured(_ id: String, minutes: Double?, shown: Date? = nil) -> AssetRecord {
+        var value = record(id, areaRatio: 0.20)
+        value.creationDate = minutes.map { start.addingTimeInterval($0 * 60) }
+        value.lastShownAt = shown
+        return value
+    }
+    let a = captured("a", minutes: 0), a2 = captured("a2", minutes: 10)
+    let b = captured("b", minutes: 240), b2 = captured("b2", minutes: 250)
+    let weighted = [a, a2, b, b2]
+    let spread = selector.widgetDisplayOrder(from: weighted, asset: { $0 }, now: now)
+    try require(spread == [a, b, a2, b2], "two capture sessions were not interleaved without losing a photo")
+    try require(selector.widgetDisplayOrder(from: spread, asset: { $0 }, now: now) == spread,
+                "an already separated rotation was reshuffled")
+    // The linear order B,A,A,B could appear improved while its B→B wrap still
+    // repeats the same session. The actual repeating cycle must be considered.
+    let boundary = selector.widgetDisplayOrder(from: [a, b, b2, a2], asset: { $0 }, now: now)
+    try require(boundary == [a, b, a2, b2], "the cycle-boundary capture run survived an available improvement")
+
+    var favorite = a
+    favorite.isFavorite = true; favorite.liked = true
+    let olderA = captured("older-a", minutes: 20, shown: now)
+    let olderB = captured("older-b", minutes: 260, shown: now)
+    let selected = [favorite, a2, b, b2, olderA, olderB]
+    let ordered = selector.widgetDisplayOrder(from: selected, asset: { $0 }, now: now)
+    try require(ordered.first == favorite && Set(ordered.prefix(4).map(\.localIdentifier)) == Set(selected.prefix(4).map(\.localIdentifier))
+                && Array(ordered.suffix(2)) == [olderA, olderB],
+                "spacing changed the weighted first choice or crossed the unshown priority boundary")
+    try require(ordered.count == selected.count && Set(ordered.map(\.localIdentifier)).count == selected.count,
+                "spacing added, dropped or duplicated a selected identifier")
+    let noCrossing = [a, a2, olderB]
+    try require(selector.widgetDisplayOrder(from: noCrossing, asset: { $0 }, now: now) == noCrossing,
+                "a recently shown separator jumped ahead of an unshown photo")
+
+    let thirtyMinutes = [a, captured("edge-a", minutes: 30), b, captured("edge-b", minutes: 270)]
+    try require(selector.widgetDisplayOrder(from: thirtyMinutes, asset: { $0 }, now: now).map(\.localIdentifier)
+                == ["a", "b", "edge-a", "edge-b"], "the inclusive 30-minute capture boundary changed")
+    let outside = [a, captured("outside-a", minutes: 30 + 1.0 / 60), b, captured("outside-b", minutes: 270 + 1.0 / 60)]
+    try require(selector.widgetDisplayOrder(from: outside, asset: { $0 }, now: now) == outside,
+                "unrelated capture times were reordered")
+    let acrossMidnight = [captured("night", minutes: 950), captured("morning", minutes: 970),
+                          captured("noon", minutes: 1680), captured("evening", minutes: 1920)]
+    try require(selector.widgetDisplayOrder(from: acrossMidnight, asset: { $0 }, now: now) == acrossMidnight,
+                "UTC captures on different calendar days were grouped")
+    var tokyo = calendar
+    tokyo.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
+    try require(WeightedPhotoSelector(calendar: tokyo).widgetDisplayOrder(from: acrossMidnight, asset: { $0 }, now: now)
+                .map(\.localIdentifier) == ["night", "noon", "morning", "evening"],
+                "same-day capture grouping ignored the injected calendar")
+    let unknown = [a, a2, captured("unknown", minutes: nil)]
+    try require(selector.widgetDisplayOrder(from: unknown, asset: { $0 }, now: now) == unknown,
+                "an unknown capture date was guessed to be a different session")
+    for count in 0...20 {
+        let sameSession = (0..<count).map { captured("small-\($0)", minutes: Double($0)) }
+        try require(selector.widgetDisplayOrder(from: sameSession, asset: { $0 }, now: now) == sameSession,
+                    "a \(count)-photo library without alternatives changed or became empty")
+    }
+    // Operate on completed cache entries, including a missing-local-image gap.
+    // Reordering whole entries must not detach filenames from their PhotoKit IDs.
+    let cached = [a, a2, b, b2].map { (record: $0, filename: $0.localIdentifier + ".jpg") }
+    let cachedOrder = selector.widgetDisplayOrder(from: cached, asset: { $0.record }, now: now)
+    try require(cachedOrder.map { $0.filename } == ["a.jpg", "b.jpg", "a2.jpg", "b2.jpg"],
+                "cache bytes lost their record association during spacing")
+    let available = cached.filter { $0.record.localIdentifier != "b" }
+    let availableOrder = selector.widgetDisplayOrder(from: available, asset: { $0.record }, now: now)
+    try require(Set(availableOrder.map { $0.filename }) == Set(available.map { $0.filename })
+                && availableOrder.count == available.count, "spacing resurrected an unavailable image")
+}
+
 private func verifyTodayPhotoSelectionReceiptPersistsAcrossRestart() throws {
     let suiteName = "jp.nekowidget.ci.today-selection.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -433,6 +507,7 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 private struct ScanRecoveryPolicyVerifier {
     static func main() throws {
         try verifyDetectionAndWidgetPoliciesAreSeparated()
+        try verifyWidgetCaptureSpacingPreservesSelection()
         try verifyTodayPhotoSelectionIsStablePerLocalDay()
         try verifyTodayPhotoSelectionReceiptPersistsAcrossRestart()
         try verifyMinimumAreaDoesNotInvalidateVisionEvidence()

@@ -75,6 +75,57 @@ struct WeightedPhotoSelector {
         return weightedOrder(fresh) + weightedOrder(older)
     }
 
+    /// Reorder only the locally cached selection, never the weighted pool.
+    /// A same-day, 30-minute gap is a conservative capture-time heuristic,
+    /// not a claim that two photos depict the same scene or cat.
+    func widgetDisplayOrder<Item>(
+        from items: [Item],
+        asset: (Item) -> AssetRecord,
+        now: Date = .now
+    ) -> [Item] {
+        guard items.count > 2 else { return items }
+        let records = items.map(asset)
+        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+        let recentlyShown = records.map { ($0.lastShownAt ?? .distantPast) >= recentCutoff }
+        func nearby(_ left: Int, _ right: Int) -> Bool {
+            guard let lhs = records[left].creationDate, let rhs = records[right].creationDate else { return false }
+            return calendar.isDate(lhs, inSameDayAs: rhs)
+                && abs(lhs.timeIntervalSince(rhs)) <= 30 * 60
+        }
+        func neighborCount(_ order: [Int]) -> Int {
+            zip(order, order.dropFirst()).filter { nearby($0.0, $0.1) }.count
+                + (nearby(order[order.count - 1], order[0]) ? 1 : 0)
+        }
+        var order = Array(items.indices)
+        var count = neighborCount(order)
+        while count > 0 {
+            var improved: [Int]?
+            search: for insertion in 1..<order.count {
+                for source in (insertion + 1)..<order.count {
+                    // Keep the first weighted choice and never promote a
+                    // recently shown photo ahead of the preferred group.
+                    guard recentlyShown[order[source]] == recentlyShown[order[insertion]] else { break }
+                    guard records[order[source]].creationDate != nil,
+                          records[order[insertion - 1]].creationDate != nil,
+                          !nearby(order[insertion - 1], order[source]) else { continue }
+                    var proposed = order
+                    let moved = proposed.remove(at: source)
+                    proposed.insert(moved, at: insertion)
+                    let nextCount = neighborCount(proposed)
+                    guard nextCount < count else { continue }
+                    count = nextCount
+                    improved = proposed
+                    break search
+                }
+            }
+            guard let improved else { break }
+            order = improved
+        }
+        // At most 20 cached photos reach this path. Each accepted move removes
+        // at least one near-time neighbor, including the loop back to the first.
+        return order.map { items[$0] }
+    }
+
     func eligibleCandidates(
         from assets: [AssetRecord],
         settings: AppSettings,

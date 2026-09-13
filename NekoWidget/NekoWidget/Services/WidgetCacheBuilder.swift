@@ -368,8 +368,11 @@ actor WidgetCacheBuilder {
         // Keep each locally available photo once, even for a short library.
         // The provider loops this rotation itself; padding to the target count
         // repeats photos at the cycle boundary and inflates selection history.
+        // Spread nearby captures only after local image failures and the
+        // weighted selection cap, so neither can erase the intended spacing.
+        let displayOrder = selector.widgetDisplayOrder(from: available, asset: { $0.record }, now: now)
         let items = PersonalWidgetRotationPolicy.orderedUniqueItems(
-            from: available.enumerated().map { offset, item in
+            from: displayOrder.enumerated().map { offset, item in
                 WidgetManifestItem(
                     localIdentifier: item.record.localIdentifier,
                     cacheFilename: item.filenames.small,
