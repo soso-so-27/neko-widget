@@ -298,8 +298,8 @@ struct OfficialWindowView: View {
                 ProgressView("写真を確認しています…")
             } else {
                 ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                                       description: Text(message ?? "公式まどで、いま届いている写真を確認できます。"))
-                Button("公式まどを見る") {
+                                       description: Text(message ?? "「\(store.displayName)」で、いま届いている写真を確認できます。"))
+                Button("\(store.displayName)を見る") {
                     showsOverview = true
                     Task { await refresh() }
                 }
@@ -402,7 +402,8 @@ struct OfficialWindowView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("写真を受け取るまど").font(.title2.weight(.semibold))
+                    Text(store.displayName).font(.title2.weight(.semibold))
+                    Text(store.definition.subtitle)
                     Text("運営が選んだ猫の写真が届きます。投稿や友だちの招待は不要です。")
                     Text("提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
                     Text("新しい写真が届くと更新します。Widgetへの反映には時間がかかる場合があります。")

@@ -112,7 +112,9 @@ struct WidgetPhotoSource: AppEntity {
     /// Existing widget instances continue to resolve by their stable `id`.
     static var availableSources: [WidgetPhotoSource] {
         var sources: [WidgetPhotoSource] = [.personalLibrary]
-            + OfficialWindowConfiguration.definitions.map(publicWindow)
+            + OfficialWindowConfiguration.definitions
+                .filter { $0.id == OfficialWindowCatalog.sourceID || $0.endpoint != nil }
+                .map(publicWindow)
         if familyWindowSourceIsEnabled {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {

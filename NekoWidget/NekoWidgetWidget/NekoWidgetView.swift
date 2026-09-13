@@ -111,7 +111,7 @@ struct NekoWidgetView: View {
     }
 
     private var loadedPhotoAccessibilityLabel: String {
-        if let photo = entry.officialPhoto { return "公式まど。\(photo.catName)の写真。タップして開く" }
+        if let photo = entry.officialPhoto { return "\(entry.windowDisplayName)。\(photo.catName)の写真。タップして開く" }
         guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
         else { return "このiPhoneで見つけた猫写真" }
         let photo = "\(entry.windowDisplayName)に届いた写真"

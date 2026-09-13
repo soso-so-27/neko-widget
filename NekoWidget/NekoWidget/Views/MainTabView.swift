@@ -1811,7 +1811,7 @@ private struct SubtleWindowThumbnail: View {
 struct WindowListNavigationFixture: View {
     @StateObject private var model = OfficialWindowFixtureModel()
     @StateObject private var secondModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
-        id: "nap-cats", displayName: "おひるね", subtitle: "眠る猫の写真",
+        id: "nap-cats", displayName: "おひるね", subtitle: "お昼寝中の猫の写真",
         endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")))
     @State private var selectedTab = 2
     @State private var opensActiveWindow = false
@@ -1831,7 +1831,8 @@ struct WindowListNavigationFixture: View {
                                publicWindows: CommandLine.arguments.contains("--window-list-two-public") ? [
                                 PublicWindowPresentationSource(store: model.store, refresh: { try await model.refresh() }, preview: { try await model.preview() }),
                                 PublicWindowPresentationSource(store: secondModel.store, refresh: { try await secondModel.refresh() }, preview: { try await secondModel.preview() })
-                               ] : nil)
+                               ] : [PublicWindowPresentationSource(store: model.store,
+                                        refresh: { try await model.refresh() }, preview: { try await model.preview() })])
             }
             .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
         }

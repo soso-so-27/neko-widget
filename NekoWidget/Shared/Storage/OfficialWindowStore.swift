@@ -12,9 +12,23 @@ enum OfficialWindowConfiguration {
     }
 
     static var definitions: [PublicWindowDefinition] {
-        [PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
-                                displayName: OfficialWindowCatalog.displayName,
-                                subtitle: "運営から届く猫の写真", endpoint: feedURL)]
+        definitions(baseFeedURL: feedURL)
+    }
+
+    static func definitions(baseFeedURL: URL?) -> [PublicWindowDefinition] {
+        let endpoint = validatedEndpoint(baseFeedURL)
+        // Keep public feeds on the configured origin and below its catalog directory.
+        let napEndpoint = endpoint?.deletingLastPathComponent()
+            .appendingPathComponent("windows", isDirectory: true)
+            .appendingPathComponent("nap-cats", isDirectory: true)
+            .appendingPathComponent("catalog.json")
+        return [
+            PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
+                                   displayName: OfficialWindowCatalog.displayName,
+                                   subtitle: "運営から届く猫の写真", endpoint: endpoint),
+            PublicWindowDefinition(id: "nap-cats", displayName: "おひるね",
+                                   subtitle: "お昼寝中の猫の写真", endpoint: validatedEndpoint(napEndpoint))
+        ]
     }
 
     static func definition(for windowID: String) -> PublicWindowDefinition? {

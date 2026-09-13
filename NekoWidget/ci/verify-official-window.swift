@@ -205,7 +205,47 @@ struct OfficialWindowChecks {
             check(invalid.endpoint == nil, "Unpinned endpoint shape accepted")
             rejects("invalid endpoint subscription") { try invalid.setSubscribed(true) }
         }
-        check(OfficialWindowConfiguration.definitions.map(\.id) == ["official-cats"], "An unimplemented window entered the product registry")
+        let productionDefinitions = OfficialWindowConfiguration.definitions
+        check(productionDefinitions.map(\.id) == ["official-cats", "nap-cats"], "Product public-window registry changed")
+        check(productionDefinitions == OfficialWindowConfiguration.definitions(baseFeedURL: OfficialWindowConfiguration.feedURL),
+              "Production bypassed the validated base feed configuration")
+        check(productionDefinitions[0].endpoint == OfficialWindowConfiguration.feedURL
+              && productionDefinitions[0].displayName == OfficialWindowCatalog.displayName, "Legacy definition changed")
+        check(productionDefinitions[1].displayName == "おひるね" && productionDefinitions[1].subtitle == "お昼寝中の猫の写真"
+              && OfficialWindowConfiguration.definition(for: "nap-cats") == productionDefinitions[1], "Nap window definition is unavailable")
+        for (base, expected) in [
+            ("https://official.invalid/catalog.json", "https://official.invalid/windows/nap-cats/catalog.json"),
+            ("https://official.invalid/preview/v1/catalog.json", "https://official.invalid/preview/v1/windows/nap-cats/catalog.json"),
+            ("https://official.invalid/cat%20photos/catalog.json", "https://official.invalid/cat%20photos/windows/nap-cats/catalog.json")
+        ] {
+            let configured = OfficialWindowConfiguration.definitions(baseFeedURL: URL(string: base))
+            check(configured[0].endpoint?.absoluteString == base, "Derivation changed the legacy endpoint")
+            check(configured[1].endpoint?.absoluteString == expected, "Nap feed escaped its configured path base")
+        }
+        check(OfficialWindowConfiguration.definitions(baseFeedURL: nil).allSatisfy { $0.endpoint == nil },
+              "Missing base enabled a public feed")
+        for raw in ["http://official.invalid/catalog.json", "https://user@official.invalid/catalog.json",
+                    "https://official.invalid:443/catalog.json", "https://official.invalid/catalog.json?other=1",
+                    "https://official.invalid/catalog.json#other", "https://official.invalid/feed.json",
+                    "https://official.invalid/catalog.json/", "/catalog.json"] {
+            let configured = OfficialWindowConfiguration.definitions(baseFeedURL: URL(string: raw))
+            check(configured.allSatisfy { $0.endpoint == nil }, "Invalid base enabled a public feed")
+        }
+        let configured = OfficialWindowConfiguration.definitions(baseFeedURL: endpoint)
+        let configuredRoot = root.appendingPathComponent("production-definitions")
+        let configuredLegacy = OfficialWindowStore.forWindow(configured[0], containerURL: configuredRoot)
+        let configuredNap = OfficialWindowStore.forWindow(configured[1], containerURL: configuredRoot)
+        check(configuredLegacy.directory?.lastPathComponent == "official-window.v1"
+              && configuredNap.directory?.lastPathComponent == "nap-cats"
+              && configuredNap.directory?.deletingLastPathComponent().lastPathComponent == "public-windows.v1",
+              "Production stores lost legacy compatibility or nap isolation")
+        check(configured[0].widgetSourceID == "official-cats" && configured[1].widgetSourceID == "public-window:nap-cats",
+              "Production Widget sources collide")
+        try configuredLegacy.setSubscribed(true)
+        check(!configuredNap.snapshot().isSubscribed, "Legacy subscription enabled nap delivery")
+        try configuredNap.setSubscribed(true)
+        try configuredLegacy.setSubscribed(false)
+        check(configuredNap.snapshot().isSubscribed, "Stopping legacy disabled nap delivery")
         check(OfficialWindowConfiguration.definition(for: "unknown-cats") == nil, "Unknown registry ID fell back to legacy")
         check(definitionA.widgetSourceID == "official-cats" && definitionB.widgetSourceID == "public-window:dusk-cats", "Widget IDs changed")
         check(PublicWindowDefinition.windowID(from: "public-window:unknown-cats") == "unknown-cats", "Unknown public Widget ID fell back")

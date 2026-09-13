@@ -2,6 +2,45 @@ import XCTest
 
 final class OfficialWindowUITests: XCTestCase {
     @MainActor
+    func testDiscoverNapWindowReceivesOnlyChosenWindow() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-two-public", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let addition = app.buttons["window-list-addition"]
+        XCTAssertTrue(addition.waitForExistence(timeout: 10))
+        addition.tap()
+        app.buttons["window-list-discover"].tap()
+        let nap = app.buttons["public-window-entry-nap-cats"]
+        XCTAssertTrue(nap.waitForExistence(timeout: 5))
+        for _ in 0..<3 { if nap.isHittable { break }; app.swipeUp() }
+        capture("public-windows-discovery", app)
+        nap.tap()
+        XCTAssertTrue(app.navigationBars["おひるね"].waitForExistence(timeout: 5))
+        let subscribe = app.buttons["official-window-subscribe"]
+        for _ in 0..<5 { if subscribe.isHittable { break }; app.swipeUp() }
+        subscribe.tap()
+        let guide = app.buttons["official-window-widget-guide"]
+        XCTAssertTrue(guide.waitForExistence(timeout: 5))
+        for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
+        guide.tap()
+        XCTAssertTrue(app.navigationBars["ホーム画面に置く"].waitForExistence(timeout: 5))
+        let source = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        for _ in 0..<3 { if source.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(source.isHittable)
+        XCTAssertTrue(source.label.contains("おひるね"), "The guide must name the window just received")
+        capture("nap-window-widget-guide", app)
+        app.buttons["閉じる"].tap()
+        app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(nap.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Receiving a theme must not subscribe to the other window")
+        capture("nap-window-receiving-list", app)
+    }
+
+    @MainActor
     func testTwoPublicWindowsKeepSamePhotoIDAndStopSeparate() {
         continueAfterFailure = false
         let app = XCUIApplication()
