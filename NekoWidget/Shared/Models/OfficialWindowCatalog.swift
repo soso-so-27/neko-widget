@@ -8,6 +8,15 @@ struct PublicWindowDefinition: Identifiable, Hashable, Sendable {
     let displayName: String
     let subtitle: String
     let endpoint: URL?
+    let catID: String?
+
+    init(id: String, displayName: String, subtitle: String, endpoint: URL?, catID: String? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.subtitle = subtitle
+        self.endpoint = endpoint
+        self.catID = catID
+    }
 
     var widgetSourceID: String {
         id == OfficialWindowCatalog.sourceID ? id : "public-window:" + id
@@ -61,8 +70,9 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         }
     }
 
-    func validate(at now: Date, expectedChannelID: String = Self.sourceID) throws {
+    func validate(at now: Date, expectedChannelID: String = Self.sourceID, expectedCatID: String? = nil) throws {
         guard schemaVersion == 1, Self.isIdentifier(expectedChannelID), channelID == expectedChannelID,
+              expectedCatID.map(Self.isIdentifier) ?? true,
               generatedAt <= now.addingTimeInterval(300), validUntil > now,
               validUntil > generatedAt,
               validUntil.timeIntervalSince(generatedAt) <= Self.maximumLifetime,
@@ -70,6 +80,7 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
               enabled || photos.isEmpty else { throw OfficialWindowError.invalidCatalog }
         for photo in photos {
             guard Self.isIdentifier(photo.id), Self.isIdentifier(photo.catID),
+                  expectedCatID.map({ photo.catID == $0 }) ?? true,
                   Self.isText(photo.catName, limit: 30), Self.isText(photo.credit, limit: 80),
                   photo.caption.map({ Self.isText($0, limit: 100, allowsNewlines: true) }) ?? true,
                   photo.photographedOn.map(Self.isCalendarDate) ?? true,

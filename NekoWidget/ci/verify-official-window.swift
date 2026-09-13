@@ -174,6 +174,8 @@ struct OfficialWindowChecks {
         try await verifyPreview(catalog: active, photo: photo, image: image, root: root, endpoint: endpoint)
         try await verifyPublicWindows(catalog: active, photo: photo, image: image,
                                       root: root.appendingPathComponent("multi-window"), endpoint: endpoint)
+        try await verifyCatWindow(catalog: active, photo: photo, image: image,
+                                  root: root.appendingPathComponent("cat-window"), endpoint: endpoint)
         print("Official window: \(assertions) catalog, routing, image, expiry, preview and subscription assertions passed")
     }
 
@@ -206,13 +208,22 @@ struct OfficialWindowChecks {
             rejects("invalid endpoint subscription") { try invalid.setSubscribed(true) }
         }
         let productionDefinitions = OfficialWindowConfiguration.definitions
-        check(productionDefinitions.map(\.id) == ["official-cats", "nap-cats"], "Product public-window registry changed")
+        check(productionDefinitions.map(\.id) == ["official-cats", "nap-cats", "cat-tabby-nap"], "Product public-window registry changed")
         check(productionDefinitions == OfficialWindowConfiguration.definitions(baseFeedURL: OfficialWindowConfiguration.feedURL),
               "Production bypassed the validated base feed configuration")
         check(productionDefinitions[0].endpoint == OfficialWindowConfiguration.feedURL
               && productionDefinitions[0].displayName == OfficialWindowCatalog.displayName, "Legacy definition changed")
         check(productionDefinitions[1].displayName == "おひるね" && productionDefinitions[1].subtitle == "お昼寝中の猫の写真"
               && OfficialWindowConfiguration.definition(for: "nap-cats") == productionDefinitions[1], "Nap window definition is unavailable")
+        check(productionDefinitions[0].catID == nil && productionDefinitions[1].catID == nil,
+              "Mixed public feeds gained a cat constraint")
+        check(productionDefinitions[2].displayName == "キジ白のまど" && productionDefinitions[2].subtitle == "この猫の写真"
+              && productionDefinitions[2].catID == "generated-tabby-nap"
+              && OfficialWindowConfiguration.definition(forCatID: "generated-tabby-nap") == productionDefinitions[2],
+              "Cat window definition or exact lookup is unavailable")
+        for id in ["", "generated-tabby", "Generated-tabby-nap", "generated-tabby-nap ", "unknown-cat"] {
+            check(OfficialWindowConfiguration.definition(forCatID: id) == nil, "Cat lookup guessed a different identity")
+        }
         for (base, expected) in [
             ("https://official.invalid/catalog.json", "https://official.invalid/windows/nap-cats/catalog.json"),
             ("https://official.invalid/preview/v1/catalog.json", "https://official.invalid/preview/v1/windows/nap-cats/catalog.json"),
@@ -221,6 +232,8 @@ struct OfficialWindowChecks {
             let configured = OfficialWindowConfiguration.definitions(baseFeedURL: URL(string: base))
             check(configured[0].endpoint?.absoluteString == base, "Derivation changed the legacy endpoint")
             check(configured[1].endpoint?.absoluteString == expected, "Nap feed escaped its configured path base")
+            check(configured[2].endpoint?.absoluteString == expected.replacingOccurrences(of: "/nap-cats/", with: "/cat-tabby-nap/"),
+                  "Cat feed escaped its configured path base")
         }
         check(OfficialWindowConfiguration.definitions(baseFeedURL: nil).allSatisfy { $0.endpoint == nil },
               "Missing base enabled a public feed")
@@ -241,6 +254,10 @@ struct OfficialWindowChecks {
               "Production stores lost legacy compatibility or nap isolation")
         check(configured[0].widgetSourceID == "official-cats" && configured[1].widgetSourceID == "public-window:nap-cats",
               "Production Widget sources collide")
+        let configuredCat = OfficialWindowStore.forWindow(configured[2], containerURL: configuredRoot)
+        check(configuredCat.directory?.lastPathComponent == "cat-tabby-nap"
+              && configuredCat.directory != configuredNap.directory && configuredCat.directory != configuredLegacy.directory
+              && configured[2].widgetSourceID == "public-window:cat-tabby-nap", "Cat store or Widget source collides")
         try configuredLegacy.setSubscribed(true)
         check(!configuredNap.snapshot().isSubscribed, "Legacy subscription enabled nap delivery")
         try configuredNap.setSubscribed(true)
@@ -441,6 +458,107 @@ struct OfficialWindowChecks {
         let afterPreviewB = try Data(contentsOf: stateBURL)
         check(afterPreviewA == savedA && afterPreviewB == savedB, "Preview wrote into a received state")
         check(a.imageURL(for: photo) == nil && b.imageURL(for: photoB) == nil, "Preview saved a Widget image")
+    }
+
+    static func verifyCatWindow(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,
+                                root: URL, endpoint: URL) async throws {
+        let definition = OfficialWindowConfiguration.definitions(baseFeedURL: endpoint)[2]
+        let catID = definition.catID!
+        let store = OfficialWindowStore.forWindow(definition, containerURL: root)
+        let stateURL = store.directory!.appendingPathComponent("state.json")
+        func tagged(_ id: String, _ catID: String) -> OfficialCatPhoto {
+            OfficialCatPhoto(id: id, catID: catID, catName: photo.catName, credit: photo.credit,
+                             caption: photo.caption, photographedOn: photo.photographedOn, publishedAt: photo.publishedAt,
+                             expiresAt: photo.expiresAt, imageFilename: photo.imageFilename, sha256: photo.sha256,
+                             width: photo.width, height: photo.height)
+        }
+        let own = tagged(photo.id, catID), other = tagged("other-photo", "another-cat")
+        func feed(_ photos: [OfficialCatPhoto], validUntil: Date? = nil) -> OfficialWindowCatalog {
+            OfficialWindowCatalog(schemaVersion: 1, channelID: definition.id, enabled: true,
+                                  generatedAt: catalog.generatedAt, validUntil: validUntil ?? catalog.validUntil, photos: photos)
+        }
+        let valid = feed([own]), mixed = feed([own, other]), wrong = feed([other])
+        try valid.validate(at: Date(), expectedChannelID: definition.id, expectedCatID: catID)
+        rejects("wrong cat in catalog") { try wrong.validate(at: Date(), expectedChannelID: definition.id, expectedCatID: catID) }
+        rejects("one foreign cat in mixed catalog") { try mixed.validate(at: Date(), expectedChannelID: definition.id, expectedCatID: catID) }
+        rejects("invalid build cat constraint") { try valid.validate(at: Date(), expectedChannelID: definition.id, expectedCatID: "../cat") }
+        for id in ["official-cats", "nap-cats"] {
+            let compatible = OfficialWindowCatalog(schemaVersion: 1, channelID: id, enabled: true,
+                generatedAt: catalog.generatedAt, validUntil: catalog.validUntil, photos: [own, other])
+            try compatible.validate(at: Date(), expectedChannelID: id)
+            let mixedDefinition = PublicWindowDefinition(id: id, displayName: "確認", subtitle: "確認", endpoint: endpoint)
+            let mixedStore = OfficialWindowStore.forWindow(mixedDefinition, containerURL: root)
+            try mixedStore.setSubscribed(true)
+            try mixedStore.accept(compatible, for: mixedStore.snapshot())
+            check(mixedStore.snapshot().photos.count == 2, "Nil cat constraint rejected a legacy mixed feed")
+        }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let loader = OfficialWindowClient(previewEndpoint: endpoint, protocolClasses: [PreviewURLProtocol.self])
+        let catEndpoint = definition.endpoint!
+        let imageURL = catEndpoint.deletingLastPathComponent().appendingPathComponent(own.imageFilename)
+        func serve(_ value: OfficialWindowCatalog) throws {
+            PreviewURLProtocol.configure([
+                catEndpoint.absoluteString: .init(data: try encoder.encode(value)),
+                imageURL.absoluteString: .init(data: image, type: "image/jpeg")
+            ])
+        }
+        let model = OfficialWindowPreviewModel(windowID: definition.id)
+        try serve(valid)
+        await model.load { try await loader.preview(store: store) }
+        check(model.content?.availablePhoto() == own, "Unsubscribed cat preview rejected its own photo")
+        check(!FileManager.default.fileExists(atPath: store.directory!.path), "Cat preview created received storage")
+        model.clear()
+        await model.load { OfficialWindowPreview(catalog: mixed, photo: own, imageData: image) }
+        check(model.content == nil && model.failed, "Cat preview model accepted a mixed catalog")
+        try serve(wrong)
+        do { _ = try await loader.preview(store: store); fatalError("Cat preview fetched another cat") }
+        catch { assertions += 1 }
+        check(PreviewURLProtocol.requestedURLs() == [catEndpoint], "Wrong cat preview fetched JPEG bytes")
+        check(!FileManager.default.fileExists(atPath: stateURL.path), "Rejected cat preview persisted a subscription")
+
+        try store.setSubscribed(true)
+        let request = store.snapshot()
+        try store.accept(valid, for: request)
+        try store.saveImage(image, photo: own, for: request)
+        check(store.snapshot().photos == [own] && store.imageURL(for: own) != nil
+              && store.imageURL(filename: own.imageFilename) != nil, "Cat cache was not available to Widget readers")
+        rejects("store accepting mixed cats") { try store.accept(mixed, for: request) }
+        rejects("same JPEG with another cat metadata") { try store.saveImage(image, photo: other, for: request) }
+        let original = store.snapshot()
+        let savedJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+        check(savedJSON["expectedCatID"] == nil && savedJSON["catID"] == nil, "Build cat constraint was persisted")
+        var corrupt = original
+        corrupt.catalog = wrong
+        try AtomicJSON.write(corrupt, to: stateURL)
+        var injected = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+        injected["expectedCatID"] = other.catID
+        injected["catID"] = other.catID
+        try JSONSerialization.data(withJSONObject: injected).write(to: stateURL, options: .atomic)
+        check(store.snapshot().isSubscribed && store.snapshot().photos.isEmpty
+              && store.imageURL(for: other) == nil && store.imageURL(filename: other.imageFilename) == nil,
+              "Disk cat constraint overrode the build or exposed another cat to Widget")
+        rejects("foreign image into corrupted cat cache") { try store.saveImage(image, photo: other, for: request) }
+        var expired = original
+        expired.catalog = feed([own], validUntil: Date().addingTimeInterval(-1))
+        try AtomicJSON.write(expired, to: stateURL)
+        check(store.snapshot().subscriptionID == request.subscriptionID && store.snapshot().photos.isEmpty
+              && store.imageURL(for: own) == nil, "Expired cat catalog stayed visible or lost subscription")
+        rejects("image after cat catalog expiry") { try store.saveImage(image, photo: own, for: request) }
+
+        try store.setSubscribed(true)
+        try serve(mixed)
+        do { try await loader.refresh(store: store); fatalError("Cat refresh accepted a mixed feed") }
+        catch { assertions += 1 }
+        check(store.snapshot().isSubscribed && store.snapshot().photos.isEmpty
+              && PreviewURLProtocol.requestedURLs() == [catEndpoint], "Rejected cat refresh changed consent or fetched bytes")
+        try serve(valid)
+        try await loader.refresh(store: store)
+        check(store.snapshot().photos == [own] && store.imageURL(for: own) != nil, "Valid cat refresh did not recover")
+        try store.setSubscribed(false)
+        rejects("cat catalog after stop") { try store.accept(valid, for: request) }
+        check(store.imageURL(for: own) == nil, "Stopped cat feed retained Widget media")
     }
 
     static func verifyPreview(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,

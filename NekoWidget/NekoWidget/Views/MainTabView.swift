@@ -1095,7 +1095,7 @@ private struct WindowListView: View {
                             presentation: OfficialWindowEntryCard.Presentation = .list) -> some View {
         OfficialWindowEntryCard(state: publicStates[source.id], store: source.store,
                                 refreshFeed: source.refresh, presentation: presentation,
-                                previewFeed: source.preview)
+                                previewFeed: source.preview, relatedWindows: publicWindows)
     }
 
     private func reloadPublicStates() {
@@ -1813,8 +1813,26 @@ struct WindowListNavigationFixture: View {
     @StateObject private var secondModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
         id: "nap-cats", displayName: "おひるね", subtitle: "お昼寝中の猫の写真",
         endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")))
+    @StateObject private var catModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
+        id: "cat-tabby-nap", displayName: "キジ白のまど", subtitle: "この猫の写真",
+        endpoint: URL(string: "https://official.invalid/windows/cat-tabby-nap/catalog.json"),
+        catID: "generated-tabby-nap"), initiallySubscribed: false)
     @State private var selectedTab = 2
     @State private var opensActiveWindow = false
+
+    private var sources: [PublicWindowPresentationSource] {
+        var result = [PublicWindowPresentationSource(store: model.store,
+                        refresh: { try await model.refresh() }, preview: { try await model.preview() })]
+        if CommandLine.arguments.contains("--window-list-two-public") {
+            result.append(PublicWindowPresentationSource(store: secondModel.store,
+                            refresh: { try await secondModel.refresh() }, preview: { try await secondModel.preview() }))
+        }
+        if CommandLine.arguments.contains("--window-list-cat-window") {
+            result.append(PublicWindowPresentationSource(store: catModel.store,
+                            refresh: { try await catModel.refresh() }, preview: { try await catModel.preview() }))
+        }
+        return result
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -1828,11 +1846,7 @@ struct WindowListNavigationFixture: View {
                                officialStore: model.store,
                                refreshOfficialFeed: { try await model.refresh() },
                                previewOfficialFeed: { try await model.preview() },
-                               publicWindows: CommandLine.arguments.contains("--window-list-two-public") ? [
-                                PublicWindowPresentationSource(store: model.store, refresh: { try await model.refresh() }, preview: { try await model.preview() }),
-                                PublicWindowPresentationSource(store: secondModel.store, refresh: { try await secondModel.refresh() }, preview: { try await secondModel.preview() })
-                               ] : [PublicWindowPresentationSource(store: model.store,
-                                        refresh: { try await model.refresh() }, preview: { try await model.preview() })])
+                               publicWindows: sources)
             }
             .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
         }

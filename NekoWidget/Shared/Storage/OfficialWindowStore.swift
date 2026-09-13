@@ -18,21 +18,30 @@ enum OfficialWindowConfiguration {
     static func definitions(baseFeedURL: URL?) -> [PublicWindowDefinition] {
         let endpoint = validatedEndpoint(baseFeedURL)
         // Keep public feeds on the configured origin and below its catalog directory.
-        let napEndpoint = endpoint?.deletingLastPathComponent()
-            .appendingPathComponent("windows", isDirectory: true)
-            .appendingPathComponent("nap-cats", isDirectory: true)
-            .appendingPathComponent("catalog.json")
+        func publicEndpoint(_ id: String) -> URL? {
+            validatedEndpoint(endpoint?.deletingLastPathComponent()
+                .appendingPathComponent("windows", isDirectory: true)
+                .appendingPathComponent(id, isDirectory: true)
+                .appendingPathComponent("catalog.json"))
+        }
         return [
             PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
                                    displayName: OfficialWindowCatalog.displayName,
                                    subtitle: "運営から届く猫の写真", endpoint: endpoint),
             PublicWindowDefinition(id: "nap-cats", displayName: "おひるね",
-                                   subtitle: "お昼寝中の猫の写真", endpoint: validatedEndpoint(napEndpoint))
+                                   subtitle: "お昼寝中の猫の写真", endpoint: publicEndpoint("nap-cats")),
+            PublicWindowDefinition(id: "cat-tabby-nap", displayName: "キジ白のまど",
+                                   subtitle: "この猫の写真", endpoint: publicEndpoint("cat-tabby-nap"),
+                                   catID: "generated-tabby-nap")
         ]
     }
 
     static func definition(for windowID: String) -> PublicWindowDefinition? {
         definitions.first { $0.id == windowID }
+    }
+
+    static func definition(forCatID catID: String) -> PublicWindowDefinition? {
+        definitions.first { $0.catID == catID }
     }
 
     static func validatedEndpoint(_ url: URL?) -> URL? {
@@ -52,6 +61,8 @@ struct OfficialWindowState: Codable, Sendable {
     var catalog: OfficialWindowCatalog?
     var checkedAt: Date?
     var imageRevision: UUID?
+    // Never encoded or trusted from disk. The reading store supplies its build-owned constraint.
+    var expectedCatID: String? = nil
 
     static let empty = Self()
     var isSubscribed: Bool {
@@ -59,7 +70,7 @@ struct OfficialWindowState: Codable, Sendable {
     }
     var photos: [OfficialCatPhoto] {
         guard isSubscribed, let catalog,
-              (try? catalog.validate(at: Date(), expectedChannelID: windowID)) != nil else { return [] }
+              (try? catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
         return catalog.availablePhotos(at: Date())
     }
 
@@ -104,7 +115,8 @@ struct OfficialWindowStore: Sendable {
     }
 
     init(directory: URL?, definition: PublicWindowDefinition) {
-        self.directory = OfficialWindowCatalog.isIdentifier(definition.id) ? directory : nil
+        self.directory = OfficialWindowCatalog.isIdentifier(definition.id)
+            && (definition.catID.map(OfficialWindowCatalog.isIdentifier) ?? true) ? directory : nil
         self.definition = definition
     }
 
@@ -126,7 +138,7 @@ struct OfficialWindowStore: Sendable {
         (try? locked { root in
             var state = try read(root)
             if let catalog = state.catalog,
-               (try? catalog.validate(at: Date(), expectedChannelID: windowID)) == nil {
+               (try? catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: definition.catID)) == nil {
                 state.catalog = nil
             }
             return state
@@ -161,7 +173,7 @@ struct OfficialWindowStore: Sendable {
     }
 
     func accept(_ catalog: OfficialWindowCatalog, for request: OfficialWindowState) throws {
-        try catalog.validate(at: Date(), expectedChannelID: windowID)
+        try catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: definition.catID)
         try locked { root in
             var state = try read(root)
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
@@ -198,11 +210,12 @@ struct OfficialWindowStore: Sendable {
     private func read(_ root: URL) throws -> OfficialWindowState {
         let url = root.appendingPathComponent("state.json")
         do {
-            let state = try AtomicJSON.read(OfficialWindowState.self, from: url)
+            var state = try AtomicJSON.read(OfficialWindowState.self, from: url)
             guard state.windowID == windowID, state.endpoint == endpoint else {
                 return OfficialWindowState(windowID: windowID)
             }
             guard state.catalog.map({ $0.channelID == windowID }) ?? true else { throw OfficialWindowError.invalidCatalog }
+            state.expectedCatID = definition.catID
             return state
         }
         catch {
@@ -266,6 +279,7 @@ struct OfficialWindowPreview: Sendable {
 @MainActor
 final class OfficialWindowPreviewModel: ObservableObject {
     let windowID: String
+    private let expectedCatID: String?
     @Published private(set) var content: OfficialWindowPreview?
     @Published private(set) var isLoading = false
     @Published private(set) var hasChecked = false
@@ -273,7 +287,10 @@ final class OfficialWindowPreviewModel: ObservableObject {
     private var generation = UUID()
     private var loadingTask: Task<Void, Never>?
 
-    init(windowID: String = OfficialWindowCatalog.sourceID) { self.windowID = windowID }
+    init(windowID: String = OfficialWindowCatalog.sourceID, catID: String? = nil) {
+        self.windowID = windowID
+        self.expectedCatID = OfficialWindowConfiguration.definition(for: windowID)?.catID ?? catID
+    }
 
     func load(force: Bool = false, using fetch: @escaping () async throws -> OfficialWindowPreview) async {
         if let loadingTask { await loadingTask.value; return }
@@ -299,7 +316,7 @@ final class OfficialWindowPreviewModel: ObservableObject {
             let next = try await fetch()
             try Task.checkCancellation()
             guard request == generation else { return }
-            try next.catalog.validate(at: Date(), expectedChannelID: windowID)
+            try next.catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: expectedCatID)
             guard content.map({ $0.catalog.generatedAt < next.catalog.generatedAt || $0.catalog == next.catalog }) ?? true else {
                 throw OfficialWindowError.invalidCatalog
             }
@@ -339,11 +356,13 @@ actor OfficialWindowClient {
         let windowID: String
         let endpoint: URL?
         let directory: URL?
+        let catID: String?
 
         init(_ store: OfficialWindowStore) {
             windowID = store.windowID
             endpoint = store.endpoint
             directory = store.directory?.standardizedFileURL
+            catID = store.definition.catID
         }
     }
     private struct Pending {
@@ -421,7 +440,7 @@ actor OfficialWindowClient {
         }
         let session = makeSession()
         defer { session.invalidateAndCancel() }
-        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, session: session)
+        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, expectedCatID: store.definition.catID, session: session)
         guard let photo = catalog.availablePhotos(at: Date()).first else {
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
@@ -429,24 +448,24 @@ actor OfficialWindowClient {
         do {
             let data = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
             try OfficialWindowImageValidator.validate(data, photo: photo)
-            try catalog.validate(at: Date(), expectedChannelID: store.windowID)
+            try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: photo, imageData: data)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             // A known new allowlist must replace the preview even if its image
             // fails. Never keep showing a photo removed by this catalog.
-            try catalog.validate(at: Date(), expectedChannelID: store.windowID)
+            try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
     }
 
-    private func fetchCatalog(_ endpoint: URL, expectedChannelID: String, session: URLSession) async throws -> OfficialWindowCatalog {
+    private func fetchCatalog(_ endpoint: URL, expectedChannelID: String, expectedCatID: String?, session: URLSession) async throws -> OfficialWindowCatalog {
         let data = try await fetch(endpoint, session: session, limit: 256 * 1024, contentType: "application/json")
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let catalog = try decoder.decode(OfficialWindowCatalog.self, from: data)
-        try catalog.validate(at: Date(), expectedChannelID: expectedChannelID)
+        try catalog.validate(at: Date(), expectedChannelID: expectedChannelID, expectedCatID: expectedCatID)
         return catalog
     }
 
@@ -455,7 +474,7 @@ actor OfficialWindowClient {
               endpoint == store.endpoint else { throw OfficialWindowError.subscriptionChanged }
         let session = makeSession()
         defer { session.invalidateAndCancel() }
-        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, session: session)
+        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, expectedCatID: store.definition.catID, session: session)
         // Persist the new allowlist before media downloads: removal/pause works
         // even when a new photo subsequently fails to download.
         try store.accept(catalog, for: request)

@@ -8,6 +8,10 @@ import { activeFiles } from '../src/index.js';
 import { prepareBundle } from './prepare_bundle.mjs';
 
 const slug = /^[a-z0-9-]{1,64}$/;
+// Initial operator-owned cat window. This is not a registration or posting API.
+export const CAT_WINDOWS = Object.freeze({
+  'cat-tabby-nap': Object.freeze({ catID: 'generated-tabby-nap', displayName: 'キジ白のまど', sourceChannelID: 'official-cats' }),
+});
 const stamp = value => new Date(value).toISOString().replace('.000Z', 'Z');
 function keys(value, allowed) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -107,7 +111,12 @@ export async function prepareUpdate(previous, plan, output, now = Math.floor(Dat
       renewed.set(photo.id, renewal.expiresAt);
     }
     if (action.paused === true && (action.addAssets || withdrawals.length || renewals.length)) throw new Error('Pause is a separate operation');
-    const history = previousRecord?.channels.find(row => row.channelID === channelID)?.history ?? old.photos;
+    const previousChannel = previousRecord?.channels.find(row => row.channelID === channelID);
+    const catID = previousChannel?.catID;
+    if ((catID !== undefined && (typeof catID !== 'string' || !slug.test(catID)))
+        || (Object.hasOwn(CAT_WINDOWS, channelID) && catID !== CAT_WINDOWS[channelID].catID)) throw new Error('Missing or invalid cat-window constraint');
+    const history = previousChannel?.history ?? old.photos;
+    if (catID !== undefined && [...history, ...old.photos].some(photo => photo.catID !== catID)) throw new Error('Different cat in cat-window history or catalog');
     const historyIDs = new Set(), historyHashes = new Set();
     for (const photo of history) {
       if (!slug.test(photo.id) || !/^[a-f0-9]{64}$/.test(photo.sha256) || historyIDs.has(photo.id)) throw new Error('Invalid publication history');
@@ -127,6 +136,7 @@ export async function prepareUpdate(previous, plan, output, now = Math.floor(Dat
       activeFiles(extra.catalog, now, channelID);
       if (!extra.catalog.enabled || !extra.catalog.photos.length) throw new Error('Additions must contain active photos');
       for (const photo of extra.catalog.photos) {
+        if (catID !== undefined && photo.catID !== catID) throw new Error('Different cat in cat-window addition');
         if (historyIDs.has(photo.id) || historyHashes.has(photo.sha256)) throw new Error('Previously published photos cannot be presented as new');
         if (Date.parse(photo.publishedAt) <= Date.parse(old.generatedAt) || Date.parse(photo.expiresAt) <= now) throw new Error('Addition must be newly published and active');
         additions.push(photo);
@@ -141,7 +151,7 @@ export async function prepareUpdate(previous, plan, output, now = Math.floor(Dat
     activeFiles(catalog, now, channelID);
     const deadlines = photos.map(photo => Date.parse(photo.expiresAt));
     updates.push({ catalog, images: source.images, record: {
-      channelID, enabled: catalog.enabled, added: additions.map(photo => photo.id),
+      channelID, ...(catID === undefined ? {} : { catID }), enabled: catalog.enabled, added: additions.map(photo => photo.id),
       withdrawn: action.paused === true ? old.photos.map(photo => photo.id) : withdrawals,
       expired: old.photos.filter(photo => Date.parse(photo.expiresAt) <= now).map(photo => photo.id),
       renewed: renewals, activeCount: photos.length, newestPhotoID: photos[0]?.id ?? null,

@@ -13,7 +13,7 @@ const stamp = value => new Date(value).toISOString().replace('.000Z', 'Z');
 function require(condition, message) { if (!condition) throw new Error(message); }
 // A publisher-output mix-up guard, not a decoder or metadata removal tool.
 // Inspect headers between scans too: APP/COM data must not hide after SOS.
-function validatePublisherJPEG(bytes, width, height) {
+export function validatePublisherJPEG(bytes, width, height) {
   require(bytes.length >= 4 && bytes[0] === 255 && bytes[1] === 216, 'Invalid publisher JPEG');
   let offset = 2, scan = false, frame = false, sawScan = false, jfif = false;
   while (offset < bytes.length) {

@@ -7,7 +7,8 @@
 - 固定checkout：`C:/dev/neko-official-supply-20260913`。作業cwdはその中の`OfficialWindowService`。
 - 私的な実行記録：`../output/runtime/current.json`。直前の実配備bundle、Worker version、照合日時、queueの絶対パスを持つ。このファイルと参照bundle・queue・画像を保守中に消さない。
 - 予定と原本：`../output/supply-week-20260913/queue.json`、同階層の`originals/PROMPTS.md`。原本・提供元の確認を終え、既存publisherで加工した3枚だけが対象。`approved:true`は運営側の掲載判断で、利用者が各画像を個別確認したという意味ではない。
-- 配備先は `neko-widget-official-cats-preview`、account `829a34ef925a39d81b0e9e08800d7c7f`。既存の「どこかの猫」と「おひるね」だけ。固定Wrangler 4.125.0を使用する。
+- 配備先は `neko-widget-official-cats-preview`、account `829a34ef925a39d81b0e9e08800d7c7f`。手動の猫まど追加反映後は「どこかの猫」「おひるね」「キジ白のまど」の既存3まどを保持する。`current.json` が示す実配備bundleを基点とし、heartbeat自体は新まどを作らない。固定Wrangler 4.125.0を使用する。
+- 「キジ白のまど」は `cat-tabby-nap` / `generated-tabby-nap` だけ。制約は `update-record.json` に保存され、保守ツールも別猫を拒否する。現在の週3枚キューを、この猫窓にも自動で振り分けない。新しい同猫写真がなければ、掲載期限後は空のまどを維持する。
 - アプリ変更、git pull、依存更新、CI、TestFlight、一般公開への拡張、新まど、投稿受付、画像の自動生成、無承認の写真期限延長を行わない。個人のまど・ユーザーの写真・スクリーンショットをキューへ入れない。サブエージェントを起動しない。
 
 ## 毎回の手順

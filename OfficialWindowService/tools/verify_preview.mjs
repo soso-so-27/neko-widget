@@ -8,12 +8,31 @@ import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { activeFiles } from '../src/index.js';
+import { CAT_WINDOWS } from './prepare_update.mjs';
 
 const service = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const base = 'https://neko-widget-official-cats-preview.nakanishisoya.workers.dev';
 const account = '829a34ef925a39d81b0e9e08800d7c7f';
 const readJSON = async file => JSON.parse(await readFile(file, 'utf8'));
 const prefix = id => id === 'official-cats' ? '' : `/windows/${id}`;
+
+export async function previousPhotosForChannel(bundle, channelID) {
+  assert(/^[a-z0-9-]{1,64}$/.test(channelID), 'Invalid previous channel');
+  const history = await readJSON(path.join(bundle, 'update-record.json'));
+  assert(history.schemaVersion === 1 && Array.isArray(history.channels), 'Previous history required');
+  const filename = path.join(bundle, 'assets', prefix(channelID).slice(1), 'catalog.json');
+  if (!history.channels.some(row => row.channelID === channelID)) {
+    assert(Object.hasOwn(CAT_WINDOWS, channelID), 'Unknown new channel');
+    // Only first creation has no former URLs. A known channel with a missing
+    // file or an unrecorded existing catalog must still fail verification.
+    try { await readFile(filename); assert.fail('Previous catalog is missing from history'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    return [];
+  }
+  const old = await readJSON(filename);
+  activeFiles(old, Date.parse(old.generatedAt), channelID);
+  return old.photos;
+}
 
 export function deploymentVersion(deployments) {
   assert(Array.isArray(deployments) && deployments.length, 'No deployment evidence');
@@ -70,8 +89,9 @@ export async function verifyPreview(bundle, expectedVersion, { allowExpired = fa
     }
     const absent = new Set(catalog.photos.map(p => p.imageFilename).filter(file => !files.has(file)));
     if (previousBundle) {
-      const old = await readJSON(path.join(previousBundle, 'assets', route.slice(1), 'catalog.json'));
-      for (const photo of old.photos) if (!files.has(photo.imageFilename)) absent.add(photo.imageFilename);
+      for (const photo of await previousPhotosForChannel(previousBundle, row.channelID)) {
+        if (!files.has(photo.imageFilename)) absent.add(photo.imageFilename);
+      }
     }
     for (const filename of absent) {
       assert(/^[a-f0-9]{64}\.jpg$/.test(filename), 'Invalid former JPEG path');
