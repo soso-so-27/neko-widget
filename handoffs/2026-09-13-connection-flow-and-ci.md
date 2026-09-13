@@ -41,4 +41,26 @@ cheap checks：共有Widget境界61件（既存skip1）、pairing-only7件、dis
 
 CIの3ジョブは2秒以内に並行開始できた。従来の約9分の開始待ちは解消済み。途中失敗したrunの長さを全体短縮の実測には使わない。
 
-配布は未実施。最終候補→main→既存内部TestFlightの順。外部テスター追加・公開・審査提出・課金開始は行わない。元の「ねことも」が失敗した原因・発生頻度は未確定。
+追加短縮の候補：baselineでiOS 26のアプリUI32件・4suiteが直列25分17秒（Composer 10分05秒、Solo 7分32秒、Official 6分35秒、Cat 1分05秒）。この部分だけXCTestの2workerにする余地がある。GalleryはSpringBoardを操作するため直列を維持する案。理論上8〜11分の短縮余地はあるが、clone起動・負荷・キーボードの安定性は未確認。今回に追加せず、実測後の候補に留めた。SMOKEのdisabled構成とmatrix通常構成、Galleryの条件別試験は目的が異なり、明白な重複として削除できるものは見つからなかった。
+
+## 最終候補の結果
+
+最終候補 `03b141c1bc76d8979335c1514ea3d3c636aaf851`、[run34724731126](https://github.com/soso-so-27/neko-widget/actions/runs/34724731126) は全job成功。共有runtimeは両OSで38件、iOS 26アプリUIは33件、SMOKEのUIは12件成功。通常／長文・白背景／字幕なしのWidget条件も成功。最初の候補の失敗はテスト側の比較誤りで、修正後の保存・復旧確認が通った。
+
+全体のcreatedAt→最後のcompletedAtは **60分09秒→48分43秒、11分26秒（19.0%）短縮**。Sharing開始待ちは9分22秒→18秒（9分04秒短縮）。Release 8分52秒→7分54秒、SMOKE 12分50秒→13分55秒、Sharing 50分47秒→48分25秒。
+
+追加Galleryの並行準備は長文・白背景3分33秒／字幕なし3分21秒で、両方の準備成功後に試験を開始。同じ区間「前のexport完了→次の試験開始」は5分26秒→4分16秒／4分53秒→4分03秒、追加Gallery全体は13分28秒→10分06秒。アプリUIは32→33件で25分17秒→25分51秒、共有runtimeは37→38件。検証削減による短縮ではない。単回比較のため、runnerのばらつきとhelper単独の効果は完全には分離できない。実ログは `output/connection-flow/final-runtime.log`。
+
+同じSHAをmainへ反映し、[main run34726887931](https://github.com/soso-so-27/neko-widget/actions/runs/34726887931) も成功。`Select checks` のログで候補run34724731126と同じSHAの証拠再利用を確認した。
+
+## TestFlight 159
+
+2026-09-13 09:08 JST、[run34726931914](https://github.com/soso-so-27/neko-widget/actions/runs/34726931914) の署名・Appleへの検証・アップロードが成功。実ログで `VERIFY SUCCEEDED with no errors` と `UPLOAD SUCCEEDED with no errors` を確認した。Delivery UUIDは `c82a081e-a149-4ba4-81e4-b6813ac7b16b`。
+
+保持した署名成果物のメタデータはversion `1.0`、build `159`、releaseMode `media-staging`、sourceCommit `03b141c1bc76d8979335c1514ea3d3c636aaf851`、githubRunId `34726931914`。検証済み候補と一致。既存公式preview feedを継続している。
+
+最終候補のiOS 26.2画像でも接続確認・期限切れ画面を確認した。`output/connection-flow/final-runtime/ios-26-2/composer-screenshots/5CF03317-E664-45B1-83B9-3F19D67E4EF3.png` と `1FD92826-FB52-40C7-A5AA-0D48D52566E2.png`。初回候補のiOS 18.6と合わせ、実生成画面を確認済み。利用者の実機での接続復旧成功を確認した意味ではない。
+
+**未完了**：アップロード後もApp Store Connectはログイン画面。再ログイン依頼は継続中。Apple側の処理完了、既存内部グループ「自分用」1人の配布表示、日本語の更新説明保存は未確認・未実施。ログイン後に159のページで確認し、`output/connection-flow/testflight-notes-159.txt` を保存する。再アップロードは不要。
+
+証拠：`output/connection-flow/testflight159-job.log`、`output/connection-flow/build159-signed/moderation-release-metadata.json`。外部テスター追加・公開・審査提出・課金開始はしていない。元の「ねことも」が失敗した原因・発生頻度は未確定。
