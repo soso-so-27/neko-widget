@@ -119,6 +119,9 @@ struct OfficialWindowEntryCard: View {
                 }
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
+                // Clipping a fill image does not constrain its hit region.
+                // Keep each navigation card inside the frame the person sees.
+                .contentShape(RoundedRectangle(cornerRadius: 20))
             }
         }
         .buttonStyle(.plain)
@@ -372,6 +375,7 @@ struct OfficialWindowView: View {
             }
             .padding(20)
         }
+        .accessibilityIdentifier("public-window-overview-\(store.windowID)")
         .navigationTitle(store.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
@@ -741,11 +745,10 @@ private struct OfficialPhotoDetailView: View {
                 .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-            ViewThatFits(in: .vertical) {
-                photoActions.fixedSize(horizontal: false, vertical: true)
-                ScrollView { photoActions }
-            }
+            photoActions
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("official-photo-detail-\(store.windowID)")
         .background(.black)
         .preferredColorScheme(.dark)
         .navigationTitle(photo.catName)
@@ -762,6 +765,7 @@ private struct OfficialPhotoDetailView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button { dismiss() } label: { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
                         .accessibilityLabel("閉じる")
+                        .accessibilityIdentifier("official-photo-close-\(store.windowID)")
                 }
             }
         }
@@ -794,7 +798,10 @@ private struct OfficialPhotoDetailView: View {
 
     private var photoActions: some View {
         VStack(spacing: 0) {
-            photoSummary
+            ViewThatFits(in: .vertical) {
+                photoSummary.fixedSize(horizontal: false, vertical: true)
+                ScrollView { photoSummary }
+            }
             if let source = catWindow {
                 NavigationLink {
                     OfficialWindowView(store: source.store, refreshFeed: source.refresh,
@@ -810,6 +817,7 @@ private struct OfficialPhotoDetailView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("\(source.store.displayName)を見る")
                 .accessibilityHint("この猫の写真を確認して、受け取りを選べます")
                 .accessibilityIdentifier("official-photo-cat-window")

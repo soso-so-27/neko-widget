@@ -12,6 +12,8 @@ final class OfficialWindowUITests: XCTestCase {
         addition.tap()
         app.buttons["window-list-discover"].tap()
         app.buttons["official-window-entry"].tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
+                      "The chosen discovery card must open its own window")
         let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
         photo.tap()
@@ -21,23 +23,25 @@ final class OfficialWindowUITests: XCTestCase {
         capture("photo-to-cat-window", app)
         catWindow.tap()
         XCTAssertTrue(app.navigationBars["キジ白のまど"].waitForExistence(timeout: 5))
-        let subscribe = app.buttons["official-window-subscribe"]
-        for _ in 0..<5 { if subscribe.isHittable { break }; app.swipeUp() }
+        let catOverview = app.scrollViews["public-window-overview-cat-tabby-nap"]
+        let subscribe = catOverview.buttons["official-window-subscribe"]
+        for _ in 0..<5 { if subscribe.isHittable { break }; catOverview.swipeUp() }
         subscribe.tap()
-        let guide = app.buttons["official-window-widget-guide"]
+        let guide = catOverview.buttons["official-window-widget-guide"]
         XCTAssertTrue(guide.waitForExistence(timeout: 5))
-        for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
+        for _ in 0..<5 { if guide.isHittable { break }; catOverview.swipeUp() }
         guide.tap()
         let source = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 5))
         XCTAssertTrue(source.label.contains("キジ白のまど"))
         capture("cat-window-widget-guide", app)
-        app.buttons["閉じる"].tap()
+        app.navigationBars["ホーム画面に置く"].buttons["閉じる"].tap()
         app.navigationBars["キジ白のまど"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(catWindow.waitForExistence(timeout: 5), "Back must return to the original photo")
-        app.buttons["閉じる"].tap()
+        app.buttons["official-photo-close-official-cats"].tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["official-window-subscribe"].exists, "Opening a cat must not subscribe to its discovery source")
+        XCTAssertTrue(app.scrollViews["public-window-overview-official-cats"].buttons["official-window-subscribe"].exists,
+                      "Opening a cat must not subscribe to its discovery source")
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
@@ -59,26 +63,30 @@ final class OfficialWindowUITests: XCTestCase {
         app.buttons["official-window-photo-fixture-photo"].tap()
         let catWindow = app.buttons["official-photo-cat-window"]
         XCTAssertTrue(catWindow.waitForExistence(timeout: 5))
-        for _ in 0..<3 { if catWindow.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(catWindow.isHittable)
+        XCTAssertLessThan(catWindow.frame.maxY, app.frame.maxY - 20,
+                          "The cat entry must remain above the home indicator without scrolling")
         capture("photo-to-cat-window-largest-text", app)
         catWindow.tap()
-        let subscribe = app.buttons["official-window-subscribe"]
+        let catOverview = app.scrollViews["public-window-overview-cat-tabby-nap"]
+        let subscribe = catOverview.buttons["official-window-subscribe"]
         XCTAssertTrue(subscribe.waitForExistence(timeout: 5))
-        for _ in 0..<5 { if subscribe.isHittable { break }; app.swipeUp() }
+        for _ in 0..<5 { if subscribe.isHittable { break }; catOverview.swipeUp() }
         subscribe.tap()
-        app.swipeDown()
-        let photo = app.buttons["official-window-photo-fixture-photo"]
-        for _ in 0..<5 { if photo.isHittable { break }; app.swipeDown() }
+        let photo = catOverview.buttons["official-window-photo-fixture-photo"]
+        for _ in 0..<5 { if photo.isHittable { break }; catOverview.swipeDown() }
         photo.tap()
-        XCTAssertTrue(app.navigationBars["キジ白"].waitForExistence(timeout: 5))
-        XCTAssertFalse(catWindow.exists, "A cat photo must not link recursively to the same window")
-        app.buttons["閉じる"].tap()
+        let catDetail = app.descendants(matching: .any)["official-photo-detail-cat-tabby-nap"].firstMatch
+        XCTAssertTrue(catDetail.waitForExistence(timeout: 5))
+        XCTAssertFalse(catDetail.buttons["official-photo-cat-window"].exists,
+                       "A cat photo must not link recursively to the same window")
+        app.buttons["official-photo-close-cat-tabby-nap"].tap()
         stopReceiving(app, windowName: "キジ白のまど")
         app.navigationBars["キジ白のまど"].buttons.element(boundBy: 0).tap()
-        app.buttons["閉じる"].tap()
+        app.buttons["official-photo-close-official-cats"].tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["official-window-subscribe"].exists, "Stopping a cat must keep the original subscription")
+        XCTAssertFalse(app.scrollViews["public-window-overview-official-cats"].buttons["official-window-subscribe"].exists,
+                       "Stopping a cat must keep the original subscription")
     }
 
     @MainActor
@@ -512,7 +520,7 @@ final class OfficialWindowUITests: XCTestCase {
 
     @MainActor
     private func stopReceiving(_ app: XCUIApplication, windowName: String = "どこかの猫") {
-        let manage = app.buttons["official-window-manage"]
+        let manage = app.navigationBars[windowName].buttons["official-window-manage"]
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
         manage.tap()
         app.buttons["official-window-stop"].tap()
