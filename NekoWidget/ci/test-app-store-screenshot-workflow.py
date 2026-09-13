@@ -209,7 +209,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         # Extra comparisons remain independent of app UI failures, reuse only
         # the Gallery test, and cannot erase a preceding app UI failure.
         self.assertIn('if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then\n    RUN_WIDGET_GALLERY=true', runtime)
-        scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
+        scenarios = runtime.index('for widget_scenario in normal long-white-large no-caption; do')
         normal_failure = runtime.index('if (( composer_status != 0 )); then')
         self.assertGreater(normal_failure, scenarios)
         self.assertIn('return "$composer_status"', runtime[normal_failure:])

@@ -22,6 +22,8 @@ REQUESTED_RUNTIMES=(
 SELECTED_UDIDS=()
 APP_BUNDLE_ID=""
 APP_GROUP_ID=""
+UI_SOURCE_UDID=""
+UI_CLONE_SCAN_NEEDED=false
 
 mkdir -p "$ARTIFACT_DIRECTORY"
 python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
@@ -29,8 +31,24 @@ python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
     --metadata "$ARTIFACT_DIRECTORY/runtime-scope.json" \
     --tests "$UI_SELECTION_FILE"
 COMPOSER_TEST_ARGUMENTS=()
+GALLERY_TEST_ARGUMENT="-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes"
+gallery_selection_count=0
 while IFS= read -r test_argument; do
-    COMPOSER_TEST_ARGUMENTS+=("$test_argument")
+    case "$test_argument" in
+        "$GALLERY_TEST_ARGUMENT")
+            gallery_selection_count=$((gallery_selection_count + 1))
+            ;;
+        -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests|\
+        -only-testing:NekoWidgetUITests/CatProfilePhotoFlowUITests|\
+        -only-testing:NekoWidgetUITests/SoloMemoriesUITests|\
+        -only-testing:NekoWidgetUITests/OfficialWindowUITests)
+            COMPOSER_TEST_ARGUMENTS+=("$test_argument")
+            ;;
+        *)
+            echo "The native UI selection contains an unreviewed test group." >&2
+            exit 1
+            ;;
+    esac
 done < "$UI_SELECTION_FILE"
 if (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
     echo "The requested scope did not select any native UI tests." >&2
@@ -40,6 +58,50 @@ RUN_WIDGET_GALLERY=false
 if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then
     RUN_WIDGET_GALLERY=true
 fi
+if { [[ "$RUN_WIDGET_GALLERY" == true ]] && (( gallery_selection_count != 1 )); } \
+    || { [[ "$RUN_WIDGET_GALLERY" == false ]] && (( gallery_selection_count != 0 )); }; then
+    echo "The serial Gallery selection does not match the requested scope." >&2
+    exit 1
+fi
+
+collect_ui_clones() {
+    local after_inventory="$RUNNER_TEMP/neko-sharing-ui-devices.json"
+    local clone_file="$RUNNER_TEMP/neko-sharing-ui-clones.txt"
+    local clone_udid=""
+    xcrun simctl list devices --json > "$after_inventory" || return $?
+    # Only new clones of this exact iOS 26 source device belong to this run.
+    # Keep identifiers private; publish counts and the current SHA for review.
+    python3 - "$DEVICE_INVENTORY" "$after_inventory" "$UI_SOURCE_UDID" \
+        "$clone_file" "$ARTIFACT_DIRECTORY/ui-parallelism.json" "$RUNTIME_SCOPE" <<'PY' || return $?
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["devices"]
+after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))["devices"]
+runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+sources = [d for d in before.get(runtime, []) if d["udid"] == sys.argv[3]]
+if len(sources) != 1:
+    raise SystemExit("The UI clone source is not the selected runtime device")
+known = {d["udid"] for devices in before.values() for d in devices}
+pattern = r"Clone [1-9][0-9]* of " + re.escape(sources[0]["name"])
+clones = [d["udid"] for d in after.get(runtime, [])
+          if d["udid"] not in known and re.fullmatch(pattern, d.get("name", ""))]
+Path(sys.argv[4]).write_text("".join(identifier + "\n" for identifier in clones), encoding="utf-8")
+Path(sys.argv[5]).write_text(json.dumps({
+    "schemaVersion": 1, "commit": os.environ.get("GITHUB_SHA"),
+    "scope": sys.argv[6], "requestedWorkers": 2,
+    "observedNewCloneCount": len(clones),
+    "galleryExecution": "serial-original-simulator",
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    while IFS= read -r clone_udid; do
+        SELECTED_UDIDS+=("$clone_udid")
+    done < "$clone_file"
+    UI_CLONE_SCAN_NEEDED=false
+}
 
 resolve_group_container() {
     local simulator_udid="$1"
@@ -101,6 +163,9 @@ cleanup_all() {
 
     trap - EXIT
     set +e
+    if [[ "$UI_CLONE_SCAN_NEEDED" == true ]]; then
+        collect_ui_clones || original_status=1
+    fi
     for simulator_udid in "${SELECTED_UDIDS[@]}"; do
         cleanup_runtime "$simulator_udid" || true
     done
@@ -383,8 +448,14 @@ for name, filename in [
     source = source.replace(marker, base64.b64encode(image).decode("ascii"))
 view.write_text(source, encoding="utf-8")
 PY
-        # Keep the same fixture preparation/build for full and mapped UI.
-        # Only test selection and the extra Gallery builds vary by scope.
+        # XCTest distributes classes over separate clones of this prepared
+        # Simulator. The flag overrides the scheme's per-target NO setting:
+        # https://developer.apple.com/documentation/xcode-release-notes/xcode-10-release-notes
+        # Fixtures enter their DEBUG roots (no production bootstrap) and use
+        # process memory or their own Simulator app containers. No host-side
+        # simctl writes occur while the workers are running.
+        UI_SOURCE_UDID="$simulator_udid"
+        UI_CLONE_SCAN_NEEDED=true
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -394,7 +465,8 @@ PY
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
             "${COMPOSER_TEST_ARGUMENTS[@]}" \
-            -parallel-testing-enabled NO \
+            -parallel-testing-enabled YES \
+            -parallel-testing-worker-count 2 \
             -testLanguage ja \
             -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO \
@@ -407,6 +479,13 @@ PY
             xcrun xcresulttool export attachments --path "$composer_result" \
                 --output-path "$runtime_artifacts/composer-screenshots"
         fi
+        collect_ui_clones || return $?
+        # Stop the new UI workers before SpringBoard/Gallery work. Existing
+        # devices and other runtimes are never included in this cleanup list.
+        local clone_udid=""
+        while IFS= read -r clone_udid; do
+            cleanup_runtime "$clone_udid" || return 2
+        done < "$RUNNER_TEMP/neko-sharing-ui-clones.txt"
         # Reuse DerivedData, but reset the disposable Simulator between
         # fixture builds. WidgetKit can otherwise serve the previous Gallery
         # snapshot even after Xcode installs the newly compiled extension.
@@ -418,11 +497,12 @@ PY
         local widget_scenario_status=0
         local widget_scenario_test=""
         local -a widget_test_arguments=()
-        for widget_scenario in long-white-large no-caption; do
+        for widget_scenario in normal long-white-large no-caption; do
             if [[ "$RUN_WIDGET_GALLERY" != true ]]; then
                 break
             fi
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
+            widget_scenario_conditions=""
             case "$widget_scenario" in
                 long-white-large)
                     widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
@@ -456,10 +536,14 @@ PY
                 AD_HOC_CODE_SIGNING_ALLOWED=YES
                 "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions"
             )
-            prepare_simulator_and_build "$simulator_udid" \
-                xcodebuild "${widget_test_arguments[@]}" \
-                -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
-                build-for-testing || return $?
+            # The first Gallery uses the products just built for app UI; the
+            # original Simulator has not displayed a Gallery snapshot yet.
+            if [[ "$widget_scenario" != normal ]]; then
+                prepare_simulator_and_build "$simulator_udid" \
+                    xcodebuild "${widget_test_arguments[@]}" \
+                    -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
+                    build-for-testing || return $?
+            fi
             xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$widget_scenario_result" \
                 test-without-building || widget_scenario_status=$?
