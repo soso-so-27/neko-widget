@@ -25,11 +25,13 @@ Python 3と既存のGitHub CLIログインが必要。対象mainコミットをc
 
 ## 基準の更新
 
-次のアップロード成功をGitHubのログ（実build、VERIFY/UPLOAD成功、エラーなし）で確認した際、同じworkflow/repository/mainのrun ID・SHA・created_at・buildを release-testflight.py の BASELINE にまとめて更新できる。入力ミス回避のため4値を独立レビューし、次の変更バッチへ含める。成功を推測して自動更新しない。
+基準は毎回更新しない。基準ログの期限切れ前や履歴件数が増えた場合、次のアップロード成功をGitHubのログ（実build、VERIFY/UPLOAD成功、エラーなし）で確認したうえで、同じworkflow/repository/mainのrun ID・SHA・created_at・buildを release-testflight.py の BASELINE にまとめて更新できる。入力ミス回避のため4値を独立レビューし、次の変更バッチへ含める。成功を推測して自動更新しない。
 
 ## 検証と限界
 
-python NekoWidget/ci/test-release-testflight.py は25件成功。GitHubをすべてmockにし、固定入力、dry-run/POST1回、SHA変更、scope/証拠、部分再実行、欠落・skip・失敗、重複build、基準、旧ログ、履歴欠落、ログ非表示を検証する。今回の実装から実GitHub操作や配布はしていない。
+python NekoWidget/ci/test-release-testflight.py はGitHub操作をmockにし、固定入力、dry-run/POST1回、SHA変更、scope/証拠、部分再実行、欠落・skip・失敗、重複build、基準、旧ログ、履歴欠落、ログ非表示を検証する。インストール済みghがあれば、実際のlog引数を `--help` で検証する（通信なし）。計27件成功。
+
+rootは実GitHubの読み取りでも基準160と、main CI 34744244198が参照する候補34742597281の必須7job成功を照合し、SHA 241662f25f03e0db5548dfc1b5d7b391f63e1c36・build161指定のdry-runを完了した。実配布は起動していない。各必須job自身の完了時刻も24時間以内と確認する。
 
 CLIの成功は「起動要求済み」まで。Appleアップロード成功、Apple処理完了、内部グループでの表示は区別する。アップロード後の画面未確認を理由に同buildを再送しない。
 
