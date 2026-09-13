@@ -16,6 +16,13 @@ OFFICIAL_SCOPE = "official-ui-v1"
 COMBINED_SCOPE = "photo-official-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
+LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
+LANE_JOB_PREFIX = "Sharing checks"
+GALLERY_CONDITIONS = {
+    "gallery-normal": "",
+    "gallery-white": "WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT",
+    "gallery-no-caption": "WIDGET_VISUAL_REVIEW_NO_CAPTION",
+}
 
 # FamilyWindowView contains shared detail/zoom and settings; PairingView and
 # SettingsView also own permission/security actions. They intentionally remain
@@ -56,6 +63,35 @@ def native_tests(scope: str) -> tuple[str, ...]:
     if scope == FULL_SCOPE:
         return PHOTO_TESTS + OFFICIAL_TESTS + (GALLERY_TEST,)
     raise ValueError("Unknown iOS runtime scope")
+
+
+def lanes(scope: str) -> tuple[str, ...]:
+    native_tests(scope)  # Validate even when no Gallery is selected.
+    return LANES if scope == FULL_SCOPE else LANES[:2]
+
+
+def lane_job(scope: str, lane: str) -> str:
+    if lane not in lanes(scope):
+        raise ValueError("Lane is not required by this scope")
+    return f"{LANE_JOB_PREFIX} [{lane}; scope {scope}]"
+
+
+def sharing_jobs(scope: str) -> tuple[str, ...]:
+    return tuple(lane_job(scope, lane) for lane in lanes(scope))
+
+
+def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
+    if lane == "all":
+        return native_tests(scope)  # Retain the local serial entry point.
+    lane_job(scope, lane)
+    if lane == "runtime":
+        return ()
+    if lane == "app-ui":
+        return tuple(test for test in native_tests(scope) if test != GALLERY_TEST)
+    if lane == "gallery-white":
+        return (GALLERY_TEST.replace("testCaptureSharedWidgetAllSupportedSizes",
+                                   "testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"),)
+    return (GALLERY_TEST,)
 
 
 def conditional_blocks(source: str) -> tuple[str, ...] | None:
@@ -150,17 +186,23 @@ def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", choices=SCOPES, required=True)
+    parser.add_argument("--lane", choices=("all",) + LANES, default="all")
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--tests", type=Path, required=True)
     args = parser.parse_args()
-    tests = native_tests(args.scope)
+    tests = lane_tests(args.scope, args.lane)
     args.metadata.write_text(json.dumps({
         "schemaVersion": 1,
         "scope": args.scope,
+        "lane": args.lane,
         "commit": os.environ.get("GITHUB_SHA"),
-        "sharingRuntime": ["ios-18-5", "ios-26-2"],
+        "sharingRuntime": (["ios-18-5", "ios-26-2"] if args.lane in ("all", "runtime")
+                           else ["ios-26-2"]),
         "nativeTests": tests,
-        "widgetGallery": args.scope == FULL_SCOPE,
+        "widgetGallery": args.scope == FULL_SCOPE and args.lane not in ("runtime", "app-ui"),
+        "fixtureConditions": ("" if args.lane == "runtime" else
+            "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE "
+            + GALLERY_CONDITIONS.get(args.lane, "")).strip(),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     args.tests.write_text("".join(f"-only-testing:{test}\n" for test in tests), encoding="utf-8")
 

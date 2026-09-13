@@ -33,7 +33,8 @@ class PlanTests(unittest.TestCase):
         self.run = dict(self.current, id=10, event="push", head_branch="codex/movie",
                         status="completed", conclusion="success", updated_at="2026-09-07T11:00:00Z",
                         repository={"full_name": "owner/repo"}, head_repository={"full_name": "owner/repo"})
-        self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"}
+        self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
+                      "completed_at": "2026-09-07T11:00:00Z"}
                      for name in planner.FULL]
         checkout = patch.object(planner, "git", return_value=self.sha)
         checkout.start()
@@ -149,7 +150,10 @@ class PlanTests(unittest.TestCase):
                         patch.object(planner, "find_evidence", side_effect=error):
                     (root / "output").write_text("")
                     planner.main()
-                    self.assertEqual((root / "output").read_text(), "build=true\nsmoke=true\nsharing=true\nruntime_scope=full-v1\n")
+                    outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                    self.assertEqual(outputs, {"build": "true", "smoke": "true", "sharing": "true",
+                        "runtime_scope": scope.FULL_SCOPE,
+                        "lanes": json.dumps(scope.LANES, separators=(",", ":"))})
 
     def test_mapped_photo_and_official_ui_keep_build_smoke_and_core_runtime(self):
         change = ('Text("before")\n', 'Text("after")\n')
@@ -160,7 +164,7 @@ class PlanTests(unittest.TestCase):
         selected = scope.select_scope({home: change, scope.OFFICIAL_VIEW: change})
         self.assertEqual(selected, scope.COMBINED_SCOPE)
         self.assertEqual(planner.required_jobs([home], scope.PHOTO_SCOPE),
-                         (planner.BUILD, planner.SMOKE, scope.sharing_job(scope.PHOTO_SCOPE)))
+                         (planner.BUILD, planner.SMOKE) + scope.sharing_jobs(scope.PHOTO_SCOPE))
         self.assertEqual(set(scope.native_tests(selected)), set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS))
         self.assertEqual(set(scope.native_tests(scope.FULL_SCOPE)),
                          set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS + (scope.GALLERY_TEST,)))
@@ -234,14 +238,15 @@ class PlanTests(unittest.TestCase):
                 self.assertEqual(scope.select_scope({home: (before, after)}), scope.FULL_SCOPE)
 
     def test_reuse_requires_scope_version_and_exact_subset_or_full_execution(self):
-        required = (planner.BUILD, planner.SMOKE, scope.sharing_job(scope.PHOTO_SCOPE))
+        required = planner.required_jobs_from_scope(scope.PHOTO_SCOPE)
         # Full executed coverage can serve a narrower main diff.
         self.assertTrue(planner.covers_jobs(self.jobs, required, self.sha))
-        photo_jobs = copy.deepcopy(self.jobs)
-        photo_jobs[-1]["name"] = required[-1]
+        photo_jobs = [{"name": name, "status": "completed", "conclusion": "success", "head_sha": self.sha,
+                       "completed_at": "2026-09-07T11:00:00Z"}
+                      for name in required]
         self.assertTrue(planner.covers_jobs(photo_jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(photo_jobs, planner.FULL, self.sha))
-        for name in (scope.sharing_job(scope.OFFICIAL_SCOPE),
+        for name in (scope.lane_job(scope.OFFICIAL_SCOPE, "app-ui"),
                      scope.SHARING_JOB_PREFIX, required[-1].replace("v1", "v0")):
             jobs = copy.deepcopy(photo_jobs)
             jobs[-1]["name"] = name
@@ -250,7 +255,7 @@ class PlanTests(unittest.TestCase):
             jobs = copy.deepcopy(photo_jobs)
             jobs[-1]["conclusion"] = conclusion
             self.assertFalse(planner.covers_jobs(jobs, required, self.sha))
-        self.assertFalse(planner.covers_jobs(photo_jobs + [self.jobs[-1]], required, self.sha))
+        self.assertFalse(planner.covers_jobs(photo_jobs + [self.jobs[3]], required, self.sha))
         self.jobs = photo_jobs
         self.assertEqual(planner.find_evidence(self.env, required, self.api, self.now), (10, self.sha))
         self.assertIsNone(planner.find_evidence(self.env, planner.FULL, self.api, self.now))
@@ -282,7 +287,7 @@ class PlanTests(unittest.TestCase):
             if len(parts) == 3:
                 self.assertIn("func " + parts[2] + "(", found[0])
         workflow = (project.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
-        self.assertIn("name: " + scope.SHARING_JOB_PREFIX + " [scope ${{ needs.plan.outputs.runtime_scope }}]", workflow)
+        self.assertIn("name: " + scope.LANE_JOB_PREFIX + " [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", workflow)
         self.assertIn("runtime_scope: ${{ steps.scope.outputs.runtime_scope }}", workflow)
         self.assertIn("NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}", workflow)
 

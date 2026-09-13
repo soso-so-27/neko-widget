@@ -180,7 +180,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
         )
         self.assertEqual(runtime.count(condition), 1)
-        review = runtime.index('if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]')
+        review = runtime.index('if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" && "$RUNTIME_LANE" != runtime ]]')
         self.assertLess(runtime.index('python3 "$VALIDATOR"'), review)
         self.assertGreater(runtime.index(condition), review)
         self.assertIn('"${COMPOSER_TEST_ARGUMENTS[@]}"', runtime)
@@ -208,14 +208,16 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
 
         # Extra comparisons remain independent of app UI failures, reuse only
         # the Gallery test, and cannot erase a preceding app UI failure.
-        self.assertIn('if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then\n    RUN_WIDGET_GALLERY=true', runtime)
-        scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
+        self.assertIn('if [[ "$RUNTIME_SCOPE" == "full-v1" && "$RUNTIME_LANE" == all ]]; then\n    RUN_WIDGET_GALLERY=true', runtime)
+        scenarios = runtime.index('for widget_scenario in $WIDGET_SCENARIOS; do')
         normal_failure = runtime.index('if (( composer_status != 0 )); then')
         self.assertGreater(normal_failure, scenarios)
         self.assertIn('return "$composer_status"', runtime[normal_failure:])
         scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
-        self.assertIn('if [[ "$RUN_WIDGET_GALLERY" != true ]]; then\n                break', scenario_body)
-        self.assertLess(scenario_body.index('"$RUN_WIDGET_GALLERY"'), scenario_body.index('xcodebuild'))
+        # Explicit Gallery lanes reject mapped scopes before any Simulator work.
+        for selected in scope.SCOPES[1:]:
+            with self.assertRaises(ValueError):
+                scope.lane_tests(selected, "gallery-white")
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(
             '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'

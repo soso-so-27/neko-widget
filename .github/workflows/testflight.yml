@@ -1,8 +1,14 @@
 name: Archive and upload to TestFlight
+run-name: "TestFlight build ${{ inputs.build_number || github.run_number }} @ ${{ github.sha }}"
 
 on:
   workflow_dispatch:
     inputs:
+      expected_main_sha:
+        description: "配布CLIが確認したmainの40桁SHA。指定時はcheckoutとの一致が必須"
+        required: false
+        default: ""
+        type: string
       build_number:
         description: "CFBundleVersion。空欄ならこのworkflowのrun numberを使います"
         required: false
@@ -56,6 +62,21 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - name: Verify the requested main commit before signing
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$EXPECTED_MAIN_SHA" ]]; then
+            if [[ ! "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              || [[ "$GITHUB_SHA" != "$EXPECTED_MAIN_SHA" ]] \
+              || [[ "$(git rev-parse HEAD)" != "$EXPECTED_MAIN_SHA" ]]; then
+              echo "The requested main commit changed. Nothing was signed or uploaded." >&2
+              exit 1
+            fi
+          fi
 
       - name: Verify Xcode installation
         shell: bash

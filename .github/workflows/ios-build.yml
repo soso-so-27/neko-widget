@@ -33,6 +33,7 @@ jobs:
       smoke: ${{ steps.scope.outputs.smoke }}
       sharing: ${{ steps.scope.outputs.sharing }}
       runtime_scope: ${{ steps.scope.outputs.runtime_scope }}
+      lanes: ${{ steps.scope.outputs.lanes }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -40,7 +41,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Test CI selection and evidence boundaries
-        run: python3 NekoWidget/ci/test-plan-ios-ci.py
+        run: python3 NekoWidget/ci/check-development-flow.py
       - name: Select checks
         id: scope
         env:
@@ -979,15 +980,16 @@ jobs:
           retention-days: 7
 
   sharing-runtime-matrix:
-    name: Sharing runtime self-test (iOS 18.5 / 26.2) [scope ${{ needs.plan.outputs.runtime_scope }}]
-    # No Release products are consumed here; do not serialize independent
-    # builds. Evidence reuse still requires BUILD, SMOKE and this exact scope.
+    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]
+    # Each lane has its own runner, checkout, Simulator, and derived products.
+    # A failed Gallery condition can be rerun without replaying app UI.
     needs: plan
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
-    # Both sharing runtimes always execute. A mapped app-view scope limits
-    # only native UI selection and Gallery captures; full still needs room
-    # for all app suites and three Widget fixture builds on a shared runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(needs.plan.outputs.lanes) }}
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -1003,13 +1005,14 @@ jobs:
         shell: bash
         env:
           NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
+          NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}
         run: bash ci/run-sharing-runtime-matrix.sh
 
       - name: Upload sharing runtime matrix artifacts
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: ios-sharing-runtime-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ios-sharing-${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/neko-sharing-runtime-matrix
           if-no-files-found: warn
           retention-days: 7

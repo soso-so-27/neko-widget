@@ -12,6 +12,7 @@ DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSharingRuntimeDerivedData"
 DEVICE_INVENTORY="$RUNNER_TEMP/neko-sharing-runtime-devices.json"
 SELECTION_FILE="$RUNNER_TEMP/neko-sharing-runtime-selection.tsv"
 RUNTIME_SCOPE="${NEKO_IOS_RUNTIME_SCOPE:-full-v1}"
+RUNTIME_LANE="${NEKO_IOS_RUNTIME_LANE:-all}"
 UI_SELECTION_FILE="$RUNNER_TEMP/neko-sharing-runtime-ui-selection.txt"
 RUNTIME_LABELS=("ios-18-5" "ios-26-2")
 REQUESTED_RUNTIMES=(
@@ -26,20 +27,41 @@ APP_GROUP_ID=""
 mkdir -p "$ARTIFACT_DIRECTORY"
 python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
     --scope "$RUNTIME_SCOPE" \
+    --lane "$RUNTIME_LANE" \
     --metadata "$ARTIFACT_DIRECTORY/runtime-scope.json" \
     --tests "$UI_SELECTION_FILE"
 COMPOSER_TEST_ARGUMENTS=()
 while IFS= read -r test_argument; do
     COMPOSER_TEST_ARGUMENTS+=("$test_argument")
 done < "$UI_SELECTION_FILE"
-if (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
+if [[ "$RUNTIME_LANE" != runtime ]] && (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
     echo "The requested scope did not select any native UI tests." >&2
     exit 1
 fi
 RUN_WIDGET_GALLERY=false
-if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then
+if [[ "$RUNTIME_SCOPE" == "full-v1" && "$RUNTIME_LANE" == all ]]; then
     RUN_WIDGET_GALLERY=true
 fi
+WIDGET_SCENARIOS=""
+case "$RUNTIME_LANE" in
+    all)
+        if [[ "$RUN_WIDGET_GALLERY" == true ]]; then
+            WIDGET_SCENARIOS="long-white-large no-caption"
+        fi
+        ;;
+    runtime) ;;
+    app-ui|gallery-normal|gallery-white|gallery-no-caption)
+        # Each visual lane regenerates its own validated production cache.
+        # Do not transfer an injected checkout or fixture build between jobs.
+        RUNTIME_LABELS=("ios-26-2")
+        REQUESTED_RUNTIMES=("com.apple.CoreSimulator.SimRuntime.iOS-26-2")
+        if [[ "$RUNTIME_LANE" == gallery-white ]]; then
+            WIDGET_SCENARIOS="long-white-large"
+        elif [[ "$RUNTIME_LANE" == gallery-no-caption ]]; then
+            WIDGET_SCENARIOS="no-caption"
+        fi
+        ;;
+esac
 
 resolve_group_container() {
     local simulator_udid="$1"
@@ -310,7 +332,7 @@ PY
     # After ordinary runtime validation, use the same iOS 26 Simulator for UI
     # review. Only these final test builds enable Widget Gallery fixture pixels.
     # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
-    if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
+    if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" && "$RUNTIME_LANE" != runtime ]]; then
         local composer_status=0
         local composer_result="$runtime_artifacts/MomentComposer.xcresult"
         xcrun simctl terminate "$simulator_udid" "$APP_BUNDLE_ID" >/dev/null 2>&1 || true
@@ -385,6 +407,7 @@ view.write_text(source, encoding="utf-8")
 PY
         # Keep the same fixture preparation/build for full and mapped UI.
         # Only test selection and the extra Gallery builds vary by scope.
+        if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui || "$RUNTIME_LANE" == gallery-normal ]]; then
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -407,6 +430,7 @@ PY
             xcrun xcresulttool export attachments --path "$composer_result" \
                 --output-path "$runtime_artifacts/composer-screenshots"
         fi
+        fi
         # Reuse DerivedData, but reset the disposable Simulator between
         # fixture builds. WidgetKit can otherwise serve the previous Gallery
         # snapshot even after Xcode installs the newly compiled extension.
@@ -418,10 +442,7 @@ PY
         local widget_scenario_status=0
         local widget_scenario_test=""
         local -a widget_test_arguments=()
-        for widget_scenario in long-white-large no-caption; do
-            if [[ "$RUN_WIDGET_GALLERY" != true ]]; then
-                break
-            fi
+        for widget_scenario in $WIDGET_SCENARIOS; do
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
             case "$widget_scenario" in
                 long-white-large)

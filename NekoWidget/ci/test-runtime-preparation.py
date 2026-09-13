@@ -99,7 +99,7 @@ exit "$status"
 
     def test_harness_keeps_condition_identity_artifacts_and_failure_aggregation(self):
         harness = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")
-        start = harness.index("for widget_scenario in long-white-large no-caption; do")
+        start = harness.index("for widget_scenario in $WIDGET_SCENARIOS; do")
         body = harness[start:harness.index("\n        done", start)]
         self.assertIn('source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"', harness)
         self.assertIn('build-for-testing || return $?', body)

@@ -12,13 +12,13 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job
+from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job, sharing_jobs, lanes
 
 
 BUILD = "Build disabled app and extensions without signing"
 SMOKE = "Launch app and scan fixtures in Simulator"
 SHARING = sharing_job(FULL_SCOPE)
-FULL = (BUILD, SMOKE, SHARING)
+FULL = (BUILD, SMOKE) + sharing_jobs(FULL_SCOPE)
 MOVIE_VIEW = "NekoWidget/NekoWidget/Views/SeasonalMovieView.swift"
 MOVIE_ADR = "NekoWidget/docs/ADR-023-季節の小さな映画.md"
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -35,7 +35,13 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (BUILD,)
     if not paths or not set(paths) <= MAPPED_VIEWS:
         runtime_scope = FULL_SCOPE
-    return (BUILD, SMOKE, sharing_job(runtime_scope))
+    return required_jobs_from_scope(runtime_scope)
+
+
+def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
+    if scope == "movie-screen-only":
+        return (BUILD,)
+    return (BUILD, SMOKE) + sharing_jobs(scope)
 
 
 def git(*args: str) -> str:
@@ -140,15 +146,18 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime) ->
         return False
 
 
-def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str) -> bool:
+def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
+                now: dt.datetime | None = None) -> bool:
     # Missing, skipped, failed or duplicate jobs are not evidence of execution.
     for name in required:
         acceptable = {name}
-        if name in {sharing_job(scope) for scope in SCOPES}:
+        for scope in SCOPES:
             # Full native/Gallery execution covers a mapped subset. A subset
             # never covers full or a different subset; legacy unscoped job
             # names are not proof of which tests actually ran.
-            acceptable.add(SHARING)
+            scoped = sharing_jobs(scope)
+            if name in scoped:
+                acceptable.add(sharing_jobs(FULL_SCOPE)[scoped.index(name)])
         matching = [job for job in jobs if job.get("name") in acceptable]
         if len(matching) != 1:
             return False
@@ -157,7 +166,60 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str) -> bool:
             "completed", "success", sha
         ):
             return False
+        if now is not None:
+            try:
+                completed = dt.datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+                if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24):
+                    return False
+            except (AttributeError, KeyError, TypeError, ValueError):
+                return False
     return True
+
+
+def executed_jobs(run: dict, repository: str, api) -> list[dict]:
+    """Latest execution of each job, including unchanged siblings after a rerun.
+
+    Never select an older success over a newer failure/skip. Ambiguous or
+    incomplete responses cause ordinary execution, not evidence reuse.
+    """
+    attempt = run.get("run_attempt", 1)
+    if type(attempt) is not int or not 1 <= attempt <= 50:
+        raise ValueError("Invalid workflow attempt")
+    prefix = f"/repos/{repository}/actions/runs/{int(run['id'])}/jobs"
+    if attempt == 1:
+        result = api(prefix + "?filter=latest&per_page=100")
+        if result["total_count"] != len(result["jobs"]):
+            raise ValueError("Incomplete job response")
+        return result["jobs"]
+    jobs, total = [], None
+    for page in range(1, 6):
+        result = api(prefix + f"?filter=all&per_page=100&page={page}")
+        count = result["total_count"]
+        if type(count) is not int or not 0 <= count <= 500 or (total is not None and count != total):
+            raise ValueError("Incomplete or changing attempt history")
+        total = count
+        jobs.extend(result["jobs"])
+        if len(jobs) == total:
+            break
+        if len(result["jobs"]) != 100 or len(jobs) > total:
+            raise ValueError("Incomplete attempt page")
+    if len(jobs) != total:
+        raise ValueError("Incomplete attempt history")
+    latest, identities, keys = {}, set(), set()
+    for job in jobs:
+        number = job.get("run_attempt")
+        if (type(number) is not int or not 1 <= number <= attempt
+                or job.get("run_id") != run["id"] or job.get("head_sha") != run["head_sha"]
+                or type(job.get("id")) is not int or not isinstance(job.get("name"), str)):
+            raise ValueError("Job attempt identity does not match the run")
+        key = (job["name"], number)
+        if job["id"] in identities or key in keys:
+            raise ValueError("Duplicate job execution")
+        identities.add(job["id"])
+        keys.add(key)
+        if job["name"] not in latest or number > latest[job["name"]]["run_attempt"]:
+            latest[job["name"]] = job
+    return list(latest.values())
 
 
 def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -> tuple[int, str] | None:
@@ -177,10 +239,11 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
             continue
         # Fixed same-repository endpoint; never follow URLs supplied by a run.
         run_id = int(run["id"])
-        result = api(f"{prefix}/runs/{run_id}/jobs?filter=latest&per_page=100")
-        if result["total_count"] > len(result["jobs"]):
-            continue  # Incomplete evidence means execute normally.
-        if covers_jobs(result["jobs"], required, run["head_sha"]):
+        try:
+            jobs = executed_jobs(run, repo, api)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if covers_jobs(jobs, required, run["head_sha"], now):
             return run_id, run["head_sha"]
     return None
 
@@ -214,13 +277,21 @@ def main() -> None:
     values = {
         "build": str(evidence is None).lower(),
         "smoke": str(evidence is None and SMOKE in required).lower(),
-        "sharing": str(evidence is None and len(required) == 3).lower(),
+        "sharing": str(evidence is None and required != (BUILD,)).lower(),
         "runtime_scope": selected_scope,
+        "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
     scope = "movie-screen-only" if required == (BUILD,) else selected_scope
+    print("IOS_CI_PLAN_JSON=" + json.dumps({
+        "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
+        "head_sha": env["GITHUB_SHA"], "scope": scope,
+        "required_jobs": required,
+        "evidence_run_id": evidence[0] if evidence else None,
+        "evidence_sha": evidence[1] if evidence else None,
+    }, separators=(",", ":")))
     summary = f"## iOS CI plan\n\nCommit: `{env['GITHUB_SHA']}`\n\nScope: `{scope}`.\n\n"
     if evidence is not None:
         run_id, tested_sha = evidence
