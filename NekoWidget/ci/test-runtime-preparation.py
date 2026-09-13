@@ -15,7 +15,7 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 
 class PreparationTests(unittest.TestCase):
-    def run_preparation(self, fail_step="", build_status=0):
+    def run_preparation(self, fail_step="", build_status=0, fresh=False):
         self.assertIsNotNone(BASH, "Bash is required to exercise the real preparation helper")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -28,6 +28,7 @@ source "$1"
 cd "$2"
 fail_step="$3"
 fixture_build_status="$4"
+fresh="$5"
 await_marker() {
     for ((attempt = 0; attempt < 100; attempt++)); do
         [[ -f "$1" ]] && return 0
@@ -38,7 +39,7 @@ await_marker() {
 xcrun() {
     [[ "$1" == simctl && "$3" == fixture-device ]] || return 92
     printf '%s\n' "$2" >> events
-    if [[ "$2" == shutdown ]]; then
+    if [[ "$2" == shutdown || ( "$fresh" == true && "$2" == boot ) ]]; then
         touch boot-started
         await_marker build-started || return $?
     fi
@@ -57,7 +58,9 @@ build() {
     return "$fixture_build_status"
 }
 status=0
-prepare_simulator_and_build fixture-device build 'a path with spaces' build-for-testing || status=$?
+fresh_arguments=()
+[[ "$fresh" != true ]] || fresh_arguments+=(--fresh)
+prepare_simulator_and_build fixture-device ${fresh_arguments[@]+"${fresh_arguments[@]}"} build 'a path with spaces' build-for-testing || status=$?
 # Simulate the harness gate: failed preparation cannot become a passing test.
 if (( status == 0 )); then
     [[ -f boot-complete && -f build-complete ]] || exit 95
@@ -68,7 +71,7 @@ exit "$status"
             result = subprocess.run(
                 [BASH, str(harness).replace("\\", "/"),
                  (CI / "prepare-simulator-and-build.sh").as_posix(), root.as_posix(),
-                 fail_step, str(build_status)],
+                 fail_step, str(build_status), "true" if fresh else "false"],
                 capture_output=True, text=True, encoding="utf-8", timeout=20,
             )
             events = (root / "events").read_text().splitlines()
@@ -97,9 +100,18 @@ exit "$status"
                 self.assertNotIn("test", events)
                 self.assertIn("build-for-testing failed", result.stderr)
 
+    def test_new_owned_device_skips_reset_but_still_joins_boot_and_build(self):
+        result, events = self.run_preparation(fresh=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([x for x in events if x != "build"], ["boot", "bootstatus", "test"])
+        for step in ("boot", "bootstatus"):
+            result, events = self.run_preparation(fail_step=step, fresh=True)
+            self.assertEqual(result.returncode, 42, result.stderr)
+            self.assertNotIn("test", events)
+
     def test_harness_keeps_condition_identity_artifacts_and_failure_aggregation(self):
         harness = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")
-        start = harness.index("for widget_scenario in long-white-large no-caption; do")
+        start = harness.index("for widget_scenario in normal long-white-large no-caption; do")
         body = harness[start:harness.index("\n        done", start)]
         self.assertIn('source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"', harness)
         self.assertIn('build-for-testing || return $?', body)

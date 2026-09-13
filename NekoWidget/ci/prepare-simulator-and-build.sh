@@ -7,6 +7,13 @@
 prepare_simulator_and_build() (
     local simulator_udid="$1"
     shift
+    # Only the harness's newly created, owned UDIDs may skip shutdown/erase.
+    # Existing callers retain the original cold-reset contract.
+    local already_fresh=false
+    if [[ "${1:-}" == "--fresh" ]]; then
+        already_fresh=true
+        shift
+    fi
     local boot_pid=""
     local build_status=0
     local boot_status=0
@@ -23,8 +30,10 @@ prepare_simulator_and_build() (
     trap cleanup_preparation EXIT
 
     reset_and_boot() {
-        xcrun simctl shutdown "$simulator_udid" || return $?
-        xcrun simctl erase "$simulator_udid" || return $?
+        if [[ "$already_fresh" != true ]]; then
+            xcrun simctl shutdown "$simulator_udid" || return $?
+            xcrun simctl erase "$simulator_udid" || return $?
+        fi
         xcrun simctl boot "$simulator_udid" || return $?
         xcrun simctl bootstatus "$simulator_udid" -b || return $?
     }
