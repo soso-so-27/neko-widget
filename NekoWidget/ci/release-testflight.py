@@ -83,7 +83,7 @@ class GitHub:
 
     def log(self, run_id: int, job_id: int | None = None) -> str:
         args = ["gh", "run", "view", str(run_id), "--repo", f"github.com/{REPOSITORY}",
-                "--log", "--allow-escape-sequences"]
+                "--log"]
         if job_id is not None:
             args.extend(["--job", str(job_id)])
         return command(args)

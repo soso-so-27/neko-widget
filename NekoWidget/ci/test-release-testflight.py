@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -363,6 +364,16 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(release.Blocked):
                 release.GitHub().dispatch({})
         self.assertEqual(command.call_count, 1)
+
+    @unittest.skipUnless(shutil.which("gh"), "GitHub CLI is not installed")
+    def test_log_arguments_are_accepted_by_the_installed_cli_without_network(self):
+        for job in (None, 2):
+            with patch.object(release, "command", return_value="") as capture:
+                release.GitHub().log(1, job)
+            # --help parses the actual command flags without fetching any run.
+            result = subprocess.run(capture.call_args.args[0] + ["--help"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_command_errors_do_not_echo_private_payloads(self):
         failed = subprocess.CompletedProcess(["gh"], 1, stdout="PRIVATE DATA", stderr="SECRET TOKEN")
