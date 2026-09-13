@@ -398,9 +398,10 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateTitle: String {
-        if entry.photoSourceIdentifier == OfficialWindowCatalog.sourceID {
-            if OfficialWindowConfiguration.feedURL == nil { return "公式まどを準備中" }
-            return OfficialWindowStore.shared.snapshot().isSubscribed ? "いま届いている写真はありません" : "どこかの猫に会えるまど"
+        if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
+            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは利用できません" }
+            if definition.endpoint == nil { return "公式まどを準備中" }
+            return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "このまどは利用できません"
@@ -416,7 +417,7 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateSubtitle: String {
-        if entry.photoSourceIdentifier == OfficialWindowCatalog.sourceID { return "タップして公式まどを開く" }
+        if PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) != nil { return "タップしてまどを開く" }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "ウィジェットを編集してください"
         }

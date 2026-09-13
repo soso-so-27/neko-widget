@@ -18,6 +18,10 @@ struct WidgetPhotoSource: AppEntity {
         detail: "公開用に提供された猫の一枚"
     )
     static let familyWindowIDPrefix = "family-window:"
+    static func publicWindow(_ definition: PublicWindowDefinition) -> WidgetPhotoSource {
+        WidgetPhotoSource(id: definition.widgetSourceID,
+                          name: "\(definition.displayName) · 公式まど", detail: definition.subtitle)
+    }
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
         name: "このiPhoneの猫写真",
@@ -64,7 +68,13 @@ struct WidgetPhotoSource: AppEntity {
     }
 
     static func resolvedSource(id: String) -> WidgetPhotoSource? {
-        if id == OfficialWindowCatalog.sourceID { return .officialWindow }
+        if let windowID = PublicWindowDefinition.windowID(from: id) {
+            if let definition = OfficialWindowConfiguration.definition(for: windowID) {
+                return publicWindow(definition)
+            }
+            // A retired public source must never become the personal-library default.
+            return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+        }
         if id == personalLibraryID { return .personalLibrary }
         if id == familyWindowID { return .familyWindow }
         guard let localWindowID = localWindowID(from: id) else { return nil }
@@ -101,7 +111,8 @@ struct WidgetPhotoSource: AppEntity {
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
     static var availableSources: [WidgetPhotoSource] {
-        var sources: [WidgetPhotoSource] = [.personalLibrary, .officialWindow]
+        var sources: [WidgetPhotoSource] = [.personalLibrary]
+            + OfficialWindowConfiguration.definitions.map(publicWindow)
         if familyWindowSourceIsEnabled {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {

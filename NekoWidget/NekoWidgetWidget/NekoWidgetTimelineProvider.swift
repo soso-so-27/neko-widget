@@ -29,8 +29,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
 #endif
         let source = configuration.photoSource ?? .personalLibrary
-        if source.id == OfficialWindowCatalog.sourceID {
-            return officialEntry(now: now, variant: variant)
+        if PublicWindowDefinition.windowID(from: source.id) != nil {
+            return officialEntry(now: now, variant: variant, sourceID: source.id)
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled,
@@ -124,21 +124,25 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
 #endif
         let source = configuration.photoSource ?? .personalLibrary
-        if source.id == OfficialWindowCatalog.sourceID {
+        if let windowID = PublicWindowDefinition.windowID(from: source.id) {
+            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else {
+                return Timeline(entries: [officialEntry(now: now, variant: variant, sourceID: source.id)], policy: .never)
+            }
+            let store = OfficialWindowStore.forWindow(definition)
             if !context.isPreview {
-                try? await OfficialWindowClient.shared.refresh()
+                try? await OfficialWindowClient.shared.refresh(store: store)
             }
             let date = Date()
-            let entry = officialEntry(now: date, variant: variant)
-            let state = OfficialWindowStore.shared.snapshot()
+            let entry = officialEntry(now: date, variant: variant, sourceID: source.id)
+            let state = store.snapshot()
             var entries = [entry]
             if let photo = entry.officialPhoto, let catalog = state.catalog {
                 // A terminal empty entry bounds the photo even when iOS delays
                 // the next network refresh. Never loop expired public photos.
                 let expiry = min(photo.expiresAt, catalog.validUntil)
                 entries.append(.empty(at: expiry, imageVariant: variant,
-                                      photoSourceIdentifier: OfficialWindowCatalog.sourceID,
-                                      windowDisplayName: OfficialWindowCatalog.displayName))
+                                      photoSourceIdentifier: source.id,
+                                      windowDisplayName: store.displayName))
             }
             return Timeline(entries: entries, policy: .after(date.addingTimeInterval(60 * 60)))
         }
@@ -256,24 +260,30 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         return Timeline(entries: entries, policy: .after(reloadDate))
     }
 
-    private func officialEntry(now: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
-        let state = OfficialWindowStore.shared.snapshot()
+    private func officialEntry(now: Date, variant: WidgetImageVariant, sourceID: String) -> NekoWidgetEntry {
+        guard let windowID = PublicWindowDefinition.windowID(from: sourceID),
+              let definition = OfficialWindowConfiguration.definition(for: windowID) else {
+            return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
+                          windowDisplayName: "利用できないまど", emptyStateReason: .sourceUnavailable)
+        }
+        let store = OfficialWindowStore.forWindow(definition)
+        let state = store.snapshot()
         var entry = NekoWidgetEntry.empty(
             at: now, imageVariant: variant,
-            photoSourceIdentifier: OfficialWindowCatalog.sourceID,
-            windowDisplayName: OfficialWindowCatalog.displayName,
+            photoSourceIdentifier: sourceID,
+            windowDisplayName: store.displayName,
             emptyStateReason: state.isSubscribed ? .waiting : .needsApp
         )
         // A failed new-image download need not blank a valid older photo that
         // the current catalog still permits. The entry keeps that photo's ID.
         guard let photo = state.photos.first(where: {
-            OfficialWindowStore.shared.imageURL(for: $0) != nil
+            store.imageURL(for: $0) != nil
         }) else { return entry }
         entry = NekoWidgetEntry(
             date: now, localIdentifier: nil, cacheFilename: photo.imageFilename,
-            imageVariant: variant, photoSourceIdentifier: OfficialWindowCatalog.sourceID,
+            imageVariant: variant, photoSourceIdentifier: sourceID,
             familySourceDigest: nil, usesFamilySpecificImage: false,
-            windowDisplayName: OfficialWindowCatalog.displayName,
+            windowDisplayName: store.displayName,
             isLiked: false, isLikeInteractionEnabled: false,
             isBookmarked: false, isBookmarkInteractionEnabled: false,
             familyHeartStatus: .hidden, familyActionsRequireApp: false, emptyStateReason: .none

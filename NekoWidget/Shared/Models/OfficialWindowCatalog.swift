@@ -1,5 +1,27 @@
 import Foundation
 
+/// The build-owned registry defines which public windows the app offers.
+/// Unknown but well-formed source IDs remain identifiable without falling back
+/// to the legacy feed; discovery does not create definitions from remote data.
+struct PublicWindowDefinition: Identifiable, Hashable, Sendable {
+    let id: String
+    let displayName: String
+    let subtitle: String
+    let endpoint: URL?
+
+    var widgetSourceID: String {
+        id == OfficialWindowCatalog.sourceID ? id : "public-window:" + id
+    }
+
+    static func windowID(from sourceID: String) -> String? {
+        if sourceID == OfficialWindowCatalog.sourceID { return sourceID }
+        let prefix = "public-window:"
+        guard sourceID.hasPrefix(prefix) else { return nil }
+        let id = String(sourceID.dropFirst(prefix.count))
+        return OfficialWindowCatalog.isIdentifier(id) ? id : nil
+    }
+}
+
 /// Public, operator-curated content. No PhotoKit identifiers, private-window
 /// IDs, authentication credentials, or automatic cat identification belong here.
 struct OfficialCatPhoto: Codable, Equatable, Identifiable, Sendable {
@@ -39,8 +61,8 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         }
     }
 
-    func validate(at now: Date) throws {
-        guard schemaVersion == 1, channelID == Self.sourceID,
+    func validate(at now: Date, expectedChannelID: String = Self.sourceID) throws {
+        guard schemaVersion == 1, Self.isIdentifier(expectedChannelID), channelID == expectedChannelID,
               generatedAt <= now.addingTimeInterval(300), validUntil > now,
               validUntil > generatedAt,
               validUntil.timeIntervalSince(generatedAt) <= Self.maximumLifetime,
@@ -95,29 +117,51 @@ enum OfficialWindowError: Error {
 
 /// Keep the public route separate from the authenticated private-window router.
 struct OfficialWindowRoute: Identifiable {
+    let windowID: String
     let photoID: String?
-    var id: String { photoID ?? OfficialWindowCatalog.sourceID }
+    var id: String { windowID + "|" + (photoID ?? "") }
 
-    init(photoID: String? = nil) { self.photoID = photoID }
+    init(windowID: String = OfficialWindowCatalog.sourceID, photoID: String? = nil) {
+        self.windowID = windowID
+        self.photoID = photoID
+    }
 
     init?(url: URL) {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              parts.scheme == "nekowidget", parts.host == "official-window",
+              parts.scheme == "nekowidget",
               parts.path.isEmpty, parts.fragment == nil, parts.user == nil,
               parts.password == nil, parts.port == nil else { return nil }
         let items = parts.queryItems ?? []
-        guard items.count <= 1, items.allSatisfy({ $0.name == "photo" }),
-              items.isEmpty || items.first?.value.map(OfficialWindowCatalog.isIdentifier) == true
+        guard Set(items.map(\.name)).count == items.count,
+              items.allSatisfy({ $0.value.map(OfficialWindowCatalog.isIdentifier) == true })
         else { return nil }
-        photoID = items.first?.value
+        switch parts.host {
+        case "official-window":
+            guard items.count <= 1, items.allSatisfy({ $0.name == "photo" }) else { return nil }
+            windowID = OfficialWindowCatalog.sourceID
+        case "public-window":
+            guard items.count <= 2, items.allSatisfy({ $0.name == "window" || $0.name == "photo" }),
+                  let id = items.first(where: { $0.name == "window" })?.value else { return nil }
+            windowID = id
+        default:
+            return nil
+        }
+        photoID = items.first(where: { $0.name == "photo" })?.value
     }
 
     var url: URL? {
-        guard photoID.map(OfficialWindowCatalog.isIdentifier) ?? true else { return nil }
+        guard OfficialWindowCatalog.isIdentifier(windowID),
+              photoID.map(OfficialWindowCatalog.isIdentifier) ?? true else { return nil }
         var parts = URLComponents()
         parts.scheme = "nekowidget"
-        parts.host = "official-window"
-        parts.queryItems = photoID.map { [URLQueryItem(name: "photo", value: $0)] }
+        if windowID == OfficialWindowCatalog.sourceID {
+            parts.host = "official-window"
+            parts.queryItems = photoID.map { [URLQueryItem(name: "photo", value: $0)] }
+        } else {
+            parts.host = "public-window"
+            parts.queryItems = [URLQueryItem(name: "window", value: windowID)]
+                + (photoID.map { [URLQueryItem(name: "photo", value: $0)] } ?? [])
+        }
         return parts.url
     }
 }

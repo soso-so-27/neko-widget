@@ -18,11 +18,12 @@ function text(value, maximum, caption = false) {
     && (caption ? value.split('\n').length <= 3 : !value.includes('\n'));
 }
 
-export function activeFiles(catalog, now = Date.now()) {
+export function activeFiles(catalog, now = Date.now(), expectedChannel = 'official-cats') {
   const invalid = () => { throw new Error('Invalid official catalog'); };
-  if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)
+  if (typeof expectedChannel !== 'string' || expectedChannel.trim() !== expectedChannel || !SLUG.test(expectedChannel)
+      || !catalog || typeof catalog !== 'object' || Array.isArray(catalog)
       || Object.keys(catalog).some(key => !TOP_KEYS.has(key))
-      || catalog.schemaVersion !== 1 || catalog.channelID !== 'official-cats'
+      || catalog.schemaVersion !== 1 || catalog.channelID !== expectedChannel
       || typeof catalog.enabled !== 'boolean' || !Array.isArray(catalog.photos)
       || catalog.photos.length > 60 || (!catalog.enabled && catalog.photos.length !== 0)) invalid();
   const generated = time(catalog.generatedAt), until = time(catalog.validUntil);
@@ -92,19 +93,25 @@ export default {
     const head = request.method === 'HEAD';
     if (request.method !== 'GET' && !head) return reply('Method not allowed', 405, 'text/plain; charset=utf-8', false, { Allow: 'GET, HEAD' });
     const url = new URL(request.url);
-    const image = /^\/([a-f0-9]{64}\.jpg)$/.exec(url.pathname);
-    if (url.search || (url.pathname !== '/catalog.json' && !image)) return reply('Not found', 404, 'text/plain; charset=utf-8', head);
+    const legacy = /^\/(catalog\.json|[a-f0-9]{64}\.jpg)$/.exec(url.pathname);
+    const window = /^\/windows\/([a-z0-9-]{1,64})\/(catalog\.json|[a-f0-9]{64}\.jpg)$/.exec(url.pathname);
+    // The original channel keeps its original URL; no aliases or fallback.
+    if (url.search || (!legacy && !window) || window?.[1] === 'official-cats') return reply('Not found', 404, 'text/plain; charset=utf-8', head);
+    const channel = window ? window[1] : 'official-cats';
+    const prefix = window ? `/windows/${channel}` : '';
+    const filename = window ? window[2] : legacy[1];
+    const image = filename !== 'catalog.json';
     try {
-      const raw = await readAsset(env.OFFICIAL_ASSETS, new URL('/catalog.json', url), CATALOG_BYTES);
+      const raw = await readAsset(env.OFFICIAL_ASSETS, new URL(`${prefix}/catalog.json`, url), CATALOG_BYTES);
       const catalog = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
-      const files = activeFiles(catalog);
+      const files = activeFiles(catalog, Date.now(), channel);
       if (!image) return reply(JSON.stringify(catalog), 200, 'application/json; charset=utf-8', head);
-      if (!files.has(image[1])) return reply('Not found', 404, 'text/plain; charset=utf-8', head);
+      if (!files.has(filename)) return reply('Not found', 404, 'text/plain; charset=utf-8', head);
       const bytes = await readAsset(env.OFFICIAL_ASSETS, new URL(url.pathname, url), IMAGE_BYTES);
       const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
-      if (`${digest}.jpg` !== image[1]) throw new Error('Image digest mismatch');
+      if (`${digest}.jpg` !== filename) throw new Error('Image digest mismatch');
       // Asset I/O may cross a publication deadline. Check again at reply time.
-      if (!activeFiles(catalog).has(image[1])) return reply('Not found', 404, 'text/plain; charset=utf-8', head);
+      if (!activeFiles(catalog, Date.now(), channel).has(filename)) return reply('Not found', 404, 'text/plain; charset=utf-8', head);
       return reply(bytes, 200, 'image/jpeg', head);
     } catch {
       // A broken/expired edition must not reveal other files or old photos.

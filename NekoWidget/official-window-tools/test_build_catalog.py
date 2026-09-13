@@ -82,6 +82,33 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.output.iterdir()),
                          sorted(["catalog.json", photo["imageFilename"]]))
 
+    def test_channel_changes_only_catalog_identity_and_keeps_photo_bytes(self):
+        legacy = self.build()
+        other_output = self.root / "other"
+        other = catalog.build_catalog(
+            other_output, document={"photos": [self.photo()]}, images_dir=self.images,
+            now=NOW, channel_id="test-window-a",
+        )
+        self.assertEqual(other, {**legacy, "channelID": "test-window-a"})
+        filename = legacy["photos"][0]["imageFilename"]
+        self.assertEqual((self.output / filename).read_bytes(), (other_output / filename).read_bytes())
+        self.assertNotIn("PRIVATE-", (other_output / "catalog.json").read_text(encoding="utf-8"))
+
+    def test_invalid_channel_is_rejected_before_output_for_active_and_paused(self):
+        for channel in ("", "a" * 65, "UPPER", "../cats", "a/b", "a\\b", "a%2fb", "a\n", None, 1):
+            for paused in (False, True):
+                with self.subTest(channel=channel, paused=paused), self.assertRaises(catalog.CatalogError):
+                    if paused:
+                        catalog.build_catalog(self.output, paused=True, channel_id=channel, now=NOW)
+                    else:
+                        self.build(channel_id=channel)
+                self.assertFalse(self.output.exists())
+
+    def test_additional_channel_still_requires_approval(self):
+        with self.assertRaisesRegex(catalog.CatalogError, "publicationApproved"):
+            self.build([self.photo(publicationApproved=False)], channel_id="test-window-a")
+        self.assertFalse(self.output.exists())
+
     def test_exif_orientation_resize_and_source_metadata_removed(self):
         source = Image.new("RGB", (3000, 1000), "red")
         source.paste("blue", (1500, 0, 3000, 1000))
@@ -318,6 +345,22 @@ class CatalogTests(unittest.TestCase):
         generated = catalog.parse_utc(result["generatedAt"], "generatedAt")
         self.assertEqual(catalog.parse_utc(result["validUntil"], "validUntil") - generated,
                          timedelta(hours=48))
+
+    def test_cli_channel_stop_does_not_change_another_channel(self):
+        active = self.build(channel_id="test-window-b")
+        original = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        stopped = self.root / "paused-a"
+        completed = subprocess.run(
+            [sys.executable, str(Path(catalog.__file__)), "--paused", "--channel-id", "test-window-a",
+             "--output", str(stopped)], capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads((stopped / "catalog.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["channelID"], "test-window-a")
+        self.assertIs(result["enabled"], False)
+        self.assertEqual(result["photos"], [])
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, original)
+        self.assertEqual(len(active["photos"]), 1)
 
     def test_cli_errors_do_not_expose_internal_input(self):
         source = self.root / "source.json"

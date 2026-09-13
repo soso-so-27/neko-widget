@@ -1,6 +1,6 @@
 # 公式まどのローカルcatalog生成
 
-承認済みのローカル画像から `official-cats` 配信の確認用ファイルを生成する Python CLI です。**アップロード、配信、公開、外部への通信は行いません。** 出力ができても公開されたことにはなりません。協力者、写真の公開同意、配信サーバーが既に用意されているとは仮定しません。
+承認済みのローカル画像から公開まど配信の確認用ファイルを生成する Python CLI です。既定channelは従来どおり `official-cats` です。**アップロード、配信、公開、外部への通信は行いません。** 出力ができても公開されたことにはなりません。協力者、写真の公開同意、配信サーバーが既に用意されているとは仮定しません。
 
 ## 実行環境
 
@@ -72,6 +72,19 @@ python .\build_catalog.py --paused --output C:\official-window-review\paused-001
 ```
 
 `enabled: false, photos: []` の `catalog.json` だけを生成します。有効期限は通常と同じです。**これは停止ファイルのローカル生成だけです。実際の公開先の切替や、既に配信されたJPEGの削除は行いません。**
+
+## 別の公開まどを生成する（2026-09-13・未配備）
+
+`--channel-id` に `[a-z0-9-]` の1〜64文字を指定します。省略時のコマンド・schema・画像処理は変わりません。次は形式例で、写真提供者や公開許可を新たに作るものではありません。
+
+```powershell
+python .\build_catalog.py --channel-id example-window --input C:\official-window-private\example-source.json --images-dir C:\official-window-private\images --output C:\official-window-review\example-001
+python .\build_catalog.py --channel-id example-window --paused --output C:\official-window-review\example-paused-001
+```
+
+出力は窓ごとに独立した `catalog.json` とJPEGです。`channelID` が変わっても、承認必須、metadata除去、4 MiB・2048px、48時間／14日の上限は変わりません。同じ写真ID・JPEGを別channelに使えますが、掲載の許可範囲は別途確認してください。停止版も対象channelを明示します。他の窓の出力を書き換える処理はありません。
+
+複数窓を一つの配備候補へまとめる手順は [配信サービスのREADME](../../OfficialWindowService/README.md) を参照してください。この追加はローカル生成・配備準備までで、新しい窓の公開・定時配信は行っていません。
 
 ## 検証
 

@@ -128,9 +128,11 @@ enum WidgetManifestReader {
         for filename: String,
         photoSourceIdentifier: String
     ) -> URL? {
+        if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
+            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return nil }
+            return OfficialWindowStore.forWindow(definition).imageURL(filename: filename)
+        }
         switch photoSourceIdentifier {
-        case OfficialWindowCatalog.sourceID:
-            return OfficialWindowStore.shared.imageURL(filename: filename)
         case WidgetPhotoSource.personalLibraryID:
             return cacheURL(for: filename)
         case let identifier where WidgetPhotoSource.isFamilyWindowSourceID(identifier):

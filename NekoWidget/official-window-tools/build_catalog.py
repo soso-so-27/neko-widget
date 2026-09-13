@@ -205,7 +205,10 @@ def jpeg_bytes(path: Path) -> tuple[bytes, int, int]:
 def build_catalog(
     output: Path, *, document: object = None, images_dir: Path | None = None,
     paused: bool = False, valid_for_hours: int = 48, now: datetime | None = None,
+    channel_id: str = "official-cats",
 ) -> dict:
+    if not isinstance(channel_id, str) or SLUG.fullmatch(channel_id) is None:
+        raise CatalogError("channel_id must be a 1..64 character lowercase slug")
     if type(valid_for_hours) is not int or not 1 <= valid_for_hours <= 48:
         raise CatalogError("valid_for_hours must be an integer from 1 to 48")
     clock = now if now is not None else datetime.now(timezone.utc)
@@ -246,7 +249,7 @@ def build_catalog(
                 "width": width, "height": height,
             })
     catalog = {
-        "schemaVersion": 1, "channelID": "official-cats", "enabled": not paused,
+        "schemaVersion": 1, "channelID": channel_id, "enabled": not paused,
         "generatedAt": utc_string(clock),
         "validUntil": utc_string(clock + timedelta(hours=valid_for_hours)),
         "photos": public_photos,
@@ -271,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--images-dir", type=Path, help="approved local image root")
     parser.add_argument("--output", type=Path, required=True, help="new local directory")
     parser.add_argument("--paused", action="store_true", help="build a disabled empty catalog")
+    parser.add_argument("--channel-id", default="official-cats", help="catalog channel slug (default: official-cats)")
     parser.add_argument("--valid-for-hours", type=int, default=48, help="catalog validity: 1..48 hours")
     args = parser.parse_args(argv)
     if args.paused and (args.input is not None or args.images_dir is not None):
@@ -282,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output, document=read_source(args.input) if args.input else None,
             images_dir=args.images_dir, paused=args.paused,
             valid_for_hours=args.valid_for_hours,
+            channel_id=args.channel_id,
         )
     except (CatalogError, OSError) as error:
         # Do not echo source paths, internal approval notes, or image metadata.

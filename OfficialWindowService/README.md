@@ -1,13 +1,13 @@
 # 公式まどの配信準備
 
-公式まど1つのcatalogとJPEGを、専用のCloudflare Workerで配信する。既存の非公開まど、R2、D1、アカウント、課金処理へのbindingは持たない。
+公式まどと追加の公開まどのcatalog・JPEGを、専用のCloudflare Workerで配信する。既存の非公開まど、R2、D1、アカウント、課金処理へのbindingは持たない。追加の公開まど対応は2026-09-13時点で未配備。
 
 写真の原本が未指定でも、合成画像A → B → 停止まで同じローカルURLで確認できる。合成画像は実在の猫や投稿者の写真として扱わない。ここまでのコマンドは公開・デプロイしない。
 
 ## 採用した構成
 
 - Worker名: `neko-widget-official-cats-preview`。配備先アカウントは既存アプリと同じCloudflareアカウントに固定。
-- 公開時のパス: `/catalog.json` と `/<sha256>.jpg` だけ。GET/HEADのみ。
+- 既存 `official-cats` のパスは `/catalog.json` と `/<sha256>.jpg` を維持。追加窓は `/windows/<channelID>/catalog.json` と `/windows/<channelID>/<sha256>.jpg`。GET/HEADのみ。
 - Workers Static Assetsを使い、Workerコードと画像を同じ配備で切り替える。`run_worker_first: true` にして、静的画像へ直接アクセスしても現在のcatalogによる判定を通す。[Cloudflare Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[binding設定](https://developers.cloudflare.com/workers/static-assets/binding/)
 - 有効なcatalogの掲載期間内にある画像だけを配信する。取り下げ・停止・期限切れは新規HTTP取得でも非表示。画像取得中に期限を跨いだ場合も、返答直前に再評価する。
 - 応答は `Cache-Control: no-store`。ユーザーが既に保持した写真や、切替前に開始した通信まで即時回収できるという意味ではない。
@@ -62,6 +62,20 @@ node node_modules/wrangler/bin/wrangler.js deploy --dry-run --config C:/official
 bundle生成に `--feed-url` を加えると `OfficialWindow.xcconfig` も生成する。アプリとWidgetへ同じ `OFFICIAL_WINDOW_FEED_URL` を設定するためのもの。確認先は `https://neko-widget-official-cats-preview.nakanishisoya.workers.dev/catalog.json`。通常ビルドの既定値は空のまま、TestFlightでは明示指定した確認用URLを使う。
 
 ## 更新・取り下げ・停止
+
+### 複数の公開まどをローカルでまとめる（未配備）
+
+既存publisherの `--channel-id` で、承認済み入力から窓ごとの出力を用意します。`--assets` は従来の `official-cats` 出力、`--additional-assets` は追加窓の出力を繰り返し指定します。次は入力形式の例で、テーマ公開・提供者募集・自動更新を実行する指示ではありません。
+
+```powershell
+node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --additional-assets C:/official-window-review/window-a-001 --additional-assets C:/official-window-review/window-b-001 --output C:/official-window-review/multi-001
+```
+
+- 配備候補の `assets/` は旧catalogと旧JPEGを保ち、追加分だけ `assets/windows/<channelID>/` に置きます。`--feed-url` の設定出力は従来の公式まどURL用です。
+- 同じchannelの二重指定、追加分による `official-cats` の上書き、slug以外のchannel、未知ファイル、hash不一致、期限切れ、入力内への出力を拒否します。全入力の検証前に出力先を作りません。
+- URLのchannelとcatalogの `channelID` が一致する場合だけ配信します。同じ写真IDやJPEG hashでも、別窓や旧rootから写真を補いません。停止・撤回写真は404、期限切れ／不正／取得不能catalogは503。存在しないchannelのcatalogも取得不能として503です。未知のパスは404。`/windows/official-cats/` を旧URLの別名にはしません。
+- Aだけ止める場合、Aを `--channel-id window-a --paused` で再生成し、現在のBとlegacy出力も含めて新しいbundleを作ります。追加指定から窓を外すと次のbundleにその窓のファイルは入りません。他窓の期限は自動延長しません。
+- dry-run・実配備の順序は既存手順どおりです。この変更は確認用の既存配信へ反映していません。新しい写真・窓の供給や配信頻度も未設定です。
 
 - 更新: 元の入力を変えてpublisherで新しい版を生成し、bundle → dry-run → 配備の順で差し替える。未来の写真は、その公開時刻以降の再生成が必要。
 - 取り下げ: 対象を入力から外して新しい版を作る。公開フォルダーにも旧JPEGを残さない。Workerも現在のcatalogにないJPEGを拒否する。

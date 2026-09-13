@@ -7,7 +7,22 @@ import ImageIO
 enum OfficialWindowConfiguration {
     static var feedURL: URL? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "OfficialWindowFeedURL") as? String,
-              let parts = URLComponents(string: raw), parts.scheme == "https",
+              let url = URL(string: raw) else { return nil }
+        return validatedEndpoint(url)
+    }
+
+    static var definitions: [PublicWindowDefinition] {
+        [PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
+                                displayName: OfficialWindowCatalog.displayName,
+                                subtitle: "運営から届く猫の写真", endpoint: feedURL)]
+    }
+
+    static func definition(for windowID: String) -> PublicWindowDefinition? {
+        definitions.first { $0.id == windowID }
+    }
+
+    static func validatedEndpoint(_ url: URL?) -> URL? {
+        guard let url, let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "https",
               let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.port == nil,
               parts.query == nil, parts.fragment == nil,
@@ -17,6 +32,7 @@ enum OfficialWindowConfiguration {
 }
 
 struct OfficialWindowState: Codable, Sendable {
+    var windowID: String = OfficialWindowCatalog.sourceID
     var subscriptionID: UUID?
     var endpoint: URL?
     var catalog: OfficialWindowCatalog?
@@ -28,7 +44,26 @@ struct OfficialWindowState: Codable, Sendable {
         subscriptionID != nil && endpoint != nil
     }
     var photos: [OfficialCatPhoto] {
-        isSubscribed ? catalog?.availablePhotos(at: Date()) ?? [] : []
+        guard isSubscribed, let catalog,
+              (try? catalog.validate(at: Date(), expectedChannelID: windowID)) != nil else { return [] }
+        return catalog.availablePhotos(at: Date())
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case windowID, subscriptionID, endpoint, catalog, checkedAt, imageRevision
+    }
+}
+
+extension OfficialWindowState {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        // Only records written before public-window scoping omit this field.
+        windowID = try values.decodeIfPresent(String.self, forKey: .windowID) ?? OfficialWindowCatalog.sourceID
+        subscriptionID = try values.decodeIfPresent(UUID.self, forKey: .subscriptionID)
+        endpoint = try values.decodeIfPresent(URL.self, forKey: .endpoint)
+        catalog = try values.decodeIfPresent(OfficialWindowCatalog.self, forKey: .catalog)
+        checkedAt = try values.decodeIfPresent(Date.self, forKey: .checkedAt)
+        imageRevision = try values.decodeIfPresent(UUID.self, forKey: .imageRevision)
     }
 }
 
@@ -42,43 +77,82 @@ struct OfficialWindowStore: Sendable {
     }
     private static let processLock = NSLock()
     let directory: URL?
-    let endpoint: URL?
+    let definition: PublicWindowDefinition
+    var windowID: String { definition.id }
+    var displayName: String { definition.displayName }
+    var endpoint: URL? { OfficialWindowConfiguration.validatedEndpoint(definition.endpoint) }
+
+    init(directory: URL?, endpoint: URL?) {
+        self.init(directory: directory, definition: PublicWindowDefinition(
+            id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
+            subtitle: "運営から届く猫の写真", endpoint: endpoint
+        ))
+    }
+
+    init(directory: URL?, definition: PublicWindowDefinition) {
+        self.directory = OfficialWindowCatalog.isIdentifier(definition.id) ? directory : nil
+        self.definition = definition
+    }
+
+    static func forWindow(_ definition: PublicWindowDefinition,
+                          containerURL: URL? = SharedContainer.containerURL) -> Self {
+        let directory: URL?
+        if !OfficialWindowCatalog.isIdentifier(definition.id) {
+            directory = nil
+        } else if definition.id == OfficialWindowCatalog.sourceID {
+            directory = containerURL?.appendingPathComponent("official-window.v1", isDirectory: true)
+        } else {
+            directory = containerURL?.appendingPathComponent("public-windows.v1", isDirectory: true)
+                .appendingPathComponent(definition.id, isDirectory: true)
+        }
+        return Self(directory: directory, definition: definition)
+    }
 
     func snapshot() -> OfficialWindowState {
         (try? locked { root in
-            let state = try read(root)
-            return state.endpoint == endpoint ? state : .empty
-        }) ?? .empty
+            var state = try read(root)
+            if let catalog = state.catalog,
+               (try? catalog.validate(at: Date(), expectedChannelID: windowID)) == nil {
+                state.catalog = nil
+            }
+            return state
+        }) ?? OfficialWindowState(windowID: windowID)
     }
 
     func setSubscribed(_ subscribed: Bool) throws {
         guard !subscribed || endpoint != nil else { throw OfficialWindowError.notConfigured }
         try locked { root in
-            let state = OfficialWindowState(subscriptionID: subscribed ? UUID() : nil, endpoint: endpoint)
+            let state = OfficialWindowState(windowID: windowID, subscriptionID: subscribed ? UUID() : nil, endpoint: endpoint)
             try AtomicJSON.write(state, to: root.appendingPathComponent("state.json"))
             try purgeImages(in: root, keeping: [])
         }
     }
 
     func imageURL(for photo: OfficialCatPhoto) -> URL? {
-        imageURL(filename: photo.imageFilename)
+        try? locked { root -> URL? in
+            let state = try read(root)
+            guard state.photos.contains(photo) else { return nil }
+            let url = root.appendingPathComponent(photo.imageFilename)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
     }
 
     func imageURL(filename: String) -> URL? {
         try? locked { root -> URL? in
             let state = try read(root)
-            guard state.endpoint == endpoint, state.photos.contains(where: { $0.imageFilename == filename }) else { return nil }
+            guard state.photos.contains(where: { $0.imageFilename == filename }) else { return nil }
             let url = root.appendingPathComponent(filename)
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
     }
 
     func accept(_ catalog: OfficialWindowCatalog, for request: OfficialWindowState) throws {
-        try catalog.validate(at: Date())
+        try catalog.validate(at: Date(), expectedChannelID: windowID)
         try locked { root in
             var state = try read(root)
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
-                  state.endpoint == request.endpoint else { throw OfficialWindowError.subscriptionChanged }
+                  state.windowID == windowID, request.windowID == windowID,
+                  state.endpoint == endpoint, request.endpoint == endpoint else { throw OfficialWindowError.subscriptionChanged }
             // A slow, older request must not undo a withdrawal or a newer edition.
             guard state.catalog.map({ $0.generatedAt < catalog.generatedAt || $0 == catalog }) ?? true
             else { throw OfficialWindowError.invalidCatalog }
@@ -94,6 +168,8 @@ struct OfficialWindowStore: Sendable {
         try locked { root in
             var state = try read(root)
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
+                  state.windowID == windowID, request.windowID == windowID,
+                  state.endpoint == endpoint, request.endpoint == endpoint,
                   state.photos.contains(photo) else { throw OfficialWindowError.subscriptionChanged }
             let url = root.appendingPathComponent(photo.imageFilename)
             try data.write(to: url, options: .atomic)
@@ -107,9 +183,16 @@ struct OfficialWindowStore: Sendable {
 
     private func read(_ root: URL) throws -> OfficialWindowState {
         let url = root.appendingPathComponent("state.json")
-        do { return try AtomicJSON.read(OfficialWindowState.self, from: url) }
+        do {
+            let state = try AtomicJSON.read(OfficialWindowState.self, from: url)
+            guard state.windowID == windowID, state.endpoint == endpoint else {
+                return OfficialWindowState(windowID: windowID)
+            }
+            guard state.catalog.map({ $0.channelID == windowID }) ?? true else { throw OfficialWindowError.invalidCatalog }
+            return state
+        }
         catch {
-            if SharingFileReadFailureClassifier.disposition(error) == .missing { return .empty }
+            if SharingFileReadFailureClassifier.disposition(error) == .missing { return OfficialWindowState(windowID: windowID) }
             throw error
         }
     }
@@ -168,12 +251,15 @@ struct OfficialWindowPreview: Sendable {
 
 @MainActor
 final class OfficialWindowPreviewModel: ObservableObject {
+    let windowID: String
     @Published private(set) var content: OfficialWindowPreview?
     @Published private(set) var isLoading = false
     @Published private(set) var hasChecked = false
     @Published private(set) var failed = false
     private var generation = UUID()
     private var loadingTask: Task<Void, Never>?
+
+    init(windowID: String = OfficialWindowCatalog.sourceID) { self.windowID = windowID }
 
     func load(force: Bool = false, using fetch: @escaping () async throws -> OfficialWindowPreview) async {
         if let loadingTask { await loadingTask.value; return }
@@ -199,7 +285,7 @@ final class OfficialWindowPreviewModel: ObservableObject {
             let next = try await fetch()
             try Task.checkCancellation()
             guard request == generation else { return }
-            try next.catalog.validate(at: Date())
+            try next.catalog.validate(at: Date(), expectedChannelID: windowID)
             guard content.map({ $0.catalog.generatedAt < next.catalog.generatedAt || $0.catalog == next.catalog }) ?? true else {
                 throw OfficialWindowError.invalidCatalog
             }
@@ -235,13 +321,30 @@ private final class OfficialWindowRedirectPolicy: NSObject, URLSessionTaskDelega
 
 actor OfficialWindowClient {
     static let shared = OfficialWindowClient()
-    private var pending: (id: UUID, subscription: UUID, imageCount: Int, task: Task<Void, Error>)?
+    private struct StoreKey: Hashable {
+        let windowID: String
+        let endpoint: URL?
+        let directory: URL?
+
+        init(_ store: OfficialWindowStore) {
+            windowID = store.windowID
+            endpoint = store.endpoint
+            directory = store.directory?.standardizedFileURL
+        }
+    }
+    private struct Pending {
+        let id: UUID
+        let subscription: UUID
+        let imageCount: Int
+        let task: Task<Void, Error>
+    }
+    private var pending: [StoreKey: Pending] = [:]
     private let previewEndpoint: URL?
     #if OFFICIAL_WINDOW_CHECKS
     private var previewProtocolClasses: [AnyClass]? = nil
     #endif
 
-    init() { previewEndpoint = OfficialWindowConfiguration.feedURL }
+    init() { previewEndpoint = nil }
 
     #if OFFICIAL_WINDOW_CHECKS
     // The standalone boundary runner supplies only an in-process URLProtocol.
@@ -252,23 +355,25 @@ actor OfficialWindowClient {
     }
     #endif
 
-    func refresh(maximumImages: Int = 1) async throws {
-        let request = OfficialWindowStore.shared.snapshot()
+    func refresh(store: OfficialWindowStore = .shared, maximumImages: Int = 1) async throws {
+        let request = store.snapshot()
         guard request.isSubscribed, let subscription = request.subscriptionID else { return }
-        if let existing = pending {
+        let key = StoreKey(store)
+        let imageCount = max(1, min(6, maximumImages))
+        if let existing = pending[key] {
             let result = await existing.task.result
-            if pending?.id == existing.id { pending = nil }
-            if existing.subscription != subscription || existing.imageCount < maximumImages {
-                try await refresh(maximumImages: maximumImages)
+            if pending[key]?.id == existing.id { pending[key] = nil }
+            if existing.subscription != subscription || existing.imageCount < imageCount {
+                try await refresh(store: store, maximumImages: imageCount)
             } else {
                 try result.get()
             }
             return
         }
         let id = UUID()
-        let task = Task { try await self.performRefresh(request: request, maximumImages: maximumImages) }
-        pending = (id, subscription, maximumImages, task)
-        defer { if pending?.id == id { pending = nil } }
+        let task = Task { try await self.performRefresh(store: store, request: request, maximumImages: imageCount) }
+        pending[key] = Pending(id: id, subscription: subscription, imageCount: imageCount, task: task)
+        defer { if pending[key]?.id == id { pending[key] = nil } }
         try await task.value
     }
 
@@ -288,12 +393,21 @@ actor OfficialWindowClient {
 
     /// Read only the build-configured public endpoint. Browsing does not create
     /// a subscription, write a cache, or change any existing received content.
-    func preview() async throws -> OfficialWindowPreview {
-        guard let endpoint = previewEndpoint else { throw OfficialWindowError.notConfigured }
+    func preview(store: OfficialWindowStore = .shared) async throws -> OfficialWindowPreview {
+        var configuredEndpoint = store.endpoint
+        #if OFFICIAL_WINDOW_CHECKS
+        // Preserve the old standalone preview test initializer. Explicit
+        // scoped stores always use their own endpoint, including window B.
+        if configuredEndpoint == nil, store.windowID == OfficialWindowCatalog.sourceID {
+            configuredEndpoint = OfficialWindowConfiguration.validatedEndpoint(previewEndpoint)
+        }
+        #endif
+        guard OfficialWindowCatalog.isIdentifier(store.windowID), let endpoint = configuredEndpoint else {
+            throw OfficialWindowError.notConfigured
+        }
         let session = makeSession()
         defer { session.invalidateAndCancel() }
-        let catalog = try await fetchCatalog(endpoint, session: session)
-        try catalog.validate(at: Date())
+        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, session: session)
         guard let photo = catalog.availablePhotos(at: Date()).first else {
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
@@ -301,39 +415,42 @@ actor OfficialWindowClient {
         do {
             let data = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
             try OfficialWindowImageValidator.validate(data, photo: photo)
-            try catalog.validate(at: Date())
+            try catalog.validate(at: Date(), expectedChannelID: store.windowID)
             return OfficialWindowPreview(catalog: catalog, photo: photo, imageData: data)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             // A known new allowlist must replace the preview even if its image
             // fails. Never keep showing a photo removed by this catalog.
-            try catalog.validate(at: Date())
+            try catalog.validate(at: Date(), expectedChannelID: store.windowID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
     }
 
-    private func fetchCatalog(_ endpoint: URL, session: URLSession) async throws -> OfficialWindowCatalog {
+    private func fetchCatalog(_ endpoint: URL, expectedChannelID: String, session: URLSession) async throws -> OfficialWindowCatalog {
         let data = try await fetch(endpoint, session: session, limit: 256 * 1024, contentType: "application/json")
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(OfficialWindowCatalog.self, from: data)
+        let catalog = try decoder.decode(OfficialWindowCatalog.self, from: data)
+        try catalog.validate(at: Date(), expectedChannelID: expectedChannelID)
+        return catalog
     }
 
-    private func performRefresh(request: OfficialWindowState, maximumImages: Int) async throws {
-        guard let endpoint = request.endpoint else { return }
+    private func performRefresh(store: OfficialWindowStore, request: OfficialWindowState, maximumImages: Int) async throws {
+        guard request.windowID == store.windowID, let endpoint = request.endpoint,
+              endpoint == store.endpoint else { throw OfficialWindowError.subscriptionChanged }
         let session = makeSession()
         defer { session.invalidateAndCancel() }
-        let catalog = try await fetchCatalog(endpoint, session: session)
+        let catalog = try await fetchCatalog(endpoint, expectedChannelID: store.windowID, session: session)
         // Persist the new allowlist before media downloads: removal/pause works
         // even when a new photo subsequently fails to download.
-        try OfficialWindowStore.shared.accept(catalog, for: request)
+        try store.accept(catalog, for: request)
         for photo in catalog.availablePhotos(at: Date()).prefix(max(1, min(6, maximumImages))) {
             try Task.checkCancellation()
-            if OfficialWindowStore.shared.imageURL(for: photo) != nil { continue }
+            if store.imageURL(for: photo) != nil { continue }
             let url = endpoint.deletingLastPathComponent().appendingPathComponent(photo.imageFilename)
             let image = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
-            try OfficialWindowStore.shared.saveImage(image, photo: photo, for: request)
+            try store.saveImage(image, photo: photo, for: request)
         }
     }
 

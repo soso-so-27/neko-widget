@@ -2,6 +2,34 @@ import XCTest
 
 final class OfficialWindowUITests: XCTestCase {
     @MainActor
+    func testTwoPublicWindowsKeepSamePhotoIDAndStopSeparate() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-two-public",
+                               "--window-list-subscribed", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let original = app.buttons["official-window-entry"]
+        let second = app.buttons["public-window-entry-nap-cats"]
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        second.tap()
+        XCTAssertTrue(app.navigationBars["おひるね"].waitForExistence(timeout: 5))
+        app.buttons["official-window-photo-fixture-photo"].tap()
+        XCTAssertTrue(app.navigationBars["おひるねの猫"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        stopReceiving(app, windowName: "おひるね")
+        XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
+        app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
+        XCTAssertFalse(second.exists, "Stopping one public window must remove only that receiving card")
+        original.tap()
+        app.buttons["official-window-photo-fixture-photo"].tap()
+        XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5),
+                      "The same photo ID in another window must keep its own photo")
+        capture("two-public-windows-original-after-stop", app)
+    }
+
+    @MainActor
     func testDiscoverReceiveGuideAndStopUpdatesWindowList() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -358,22 +386,22 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
-    private func stopReceiving(_ app: XCUIApplication) {
+    private func stopReceiving(_ app: XCUIApplication, windowName: String = "どこかの猫") {
         let manage = app.buttons["official-window-manage"]
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
         manage.tap()
         app.buttons["official-window-stop"].tap()
-        let confirm = receivingConfirmationButton("official-window-stop-confirm", in: app)
+        let confirm = receivingConfirmationButton("official-window-stop-confirm", in: app, windowName: windowName)
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Stopping needs a deliberate confirmation")
         confirm.tap()
     }
 
     @MainActor
-    private func receivingConfirmationButton(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+    private func receivingConfirmationButton(_ identifier: String, in app: XCUIApplication, windowName: String = "どこかの猫") -> XCUIElement {
         // iOS 26's recorded AX tree exposes a parent and child Button with
         // the same ID/label for one alert action. Scope to this exact alert
         // before selecting that action; the post-tap subscription checks stay.
-        app.alerts["「どこかの猫」の受け取りをやめますか？"]
+        app.alerts["「\(windowName)」の受け取りをやめますか？"]
             .buttons.matching(identifier: identifier).firstMatch
     }
 

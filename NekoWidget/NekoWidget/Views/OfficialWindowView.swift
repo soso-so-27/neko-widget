@@ -48,6 +48,22 @@ struct WindowPhotoCard<Photo: View>: View {
 }
 
 @MainActor
+struct PublicWindowPresentationSource: Identifiable {
+    let store: OfficialWindowStore
+    let refresh: () async throws -> Void
+    let preview: () async throws -> OfficialWindowPreview
+    var id: String { store.windowID }
+
+    init(store: OfficialWindowStore,
+         refresh: (() async throws -> Void)? = nil,
+         preview: (() async throws -> OfficialWindowPreview)? = nil) {
+        self.store = store
+        self.refresh = refresh ?? { try await OfficialWindowClient.shared.refresh(store: store, maximumImages: 6) }
+        self.preview = preview ?? { try await OfficialWindowClient.shared.preview(store: store) }
+    }
+}
+
+@MainActor
 struct OfficialWindowEntryCard: View {
     enum Presentation: Equatable { case list, discovery }
     let state: OfficialWindowState
@@ -55,21 +71,19 @@ struct OfficialWindowEntryCard: View {
     let refreshFeed: () async throws -> Void
     let presentation: Presentation
     let previewFeed: () async throws -> OfficialWindowPreview
-    @StateObject private var preview = OfficialWindowPreviewModel()
+    @StateObject private var preview: OfficialWindowPreviewModel
 
-    init(state: OfficialWindowState = OfficialWindowStore.shared.snapshot(),
+    init(state: OfficialWindowState? = nil,
          store: OfficialWindowStore = .shared,
-         refreshFeed: @escaping () async throws -> Void = {
-             try await OfficialWindowClient.shared.refresh(maximumImages: 6)
-         }, presentation: Presentation = .list,
-         previewFeed: @escaping () async throws -> OfficialWindowPreview = {
-             try await OfficialWindowClient.shared.preview()
-         }) {
-        self.state = state
+         refreshFeed: (() async throws -> Void)? = nil, presentation: Presentation = .list,
+         previewFeed: (() async throws -> OfficialWindowPreview)? = nil) {
+        let source = PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
+        self.state = state ?? store.snapshot()
         self.store = store
-        self.refreshFeed = refreshFeed
+        self.refreshFeed = source.refresh
         self.presentation = presentation
-        self.previewFeed = previewFeed
+        self.previewFeed = source.preview
+        _preview = StateObject(wrappedValue: OfficialWindowPreviewModel(windowID: store.windowID))
     }
 
     private var photoDeadlines: [Date] {
@@ -84,7 +98,7 @@ struct OfficialWindowEntryCard: View {
                                previewFeed: previewFeed, preview: preview)
         } label: {
             if presentation == .list {
-                WindowPhotoCard(title: OfficialWindowCatalog.displayName, kind: .official) { cover }
+                WindowPhotoCard(title: store.displayName, kind: .official) { cover }
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Color(.tertiarySystemFill).aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -92,7 +106,7 @@ struct OfficialWindowEntryCard: View {
                             cover.frame(width: geometry.size.width, height: geometry.size.height).clipped()
                         } }
                     HStack {
-                        Text(OfficialWindowCatalog.displayName).font(.headline)
+                        Text(store.displayName).font(.headline)
                         Spacer()
                         if state.isSubscribed {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
@@ -105,8 +119,8 @@ struct OfficialWindowEntryCard: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("official-window-entry")
-        .accessibilityLabel("\(OfficialWindowCatalog.displayName)、写真を受け取るまど、公式")
+        .accessibilityIdentifier(store.windowID == OfficialWindowCatalog.sourceID ? "official-window-entry" : "public-window-entry-\(store.windowID)")
+        .accessibilityLabel("\(store.displayName)、写真を受け取るまど、公式")
         .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
                              (state.isSubscribed ? state.photos.first : preview.content?.availablePhoto())?.credit]
             .compactMap { $0 }.joined(separator: "。"))
@@ -172,17 +186,15 @@ struct OfficialWindowView: View {
     }
 
     init(initialPhotoID: String? = nil, store: OfficialWindowStore = .shared,
-          refreshFeed: @escaping () async throws -> Void = {
-              try await OfficialWindowClient.shared.refresh(maximumImages: 6)
-          },
-          previewFeed: @escaping () async throws -> OfficialWindowPreview = {
-              try await OfficialWindowClient.shared.preview()
-          }, preview: OfficialWindowPreviewModel? = nil) {
+          refreshFeed: (() async throws -> Void)? = nil,
+          previewFeed: (() async throws -> OfficialWindowPreview)? = nil,
+          preview: OfficialWindowPreviewModel? = nil) {
+        let source = PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
         self.initialPhotoID = initialPhotoID
         self.store = store
-        self.refreshFeed = refreshFeed
-        self.previewFeed = previewFeed
-        _preview = StateObject(wrappedValue: preview ?? OfficialWindowPreviewModel())
+        self.refreshFeed = source.refresh
+        self.previewFeed = source.preview
+        _preview = StateObject(wrappedValue: preview ?? OfficialWindowPreviewModel(windowID: store.windowID))
         // The Widget already cached this photo. Resolve it before the first
         // frame, rather than opening the overview and then another sheet.
         _state = State(initialValue: store.snapshot())
@@ -252,7 +264,7 @@ struct OfficialWindowView: View {
                 .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .sheet(isPresented: $showsAbout) { about.environment(\.dynamicTypeSize, dynamicTypeSize) }
-        .alert("「\(OfficialWindowCatalog.displayName)」の受け取りをやめますか？",
+        .alert("「\(store.displayName)」の受け取りをやめますか？",
                isPresented: $confirmsStop) {
             Button("受け取りをやめる", role: .destructive) { changeSubscription(false) }
                 .accessibilityIdentifier("official-window-stop-confirm")
@@ -352,7 +364,7 @@ struct OfficialWindowView: View {
             }
             .padding(20)
         }
-        .navigationTitle(OfficialWindowCatalog.displayName)
+        .navigationTitle(store.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
@@ -451,7 +463,7 @@ struct OfficialWindowView: View {
                             Text("1. ホーム画面にある「ねこのまど」のウィジェットを長押しして、「ウィジェットを編集」を開きます。")
                             Text("2. 「表示する写真」で、次の表示元を選びます。")
                         }
-                        Label("どこかの猫 · 公式まど", systemImage: "pawprint.fill")
+                        Label("\(store.displayName) · 公式まど", systemImage: "pawprint.fill")
                             .font(.headline)
                             .accessibilityIdentifier("official-window-widget-source")
                     }
@@ -859,11 +871,14 @@ final class OfficialWindowFixtureModel: ObservableObject {
     @Published var finishLinkedRefresh = false
     @Published var linkedRefreshFailed = false
 
-    init() {
+    init(definition: PublicWindowDefinition? = nil) {
         let unavailable = CommandLine.arguments.contains("--official-window-unconfigured")
         store = OfficialWindowStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("official-fixture-" + UUID().uuidString),
-            endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json")
+            definition: definition ?? PublicWindowDefinition(
+                id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
+                subtitle: "確認用の猫の写真",
+                endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json"))
         )
         if CommandLine.arguments.contains("--official-window-linked-photo") {
             linkedPhotoID = CommandLine.arguments.contains("--official-window-missing-photo") ? "removed-photo" : "fixture-photo"
@@ -906,7 +921,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
         guard request.isSubscribed else { return }
         let count = CommandLine.arguments.contains("--official-window-recent-photos") ? 3 : 1
         let items = try (0..<count).map { try fixturePhoto(index: $0) }
-        let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: "official-cats", enabled: true,
+        let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: store.windowID, enabled: true,
                                            generatedAt: fixtureDate, validUntil: fixtureDate.addingTimeInterval(86400),
                                            photos: items.map(\.photo))
         try store.accept(catalog, for: request)
@@ -916,13 +931,13 @@ final class OfficialWindowFixtureModel: ObservableObject {
 
     func preview() async throws -> OfficialWindowPreview {
         let item = try fixturePhoto(index: 0)
-        let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: "official-cats", enabled: true,
+        let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: store.windowID, enabled: true,
                                            generatedAt: fixtureDate, validUntil: fixtureDate.addingTimeInterval(86400), photos: [item.photo])
         return OfficialWindowPreview(catalog: catalog, photo: item.photo, imageData: item.data)
     }
 
     private func fixturePhoto(index: Int) throws -> (photo: OfficialCatPhoto, data: Data) {
-        let original = MomentExperiencePhotoFixture.image(index: index)
+        let original = MomentExperiencePhotoFixture.image(index: index + (store.windowID == OfficialWindowCatalog.sourceID ? 0 : 1))
         // Match the reported shelf: a portrait official photo beside a private
         // photo, with an AI credit that must not change the card's height.
         let isMixedShelf = CommandLine.arguments.contains("--window-list-mixed")
@@ -946,7 +961,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
-            catID: "fixture-cat", catName: "確認用の猫", credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
+            catID: "fixture-cat", catName: store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫", credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
             caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
             expiresAt: fixtureDate.addingTimeInterval(CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400),

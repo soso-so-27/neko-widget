@@ -25,6 +25,13 @@ function environment(value = catalog(), extra = {}) {
 }
 const fetch = (pathname, env, init) => worker.fetch(new Request(`https://official.example${pathname}`, init), env);
 
+function addChannel(env, id, value = catalog()) {
+  value.channelID = id;
+  env.assets.set(`/windows/${id}/catalog.json`, JSON.stringify(value));
+  env.assets.set(`/windows/${id}/${filename}`, bytes);
+  return value;
+}
+
 test('serves the current catalog and matching JPEG without caching', async () => {
   const env = environment();
   assert.equal((await fetch('/catalog.json', env)).status, 200);
@@ -109,5 +116,85 @@ test('a deadline crossed during image I/O prevents the final image response', as
       return result;
     };
     assert.equal((await fetch(`/${filename}`, env)).status, catalogExpires ? 503 : 404);
+  }
+});
+
+test('channels isolate matching photo IDs and hashes, including a stopped channel', async () => {
+  const env = environment();
+  const a = addChannel(env, 'window-a'), b = addChannel(env, 'window-b');
+  for (const [prefix, id] of [['', 'official-cats'], ['/windows/window-a', 'window-a'], ['/windows/window-b', 'window-b']]) {
+    assert.equal((await (await fetch(`${prefix}/catalog.json`, env)).json()).channelID, id);
+    const response = await fetch(`${prefix}/${filename}`, env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  }
+  a.enabled = false; a.photos = [];
+  addChannel(env, 'window-a', a);
+  assert.equal((await (await fetch('/windows/window-a/catalog.json', env)).json()).enabled, false);
+  assert.equal((await fetch(`/windows/window-a/${filename}`, env)).status, 404);
+  assert.deepEqual(await (await fetch('/windows/window-b/catalog.json', env)).json(), b);
+  assert.equal((await fetch(`/windows/window-b/${filename}`, env)).status, 200);
+  assert.equal((await fetch(`/${filename}`, env)).status, 200);
+});
+
+test('missing, withdrawn or mismatched channel data never falls back to another channel', async () => {
+  const env = environment();
+  addChannel(env, 'window-a'); addChannel(env, 'window-b');
+  env.assets.delete(`/windows/window-a/${filename}`);
+  assert.equal((await fetch(`/windows/window-a/${filename}`, env)).status, 503);
+  const withdrawn = catalog(); withdrawn.photos = [];
+  addChannel(env, 'window-a', withdrawn);
+  assert.equal((await fetch(`/windows/window-a/${filename}`, env)).status, 404);
+  env.assets.set('/windows/window-a/catalog.json', env.assets.get('/windows/window-b/catalog.json'));
+  for (const suffix of ['catalog.json', filename]) assert.equal((await fetch(`/windows/window-a/${suffix}`, env)).status, 503);
+  env.assets.set('/catalog.json', env.assets.get('/windows/window-b/catalog.json'));
+  assert.equal((await fetch('/catalog.json', env)).status, 503);
+  assert.equal((await fetch('/windows/unknown/catalog.json', env)).status, 503);
+  assert.equal((await fetch(`/windows/window-b/${filename}`, env)).status, 200);
+});
+
+test('channel paths reject aliases, traversal spellings and private files before asset access', async () => {
+  const env = environment();
+  for (const pathname of [
+    '/windows/official-cats/catalog.json', '/windows/UPPER/catalog.json', `/windows/${'a'.repeat(65)}/catalog.json`,
+    '/windows/a%2fb/catalog.json', '/windows/%2e%2e%2f/catalog.json', '/windows/window-a/source.json',
+    '/windows/window-a/catalog.json?x=1', '/windows/window-a/%63atalog.json', '/windows/window-a/',
+  ]) assert.equal((await fetch(pathname, env)).status, 404, pathname);
+  assert.equal(env.calls.length, 0);
+});
+
+test('channel asset redirects are rejected without forwarding input headers', async () => {
+  for (const redirectCatalog of [true, false]) {
+    const env = environment(); addChannel(env, 'window-a');
+    const underlying = env.OFFICIAL_ASSETS.fetch;
+    env.OFFICIAL_ASSETS.fetch = async request => {
+      assert.equal(request.redirect, 'manual');
+      assert.equal([...request.headers].length, 0);
+      if (new URL(request.url).pathname.endsWith(redirectCatalog ? '/catalog.json' : `/${filename}`)) {
+        return new Response(null, { status: 302, headers: { Location: `https://other.example/${filename}` } });
+      }
+      return underlying(request);
+    };
+    assert.equal((await fetch(`/windows/window-a/${filename}`, env, { headers: { Cookie: 'private=1' } })).status, 503);
+  }
+});
+
+test('channel image reply rechecks photo and catalog deadlines independently', async t => {
+  let clock = now;
+  t.mock.method(Date, 'now', () => clock);
+  for (const catalogExpires of [false, true]) {
+    clock = now;
+    const env = environment(), a = catalog();
+    if (catalogExpires) a.validUntil = utc(now + 1000); else a.photos[0].expiresAt = utc(now + 1000);
+    addChannel(env, 'window-a', a); addChannel(env, 'window-b');
+    const underlying = env.OFFICIAL_ASSETS.fetch;
+    env.OFFICIAL_ASSETS.fetch = async request => {
+      const result = await underlying(request);
+      if (new URL(request.url).pathname === `/windows/window-a/${filename}`) clock = now + 2000;
+      return result;
+    };
+    assert.equal((await fetch(`/windows/window-a/${filename}`, env)).status, catalogExpires ? 503 : 404);
+    assert.equal((await fetch(`/windows/window-b/${filename}`, env)).status, 200);
   }
 });

@@ -155,7 +155,7 @@ struct MainTabView: View {
             .badge(hasUnreadMemoriesSummary ? 1 : 0)
             .tag(AppTab.memories)
 
-            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.feedURL != nil {
+            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
                 NavigationStack {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
@@ -1054,34 +1054,32 @@ private struct WindowListView: View {
     @State private var pairingPhases: [String: PairingPhase] = [:]
     @State private var catalogReloadRevision = 0
     @State private var requestedSetupPath: PairingSetupPath?
-    @State private var officialState: OfficialWindowState
+    @State private var publicStates: [String: OfficialWindowState]
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
     @State private var windowErrors: Set<String> = []
 
     let supportsPrivateWindows: Bool
-    let officialStore: OfficialWindowStore
-    let refreshOfficialFeed: () async throws -> Void
-    let previewOfficialFeed: () async throws -> OfficialWindowPreview
+    let publicWindows: [PublicWindowPresentationSource]
 
     init(opensActiveWindow: Binding<Bool>,
          pendingFamilyMomentSourceDigest: Binding<String?>,
          pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
          supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible,
          officialStore: OfficialWindowStore = .shared,
-          refreshOfficialFeed: @escaping () async throws -> Void = {
-              try await OfficialWindowClient.shared.refresh(maximumImages: 6)
-          },
-          previewOfficialFeed: @escaping () async throws -> OfficialWindowPreview = {
-              try await OfficialWindowClient.shared.preview()
-          }) {
+         refreshOfficialFeed: (() async throws -> Void)? = nil,
+         previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
+         publicWindows: [PublicWindowPresentationSource]? = nil) {
         _opensActiveWindow = opensActiveWindow
         _pendingFamilyMomentSourceDigest = pendingFamilyMomentSourceDigest
         _pendingFamilyNotificationRoute = pendingFamilyNotificationRoute
         self.supportsPrivateWindows = supportsPrivateWindows
-        self.officialStore = officialStore
-        self.refreshOfficialFeed = refreshOfficialFeed
-        self.previewOfficialFeed = previewOfficialFeed
-        _officialState = State(initialValue: officialStore.snapshot())
+        let sources = publicWindows ?? OfficialWindowConfiguration.definitions.map { definition in
+            definition.id == officialStore.windowID
+                ? PublicWindowPresentationSource(store: officialStore, refresh: refreshOfficialFeed, preview: previewOfficialFeed)
+                : PublicWindowPresentationSource(store: .forWindow(definition))
+        }
+        self.publicWindows = sources
+        _publicStates = State(initialValue: Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.store.snapshot()) }))
     }
 
     private var cardColumns: [GridItem] {
@@ -1089,17 +1087,27 @@ private struct WindowListView: View {
               count: dynamicTypeSize >= .xxxLarge ? 1 : 2)
     }
 
-    private var officialCard: some View {
-        OfficialWindowEntryCard(state: officialState, store: officialStore,
-                                refreshFeed: refreshOfficialFeed, previewFeed: previewOfficialFeed)
+    private var receivingPublicWindows: [PublicWindowPresentationSource] {
+        publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
+    }
+
+    private func publicCard(_ source: PublicWindowPresentationSource,
+                            presentation: OfficialWindowEntryCard.Presentation = .list) -> some View {
+        OfficialWindowEntryCard(state: publicStates[source.id], store: source.store,
+                                refreshFeed: source.refresh, presentation: presentation,
+                                previewFeed: source.preview)
+    }
+
+    private func reloadPublicStates() {
+        publicStates = Dictionary(uniqueKeysWithValues: publicWindows.map { ($0.id, $0.store.snapshot()) })
     }
 
     private var discovery: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                OfficialWindowEntryCard(state: officialState, store: officialStore,
-                                        refreshFeed: refreshOfficialFeed, presentation: .discovery,
-                                        previewFeed: previewOfficialFeed)
+                ForEach(publicWindows) { source in
+                    publicCard(source, presentation: .discovery)
+                }
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -1148,12 +1156,12 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if !connectedWindows.isEmpty || officialState.isSubscribed {
+                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty {
                     LazyVGrid(columns: cardColumns, spacing: 14) {
                         ForEach(connectedWindows) { window in
                             windowCard(window)
                         }
-                        if officialState.isSubscribed { officialCard }
+                        ForEach(receivingPublicWindows) { source in publicCard(source) }
                     }
                     .accessibilityIdentifier("window-list-receiving")
                 }
@@ -1170,7 +1178,7 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if windows.isEmpty, !officialState.isSubscribed {
+                    if windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
                     } else {
                         if !setupWindows.isEmpty {
@@ -1203,9 +1211,9 @@ private struct WindowListView: View {
             }
         }
         .background(Color(.systemGroupedBackground))
-        .onAppear { officialState = officialStore.snapshot() }
+        .onAppear { reloadPublicStates() }
         .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
-            officialState = officialStore.snapshot()
+            reloadPublicStates()
         }
         .navigationDestination(isPresented: $opensActiveWindow) {
             activeWindowDestination
@@ -1534,11 +1542,11 @@ private struct WindowListView: View {
     }
 
     private func reload() async {
-        officialState = officialStore.snapshot()
-        if officialState.isSubscribed {
+        reloadPublicStates()
+        for source in receivingPublicWindows {
             Task {
-                try? await refreshOfficialFeed()
-                officialState = officialStore.snapshot()
+                try? await source.refresh()
+                publicStates[source.id] = source.store.snapshot()
             }
         }
 #if DEBUG
@@ -1802,6 +1810,9 @@ private struct SubtleWindowThumbnail: View {
 /// account bootstrap and the real public network are not used by this fixture.
 struct WindowListNavigationFixture: View {
     @StateObject private var model = OfficialWindowFixtureModel()
+    @StateObject private var secondModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
+        id: "nap-cats", displayName: "おひるね", subtitle: "眠る猫の写真",
+        endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")))
     @State private var selectedTab = 2
     @State private var opensActiveWindow = false
 
@@ -1816,7 +1827,11 @@ struct WindowListNavigationFixture: View {
                                supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed"),
                                officialStore: model.store,
                                refreshOfficialFeed: { try await model.refresh() },
-                               previewOfficialFeed: { try await model.preview() })
+                               previewOfficialFeed: { try await model.preview() },
+                               publicWindows: CommandLine.arguments.contains("--window-list-two-public") ? [
+                                PublicWindowPresentationSource(store: model.store, refresh: { try await model.refresh() }, preview: { try await model.preview() }),
+                                PublicWindowPresentationSource(store: secondModel.store, refresh: { try await secondModel.refresh() }, preview: { try await secondModel.preview() })
+                               ] : nil)
             }
             .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
         }

@@ -135,7 +135,14 @@ struct AppRootView: View {
         }
         .sheet(item: $officialWindowRoute) { route in
             NavigationStack {
-                OfficialWindowView(initialPhotoID: route.photoID)
+                Group {
+                    if let definition = OfficialWindowConfiguration.definition(for: route.windowID) {
+                        OfficialWindowView(initialPhotoID: route.photoID, store: .forWindow(definition))
+                    } else {
+                        ContentUnavailableView("このまどは利用できません", systemImage: "rectangle.slash",
+                                               description: Text("まど一覧から、受け取るまどを選べます。"))
+                    }
+                }
                     .id(officialWindowPresentationID)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {

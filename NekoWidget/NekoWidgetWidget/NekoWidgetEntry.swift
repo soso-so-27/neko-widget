@@ -65,8 +65,8 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
-        if photoSourceIdentifier == OfficialWindowCatalog.sourceID {
-            return OfficialWindowRoute(photoID: officialPhoto?.id).url
+        if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
+            return OfficialWindowRoute(windowID: windowID, photoID: officialPhoto?.id).url
         }
         guard emptyStateReason != .sourceUnavailable else { return nil }
         if WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier) {

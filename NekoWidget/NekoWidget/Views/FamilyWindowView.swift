@@ -1086,7 +1086,7 @@ struct FamilyWindowView: View {
         .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「写真源」で「\(model.windowDisplayName)」を選びます。")
+            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
         }
     }
 
