@@ -209,7 +209,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         # Extra comparisons remain independent of app UI failures, reuse only
         # the Gallery test, and cannot erase a preceding app UI failure.
         self.assertIn('if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then\n    RUN_WIDGET_GALLERY=true', runtime)
-        scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
+        scenarios = runtime.index('for widget_scenario in normal long-white-large no-caption; do')
         normal_failure = runtime.index('if (( composer_status != 0 )); then')
         self.assertGreater(normal_failure, scenarios)
         self.assertIn('return "$composer_status"', runtime[normal_failure:])
@@ -233,7 +233,10 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.assertIn(reset, preparation)
             reset_positions.append(preparation.index(reset))
         self.assertEqual(reset_positions, sorted(reset_positions))
-        self.assertIn('prepare_simulator_and_build "$simulator_udid"', scenario_body)
+        self.assertIn('create_test_simulator widget_simulator_udid', scenario_body)
+        self.assertIn('prepare_simulator_and_build "$widget_simulator_udid" --fresh', scenario_body)
+        self.assertIn('if [[ "$widget_scenario" == normal ]]; then', scenario_body)
+        self.assertIn('xcrun simctl bootstatus "$widget_simulator_udid" -b || return $?', scenario_body)
         self.assertIn('build-for-testing || return $?', scenario_body)
         self.assertIn('test-without-building || widget_scenario_status=$?', scenario_body)
         self.assertIn('-derivedDataPath "$DERIVED_DATA_DIRECTORY"', scenario_body)

@@ -20,6 +20,8 @@ REQUESTED_RUNTIMES=(
 )
 
 SELECTED_UDIDS=()
+CREATED_UDIDS=()
+UI_PIDS=()
 APP_BUNDLE_ID=""
 APP_GROUP_ID=""
 
@@ -36,6 +38,10 @@ if (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
     echo "The requested scope did not select any native UI tests." >&2
     exit 1
 fi
+UI_PARTITION_DIRECTORY="$ARTIFACT_DIRECTORY/ui-partition"
+python3 "$PROJECT_DIRECTORY/ci/test-balanced-ui-shards.py"
+python3 "$PROJECT_DIRECTORY/ci/balanced_ui_shards.py" \
+    --scope "$RUNTIME_SCOPE" --output "$UI_PARTITION_DIRECTORY"
 RUN_WIDGET_GALLERY=false
 if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then
     RUN_WIDGET_GALLERY=true
@@ -95,18 +101,60 @@ cleanup_runtime() {
     return "$cleanup_status"
 }
 
+# Assign through the caller's variable: command substitution would lose the
+# owned-UDID registration and leave a Simulator behind during failure cleanup.
+create_test_simulator() {
+    local destination_variable="$1"
+    local purpose="$2"
+    local device_type="$3"
+    local runtime="$4"
+    local created_udid=""
+    created_udid="$(xcrun simctl create "Neko-CI-$purpose" "$device_type" "$runtime")" || return $?
+    if [[ ! "$created_udid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+        echo "Simulator creation did not return a UDID." >&2
+        return 1
+    fi
+    CREATED_UDIDS+=("$created_udid")
+    printf -v "$destination_variable" '%s' "$created_udid"
+}
+
+discard_test_simulator() {
+    local simulator_udid="$1"
+    local index=""
+    xcrun simctl shutdown "$simulator_udid" >/dev/null 2>&1 || true
+    xcrun simctl delete "$simulator_udid" || return $?
+    for index in "${!CREATED_UDIDS[@]}"; do
+        if [[ "${CREATED_UDIDS[$index]}" == "$simulator_udid" ]]; then
+            CREATED_UDIDS[$index]=""
+        fi
+    done
+}
+
 cleanup_all() {
     local original_status=$?
     local simulator_udid=""
 
     trap - EXIT
     set +e
-    for simulator_udid in "${SELECTED_UDIDS[@]}"; do
+    # Join outstanding xcodebuild children before touching their Simulators.
+    local child_pid=""
+    for child_pid in ${UI_PIDS[@]+"${UI_PIDS[@]}"}; do
+        [[ -z "$child_pid" ]] || kill "$child_pid" 2>/dev/null || true
+    done
+    for child_pid in ${UI_PIDS[@]+"${UI_PIDS[@]}"}; do
+        [[ -z "$child_pid" ]] || wait "$child_pid" 2>/dev/null || true
+    done
+    for simulator_udid in ${CREATED_UDIDS[@]+"${CREATED_UDIDS[@]}"}; do
+        [[ -z "$simulator_udid" ]] || discard_test_simulator "$simulator_udid" || true
+    done
+    for simulator_udid in ${SELECTED_UDIDS[@]+"${SELECTED_UDIDS[@]}"}; do
         cleanup_runtime "$simulator_udid" || true
     done
     exit "$original_status"
 }
 trap cleanup_all EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 printf 'Sharing runtime matrix started at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 xcrun simctl list devices available --json > "$DEVICE_INVENTORY"
@@ -307,20 +355,13 @@ PY
             --renderer-version "$RENDERER_VERSION" \
             || validator_status=$?
     fi
-    # After ordinary runtime validation, use the same iOS 26 Simulator for UI
+    # After ordinary runtime validation, use dedicated iOS 26 Simulators for UI
     # review. Only these final test builds enable Widget Gallery fixture pixels.
     # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
     if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
         local composer_status=0
-        local composer_result="$runtime_artifacts/MomentComposer.xcresult"
         xcrun simctl terminate "$simulator_udid" "$APP_BUNDLE_ID" >/dev/null 2>&1 || true
         defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
-        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
-            AppleKeyboards -array ja_JP-Kana en_US
-        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
-            AppleLanguages -array ja
-        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
-            AppleLocale -string ja_JP
         # Export only the three runtime-validated JPEGs derived from the known
         # portrait. Reuse those exact bytes in normal and no-caption Gallery
         # builds; the separate white-background comparison remains synthetic.
@@ -383,16 +424,50 @@ for name, filename in [
     source = source.replace(marker, base64.b64encode(image).decode("ascii"))
 view.write_text(source, encoding="utf-8")
 PY
-        # Keep the same fixture preparation/build for full and mapped UI.
-        # Only test selection and the extra Gallery builds vary by scope.
-        xcodebuild \
+        # One normal fixture build feeds both explicit app UI shards and the
+        # normal Gallery capture. No build writes occur while UI shards run.
+        local device_type=""
+        device_type="$(python3 - "$DEVICE_INVENTORY" "$runtime" "$simulator_udid" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+devices = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["devices"]
+device = next(device for device in devices[sys.argv[2]] if device["udid"] == sys.argv[3])
+device_type = device.get("deviceTypeIdentifier", "")
+if not device_type.startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-"):
+    raise SystemExit("The selected iPhone device type is unavailable")
+print(device_type)
+PY
+        )" || return $?
+        xcrun simctl shutdown "$simulator_udid" || return $?
+        local shard=""
+        local ui_udid=""
+        local ui_primary_udid=""
+        local ui_index=0
+        local ui_status=0
+        local ui_result=""
+        local ui_test_manifest=""
+        local -a ui_names=()
+        local -a ui_udids=()
+        local -a ui_statuses=()
+        local -a ui_arguments=()
+        local widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+        for shard in a b; do
+            [[ -s "$UI_PARTITION_DIRECTORY/shard-$shard.txt" ]] || continue
+            create_test_simulator ui_udid "UI-$shard" "$device_type" "$runtime" || return $?
+            ui_names+=("$shard")
+            ui_udids+=("$ui_udid")
+        done
+        ui_primary_udid="${ui_udids[0]}"
+        prepare_simulator_and_build "$ui_primary_udid" --fresh xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,id=$simulator_udid" \
+            -destination "platform=iOS Simulator,id=$ui_primary_udid" \
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
-            -resultBundlePath "$composer_result" \
+            -resultBundlePath "$runtime_artifacts/MomentComposer-build.xcresult" \
             "${COMPOSER_TEST_ARGUMENTS[@]}" \
             -parallel-testing-enabled NO \
             -testLanguage ja \
@@ -402,27 +477,98 @@ PY
             CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             'WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE' \
-            test || composer_status=$?
-        if [[ -d "$composer_result" ]]; then
-            xcrun xcresulttool export attachments --path "$composer_result" \
-                --output-path "$runtime_artifacts/composer-screenshots"
-        fi
-        # Reuse DerivedData, but reset the disposable Simulator between
-        # fixture builds. WidgetKit can otherwise serve the previous Gallery
-        # snapshot even after Xcode installs the newly compiled extension.
+            build-for-testing || return $?
+        # Run the prepared test manifest directly. Concurrent workers must not
+        # resolve/build the same scheme or write to a shared build database.
+        ui_test_manifest="$(python3 - "$DERIVED_DATA_DIRECTORY/Build/Products" <<'PY'
+import sys
+from pathlib import Path
+
+candidates = list(Path(sys.argv[1]).glob("NekoWidget_*.xctestrun"))
+if len(candidates) != 1:
+    raise SystemExit("Expected exactly one prepared NekoWidget test manifest")
+print(candidates[0].resolve())
+PY
+        )" || return $?
+        # Configure both before launching either test process. Each has its own
+        # UDID, result bundle and log, with Xcode's automatic cloning disabled.
+        for ui_udid in "${ui_udids[@]}"; do
+            if [[ "$ui_udid" != "$ui_primary_udid" ]]; then
+                xcrun simctl boot "$ui_udid" || return $?
+                xcrun simctl bootstatus "$ui_udid" -b || return $?
+            fi
+            xcrun simctl spawn "$ui_udid" defaults write NSGlobalDomain AppleKeyboards -array ja_JP-Kana en_US || return $?
+            xcrun simctl spawn "$ui_udid" defaults write NSGlobalDomain AppleLanguages -array ja || return $?
+            xcrun simctl spawn "$ui_udid" defaults write NSGlobalDomain AppleLocale -string ja_JP || return $?
+        done
+        UI_PIDS=()
+        for ui_index in "${!ui_names[@]}"; do
+            shard="${ui_names[$ui_index]}"
+            ui_arguments=()
+            while IFS= read -r test_argument; do
+                ui_arguments+=("$test_argument")
+            done < "$UI_PARTITION_DIRECTORY/shard-$shard.txt"
+            printf 'App UI shard %s started at %s\n' "$shard" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            xcodebuild \
+                -xctestrun "$ui_test_manifest" \
+                -destination "platform=iOS Simulator,id=${ui_udids[$ui_index]}" \
+                -resultBundlePath "$runtime_artifacts/MomentComposer-$shard.xcresult" \
+                "${ui_arguments[@]}" -parallel-testing-enabled NO \
+                -testLanguage ja -testRegion JP \
+                test-without-building > "$runtime_artifacts/ui-shard-$shard.log" 2>&1 &
+            UI_PIDS+=("$!")
+        done
+        # Wait for BOTH even if the first fails. Aggregate before Gallery and
+        # retain each exit status; no failed shard becomes a successful run.
+        for ui_index in "${!ui_names[@]}"; do
+            ui_status=0
+            wait "${UI_PIDS[$ui_index]}" || ui_status=$?
+            UI_PIDS[$ui_index]=""
+            ui_statuses+=("$ui_status")
+            if (( ui_status != 0 )); then
+                composer_status=1
+            fi
+        done
+        python3 - "$runtime_artifacts/ui-shard-results.json" "${ui_names[*]}" "${ui_statuses[*]}" <<'PY' || return $?
+import json
+import sys
+from pathlib import Path
+
+rows = [{"shard": name, "exitStatus": int(status)}
+        for name, status in zip(sys.argv[2].split(), sys.argv[3].split(), strict=True)]
+Path(sys.argv[1]).write_text(json.dumps({"schemaVersion": 1, "results": rows,
+    "testCommandsSucceeded": all(row["exitStatus"] == 0 for row in rows)}, indent=2) + "\n", encoding="utf-8")
+PY
+        for ui_index in "${!ui_names[@]}"; do
+            shard="${ui_names[$ui_index]}"
+            cat "$runtime_artifacts/ui-shard-$shard.log" || composer_status=1
+            ui_result="$runtime_artifacts/MomentComposer-$shard.xcresult"
+            if [[ -d "$ui_result" ]]; then
+                xcrun xcresulttool export attachments --path "$ui_result" \
+                    --output-path "$runtime_artifacts/composer-screenshots/shard-$shard" || composer_status=1
+            else
+                echo "App UI shard $shard produced no result bundle." >&2
+                composer_status=1
+            fi
+            discard_test_simulator "${ui_udids[$ui_index]}" || return $?
+        done
+        # Reuse only compiled products. Every Gallery condition starts on a
+        # newly created UDID, after both app UI processes and devices finish.
+        # No app-UI or earlier Gallery SpringBoard/catalog state is inherited.
         # These captures do not install a Home Screen Widget or invoke actions.
-        local widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
         local widget_scenario=""
         local widget_scenario_conditions=""
         local widget_scenario_result=""
         local widget_scenario_status=0
         local widget_scenario_test=""
+        local widget_simulator_udid=""
         local -a widget_test_arguments=()
-        for widget_scenario in long-white-large no-caption; do
+        for widget_scenario in normal long-white-large no-caption; do
             if [[ "$RUN_WIDGET_GALLERY" != true ]]; then
                 break
             fi
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
+            widget_scenario_conditions=""
             case "$widget_scenario" in
                 long-white-large)
                     widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
@@ -434,17 +580,13 @@ PY
             esac
             widget_scenario_result="$runtime_artifacts/Widget-$widget_scenario.xcresult"
             widget_scenario_status=0
-            # Runtime results and cache JPEGs were exported above. These last
-            # builds need no simulator data: erase both extension registrations
-            # and SpringBoard's cached previews before installing each fixture.
-            # Compile while this fresh Simulator boots, then test the exact
-            # prepared products. No test runs if either preparation fails.
+            create_test_simulator widget_simulator_udid "Gallery-$widget_scenario" "$device_type" "$runtime" || return $?
             widget_test_arguments=(
                 -project NekoWidget.xcodeproj
                 -scheme NekoWidget
                 -configuration Debug
                 -sdk iphonesimulator
-                -destination "platform=iOS Simulator,id=$simulator_udid"
+                -destination "platform=iOS Simulator,id=$widget_simulator_udid"
                 -derivedDataPath "$DERIVED_DATA_DIRECTORY"
                 "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/$widget_scenario_test"
                 -parallel-testing-enabled NO
@@ -456,17 +598,24 @@ PY
                 AD_HOC_CODE_SIGNING_ALLOWED=YES
                 "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions"
             )
-            prepare_simulator_and_build "$simulator_udid" \
-                xcodebuild "${widget_test_arguments[@]}" \
-                -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
-                build-for-testing || return $?
+            if [[ "$widget_scenario" == normal ]]; then
+                # Reuse the normal build made before the app UI shards.
+                xcrun simctl boot "$widget_simulator_udid" || return $?
+                xcrun simctl bootstatus "$widget_simulator_udid" -b || return $?
+            else
+                prepare_simulator_and_build "$widget_simulator_udid" --fresh \
+                    xcodebuild "${widget_test_arguments[@]}" \
+                    -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
+                    build-for-testing || return $?
+            fi
             xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$widget_scenario_result" \
                 test-without-building || widget_scenario_status=$?
             if [[ -d "$widget_scenario_result" ]]; then
                 xcrun xcresulttool export attachments --path "$widget_scenario_result" \
-                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"
+                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots" || widget_scenario_status=1
             fi
+            discard_test_simulator "$widget_simulator_udid" || return $?
             if (( widget_scenario_status != 0 )); then
                 return "$widget_scenario_status"
             fi
