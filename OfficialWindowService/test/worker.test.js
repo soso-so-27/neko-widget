@@ -59,7 +59,8 @@ test('expired or future photos cannot be fetched directly', async () => {
   const future = catalog(); future.generatedAt = utc(now + 120_000); future.photos[0].publishedAt = future.generatedAt;
   assert.equal((await fetch(`/${filename}`, environment(future))).status, 404);
 });
-test('stale, invalid and conflicting catalog data fail without serving images', async () => {
+test('stale, invalid and conflicting catalog data fail without serving images', async t => {
+  t.mock.method(Date, 'now', () => now);
   for (const change of [
     value => { value.validUntil = utc(now); },
     value => { value.generatedAt = utc(now + 301_000); },

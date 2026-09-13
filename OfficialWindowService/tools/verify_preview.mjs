@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { activeFiles } from '../src/index.js';
 import { CAT_WINDOWS } from './prepare_update.mjs';
+import { validateDeployment } from './schedule_bundle.mjs';
 
 const service = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const base = 'https://neko-widget-official-cats-preview.nakanishisoya.workers.dev';
@@ -42,7 +43,7 @@ export function deploymentVersion(deployments) {
   return latest.versions[0].version_id;
 }
 
-async function activeVersion(config) {
+export async function activeVersion(config) {
   const { stdout } = await promisify(execFile)(process.execPath,
     [path.join(service, 'node_modules/wrangler/bin/wrangler.js'), 'deployments', 'list', '--config', config, '--json'],
     { cwd: service, windowsHide: true, timeout: 45_000, maxBuffer: 2 * 1024 * 1024,
@@ -50,7 +51,7 @@ async function activeVersion(config) {
   return deploymentVersion(JSON.parse(stdout.replace(/^\uFEFF/, '')));
 }
 
-export async function verifyPreview(bundle, expectedVersion, { allowExpired = false, previousBundle } = {}) {
+export async function verifyPreview(bundle, expectedVersion, { allowExpired = false, previousBundle, deploymentBundle, versionReader = activeVersion } = {}) {
   assert(path.isAbsolute(bundle), 'Use an absolute bundle path');
   assert(/^[a-f0-9-]{36}$/.test(expectedVersion), 'A recorded Worker version is required');
   const configPath = path.join(bundle, 'wrangler.jsonc'), config = await readJSON(configPath);
@@ -61,7 +62,11 @@ export async function verifyPreview(bundle, expectedVersion, { allowExpired = fa
   assert.deepEqual(config, template, 'Candidate config changed');
   assert(config.account_id === account && config.name === 'neko-widget-official-cats-preview', 'Wrong preview target');
   assert.deepEqual(await readFile(path.join(bundle, 'worker.js')), await readFile(path.join(service, 'src/index.js')), 'Worker code changed');
-  assert.equal(await activeVersion(configPath), expectedVersion, 'Live Worker is not the recorded edition');
+  // A restored current snapshot verifies public bytes; the deployed scheduled
+  // wrapper still has its own exact configuration/code and one Worker version.
+  if (deploymentBundle) await validateDeployment(deploymentBundle, true);
+  const deployedConfigPath = deploymentBundle ? path.join(deploymentBundle, 'wrangler.jsonc') : configPath;
+  assert.equal(await versionReader(deployedConfigPath), expectedVersion, 'Live Worker is not the recorded edition');
   const history = await readJSON(path.join(bundle, 'update-record.json'));
   assert(history.schemaVersion === 1 && Array.isArray(history.channels) && history.channels.length, 'History required');
   const channels = [];
@@ -102,7 +107,7 @@ export async function verifyPreview(bundle, expectedVersion, { allowExpired = fa
       unavailableChecked: absent.size, validUntil: catalog.validUntil });
   }
   // Do not accept a deployment that changed while HTTP checks were running.
-  assert.equal(await activeVersion(configPath), expectedVersion, 'Worker changed during verification');
+  assert.equal(await versionReader(deployedConfigPath), expectedVersion, 'Worker changed during verification');
   return { schemaVersion: 1, checkedAt: new Date().toISOString(), workerVersion: expectedVersion, channels };
 }
 

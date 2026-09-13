@@ -182,7 +182,7 @@ export async function prepareUpdate(previous, plan, output, now = Math.floor(Dat
     await writeFile(path.join(directory, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n', { flag: 'wx' });
     directories.push(directory);
   }
-  const bundle = await prepareBundle(directories[0], path.join(target, 'bundle'), undefined, directories.slice(1));
+  const bundle = await prepareBundle(directories[0], path.join(target, 'bundle'), undefined, directories.slice(1), now);
   await writeFile(path.join(bundle.directory, 'update-record.json'), JSON.stringify(record, null, 2) + '\n', { flag: 'wx' });
   await writeFile(path.join(target, 'plan.json'), JSON.stringify(plan, null, 2) + '\n', { flag: 'wx' });
   return { bundle: bundle.directory, ...record };

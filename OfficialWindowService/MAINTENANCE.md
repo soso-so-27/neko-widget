@@ -1,5 +1,18 @@
 # 公式まどの定期保守
 
+## 予定配信方式への移行後
+
+**最初に `output/runtime/current.json` の `mode` を確認する。`scheduled` なら、以下の旧配備手順は実行しない。** [予定配信の運用手順](SCHEDULED_OPERATIONS.md)が正本。写真の追加・期限更新は配備済みの有限予定がサーバー時刻で行い、heartbeatは読取専用で確認する。
+
+- 固定checkout：`C:/dev/neko-official-supply-20260913`。同じruntimeにcurrent/pending/実行記録を保つ。
+- `node output/runtime/check-schedule.mjs` を固定checkoutのルートで1回実行する。現在版のWorker version・HTTPS・JPEG、内部URL/未掲載JPEGの拒否、queueと窓別在庫、予定終了を照合し、ローカル記録だけを作る。
+- pendingがある、modeが違う、履歴や写真がない、versionが違う、通信・認証に失敗した場合は、新しい配備をせず原因を報告する。mode不明を旧方式へ自動で戻さない。
+- 新しい掲載への切替、実際の失敗、新しく生じた補充不足・終了接近だけを通知する。同じ不足、健康な変更なしは繰り返し報告しない。写真の生成・queue追加・停止・復旧・再配備はheartbeatでは行わない。
+- 予定の終了後は503で停止した状態を報告する。復旧は担当者が同一versionを確認し、明示的な期限切れ復元から新予定を作る。過去の予定bundleを再配備しない。
+- アプリ変更、git pull、CI、TestFlight、外部公開、課金、サブエージェントは不要。写真がサーバーで切り替わったことと、実機Widgetで更新されたことを区別する。
+
+## 旧方式の記録（modeがscheduledなら使用しない）
+
 2026-09-13。既存の内部TestFlight向けpreviewを、このCodexタスクで毎日09:00・21:00（Asia/Tokyo）に保守する。初期の写真追加は公式・お題用に週3枚、キジ白のまど用に週2枚程度を予定する。実際の追加対象は承認済みqueueの日時とchannelを使い、頻度から新しい予定を作らない。catalogの有効性を保つ更新とは分ける。実際の端末・Widgetへの反映時刻はOS次第で、定時到着は約束しない。
 
 ## 実行場所と許可範囲

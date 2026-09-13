@@ -15,7 +15,7 @@ export function feedSetting(value) {
   return `// Include after the existing app configuration. Applies to both app and Widget.\nOFFICIAL_WINDOW_FEED_URL = ${url.href.replace('https://', 'https:/$()/')}\n`;
 }
 
-async function readCatalogDirectory(input, target, expectedChannel) {
+async function readCatalogDirectory(input, target, expectedChannel, now) {
   const source = path.resolve(input);
   if (source.startsWith('\\\\') || source.startsWith('//')) throw new Error('Use local paths');
   const rootInfo = await lstat(source);
@@ -27,7 +27,7 @@ async function readCatalogDirectory(input, target, expectedChannel) {
   const manifestInfo = await lstat(manifestPath);
   if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink() || manifestInfo.size > 256 * 1024) throw new Error('Invalid catalog file');
   const catalog = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readFile(manifestPath)));
-  activeFiles(catalog, Date.now(), expectedChannel ?? catalog.channelID);
+  activeFiles(catalog, now, expectedChannel ?? catalog.channelID);
   const filenames = new Set(catalog.photos.map(photo => photo.imageFilename));
   const expected = new Set(['catalog.json', ...filenames]);
   const entries = await readdir(source);
@@ -45,7 +45,8 @@ async function readCatalogDirectory(input, target, expectedChannel) {
 }
 
 // Keep the original three-argument API and legacy root output unchanged.
-export async function prepareBundle(input, output, feedURL, additionalInputs = []) {
+export async function prepareBundle(input, output, feedURL, additionalInputs = [], now = Date.now()) {
+  if (!Number.isSafeInteger(now)) throw new Error('Use a valid bundle validation time');
   if (!Array.isArray(additionalInputs) || additionalInputs.some(value => typeof value !== 'string' || !value)) throw new Error('Additional assets must be local directory paths');
   const destination = path.resolve(output);
   if (destination.startsWith('\\\\') || destination.startsWith('//')) throw new Error('Use local paths');
@@ -54,10 +55,10 @@ export async function prepareBundle(input, output, feedURL, additionalInputs = [
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const parent = await realpath(path.dirname(destination));
   const target = path.join(parent, path.basename(destination));
-  const legacy = await readCatalogDirectory(input, target, 'official-cats');
+  const legacy = await readCatalogDirectory(input, target, 'official-cats', now);
   const editions = [legacy], channels = new Set(['official-cats']);
   for (const additional of additionalInputs) {
-    const edition = await readCatalogDirectory(additional, target);
+    const edition = await readCatalogDirectory(additional, target, undefined, now);
     if (channels.has(edition.catalog.channelID)) throw new Error('Duplicate channel or legacy channel overwrite');
     channels.add(edition.catalog.channelID);
     editions.push(edition);
