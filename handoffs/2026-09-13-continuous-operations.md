@@ -28,7 +28,7 @@
 - 実bundle：`C:/dev/neko-continuous-ops-20260913/output/schedule-deploy-20260913/bundle`。同階層の他のscheduleフォルダーは配備していない候補であり、使わない。
 - 配備記録：固定checkoutの `output/runtime/runs/20260913-scheduled-migration/`。
 - 新監視の初回記録：`output/runtime/runs/20260913T124359959Z-schedule-check/`。
-- 監視script：`output/runtime/check-schedule.mjs`。現在の結果は `output/runtime/last-schedule-check.json`。
+- 監視のコード正本：`OfficialWindowService/tools/monitor_schedule.mjs`。入口は `output/runtime/check-schedule.mjs`。現在の結果は `output/runtime/last-schedule-check.json`。
 
 原本・queue・未来の掲載履歴・実行記録はgit管理外。公開リポジトリへ画像や承認記録を追加していない。新しい保存サービスや認証基盤も追加していない。
 
