@@ -960,10 +960,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.smoke == 'true'
     runs-on: macos-15
-    # A cold hosted Simulator can spend several minutes in first-boot data
-    # migration. The smoke script itself has bounded waits, so leave enough
-    # job time to upload its PASS artifacts instead of cancelling at ~20 min.
-    timeout-minutes: 30
+    # Cold setup varied from 9 to 13 minutes before the same 15-minute UI
+    # suite. Preserve time for the following photo/Widget validation and
+    # artifact collection; the script's individual bounded waits stay intact.
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       # iOS 26.2 accepts `simctl privacy grant photos` without changing

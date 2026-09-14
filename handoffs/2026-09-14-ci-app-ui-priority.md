@@ -1,7 +1,7 @@
 # アプリUIの開始待ちを抑えるCI候補
 
 起点は製品 `fcd1d7c`、専用branch `codex/ci-app-ui-priority-20260914`。
-製品コード・試験内容・配布workflowは変更していない。手元検証まで完了し、commit/push/実CIは未実施。この候補の検証を製品のTestFlight配布条件にしない。
+製品コード・試験内容・配布workflowは変更していない。製品169は先にアップロード済み。このCI候補の検証を製品のTestFlight配布条件にしない。
 
 ## 変更
 
@@ -16,7 +16,15 @@ GitHubの [max-parallel](https://docs.github.com/en/actions/reference/workflows-
 
 `python NekoWidget/ci/check-development-flow.py` の6群が27.8秒で成功。追加境界では、実workflowの全scopeを展開し、検証の欠落・重複、最大Mac数、app-ui独立、Mac job間の依存追加、試験コマンドや成果物識別子の変化を検査する。既存の失敗/skip/重複/SHA違いの証拠拒否と局所再実行の検証も成功。YAMLの読み取りと `git diff --check` も成功。
 
-GitHub上の実行・開始時刻・性能は未確認。手元のYAML読み取りはActions engineの実行成功の代用ではない。
+初回候補 `0f1b080` の実行では app-ui の開始待ちが9分48秒から21秒へ短縮した。ただし後述のsmoke時間切れがあり、候補全体は成功していない。手元のYAML読み取りはActions engineの実行成功の代用ではない。
+
+## 初回試験で判明した30分枠の不足
+
+[34836005974](https://github.com/soso-so-27/neko-widget/actions/runs/34836005974) のsmokeが30分上限で打ち切られた。UI 21件とPhotos権限bootstrapは成功したが、その後の写真投入・Widget最終検証が未完了。成果物だけを成功証拠にはしない。他の進行中ジョブは、この候補を修正するために停止した。
+
+独立したログ・成果物比較では、[製品169の成功34830006233](https://github.com/soso-so-27/neko-widget/actions/runs/34830006233) に対し、script開始からUI開始まで9分00秒→12分42秒。UI自体は15分26秒→15分24秒でほぼ同じ。bootstrap成功時点で残り94秒だったが、成功側でも最終smoke成功まで1分56秒、cleanupまで2分26秒を要していた。addmediaの既存120秒制限より先にjobが切れ、結果JSONは未生成。Simulator固有の停止と断定した同SHA再実行はしない。
+
+最小修正としてsmoke job上限のみ30分→40分へ変更する。試験、個々の待機上限、成果物、失敗判定は変更しない。正常時に40分まで待つ処理を追加したわけではない。新SHAで全必須項目と全体時間を確認する。
 
 ## 短縮できる上限と採用条件
 
