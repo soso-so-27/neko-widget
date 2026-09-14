@@ -10,6 +10,12 @@ struct WidgetCacheBuildResult: Sendable {
     var selectedIdentifiers: [String]
 }
 
+struct PersonalWidgetPreparationResult: Sendable {
+    let candidateCount: Int
+    let addedCount: Int
+    let hasMore: Bool
+}
+
 private struct WidgetCacheGeneration: Codable, Equatable, Sendable {
     var generatedAt: Date
     var filenames: [String]
@@ -92,6 +98,180 @@ actor WidgetCacheBuilder {
     ) {
         self.imageLoader = imageLoader
         self.selector = selector
+    }
+
+    /// The app supplies an already-curated snapshot and a compare-and-swap
+    /// authority token. Rendering happens outside the cross-process store lock;
+    /// only final placement/publication/collection shares the Provider's lock.
+    func replenishPersonal(
+        from snapshot: LibrarySnapshot,
+        eligibilityRevision: String,
+        now: Date = .now
+    ) async throws -> PersonalWidgetPreparationResult {
+        guard let container = SharedContainer.containerURL,
+              let cache = SharedContainer.widgetCacheDirectoryURL,
+              let manifestURL = SharedContainer.widgetManifestURL else {
+            throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
+        }
+        let rediscovery = PersonalRediscoveryStore.shared
+        guard let initial = try rediscovery.snapshot(now: now),
+              initial.isAuthorized,
+              initial.eligibilityRevision == eligibilityRevision else {
+            throw CancellationError()
+        }
+        let existingIDs = Set(initial.candidates.filter {
+            Self.hasUsablePersonalFiles(for: $0.item, cacheDirectory: cache)
+        }.map { $0.item.localIdentifier })
+        let discardedIDs = Set(initial.candidates.map { $0.item.localIdentifier }).subtracting(existingIDs)
+        var ordered = selector.candidateOrder(from: snapshot.assets,
+                                              settings: snapshot.settings, now: now)
+            .filter { initial.eligiblePhotoIDs.contains($0.localIdentifier)
+                && !existingIDs.contains($0.localIdentifier) }
+        // Full, mostly unissued pools need no work. Issued candidates can be
+        // replaced later, once their live leases and history no longer pin them.
+        if existingIDs.count >= 100 && initial.remainingUnissuedCount > 30 { ordered = [] }
+        let stage = container.appendingPathComponent("personal-widget-staging", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: stage.path)
+        defer { try? FileManager.default.removeItem(at: stage) }
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let legacy = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)
+        var prepared: [PersonalRediscoveryCandidate] = []
+        let started = Date()
+        var attempted = 0
+        // Bound both successful work and unavailable-iCloud probes. No network
+        // download, Vision rescan or unbounded library pass occurs in this job.
+        for record in ordered.prefix(30) {
+            try Task.checkCancellation()
+            if attempted > 0 && Date().timeIntervalSince(started) >= 5 { break }
+            attempted += 1
+            if let old = legacy?.items.first(where: {
+                $0.localIdentifier == record.localIdentifier
+                    && $0.sourceModificationDate == record.sourceModificationDate
+                    && $0.rendererVersion == WidgetRenderPlanner.rendererVersion
+            }), Self.hasUsablePersonalFiles(for: old, cacheDirectory: cache) {
+                prepared.append(.init(item: old, creationDate: record.creationDate,
+                                      burstIdentifier: record.burstIdentifier,
+                                      isFavorite: record.isFavorite, isSaved: record.liked,
+                                      preparedAt: now))
+            } else if let item = try preparePersonalItem(record, in: stage, now: now) {
+                prepared.append(.init(item: item, creationDate: record.creationDate,
+                                      burstIdentifier: record.burstIdentifier,
+                                      isFavorite: record.isFavorite, isSaved: record.liked,
+                                      preparedAt: now))
+            }
+            if prepared.count >= 10 { break }
+        }
+        try Task.checkCancellation()
+        let published = try rediscovery.publish(
+            candidates: prepared,
+            expectedRevision: eligibilityRevision,
+            now: now,
+            interval: TimeInterval(snapshot.settings.widgetEntryIntervalMinutes * 60),
+            discardCandidateIDs: discardedIDs
+        ) { protectedFiles in
+            try Task.checkCancellation()
+            let incoming = Set(prepared.flatMap { $0.item.allCacheFilenames })
+            // The store includes incoming references in this set. Never collect
+            // a Provider/grant dependency in order to make space for a new photo.
+            var required = protectedFiles.union(incoming)
+            // Preserve the installed pre-upgrade Provider's active references
+            // while its extension transitions to the new store.
+            if let currentLegacy = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL),
+               currentLegacy.generatedAt > now.addingTimeInterval(-12 * 60 * 60) {
+                required.formUnion(currentLegacy.items.flatMap(\.allCacheFilenames))
+            }
+            for leaseURL in SharedContainer.allWidgetTimelineLeaseURLs {
+                if let lease = try? AtomicJSON.read(WidgetTimelineLease.self, from: leaseURL),
+                   lease.recordedAt > now.addingTimeInterval(-12 * 60 * 60) {
+                    required.formUnion(lease.cacheFilenames)
+                }
+            }
+            guard required.count <= Self.maximumCachedFileCount else {
+                throw CocoaError(.fileWriteOutOfSpace)
+            }
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: cache, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            for url in contents where !required.contains(url.lastPathComponent)
+                && ["jpg", "jpeg"].contains(url.pathExtension.lowercased()) {
+                try FileManager.default.removeItem(at: url)
+            }
+            for filename in incoming {
+                let staged = stage.appendingPathComponent(filename)
+                guard FileManager.default.fileExists(atPath: staged.path) else { continue }
+                let data = try Data(contentsOf: staged)
+                let destination = cache.appendingPathComponent(filename)
+                try data.write(to: destination, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                    ofItemAtPath: destination.path)
+            }
+        }
+        // Rolling upgrades still see at most the legacy twenty-entry shape.
+        // New Providers use the persisted plan, never this compatibility order.
+        try rediscovery.withProtectedCacheFiles(expectedRevision: eligibilityRevision, now: now) { protected in
+            let available = published.candidates.filter {
+                Set($0.item.allCacheFilenames).isSubset(of: protected)
+            }
+            let legacyItems = Array(available.prefix(20)).enumerated().map { offset, candidate in
+                var item = candidate.item
+                item.scheduledDate = now.addingTimeInterval(
+                    TimeInterval(offset * snapshot.settings.widgetEntryIntervalMinutes * 60))
+                return item
+            }
+            try AtomicJSON.write(WidgetManifest(items: legacyItems, generatedAt: now), to: manifestURL)
+        }
+        SharedLog.app.info("widget-cache", "Personal photo candidates replenished",
+                          metadata: ["entries": "\(published.candidates.count)",
+                                     "generatedFiles": "\(prepared.count * 3)",
+                                     "networkAllowed": "false"])
+        let addedCount = Set(published.candidates.map { $0.item.localIdentifier })
+            .subtracting(existingIDs).count
+        return .init(candidateCount: published.candidates.count,
+                     addedCount: addedCount,
+                     hasMore: addedCount > 0 && attempted < ordered.count && published.candidates.count < 100)
+    }
+
+    private func preparePersonalItem(_ record: AssetRecord, in stage: URL,
+                                     now: Date) throws -> WidgetManifestItem? {
+        try autoreleasepool {
+            guard let image = imageLoader.image(localIdentifier: record.localIdentifier,
+                targetSize: CGSize(width: Self.sourceImageRequestPixelDimension,
+                                   height: Self.sourceImageRequestPixelDimension),
+                networkAccessAllowed: false, contentMode: .aspectFit) else { return nil }
+            let normalized = WidgetSourceImageNormalizer.normalizedUIImage(image)
+            let size = WidgetSourcePixelSize(width: normalized.cgImage?.width ?? Int(normalized.size.width),
+                                            height: normalized.cgImage?.height ?? Int(normalized.size.height))
+            let plans = WidgetRenderPlanner.plans(visionBoundingBox: record.cat.boundingBox?.cgRect,
+                                                  sourcePixelSize: size)
+            let filenames = Self.cacheFilenames(for: record)
+            for spec in Self.RenderSpec.all {
+                try Task.checkCancellation()
+                guard let output = Self.widgetJPEG(normalizedImage: normalized,
+                    renderPlan: plans.plan(for: spec.variant), catBoundingBox: record.cat.boundingBox?.cgRect,
+                    spec: spec) else { return nil }
+                try output.data.write(to: stage.appendingPathComponent(filenames.filename(for: spec.variant)),
+                                      options: .atomic)
+            }
+            return WidgetManifestItem(localIdentifier: record.localIdentifier,
+                cacheFilename: filenames.small, cacheFilenames: filenames, scheduledDate: now,
+                rendererVersion: WidgetRenderPlanner.rendererVersion, sourcePixelSize: size,
+                renderPlans: plans, sourceModificationDate: record.sourceModificationDate)
+        }
+    }
+
+    private static func hasUsablePersonalFiles(for item: WidgetManifestItem, cacheDirectory: URL) -> Bool {
+        guard hasCompleteFamilyFiles(for: item, cacheDirectory: cacheDirectory) else { return false }
+        return item.allCacheFilenames.allSatisfy { filename in
+            guard let source = CGImageSourceCreateWithURL(cacheDirectory.appendingPathComponent(filename) as CFURL,
+                [kCGImageSourceShouldCache: false] as CFDictionary),
+                  CGImageSourceGetCount(source) == 1,
+                  CGImageSourceGetStatus(source) == .statusComplete else { return false }
+            return true
+        }
     }
 
     func build(from snapshot: LibrarySnapshot, now: Date = .now) async throws -> WidgetCacheBuildResult {
@@ -750,6 +930,12 @@ actor WidgetCacheBuilder {
                     PrivateWindowDisplayName.resolved($0)
                 }
             )
+        }
+    }
+
+    func clearPersonal(expectedRevision: String) throws {
+        try PersonalRediscoveryStore.shared.withProtectedCacheFiles(expectedRevision: expectedRevision) { _ in
+            try clear()
         }
     }
 

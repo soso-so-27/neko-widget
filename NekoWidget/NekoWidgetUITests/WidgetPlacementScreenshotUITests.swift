@@ -150,10 +150,23 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCapturePersonalRediscoveryWidgetAvailableAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true, personalRediscoveryState: "available")
+    }
+
+    @MainActor
+    func testCapturePersonalRediscoveryWidgetUsedAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true, personalRediscoveryState: "used")
+    }
+
+    @MainActor
     private func captureFixtureGallery(
         captureAllSizes: Bool,
         expectWhiteFixture: Bool = false,
-        officialWindow: Bool = false
+        officialWindow: Bool = false,
+        personalRediscoveryState: String? = nil
     ) {
         let app = XCUIApplication()
         app.launchArguments += [
@@ -253,8 +266,10 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 return
             }
             if officialWindow { assertNoOfficialPhotoActions(in: gallery) }
+            let capturePrefix = personalRediscoveryState.map { "widget-personal-\($0)" }
+                ?? (officialWindow ? "widget-official" : "widget-family")
             captureScreenshot(
-                named: officialWindow ? "widget-official-small" : "widget-family-small",
+                named: "\(capturePrefix)-small",
                 screenshot: fixtureScreenshot
             )
             for (index, size) in ["medium", "large"].enumerated() {
@@ -296,12 +311,21 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 }
                 if officialWindow { assertNoOfficialPhotoActions(in: gallery) }
                 captureScreenshot(
-                    named: officialWindow ? "widget-official-\(size)" : "widget-family-\(size)",
+                    named: "\(capturePrefix)-\(size)",
                     screenshot: screenshot
                 )
             }
             if officialWindow {
                 installSmallOfficialWidget(in: springboard, gallery: gallery, pages: pages)
+            }
+            if let personalRediscoveryState {
+                // SpringBoard flattens each Widget preview into one AX button.
+                // Pixel review verifies the left 44-point turn/check control
+                // and unchanged right save control in all three real sizes.
+                let hierarchy = XCTAttachment(string: gallery.debugDescription)
+                hierarchy.name = "widget-personal-\(personalRediscoveryState)-gallery-accessibility"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
             }
         } else {
             guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {

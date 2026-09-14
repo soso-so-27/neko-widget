@@ -24,6 +24,15 @@ import UIKit
 #if OFFICIAL_WINDOW_WIDGET_FIXTURE && WIDGET_VISUAL_REVIEW_FIXTURE
 #error("Choose either the official or private-window Widget review fixture.")
 #endif
+#if PERSONAL_REDISCOVERY_WIDGET_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
+#error("Personal rediscovery review requires Debug and the dedicated screenshot fixture.")
+#endif
+#if PERSONAL_REDISCOVERY_WIDGET_FIXTURE && (OFFICIAL_WINDOW_WIDGET_FIXTURE || WIDGET_VISUAL_REVIEW_FIXTURE)
+#error("Choose one photo source for the Widget review fixture.")
+#endif
+#if PERSONAL_REDISCOVERY_WIDGET_USED_FIXTURE && !PERSONAL_REDISCOVERY_WIDGET_FIXTURE
+#error("The used state requires the personal rediscovery Widget fixture.")
+#endif
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
@@ -257,26 +266,27 @@ struct NekoWidgetView: View {
     @ViewBuilder
     private func photoActionButtons() -> some View {
         if let localIdentifier = entry.localIdentifier,
-           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
-           entry.isLikeInteractionEnabled {
+           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID {
             actionTray {
-                if entry.isLiked {
-                    memoryMark(isSelected: true)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("思い出に残した写真")
-                    .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
-                } else {
-                    Button(
-                        intent: ToggleWidgetLikeIntent(
-                            localIdentifier: localIdentifier,
-                            fallbackIsLiked: false
-                        )
-                    ) {
-                        memoryMark(isSelected: false, invalidatesContent: true)
+                if entry.isLikeInteractionEnabled {
+                    if entry.isLiked {
+                        memoryMark(isSelected: true)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("思い出に残した写真")
+                            .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
+                    } else {
+                        Button(
+                            intent: ToggleWidgetLikeIntent(
+                                localIdentifier: localIdentifier,
+                                fallbackIsLiked: false
+                            )
+                        ) {
+                            memoryMark(isSelected: false, invalidatesContent: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("思い出に残す")
+                        .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("思い出に残す")
-                    .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
                 }
             }
         }
@@ -286,10 +296,56 @@ struct NekoWidgetView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: actionButtonSpacing) {
+            dailyPersonalPhotoControl
             Spacer(minLength: 0)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private var dailyPersonalPhotoControl: some View {
+        switch entry.personalRediscoveryAction {
+        case let .available(token):
+            Button(intent: DailyPersonalPhotoIntent(token: token)) {
+                dailyPersonalPhotoMark(isUsed: false)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("もう一枚")
+            .accessibilityHint("1日に1回、このiPhoneの猫写真を切り替えます")
+            .accessibilityIdentifier("personal-widget-another-photo")
+        case .used:
+            Button(intent: DailyPersonalPhotoIntent()) {
+                dailyPersonalPhotoMark(isUsed: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("今日はめくりました")
+            .accessibilityHint("写真は自動で変わります。もう一度押すと操作の状態を更新します")
+            .accessibilityIdentifier("personal-widget-turned")
+        case .unavailable:
+            EmptyView()
+        }
+    }
+
+    private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
+                .font(.system(size: 13, weight: .medium))
+                .invalidatableContent()
+            if family != .systemSmall && !isUsed {
+                Text("もう一枚")
+                    .font(.caption2.weight(.medium))
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, family == .systemSmall || isUsed ? 0 : 10)
+        .frame(minWidth: 30, minHeight: 30)
+        .background(Color.black.opacity(0.64), in: Capsule())
+        .overlay { Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.5) }
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     /// The private-memory control stays in exactly the same place before and
@@ -616,6 +672,31 @@ enum AppStoreWidgetPreviewFixture {
             emptyStateReason: .none,
             familyCaption: caption(for: variant)
         )
+#elseif PERSONAL_REDISCOVERY_WIDGET_FIXTURE
+        // Display-only identities exercise the production photo/save/turn
+        // layout in WidgetKit's real size gallery. Tests do not invoke these
+        // controls or treat these illustration pixels as photo-quality proof.
+        var entry = NekoWidgetEntry(
+            date: date, localIdentifier: "personal-widget-review-photo",
+            cacheFilename: cacheFilename, imageVariant: variant,
+            photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
+            familySourceDigest: nil, usesFamilySpecificImage: false,
+            windowDisplayName: PrivateWindowDisplayName.fallback,
+            isLiked: false, isLikeInteractionEnabled: true,
+            isBookmarked: false, isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden, familyActionsRequireApp: false,
+            emptyStateReason: .none
+        )
+#if PERSONAL_REDISCOVERY_WIDGET_USED_FIXTURE
+        entry.personalRediscoveryAction = .used(grantID: "personal-widget-review-grant")
+#else
+        entry.personalRediscoveryAction = .available(token: PersonalRediscoveryEntryToken(
+            id: "personal-widget-review-token", createdAt: date, eligibilityDay: "fixture-day",
+            sourceID: WidgetPhotoSource.personalLibraryID, photoID: "personal-widget-review-photo",
+            scopeRevision: "personal-widget-review-scope"
+        ))
+#endif
+        return entry
 #else
         return NekoWidgetEntry(
             date: date,

@@ -1708,6 +1708,7 @@ struct PhotoBrowserView: View {
     private let browserPhotos: [PhotoPresentation]
     private let deliveryActions: PhotoWindowDeliveryActions?
     private let dayCollectionDate: Date?
+    private let rediscoveryStore: PersonalRediscoveryStore?
     private let browserPhotoIdentifiers: [String]
     private let browserPhotoByIdentifier: [String: PhotoPresentation]
     private let browserIndexByIdentifier: [String: Int]
@@ -1726,6 +1727,7 @@ struct PhotoBrowserView: View {
     @StateObject private var photoDeliveryModel = MomentSharingViewModel()
     @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
+    @State private var showsRediscoveryHistory = false
 
     init(
         photos: [PhotoPresentation],
@@ -1742,7 +1744,8 @@ struct PhotoBrowserView: View {
         assignmentsByPhotoIdentifier: [String: Set<String>],
         replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool,
         deliveryActions: PhotoWindowDeliveryActions? = nil,
-        dayCollectionDate: Date? = nil
+        dayCollectionDate: Date? = nil,
+        rediscoveryStore: PersonalRediscoveryStore? = nil
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -1769,6 +1772,7 @@ struct PhotoBrowserView: View {
         self.replaceProfileAssignments = replaceProfileAssignments
         self.deliveryActions = deliveryActions
         self.dayCollectionDate = dayCollectionDate
+        self.rediscoveryStore = rediscoveryStore
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
         browserPhotoByIdentifier = Dictionary(
@@ -1948,6 +1952,11 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button { showsRediscoveryHistory = true } label: {
+                        Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("photo-browser-rediscovery-history")
+                    Divider()
                     if showsWidgetTiming {
                         Button {
                             showsWidgetInformation = true
@@ -2006,6 +2015,15 @@ struct PhotoBrowserView: View {
 
     private var browserDialogs: some View {
         browserNavigation
+        .sheet(isPresented: $showsRediscoveryHistory) {
+            NavigationStack {
+                PersonalRediscoveryHistoryView(store: rediscoveryStore ?? .shared)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { showsRediscoveryHistory = false }
+                            .accessibilityIdentifier("personal-rediscovery-history-close")
+                    } }
+            }
+        }
         .alert("ウィジェットの表示について", isPresented: $showsWidgetInformation) {
             Button("閉じる", role: .cancel) {}
         } message: {

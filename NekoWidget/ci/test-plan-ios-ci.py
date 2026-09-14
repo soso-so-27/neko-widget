@@ -167,7 +167,7 @@ class PlanTests(unittest.TestCase):
                          (planner.BUILD, planner.SMOKE) + scope.sharing_jobs(scope.PHOTO_SCOPE))
         self.assertEqual(set(scope.native_tests(selected)), set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS))
         self.assertEqual(set(scope.native_tests(scope.FULL_SCOPE)),
-                         set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS + (scope.GALLERY_TEST,)))
+                         set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests", scope.GALLERY_TEST)))
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE):
             self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(selected))
 

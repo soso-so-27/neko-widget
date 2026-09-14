@@ -55,6 +55,10 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 photoSourceIdentifier: source.id
             )
         }
+        if source.id == WidgetPhotoSource.personalLibraryID,
+           let timeline = personalRediscoveryTimeline(now: now, variant: variant) {
+            return timeline.entries.first ?? .empty(at: now, imageVariant: variant)
+        }
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
         let item = normalizedSchedule(
@@ -174,6 +178,10 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 photoSourceIdentifier: source.id
             )
         }
+        if source.id == WidgetPhotoSource.personalLibraryID,
+           let timeline = personalRediscoveryTimeline(now: now, variant: variant) {
+            return timeline
+        }
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
 
@@ -258,6 +266,46 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             ]
         )
         return Timeline(entries: entries, policy: .after(reloadDate))
+    }
+
+    /// The shared plan chooses the photo before testing a size's cache. A
+    /// missing rendition stays empty at that slot instead of showing the next
+    /// photo, and the store secures its lease before returning these entries.
+    private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
+        do {
+            guard let plan = try PersonalRediscoveryStore.shared.issueTimeline(now: now, variant: variant) else {
+                // Only a device that has not adopted the shared plan uses the
+                // legacy manifest. Corrupt or invalidated plans fail closed.
+                return nil
+            }
+            let likes = readLikeState()
+            let entries = plan.entries.prefix(Self.maximumTimelineEntryCount).map { planned in
+                guard let item = planned.item else {
+                    return NekoWidgetEntry.empty(at: planned.date, imageVariant: variant,
+                                                 emptyStateReason: .needsApp)
+                }
+                var entry = NekoWidgetEntry(
+                    date: planned.date, localIdentifier: item.localIdentifier,
+                    cacheFilename: item.cacheFilename(for: variant), imageVariant: variant,
+                    photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
+                    familySourceDigest: nil, usesFamilySpecificImage: item.cacheFilenames != nil,
+                    windowDisplayName: PrivateWindowDisplayName.fallback,
+                    isLiked: likes.records[item.localIdentifier]?.isLiked ?? false,
+                    isLikeInteractionEnabled: likes.isInteractionReady,
+                    isBookmarked: false, isBookmarkInteractionEnabled: false,
+                    familyHeartStatus: .hidden, familyActionsRequireApp: false,
+                    emptyStateReason: .none)
+                entry.personalRediscoveryAction = planned.action
+                return entry
+            }
+            return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant)] : entries,
+                            policy: .after(plan.reloadDate))
+        } catch {
+            SharedLog.widget.error("timeline", "Personal photo plan could not be read",
+                                   metadata: SharedLog.errorMetadata(error, category: .widgetTimeline))
+            return Timeline(entries: [.empty(at: now, imageVariant: variant, emptyStateReason: .needsApp)],
+                            policy: .after(now.addingTimeInterval(20 * 60)))
+        }
     }
 
     private func officialEntry(now: Date, variant: WidgetImageVariant, sourceID: String) -> NekoWidgetEntry {

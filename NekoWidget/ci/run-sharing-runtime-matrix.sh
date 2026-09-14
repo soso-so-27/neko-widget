@@ -46,7 +46,7 @@ WIDGET_SCENARIOS=""
 case "$RUNTIME_LANE" in
     all)
         if [[ "$RUN_WIDGET_GALLERY" == true ]]; then
-            WIDGET_SCENARIOS="long-white-large no-caption"
+            WIDGET_SCENARIOS="long-white-large no-caption personal-available personal-used"
         fi
         ;;
     runtime) ;;
@@ -59,6 +59,8 @@ case "$RUNTIME_LANE" in
             WIDGET_SCENARIOS="long-white-large"
         elif [[ "$RUNTIME_LANE" == gallery-no-caption ]]; then
             WIDGET_SCENARIOS="no-caption"
+        elif [[ "$RUNTIME_LANE" == gallery-normal ]]; then
+            WIDGET_SCENARIOS="personal-available personal-used"
         fi
         ;;
 esac
@@ -443,8 +445,19 @@ PY
         local widget_scenario_test=""
         local -a widget_test_arguments=()
         for widget_scenario in $WIDGET_SCENARIOS; do
+            widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+            widget_scenario_conditions=""
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
             case "$widget_scenario" in
+                personal-available)
+                    widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE PERSONAL_REDISCOVERY_WIDGET_FIXTURE"
+                    widget_scenario_test="testCapturePersonalRediscoveryWidgetAvailableAllSupportedSizes"
+                    ;;
+                personal-used)
+                    widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE PERSONAL_REDISCOVERY_WIDGET_FIXTURE"
+                    widget_scenario_conditions="PERSONAL_REDISCOVERY_WIDGET_USED_FIXTURE"
+                    widget_scenario_test="testCapturePersonalRediscoveryWidgetUsedAllSupportedSizes"
+                    ;;
                 long-white-large)
                     widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
                     widget_scenario_conditions="WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT"

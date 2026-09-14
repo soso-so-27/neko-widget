@@ -2586,3 +2586,128 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         add(attachment)
     }
 }
+
+/// The history and photo views are production components. Only the personal
+/// store directory, fixture pixels and save/send boundaries are isolated.
+final class PersonalRediscoveryUITests: XCTestCase {
+    @MainActor
+    func testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions() {
+        continueAfterFailure = false
+        for large in [false, true] {
+            let app = application(large: large)
+            app.launch()
+            openHistory(in: app)
+            let results = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-rediscovery-result-"))
+            let previous = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-rediscovery-previous-"))
+            XCTAssertTrue(results.firstMatch.waitForExistence(timeout: 10))
+            XCTAssertEqual(results.count, 1)
+            let yesterdayResultID = results.firstMatch.identifier
+            let yesterdayPhotoID = results.firstMatch.value as? String ?? ""
+            let previousButtonID = previous.firstMatch.identifier
+            let previousPhotoID = previous.firstMatch.value as? String ?? ""
+            XCTAssertFalse(yesterdayPhotoID.isEmpty)
+            XCTAssertFalse(previousPhotoID.isEmpty)
+            XCTAssertNotEqual(yesterdayPhotoID, previousPhotoID)
+
+            let turn = app.buttons["personal-rediscovery-turn"]
+            XCTAssertTrue(turn.isHittable)
+            XCTAssertGreaterThanOrEqual(turn.frame.height, 44)
+            turn.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["personal-rediscovery-used"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(results.count, 2, "Today's selection must keep yesterday's remaining 48-hour history")
+            XCTAssertFalse(turn.exists, "Reading history must not offer a second daily turn")
+            capture(large ? "rediscovery-history-large" : "rediscovery-history", app)
+
+            let oldResult = app.buttons[yesterdayResultID]
+            reveal(oldResult, in: app)
+            oldResult.tap()
+            assertPhoto(yesterdayPhotoID, in: app)
+            let save = app.buttons.matching(NSPredicate(format: "label == %@", "思い出に残す"))
+                .allElementsBoundByIndex.first { $0.isHittable }
+            XCTAssertNotNil(save)
+            save?.tap()
+            XCTAssertTrue(app.buttons.matching(identifier: "photo-browser-memory-saved-state")
+                .firstMatch.waitForExistence(timeout: 5))
+            let deliver = app.buttons.matching(identifier: "photo-browser-deliver")
+                .allElementsBoundByIndex.first { $0.isHittable }
+            XCTAssertNotNil(deliver)
+            deliver?.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["photo-window-no-destinations"].firstMatch.waitForExistence(timeout: 5))
+            app.buttons["photo-window-cancel"].tap()
+            assertPhoto(yesterdayPhotoID, in: app)
+            capture(large ? "rediscovery-old-result-large" : "rediscovery-old-result", app)
+            app.buttons["widget-photo-close"].tap()
+
+            let prior = app.buttons[previousButtonID]
+            reveal(prior, in: app)
+            prior.tap()
+            assertPhoto(previousPhotoID, in: app)
+            app.buttons["widget-photo-close"].tap()
+            XCTAssertEqual(results.count, 2, "Viewing the prior photo must not redraw or consume a turn")
+            XCTAssertFalse(app.buttons["personal-rediscovery-turn"].exists)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testOneCandidateShowsPhotoWithoutSpendingADailyTurn() {
+        continueAfterFailure = false
+        let app = application()
+        app.launchArguments.append("--personal-rediscovery-one-photo")
+        app.launch()
+        openHistory(in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["personal-rediscovery-empty"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["personal-rediscovery-not-ready"].exists)
+        XCTAssertFalse(app.buttons["personal-rediscovery-turn"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["personal-rediscovery-used"].firstMatch.exists)
+        capture("rediscovery-one-candidate", app)
+        app.buttons["personal-rediscovery-history-close"].tap()
+        assertPhoto("app-store-screenshot-fixture-1", in: app)
+    }
+
+    @MainActor
+    private func application(large: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--personal-rediscovery-ui-fixture", "--photo-window-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        if large { app.launchArguments.append("--personal-rediscovery-large") }
+        return app
+    }
+
+    @MainActor
+    private func openHistory(in app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["写真メニュー"].waitForExistence(timeout: 10))
+        app.buttons["写真メニュー"].tap()
+        let history = app.buttons["photo-browser-rediscovery-history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        history.tap()
+        XCTAssertTrue(app.navigationBars["まどでめくった写真"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func reveal(_ button: XCUIElement, in app: XCUIApplication) {
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+        XCTAssertTrue(button.isHittable)
+    }
+
+    @MainActor
+    private func assertPhoto(_ identifier: String, in app: XCUIApplication) {
+        let markers = app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@",
+            "personal-rediscovery-fixture-photo-id", identifier))
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            markers.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
+                && app.images.matching(identifier: "photo-detail-zoom-surface")
+                    .allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
+    }
+
+    @MainActor
+    private func capture(_ name: String, _ app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

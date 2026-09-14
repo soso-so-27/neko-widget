@@ -143,6 +143,12 @@ struct SettingsView: View {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
+                NavigationLink {
+                    PersonalRediscoveryHistoryView()
+                } label: {
+                    Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
+                }
+                .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
                 Text("ウィジェット")
             }

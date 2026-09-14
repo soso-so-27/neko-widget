@@ -37,6 +37,7 @@ struct NekoWidgetEntry: TimelineEntry {
     let emptyStateReason: WidgetEmptyStateReason
     var familyCaption: String? = nil
     var officialPhoto: OfficialCatPhoto? = nil
+    var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
 
     static func empty(
         at date: Date,

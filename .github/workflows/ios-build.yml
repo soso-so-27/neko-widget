@@ -401,6 +401,15 @@ jobs:
             -o "$RUNNER_TEMP/verify-personal-widget-rotation"
           "$RUNNER_TEMP/verify-personal-widget-rotation"
 
+          xcrun --sdk macosx swiftc \
+            -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Storage/PersonalRediscoveryStore.swift \
+            ci/verify-personal-rediscovery.swift \
+            -o "$RUNNER_TEMP/verify-personal-rediscovery"
+          "$RUNNER_TEMP/verify-personal-rediscovery"
+
       - name: Verify disabled Plus purchase foundation
         working-directory: NekoWidget
         shell: bash

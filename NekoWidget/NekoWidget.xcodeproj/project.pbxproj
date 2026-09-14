@@ -188,6 +188,12 @@
 		D02609100000000000000201 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
 		D02609100000000000000202 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
 		D02609100000000000000301 /* OfficialWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000300 /* OfficialWindowView.swift */; };
+		A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */; };
+		A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */; };
+		A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
+		A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -389,6 +395,10 @@
 		D02609100000000000000100 /* OfficialWindowCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowCatalog.swift; sourceTree = "<group>"; };
 		D02609100000000000000200 /* OfficialWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowStore.swift; sourceTree = "<group>"; };
 		D02609100000000000000300 /* OfficialWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowView.swift; sourceTree = "<group>"; };
+		A16700000000000000000001 /* PersonalRediscoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryStore.swift; sourceTree = "<group>"; };
+		A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetBackgroundRefresh.swift; sourceTree = "<group>"; };
+		A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryHistoryView.swift; sourceTree = "<group>"; };
+		A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyPersonalPhotoIntent.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -539,6 +549,7 @@
 				D02609100000000000000200 /* OfficialWindowStore.swift */,
 				F0000000000000000000010C /* AtomicJSON.swift */,
 				F0000000000000000000010E /* SharedLikeStore.swift */,
+				A16700000000000000000001 /* PersonalRediscoveryStore.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -639,6 +650,7 @@
 				F00000000000000000000253 /* MomentSharingCoordinator.swift */,
 				F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */,
 				F0000000000000000000025A /* MomentBackgroundRefreshService.swift */,
+				A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */,
 				F00000000000000000000256 /* MomentShareHandoffProcessor.swift */,
 				F0000000000000000000025E /* SeasonalMovieCandidateService.swift */,
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
@@ -676,6 +688,7 @@
 				F00000000000000000000233 /* MainTabView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
+				A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */,
 				F00000000000000000000234 /* PhotoAssetImageView.swift */,
 				F00000000000000000000235 /* PhotoPermissionView.swift */,
 				F00000000000000000000236 /* ScanStatusView.swift */,
@@ -718,6 +731,7 @@
 				F00000000000000000000315 /* WidgetCacheImageLoader.swift */,
 				F00000000000000000000316 /* WidgetManifestReader.swift */,
 				F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */,
+				A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */,
 				F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */,
 				F00000000000000000000301 /* Info.plist */,
 				F00000000000000000000302 /* NekoWidgetWidget.entitlements */,
@@ -945,6 +959,7 @@
 				10000000000000000000000D /* SharedLog.swift in Sources */,
 				100000000000000000000175 /* DiagnosticLogPrivacy.swift in Sources */,
 				10000000000000000000000E /* SharedLikeStore.swift in Sources */,
+				A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
 				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
@@ -1026,6 +1041,7 @@
 				1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */,
 				1000000000000000000001F1 /* BlockedSharingView.swift in Sources */,
 				100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */,
+				A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */,
 				100000000000000000000178 /* MomentShareIngressService.swift in Sources */,
 				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
 				10000000000000000000016E /* MomentSharingViewModel.swift in Sources */,
@@ -1040,6 +1056,7 @@
 				100000000000000000000133 /* MainTabView.swift in Sources */,
 				A16600000000000000000001 /* WidgetPhotoOpening.swift in Sources */,
 				A16600000000000000000002 /* WidgetPhotoOpeningFixture.swift in Sources */,
+				A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */,
 				100000000000000000000134 /* PhotoAssetImageView.swift in Sources */,
 				100000000000000000000135 /* PhotoPermissionView.swift in Sources */,
 				100000000000000000000136 /* ScanStatusView.swift in Sources */,
@@ -1047,6 +1064,7 @@
 				100000000000000000000138 /* LogView.swift in Sources */,
 				100000000000000000000145 /* PairingView.swift in Sources */,
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
+				A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1068,6 +1086,7 @@
 				20000000000000000000001F /* MomentSharingStore.swift in Sources */,
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
+				A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
@@ -1077,6 +1096,7 @@
 				200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */,
 				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
 				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
+				A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */,
 				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

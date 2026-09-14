@@ -61,7 +61,7 @@ def native_tests(scope: str) -> tuple[str, ...]:
     if scope == COMBINED_SCOPE:
         return PHOTO_TESTS + OFFICIAL_TESTS
     if scope == FULL_SCOPE:
-        return PHOTO_TESTS + OFFICIAL_TESTS + (GALLERY_TEST,)
+        return PHOTO_TESTS + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests", GALLERY_TEST)
     raise ValueError("Unknown iOS runtime scope")
 
 

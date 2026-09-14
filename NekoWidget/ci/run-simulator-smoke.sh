@@ -1008,6 +1008,7 @@ TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -resultBundlePath "$PERMISSION_RESULT_BUNDLE" \
     -only-testing:NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess \
     -only-testing:NekoWidgetUITests/OfficialWindowUITests \
+    -only-testing:NekoWidgetUITests/PersonalRediscoveryUITests \
     -parallel-testing-enabled NO \
     COMPILER_INDEX_STORE_ENABLE=NO \
     CODE_SIGNING_ALLOWED=YES \

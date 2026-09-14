@@ -199,6 +199,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         guard !Self.suppressesNormalServicesForDebugLaunch else { return true }
 #endif
         UNUserNotificationCenter.current().delegate = self
+        PersonalWidgetBackgroundRefresh.register()
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: MomentBackgroundRefreshPolicy.taskIdentifier,
             using: nil
@@ -232,6 +233,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
 #if DEBUG
         guard !Self.suppressesNormalServicesForDebugLaunch else { return }
 #endif
+        PersonalWidgetBackgroundRefresh.schedule()
         guard SharingAPIConfiguration.current.isMediaAvailable else { return }
         scheduleNextRefresh()
     }

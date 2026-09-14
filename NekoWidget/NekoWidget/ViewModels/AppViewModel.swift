@@ -205,6 +205,8 @@ final class AppViewModel: ObservableObject {
     private let scanner: PhotoLibraryScanner
     private let albumService: PhotoAlbumService
     private let widgetCacheBuilder: WidgetCacheBuilder
+    private var personalReplenishmentTask: Task<Void, Never>?
+    private var personalPreparationGeneration = 0
     private let imageLoader: PhotoImageLoader
     private let photoSelector: WeightedPhotoSelector
     private let todayPhotoSelectionStore: TodayPhotoSelectionStore
@@ -705,6 +707,8 @@ final class AppViewModel: ObservableObject {
     }
 
     func suspendScan() {
+        personalReplenishmentTask?.cancel()
+        personalPreparationGeneration += 1
         guard isScanning else { return }
         let suspendedGeneration = scanGeneration
         var cancelled = latestScanProgressState(generation: suspendedGeneration)
@@ -777,8 +781,8 @@ final class AppViewModel: ObservableObject {
         refreshCurrentAsset()
         await saveSnapshot(reportErrors: true)
 
-        // A like changes the 3x display weight, so refresh the principal v1
-        // display surface immediately.
+        // Refill only missing candidates. Saving must not reset the persisted
+        // rotation or replace a newer manual photo with this old entry.
         await rebuildWidgetCache(reportErrors: false)
     }
 
@@ -979,6 +983,8 @@ final class AppViewModel: ObservableObject {
     ) async {
         let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
         guard !identifiers.isEmpty else { return }
+        guard suspendPersonalWidgetAuthority() else { return }
+        defer { _ = try? synchronizePersonalWidgetAuthority() }
         let legacyCurationIsCanonical = catHouseholdIdentity?.mode == .legacyUnscoped
         if catHouseholdIdentity != nil, !legacyCurationIsCanonical {
             do {
@@ -1118,6 +1124,8 @@ final class AppViewModel: ObservableObject {
     }
 
     private func performSelectPhotoSourceAlbum(localIdentifier: String?) async {
+        guard suspendPersonalWidgetAuthority() else { return }
+        defer { _ = try? synchronizePersonalWidgetAuthority() }
         guard candidateAuthorityIsReady(operation: "select_photo_source") else { return }
         guard canReadPhotos, let curationStore else {
             setError(NekoWidgetError.photoAccessDenied)
@@ -1271,6 +1279,7 @@ final class AppViewModel: ObservableObject {
         settings = normalized
         snapshot.settings = normalized
         snapshot.updatedAt = .now
+        _ = try? synchronizePersonalWidgetAuthority()
         SharedLog.app.info(
             "settings",
             "Cat life reference updated",
@@ -2707,6 +2716,7 @@ final class AppViewModel: ObservableObject {
     private func refreshCandidateOutputsAfterCurationChange(
         reportErrors: Bool = true
     ) async {
+        _ = try? synchronizePersonalWidgetAuthority()
         logBoundingBoxAspectDistribution(trigger: "candidate-output-refresh")
         // PhotoAlbumService is an actor. Always enqueue this generation behind
         // any in-flight stale membership update; a time-bounded status poll can
@@ -3502,33 +3512,41 @@ final class AppViewModel: ObservableObject {
             "Widget cache rebuild requested",
             metadata: ["assets": "\(snapshot.assets.count)"]
         )
+        personalReplenishmentTask?.cancel()
+        personalPreparationGeneration += 1
+        let generation = personalPreparationGeneration
         do {
-            let result = try await widgetCacheBuilder.build(
-                from: candidateSnapshot(snapshot)
-            )
-            let occurrenceCounts = Dictionary(
-                grouping: result.selectedIdentifiers,
-                by: { $0 }
-            ).mapValues(\.count)
-            let shownAt = result.manifest.generatedAt
-            for index in snapshot.assets.indices {
-                let identifier = snapshot.assets[index].localIdentifier
-                guard let count = occurrenceCounts[identifier] else { continue }
-                snapshot.assets[index].lastShownAt = shownAt
-                snapshot.assets[index].shownCount += count
-            }
-            snapshot.updatedAt = .now
-            refreshCurrentAsset()
-            await saveSnapshot(reportErrors: reportErrors)
+            let revision = try synchronizePersonalWidgetAuthority()
+            let input = candidateSnapshot(snapshot)
+            let result = try await widgetCacheBuilder.replenishPersonal(
+                from: input, eligibilityRevision: revision)
+            // Preparation is not a view. Keep legacy lastShownAt/shownCount
+            // unchanged; the shared journal records issued slots separately.
             WidgetCenter.shared.reloadAllTimelines()
             SharedLog.app.info(
                 "widget-cache",
                 "Widget timeline reload requested",
                 metadata: [
-                    "entries": "\(result.manifest.items.count)",
-                    "uniqueAssets": "\(Set(result.selectedIdentifiers).count)"
+                    "entries": "\(result.candidateCount)",
+                    "uniqueAssets": "\(result.candidateCount)"
                 ]
             )
+            if result.hasMore {
+                personalReplenishmentTask = Task { [weak self] in
+                    guard let self else { return }
+                    for _ in 0..<10 {
+                        guard !Task.isCancelled, generation == self.personalPreparationGeneration,
+                              UIApplication.shared.applicationState == .active else { return }
+                        await Task.yield()
+                        do {
+                            let batch = try await self.widgetCacheBuilder.replenishPersonal(
+                                from: input, eligibilityRevision: revision)
+                            if batch.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
+                            if !batch.hasMore { return }
+                        } catch { return } // Next foreground/BG opportunity can resume.
+                    }
+                }
+            }
         } catch {
             Self.logError(error, category: "widget-cache", operation: "rebuild_cache")
             if reportErrors { setError(error) }
@@ -3563,7 +3581,11 @@ final class AppViewModel: ObservableObject {
 
     private func performClearWidgetOutput(reportErrors: Bool) async {
         do {
-            try await widgetCacheBuilder.clear()
+            personalReplenishmentTask?.cancel()
+            personalPreparationGeneration += 1
+            let revision = try PersonalRediscoveryStore.shared.updateEligibility(
+                photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
+            try await widgetCacheBuilder.clearPersonal(expectedRevision: revision)
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             Self.logError(error, category: "widget-cache", operation: "clear_cache")
@@ -3603,10 +3625,40 @@ final class AppViewModel: ObservableObject {
             return
         }
         do {
+            // Publish permission/scope changes before an awaited disk operation
+            // can let a Widget intent validate an obsolete candidate pool.
+            _ = try synchronizePersonalWidgetAuthority(input: value)
             try await store.save(value)
         } catch {
             Self.logError(error, category: "storage", operation: "save_snapshot")
             if reportErrors { setError(error) }
+        }
+    }
+
+    @discardableResult
+    private func synchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
+        let curated = candidateSnapshot(input ?? snapshot)
+        let eligible = photoSelector.eligibleCandidates(from: curated.assets,
+            settings: curated.settings, now: .now)
+        let dates = Dictionary(uniqueKeysWithValues: eligible.compactMap { record in
+            record.sourceModificationDate.map { (record.localIdentifier, $0) }
+        })
+        let scope = "\(curated.settings.analysisFingerprint)|\(curated.settings.dateRange.rawValue)|\(curated.settings.minimumCatAreaRatio)|\(curated.settings.widgetEntryIntervalMinutes)"
+        return try PersonalRediscoveryStore.shared.updateEligibility(
+            photoIDs: Set(eligible.map(\.localIdentifier)), scopeIdentifier: scope,
+            isAuthorized: canReadPhotos && catIdentityLoadState == .ready,
+            now: .now, photoModificationDates: dates)
+    }
+
+    private func suspendPersonalWidgetAuthority() -> Bool {
+        do {
+            try PersonalRediscoveryStore.shared.suspend(now: .now)
+            personalReplenishmentTask?.cancel()
+            personalPreparationGeneration += 1
+            return true
+        } catch {
+            setError(error)
+            return false
         }
     }
 

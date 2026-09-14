@@ -7,6 +7,7 @@ import SwiftUI
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
+    @State private var showsRediscoveryHistory = false
 
     private var placementSteps: [String] {
         if #available(iOS 18.0, *) {
@@ -60,6 +61,15 @@ struct WidgetPlacementGuideView: View {
                 )
                 .accessibilityIdentifier("widget-placement-steps")
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("このiPhoneの猫写真は自動で変わります。\n「もう一枚」で、自分でも1日1回めくれます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button("まどでめくった写真を見る") { showsRediscoveryHistory = true }
+                        .font(.subheadline).frame(minHeight: 44)
+                        .accessibilityIdentifier("widget-placement-rediscovery")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Label(
                     OnboardingPresentationCopy.widgetReturnHint,
                     systemImage: "checkmark.circle"
@@ -90,6 +100,14 @@ struct WidgetPlacementGuideView: View {
             .padding(.bottom, 30)
         }
         .background(Color(.systemBackground))
+        .sheet(isPresented: $showsRediscoveryHistory) {
+            NavigationStack {
+                PersonalRediscoveryHistoryView()
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { showsRediscoveryHistory = false }
+                    } }
+            }
+        }
     }
 }
 
