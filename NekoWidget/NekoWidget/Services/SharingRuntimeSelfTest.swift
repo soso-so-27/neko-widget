@@ -6975,6 +6975,95 @@ actor SharingRuntimeSelfTestRunner {
             // Personal v5 bytes remain active; sharing keeps its prior day.
         }
         try testPersonalWidgetFallbackRendering()
+        try testPersonalWidgetBootstrapCache(record: record, directory: directory, now: modificationDate)
+    }
+
+    private static func testPersonalWidgetBootstrapCache(
+        record: AssetRecord, directory: URL, now: Date
+    ) throws {
+        let filenames = WidgetCacheBuilder.runtimeSelfTestCurrentCacheFilenames(for: record)
+        let sourceSize = WidgetSourcePixelSize(width: 32, height: 32)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32), format: format).image { context in
+            UIColor.gray.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        guard let jpeg = image.jpegData(compressionQuality: 0.8) else {
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        for filename in filenames.all {
+            try SharingSecureFile.write(jpeg, to: directory.appendingPathComponent(filename))
+        }
+        let item = WidgetManifestItem(
+            localIdentifier: record.localIdentifier, cacheFilename: filenames.small,
+            cacheFilenames: filenames, scheduledDate: now,
+            rendererVersion: WidgetRenderPlanner.rendererVersion, sourcePixelSize: sourceSize,
+            renderPlans: WidgetRenderPlanner.plans(
+                visionBoundingBox: record.cat.boundingBox?.cgRect, sourcePixelSize: sourceSize),
+            sourceModificationDate: record.sourceModificationDate)
+        let manifest = WidgetManifest(items: [item], generatedAt: now)
+        // None of the first thirty eligible records has a prepared JPEG. The
+        // migration adapter must find the cached record beyond that probe limit.
+        let uncached: [AssetRecord] = (0..<30).map { index in
+            var value = record
+            value.localIdentifier = "runtime-bootstrap-uncached-\(index)"
+            return value
+        }
+        let adopted = WidgetCacheBuilder.personalBootstrapCandidates(
+            from: uncached + [record], manifest: manifest, cacheDirectory: directory, now: now)
+        guard adopted.count == 1, adopted[0].item == item,
+              adopted[0].creationDate == record.creationDate,
+              adopted[0].isFavorite == record.isFavorite,
+              adopted[0].isSaved == record.liked,
+              adopted[0].preparedAt == now,
+              WidgetCacheBuilder.personalBootstrapCandidates(
+                from: uncached, manifest: manifest, cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+
+        // After an empty compatibility manifest was written, the same current
+        // three JPEGs can still restore display without inventing lost geometry.
+        let recovered = WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
+            from: uncached + [record], cacheDirectory: directory, now: now)
+        guard recovered.count == 1, recovered[0].item.localIdentifier == record.localIdentifier,
+              recovered[0].item.cacheFilenames == filenames,
+              recovered[0].item.sourceModificationDate == record.sourceModificationDate,
+              recovered[0].item.sourcePixelSize == nil, recovered[0].item.renderPlans == nil,
+              WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
+                from: uncached, cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+
+        var edited = record
+        edited.sourceModificationDate = now.addingTimeInterval(1)
+        var changedBox = record
+        changedBox.cat.boundingBox = NormalizedRect(x: 0.1, y: 0.2, width: 0.6, height: 0.5)
+        var changedAnalysis = record
+        changedAnalysis.analysisFingerprint += "-changed"
+        for changed in [edited, changedBox, changedAnalysis] {
+            guard WidgetCacheBuilder.personalBootstrapCandidates(
+                from: [changed], manifest: manifest, cacheDirectory: directory, now: now).isEmpty
+                && WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
+                    from: [changed], cacheDirectory: directory, now: now).isEmpty
+            else { throw DailySharingError.stateUnavailable }
+        }
+        var oldRenderer = item
+        oldRenderer.rendererVersion = "cat-aware-full-bleed-v5"
+        guard WidgetCacheBuilder.personalBootstrapCandidates(
+            from: [record], manifest: WidgetManifest(items: [oldRenderer], generatedAt: now),
+            cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent(filenames.large))
+        guard WidgetCacheBuilder.personalBootstrapCandidates(
+            from: [record], manifest: manifest, cacheDirectory: directory, now: now).isEmpty
+            && WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
+                from: [record], cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+        try Data([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]).write(
+            to: directory.appendingPathComponent(filenames.large))
+        guard WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
+            from: [record], cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
     }
 
     private static func testPersonalWidgetFallbackRendering() throws {

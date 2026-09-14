@@ -3533,13 +3533,16 @@ final class AppViewModel: ObservableObject {
             if result.hasMore {
                 personalReplenishmentTask = Task { [weak self] in
                     guard let self else { return }
+                    var attemptedPhotoIDs = result.attemptedPhotoIDs
                     for _ in 0..<10 {
                         guard !Task.isCancelled, generation == self.personalPreparationGeneration,
                               UIApplication.shared.applicationState == .active else { return }
                         await Task.yield()
                         do {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
-                                from: input, eligibilityRevision: revision)
+                                from: input, eligibilityRevision: revision,
+                                skippingPhotoIDs: attemptedPhotoIDs)
+                            attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             if batch.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
@@ -3636,17 +3639,45 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     private func synchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
+        let now = Date.now
         let curated = candidateSnapshot(input ?? snapshot)
         let eligible = photoSelector.eligibleCandidates(from: curated.assets,
-            settings: curated.settings, now: .now)
+            settings: curated.settings, now: now)
         let dates = Dictionary(uniqueKeysWithValues: eligible.compactMap { record in
             record.sourceModificationDate.map { (record.localIdentifier, $0) }
         })
+        let authorized = canReadPhotos && catIdentityLoadState == .ready
+        let eligibleIDs = Set(eligible.map(\.localIdentifier))
+        var bootstrap: [PersonalRediscoveryCandidate] = []
+        // Adopt usable cached photos atomically with the new authority. An
+        // empty state would otherwise disable the old Provider fallback before
+        // asynchronous PhotoKit preparation has produced its first image.
+        if authorized {
+            let current = try PersonalRediscoveryStore.shared.snapshot(now: now)
+            let hasRetainedCandidate = current?.candidates.contains {
+                eligibleIDs.contains($0.item.localIdentifier)
+                    && $0.item.sourceModificationDate == dates[$0.item.localIdentifier]
+            } ?? false
+            if !hasRetainedCandidate,
+               let manifestURL = SharedContainer.widgetManifestURL,
+               let cache = SharedContainer.widgetCacheDirectoryURL {
+                bootstrap = WidgetCacheBuilder.personalBootstrapCandidates(from: eligible,
+                    manifest: try? AtomicJSON.read(WidgetManifest.self, from: manifestURL),
+                    cacheDirectory: cache, now: now)
+                let bootstrapIDs = Set(bootstrap.map { $0.item.localIdentifier })
+                let accessibleIDs = Set(WidgetCacheBuilder.currentPersonalRecords(
+                    from: eligible.filter { bootstrapIDs.contains($0.localIdentifier) }).map(\.localIdentifier))
+                bootstrap.removeAll { !accessibleIDs.contains($0.item.localIdentifier) }
+            }
+        }
         let scope = "\(curated.settings.analysisFingerprint)|\(curated.settings.dateRange.rawValue)|\(curated.settings.minimumCatAreaRatio)|\(curated.settings.widgetEntryIntervalMinutes)"
-        return try PersonalRediscoveryStore.shared.updateEligibility(
-            photoIDs: Set(eligible.map(\.localIdentifier)), scopeIdentifier: scope,
-            isAuthorized: canReadPhotos && catIdentityLoadState == .ready,
-            now: .now, photoModificationDates: dates)
+        let revision = try PersonalRediscoveryStore.shared.updateEligibility(
+            photoIDs: eligibleIDs, scopeIdentifier: scope,
+            isAuthorized: authorized, now: now, photoModificationDates: dates,
+            bootstrapCandidates: bootstrap,
+            interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
+        if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
+        return revision
     }
 
     private func suspendPersonalWidgetAuthority() -> Bool {

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import ImageIO
+import Photos
 import UIKit
 import UniformTypeIdentifiers
 @preconcurrency import Vision
@@ -14,6 +15,7 @@ struct PersonalWidgetPreparationResult: Sendable {
     let candidateCount: Int
     let addedCount: Int
     let hasMore: Bool
+    let attemptedPhotoIDs: Set<String>
 }
 
 private struct PersonalWidgetRenderMeasurements {
@@ -132,6 +134,7 @@ actor WidgetCacheBuilder {
     func replenishPersonal(
         from snapshot: LibrarySnapshot,
         eligibilityRevision: String,
+        skippingPhotoIDs: Set<String> = [],
         now: Date = .now
     ) async throws -> PersonalWidgetPreparationResult {
         guard let container = SharedContainer.containerURL,
@@ -149,13 +152,19 @@ actor WidgetCacheBuilder {
             Self.hasUsablePersonalFiles(for: $0.item, cacheDirectory: cache)
         }.map { $0.item.localIdentifier })
         let discardedIDs = Set(initial.candidates.map { $0.item.localIdentifier }).subtracting(existingIDs)
+        let needsGeometryIDs = Set(initial.candidates.filter {
+            $0.item.rendererVersion == nil || $0.item.renderPlans == nil || $0.item.sourcePixelSize == nil
+        }.map { $0.item.localIdentifier })
         var ordered = selector.candidateOrder(from: snapshot.assets,
                                               settings: snapshot.settings, now: now)
             .filter { initial.eligiblePhotoIDs.contains($0.localIdentifier)
-                && !existingIDs.contains($0.localIdentifier) }
+                && (!existingIDs.contains($0.localIdentifier) || needsGeometryIDs.contains($0.localIdentifier))
+                && !skippingPhotoIDs.contains($0.localIdentifier) }
         // Full, mostly unissued pools need no work. Issued candidates can be
         // replaced later, once their live leases and history no longer pin them.
-        if existingIDs.count >= 100 && initial.remainingUnissuedCount > 30 { ordered = [] }
+        if existingIDs.count >= 100 && initial.remainingUnissuedCount > 30 {
+            ordered.removeAll { !needsGeometryIDs.contains($0.localIdentifier) }
+        }
         let stage = container.appendingPathComponent("personal-widget-staging", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
@@ -165,32 +174,40 @@ actor WidgetCacheBuilder {
         defer { try? FileManager.default.removeItem(at: stage) }
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let legacy = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)
-        var prepared: [PersonalRediscoveryCandidate] = []
+        // Reuse known cached photos before probing the randomized PhotoKit
+        // order. Its first thirty records can all be unavailable in iCloud.
+        var prepared = Self.personalBootstrapCandidates(from: ordered,
+            manifest: legacy, cacheDirectory: cache, now: now)
+        if prepared.isEmpty && existingIDs.isEmpty {
+            prepared = Self.recoverUnindexedPersonalCache(from: ordered, cacheDirectory: cache, now: now)
+        }
+        let cachedIDs = Set(prepared.map { $0.item.localIdentifier })
+        let accessibleCachedIDs = Set(Self.currentPersonalRecords(
+            from: ordered.filter { cachedIDs.contains($0.localIdentifier) }).map(\.localIdentifier))
+        prepared.removeAll { !accessibleCachedIDs.contains($0.item.localIdentifier) }
+        let reusedIDs = Set(prepared.map { $0.item.localIdentifier })
+        let recoveredWithoutGeometryIDs = Set(prepared.filter { $0.item.renderPlans == nil }
+            .map { $0.item.localIdentifier })
+        ordered.removeAll { reusedIDs.contains($0.localIdentifier) }
         var measurements = PersonalWidgetRenderMeasurements()
         let started = Date()
-        var attempted = 0
+        // Recovered display bytes have not attempted an original-image load.
+        // Let the next bounded batch restore their sharing geometry if possible.
+        var attemptedPhotoIDs = reusedIDs.subtracting(recoveredWithoutGeometryIDs)
+        var unavailable = 0
         // Bound both successful work and unavailable-iCloud probes. No network
         // download, Vision rescan or unbounded library pass occurs in this job.
-        for record in ordered.prefix(30) {
+        for record in ordered.prefix(30) where prepared.count < 10 {
             try Task.checkCancellation()
-            if attempted > 0 && Date().timeIntervalSince(started) >= 5 { break }
-            attempted += 1
-            if let old = legacy?.items.first(where: {
-                $0.localIdentifier == record.localIdentifier
-                    && $0.sourceModificationDate == record.sourceModificationDate
-                    && $0.rendererVersion == WidgetRenderPlanner.rendererVersion
-            }), Self.hasUsablePersonalFiles(for: old, cacheDirectory: cache) {
-                prepared.append(.init(item: old, creationDate: record.creationDate,
-                                      burstIdentifier: record.burstIdentifier,
-                                      isFavorite: record.isFavorite, isSaved: record.liked,
-                                      preparedAt: now))
-            } else if let rendered = try preparePersonalItem(record, in: stage, now: now) {
+            if !attemptedPhotoIDs.isEmpty && Date().timeIntervalSince(started) >= 5 { break }
+            attemptedPhotoIDs.insert(record.localIdentifier)
+            if let rendered = try preparePersonalItem(record, in: stage, now: now) {
                 measurements.append(rendered.measurements)
                 prepared.append(.init(item: rendered.item, creationDate: record.creationDate,
                                       burstIdentifier: record.burstIdentifier,
                                       isFavorite: record.isFavorite, isSaved: record.liked,
                                       preparedAt: now))
-            }
+            } else { unavailable += 1 }
             if prepared.count >= 10 { break }
         }
         try Task.checkCancellation()
@@ -202,6 +219,9 @@ actor WidgetCacheBuilder {
             discardCandidateIDs: discardedIDs
         ) { protectedFiles in
             try Task.checkCancellation()
+            // An unsuccessful first batch has no new files to publish. Keep
+            // old unindexed JPEGs available for a later recovery attempt.
+            if prepared.isEmpty && initial.candidates.isEmpty { return }
             let incoming = Set(prepared.flatMap { $0.item.allCacheFilenames })
             // The store includes incoming references in this set. Never collect
             // a Provider/grant dependency in order to make space for a new photo.
@@ -280,7 +300,7 @@ actor WidgetCacheBuilder {
             "outputPixels": Self.outputPixelDescription,
             "targetBytesEach": Self.targetByteDescription,
             "retainedCacheWorstCaseBytes": "\(Self.maximumRetainedCacheByteUpperBound)",
-            "unavailable": "\(attempted - prepared.count)",
+            "unavailable": "\(unavailable)",
             "networkAllowed": "false"
         ]
         for spec in Self.RenderSpec.all {
@@ -294,7 +314,96 @@ actor WidgetCacheBuilder {
             .subtracting(existingIDs).count
         return .init(candidateCount: published.candidates.count,
                      addedCount: addedCount,
-                     hasMore: addedCount > 0 && attempted < ordered.count && published.candidates.count < 100)
+                     hasMore: (!recoveredWithoutGeometryIDs.isEmpty
+                        || attemptedPhotoIDs.subtracting(reusedIDs).count < ordered.count)
+                        && published.candidates.count < 100,
+                     attemptedPhotoIDs: attemptedPhotoIDs)
+    }
+
+    /// Only current, explicitly eligible records can adopt a legacy manifest.
+    /// Checking the deterministic filenames also rejects a stale analysis box
+    /// or renderer cache revision, even when PhotoKit's edit date is unchanged.
+    static func personalBootstrapCandidates(
+        from eligible: [AssetRecord], manifest: WidgetManifest?,
+        cacheDirectory: URL, now: Date
+    ) -> [PersonalRediscoveryCandidate] {
+        guard let manifest, !manifest.items.isEmpty else { return [] }
+        let records = Dictionary(eligible.map { ($0.localIdentifier, $0) },
+                                 uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        return PersonalWidgetRotationPolicy.orderedUniqueItems(from: manifest.items).compactMap { item in
+            guard let record = records[item.localIdentifier],
+                  seen.insert(item.localIdentifier).inserted,
+                  item.sourceModificationDate == record.sourceModificationDate,
+                  item.rendererVersion == WidgetRenderPlanner.rendererVersion,
+                  item.cacheFilenames == cacheFilenames(for: record),
+                  hasUsablePersonalFiles(for: item, cacheDirectory: cacheDirectory)
+            else { return nil }
+            return .init(item: item, creationDate: record.creationDate,
+                         burstIdentifier: record.burstIdentifier,
+                         isFavorite: record.isFavorite, isSaved: record.liked, preparedAt: now)
+        }
+    }
+
+    /// Metadata-only permission/edit check; this never downloads an image.
+    /// Callers have already reduced this to at most twenty cached records.
+    static func currentPersonalRecords(from records: [AssetRecord]) -> [AssetRecord] {
+        guard !records.isEmpty else { return [] }
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return [] }
+        let known = Dictionary(records.map { ($0.localIdentifier, $0) },
+                               uniquingKeysWith: { first, _ in first })
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(known.keys), options: nil)
+        var result: [AssetRecord] = []
+        assets.enumerateObjects { asset, _, _ in
+            guard let record = known[asset.localIdentifier], asset.mediaType == .image,
+                  record.sourceModificationDateWasCaptured == true else { return }
+            let modified = asset.modificationDate.map {
+                Date(timeIntervalSince1970: floor($0.timeIntervalSince1970))
+            }
+            if record.sourceModificationDate == modified { result.append(record) }
+        }
+        return result
+    }
+
+    /// Build 167 could replace the legacy index with an empty manifest. Recover
+    /// only exact current cache identities; never infer an ID from a filename
+    /// or invent the lost original-image geometry. The existing sharing freezer
+    /// will require an original-image rebuild when geometry is unavailable.
+    private static func recoverUnindexedPersonalCache(
+        from eligible: [AssetRecord], cacheDirectory: URL, now: Date
+    ) -> [PersonalRediscoveryCandidate] {
+        let files = Set((try? FileManager.default.contentsOfDirectory(atPath: cacheDirectory.path)) ?? [])
+        guard !files.isEmpty else { return [] }
+        let started = Date()
+        var result: [PersonalRediscoveryCandidate] = []
+        // The pre-upgrade app recorded the last prepared photos in lastShownAt.
+        // Prioritize these metadata records; no PhotoKit image is requested.
+        for record in eligible.sorted(by: { ($0.lastShownAt ?? .distantPast) > ($1.lastShownAt ?? .distantPast) }) {
+            if result.count >= 20 || Date().timeIntervalSince(started) >= 2 { break }
+            let filenames = cacheFilenames(for: record)
+            guard Set(filenames.all).isSubset(of: files) else { continue }
+            let item = WidgetManifestItem(localIdentifier: record.localIdentifier,
+                cacheFilename: filenames.small, cacheFilenames: filenames, scheduledDate: now,
+                sourceModificationDate: record.sourceModificationDate)
+            guard hasUsablePersonalFiles(for: item, cacheDirectory: cacheDirectory),
+                  WidgetImageVariant.allCases.allSatisfy({ variant in
+                      autoreleasepool {
+                          guard let source = CGImageSourceCreateWithURL(
+                              cacheDirectory.appendingPathComponent(item.cacheFilename(for: variant)) as CFURL,
+                              [kCGImageSourceShouldCache: false] as CFDictionary),
+                                let image = CGImageSourceCreateImageAtIndex(source, 0,
+                                    [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                          else { return false }
+                          return image.width > 0 && image.height > 0
+                              && image.width <= variant.pixelWidth && image.height <= variant.pixelHeight
+                      }
+                  }) else { continue }
+            result.append(.init(item: item, creationDate: record.creationDate,
+                burstIdentifier: record.burstIdentifier, isFavorite: record.isFavorite,
+                isSaved: record.liked, preparedAt: now))
+        }
+        return result
     }
 
     private func preparePersonalItem(_ record: AssetRecord, in stage: URL,
@@ -1408,6 +1517,12 @@ actor WidgetCacheBuilder {
         for record: AssetRecord
     ) -> WidgetCacheFilenames {
         cacheFilenames(for: record)
+    }
+
+    static func runtimeSelfTestRecoveredPersonalCache(
+        from records: [AssetRecord], cacheDirectory: URL, now: Date
+    ) -> [PersonalRediscoveryCandidate] {
+        recoverUnindexedPersonalCache(from: records, cacheDirectory: cacheDirectory, now: now)
     }
 
     /// Exercises the production JPEG path without PhotoKit or cache publication.

@@ -166,18 +166,23 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     /// Publish the current eligibility authority before starting asynchronous
-    /// cache work. Added photos do not invalidate retained, unchanged items.
+    /// cache work. An empty pool can adopt up to twenty verified legacy cache
+    /// items in the same commit, so a later cache-build failure does not blank it.
+    /// Added photos do not invalidate retained, unchanged items.
     @discardableResult
     func updateEligibility(
         photoIDs: Set<String>,
         scopeIdentifier: String,
         isAuthorized: Bool,
         now: Date = .now,
-        photoModificationDates: [String: Date] = [:]
+        photoModificationDates: [String: Date] = [:],
+        bootstrapCandidates: [PersonalRediscoveryCandidate] = [],
+        interval: TimeInterval = 20 * 60
     ) throws -> String {
         try locked {
             guard photoIDs.allSatisfy(Self.validIdentifier), !scopeIdentifier.isEmpty,
-                  scopeIdentifier.utf8.count <= 4_096 else { throw Error.invalidCandidate }
+                  scopeIdentifier.utf8.count <= 4_096,
+                  interval.isFinite, (60...86_400).contains(interval) else { throw Error.invalidCandidate }
             var state = try read() ?? PersonalRediscoveryFile(
                 eligibilityRevision: UUID().uuidString, scopeIdentifier: scopeIdentifier,
                 eligiblePhotoIDs: [], modificationDates: [:], isAuthorized: false,
@@ -207,8 +212,26 @@ struct PersonalRediscoveryStore: Sendable {
                 state.issues[index].invalidated = true
             }
             if !isAuthorized { state.plan = nil }
-            repairPlan(&state, now: now)
             prune(&state, now: now)
+            if isAuthorized && state.candidates.isEmpty {
+                var protected = pinnedFiles(state, now: now)
+                var inspectedIDs = Set<String>()
+                // Legacy manifests contain at most twenty items. Bound decode
+                // work and never inspect files before checking current authority.
+                for candidate in bootstrapCandidates.prefix(20) {
+                    guard eligible(candidate.item, in: state), validItem(candidate.item),
+                          inspectedIDs.insert(candidate.item.localIdentifier).inserted else { continue }
+                    let proposedFiles = protected.union(candidate.item.allCacheFilenames)
+                    guard proposedFiles.count <= Self.maximumCachedFileCount,
+                          commitCandidateReady(candidate.item) else { continue }
+                    state.candidates.append(candidate)
+                    protected = proposedFiles
+                }
+                if state.plan == nil && !state.candidates.isEmpty {
+                    state.plan = makePlan(candidates: state.candidates, anchor: now, interval: interval)
+                }
+            }
+            repairPlan(&state, now: now)
             state.updatedAt = now
             try write(state)
             return state.eligibilityRevision

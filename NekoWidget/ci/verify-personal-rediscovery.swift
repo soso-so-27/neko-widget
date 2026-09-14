@@ -19,7 +19,7 @@ private struct Fixture {
     let candidates: [PersonalRediscoveryCandidate]
     let revision: String
 
-    init(_ count: Int, at date: Date = baseline) throws {
+    init(_ count: Int, at date: Date = baseline, legacyOnly: Bool = false) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("rediscovery-check-\(UUID().uuidString)")
         store = PersonalRediscoveryStore(containerURL: directory)
         candidates = (0..<count).map { index in
@@ -30,9 +30,15 @@ private struct Fixture {
                 sourceModificationDate: date
             ), creationDate: date.addingTimeInterval(-Double(index) * 3_600), preparedAt: date)
         }
-        revision = try store.updateEligibility(photoIDs: Set(candidates.map { $0.item.localIdentifier }), scopeIdentifier: "fixture", isAuthorized: true, now: date)
         try Self.writeImages(candidates, directory: directory)
-        if count > 0 { try store.publish(candidates: candidates, expectedRevision: revision, now: date) }
+        if legacyOnly {
+            revision = ""
+            let manifest = WidgetManifest(items: candidates.map(\.item), generatedAt: date)
+            try JSONEncoder().encode(manifest).write(to: directory.appendingPathComponent("widget-manifest.json"), options: .atomic)
+        } else {
+            revision = try store.updateEligibility(photoIDs: Set(candidates.map { $0.item.localIdentifier }), scopeIdentifier: "fixture", isAuthorized: true, now: date)
+            if count > 0 { try store.publish(candidates: candidates, expectedRevision: revision, now: date) }
+        }
     }
 
     static func writeImages(_ candidates: [PersonalRediscoveryCandidate], directory: URL) throws {
@@ -65,6 +71,19 @@ private struct Fixture {
         return token
     }
 
+    @discardableResult
+    func bootstrap(
+        candidates seeds: [PersonalRediscoveryCandidate]? = nil,
+        photoIDs: Set<String>? = nil, isAuthorized: Bool = true,
+        modificationDate: Date = baseline, interval: TimeInterval = 20 * 60
+    ) throws -> String {
+        try store.updateEligibility(
+            photoIDs: photoIDs ?? Set(candidates.map { $0.item.localIdentifier }),
+            scopeIdentifier: "fixture", isAuthorized: isAuthorized, now: baseline,
+            photoModificationDates: Dictionary(uniqueKeysWithValues: candidates.map { ($0.item.localIdentifier, modificationDate) }),
+            bootstrapCandidates: seeds ?? candidates, interval: interval)
+    }
+
     func cleanup() { try? FileManager.default.removeItem(at: directory) }
 }
 
@@ -84,8 +103,124 @@ private enum PersonalRediscoveryVerifier {
         try dailyAndHistory()
         try invalidCandidateDoesNotConsume()
         try authorityAndPublication()
+        try upgradeBootstrap()
+        try bootstrapRejections()
         try concurrentProcesses()
-        print("Personal rediscovery passed: shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, cross-process race.")
+        print("Personal rediscovery passed: shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, cross-process race.")
+    }
+
+    private static func upgradeBootstrap() throws {
+        let fixture = try Fixture(20, legacyOnly: true)
+        defer { fixture.cleanup() }
+        try require(try fixture.store.snapshot(now: baseline) == nil, "legacy fixture already created canonical state")
+        let manifest = try JSONDecoder().decode(WidgetManifest.self,
+            from: Data(contentsOf: fixture.directory.appendingPathComponent("widget-manifest.json")))
+        let seeds = manifest.items.map { PersonalRediscoveryCandidate(item: $0, preparedAt: baseline) }
+        let revision = try fixture.bootstrap(candidates: seeds, interval: 30 * 60)
+        let first = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
+        try require(first.entries.count == 2 && first.entries.allSatisfy { $0.item != nil }, "authority committed before legacy photos and plan")
+        try require(first.entries[1].date == baseline.addingTimeInterval(30 * 60), "bootstrap ignored configured interval")
+        let saved = try fixture.store.snapshot(now: baseline)!
+        try require(saved.candidates.count == 20, "bootstrap lost prepared legacy candidates")
+        do {
+            try fixture.store.publish(candidates: [], expectedRevision: revision, now: baseline.addingTimeInterval(30)) { _ in
+                throw CheckFailure.failed("initial async publication failed")
+            }
+            throw CheckFailure.failed("failed initial publication reported success")
+        } catch CheckFailure.failed("initial async publication failed") {}
+        try require(try fixture.store.snapshot(now: baseline) == saved, "failed asynchronous build replaced bootstrap state")
+        let resumed = PersonalRediscoveryStore(containerURL: fixture.directory)
+        for variant in WidgetImageVariant.allCases {
+            let timeline = try resumed.issueTimeline(now: baseline, variant: variant, timeZone: utc)!
+            try require(timeline.entries.map { $0.item?.localIdentifier } == first.entries.map { $0.item?.localIdentifier }, "upgrade restart or image size lost bootstrapped photo")
+        }
+        // Repeated authority refreshes are not a refill and must not reschedule
+        // the existing plan, even when an alternate bootstrap is supplied.
+        try fixture.bootstrap(candidates: Array(seeds.prefix(1)), interval: 10 * 60)
+        try require(try fixture.store.snapshot(now: baseline)?.candidates == saved.candidates, "bootstrap replaced existing pool")
+        let repeated = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
+        try require(repeated.entries.map(\.slotID) == first.entries.map(\.slotID) && repeated.entries[1].date == first.entries[1].date, "bootstrap reset existing plan")
+
+        let capped = try Fixture(21, legacyOnly: true)
+        defer { capped.cleanup() }
+        try capped.bootstrap()
+        try require(try capped.store.snapshot(now: baseline)?.candidates.count == 20, "bootstrap exceeded legacy twenty-item bound")
+
+        let used = try Fixture(3)
+        defer { used.cleanup() }
+        let token = try used.token()
+        let operation = UUID().uuidString
+        guard case let .committed(grant) = try used.store.perform(token: token,
+            operationID: operation, operationCreatedAt: baseline, now: baseline, timeZone: utc) else {
+            throw CheckFailure.failed("bootstrap quota fixture did not commit")
+        }
+        let before = try used.store.snapshot(now: baseline)!
+        try used.store.publish(candidates: [], expectedRevision: used.revision, now: baseline,
+            discardCandidateIDs: Set(used.candidates.map { $0.item.localIdentifier }))
+        try require(try used.store.snapshot(now: baseline)?.candidates.isEmpty == true, "quota fixture did not empty pool")
+        try used.bootstrap()
+        let after = try used.store.snapshot(now: baseline)!
+        try require(after.candidates.count == 3 && after.history == before.history
+            && after.nextAvailableAt == before.nextAvailableAt && !after.canTurn, "bootstrap reset daily usage or history")
+        guard case let .existing(replayed) = try used.store.perform(token: token,
+            operationID: operation, operationCreatedAt: baseline, now: baseline, timeZone: utc) else {
+            throw CheckFailure.failed("bootstrap lost committed operation")
+        }
+        try require(replayed.id == grant.id, "bootstrap replay chose a new photo")
+    }
+
+    private static func bootstrapRejections() throws {
+        let authority = try Fixture(3, legacyOnly: true)
+        defer { authority.cleanup() }
+        try authority.bootstrap(isAuthorized: false)
+        try require(try authority.store.snapshot(now: baseline)?.candidates.isEmpty == true, "unauthorized legacy cache was adopted")
+        let allowed = Set(authority.candidates.dropFirst().map { $0.item.localIdentifier })
+        try authority.bootstrap(photoIDs: allowed, modificationDate: baseline.addingTimeInterval(1))
+        try require(try authority.store.snapshot(now: baseline)?.candidates.isEmpty == true, "stale source revision was adopted")
+        try authority.bootstrap(photoIDs: allowed)
+        try require(try Set(authority.store.snapshot(now: baseline)!.candidates.map { $0.item.localIdentifier }) == allowed, "excluded legacy photo returned")
+
+        for variant in WidgetImageVariant.allCases {
+            let missing = try Fixture(1, legacyOnly: true)
+            defer { missing.cleanup() }
+            let url = missing.directory.appendingPathComponent("widget-cache")
+                .appendingPathComponent(missing.candidates[0].item.cacheFilename(for: variant))
+            try FileManager.default.removeItem(at: url)
+            try missing.bootstrap()
+            try require(try missing.store.snapshot(now: baseline)?.candidates.isEmpty == true, "missing \(variant) image was adopted")
+            try require(try missing.store.issueTimeline(now: baseline, variant: variant)?.entries.isEmpty == true, "invalid bootstrap created a photo slot")
+        }
+        let invalid = try Fixture(1, legacyOnly: true)
+        defer { invalid.cleanup() }
+        var seed = invalid.candidates[0]
+        seed.item.cacheFilenames = nil
+        try invalid.bootstrap(candidates: [seed])
+        try require(try invalid.store.snapshot(now: baseline)?.candidates.isEmpty == true, "single-variant legacy item was adopted")
+        let imageURL = invalid.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(invalid.candidates[0].item.cacheFilename(for: .large))
+#if canImport(ImageIO)
+        // A plausible JPEG header and footer must not bypass complete decode.
+        try Data([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]).write(to: imageURL)
+#else
+        try Data([0, 0, 0, 0]).write(to: imageURL)
+#endif
+        try invalid.bootstrap()
+        try require(try invalid.store.snapshot(now: baseline)?.candidates.isEmpty == true, "corrupt JPEG was adopted")
+        for badInterval in [59.0, 86_401.0, Double.infinity, Double.nan] {
+            do {
+                try invalid.bootstrap(interval: badInterval)
+                throw CheckFailure.failed("invalid bootstrap interval accepted")
+            } catch PersonalRediscoveryStore.Error.invalidCandidate {}
+        }
+        let stateURL = invalid.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let corrupted = Data("{ broken".utf8)
+        try corrupted.write(to: stateURL)
+        try Fixture.writeImages(invalid.candidates, directory: invalid.directory)
+        do {
+            try invalid.bootstrap()
+            throw CheckFailure.failed("bootstrap silently replaced corrupt canonical state")
+        } catch PersonalRediscoveryStore.Error.corrupted {}
+        try require(try Data(contentsOf: stateURL) == corrupted, "bootstrap changed unreadable authority")
     }
 
     private static func invalidCandidateDoesNotConsume() throws {
