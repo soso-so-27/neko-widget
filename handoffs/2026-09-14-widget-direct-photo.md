@@ -26,3 +26,5 @@
 初回候補5880b6cではReleaseビルドと通常Widget Galleryが成功。確認中、共有まど有効化後に写真がすぐ閉じられたり解決に失敗した場合、背景画面・Widget出力への通知が後続同期まで行われない経路を特定した。独立レビューで既存通知の非再帰性・lifecycle維持を確認し、有効化直後に通知する修正を追加。旧run34791253872は不要な継続を避けて取消。共有のキャッシュ表示前に通信完了を待つ変更ではない。
 
 候補953ce4c / run34792056924ではReleaseビルド、共有runtime、白写真・ひとことなしGalleryが成功。iOS 18.6のsmokeで新規3ケースがURLを開く前のfixture初期表示で失敗。検証用のお題URLが`/nap.json`で、製品の`/catalog.json`条件を満たさず、購読初期化のDEBUG assertionに入っていた。既存の動作確認済みfixtureと同じ`/windows/nap-cats/catalog.json`へ修正した。製品のURL条件を緩めず、検証コードの不具合として記録。残る旧候補ジョブは取り消し、新しいSHAで確認する。
+
+候補183c042 / run34793545578ではURLを受けて読み込み画面と閉じる操作まで表示できたが、保持した背景要素の`exists == false`を求める新規試験が失敗。iOS 18.6の録画を抽出した`output/183c-loading-frame.png`で、画面全体が写真の読み込み表示に覆われ、ホーム・一覧・元のナビゲーションが見えないことを確認した。[Appleのexists仕様](https://developer.apple.com/documentation/xcuiautomation/xcuielement/exists)どおり、覆われた要素も階層に存在し得る。背景を保持する仕様に合わせ、非表示の操作は`isHittable == false`、対象の写真・閉じるは操作可能であることへ判定を修正。保持された別写真も存在だけで混同せず、現在表示中の写真を検査する。画像確認、対象URLの一致、欠落写真の非代替、閉じた後の状態保持の条件は維持する。

@@ -50,9 +50,9 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-settings-draft"].label, "変更回数：1")
         app.open(routes[1].url)
         assertWidgetPhotoOpening(routes[1], in: app)
-        XCTAssertFalse(editSettings.exists, "The existing settings sheet must be covered while loading")
+        XCTAssertFalse(editSettings.isHittable, "The existing settings sheet must be covered while loading")
         resolveWidgetPhoto(in: app)
-        XCTAssertFalse(app.staticTexts["widget-photo-fixture-settings-draft"].exists)
+        XCTAssertFalse(app.staticTexts["widget-photo-fixture-settings-draft"].isHittable)
         capture("widget-url-above-settings", app)
         app.buttons["widget-photo-close"].tap()
         XCTAssertTrue(editSettings.waitForExistence(timeout: 5))
@@ -70,10 +70,10 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-existing-draft"].label, "変更回数：1")
         app.open(routes[0].url)
         assertWidgetPhotoOpening(routes[0], in: app)
-        XCTAssertFalse(editExistingPhoto.exists,
+        XCTAssertFalse(editExistingPhoto.isHittable,
                        "An existing full-screen photo must be covered while the Widget loads")
         resolveWidgetPhoto(in: app)
-        XCTAssertFalse(app.staticTexts["widget-photo-fixture-existing-draft"].exists)
+        XCTAssertFalse(app.staticTexts["widget-photo-fixture-existing-draft"].isHittable)
         capture("widget-url-above-existing-fullscreen-photo", app)
         app.buttons["widget-photo-close"].tap()
         XCTAssertTrue(editExistingPhoto.waitForExistence(timeout: 5))
@@ -100,7 +100,7 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertFalse(closeInformation.exists,
                        "The photo's child information sheet must dismiss with the Widget")
         XCTAssertFalse(app.buttons["widget-photo-close"].exists)
-        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists)
+        XCTAssertEqual(visibleWidgetPhotos(in: app).count, 0)
         app.buttons["widget-photo-fixture-other-close"].tap()
         XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
     }
@@ -119,9 +119,11 @@ final class OfficialWindowUITests: XCTestCase {
                 format: "label == %@ OR label == %@", "写真を表示できません", "この写真は表示できません"
             )).firstMatch
             XCTAssertTrue(unavailable.waitForExistence(timeout: 10), route.name)
-            XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists,
+            XCTAssertEqual(visibleWidgetPhotos(in: app).count, 0,
                            "Missing \(route.name) must not borrow the seeded valid photo")
-            XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+            XCTAssertFalse(app.descendants(matching: .any)
+                .matching(identifier: "official-window-image-loaded")
+                .allElementsBoundByIndex.contains { $0.isHittable })
             assertWidgetBackgroundHidden(in: app)
             capture("widget-url-missing-\(route.name)", app)
             closeWidgetPhotoOnce(in: app)
@@ -174,7 +176,7 @@ final class OfficialWindowUITests: XCTestCase {
         let resolve = app.buttons["widget-photo-fixture-resolve"]
         XCTAssertTrue(resolve.waitForExistence(timeout: 5))
         XCTAssertTrue(resolve.isHittable)
-        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists,
+        XCTAssertEqual(visibleWidgetPhotos(in: app).count, 0,
                        "The previous photo must disappear while the new selection loads")
         XCTAssertEqual(app.buttons.matching(identifier: "widget-photo-close").count, 1)
         assertWidgetBackgroundHidden(in: app)
@@ -183,20 +185,32 @@ final class OfficialWindowUITests: XCTestCase {
     @MainActor
     private func resolveWidgetPhoto(in app: XCUIApplication) {
         app.buttons["widget-photo-fixture-resolve"].tap()
-        let photo = app.images["photo-detail-zoom-surface"]
-        XCTAssertTrue(photo.waitForExistence(timeout: 10))
-        XCTAssertTrue(photo.isHittable)
+        let photos = app.images.matching(identifier: "photo-detail-zoom-surface")
+        let oneVisiblePhoto = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            photos.allElementsBoundByIndex.filter { $0.isHittable }.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [oneVisiblePhoto], timeout: 10), .completed,
+                       "Exactly one photo must become visible after the selected route resolves")
         XCTAssertEqual(app.buttons.matching(identifier: "widget-photo-close").count, 1)
         assertWidgetBackgroundHidden(in: app)
     }
 
+    // Native overFullScreen keeps covered views in the hierarchy: exists can
+    // remain true. Check interaction/visible photos; loading screenshots also
+    // verify that the opaque destination does not show background content.
+    @MainActor
+    private func visibleWidgetPhotos(in app: XCUIApplication) -> [XCUIElement] {
+        app.images.matching(identifier: "photo-detail-zoom-surface")
+            .allElementsBoundByIndex.filter { $0.isHittable }
+    }
+
     @MainActor
     private func assertWidgetBackgroundHidden(in app: XCUIApplication) {
-        XCTAssertFalse(app.buttons["widget-photo-fixture-home"].exists)
-        XCTAssertFalse(app.buttons["widget-photo-fixture-list"].exists)
-        XCTAssertFalse(app.navigationBars["確認用ホーム"].exists)
-        XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
-        XCTAssertFalse(app.navigationBars["おひるね"].exists)
+        XCTAssertFalse(app.buttons["widget-photo-fixture-home"].isHittable)
+        XCTAssertFalse(app.buttons["widget-photo-fixture-list"].isHittable)
+        XCTAssertFalse(app.navigationBars["確認用ホーム"].isHittable)
+        XCTAssertFalse(app.navigationBars["どこかの猫"].isHittable)
+        XCTAssertFalse(app.navigationBars["おひるね"].isHittable)
     }
 
     @MainActor
@@ -207,7 +221,7 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(home.isHittable)
         XCTAssertTrue(app.buttons["widget-photo-fixture-list"].isHittable)
         XCTAssertFalse(app.buttons["widget-photo-close"].exists)
-        XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists)
+        XCTAssertEqual(visibleWidgetPhotos(in: app).count, 0)
         XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
         XCTAssertFalse(app.navigationBars["おひるね"].exists)
     }
