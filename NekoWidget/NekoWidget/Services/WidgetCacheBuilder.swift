@@ -176,7 +176,7 @@ actor WidgetCacheBuilder {
         let legacy = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)
         // Reuse known cached photos before probing the randomized PhotoKit
         // order. Its first thirty records can all be unavailable in iCloud.
-        var prepared = Self.personalBootstrapCandidates(from: ordered,
+        var prepared = Self.personalBootstrapCandidates(from: ordered.filter { !existingIDs.contains($0.localIdentifier) },
             manifest: legacy, cacheDirectory: cache, now: now)
         if prepared.isEmpty && existingIDs.isEmpty {
             prepared = Self.recoverUnindexedPersonalCache(from: ordered, cacheDirectory: cache, now: now)
@@ -331,14 +331,27 @@ actor WidgetCacheBuilder {
         let records = Dictionary(eligible.map { ($0.localIdentifier, $0) },
                                  uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
-        return PersonalWidgetRotationPolicy.orderedUniqueItems(from: manifest.items).compactMap { item in
+        return PersonalWidgetRotationPolicy.orderedUniqueItems(from: manifest.items).compactMap { original in
+            var item = original
             guard let record = records[item.localIdentifier],
                   seen.insert(item.localIdentifier).inserted,
                   item.sourceModificationDate == record.sourceModificationDate,
-                  item.rendererVersion == WidgetRenderPlanner.rendererVersion,
-                  item.cacheFilenames == cacheFilenames(for: record),
                   hasUsablePersonalFiles(for: item, cacheDirectory: cacheDirectory)
             else { return nil }
+            if item.rendererVersion == "cat-aware-full-bleed-v5",
+               WidgetImageVariant.allCases.allSatisfy({ variant in
+                   item.cacheFilename(for: variant).hasPrefix("asset-cat-aware-full-bleed-v5-\(variant.rawValue)-")
+               }), fullyDecodesPersonalItem(item, cacheDirectory: cacheDirectory) {
+                // Build 166 kept its active v5 photo if the v6 original could
+                // not be loaded. Preserve that display while requesting a v6
+                // rebuild; do not reintroduce old geometry into sharing.
+                item.rendererVersion = nil
+                item.sourcePixelSize = nil
+                item.renderPlans = nil
+            } else {
+                guard item.rendererVersion == WidgetRenderPlanner.rendererVersion,
+                      item.cacheFilenames == cacheFilenames(for: record) else { return nil }
+            }
             return .init(item: item, creationDate: record.creationDate,
                          burstIdentifier: record.burstIdentifier,
                          isFavorite: record.isFavorite, isSaved: record.liked, preparedAt: now)
@@ -387,23 +400,27 @@ actor WidgetCacheBuilder {
                 cacheFilename: filenames.small, cacheFilenames: filenames, scheduledDate: now,
                 sourceModificationDate: record.sourceModificationDate)
             guard hasUsablePersonalFiles(for: item, cacheDirectory: cacheDirectory),
-                  WidgetImageVariant.allCases.allSatisfy({ variant in
-                      autoreleasepool {
-                          guard let source = CGImageSourceCreateWithURL(
-                              cacheDirectory.appendingPathComponent(item.cacheFilename(for: variant)) as CFURL,
-                              [kCGImageSourceShouldCache: false] as CFDictionary),
-                                let image = CGImageSourceCreateImageAtIndex(source, 0,
-                                    [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-                          else { return false }
-                          return image.width > 0 && image.height > 0
-                              && image.width <= variant.pixelWidth && image.height <= variant.pixelHeight
-                      }
-                  }) else { continue }
+                  fullyDecodesPersonalItem(item, cacheDirectory: cacheDirectory) else { continue }
             result.append(.init(item: item, creationDate: record.creationDate,
                 burstIdentifier: record.burstIdentifier, isFavorite: record.isFavorite,
                 isSaved: record.liked, preparedAt: now))
         }
         return result
+    }
+
+    private static func fullyDecodesPersonalItem(_ item: WidgetManifestItem, cacheDirectory: URL) -> Bool {
+        WidgetImageVariant.allCases.allSatisfy { variant in
+            autoreleasepool {
+                guard let source = CGImageSourceCreateWithURL(
+                    cacheDirectory.appendingPathComponent(item.cacheFilename(for: variant)) as CFURL,
+                    [kCGImageSourceShouldCache: false] as CFDictionary),
+                      let image = CGImageSourceCreateImageAtIndex(source, 0,
+                          [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                else { return false }
+                return image.width > 0 && image.height > 0
+                    && image.width <= variant.pixelWidth && image.height <= variant.pixelHeight
+            }
+        }
     }
 
     private func preparePersonalItem(_ record: AssetRecord, in stage: URL,

@@ -7048,7 +7048,7 @@ actor SharingRuntimeSelfTestRunner {
             else { throw DailySharingError.stateUnavailable }
         }
         var oldRenderer = item
-        oldRenderer.rendererVersion = "cat-aware-full-bleed-v5"
+        oldRenderer.rendererVersion = "unknown-v99"
         guard WidgetCacheBuilder.personalBootstrapCandidates(
             from: [record], manifest: WidgetManifest(items: [oldRenderer], generatedAt: now),
             cacheDirectory: directory, now: now).isEmpty
@@ -7063,6 +7063,39 @@ actor SharingRuntimeSelfTestRunner {
             to: directory.appendingPathComponent(filenames.large))
         guard WidgetCacheBuilder.runtimeSelfTestRecoveredPersonalCache(
             from: [record], cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+
+        // Build 166 can still have an active v5 manifest. Its readable photos
+        // remain displayable, while obsolete sharing geometry must be cleared.
+        let v5Filenames = WidgetCacheFilenames(
+            small: "asset-cat-aware-full-bleed-v5-small-bootstrap.jpg",
+            medium: "asset-cat-aware-full-bleed-v5-medium-bootstrap.jpg",
+            large: "asset-cat-aware-full-bleed-v5-large-bootstrap.jpg")
+        for filename in v5Filenames.all {
+            try SharingSecureFile.write(jpeg, to: directory.appendingPathComponent(filename))
+        }
+        var v5Item = item
+        v5Item.cacheFilename = v5Filenames.small
+        v5Item.cacheFilenames = v5Filenames
+        v5Item.rendererVersion = "cat-aware-full-bleed-v5"
+        let v5Manifest = WidgetManifest(items: [v5Item], generatedAt: now)
+        let v5Adopted = WidgetCacheBuilder.personalBootstrapCandidates(
+            from: uncached + [record], manifest: v5Manifest, cacheDirectory: directory, now: now)
+        var displayOnly = v5Item
+        displayOnly.rendererVersion = nil
+        displayOnly.sourcePixelSize = nil
+        displayOnly.renderPlans = nil
+        guard v5Adopted.count == 1, v5Adopted[0].item == displayOnly,
+              WidgetCacheBuilder.personalBootstrapCandidates(
+                from: [edited], manifest: v5Manifest, cacheDirectory: directory, now: now).isEmpty,
+              WidgetCacheBuilder.personalBootstrapCandidates(
+                from: uncached, manifest: v5Manifest, cacheDirectory: directory, now: now).isEmpty
+        else { throw DailySharingError.stateUnavailable }
+        // JPEG framing alone must not qualify a damaged old cache for adoption.
+        try SharingSecureFile.write(Data([0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]),
+            to: directory.appendingPathComponent(v5Filenames.medium))
+        guard WidgetCacheBuilder.personalBootstrapCandidates(
+            from: [record], manifest: v5Manifest, cacheDirectory: directory, now: now).isEmpty
         else { throw DailySharingError.stateUnavailable }
     }
 
