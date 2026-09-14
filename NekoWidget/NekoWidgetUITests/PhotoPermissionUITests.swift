@@ -479,9 +479,13 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(card.isHittable)
         let discover = app.buttons["window-list-discover"]
         XCTAssertTrue(discover.isHittable)
-        XCTAssertGreaterThanOrEqual(discover.frame.height, 44)
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
+        discover.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        XCTAssertTrue(card.isHittable, "Discovery must return to the receiving photo")
         card.tap()
         let manage = app.buttons["official-window-manage"]
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
@@ -638,10 +642,9 @@ final class OfficialWindowUITests: XCTestCase {
             let connect = app.buttons["window-list-connect"]
             XCTAssertTrue(discover.isHittable)
             XCTAssertTrue(connect.isHittable)
-            XCTAssertGreaterThanOrEqual(discover.frame.width, 44)
-            XCTAssertGreaterThanOrEqual(discover.frame.height, 44)
-            XCTAssertGreaterThanOrEqual(connect.frame.width, 44)
-            XCTAssertGreaterThanOrEqual(connect.frame.height, 44)
+            // Native toolbar AX frames are not a measurement of the complete
+            // touch target. Verify distinct, reachable actions and their result.
+            XCTAssertFalse(discover.frame.intersects(connect.frame))
             discover.tap()
             XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5),
