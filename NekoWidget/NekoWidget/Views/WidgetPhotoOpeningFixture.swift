@@ -17,7 +17,7 @@ struct WidgetPhotoOpeningFixture: View {
     @StateObject private var channel = OfficialWindowFixtureModel(
         definition: PublicWindowDefinition(
             id: "nap-cats", displayName: "おひるね", subtitle: "確認用の猫の写真",
-            endpoint: URL(string: "https://official.invalid/nap.json")),
+            endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")),
         initiallySubscribed: true)
 
     var body: some View {
