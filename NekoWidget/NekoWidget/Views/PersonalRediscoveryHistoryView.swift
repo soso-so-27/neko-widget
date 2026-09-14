@@ -279,7 +279,7 @@ private final class PersonalRediscoveryHistoryFixtureModel: ObservableObject {
                                       operationCreatedAt: yesterday, now: yesterday)
             }
         } catch {
-            seedError = String(describing: error)
+            seedError = "履歴の検証用写真を準備できませんでした"
         }
     }
 
@@ -296,7 +296,7 @@ struct PersonalRediscoveryHistoryFixture: View {
     var body: some View {
         Group {
             if let error = model.seedError {
-                Text("確認用の準備に失敗しました：\(error)")
+                Text(error)
                     .accessibilityIdentifier("personal-rediscovery-fixture-error")
             } else {
                 WidgetPhotoPresentationHost {

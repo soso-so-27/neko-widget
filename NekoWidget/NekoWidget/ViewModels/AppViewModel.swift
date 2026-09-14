@@ -1279,7 +1279,6 @@ final class AppViewModel: ObservableObject {
         settings = normalized
         snapshot.settings = normalized
         snapshot.updatedAt = .now
-        _ = try? synchronizePersonalWidgetAuthority()
         SharedLog.app.info(
             "settings",
             "Cat life reference updated",
