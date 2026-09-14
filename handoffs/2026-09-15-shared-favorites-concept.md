@@ -79,3 +79,19 @@
 - **Google Photosパートナー共有**：保存済み写真は共有相手の削除・共有終了後も自分のライブラリに残る。一方、自動保存設定も持つ。保存済みコピーの独立性は参考にし、自動共有・自動保存を本案の既定にはしない。[公式説明](https://support.google.com/photos/answer/7378858?co=GENIE.Platform%3DiOS&hl=en)。
 
 これらは競合の機能をそのまま移す根拠ではない。試すべき仮説は、送受信という操作分類より先に「同じ相手と選んだ写真」を見せると、まどを開く理由が明確になるか。判断には両端末で手選び→受取→見返し→個人保存を実際に使う観察が必要で、今回はそこまで確認していない。
+
+## 2026-09-15追記：今回採用した実装範囲
+
+ユーザーの最新の希望は、長期アーカイブの追加ではなく「共有の場所とわかる見せ方」。今回の実装対象は、**同じまどで、この端末から今開ける双方の写真を、同じ大きさの共通一覧へまとめること**に絞る。以上の保存・同期・Widget再発見の設計案をまとめて実装済みにはしない。実装と検証の完了は現在の台帳で扱う。
+
+- 写真中心の「共有アルバム」として、送受信の分類より先に双方の写真を見せる。別のまどは混ぜない。送信待ちや失敗は、相手にも公開済みの写真と同じ状態に見せず、既存の送信状況・再試行を残す。
+- 「写真を追加」と共有先の表示で、選んだ写真をどのまどへ届けるかを明確にする。既存の写真選択・宛先確認・明示送信を維持し、個人の写真や思い出を自動公開しない。
+- 受信写真を「自分の思い出に追加」する個人の取り込みと、まどへ写真を追加する共有操作を区別する。Photosへの明示コピー、個人の登録、相手へ通知しない既存の境界は変更しない。
+- 名称だけで無期限保存・全端末の同じ履歴・共有保管庫の完成を約束しない。現行の保持期間とサーバー仕様は変更せず、旧写真の保存契約を延長しない。検討途中の「共有一覧を追加から7日に限定する」案も**採用しない**。
+
+### 完全な共有保管庫に必要だが、今回は実装しないこと
+
+1. **新規写真の自己配信と追加端末での再取得**。現行relayは送信者participantにも画像downloadを許可する一方、commitの写真changeは相手へだけ作る。クライアントは自己senderのchangeを到達通知として扱い、画像を取得しない。自分の別端末でも同じ集合を得るには、自己写真の通知・読取コピー・重複排除・期限内再取得が別途必要。権限があることだけで同期完成とはしない。根拠：[moments.ts](../NekoWidget/SharingService/src/moments.ts) の `commitMoment` / `downloadMomentCiphertext`、[MomentSharingCoordinator.swift](../NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift) の `receiveChanges`。
+2. **自己配信に伴うACKと旧clientの互換**。commit時の自己changeを足すだけでは、現行ACK通知の重複防止がその行を見て、後日の到達通知を抑止する。写真追加と到達通知を区別する設計が必要。自分への読取コピーを相手の受信ACKやハートとして扱わず、活動時刻を開示しない既存の意味を維持する。根拠：`moments.ts` の `acknowledgeMoment`（送信者通知の `NOT EXISTS` 条件）。
+3. **保持と共有集合の整合**。現行relayは未受信30日・受信ACK後7日で、端末内の受信表示は最長90日、送信detailは作成から30日。relayから消えた写真は、別端末が後から再取得できない。受信日時を起点に旧写真の寿命を再延長せず、共通集合の正本・保持契約・容量・期限切れ反映を改めて決める必要がある。根拠：`moments.ts` の `acknowledgeMoment` / `runMomentCleanup`、[MomentSharingStore.swift](../NekoWidget/Shared/Sharing/MomentSharingStore.swift) の `pruneLocalHistoryWhileLocked`。
+4. **共有からの削除と復元**。現在の端末内削除や個人の思い出から外す操作を、双方の共有写真の撤回・復元と読み替えない。共有削除の権限、端末間の削除通知、追加端末での復元範囲は未実装の課題として残す。共有解除・ブロック・世代変更で古い画像を再公開させない既存のlifecycle排他と、明示保存したPhotosコピーを回収しない境界を維持する。根拠：`MomentSharingCoordinator.swift` の `blockAndLeave` / `storeReceived`、`MomentSharingStore.swift` の `enterReportOnlyModeWhileLifecycleLocked`。

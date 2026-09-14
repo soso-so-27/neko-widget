@@ -93,19 +93,6 @@ struct FamilyWidgetPhotoView: View {
     }
 }
 
-private enum FamilyWindowSection: String, CaseIterable, Identifiable {
-    case received
-    case sent
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .received: "届いた"
-        case .sent: "送った"
-        }
-    }
-}
-
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -135,7 +122,8 @@ struct FamilyWindowView: View {
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
-    @State private var selectedSection: FamilyWindowSection = .received
+    @State private var showsSharedPhotoInformation = false
+    @State private var showsUnavailablePhotoHistory = false
     @State private var memoryActionMomentID: String?
     @State private var heartActionMomentID: String?
     @State private var memoryResultMomentID: String?
@@ -158,8 +146,7 @@ struct FamilyWindowView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var preparedDelivery: PreparedMomentDelivery?
     @State private var deliveryCaption = ""
-    @State private var selectedSentRecord: MomentSentRecordPresentation?
-    @State private var selectedMomentForDetail: MomentInboxItem?
+    @State private var selectedSharedPhoto: MomentSharedPhoto?
     @State private var pendingDetailMemoryConfirmationID: String?
     @State private var isPreparingSelectedPhoto = false
     @State private var isDeliveringSelectedPhoto = false
@@ -177,6 +164,30 @@ struct FamilyWindowView: View {
 #endif
 
     private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
+
+    // One presentation owns both photo kinds. A notification can replace the
+    // current target without competing received/sent full-screen covers.
+    private var selectedMomentForDetail: MomentInboxItem? {
+        get {
+            if case let .received(item) = selectedSharedPhoto { return item }
+            return nil
+        }
+        nonmutating set {
+            if let newValue { selectedSharedPhoto = .received(newValue) }
+            else if case .received = selectedSharedPhoto { selectedSharedPhoto = nil }
+        }
+    }
+
+    private var selectedSentRecord: MomentSentRecordPresentation? {
+        get {
+            if case let .sent(record) = selectedSharedPhoto { return record }
+            return nil
+        }
+        nonmutating set {
+            if let newValue { selectedSharedPhoto = .sent(newValue) }
+            else if case .sent = selectedSharedPhoto { selectedSharedPhoto = nil }
+        }
+    }
 
     init(
         initialPresentation: FamilyWindowInitialPresentation = .content,
@@ -769,11 +780,8 @@ struct FamilyWindowView: View {
         .sheet(isPresented: $showsOutgoingDetails, onDismiss: presentPendingOutgoingConfirmation) {
             outgoingDetails
         }
-        .fullScreenCover(item: $selectedSentRecord) { record in
-            sentRecordDetail(recordID: record.id)
-        }
         .fullScreenCover(
-            item: $selectedMomentForDetail,
+            item: $selectedSharedPhoto,
             onDismiss: {
                 notificationAccessibilityFocus = nil
                 pendingDetailMemoryConfirmationID = nil
@@ -783,8 +791,12 @@ struct FamilyWindowView: View {
                 deleteReceivedTarget = nil
                 blockTarget = nil
             }
-        ) { item in
-            photoActionDialogs(receivedPhotoDetail(item.id), isDetail: true)
+        ) { photo in
+            switch photo {
+            case let .sent(record):
+                sentRecordDetail(recordID: record.id)
+            case let .received(item):
+                photoActionDialogs(receivedPhotoDetail(item.id), isDetail: true)
                 .task(id: pendingDetailMemoryConfirmationID) {
                     // Present the exact photo before asking to copy it. A
                     // Widget bookmark must not open a dialog behind the viewer.
@@ -797,6 +809,7 @@ struct FamilyWindowView: View {
                     pendingDetailMemoryConfirmationID = nil
                     if !model.isSavedMemory(current) { widgetMemoryTarget = current }
                 }
+            }
         }
     }
 
@@ -846,7 +859,7 @@ struct FamilyWindowView: View {
                                     Button(model.reportActionTitle(item)) { reportTarget = item }
                                         .disabled(!model.canSubmitReport(item))
                                 }
-                                Button("この写真を削除", role: .destructive) { deleteReceivedTarget = item }
+                                Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
                                 if !model.isReportOnly {
                                     Button("この相手をブロック", role: .destructive) { blockTarget = item }
                                 }
@@ -895,29 +908,28 @@ struct FamilyWindowView: View {
                         sharingErrorCard(message)
                     }
 
-                    Picker("まどに表示する内容", selection: $selectedSection) {
-                        ForEach(FamilyWindowSection.allCases) { section in
-                            Text(section.title).tag(section)
+                    HStack {
+                        MomentSharedAlbumHeading()
+                        Spacer()
+                        Button("共有写真について", systemImage: "info.circle") {
+                            showsSharedPhotoInformation = true
                         }
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("family-window-shared-photo-info")
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("family-window-section")
-                    .onChange(of: selectedSection) { _, section in
-                        guard section != .sent,
-                              focusedSentMomentID != nil else { return }
-                        focusedSentMomentID = nil
-                        notificationAccessibilityFocus = nil
+                    if let photoSelectionMessage {
+                        Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
-
-                    if pendingNotificationRoute?.target == nil {
-                        sendPhotoAction
-                    }
+                    outgoingStatusSection
                 }
 
-                if model.isReportOnly || selectedSection == .received {
+                if model.isReportOnly {
                     receivedSectionContent
                 } else {
-                    sentSectionContent
+                    sharedPhotoContent
                 }
 
                 if !model.isReportOnly {
@@ -928,7 +940,15 @@ struct FamilyWindowView: View {
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .refreshable { await model.synchronize() }
+        .sheet(isPresented: $showsSharedPhotoInformation) {
+            sharedPhotoInformation
+        }
         .toolbar {
+            if !model.isReportOnly, pendingNotificationRoute?.target == nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    sendPhotoAction
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
                     windowSettingsContent
@@ -936,6 +956,95 @@ struct FamilyWindowView: View {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("まどの設定")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sharedPhotoContent: some View {
+        let photos = MomentSharedPhoto.ordered(
+            received: model.receivedMoments,
+            sent: model.outgoingPresentation.sentRecords
+        )
+        if photos.isEmpty {
+            ContentUnavailableView(
+                "お互いの写真を、このまどに。",
+                systemImage: "photo.on.rectangle.angled",
+                description: Text("右上の写真ボタンから追加できます。")
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+        } else {
+            MomentSharedPhotoGrid(photos: photos) { photo in
+                switch photo {
+                case let .received(item):
+                    compactMomentCard(item)
+                case let .sent(record):
+                    Button { selectedSentRecord = record } label: {
+                        sentRecordCard(record)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .accessibilityIdentifier("family-window-shared-photos")
+        }
+
+        if !model.safetyHiddenMoments.isEmpty {
+            Text("安全確認で非表示")
+                .font(.headline)
+            ForEach(model.safetyHiddenMoments) { item in
+                safetyHiddenCard(item)
+            }
+        }
+
+        // An image-less delivery record is useful for support, but it must not
+        // become a blank tile among the photos or imply a recoverable archive.
+        let unavailable = model.outgoingPresentation.sentRecords.filter {
+            $0.localThumbnailJPEG.flatMap { UIImage(data: $0) } == nil
+        }
+        if !unavailable.isEmpty {
+            DisclosureGroup("写真のない送信履歴", isExpanded: $showsUnavailablePhotoHistory) {
+                VStack(spacing: 10) {
+                    ForEach(unavailable.prefix(sentRecordDisplayLimit)) { record in
+                        Button { selectedSentRecord = record } label: {
+                            sentRecordCard(record)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if unavailable.count > sentRecordDisplayLimit {
+                        Button("さらに見る") { sentRecordDisplayLimit += 20 }
+                            .frame(minHeight: 44)
+                    }
+                }
+                .padding(.top, 10)
+            }
+            .font(.subheadline)
+            .accessibilityIdentifier("family-window-unavailable-photo-history")
+        }
+    }
+
+    private var sharedPhotoInformation: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("このまどでは、お互いに追加した写真を一緒に見られます。")
+                    Text("写真は自動では共有されません。追加する1枚を選んで確認します。")
+                }
+                Section("写真の保存") {
+                    Text("届いた写真は最長90日です。自分の思い出に追加すると、写真アプリにもコピーします。相手には通知しません。")
+                    Text("自分が追加した写真の控えは、このiPhoneに最長30日保存します。")
+                    Text("この一覧は長期保管用ではありません。端末や追加した時期により、見られる写真は異なります。機種変更や再インストール後に、過去の全写真を復元する機能はありません。")
+                }
+            }
+            .navigationTitle("共有の写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる", systemImage: "xmark") {
+                        showsSharedPhotoInformation = false
+                    }
+                    .labelStyle(.iconOnly)
+                }
             }
         }
     }
@@ -979,26 +1088,12 @@ struct FamilyWindowView: View {
 
         if !model.receivedMoments.isEmpty {
             Label(
-                "届いた写真は最長90日です。残したい写真は「取り込んで残す」を選びます。",
+                "届いた写真は最長90日です。保存するには「自分の思い出に追加」を選びます。",
                 systemImage: "info.circle"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("family-window-received-retention-summary")
-        }
-    }
-
-    @ViewBuilder
-    private var sentSectionContent: some View {
-        if model.outgoingPresentation.hasActivity {
-            outgoingStatusSection
-        } else {
-            ContentUnavailableView(
-                "送った写真はまだありません",
-                systemImage: "paperplane"
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
         }
     }
 
@@ -1043,50 +1138,36 @@ struct FamilyWindowView: View {
     }
 
     private var sendPhotoAction: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            PhotosPicker(
-                selection: $selectedPhotoItem,
-                matching: .images,
-                preferredItemEncoding: .compatible,
-                photoLibrary: .shared()
-            ) {
-                HStack(spacing: 10) {
-                    if isPreparingSelectedPhoto {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "paperplane.fill")
-                    }
-                    Text(isPreparingSelectedPhoto
-                        ? "写真を準備しています…"
-                        : "写真を届ける")
-                        .font(.subheadline.weight(.semibold))
+        PhotosPicker(
+            selection: $selectedPhotoItem,
+            matching: .images,
+            preferredItemEncoding: .compatible,
+            photoLibrary: .shared()
+        ) {
+            Group {
+                if isPreparingSelectedPhoto {
+                    ProgressView()
+                        .tint(.accentColor)
+                } else {
+                    Image(systemName: "photo.badge.plus")
                 }
-                .frame(minHeight: 28)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.roundedRectangle(radius: 14))
-            .controlSize(.regular)
-            .disabled(
-                model.isWorking
-                    || model.isShowingLastKnownState
-                    || isPreparingSelectedPhoto
-                    || isDeliveringSelectedPhoto
-            )
-            .accessibilityIdentifier("family-window-photo-picker")
-            .accessibilityHint("写真を1枚選び、届け先を確認します")
-            .onChange(of: selectedPhotoItem) { _, item in
-                prepareSelectedPhoto(item)
-            }
-
-            if let photoSelectionMessage {
-                Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .disabled(
+            model.isWorking
+                || model.isShowingLastKnownState
+                || isPreparingSelectedPhoto
+                || isDeliveringSelectedPhoto
+        )
+        .accessibilityLabel(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を追加")
+        .accessibilityIdentifier("family-window-photo-picker")
+        .accessibilityHint("写真を1枚選び、共有先を確認します")
+        .onChange(of: selectedPhotoItem) { _, item in
+            prepareSelectedPhoto(item)
+        }
+
     }
 
     private var notificationRouteResolutionCard: some View {
@@ -1186,7 +1267,7 @@ struct FamilyWindowView: View {
                     destination = try await model.deliveryDestinationSnapshot()
                 } catch {
                     photoSelectionMessage =
-                        "届け先を確認できませんでした。まどの状態を確認して、もう一度お試しください。"
+                        "共有先を確認できませんでした。まどの状態を確認して、もう一度お試しください。"
                     return
                 }
                 preparedDelivery = PreparedMomentDelivery(
@@ -1224,7 +1305,6 @@ struct FamilyWindowView: View {
                     isDeliveringSelectedPhoto = false
                     if didStage {
                         preparedDelivery = nil
-                        selectedSection = .sent
                     } else {
                         selectedDeliveryMessage = model.errorMessage
                             ?? "写真を準備できませんでした。もう一度お試しください。"
@@ -1707,51 +1787,6 @@ struct FamilyWindowView: View {
                 .accessibilityIdentifier("family-window-outgoing-summary")
             }
 
-            if !model.outgoingPresentation.sentRecords.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("送った写真")
-                            .font(.headline)
-                        Spacer()
-                    }
-                    MomentSentHistory(
-                        records: visibleSentRecords,
-                        focusedMomentID: focusedSentMomentID
-                    ) { record in
-                        Button {
-                            selectedSentRecord = record
-                        } label: {
-                            sentRecordCard(record)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if model.outgoingPresentation.sentRecords.count > 20 {
-                    HStack {
-                        if sentRecordDisplayLimit > 20 {
-                            Button("最新の写真に戻す") {
-                                withAnimation { sentRecordDisplayLimit = 20 }
-                            }
-                        }
-                        Spacer(minLength: 12)
-                        if sentRecordDisplayLimit
-                            < model.outgoingPresentation.sentRecords.count {
-                            Button("さらに見る") {
-                                withAnimation {
-                                    sentRecordDisplayLimit = min(
-                                        sentRecordDisplayLimit + 20,
-                                        model.outgoingPresentation.sentRecords.count
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("family-window-sent-record-pagination")
-                }
-            }
         }
         .accessibilityIdentifier("family-window-outgoing-status")
     }
@@ -1810,19 +1845,6 @@ struct FamilyWindowView: View {
         case nil:
             break
         }
-    }
-
-    private var visibleSentRecords: [MomentSentRecordPresentation] {
-        let allRecords = model.outgoingPresentation.sentRecords
-        var records = Array(allRecords.prefix(max(20, sentRecordDisplayLimit)))
-        if let focusedSentMomentID,
-           let target = allRecords.first(where: {
-               $0.momentID == focusedSentMomentID
-           }) {
-            records.removeAll { $0.momentID == focusedSentMomentID }
-            records.insert(target, at: records.startIndex)
-        }
-        return records
     }
 
     private var canManageOutgoingPresentation: Bool {
@@ -2246,17 +2268,17 @@ struct FamilyWindowView: View {
 
     private var memorySaveDialogTitle: String {
         guard let target = widgetMemoryTarget else {
-            return "この写真を取り込んで残しますか？"
+            return "自分の思い出に追加しますか？"
         }
         return model.hasImportedMemory(target)
-            ? "この写真を思い出に戻しますか？"
-            : "この写真を取り込んで残しますか？"
+            ? "自分の思い出に戻しますか？"
+            : "自分の思い出に追加しますか？"
     }
 
     private func memorySaveActionTitle(for item: MomentInboxItem) -> String {
         model.hasImportedMemory(item)
-            ? "思い出にもう一度加える"
-            : "写真アプリにコピーして残す"
+            ? "自分の思い出に再追加"
+            : "自分の思い出に追加"
     }
 
     private func memorySaveConfirmationMessage(for item: MomentInboxItem) -> String {
@@ -2353,7 +2375,6 @@ struct FamilyWindowView: View {
         focusedMomentID = nil
         widgetMemoryTarget = nil
         clearsWidgetFocusAfterMemorySave = false
-        selectedSection = .received
         focusedMomentID = target.id
         selectedMomentForDetail = target
         if !model.isSavedMemory(target) {
@@ -2380,7 +2401,6 @@ struct FamilyWindowView: View {
                 pendingNotificationRoute = nil
                 widgetMemoryTarget = nil
                 focusedSentMomentID = nil
-                selectedSection = .received
                 focusedMomentID = momentID
                 selectedMomentForDetail = target
                 Task { @MainActor in
@@ -2397,8 +2417,8 @@ struct FamilyWindowView: View {
                 widgetMemoryTarget = nil
                 focusedMomentID = nil
                 selectedMomentForDetail = nil
-                selectedSection = .sent
                 focusedSentMomentID = momentID
+                selectedSentRecord = matches[0]
                 Task { @MainActor in
                     await Task.yield()
                     notificationAccessibilityFocus = momentID
@@ -2407,21 +2427,19 @@ struct FamilyWindowView: View {
             return
         }
 
-        // Legacy v1 notifications intentionally contain only the kind. They
-        // retain the original selected-window section fallback.
+        // Legacy notifications do not identify a photo. Open the common
+        // collection without substituting an arbitrary notification target.
         pendingNotificationRoute = nil
         notificationAccessibilityFocus = nil
         widgetMemoryTarget = nil
         focusedMomentID = nil
         focusedSentMomentID = nil
-        selectedMomentForDetail = nil
+        selectedSharedPhoto = nil
         switch route.kind {
         case .newMoment:
-            selectedSection = .received
+            break
         case .heart:
-            selectedSection = .sent
-            // A heart may refer to an older sent record. Keep every retained
-            // status visible instead of hiding it behind the three-row summary.
+            showsUnavailablePhotoHistory = true
             sentRecordDisplayLimit = model.outgoingPresentation.sentRecords.count
         }
     }
@@ -2588,7 +2606,7 @@ struct FamilyWindowView: View {
             Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("取り込んで残した写真は、位置情報を除いて写真アプリへ保存します。通常の思い出と写真まとめに入り、相手へは通知しません。")
+            Text("自分の思い出に追加した写真は、位置情報を除いて写真アプリへ保存します。通常の思い出と写真まとめに入り、相手へは通知しません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、思い出から外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")
@@ -2614,12 +2632,12 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
         if model.isSavedMemory(item) {
-            return "このiPhoneの「届いた」から削除します。「思い出」に残した写真と、相手とのまどはそのままです。取り消せません。"
+            return "このiPhoneの共有写真の一覧から削除します。自分の思い出、相手の写真一覧とまどはそのままです。取り消せません。"
         }
         if model.hasImportedMemory(item) {
-            return "このiPhoneの「届いた」から削除します。写真アプリへ取り込んだ写真と、相手とのまどはそのままです。取り消せません。"
+            return "このiPhoneの共有写真の一覧から削除します。写真アプリへ取り込んだ写真、相手の写真一覧とまどはそのままです。取り消せません。"
         }
-        return "このiPhoneの「届いた」から削除します。相手とのまどはそのままです。取り消せません。"
+        return "このiPhoneの共有写真の一覧から削除します。相手の写真一覧とまどはそのままです。取り消せません。"
     }
 
     private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {
@@ -2757,7 +2775,7 @@ struct MomentReceivedPhotoActions: View {
                     } else {
                         Image(systemName: "bookmark")
                     }
-                    Text(hasImportedMemory ? "もう一度思い出に加える" : "取り込んで残す")
+                    Text(hasImportedMemory ? "自分の思い出に再追加" : "自分の思い出に追加")
                 }
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)

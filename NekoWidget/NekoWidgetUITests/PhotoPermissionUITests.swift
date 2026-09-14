@@ -2359,7 +2359,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         second.tap()
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertFalse(saved.exists, "Another photo must not inherit the saved state.")
-        XCTAssertEqual(save.label, "取り込んで残す")
+        XCTAssertEqual(save.label, "自分の思い出に追加")
         XCTAssertEqual(heart.label, "写真を届けた相手にハートを送る")
         XCTAssertTrue(heart.isEnabled)
         tapReceivedDetailControl(app, identifier: "family-window-save-memory")
@@ -2397,6 +2397,69 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(control.frame.height + 0.001, 44,
                                     "The action must retain a 44-point target, allowing only floating-point rounding.")
         control.tap()
+    }
+
+    @MainActor
+    func testSharedAlbumMixesBothSidesAndOpensTheSelectedPhoto() {
+        let expectedIDs = ["received-r1", "sent-s1", "received-r2", "sent-s2"]
+        for variant in ["standard", "large", "narrow"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--moment-shared-album-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if variant == "large" { app.launchArguments.append("--shared-album-large-text") }
+            if variant == "narrow" { app.launchArguments.append("--shared-album-narrow") }
+            app.launch()
+
+            let projection = app.descendants(matching: .any)["shared-album-fixture-projection"].firstMatch
+            XCTAssertTrue(projection.waitForExistence(timeout: 15))
+            // Read the actual projection; a LazyVGrid need not instantiate offscreen cells.
+            XCTAssertEqual(projection.value as? String, expectedIDs.joined(separator: ","),
+                "Sort by addition time, use a stable tie order, prefer received duplicates, and omit missing/invalid sent images.")
+            let first = app.buttons["shared-album-fixture-received-r1"]
+            let second = app.buttons["shared-album-fixture-sent-s1"]
+            XCTAssertTrue(first.waitForExistence(timeout: 5))
+            XCTAssertTrue(second.waitForExistence(timeout: 5))
+            XCTAssertTrue(first.isHittable)
+            XCTAssertEqual(first.frame.width, second.frame.width, accuracy: 2,
+                "Both directions use the same photo columns.")
+            XCTAssertGreaterThanOrEqual(first.frame.height + 1, first.frame.width,
+                "The square photo must keep its area beneath the optional caption.")
+            if variant == "large" {
+                XCTAssertGreaterThanOrEqual(second.frame.minY + 1, first.frame.maxY,
+                    "Accessibility text uses one column.")
+                XCTAssertGreaterThan(first.frame.width, app.frame.width * 0.7)
+            } else {
+                XCTAssertEqual(first.frame.minY, second.frame.minY, accuracy: 2)
+                XCTAssertGreaterThanOrEqual(second.frame.minX + 1, first.frame.maxX)
+                if variant == "narrow" { XCTAssertLessThanOrEqual(first.frame.width, 144) }
+            }
+            XCTAssertTrue(second.label.contains("ハートが届いています"))
+            attach(app, name: "shared-album-\(variant)")
+
+            let scroll = app.scrollViews["shared-album-fixture-scroll"]
+            for (index, photoID) in expectedIDs.enumerated() {
+                let tile = app.buttons["shared-album-fixture-\(photoID)"]
+                for _ in 0..<6 where !(tile.exists && tile.isHittable) { scroll.swipeUp() }
+                XCTAssertTrue(tile.exists && tile.isHittable, "Every projected photo remains reachable.")
+                // Exercise both existing detail directions without repeating every identical transition.
+                if index < 2 {
+                    tile.tap()
+                    let current = app.staticTexts["shared-album-fixture-current-photo"]
+                    XCTAssertTrue(current.waitForExistence(timeout: 5))
+                    XCTAssertEqual(current.value as? String, photoID)
+                    let image = app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch
+                    XCTAssertTrue(image.waitForExistence(timeout: 10))
+                    XCTAssertGreaterThan(Self.detailValue(image.value as? String, field: "pixels") ?? 0, 0)
+                    if variant == "standard" { attach(app, name: "shared-album-detail-\(photoID)") }
+                    closePhotoDetail(app)
+                    XCTAssertTrue(tile.exists && tile.isHittable, "One close returns to the selected photo in the shared list.")
+                }
+            }
+            for omittedID in ["sent-duplicate", "sent-missing", "sent-invalid"] {
+                XCTAssertFalse(app.buttons["shared-album-fixture-\(omittedID)"].exists)
+            }
+            if variant == "large" { attach(app, name: "shared-album-large-later-photos") }
+            app.terminate()
+        }
     }
 
     @MainActor

@@ -1933,12 +1933,12 @@ struct PhotoBrowserView: View {
                 // Freeze the visible photo before opening destination selection.
                 deliveryPhoto = selectedPhoto
             } label: {
-                Image(systemName: "paperplane")
+                Image(systemName: "photo.badge.plus")
                     .font(.title3)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("まどへ届ける")
-            .accessibilityHint("届け先を選んでから、写真とひとことを確認します")
+            .accessibilityLabel("まどに追加")
+            .accessibilityHint("共有先を選んでから、写真とひとことを確認します")
             .accessibilityIdentifier("photo-browser-deliver")
             .disabled(isExportingMemoryPhoto)
         }

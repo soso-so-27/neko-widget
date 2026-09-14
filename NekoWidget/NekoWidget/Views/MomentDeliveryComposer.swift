@@ -61,7 +61,7 @@ struct MomentDeliveryComposer: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("届け先：\(destinationName)")
+                        Text("共有先：\(destinationName)")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("family-window-composer-destination")
@@ -74,7 +74,7 @@ struct MomentDeliveryComposer: View {
                             .font(.subheadline)
                             .frame(minWidth: 44, minHeight: 44)
                             .disabled(isSending)
-                            .accessibilityLabel("届け先を変更")
+                            .accessibilityLabel("共有先を変更")
                             .accessibilityIdentifier("photo-window-change-destination")
                         }
                     }
@@ -98,15 +98,15 @@ struct MomentDeliveryComposer: View {
                         } label: {
                             HStack {
                                 if isSending { ProgressView().tint(.white) }
-                                else if !dynamicTypeSize.isAccessibilitySize { Image(systemName: "paperplane.fill") }
-                                Text(isSending ? "届けています…" : "届ける")
+                                else if !dynamicTypeSize.isAccessibilitySize { Image(systemName: "photo.badge.plus") }
+                                Text(isSending ? "追加しています…" : "追加する")
                             }
                             .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .disabled(isSending || !canSend
                             || MomentCaption.validationMessage(for: caption) != nil)
                         .accessibilityIdentifier("family-window-confirm-delivery")
-                        .accessibilityLabel(isSending ? "届けています" : "この1枚を届ける")
+                        .accessibilityLabel(isSending ? "追加しています" : "この1枚をまどに追加")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -144,7 +144,7 @@ struct MomentDeliveryComposer: View {
             .alert("写真の共有について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除いて届けます。ひとことの入力は任意です。")
+                Text("写真の位置情報を除いて共有します。ひとことの入力は任意です。")
             }
             .onChange(of: isCaptionFocused) { _, focused in
                 // Interactive keyboard dismissal also finishes editing.
@@ -179,7 +179,7 @@ struct MomentDeliveryComposer: View {
                 .background(Color.black)
                 .contentShape(Rectangle())
                 .onTapGesture { finishCaptionEditing() }
-                .accessibilityLabel("届ける写真")
+                .accessibilityLabel("追加する写真")
             ZStack(alignment: .bottom) {
               if isEditingCaption {
                 TextField("ひとこと（任意）", text: $caption, axis: .vertical)
@@ -243,6 +243,68 @@ struct MomentPhotoCaption: View {
             .padding(.vertical, 6)
             .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
             .padding(12)
+    }
+}
+
+/// A projection of photos currently available in one verified window context.
+/// The caller supplies received items after the existing safety/lifecycle filters.
+enum MomentSharedPhoto: Identifiable {
+    case received(MomentInboxItem)
+    case sent(MomentSentRecordPresentation)
+
+    var id: String {
+        switch self {
+        case .received(let item): "received-\(item.id)"
+        case .sent(let record): "sent-\(record.id)"
+        }
+    }
+
+    var sharedAt: Date {
+        switch self {
+        case .received(let item): item.committedAt
+        case .sent(let record): record.serverAcceptedAt
+        }
+    }
+
+    static func ordered(
+        received: [MomentInboxItem], sent: [MomentSentRecordPresentation]
+    ) -> [Self] {
+        let receivedIDs = Set(received.map(\.id))
+        let sentPhotos = sent.filter { record in
+            guard record.localThumbnailJPEG.flatMap({ UIImage(data: $0) }) != nil else { return false }
+            return record.momentID.map { !receivedIDs.contains($0) } ?? true
+        }
+        return (received.map(Self.received) + sentPhotos.map(Self.sent)).sorted {
+            if $0.sharedAt != $1.sharedAt { return $0.sharedAt > $1.sharedAt }
+            return $0.id < $1.id
+        }
+    }
+}
+
+struct MomentSharedAlbumHeading: View {
+    var body: some View {
+        Label("相手と共有", systemImage: "person.2")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+    }
+}
+
+struct MomentSharedPhotoGrid<Card: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let photos: [MomentSharedPhoto]
+    @ViewBuilder let card: (MomentSharedPhoto) -> Card
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+            ForEach(photos) { photo in
+                card(photo).frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
+              count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
     }
 }
 
@@ -364,6 +426,146 @@ enum MomentPhotoThumbnailLayout {
 }
 
 #if DEBUG
+/// Production projection, grid, thumbnails and detail body with local pixels.
+/// No sharing, Photos writes, or persistent shared archive is created here.
+struct MomentSharedAlbumFixture: View {
+    @State private var selectedPhoto: MomentSharedPhoto?
+    @State private var showsFixtureInformation = false
+
+    private var isLarge: Bool { CommandLine.arguments.contains("--shared-album-large-text") }
+    private var isNarrow: Bool { CommandLine.arguments.contains("--shared-album-narrow") }
+    private var photos: [MomentSharedPhoto] {
+        MomentSharedPhoto.ordered(received: received, sent: sent)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    MomentSharedAlbumHeading()
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("shared-album-fixture-projection")
+                        .accessibilityValue(photos.map(\.id).joined(separator: ","))
+                    MomentSharedPhotoGrid(photos: photos) { photo in
+                        Button { selectedPhoto = photo } label: {
+                            thumbnail(photo)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(photoLabel(photo))
+                        .accessibilityIdentifier("shared-album-fixture-\(photo.id)")
+                    }
+                }
+                .frame(maxWidth: isNarrow ? 288 : .infinity)
+                .padding(16)
+            }
+            .accessibilityIdentifier("shared-album-fixture-scroll")
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("マイファミリー")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("写真を追加", systemImage: "photo.badge.plus") { showsFixtureInformation = true }
+                        .labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("まどの設定", systemImage: "gearshape") { showsFixtureInformation = true }
+                        .labelStyle(.iconOnly)
+                }
+            }
+            .alert("表示確認用の画面です", isPresented: $showsFixtureInformation) {
+                Button("閉じる", role: .cancel) {}
+            } message: {
+                Text("この入口では写真の共有や接続状態の変更は行いません。")
+            }
+            .fullScreenCover(item: $selectedPhoto) { photo in
+                NavigationStack {
+                    MomentPhotoDetailBody(imageURL: imageURL(photo), caption: caption(photo)) { EmptyView() }
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .principal) {
+                                Text(photoLabel(photo))
+                                    .accessibilityIdentifier("shared-album-fixture-current-photo")
+                                    .accessibilityValue(photo.id)
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("閉じる", systemImage: "xmark") { selectedPhoto = nil }
+                                    .labelStyle(.iconOnly)
+                                    .accessibilityIdentifier("photo-detail-close")
+                            }
+                        }
+                }
+                .environment(\.dynamicTypeSize, isLarge ? .accessibility5 : .large)
+            }
+        }
+        .environment(\.dynamicTypeSize, isLarge ? .accessibility5 : .large)
+        .preferredColorScheme(isLarge ? .light : .dark)
+    }
+
+    @ViewBuilder
+    private func thumbnail(_ photo: MomentSharedPhoto) -> some View {
+        switch photo {
+        case .received(let item):
+            MomentReceivedPhotoThumbnail(url: imageURL(photo), caption: item.caption,
+                receivedAt: item.receivedAt, isSaved: false, hasSentHeart: false)
+        case .sent(let record):
+            MomentSentRecordCard(record: record)
+        }
+    }
+
+    private func caption(_ photo: MomentSharedPhoto) -> String? {
+        switch photo {
+        case .received(let item): item.caption
+        case .sent(let record): record.localCaption
+        }
+    }
+
+    private func photoLabel(_ photo: MomentSharedPhoto) -> String {
+        switch photo {
+        case .received: "相手の写真"
+        case .sent(let record): record.hasReceivedHeart ? "自分の写真。ハートが届いています" : "自分の写真"
+        }
+    }
+
+    private func imageURL(_ photo: MomentSharedPhoto) -> URL {
+        switch photo {
+        case .received(let item): MomentExperiencePhotoFixture.url(index: item.id == "r1" ? 0 : 2)
+        case .sent(let record): MomentExperiencePhotoFixture.url(index: record.id == "s1" ? 1 : 0)
+        }
+    }
+
+    private var received: [MomentInboxItem] {
+        let date = Date(timeIntervalSince1970: 1_788_846_000)
+        return ["r2", "r1"].map { id in
+            let committedAt = date.addingTimeInterval(id == "r1" ? 0 : -120)
+            return MomentInboxItem(id: id, senderParticipantID: "fixture-peer", kind: .memory,
+                keyEpoch: 1, localJPEGFileName: "\(id).jpg", capturedAt: nil, captureDateIsMissing: true,
+                committedAt: committedAt, receivedAt: date.addingTimeInterval(600), state: .available,
+                accessExpiresAt: date.addingTimeInterval(86_400), caption: id == "r1" ? "おひるね" : nil)
+        }
+    }
+
+    private var sent: [MomentSentRecordPresentation] {
+        let date = Date(timeIntervalSince1970: 1_788_846_000)
+        let thumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+            from: try! Data(contentsOf: MomentExperiencePhotoFixture.url(index: 1)))
+        return [
+            MomentSentRecordPresentation(id: "s2", momentID: "sent-two", serverAcceptedAt: date.addingTimeInterval(-120),
+                recipientDeliveryConfirmedAt: date, hasReceivedHeart: false,
+                localThumbnailJPEG: MomentExperiencePhotoFixture.image(index: 0).jpegData(compressionQuality: 0.8),
+                localCaption: "今日もよく眠りました"),
+            MomentSentRecordPresentation(id: "duplicate", momentID: "r1", serverAcceptedAt: date.addingTimeInterval(60),
+                recipientDeliveryConfirmedAt: date, hasReceivedHeart: false, localThumbnailJPEG: thumbnail),
+            MomentSentRecordPresentation(id: "missing", serverAcceptedAt: date.addingTimeInterval(120),
+                recipientDeliveryConfirmedAt: nil, hasReceivedHeart: false),
+            MomentSentRecordPresentation(id: "invalid", serverAcceptedAt: date.addingTimeInterval(180),
+                recipientDeliveryConfirmedAt: nil, hasReceivedHeart: false, localThumbnailJPEG: Data([0, 1, 2])),
+            MomentSentRecordPresentation(id: "s1", momentID: "sent-one", serverAcceptedAt: date.addingTimeInterval(-60),
+                recipientDeliveryConfirmedAt: date, hasReceivedHeart: true, localThumbnailJPEG: thumbnail)
+        ]
+    }
+}
+
 /// Only deterministic bundled images and values; no sharing state or network.
 struct MomentSentHistoryFixture: View {
     @State private var selectedRecord: MomentSentRecordPresentation?
@@ -451,7 +653,7 @@ struct MomentDeliveryComposerFixture: View {
 
     var body: some View {
         VStack {
-            Button("写真を選ぶ") {
+            Button("写真を追加") {
                 caption = ""
                 isPresented = true
             }

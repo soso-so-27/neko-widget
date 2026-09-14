@@ -836,8 +836,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('alert("この写真は更新されました"', family_view)
         self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
-        self.assertIn('"この写真を取り込んで残しますか？"', family_view)
-        self.assertIn('"写真アプリにコピーして残す"', family_view)
+        self.assertIn('"自分の思い出に追加しますか？"', family_view)
+        self.assertIn('"自分の思い出に追加"', family_view)
         confirmation = section(
             family_view,
             ".confirmationDialog(\n            memorySaveDialogTitle",
@@ -3107,11 +3107,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertIn('Text("送った写真")', family)
+        self.assertIn('DisclosureGroup("写真のない送信履歴"', family)
         self.assertIn('.navigationTitle("送信状況")', family)
         self.assertNotIn('Text("履歴")', family)
         self.assertIn("届いた写真は最長90日です", family)
-        self.assertIn("残したい写真は「取り込んで残す」を選びます", family)
+        self.assertIn("保存するには「自分の思い出に追加」を選びます", family)
         self.assertIn("到着は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
@@ -3121,8 +3121,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var outgoingStatusSection: some View",
             "private var outgoingDetails: some View",
         )
-        self.assertIn("records: visibleSentRecords", target_record)
-        self.assertIn("focusedMomentID: focusedSentMomentID", target_record)
+        self.assertNotIn("MomentSentHistory", target_record)
         self.assertIn("model.outgoingPresentation.activitySummary", target_record)
         self.assertIn("showsOutgoingDetails = true", target_record)
         self.assertIn('.accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")', target_record)
@@ -3140,19 +3139,18 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("pendingOutgoingConfirmation = confirmation", request)
         self.assertIn("showsOutgoingDetails = false", request)
         self.assertNotIn("CancelConfirmation = true", request)
-        dismiss = section(family, "private func presentPendingOutgoingConfirmation", "private var visibleSentRecords")
+        dismiss = section(family, "private func presentPendingOutgoingConfirmation", "private var canManageOutgoingPresentation")
         self.assertIn("pendingOutgoingConfirmation = nil", dismiss)
         self.assertIn("!model.isShowingLastKnownState", dismiss)
         self.assertIn("!model.isReportOnly", dismiss)
         self.assertIn("cancellableEncryptedDeliveryCount > 0", dismiss)
         self.assertIn('Label("共有状況を更新", systemImage: "arrow.clockwise")', family)
         self.assertNotIn("プレビュー画像は送信したiPhoneだけに最長30日残り", target_record)
-        self.assertIn("if let focusedSentMomentID", family)
-        self.assertIn("records.insert(target, at: records.startIndex)", family)
+        self.assertIn("focusedSentMomentID = momentID", family)
+        self.assertIn("selectedSentRecord = matches[0]", family)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
-        self.assertIn("sentRecordDisplayLimit + 20", family)
+        self.assertIn("sentRecordDisplayLimit += 20", family)
         self.assertIn('Button("さらに見る")', family)
-        self.assertIn('Button("最新の写真に戻す")', family)
         self.assertIn("sentRecordDisplayLimit = 20", family)
         self.assertIn("static let sentRecordLimit = 200", presentation)
         self.assertIn(
@@ -3473,36 +3471,34 @@ try MomentSharingStateStore.verifyPrivateAlias()
         main = source("NekoWidget/Views/MainTabView.swift")
         self.assertNotIn("Task { await catProfilesActions.replacePhotoAssignments(values) }", main)
 
-    def test_family_window_separates_received_sent_and_settings(self) -> None:
+    def test_family_window_combines_photos_without_exposing_report_only_sends(self) -> None:
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         paired = section(
             family,
             "private var pairedContent: some View",
-            "@ViewBuilder\n    private var receivedSectionContent",
+            "@ViewBuilder\n    private var sharedPhotoContent",
         )
-        self.assertIn('Picker("まどに表示する内容"', paired)
+        self.assertNotIn('Picker("まどに表示する内容"', paired)
         self.assertIn("receivedSectionContent", paired)
-        self.assertIn("sentSectionContent", paired)
+        self.assertIn("sharedPhotoContent", paired)
         self.assertIn("sendPhotoAction", paired)
         self.assertEqual(paired.count("sendPhotoAction"), 1)
-        self.assertIn('case .received: "届いた"', family)
-        self.assertIn('case .sent: "送った"', family)
-
-        received_start = paired.index(
-            "if model.isReportOnly || selectedSection == .received {"
-        )
+        self.assertIn("MomentSharedAlbumHeading()", paired)
+        self.assertIn("if !model.isReportOnly, pendingNotificationRoute?.target == nil", paired)
+        received_start = paired.index("if model.isReportOnly {\n                    receivedSectionContent")
         sent_start = paired.index("} else {", received_start)
         received_branch = paired[received_start:sent_start]
         sent_branch = paired[sent_start:]
 
         self.assertIn("receivedSectionContent", received_branch)
         self.assertNotIn("sendPhotoAction", received_branch)
-        self.assertIn("sentSectionContent", sent_branch)
-        self.assertNotIn("sendPhotoAction", sent_branch)
-        self.assertLess(
-            paired.index('Picker("まどに表示する内容"'),
-            paired.index("sendPhotoAction"),
-        )
+        self.assertIn("sharedPhotoContent", sent_branch)
+        gallery = section(family, "private var sharedPhotoContent:", "private var sharedPhotoInformation:")
+        self.assertIn("received: model.receivedMoments", gallery)
+        self.assertIn("sent: model.outgoingPresentation.sentRecords", gallery)
+        self.assertIn("MomentSharedPhotoGrid(photos: photos)", gallery)
+        self.assertIn("compactMomentCard(item)", gallery)
+        self.assertIn("selectedSentRecord = record", gallery)
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
@@ -3558,7 +3554,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         received_section = section(
             family,
             "@ViewBuilder\n    private var receivedSectionContent",
-            "@ViewBuilder\n    private var sentSectionContent",
+            "private var orderedReceivedMoments:",
         )
         self.assertIn("columns: receivedPhotoColumns", received_section)
         received_columns = section(
@@ -3584,7 +3580,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         received_section = section(
             family,
             "@ViewBuilder\n    private var receivedSectionContent",
-            "@ViewBuilder\n    private var sentSectionContent",
+            "private var orderedReceivedMoments:",
         )
         self.assertIn("momentCard(latest, fillsPhotoFrame: true)", received_section)
 
@@ -3682,7 +3678,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
         self.assertIn("PhotosPicker(", family)
-        self.assertIn('"写真を届ける"', family)
+        self.assertIn('"写真を追加"', family)
         self.assertIn("preferredItemEncoding: .compatible", family)
         self.assertIn("deliveryConfirmation", family)
         self.assertIn("type: PickedMomentIngressPhoto.self", family)
@@ -3943,8 +3939,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
         self.assertIn('Button("思い出から外す", role: .destructive)', family)
-        self.assertIn('"取り込んで残す"', family)
-        self.assertIn('"写真アプリにコピーして残す"', family)
+        self.assertIn('"自分の思い出に追加"', family)
+        self.assertIn('"自分の思い出に追加"', family)
         self.assertIn("通常の思い出と写真まとめに入り", family)
         self.assertIn("相手へは通知しません", family)
         self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
