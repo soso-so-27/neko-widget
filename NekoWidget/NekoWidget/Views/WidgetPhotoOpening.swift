@@ -150,12 +150,20 @@ private final class WidgetPhotoPresentationController: UIViewController {
                     self.isTransitioning = false
                     self.applyRequest()
                 }
-                if let presenter = photoController.presentingViewController {
-                    // Also dismiss any information/share sheet owned by the
-                    // Widget viewer, while preserving the pre-Widget screen.
-                    presenter.dismiss(animated: false, completion: finish)
+                let dismissPhoto = {
+                    if photoController.presentingViewController != nil {
+                        photoController.dismiss(animated: false, completion: finish)
+                    } else {
+                        finish()
+                    }
+                }
+                if photoController.presentedViewController != nil {
+                    // First remove the Widget's own information/share sheets.
+                    // Once it is a leaf, dismiss the owned controller itself;
+                    // do not ask a retained SwiftUI presenter to dismiss.
+                    photoController.dismiss(animated: false, completion: dismissPhoto)
                 } else {
-                    finish()
+                    dismissPhoto()
                 }
             } else {
                 // Do not mutate the SwiftUI URL state during a representable
@@ -168,9 +176,9 @@ private final class WidgetPhotoPresentationController: UIViewController {
             return
         }
         if let photoController {
-            if displayedID != requestID, let child = photoController.presentedViewController {
+            if displayedID != requestID, photoController.presentedViewController != nil {
                 isTransitioning = true
-                child.dismiss(animated: false) { [weak self] in
+                photoController.dismiss(animated: false) { [weak self] in
                     self?.isTransitioning = false
                     self?.applyRequest()
                 }

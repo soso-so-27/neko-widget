@@ -25,7 +25,7 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
-    func testWidgetURLsWarmOpenReplaceLoadingAndDisplayedPhotosWithoutStacking() {
+    func testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations() {
         continueAfterFailure = false
         let app = widgetPhotoApplication()
         app.launch()

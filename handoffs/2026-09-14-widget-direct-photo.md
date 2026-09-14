@@ -28,3 +28,5 @@
 候補953ce4c / run34792056924ではReleaseビルド、共有runtime、白写真・ひとことなしGalleryが成功。iOS 18.6のsmokeで新規3ケースがURLを開く前のfixture初期表示で失敗。検証用のお題URLが`/nap.json`で、製品の`/catalog.json`条件を満たさず、購読初期化のDEBUG assertionに入っていた。既存の動作確認済みfixtureと同じ`/windows/nap-cats/catalog.json`へ修正した。製品のURL条件を緩めず、検証コードの不具合として記録。残る旧候補ジョブは取り消し、新しいSHAで確認する。
 
 候補183c042 / run34793545578ではURLを受けて読み込み画面と閉じる操作まで表示できたが、保持した背景要素の`exists == false`を求める新規試験が失敗。iOS 18.6の録画を抽出した`output/183c-loading-frame.png`で、画面全体が写真の読み込み表示に覆われ、ホーム・一覧・元のナビゲーションが見えないことを確認した。[Appleのexists仕様](https://developer.apple.com/documentation/xcuiautomation/xcuielement/exists)どおり、覆われた要素も階層に存在し得る。背景を保持する仕様に合わせ、非表示の操作は`isHittable == false`、対象の写真・閉じるは操作可能であることへ判定を修正。保持された別写真も存在だけで混同せず、現在表示中の写真を検査する。画像確認、対象URLの一致、欠落写真の非代替、閉じた後の状態保持の条件は維持する。
+
+候補bc9f1d3 / run34794569680では、iOS 18.6でcold 4経路、欠落写真4経路が成功。warmの読み込み中・表示中の切り替えも進んだが、設定sheetの上から開いたWidgetを閉じる場面で失敗。録画`output/bc9f-after-close.png`では写真画面が残った。独立レビューを加え、保持したSwiftUI presenterへdismissを呼ぶ処理を廃止。Widget自身の子sheetを先に閉じ、その完了後にWidget自身を閉じる。差し替え時も所有するWidget controllerから子だけを閉じる。遷移中ガードは全完了まで維持。既知の失敗を先に検出できるようwarmテストをActiveAppという名前にし、条件を削らず先に実行する。cold成功だけで完了扱いにせず、残りも新しいSHAで確認する。
