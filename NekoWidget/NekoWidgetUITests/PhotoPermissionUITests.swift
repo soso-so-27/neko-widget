@@ -2609,6 +2609,18 @@ final class PersonalRediscoveryUITests: XCTestCase {
             XCTAssertFalse(previousPhotoID.isEmpty)
             XCTAssertNotEqual(yesterdayPhotoID, previousPhotoID)
 
+            let resultFrame = results.firstMatch.frame
+            let previousFrame = previous.firstMatch.frame
+            if large {
+                XCTAssertGreaterThanOrEqual(previousFrame.minY, resultFrame.maxY,
+                    "Accessibility text must stack the two photos vertically")
+                XCTAssertEqual(resultFrame.minX, previousFrame.minX, accuracy: 2)
+                XCTAssertGreaterThan(resultFrame.width, app.frame.width * 0.7)
+            } else {
+                XCTAssertEqual(resultFrame.minY, previousFrame.minY, accuracy: 2)
+                XCTAssertGreaterThanOrEqual(previousFrame.minX, resultFrame.maxX)
+            }
+
             let turn = app.buttons["personal-rediscovery-turn"]
             XCTAssertTrue(turn.isHittable)
             XCTAssertGreaterThanOrEqual(turn.frame.height, 44)

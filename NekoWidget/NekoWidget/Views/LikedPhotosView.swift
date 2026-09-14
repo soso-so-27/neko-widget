@@ -2023,6 +2023,7 @@ struct PhotoBrowserView: View {
                             .accessibilityIdentifier("personal-rediscovery-history-close")
                     } }
             }
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .alert("ウィジェットの表示について", isPresented: $showsWidgetInformation) {
             Button("閉じる", role: .cancel) {}

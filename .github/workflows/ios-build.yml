@@ -87,6 +87,7 @@ jobs:
           python3 ci/test-app-store-local-only-readiness.py
           python3 ci/test-export-temp-file-lifecycle.py
           python3 ci/test-photo-permission-bootstrap.py
+          python3 ci/test-simulator-smoke-personal-state.py
           python3 ci/test-diagnostic-log-privacy.py
           python3 ci/test-app-store-screenshot-workflow.py
           python3 ci/test-runtime-preparation.py

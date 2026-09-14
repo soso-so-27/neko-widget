@@ -16,6 +16,32 @@ struct PersonalWidgetPreparationResult: Sendable {
     let hasMore: Bool
 }
 
+private struct PersonalWidgetRenderMeasurements {
+    var widths: [Int] = []
+    var heights: [Int] = []
+    var decodedBytes: [Int] = []
+    var compositions: [WidgetCompositionMode: Int] = [:]
+    var upscaled: [WidgetImageVariant: Int] = [:]
+    var maximumScale: CGFloat = 0
+    var fallbackPairs = 0
+    var currentFallback = 0
+    var legacyFallback = 0
+    var generatedFiles = 0
+
+    mutating func append(_ other: Self) {
+        widths += other.widths
+        heights += other.heights
+        decodedBytes += other.decodedBytes
+        compositions.merge(other.compositions, uniquingKeysWith: +)
+        upscaled.merge(other.upscaled, uniquingKeysWith: +)
+        maximumScale = max(maximumScale, other.maximumScale)
+        fallbackPairs += other.fallbackPairs
+        currentFallback += other.currentFallback
+        legacyFallback += other.legacyFallback
+        generatedFiles += other.generatedFiles
+    }
+}
+
 private struct WidgetCacheGeneration: Codable, Equatable, Sendable {
     var generatedAt: Date
     var filenames: [String]
@@ -140,6 +166,7 @@ actor WidgetCacheBuilder {
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let legacy = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)
         var prepared: [PersonalRediscoveryCandidate] = []
+        var measurements = PersonalWidgetRenderMeasurements()
         let started = Date()
         var attempted = 0
         // Bound both successful work and unavailable-iCloud probes. No network
@@ -157,8 +184,9 @@ actor WidgetCacheBuilder {
                                       burstIdentifier: record.burstIdentifier,
                                       isFavorite: record.isFavorite, isSaved: record.liked,
                                       preparedAt: now))
-            } else if let item = try preparePersonalItem(record, in: stage, now: now) {
-                prepared.append(.init(item: item, creationDate: record.creationDate,
+            } else if let rendered = try preparePersonalItem(record, in: stage, now: now) {
+                measurements.append(rendered.measurements)
+                prepared.append(.init(item: rendered.item, creationDate: record.creationDate,
                                       burstIdentifier: record.burstIdentifier,
                                       isFavorite: record.isFavorite, isSaved: record.liked,
                                       preparedAt: now))
@@ -224,10 +252,44 @@ actor WidgetCacheBuilder {
             }
             try AtomicJSON.write(WidgetManifest(items: legacyItems, generatedAt: now), to: manifestURL)
         }
-        SharedLog.app.info("widget-cache", "Personal photo candidates replenished",
-                          metadata: ["entries": "\(published.candidates.count)",
-                                     "generatedFiles": "\(prepared.count * 3)",
-                                     "networkAllowed": "false"])
+        // Preserve the existing diagnostic completion contract. These are
+        // measurements of this render batch and the published pool, never
+        // invented view counts or a legacy generation-history write.
+        let filenames = Set(published.candidates.flatMap { $0.item.allCacheFilenames })
+        let byteCounts = filenames.compactMap { filename in
+            (try? cache.appendingPathComponent(filename).resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        }
+        var metadata: [String: String] = [
+            "algorithm": WidgetRenderPlanner.rendererVersion,
+            "entries": "\(published.candidates.count)",
+            "uniqueAssets": "\(published.candidates.count)",
+            "uniqueFiles": "\(filenames.count)",
+            "generatedFiles": "\(measurements.generatedFiles)",
+            "reusedFiles": "\(prepared.count * 3 - measurements.generatedFiles)",
+            "cacheFileCap": "\(Self.maximumCachedFileCount)",
+            "cacheBytesMax": "\(byteCounts.max() ?? 0)",
+            "cacheBytesMin": "\(byteCounts.min() ?? 0)",
+            "cacheBytesTotal": "\(byteCounts.reduce(0, +))",
+            "inputPixelsMax": Self.pixelRange(widths: measurements.widths, heights: measurements.heights),
+            "inputDecodedBytesMax": "\(measurements.decodedBytes.max() ?? 0)",
+            "current8Fallback": "\(measurements.currentFallback)",
+            "legacy18Fallback": "\(measurements.legacyFallback)",
+            "marginFallbackDenominator": "\(measurements.fallbackPairs)",
+            "marginComparisonScope": "generated-small-large",
+            "renderScaleMax": String(format: "%.4f", measurements.maximumScale),
+            "outputPixels": Self.outputPixelDescription,
+            "targetBytesEach": Self.targetByteDescription,
+            "retainedCacheWorstCaseBytes": "\(Self.maximumRetainedCacheByteUpperBound)",
+            "unavailable": "\(attempted - prepared.count)",
+            "networkAllowed": "false"
+        ]
+        for spec in Self.RenderSpec.all {
+            metadata["renderUpscaled\(spec.variant.rawValue.capitalized)"] = "\(measurements.upscaled[spec.variant, default: 0])"
+        }
+        for mode in WidgetCompositionMode.allCases {
+            metadata[mode.generatedMetadataKey] = "\(measurements.compositions[mode, default: 0])"
+        }
+        SharedLog.app.info("widget-cache", "Widget cache build completed", metadata: metadata)
         let addedCount = Set(published.candidates.map { $0.item.localIdentifier })
             .subtracting(existingIDs).count
         return .init(candidateCount: published.candidates.count,
@@ -236,7 +298,7 @@ actor WidgetCacheBuilder {
     }
 
     private func preparePersonalItem(_ record: AssetRecord, in stage: URL,
-                                     now: Date) throws -> WidgetManifestItem? {
+                                     now: Date) throws -> (item: WidgetManifestItem, measurements: PersonalWidgetRenderMeasurements)? {
         try autoreleasepool {
             guard let image = imageLoader.image(localIdentifier: record.localIdentifier,
                 targetSize: CGSize(width: Self.sourceImageRequestPixelDimension,
@@ -248,6 +310,12 @@ actor WidgetCacheBuilder {
             let plans = WidgetRenderPlanner.plans(visionBoundingBox: record.cat.boundingBox?.cgRect,
                                                   sourcePixelSize: size)
             let filenames = Self.cacheFilenames(for: record)
+            var measurements = PersonalWidgetRenderMeasurements()
+            let width = image.cgImage?.width ?? Int(image.size.width * image.scale)
+            let height = image.cgImage?.height ?? Int(image.size.height * image.scale)
+            measurements.widths = [width]
+            measurements.heights = [height]
+            measurements.decodedBytes = [image.cgImage.map { $0.bytesPerRow * $0.height } ?? width * height * 4]
             for spec in Self.RenderSpec.all {
                 try Task.checkCancellation()
                 guard let output = Self.widgetJPEG(normalizedImage: normalized,
@@ -255,11 +323,21 @@ actor WidgetCacheBuilder {
                     spec: spec) else { return nil }
                 try output.data.write(to: stage.appendingPathComponent(filenames.filename(for: spec.variant)),
                                       options: .atomic)
+                measurements.generatedFiles += 1
+                measurements.compositions[output.compositionMode, default: 0] += 1
+                measurements.maximumScale = max(measurements.maximumScale, output.renderScale)
+                if output.renderScale > 1.001 { measurements.upscaled[spec.variant, default: 0] += 1 }
+                if let legacyFallback = output.legacy18WouldFallback {
+                    measurements.fallbackPairs += 1
+                    if output.compositionMode == .blurredFitFallback { measurements.currentFallback += 1 }
+                    if legacyFallback { measurements.legacyFallback += 1 }
+                }
             }
-            return WidgetManifestItem(localIdentifier: record.localIdentifier,
+            let item = WidgetManifestItem(localIdentifier: record.localIdentifier,
                 cacheFilename: filenames.small, cacheFilenames: filenames, scheduledDate: now,
                 rendererVersion: WidgetRenderPlanner.rendererVersion, sourcePixelSize: size,
                 renderPlans: plans, sourceModificationDate: record.sourceModificationDate)
+            return (item, measurements)
         }
     }
 

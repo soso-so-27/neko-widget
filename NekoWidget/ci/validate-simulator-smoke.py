@@ -4,10 +4,43 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
+
+
+PERSONAL_SOURCE_ID = "personal-library"
+SWIFT_REFERENCE_EPOCH = 978_307_200
+EXPECTED_CACHE_DIMENSIONS = {
+    "small": (500, 500), "medium": (1050, 500), "large": (1050, 1100),
+}
+MAXIMUM_CACHE_BYTES = {
+    "small": 100 * 1_024, "medium": 200 * 1_024, "large": 220 * 1_024,
+}
+
+
+def safe_cache_filename(value: Any) -> bool:
+    return (
+        isinstance(value, str) and len(value.encode("utf-8")) <= 255
+        and ".." not in value
+        and re.fullmatch(r"[A-Za-z0-9_.-]+\.jpg", value) is not None
+    )
+
+
+def finite_number(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def valid_uuid(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value.lower()
+    except ValueError:
+        return False
 
 
 def integer_metadata(entry: dict[str, Any], key: str) -> int:
@@ -39,8 +72,12 @@ def aligned_byte_count(value: int, alignment: int) -> int:
 
 def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
     """Read JPEG SOF dimensions without a third-party image dependency."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    if not 4 <= path.stat().st_size <= max(MAXIMUM_CACHE_BYTES.values()):
+        return None
     data = path.read_bytes()
-    if not data.startswith(b"\xff\xd8"):
+    if not data.startswith(b"\xff\xd8") or not data.endswith(b"\xff\xd9"):
         return None
 
     start_of_frame_markers = {
@@ -85,6 +122,288 @@ def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
             return width, height
         offset += segment_length
     return None
+
+
+def validate_personal_state(
+    group_container: Path,
+    expected_renderer: str,
+    failures: list[str],
+    *,
+    observed_at: float | None = None,
+    snapshot_photo_ids: set[str] | None = None,
+    detected_fixture_ids: set[str] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, set[Path]]]:
+    """Validate the canonical pool and every live image dependency, not v1 history.
+
+    Dates in this file use Swift Codable's 2001 epoch. `observed_at`, when
+    supplied from SharedLog, is Unix time. Empty issues/grants are legitimate
+    in headless smoke: a persisted, usable plan is still mandatory.
+    """
+    path = group_container / "personal-rediscovery.v1" / "state.json"
+    cache = group_container / "widget-cache"
+    report: dict[str, Any] = {
+        "statePath": "personal-rediscovery.v1/state.json", "candidateCap": 100,
+        "fileCap": 400, "candidateCount": 0, "liveReferenceCount": 0,
+        "actualJPEGCount": 0, "actualJPEGBytes": 0, "cycleCount": 0,
+        "issueCount": 0, "grantCount": 0,
+    }
+    files = {variant: set() for variant in EXPECTED_CACHE_DIMENSIONS}
+    items: list[dict[str, Any]] = []
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        failures.append("Canonical personal-rediscovery.v1/state.json is missing or unsafe.")
+        return report, items, files
+    try:
+        if not 1 <= path.stat().st_size <= 8 * 1_024 * 1_024:
+            raise ValueError("state exceeds the 8 MiB production bound")
+        state = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(state, dict):
+            raise ValueError("state is not an object")
+    except (OSError, ValueError) as error:
+        failures.append(f"Canonical personal state is invalid: {error}")
+        return report, items, files
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            failures.append("Personal rediscovery " + message)
+
+    require(type(state.get("schemaVersion")) is int and state["schemaVersion"] == 1,
+            "has an unsupported schemaVersion.")
+    require(state.get("sourceID") == PERSONAL_SOURCE_ID, "has a nonpersonal sourceID.")
+    require(valid_uuid(state.get("eligibilityRevision")), "has no valid authority revision.")
+    require(state.get("isAuthorized") is True, "authority is not ready after the smoke scan.")
+    require(isinstance(state.get("scopeIdentifier"), str) and bool(state["scopeIdentifier"]),
+            "has no persisted source scope.")
+    updated_at = state.get("updatedAt")
+    require(finite_number(updated_at), "has no valid updatedAt.")
+    now = updated_at if finite_number(updated_at) else 0.0
+    if finite_number(observed_at):
+        now = max(now, observed_at - SWIFT_REFERENCE_EPOCH)
+    raw_eligible = state.get("eligiblePhotoIDs")
+    eligible = set()
+    if isinstance(raw_eligible, list) and all(isinstance(value, str) and value for value in raw_eligible):
+        eligible = set(raw_eligible)
+        require(len(eligible) == len(raw_eligible), "authority repeats photo IDs.")
+    else:
+        require(False, "has malformed eligiblePhotoIDs.")
+    versions = state.get("modificationDates")
+    if not isinstance(versions, dict) or not all(
+        key in eligible and finite_number(value) for key, value in versions.items()
+    ):
+        require(False, "has invalid source modification dates.")
+        versions = {}
+
+    references: set[str] = set()
+    candidate_ids: set[str] = set()
+    filename_owners: dict[str, str] = {}
+
+    def inspect_item(item: Any, label: str, *, live: bool) -> None:
+        if not isinstance(item, dict):
+            require(False, f"{label} has no manifest item.")
+            return
+        photo_id = item.get("localIdentifier")
+        require(isinstance(photo_id, str) and bool(photo_id), f"{label} has no photo ID.")
+        if not isinstance(photo_id, str) or not photo_id:
+            return
+        if live:
+            require(photo_id in eligible, f"{label} is outside the current personal authority.")
+            if snapshot_photo_ids is not None:
+                require(photo_id in snapshot_photo_ids, f"{label} has no PhotoKit snapshot record.")
+            if photo_id in versions:
+                require(item.get("sourceModificationDate") == versions[photo_id],
+                        f"{label} uses an obsolete photo revision.")
+            require(item.get("rendererVersion") == expected_renderer,
+                    f"{label} uses an unexpected renderer version.")
+        require(finite_number(item.get("scheduledDate")), f"{label} has no scheduled date.")
+        filenames = item.get("cacheFilenames")
+        if not isinstance(filenames, dict):
+            require(False, f"{label} has no three-size cache references.")
+            return
+        names = [filenames.get(variant) for variant in EXPECTED_CACHE_DIMENSIONS]
+        safe = all(safe_cache_filename(name) for name in names)
+        require(safe, f"{label} has an unsafe cache filename.")
+        if not safe:
+            return
+        require(len(set(names)) == 3, f"{label} repeats a cache file across sizes.")
+        require(item.get("cacheFilename") == filenames["small"], f"{label} legacy filename is not its small image.")
+        if live:
+            items.append(item)
+            references.update(names)
+            for variant, filename in zip(EXPECTED_CACHE_DIMENSIONS, names):
+                require(filename not in filename_owners or filename_owners[filename] == photo_id,
+                        f"{label} shares a cache filename with another photo.")
+                filename_owners[filename] = photo_id
+                files[variant].add(cache / filename)
+            plans = item.get("renderPlans")
+            require(isinstance(plans, dict) and all(
+                isinstance(plans.get(variant), dict)
+                and plans[variant].get("compositionMode") in (
+                    "cat-full-bleed", "medium-upper-focus", "blurred-fit-fallback",
+                ) for variant in EXPECTED_CACHE_DIMENSIONS
+            ), f"{label} has no valid three-size render plans.")
+
+    candidates = state.get("candidates")
+    if not isinstance(candidates, list):
+        require(False, "candidates is not an array.")
+        candidates = []
+    report["candidateCount"] = len(candidates)
+    require(1 <= len(candidates) <= 100, f"contains {len(candidates)} candidates; expected 1-100.")
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            require(False, f"candidate {index} is malformed.")
+            continue
+        item = candidate.get("item")
+        inspect_item(item, f"candidate {index}", live=True)
+        require(finite_number(candidate.get("preparedAt")), f"candidate {index} has no preparation date.")
+        if isinstance(item, dict) and isinstance(item.get("localIdentifier"), str):
+            identifier = item["localIdentifier"]
+            require(identifier not in candidate_ids, "candidate pool repeats a photo ID.")
+            candidate_ids.add(identifier)
+    if detected_fixture_ids is not None:
+        require(bool(candidate_ids.intersection(detected_fixture_ids)), "pool contains no detected imported fixture.")
+
+    plan = state.get("plan")
+    if not isinstance(plan, dict):
+        require(False, "has no persisted rotation plan.")
+    else:
+        require(valid_uuid(plan.get("id")), "rotation plan has no valid ID.")
+        require(finite_number(plan.get("anchor")), "rotation plan has no finite anchor.")
+        require(finite_number(plan.get("interval")) and 60 <= plan["interval"] <= 86_400,
+                "rotation interval is outside production bounds.")
+        require(type(plan.get("seed")) is int and 0 <= plan["seed"] < 2**64,
+                "rotation plan has no fixed UInt64 seed.")
+        cycles = plan.get("cycles")
+        if not isinstance(cycles, list):
+            cycles = []
+        report["cycleCount"] = len(cycles)
+        require(1 <= len(cycles) <= 2, "rotation plan must retain one or two cycles.")
+        previous_end = None
+        previous_index = None
+        for index, cycle in enumerate(cycles):
+            if not isinstance(cycle, dict):
+                require(False, f"cycle {index} is malformed.")
+                continue
+            start, ordinal, order = cycle.get("startSlot"), cycle.get("index"), cycle.get("order")
+            valid_start = type(start) is int and start >= 0
+            valid_index = type(ordinal) is int and ordinal >= 0
+            require(valid_start and valid_index, f"cycle {index} has invalid indices.")
+            valid_order = isinstance(order, list) and 1 <= len(order) <= 100 and all(isinstance(value, str) and value for value in order)
+            require(valid_order, f"cycle {index} has no bounded photo order.")
+            if valid_start and valid_index and valid_order:
+                if previous_end is not None:
+                    require(start >= previous_end and ordinal > previous_index, "cycles overlap or go backwards.")
+                previous_end, previous_index = start + len(order), ordinal
+                if finite_number(plan.get("anchor")) and finite_number(plan.get("interval")) and plan["interval"] > 0:
+                    slot = max(0, int((now - plan["anchor"]) // plan["interval"]))
+                    require(all(value in candidate_ids for offset, value in enumerate(order) if start + offset >= slot),
+                            f"cycle {index} has a future slot outside the prepared pool.")
+
+    issues = state.get("issues")
+    if not isinstance(issues, list):
+        require(False, "issues is not an array.")
+        issues = []
+    report["issueCount"] = len(issues)
+    require(len(issues) <= 3_000, "issue journal exceeds 3,000 entries.")
+    issue_keys: set[tuple[str, str]] = set()
+    for index, issue in enumerate(issues):
+        if not isinstance(issue, dict):
+            require(False, f"issue {index} is malformed.")
+            continue
+        photo_id, slot_id = issue.get("photoID"), issue.get("slotID")
+        require(isinstance(photo_id, str) and isinstance(slot_id, str) and bool(slot_id), f"issue {index} lacks identity.")
+        if isinstance(photo_id, str) and isinstance(slot_id, str):
+            require((slot_id, photo_id) not in issue_keys, "journal repeats an issued photo/slot.")
+            issue_keys.add((slot_id, photo_id))
+        dates_valid = all(finite_number(issue.get(key)) for key in ("scheduledAt", "issuedAt", "leaseUntil"))
+        require(dates_valid, f"issue {index} has invalid dates.")
+        names = issue.get("cacheFilenames")
+        if not isinstance(names, list) or not names or not all(safe_cache_filename(name) for name in names):
+            require(False, f"issue {index} has unsafe cache references.")
+            continue
+        if dates_valid:
+            require(issue["leaseUntil"] >= issue["scheduledAt"], f"issue {index} lease expires before its slot.")
+            # Canceled future selection usage can still have an outstanding file lease.
+            if now < issue["leaseUntil"] and isinstance(photo_id, str) and photo_id in eligible:
+                references.update(names)
+
+    grants = state.get("grants")
+    if not isinstance(grants, list):
+        require(False, "grants is not an array.")
+        grants = []
+    report["grantCount"] = len(grants)
+    grant_ids: set[str] = set()
+    for index, grant in enumerate(grants):
+        if not isinstance(grant, dict):
+            require(False, f"grant {index} is malformed.")
+            continue
+        identifier = grant.get("id")
+        require(valid_uuid(identifier) and identifier not in grant_ids, f"grant {index} has invalid/duplicate identity.")
+        if isinstance(identifier, str):
+            grant_ids.add(identifier)
+        valid_dates = all(finite_number(grant.get(key)) for key in ("committedAt", "resultExpiresAt", "overrideUntil"))
+        require(valid_dates, f"grant {index} has invalid dates.")
+        if valid_dates:
+            require(abs(grant["resultExpiresAt"] - grant["committedAt"] - 48 * 60 * 60) < 0.001,
+                    f"grant {index} does not retain its result for 48 hours.")
+            require(grant["committedAt"] < grant["overrideUntil"] <= grant["resultExpiresAt"],
+                    f"grant {index} has an invalid manual override.")
+        for item_key, id_key, invalidated_key in (
+            ("resultItem", "photoID", "resultInvalidated"),
+            ("previousItem", "previousPhotoID", "previousInvalidated"),
+        ):
+            item = grant.get(item_key)
+            photo_id = grant.get(id_key)
+            require(isinstance(item, dict) and item.get("localIdentifier") == photo_id,
+                    f"grant {index} {item_key} does not match its bound photo ID.")
+            require(type(grant.get(invalidated_key)) is bool, f"grant {index} lacks explicit invalidation state.")
+            live = valid_dates and now < grant["resultExpiresAt"] and grant.get(invalidated_key) is False and isinstance(photo_id, str) and photo_id in eligible
+            inspect_item(item, f"grant {index} {item_key}", live=live)
+    operations = state.get("operations")
+    require(isinstance(operations, list) and len(operations) <= 10_000, "operation journal is not bounded.")
+    if isinstance(operations, list):
+        operation_ids: set[str] = set()
+        for operation in operations:
+            valid = isinstance(operation, dict) and valid_uuid(operation.get("id")) and isinstance(operation.get("grantID"), str) and operation["grantID"] in grant_ids and finite_number(operation.get("createdAt"))
+            require(valid, "operation has no valid committed result.")
+            if valid:
+                require(operation["id"] not in operation_ids, "operation ID was recorded twice.")
+                operation_ids.add(operation["id"])
+    if grants or state.get("nextAvailableAt") is not None:
+        require(finite_number(state.get("nextAvailableAt")), "daily quota has no nextAvailableAt.")
+
+    report["liveReferenceCount"] = len(references)
+    require(len(references) <= 400, f"retains {len(references)} live JPEG references; cap is 400.")
+    if cache.is_symlink() or not cache.is_dir():
+        require(False, "cache directory is missing or unsafe.")
+        return report, items, files
+    actual_files: dict[str, Path] = {}
+    for image_path in cache.iterdir():
+        if image_path.is_symlink() or image_path.is_dir():
+            require(False, "cache contains a symlink or nested directory.")
+            continue
+        if image_path.suffix.lower() in {".jpg", ".jpeg"}:
+            actual_files[image_path.name] = image_path
+    report["actualJPEGCount"] = len(actual_files)
+    require(len(actual_files) <= 400, f"cache contains {len(actual_files)} JPEGs; cap is 400.")
+    require(references.issubset(actual_files), "live references include missing JPEG files.")
+    reverse_dimensions = {size: variant for variant, size in EXPECTED_CACHE_DIMENSIONS.items()}
+    for filename, image_path in actual_files.items():
+        try:
+            size = image_path.stat().st_size
+            report["actualJPEGBytes"] += size
+            dimensions = jpeg_dimensions(image_path)
+            variant = reverse_dimensions.get(dimensions)
+            require(variant is not None, f"cache JPEG {filename} is unreadable or has an invalid canvas.")
+            for bound_variant, bound_files in files.items():
+                if image_path in bound_files:
+                    require(dimensions == EXPECTED_CACHE_DIMENSIONS[bound_variant],
+                            f"cache JPEG {filename} does not match its bound {bound_variant} canvas.")
+            if variant is not None:
+                require(4 <= size <= MAXIMUM_CACHE_BYTES[variant], f"cache JPEG {filename} exceeds its {variant} byte budget.")
+                if filename in references:
+                    files[variant].add(image_path)
+        except OSError as error:
+            require(False, f"cache JPEG {filename} is not readable: {error}")
+    return report, items, files
 
 
 def timeline_entry_limit(
@@ -149,6 +468,9 @@ def timeline_entry_limit(
             for value in (anchor_declaration, anchor_elapsed, anchor_reload)
         ),
         "afterReloadPolicy": after_policy is not None,
+        "personalPlanResolution": re.search(r"PersonalRediscoveryStore\.shared\.issueTimeline\(", source) is not None,
+        "personalPlanTwoEntryPrefix": re.search(r"plan\.entries\.prefix\(\s*Self\.maximumTimelineEntryCount\s*\)", source) is not None,
+        "personalPlanAfterPolicy": re.search(r"policy:\s*\.after\(\s*plan\.reloadDate\s*\)", source) is not None,
     }
     if not checks["twoEntryPrefix"]:
         failures.append(
@@ -164,6 +486,10 @@ def timeline_entry_limit(
             "Timeline provider does not request its bounded refill with an "
             "after(reloadDate) policy."
         )
+    if not all(checks[key] for key in (
+        "personalPlanResolution", "personalPlanTwoEntryPrefix", "personalPlanAfterPolicy",
+    )):
+        failures.append("Personal plan output must resolve the shared timeline, cap its entries at two, and use its persisted reload date.")
     return limit, checks
 
 
@@ -602,17 +928,21 @@ def main() -> int:
         "medium": set(),
         "large": set(),
     }
-    expected_cache_dimensions = {
-        "small": (500, 500),
-        "medium": (1050, 500),
-        "large": (1050, 1100),
-    }
-    maximum_cache_bytes = {
-        "small": 100 * 1_024,
-        "medium": 200 * 1_024,
-        "large": 220 * 1_024,
-    }
-    for item in manifest_items:
+    expected_cache_dimensions = EXPECTED_CACHE_DIMENSIONS
+    maximum_cache_bytes = MAXIMUM_CACHE_BYTES
+    personal_state_report, personal_items, personal_files = validate_personal_state(
+        group_container, expected_widget_cache_algorithm, failures,
+        observed_at=max((entry_timestamp(entry) or 0 for entry in entries), default=0),
+        snapshot_photo_ids={asset["localIdentifier"] for asset in snapshot_assets
+                            if isinstance(asset.get("localIdentifier"), str)},
+        detected_fixture_ids={asset["localIdentifier"] for asset in fixture_assets
+                              if isinstance(asset.get("localIdentifier"), str)
+                              and asset.get("analysisStatus") == "detected"},
+    )
+    for variant, paths in personal_files.items():
+        cache_files_by_variant[variant].update(paths)
+        referenced_cache_files.update(paths)
+    for item in manifest_items + personal_items:
         legacy_filename = item.get("cacheFilename")
         filenames = item.get("cacheFilenames")
         if not isinstance(filenames, dict):
@@ -623,9 +953,7 @@ def main() -> int:
         for variant in expected_cache_dimensions:
             filename = filenames.get(variant)
             if (
-                not isinstance(filename, str)
-                or Path(filename).name != filename
-                or Path(filename).suffix.lower() not in {".jpg", ".jpeg"}
+                not safe_cache_filename(filename)
             ):
                 failures.append(
                     f"Widget manifest contains an unsafe {variant} cache filename."
@@ -764,55 +1092,6 @@ def main() -> int:
             f"{simultaneous_three_family_decode_budget_bytes})."
         )
 
-    history_path = group_container / "widget-cache-history.json"
-    history_current_generation_files: list[str] = []
-    history_generation_count = 0
-    history_retained_files: set[str] = set()
-    if not history_path.is_file():
-        failures.append("widget-cache-history.json was not written to the App Group.")
-    else:
-        try:
-            history = json.loads(history_path.read_text(encoding="utf-8-sig"))
-            generations = history.get("generations", [])
-            if isinstance(generations, list):
-                history_generation_count = len(generations)
-                for generation in generations:
-                    if not isinstance(generation, dict):
-                        continue
-                    raw_generation_filenames = generation.get("filenames", [])
-                    if isinstance(raw_generation_filenames, list):
-                        history_retained_files.update(
-                            value
-                            for value in raw_generation_filenames
-                            if isinstance(value, str)
-                        )
-            if history_generation_count > 8:
-                failures.append(
-                    f"Widget cache history retains {history_generation_count} generations; cap is 8."
-                )
-            if len(history_retained_files) > 400:
-                failures.append(
-                    f"Widget cache history retains {len(history_retained_files)} files; cap is 400."
-                )
-            if isinstance(generations, list) and generations:
-                first_generation = generations[0]
-                if isinstance(first_generation, dict):
-                    raw_filenames = first_generation.get("filenames", [])
-                    if isinstance(raw_filenames, list):
-                        history_current_generation_files = [
-                            value for value in raw_filenames if isinstance(value, str)
-                        ]
-            if not referenced_cache_files:
-                failures.append("Widget manifest does not reference cache files.")
-            elif not {
-                path.name for path in referenced_cache_files
-            }.issubset(set(history_current_generation_files)):
-                failures.append(
-                    "Latest widget cache history generation does not retain every "
-                    "family-specific image."
-                )
-        except (json.JSONDecodeError, OSError) as error:
-            failures.append(f"widget-cache-history.json is invalid: {error}")
     widget_log_files = [path.name for path in log_files if path.name.startswith("widget-")]
     report = {
         "status": "pass" if not failures else "fail",
@@ -893,11 +1172,7 @@ def main() -> int:
                 "aggregate/headroom is not a WidgetKit runtime safety proof"
             ),
         },
-        "historyCurrentGenerationFileCount": len(history_current_generation_files),
-        "historyGenerationCount": history_generation_count,
-        "historyRetainedFileCount": len(history_retained_files),
-        "historyGenerationCap": 8,
-        "historyFileCap": 400,
+        "personalRediscovery": personal_state_report,
         "retainedCacheWorstCaseBytes": 400 * 220 * 1_024,
         "oversizedCacheFiles": oversized_cache_files,
         "failures": failures,
