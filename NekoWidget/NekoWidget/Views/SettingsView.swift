@@ -122,7 +122,8 @@ struct SettingsView: View {
                 NavigationLink {
                     CatProfilesView(
                         presentation: catProfilesPresentation,
-                        actions: catProfilesActions
+                        actions: catProfilesActions,
+                        opensProfileSettings: true
                     )
                 } label: {
                     LabeledContent {
@@ -130,9 +131,10 @@ struct SettingsView: View {
                             ? "未登録"
                             : "\(catProfilesPresentation.profiles.count.formatted())匹")
                     } label: {
-                        Label("猫ごとの写真・プロフィール", systemImage: "cat.fill")
+                        Label("猫のプロフィール", systemImage: "cat.fill")
                     }
                 }
+                .accessibilityIdentifier("settings-cat-profiles")
 
             } header: {
                 Text("写真とねこ")
@@ -342,6 +344,21 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
 
                 NavigationLink {
+                    PhotoSourceAlbumSelectionView(
+                        albums: photoSourceAlbums,
+                        status: photoSourceStatus,
+                        isScanning: isScanning,
+                        selectSourceAlbum: selectPhotoSourceAlbum,
+                        isLimitedAccess: isLimitedAccess,
+                        chooseMorePhotos: chooseMorePhotos
+                    )
+                    .task { await refreshPhotoSourceAlbums() }
+                } label: {
+                    LabeledContent("写真の対象", value: sourceSummary)
+                }
+                .accessibilityIdentifier("settings-photo-source")
+
+                NavigationLink {
                     CatCandidateCurationView(
                         excludedPhotos: excludedCatPhotos,
                         sourceAlbums: photoSourceAlbums,
@@ -351,16 +368,18 @@ struct SettingsView: View {
                         chooseMorePhotos: chooseMorePhotos,
                         restoreCatCandidates: restoreCatCandidates,
                         selectSourceAlbum: selectPhotoSourceAlbum,
-                        refreshSourceAlbums: refreshPhotoSourceAlbums
+                        refreshSourceAlbums: refreshPhotoSourceAlbums,
+                        showsSourceSettings: false
                     )
                 } label: {
                     LabeledContent(
-                        "対象と除外",
+                        "除外した写真",
                         value: excludedCatPhotos.isEmpty
-                            ? sourceSummary
-                            : "除外 \(excludedCatPhotos.count.formatted())枚"
+                            ? "なし"
+                            : "\(excludedCatPhotos.count.formatted())枚"
                     )
                 }
+                .accessibilityIdentifier("settings-excluded-photos")
 
                 NavigationLink {
                     PhotoLibraryAlbumSettingsView(

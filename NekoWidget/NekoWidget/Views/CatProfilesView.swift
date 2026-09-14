@@ -76,6 +76,7 @@ struct CatProfilesViewActions {
 struct CatProfilesView: View {
     let presentation: CatProfilesPresentation
     let actions: CatProfilesViewActions
+    var opensProfileSettings = false
 
     private struct CreationRequest: Identifiable {
         let id = UUID()
@@ -98,7 +99,7 @@ struct CatProfilesView: View {
             unassignedSection
             legacyExclusionSection
         }
-        .navigationTitle("猫ごとの写真")
+        .navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")
         .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
             if continuesProfileCreation {
                 continuesProfileCreation = false
@@ -185,7 +186,9 @@ struct CatProfilesView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("cat-profile-open")
-                .accessibilityHint("この子の写真を開きます")
+                .accessibilityHint(opensProfileSettings
+                    ? "この子のプロフィールを開きます"
+                    : "この子の写真を開きます")
             }
 
             Button {
@@ -264,13 +267,24 @@ struct CatProfilesView: View {
         }
     }
 
+    @ViewBuilder
     private func profileDetail(_ profile: CatProfilePresentation) -> some View {
-        CatProfileConfirmedPhotosView(
-            profile: profile,
-            allProfiles: presentation.profiles,
-            actions: actions,
-            profileSettingsAlbumOptions: presentation.photoAlbumOptions
-        )
+        if opensProfileSettings {
+            CatProfileDetailView(
+                profile: profile,
+                allProfiles: presentation.profiles,
+                manualCandidatePhotos: profile.manualCandidatePhotos,
+                photoAlbumOptions: presentation.photoAlbumOptions,
+                actions: actions
+            )
+        } else {
+            CatProfileConfirmedPhotosView(
+                profile: profile,
+                allProfiles: presentation.profiles,
+                actions: actions,
+                profileSettingsAlbumOptions: presentation.photoAlbumOptions
+            )
+        }
     }
 
 }

@@ -18,40 +18,15 @@ struct CatCandidateCurationView: View {
     let restoreCatCandidates: ([String]) async -> Void
     let selectSourceAlbum: (String?) async -> Void
     let refreshSourceAlbums: () async -> Void
+    var showsSourceSettings = true
 
     @State private var isRestoringAll = false
     @State private var showsRestoreAllConfirmation = false
 
     var body: some View {
         Form {
-            Section {
-                NavigationLink {
-                    PhotoSourceAlbumSelectionView(
-                        albums: sourceAlbums,
-                        status: sourceStatus,
-                        isScanning: isScanning,
-                        selectSourceAlbum: selectSourceAlbum
-                    )
-                } label: {
-                    LabeledContent("写真の対象", value: sourceTitle)
-                }
-
-                if sourceStatus == .unavailable {
-                    Label(
-                        "選択したアルバムを利用できません。対象を選び直すまで、以前の結果を保持します。",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                }
-
-                if isLimitedAccess {
-                    Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
-                }
-            } header: {
-                Text("写真の対象・上級設定")
-            } footer: {
-                Text("初期値は写真ライブラリ全体です。アルバムを選ぶと、その中の写真だけを次回スキャンの対象にします。アルバム名を変えても選択は維持されます。写真へのアクセスが制限されている場合は、許可済みの写真だけを確認します。")
+            if showsSourceSettings {
+                sourceSettingsSection
             }
 
             Section {
@@ -88,7 +63,7 @@ struct CatCandidateCurationView: View {
                 Text("ここでの除外や復元は、アプリの「写真」・ウィジェット・「自動アルバム」の候補だけに影響します。写真アプリの写真は削除・変更されません。")
             }
         }
-        .navigationTitle("写真の整理")
+        .navigationTitle(showsSourceSettings ? "写真の整理" : "除外した写真")
         .task { await refreshSourceAlbums() }
         .confirmationDialog(
             "除外した写真をすべて候補に戻しますか？",
@@ -105,6 +80,38 @@ struct CatCandidateCurationView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("写真アプリの写真自体は変更されません。")
+        }
+    }
+
+    private var sourceSettingsSection: some View {
+        Section {
+            NavigationLink {
+                PhotoSourceAlbumSelectionView(
+                    albums: sourceAlbums,
+                    status: sourceStatus,
+                    isScanning: isScanning,
+                    selectSourceAlbum: selectSourceAlbum
+                )
+            } label: {
+                LabeledContent("写真の対象", value: sourceTitle)
+            }
+
+            if sourceStatus == .unavailable {
+                Label(
+                    "選択したアルバムを利用できません。対象を選び直すまで、以前の結果を保持します。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.footnote)
+                .foregroundStyle(.orange)
+            }
+
+            if isLimitedAccess {
+                Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+            }
+        } header: {
+            Text("写真の対象・上級設定")
+        } footer: {
+            Text("初期値は写真ライブラリ全体です。アルバムを選ぶと、その中の写真だけを次回スキャンの対象にします。アルバム名を変えても選択は維持されます。写真へのアクセスが制限されている場合は、許可済みの写真だけを確認します。")
         }
     }
 
@@ -152,17 +159,34 @@ private struct ExcludedCatPhotoRow: View {
     }
 }
 
-private struct PhotoSourceAlbumSelectionView: View {
+struct PhotoSourceAlbumSelectionView: View {
     let albums: [PhotoSourceAlbumOption]
     let status: PhotoSourceAlbumStatus
     let isScanning: Bool
     let selectSourceAlbum: (String?) async -> Void
+    var isLimitedAccess = false
+    var chooseMorePhotos: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
     @State private var savingIdentifier: String?
 
     var body: some View {
         List {
+            if status == .unavailable || isLimitedAccess {
+                Section {
+                    if status == .unavailable {
+                        Label(
+                            "選択したアルバムを利用できません。対象を選び直すまで、以前の結果を保持します。",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    }
+                    if isLimitedAccess {
+                        Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+                    }
+                }
+            }
             Section {
                 sourceButton(
                     identifier: nil,

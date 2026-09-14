@@ -1208,12 +1208,7 @@ private struct WindowListView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if supportsPrivateWindows {
-                    NavigationLink { connectionOptions } label: {
-                        Image(systemName: "person.badge.plus")
-                            .frame(minWidth: 44, minHeight: 44)
-                    }
-                    .accessibilityLabel("相手とつなぐ")
-                    .accessibilityIdentifier("window-list-connect")
+                    connectionEntry
                 }
                 NavigationLink { discovery } label: {
                     Image(systemName: "magnifyingglass")
@@ -1259,6 +1254,26 @@ private struct WindowListView: View {
 
     private var availabilityMessage: String? {
         model.bootstrapRetryMessage ?? catalogLoadMessage
+    }
+
+    @ViewBuilder
+    private var connectionEntry: some View {
+        if setupWindows.count == 1, let pending = setupWindows.first {
+            Button { open(pending) } label: {
+                Image(systemName: "person.badge.plus")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .disabled(model.isWorking || pausesWindowChanges || switchingWindowID != nil)
+            .accessibilityLabel("\(pending.displayName)の設定を続ける")
+            .accessibilityIdentifier("window-list-connect")
+        } else {
+            NavigationLink { connectionOptions } label: {
+                Image(systemName: "person.badge.plus")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("相手とつなぐ")
+            .accessibilityIdentifier("window-list-connect")
+        }
     }
 
     private var pausesWindowChanges: Bool {

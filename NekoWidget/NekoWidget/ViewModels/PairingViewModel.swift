@@ -268,7 +268,7 @@ final class PairingViewModel: ObservableObject {
     /// CAS revision remain untouched, so a label edit cannot interrupt a
     /// concurrent approval, refresh, consent, or cancellation operation.
     @discardableResult
-    func updateWindowDisplayName(_ rawValue: String) async -> Bool {
+    func updateWindowDisplayName(_ rawValue: String, expectedSpaceID: String? = nil) async -> Bool {
         guard canEditWindowDisplayName else {
             configurationMessage = state?.localDeviceIsAdditional == true
                 ? "追加したiPhoneでは名前を変更できません。最初のiPhoneで変更してください。"
@@ -283,6 +283,13 @@ final class PairingViewModel: ObservableObject {
             return false
         }
         do {
+            // A settings alert can outlive the active window. Compare with
+            // the operation's fresh state before writing any presentation data.
+            if let expectedSpaceID,
+               operation.expectedState.spaceID != expectedSpaceID
+                    || operation.expectedState.phase != .paired {
+                throw PairingError.stateUnavailable
+            }
             if Self.isLocalWindowNameDraft(operation.expectedState) {
                 let saved = try PairingStateStore.updateActiveDraftDisplayName(
                     rawValue,

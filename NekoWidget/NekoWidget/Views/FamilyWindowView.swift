@@ -117,6 +117,13 @@ struct FamilyWindowView: View {
     @Binding private var pendingMemorySourceDigest: String?
     @Binding private var pendingNotificationRoute: MomentNotificationRoute?
     @StateObject private var model = MomentSharingViewModel()
+    @StateObject private var nameModel = PairingViewModel()
+    @State private var showsNameEditor = false
+    @State private var nameEditRequest: UUID?
+    @State private var isPreparingNameEditor = false
+    @State private var windowNameDraft = ""
+    @State private var nameEditingSpaceID: String?
+    @State private var nameEditError: String?
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
     @State private var deleteReceivedTarget: MomentInboxItem?
@@ -1297,11 +1304,36 @@ struct FamilyWindowView: View {
             // together so large text does not need lazy section measurement
             // while the user scrolls to notification and safety controls.
             VStack(alignment: .leading, spacing: 24) {
-                Text(model.windowDisplayName)
-                    .font(.title2.bold())
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("family-window-settings-title")
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(model.windowDisplayName)
+                            .font(.title2.bold())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("family-window-settings-title")
+                        Spacer(minLength: 0)
+                        if canRenameWindow {
+                            Button { nameEditRequest = UUID() } label: {
+                                if isPreparingNameEditor || nameModel.isSynchronizingWindowName {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "pencil")
+                                }
+                            }
+                            .frame(minWidth: 44, minHeight: 44)
+                            .disabled(isPreparingNameEditor || nameModel.isSynchronizingWindowName || model.isWorking)
+                            .accessibilityLabel("まどの名前を変更")
+                            .accessibilityIdentifier("family-window-rename")
+                        }
+                    }
+                    if let message = nameEditError ?? nameModel.windowNameStatusMessage {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(nameEditError != nil || nameModel.windowNameStatusIsError
+                                ? Color.orange : Color.secondary)
+                            .accessibilityIdentifier("family-window-name-status")
+                    }
+                }
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("表示と通知")
@@ -1325,10 +1357,84 @@ struct FamilyWindowView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("まどの設定")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: nameEditRequest) {
+            if nameEditRequest != nil { await prepareWindowNameEditor() }
+        }
+        .onDisappear {
+            nameEditRequest = nil
+            showsNameEditor = false
+        }
+        .alert("まどの名前", isPresented: $showsNameEditor) {
+            TextField("名前", text: $windowNameDraft)
+                .accessibilityIdentifier("family-window-name-field")
+            Button("保存して共有") { Task { await saveWindowName() } }
+                .disabled(windowNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("名前は相手のまどにも表示されます。")
+        }
         .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
+        }
+    }
+
+    private var canRenameWindow: Bool {
+#if DEBUG
+        if Self.isSettingsFixture { return true }
+#endif
+        return model.isPaired && !model.isReportOnly && !model.isShowingLastKnownState
+            && model.pairingState?.role == .inviter
+            && model.pairingState?.localDeviceIsAdditional != true
+    }
+
+    private func prepareWindowNameEditor() async {
+        guard canRenameWindow, !isPreparingNameEditor, !Task.isCancelled,
+              let request = nameEditRequest else { return }
+        nameEditError = nil
+#if DEBUG
+        if Self.isSettingsFixture {
+            windowNameDraft = model.windowDisplayName
+            showsNameEditor = true
+            return
+        }
+#endif
+        guard let spaceID = model.pairingState?.spaceID else { return }
+        isPreparingNameEditor = true
+        defer { isPreparingNameEditor = false }
+        await nameModel.bootstrap()
+        guard !Task.isCancelled, nameEditRequest == request else { return }
+        nameModel.reloadWindowDisplayName()
+        guard canRenameWindow, model.pairingState?.spaceID == spaceID,
+              nameModel.state?.spaceID == spaceID, nameModel.canPersistWindowDisplayName,
+              nameModel.bootstrapRetryMessage == nil else {
+            nameEditError = "名前を変更できる状態か確認できませんでした。まどを開き直してください。"
+            return
+        }
+        nameEditingSpaceID = spaceID
+        windowNameDraft = nameModel.windowDisplayName
+        showsNameEditor = true
+    }
+
+    private func saveWindowName() async {
+#if DEBUG
+        if Self.isSettingsFixture {
+            showsSettingsFixtureExplanation = true
+            return
+        }
+#endif
+        guard canRenameWindow, let spaceID = nameEditingSpaceID,
+              model.pairingState?.spaceID == spaceID else {
+            nameEditError = "まどの状態が変わったため、名前を変更しませんでした。まどを開き直してください。"
+            return
+        }
+        if await nameModel.updateWindowDisplayName(windowNameDraft, expectedSpaceID: spaceID) {
+            windowNameDraft = nameModel.windowDisplayName
+        } else {
+            nameEditError = nameModel.configurationMessage
+                ?? (nameModel.windowNameStatusIsError ? nameModel.windowNameStatusMessage : nil)
+                ?? "名前を保存できませんでした。もう一度お試しください。"
         }
     }
 
@@ -1520,7 +1626,7 @@ struct FamilyWindowView: View {
             HStack(spacing: 12) {
                 settingsSymbol("person.2.fill")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("名前と接続")
+                    Text("接続と端末")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly || model.isShowingLastKnownState {
                         Text(model.isReportOnly
@@ -1542,7 +1648,7 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityHint("まどの名前、接続相手、使っているiPhoneを確認します")
+        .accessibilityHint("接続相手と、使っているiPhoneを確認します")
         .accessibilityIdentifier("family-window-sharing-settings")
     }
 

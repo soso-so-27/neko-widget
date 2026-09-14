@@ -656,22 +656,15 @@ final class OfficialWindowUITests: XCTestCase {
                           "One back from discovery must return to the window list")
             XCTAssertTrue(connect.isHittable)
             connect.tap()
-            XCTAssertTrue(app.navigationBars["相手とつなぐ"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
-            let resume = app.buttons["window-list-resume-setup"]
-            for _ in 0..<5 { if resume.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(resume.isHittable)
-            XCTAssertTrue(resume.label.contains("ねことも"))
-            XCTAssertFalse(app.buttons["window-list-create"].exists, "Resume the existing setup slot")
-            XCTAssertFalse(app.buttons["window-list-join"].exists)
-            XCTAssertFalse(app.buttons["window-list-recover"].exists)
-            capture(largeText ? "window-connection-options-large-text" : "window-connection-options-standard", app)
-            app.navigationBars["相手とつなぐ"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5),
+                          "A single unfinished window must open directly from the person-plus action")
+            XCTAssertFalse(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
+            XCTAssertFalse(app.buttons["window-list-resume-setup"].exists)
+            capture(largeText ? "window-setup-direct-large-text" : "window-setup-direct-standard", app)
+            app.navigationBars["ねことも"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
-                          "One back from connection options must return to the window list")
+                          "One back from setup must return to the window list")
             connect.tap()
-            XCTAssertTrue(resume.waitForExistence(timeout: 5))
-            resume.tap()
             XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5))
             let restart = app.buttons["設定をやり直す"]
             for _ in 0..<6 { if restart.isHittable { break }; app.swipeUp() }
@@ -1432,17 +1425,45 @@ final class SoloMemoriesUITests: XCTestCase {
                 app.navigationBars["\(name)の写真"].buttons.element(boundBy: 0).tap()
                 XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
             }
-            if !largeText {
-                app.buttons["window-settings-button"].tap()
-                let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
-                XCTAssertTrue(photoSettings.waitForExistence(timeout: 5))
-                photoSettings.tap()
-                let curation = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "対象と除外")).firstMatch
-                for _ in 0..<5 where !curation.isHittable { app.swipeUp() }
-                XCTAssertTrue(curation.isHittable)
-                curation.tap()
-                XCTAssertTrue(app.navigationBars["写真の整理"].waitForExistence(timeout: 5))
-            }
+            app.buttons["window-settings-button"].tap()
+            let profiles = app.buttons["settings-cat-profiles"]
+            XCTAssertTrue(profiles.waitForExistence(timeout: 5))
+            for _ in 0..<5 where !profiles.isHittable { app.swipeUp() }
+            profiles.tap()
+            XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 5))
+            let firstCat = app.buttons.matching(identifier: "cat-profile-open").firstMatch
+            XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
+            let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
+            firstCat.tap()
+            XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["名前を変更"].exists, "Settings must open the profile, without a photo-grid intermediary")
+            XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
+            capture(largeText ? "cat-settings-direct-largest-text" : "cat-settings-direct")
+            app.navigationBars[catName].buttons.element(boundBy: 0).tap()
+            app.navigationBars["猫のプロフィール"].buttons.element(boundBy: 0).tap()
+
+            let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
+            for _ in 0..<5 where !photoSettings.isHittable { app.swipeDown() }
+            XCTAssertTrue(photoSettings.isHittable)
+            photoSettings.tap()
+            let source = app.buttons["settings-photo-source"]
+            for _ in 0..<5 where !source.isHittable { app.swipeUp() }
+            XCTAssertTrue(source.isHittable)
+            capture(largeText ? "photo-settings-shortcuts-largest-text" : "photo-settings-shortcuts")
+            source.tap()
+            XCTAssertTrue(app.navigationBars["写真の対象"].waitForExistence(timeout: 5))
+            capture(largeText ? "photo-source-direct-largest-text" : "photo-source-direct")
+            let allPhotos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "すべての写真")).firstMatch
+            XCTAssertTrue(allPhotos.isHittable)
+            allPhotos.tap()
+            XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5),
+                          "Selecting a source returns directly to photo settings")
+            let excluded = app.buttons["settings-excluded-photos"]
+            for _ in 0..<5 where !excluded.isHittable { app.swipeUp() }
+            XCTAssertTrue(excluded.isHittable)
+            excluded.tap()
+            XCTAssertTrue(app.navigationBars["除外した写真"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["写真の対象"].exists)
             app.terminate()
         }
     }
@@ -1483,6 +1504,22 @@ final class SoloMemoriesUITests: XCTestCase {
             // gestures inside it instead of swiping the application window.
             let settings = app.scrollViews.firstMatch
             XCTAssertTrue(settings.waitForExistence(timeout: 10))
+            let title = app.staticTexts["family-window-settings-title"]
+            XCTAssertTrue(title.waitForExistence(timeout: 10))
+            let originalName = title.label
+            let rename = app.buttons["family-window-rename"]
+            XCTAssertTrue(rename.isHittable)
+            rename.tap()
+            let nameAlert = app.alerts["まどの名前"]
+            XCTAssertTrue(nameAlert.waitForExistence(timeout: 5))
+            let nameField = nameAlert.textFields.firstMatch
+            XCTAssertTrue(nameField.isHittable)
+            nameField.tap()
+            nameField.typeText("test")
+            capture(largeText ? "window-name-direct-largest-text" : "window-name-direct")
+            nameAlert.buttons["キャンセル"].tap()
+            XCTAssertFalse(nameAlert.exists)
+            XCTAssertEqual(title.label, originalName, "Cancelling a name edit must retain the window name")
             let widget = app.buttons["family-window-widget-guide"]
             XCTAssertTrue(widget.waitForExistence(timeout: 10))
             XCTAssertTrue(widget.isHittable)
