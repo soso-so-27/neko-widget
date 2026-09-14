@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,12 @@ CI = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("planner", CI / "plan-ios-ci.py")
 planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
+
+
+def workflow_jobs():
+    workflow = (CI.parents[1] / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+    return dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                           workflow.split("\njobs:\n", 1)[1], re.M | re.S))
 
 
 class LaneTests(unittest.TestCase):
@@ -79,14 +86,64 @@ class LaneTests(unittest.TestCase):
                                  ["-only-testing:" + test for test in meta["nativeTests"]])
 
     def test_workflow_isolates_products_and_preserves_independent_failures(self):
-        workflow = (CI.parents[1] / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
-        body = workflow.split("\n  sharing-runtime-matrix:", 1)[1]
-        self.assertIn("fail-fast: false", body)
-        self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.lanes) }}", body)
-        self.assertIn("NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}", body)
-        self.assertIn("${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", body)
-        self.assertNotIn("download-artifact", body)
-        self.assertNotIn("continue-on-error", body)
+        jobs = workflow_jobs()
+        matrix = jobs["sharing-runtime-matrix"]
+        self.assertIn("fail-fast: false", matrix)
+        self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}", matrix)
+        self.assertIn("NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}", matrix)
+        self.assertIn("${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", matrix)
+        for identifier in ("sharing-app-ui", "sharing-runtime-matrix"):
+            body = jobs[identifier]
+            self.assertNotIn("download-artifact", body)
+            self.assertNotIn("continue-on-error", body)
+            self.assertIn("timeout-minutes: 60", body)
+            # Scheduling must not change checkout isolation, commands, flags,
+            # artifact provenance or whether a failure is propagated.
+            steps = body.split("    steps:\n", 1)[1]
+            if identifier == "sharing-app-ui":
+                steps = steps.replace("NEKO_IOS_RUNTIME_LANE: app-ui", "NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}")
+                steps = steps.replace("ios-sharing-app-ui-", "ios-sharing-${{ matrix.lane }}-")
+            self.assertEqual(steps.strip(), matrix.split("    steps:\n", 1)[1].strip())
+
+    def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
+        jobs = workflow_jobs()
+        for selected in scope.SCOPES:
+            with self.subTest(scope=selected):
+                remaining = scope.matrix_lanes(selected)
+                partition = ("app-ui",) + remaining
+                self.assertCountEqual(partition, scope.lanes(selected))
+                self.assertEqual(len(partition), len(set(partition)))
+                outputs = {"lanes": scope.lanes(selected), "matrix_lanes": remaining}
+                maximum_running = 0
+                names = []
+                for identifier, body in jobs.items():
+                    if "    runs-on: macos-15\n" not in body:
+                        continue
+                    matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
+                    expansion = outputs[matrix[1]] if matrix else (None,)
+                    limit = re.search(r"^      max-parallel: (\d+)$", body, re.M)
+                    maximum_running += min(len(expansion), int(limit[1])) if limit else len(expansion)
+                    # Every Mac check depends only on the planner. A failed
+                    # sibling neither blocks another check nor forces its rerun.
+                    self.assertIn("    needs: plan\n", body)
+                    self.assertNotIn("continue-on-error", body)
+                    name = re.search(r"^    name: (.+)$", body, re.M)[1]
+                    for lane in expansion:
+                        expanded_name = name.replace("${{ needs.plan.outputs.runtime_scope }}", selected)
+                        if lane:
+                            expanded_name = expanded_name.replace("${{ matrix.lane }}", lane)
+                        names.append(expanded_name)
+                self.assertCountEqual(names, (planner.BUILD, planner.SMOKE) + scope.sharing_jobs(selected))
+                self.assertEqual(len(names), len(set(names)))
+                self.assertIn("    name: " + scope.lane_job(selected, "app-ui").replace(selected,
+                    "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
+                self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
+                self.assertLessEqual(maximum_running, 5)
+                self.assertEqual(maximum_running, 5 if selected == scope.FULL_SCOPE else 4)
+                if selected != scope.FULL_SCOPE:
+                    self.assertEqual(remaining, ("runtime",))
+        with self.assertRaises(ValueError):
+            scope.matrix_lanes("unknown")
 
     def test_partial_rerun_keeps_passed_siblings_and_uses_only_latest_result(self):
         run = dict(id=42, head_sha="a" * 40, run_attempt=2)

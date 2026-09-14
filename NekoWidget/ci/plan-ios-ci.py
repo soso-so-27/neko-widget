@@ -12,7 +12,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job, sharing_jobs, lanes
+from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job, sharing_jobs, lanes, matrix_lanes
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -280,6 +280,7 @@ def main() -> None:
         "sharing": str(evidence is None and required != (BUILD,)).lower(),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
+        "matrix_lanes": json.dumps(matrix_lanes(selected_scope), separators=(",", ":")),
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():

@@ -70,6 +70,11 @@ def lanes(scope: str) -> tuple[str, ...]:
     return LANES if scope == FULL_SCOPE else LANES[:2]
 
 
+def matrix_lanes(scope: str) -> tuple[str, ...]:
+    """App UI runs independently; the remaining lanes share two Mac slots."""
+    return tuple(lane for lane in lanes(scope) if lane != "app-ui")
+
+
 def lane_job(scope: str, lane: str) -> str:
     if lane not in lanes(scope):
         raise ValueError("Lane is not required by this scope")

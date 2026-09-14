@@ -153,7 +153,8 @@ class PlanTests(unittest.TestCase):
                     outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                     self.assertEqual(outputs, {"build": "true", "smoke": "true", "sharing": "true",
                         "runtime_scope": scope.FULL_SCOPE,
-                        "lanes": json.dumps(scope.LANES, separators=(",", ":"))})
+                        "lanes": json.dumps(scope.LANES, separators=(",", ":")),
+                        "matrix_lanes": '["runtime","gallery-normal","gallery-white","gallery-no-caption"]'})
 
     def test_mapped_photo_and_official_ui_keep_build_smoke_and_core_runtime(self):
         change = ('Text("before")\n', 'Text("after")\n')
@@ -296,6 +297,7 @@ class PlanTests(unittest.TestCase):
         workflow = (project.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
         for identifier, output in (("build-without-signing", "build"),
                                    ("simulator-smoke-test", "smoke"),
+                                   ("sharing-app-ui", "sharing"),
                                    ("sharing-runtime-matrix", "sharing")):
             body = re.split(r"\n  (?=\S)", workflow.split("\n  " + identifier + ":", 1)[1], maxsplit=1)[0]
             self.assertIn("    needs: plan\n", body)

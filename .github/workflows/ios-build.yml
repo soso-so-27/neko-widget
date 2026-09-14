@@ -34,6 +34,7 @@ jobs:
       sharing: ${{ steps.scope.outputs.sharing }}
       runtime_scope: ${{ steps.scope.outputs.runtime_scope }}
       lanes: ${{ steps.scope.outputs.lanes }}
+      matrix_lanes: ${{ steps.scope.outputs.matrix_lanes }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -989,6 +990,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  sharing-app-ui:
+    name: Sharing checks [app-ui; scope ${{ needs.plan.outputs.runtime_scope }}]
+    # The longest check must not compete with all five matrix lanes for the
+    # initial Mac slots. App UI, build and smoke each have one slot, while
+    # the remaining runtime/Gallery matrix uses at most two slots below.
+    needs: plan
+    if: needs.plan.outputs.sharing == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Run sharing runtime matrix
+        working-directory: NekoWidget
+        shell: bash
+        env:
+          NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
+          NEKO_IOS_RUNTIME_LANE: app-ui
+        run: bash ci/run-sharing-runtime-matrix.sh
+
+      - name: Upload sharing runtime matrix artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios-sharing-app-ui-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-sharing-runtime-matrix
+          if-no-files-found: warn
+          retention-days: 7
+
   sharing-runtime-matrix:
     name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]
     # Each lane has its own runner, checkout, Simulator, and derived products.
@@ -998,8 +1034,12 @@ jobs:
     runs-on: macos-15
     strategy:
       fail-fast: false
+      # Three independent Mac jobs plus this matrix's two slots fit the
+      # observed five-Mac capacity. No lane order or success dependency is
+      # needed, so a failed check can still be retried independently.
+      max-parallel: 2
       matrix:
-        lane: ${{ fromJSON(needs.plan.outputs.lanes) }}
+        lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
