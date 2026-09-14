@@ -11,7 +11,13 @@ private func require(_ value: @autoclosure () throws -> Bool, _ message: String)
 
 private let utc = TimeZone(secondsFromGMT: 0)!
 private let baseline = ISO8601DateFormatter().date(from: "2026-09-14T10:00:00Z")!
-private let interval: TimeInterval = 20 * 60
+private let interval: TimeInterval = 24 * 60 * 60
+
+private func midnightAfter(_ date: Date, timeZone: TimeZone = utc) -> Date {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))!
+}
 
 private struct Fixture {
     let directory: URL
@@ -19,7 +25,7 @@ private struct Fixture {
     let candidates: [PersonalRediscoveryCandidate]
     let revision: String
 
-    init(_ count: Int, at date: Date = baseline, legacyOnly: Bool = false) throws {
+    init(_ count: Int, at date: Date = baseline, legacyOnly: Bool = false, timeZone: TimeZone = utc) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("rediscovery-check-\(UUID().uuidString)")
         store = PersonalRediscoveryStore(containerURL: directory)
         candidates = (0..<count).map { index in
@@ -36,8 +42,8 @@ private struct Fixture {
             let manifest = WidgetManifest(items: candidates.map(\.item), generatedAt: date)
             try JSONEncoder().encode(manifest).write(to: directory.appendingPathComponent("widget-manifest.json"), options: .atomic)
         } else {
-            revision = try store.updateEligibility(photoIDs: Set(candidates.map { $0.item.localIdentifier }), scopeIdentifier: "fixture", isAuthorized: true, now: date)
-            if count > 0 { try store.publish(candidates: candidates, expectedRevision: revision, now: date) }
+            revision = try store.updateEligibility(photoIDs: Set(candidates.map { $0.item.localIdentifier }), scopeIdentifier: "fixture", isAuthorized: true, now: date, timeZone: timeZone)
+            if count > 0 { try store.publish(candidates: candidates, expectedRevision: revision, now: date, timeZone: timeZone) }
         }
     }
 
@@ -81,7 +87,7 @@ private struct Fixture {
             photoIDs: photoIDs ?? Set(candidates.map { $0.item.localIdentifier }),
             scopeIdentifier: "fixture", isAuthorized: isAuthorized, now: baseline,
             photoModificationDates: Dictionary(uniqueKeysWithValues: candidates.map { ($0.item.localIdentifier, modificationDate) }),
-            bootstrapCandidates: seeds ?? candidates, interval: interval)
+            bootstrapCandidates: seeds ?? candidates, interval: interval, timeZone: utc)
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: directory) }
@@ -101,12 +107,13 @@ private enum PersonalRediscoveryVerifier {
         }
         try poolAndTimeline()
         try dailyAndHistory()
+        try dailyPhotoAndCadenceMigration()
         try invalidCandidateDoesNotConsume()
         try authorityAndPublication()
         try upgradeBootstrap()
         try bootstrapRejections()
         try concurrentProcesses()
-        print("Personal rediscovery passed: shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, cross-process race.")
+        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, cross-process race.")
     }
 
     private static func upgradeBootstrap() throws {
@@ -119,7 +126,7 @@ private enum PersonalRediscoveryVerifier {
         let revision = try fixture.bootstrap(candidates: seeds, interval: 30 * 60)
         let first = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
         try require(first.entries.count == 2 && first.entries.allSatisfy { $0.item != nil }, "authority committed before legacy photos and plan")
-        try require(first.entries[1].date == baseline.addingTimeInterval(30 * 60), "bootstrap ignored configured interval")
+        try require(first.entries[1].date == midnightAfter(baseline), "bootstrap did not schedule tomorrow's photo")
         let saved = try fixture.store.snapshot(now: baseline)!
         try require(saved.candidates.count == 20, "bootstrap lost prepared legacy candidates")
         do {
@@ -286,7 +293,7 @@ private enum PersonalRediscoveryVerifier {
             throw CheckFailure.failed("first turn did not commit")
         }
         try require(first.photoID != token.photoID && first.previousPhotoID == token.photoID, "manual source/result binding changed")
-        try require(first.overrideUntil == time.addingTimeInterval(interval), "manual did not move boundary once")
+        try require(first.overrideUntil == midnightAfter(time), "manual photo did not stay until next midnight")
         let held = try fixture.store.currentEntry(now: baseline.addingTimeInterval(20 * 60), timeZone: utc)
         try require(held?.item?.localIdentifier == first.photoID, "manual vanished at old boundary")
         let nextDay = baseline.addingTimeInterval(24 * 60 * 60)
@@ -320,9 +327,9 @@ private enum PersonalRediscoveryVerifier {
         if case .available = timeline.entries[1].action {} else { throw CheckFailure.failed("midnight control stayed used") }
 
         let dstTime = ISO8601DateFormatter().date(from: "2026-03-08T08:30:00Z")!
-        let dst = try Fixture(3, at: dstTime)
-        defer { dst.cleanup() }
         let pacific = TimeZone(identifier: "America/Los_Angeles")!
+        let dst = try Fixture(3, at: dstTime, timeZone: pacific)
+        defer { dst.cleanup() }
         let dstToken = try dst.token(at: dstTime, timeZone: pacific)
         _ = try dst.store.perform(token: dstToken, operationID: UUID().uuidString, operationCreatedAt: dstTime, now: dstTime, timeZone: pacific)
         try require(try dst.store.snapshot(now: dstTime)?.nextAvailableAt == ISO8601DateFormatter().date(from: "2026-03-09T07:00:00Z"), "DST used fixed 86400 seconds")
@@ -353,7 +360,7 @@ private enum PersonalRediscoveryVerifier {
         try require(try fixture.store.currentEntry(now: baseline.addingTimeInterval(30), timeZone: utc)?.slotID == stable?.slotID, "refill reset anchor")
         try fixture.store.publish(candidates: [], expectedRevision: revised, now: baseline, interval: 30 * 60)
         let rescheduled = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
-        try require(rescheduled.entries[1].date == baseline.addingTimeInterval(30 * 60), "explicit interval ignored")
+        try require(rescheduled.entries[1].date == midnightAfter(baseline), "old interval preference restarted automatic rotation")
         let saved = try fixture.store.snapshot(now: baseline)
         do {
             try fixture.store.publish(candidates: [], expectedRevision: revised, now: baseline) { _ in throw CheckFailure.failed("injected IO failure") }
@@ -366,7 +373,11 @@ private enum PersonalRediscoveryVerifier {
         let full = try Fixture(100)
         defer { full.cleanup() }
         _ = try full.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)
-        let refillTime = baseline.addingTimeInterval(13 * 3_600)
+        let refillTime = baseline.addingTimeInterval(3 * 86_400)
+        try require(try full.store.snapshot(now: baseline)?.retirableCandidateCount == 0,
+                    "daily current/tomorrow photo was marked retirable")
+        try require((try full.store.snapshot(now: refillTime)?.retirableCandidateCount ?? 0) > 0,
+                    "daily replenishment must not wait for seventy consumed days")
         let newItem = WidgetManifestItem(localIdentifier: "new-photo", cacheFilename: "new-small.jpg", cacheFilenames: WidgetCacheFilenames(small: "new-small.jpg", medium: "new-medium.jpg", large: "new-large.jpg"), scheduledDate: refillTime)
         let addition = PersonalRediscoveryCandidate(item: newItem, preparedAt: refillTime)
         let expandedIDs = Set(full.candidates.map { $0.item.localIdentifier }).union(["new-photo"])
@@ -385,6 +396,114 @@ private enum PersonalRediscoveryVerifier {
             _ = try fixture.store.snapshot(now: baseline)
             throw CheckFailure.failed("corrupt state silently reset quota")
         } catch PersonalRediscoveryStore.Error.corrupted {}
+    }
+
+    private static func dailyPhotoAndCadenceMigration() throws {
+        let fixture = try Fixture(5)
+        defer { fixture.cleanup() }
+        let first = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
+        let photo = first.entries[0].item!.localIdentifier
+        let tomorrow = midnightAfter(baseline)
+        try require(first.entries[1].date == tomorrow && first.reloadDate == midnightAfter(tomorrow),
+                    "daily timeline must cover today and tomorrow only")
+        for time in [baseline.addingTimeInterval(1_201), baseline.addingTimeInterval(4 * 3_600), tomorrow.addingTimeInterval(-1)] {
+            let restarted = PersonalRediscoveryStore(containerURL: fixture.directory)
+            try require(try restarted.currentEntry(now: time, timeZone: utc)?.item?.localIdentifier == photo,
+                        "photo changed automatically inside a calendar day")
+        }
+        try fixture.store.publish(candidates: [], expectedRevision: fixture.revision,
+                                  now: baseline.addingTimeInterval(3_600), interval: 10 * 60, timeZone: utc)
+        try require(try fixture.store.currentEntry(now: baseline.addingTimeInterval(3_601), timeZone: utc)?.item?.localIdentifier == photo,
+                    "refill/save changed today's photo")
+        let turnTime = baseline.addingTimeInterval(4 * 3_600)
+        let token = try fixture.token(at: turnTime)
+        guard case let .committed(grant) = try fixture.store.perform(token: token, operationID: UUID().uuidString,
+            operationCreatedAt: turnTime, now: turnTime, timeZone: utc) else { throw CheckFailure.failed("daily turn failed") }
+        try fixture.store.publish(candidates: [], expectedRevision: fixture.revision, now: turnTime.addingTimeInterval(60), timeZone: utc)
+        try require(try fixture.store.currentEntry(now: tomorrow.addingTimeInterval(-1), timeZone: utc)?.item?.localIdentifier == grant.photoID,
+                    "manual result disappeared before midnight")
+        let next = try fixture.store.currentEntry(now: tomorrow, timeZone: utc)!
+        try require(next.item?.localIdentifier != grant.photoID, "tomorrow kept yesterday's manual photo")
+        if case .available = next.action {} else { throw CheckFailure.failed("tomorrow did not restore daily action") }
+
+        // Read a real v1 JSON shape without the new optional cadence field.
+        // Keep the currently scheduled old photo, candidates, and used quota.
+        let legacy = try Fixture(4)
+        defer { legacy.cleanup() }
+        let legacyToken = try legacy.token()
+        let operation = UUID().uuidString
+        guard case let .committed(oldGrant) = try legacy.store.perform(token: legacyToken, operationID: operation,
+            operationCreatedAt: baseline, now: baseline, timeZone: utc) else { throw CheckFailure.failed("legacy turn fixture") }
+        let url = legacy.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        var json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        var oldPlan = json["plan"] as! [String: Any]
+        oldPlan.removeValue(forKey: "calendarTimeZoneIdentifier")
+        oldPlan["anchor"] = baseline.addingTimeInterval(1_200).timeIntervalSinceReferenceDate
+        oldPlan["interval"] = 1_200
+        json["plan"] = oldPlan
+        var grants = json["grants"] as! [[String: Any]]
+        grants[0]["overrideUntil"] = baseline.addingTimeInterval(1_200).timeIntervalSinceReferenceDate
+        json["grants"] = grants
+        try JSONSerialization.data(withJSONObject: json).write(to: url, options: .atomic)
+        let migrated = try legacy.store.currentEntry(now: baseline.addingTimeInterval(60), timeZone: utc)!
+        try require(migrated.item?.localIdentifier == oldGrant.photoID, "migration lost current manual photo")
+        try require(try legacy.store.currentEntry(now: tomorrow.addingTimeInterval(-1), timeZone: utc)?.item?.localIdentifier == oldGrant.photoID,
+                    "legacy manual photo resumed 20-minute cadence")
+        let snapshot = try legacy.store.snapshot(now: baseline.addingTimeInterval(60))!
+        try require(snapshot.candidates.count == 4 && !snapshot.canTurn && snapshot.history.first?.id == oldGrant.id,
+                    "cadence migration reset pool, quota, or history")
+        guard case let .existing(replay) = try legacy.store.perform(token: legacyToken, operationID: operation,
+            operationCreatedAt: baseline, now: tomorrow, timeZone: utc) else { throw CheckFailure.failed("migration lost replay") }
+        try require(replay.id == oldGrant.id, "migration replay picked another photo")
+
+        let automatic = try Fixture(3)
+        defer { automatic.cleanup() }
+        let original = try automatic.store.currentEntry(now: baseline, timeZone: utc)!.item!.localIdentifier
+        let automaticURL = automatic.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        var oldState = try JSONSerialization.jsonObject(with: Data(contentsOf: automaticURL)) as! [String: Any]
+        var automaticPlan = oldState["plan"] as! [String: Any]
+        automaticPlan.removeValue(forKey: "calendarTimeZoneIdentifier")
+        automaticPlan["anchor"] = baseline.timeIntervalSinceReferenceDate
+        automaticPlan["interval"] = 1_200
+        oldState["plan"] = automaticPlan
+        try JSONSerialization.data(withJSONObject: oldState).write(to: automaticURL, options: .atomic)
+        try require(try automatic.store.currentEntry(now: baseline.addingTimeInterval(60), timeZone: utc)?.item?.localIdentifier == original,
+                    "unused old plan migration switched the current photo")
+        try require(try automatic.store.currentEntry(now: tomorrow.addingTimeInterval(-1), timeZone: utc)?.item?.localIdentifier == original,
+                    "unused old plan resumed 20-minute rotation")
+        try require(try automatic.store.snapshot(now: baseline)?.canTurn == true, "unused migration consumed a daily turn")
+
+        let leased = try Fixture(100)
+        defer { leased.cleanup() }
+        let issued = try leased.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
+        let heldID = issued.entries[0].item!.localIdentifier
+        let late = tomorrow.addingTimeInterval(-60)
+        try leased.store.withProtectedCacheFiles(now: late) { protected in
+            try require(Set(issued.entries[0].item!.allCacheFilenames).isSubset(of: protected), "daily photo lease expired before midnight")
+        }
+        let extra = PersonalRediscoveryCandidate(item: WidgetManifestItem(localIdentifier: "extra-daily",
+            cacheFilename: "extra-daily-small.jpg", cacheFilenames: WidgetCacheFilenames(small: "extra-daily-small.jpg",
+                medium: "extra-daily-medium.jpg", large: "extra-daily-large.jpg"), scheduledDate: late), preparedAt: late)
+        let revised = try leased.store.updateEligibility(photoIDs: Set(leased.candidates.map { $0.item.localIdentifier }).union(["extra-daily"]),
+            scopeIdentifier: "daily-expanded", isAuthorized: true, now: late, timeZone: utc)
+        try Fixture.writeImages([extra], directory: leased.directory)
+        _ = try leased.store.publish(candidates: [extra], expectedRevision: revised, now: late, timeZone: utc)
+        try require(try leased.store.currentEntry(now: late, timeZone: utc)?.item?.localIdentifier == heldID,
+                    "candidate refill retired today's displayed photo")
+
+        let pacific = TimeZone(identifier: "America/Los_Angeles")!
+        for (start, end, seconds) in [("2026-03-08T08:00:00Z", "2026-03-09T07:00:00Z", 23 * 3_600),
+                                      ("2026-11-01T07:00:00Z", "2026-11-02T08:00:00Z", 25 * 3_600)] {
+            let date = ISO8601DateFormatter().date(from: start)!
+            let midnight = ISO8601DateFormatter().date(from: end)!
+            let dst = try Fixture(3, at: date, timeZone: pacific)
+            defer { dst.cleanup() }
+            let day = try dst.store.issueTimeline(now: date, variant: .small, timeZone: pacific)!
+            try require(day.entries[1].date == midnight && midnight.timeIntervalSince(date) == Double(seconds),
+                        "automatic daily cadence used 86400 seconds across DST")
+            try require(try dst.store.currentEntry(now: midnight.addingTimeInterval(-1), timeZone: pacific)?.item?.localIdentifier == day.entries[0].item?.localIdentifier,
+                        "DST changed photo before local midnight")
+        }
     }
 
     private static func concurrentProcesses() throws {

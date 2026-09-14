@@ -27,7 +27,7 @@ struct PersonalRediscoveryHistoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("1日1回、まどの写真をめくれます。")
+                    Text("今日の一枚を、1回だけ選び直せます。")
                         .font(.subheadline).foregroundStyle(.secondary)
                     dailyAction
                     if let message {

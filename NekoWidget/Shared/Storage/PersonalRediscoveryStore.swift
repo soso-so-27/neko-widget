@@ -80,6 +80,7 @@ struct PersonalRediscoverySnapshot: Equatable, Sendable {
     var nextAvailableAt: Date?
     var canTurn: Bool
     var remainingUnissuedCount: Int
+    var retirableCandidateCount: Int
 }
 
 private struct PersonalRediscoveryCycle: Codable {
@@ -94,6 +95,9 @@ private struct PersonalRediscoveryPlan: Codable {
     var interval: TimeInterval
     var seed: UInt64
     var cycles: [PersonalRediscoveryCycle]
+    // nil is a pre-daily (20-minute) plan. Keep its images and migrate the
+    // currently selected photo on first use, rather than clearing the store.
+    var calendarTimeZoneIdentifier: String? = nil
 }
 
 private struct PersonalRediscoveryIssue: Codable {
@@ -177,7 +181,8 @@ struct PersonalRediscoveryStore: Sendable {
         now: Date = .now,
         photoModificationDates: [String: Date] = [:],
         bootstrapCandidates: [PersonalRediscoveryCandidate] = [],
-        interval: TimeInterval = 20 * 60
+        interval: TimeInterval = 20 * 60,
+        timeZone: TimeZone = .current
     ) throws -> String {
         try locked {
             guard photoIDs.allSatisfy(Self.validIdentifier), !scopeIdentifier.isEmpty,
@@ -228,7 +233,7 @@ struct PersonalRediscoveryStore: Sendable {
                     protected = proposedFiles
                 }
                 if state.plan == nil && !state.candidates.isEmpty {
-                    state.plan = makePlan(candidates: state.candidates, anchor: now, interval: interval)
+                    state.plan = makePlan(candidates: state.candidates, anchor: now, timeZone: timeZone)
                 }
             }
             repairPlan(&state, now: now)
@@ -296,6 +301,7 @@ struct PersonalRediscoveryStore: Sendable {
         now: Date = .now,
         interval: TimeInterval = 20 * 60,
         discardCandidateIDs: Set<String> = [],
+        timeZone: TimeZone = .current,
         prepareFiles: (Set<String>) throws -> Void = { _ in }
     ) throws -> PersonalRediscoverySnapshot {
         try locked {
@@ -357,16 +363,7 @@ struct PersonalRediscoveryStore: Sendable {
             }
             state.candidates = proposed
             if state.plan == nil, !proposed.isEmpty {
-                state.plan = makePlan(candidates: proposed, anchor: now, interval: interval)
-            } else if let existing = state.plan, existing.interval != interval {
-                // An explicit preference change may move the cadence once.
-                // Ordinary saves/refills with the same interval do not.
-                let current = resolve(&state, date: now, now: now, timeZone: .current)?.item?.localIdentifier
-                var replacement = makePlan(candidates: proposed, anchor: now, interval: interval)
-                if let current, let index = replacement.cycles[0].order.firstIndex(of: current) {
-                    replacement.cycles[0].order.swapAt(0, index)
-                }
-                state.plan = replacement
+                state.plan = makePlan(candidates: proposed, anchor: now, timeZone: timeZone)
             } else if var plan = state.plan, let last = plan.cycles.indices.last {
                 // Append beyond already-issued slots. Keeping the established
                 // interval avoids a save/refill silently moving the anchor.
@@ -464,13 +461,14 @@ struct PersonalRediscoveryStore: Sendable {
                     continue
                 }
                 if let existing = state.issues.firstIndex(where: { $0.slotID == entries[index].slotID && $0.photoID == item.localIdentifier }) {
-                    state.issues[existing].leaseUntil = max(state.issues[existing].leaseUntil, entries[index].date.addingTimeInterval(Self.leaseDuration))
+                    state.issues[existing].leaseUntil = max(state.issues[existing].leaseUntil,
+                        Self.nextMidnight(entries[index].date, timeZone: timeZone).addingTimeInterval(Self.leaseDuration))
                     state.issues[existing].cacheFilenames = Array(Set(state.issues[existing].cacheFilenames).union(item.allCacheFilenames)).sorted()
                 } else {
                     state.issues.append(PersonalRediscoveryIssue(
                         slotID: entries[index].slotID, photoID: item.localIdentifier,
                         scheduledAt: entries[index].date, issuedAt: now,
-                        leaseUntil: entries[index].date.addingTimeInterval(Self.leaseDuration),
+                        leaseUntil: Self.nextMidnight(entries[index].date, timeZone: timeZone).addingTimeInterval(Self.leaseDuration),
                         cacheFilenames: item.allCacheFilenames
                     ))
                 }
@@ -545,8 +543,8 @@ struct PersonalRediscoveryStore: Sendable {
                   eligible(selected.item, in: state), allFilesReadable(selected.item) else {
                 return .unavailable
             }
-            let interval = state.plan?.interval ?? 20 * 60
-            let until = now.addingTimeInterval(interval)
+            ensureDailyPlan(&state, now: now, timeZone: timeZone)
+            let until = Self.nextMidnight(now, timeZone: timeZone)
             let grant = PersonalRediscoveryGrant(
                 id: UUID().uuidString, photoID: selected.item.localIdentifier,
                 previousPhotoID: token.photoID, committedAt: now,
@@ -567,9 +565,10 @@ struct PersonalRediscoveryStore: Sendable {
                 resume = ordered(state.candidates.filter { $0.item.localIdentifier != grant.photoID }, seed: Self.stableHash(grant.id), avoiding: grant.photoID)
             }
             state.plan = PersonalRediscoveryPlan(
-                id: UUID().uuidString, anchor: until, interval: interval,
+                id: UUID().uuidString, anchor: until, interval: 86_400,
                 seed: Self.stableHash(grant.id),
-                cycles: [PersonalRediscoveryCycle(index: 0, startSlot: 0, order: resume)]
+                cycles: [PersonalRediscoveryCycle(index: 0, startSlot: 0, order: resume)],
+                calendarTimeZoneIdentifier: timeZone.identifier
             )
             for index in state.issues.indices where state.issues[index].scheduledAt > now {
                 // Keep file leases, but these canceled reservations are not selection usage.
@@ -612,8 +611,10 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private func resolve(
-        _ state: inout PersonalRediscoveryFile, date: Date, now: Date, timeZone: TimeZone
+        _ state: inout PersonalRediscoveryFile, date: Date, now: Date, timeZone: TimeZone,
+        dailyPlanReady: Bool = false
     ) -> PersonalRediscoveryEntry? {
+        if !dailyPlanReady { ensureDailyPlan(&state, now: now, timeZone: timeZone) }
         if let grant = state.grants.last(where: { date >= $0.committedAt && date < $0.overrideUntil }),
            !grant.resultInvalidated, eligible(grant.resultItem, in: state) {
             return entry(item: grant.resultItem, date: date, slotID: "manual-\(grant.id)", state: state, now: now, timeZone: timeZone)
@@ -636,6 +637,31 @@ struct PersonalRediscoveryStore: Sendable {
         let photoID = cycle.order[Int(slot - cycle.startSlot)]
         let item = state.candidates.first(where: { $0.item.localIdentifier == photoID && eligible($0.item, in: state) })?.item
         return entry(item: item, date: date, slotID: "\(plan.id)-\(slot)", state: state, now: now, timeZone: timeZone)
+    }
+
+    /// Migrate the old cadence, or rebase after a timezone change, while keeping
+    /// today's visible photo and the committed turn. A refill never reselects it.
+    private func ensureDailyPlan(_ state: inout PersonalRediscoveryFile, now: Date, timeZone: TimeZone) {
+        guard let old = state.plan,
+              old.calendarTimeZoneIdentifier != timeZone.identifier,
+              !state.candidates.isEmpty else { return }
+        let current = resolve(&state, date: now, now: now, timeZone: timeZone,
+                              dailyPlanReady: true)?.item?.localIdentifier
+        var replacement = makePlan(candidates: state.candidates, anchor: now, timeZone: timeZone)
+        if let current, let index = replacement.cycles[0].order.firstIndex(of: current) {
+            replacement.cycles[0].order.swapAt(0, index)
+        }
+        let tomorrow = Self.nextMidnight(now, timeZone: timeZone)
+        if let index = state.grants.lastIndex(where: {
+            now >= $0.committedAt && now < $0.overrideUntil && !$0.resultInvalidated
+        }) {
+            state.grants[index].overrideUntil = max(state.grants[index].overrideUntil, tomorrow)
+            state.nextAvailableAt = max(state.nextAvailableAt ?? tomorrow, state.grants[index].overrideUntil)
+        }
+        for index in state.issues.indices where state.issues[index].scheduledAt > now {
+            state.issues[index].invalidated = true
+        }
+        state.plan = replacement
     }
 
     /// Only an authority/pool change repairs missing IDs. Missing JPEG variants
@@ -676,7 +702,7 @@ struct PersonalRediscoveryStore: Sendable {
                 action = .used(grantID: grant.id)
             } else {
                 let day = Self.dayKey(date, timeZone: timeZone)
-                let slotStart = state.plan.map { $0.anchor.addingTimeInterval(Double(Self.slot(at: date, in: $0)) * $0.interval) } ?? date
+                let slotStart = state.plan.map { Self.date(forSlot: Self.slot(at: date, in: $0), in: $0) } ?? date
                 action = .available(token: PersonalRediscoveryEntryToken(
                     id: "\(slotID)-\(day)", createdAt: min(date, slotStart),
                     eligibilityDay: day, sourceID: Self.personalSourceID,
@@ -690,14 +716,17 @@ struct PersonalRediscoveryStore: Sendable {
     private func nextBoundary(_ state: PersonalRediscoveryFile, now: Date) -> Date {
         if let grant = state.grants.last, now < grant.overrideUntil { return grant.overrideUntil }
         guard let plan = state.plan else { return now.addingTimeInterval(20 * 60) }
-        return plan.anchor.addingTimeInterval(Double(Self.slot(at: now, in: plan) + 1) * plan.interval)
+        return Self.date(forSlot: Self.slot(at: now, in: plan) + 1, in: plan)
     }
 
-    private func makePlan(candidates: [PersonalRediscoveryCandidate], anchor: Date, interval: TimeInterval) -> PersonalRediscoveryPlan {
+    private func makePlan(candidates: [PersonalRediscoveryCandidate], anchor: Date, timeZone: TimeZone) -> PersonalRediscoveryPlan {
         let id = UUID().uuidString
         let seed = Self.stableHash(id)
-        return PersonalRediscoveryPlan(id: id, anchor: anchor, interval: interval, seed: seed,
-            cycles: [PersonalRediscoveryCycle(index: 0, startSlot: 0, order: ordered(candidates, seed: seed, avoiding: nil))])
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return PersonalRediscoveryPlan(id: id, anchor: calendar.startOfDay(for: anchor), interval: 86_400, seed: seed,
+            cycles: [PersonalRediscoveryCycle(index: 0, startSlot: 0, order: ordered(candidates, seed: seed, avoiding: nil))],
+            calendarTimeZoneIdentifier: timeZone.identifier)
     }
 
     /// Bounded O(n²), n <= 100. No repeated whole-order improvement search.
@@ -754,13 +783,17 @@ struct PersonalRediscoveryStore: Sendable {
             .filter { $0.resultIsAvailable || $0.previousIsAvailable }
             .sorted { $0.committedAt > $1.committedAt }
         let used = Set(state.issues.filter { !$0.invalidated && $0.scheduledAt <= now }.map(\.photoID))
+        let pinned = pinnedFiles(state, now: now)
         return PersonalRediscoverySnapshot(
             candidates: state.candidates, eligibilityRevision: state.eligibilityRevision,
             scopeIdentifier: state.scopeIdentifier, eligiblePhotoIDs: state.eligiblePhotoIDs,
             photoModificationDates: state.modificationDates, isAuthorized: state.isAuthorized,
             history: history, latestGrant: history.first, nextAvailableAt: state.nextAvailableAt,
             canTurn: state.isAuthorized && state.candidates.count > 1 && (state.nextAvailableAt.map { now >= $0 } ?? true),
-            remainingUnissuedCount: state.candidates.filter { !used.contains($0.item.localIdentifier) }.count
+            remainingUnissuedCount: state.candidates.filter { !used.contains($0.item.localIdentifier) }.count,
+            retirableCandidateCount: state.candidates.filter {
+                used.contains($0.item.localIdentifier) && pinned.isDisjoint(with: $0.item.allCacheFilenames)
+            }.count
         )
     }
 
@@ -904,6 +937,7 @@ struct PersonalRediscoveryStore: Sendable {
               Set(state.grants.map(\.id)).count == state.grants.count,
               state.operations.count <= 10_000,
               state.plan.map({ $0.interval.isFinite && (60...86_400).contains($0.interval)
+                  && ($0.calendarTimeZoneIdentifier.map { TimeZone(identifier: $0) != nil } ?? true)
                   && $0.cycles.count <= 2 && $0.cycles.allSatisfy({ !$0.order.isEmpty && $0.order.count <= 200 && $0.startSlot >= 0 }) }) ?? true
         else { throw Error.corrupted }
         return state
@@ -949,8 +983,23 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private static func slot(at date: Date, in plan: PersonalRediscoveryPlan) -> Int64 {
+        if let identifier = plan.calendarTimeZoneIdentifier, let timeZone = TimeZone(identifier: identifier) {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            return Int64(max(0, calendar.dateComponents([.day], from: calendar.startOfDay(for: plan.anchor),
+                                                       to: calendar.startOfDay(for: date)).day ?? 0))
+        }
         let value = max(0, floor(date.timeIntervalSince(plan.anchor) / plan.interval))
         return Int64(min(value, Double(Int64.max / 4)))
+    }
+
+    private static func date(forSlot slot: Int64, in plan: PersonalRediscoveryPlan) -> Date {
+        if let identifier = plan.calendarTimeZoneIdentifier, let timeZone = TimeZone(identifier: identifier) {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            return calendar.date(byAdding: .day, value: Int(slot), to: plan.anchor) ?? plan.anchor.addingTimeInterval(Double(slot) * 86_400)
+        }
+        return plan.anchor.addingTimeInterval(Double(slot) * plan.interval)
     }
 
     private static func dayKey(_ date: Date, timeZone: TimeZone) -> String {

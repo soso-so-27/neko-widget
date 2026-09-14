@@ -329,17 +329,27 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let requestTimeout: TimeInterval
 
-    init(configuration: SharingAPIConfiguration = .current) throws {
+    init(configuration: SharingAPIConfiguration = .current, requestTimeout: TimeInterval? = nil) throws {
         // Window-name synchronization remains available when the independent
         // photo runtime is paused. Individual media entry points are still
         // only called by the media-gated coordinator path.
         guard configuration.isAvailable, let baseURL = configuration.baseURL else {
             throw MomentSharingError.featureDisabled
         }
+        if let requestTimeout, !requestTimeout.isFinite || !(1...45).contains(requestTimeout) {
+            throw MomentSharingError.invalidPayload
+        }
         self.baseURL = baseURL
+        self.requestTimeout = requestTimeout ?? 45
         let delegate = MomentNoRedirectSessionDelegate()
-        self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        if let requestTimeout {
+            sessionConfiguration.timeoutIntervalForRequest = requestTimeout
+            sessionConfiguration.timeoutIntervalForResource = requestTimeout
+        }
+        self.session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         self.encoder = encoder
@@ -881,7 +891,7 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
             protocolVersion: MomentSharingProtocol.version,
             clientRequestId: clientRequestID.uuidString.lowercased()
         ))
-        request.timeoutInterval = 45
+        request.timeoutInterval = requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token.base64URLEncodedString())", forHTTPHeaderField: "Authorization")
@@ -1053,7 +1063,7 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body.isEmpty ? nil : body
-        request.timeoutInterval = 45
+        request.timeoutInterval = requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         try authenticate(

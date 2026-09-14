@@ -1,4 +1,7 @@
 import AppIntents
+#if NEKO_HOST_APP
+import UIKit
+#endif
 import CryptoKit
 import Foundation
 import WidgetKit
@@ -149,17 +152,19 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
 
 /// Queues the same fixed, idempotent wire reaction used by the app. The
 /// compatibility name remains `paw` internally, while the Widget truthfully
-/// presents the user action as a heart. Relay I/O is still owned by the host
-/// app. The action therefore opens the host after it durably queues the heart;
-/// the ordinary authenticated foreground synchronization commits it without
-/// sharing room credentials with the Widget Extension.
+/// presents the user action as a heart. The host runs this action in the
+/// background and sends only its durable request, keeping room credentials
+/// out of the Widget Extension and leaving unavailable sends pending.
 struct SendFamilyWidgetHeartIntent: AppIntent {
-    static var title: LocalizedStringResource = "ハートを送信待ちに追加"
+    static var title: LocalizedStringResource = "ハートを送る"
     static var description = IntentDescription(
-        "表示中の届いた写真に、1回だけハートを送信待ちとして追加します。"
+        "表示中の届いた写真にハートを送ります。通信できないときは送信待ちに残します。"
     )
     static var isDiscoverable = false
-    static var openAppWhenRun = true
+    static var openAppWhenRun = false
+
+    @available(iOS 26.0, *)
+    static var supportedModes: IntentModes { [.background, .foreground(.dynamic)] }
 
     @Parameter(title: "表示写真キー")
     var sourceDigest: String
@@ -194,13 +199,6 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                 metadata: ["source": SharedLog.shortHash(sourceDigest)]
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-#if NEKO_HOST_APP
-            await MainActor.run {
-                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(
-                    "この写真へのハートは送れませんでした。表示期間やまどの接続状態が変わった可能性があります。"
-                )
-            }
-#endif
             return .result()
         }
 
@@ -221,12 +219,20 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
 #if NEKO_HOST_APP
-            await presentQueuedHeart(
+            let protectedDataAvailable = await MainActor.run {
+                UIApplication.shared.isProtectedDataAvailable
+            }
+            _ = await MomentSharingCoordinator().sendQueuedWidgetHeart(
                 momentID: momentID,
                 localWindowID: localWindowID,
-                phase: item.phase
+                clientRequestID: item.clientRequestID,
+                lifecycleToken: lifecycleToken,
+                protectedDataAvailable: protectedDataAvailable
             )
 #endif
+            // A misrouted extension invocation can queue safely but cannot load
+            // host keys or claim acceptance. The provider reads the real phase.
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         } catch {
             SharedLog.widget.error(
                 "reaction",
@@ -237,52 +243,20 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                     additional: ["source": SharedLog.shortHash(sourceDigest)]
                 )
             )
-#if NEKO_HOST_APP
-            await MainActor.run {
-                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(
-                    "ハートの送信待ちへの追加を確認できませんでした。まどで送信状況を確認してください。"
-                )
-            }
-#endif
-            throw error
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         }
         return .result()
     }
 
-#if NEKO_HOST_APP
-    /// openAppWhenRun executes this intent in the host process. Reuse its
-    /// existing cold-launch mailbox rather than a custom-scheme OpenURLIntent
-    /// (which only supports universal links) or a second persisted route.
-    private func presentQueuedHeart(
-        momentID: String,
-        localWindowID: String,
-        phase: MomentPawOutboxPhase
-    ) async {
-        guard let window = PrivateWindowCatalogStore.widgetEntries().first(where: {
-            $0.localWindowID == localWindowID
-        }), let spaceID = window.spaceID,
-        PairingValidation.isOpaqueIdentifier(spaceID) else {
-            let message = phase == .sent
-                ? "ハートは送信済みです。この写真を開けなかったため、まどで確認してください。"
-                : "ハートは送信待ちです。この写真を開けなかったため、まどで送信状況を確認してください。"
-            await MainActor.run {
-                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(message)
-            }
-            return
-        }
-        let route = MomentNotificationRoute(
-            kind: .newMoment,
-            target: MomentNotificationRouteTarget(
-                spaceID: spaceID,
-                momentID: momentID
-            )
-        )
-        await MainActor.run {
-            MomentNotificationTapMailbox.shared.enqueue(route)
-        }
-    }
-#endif
 }
+
+#if NEKO_HOST_APP
+// WidgetKit documents this protocol as host-process execution. Work starts in
+// the background; no foreground-continuation API or navigation is requested.
+// Keep the compatibility conformance for iOS 17–25 alongside supportedModes.
+@available(iOSApplicationExtension, unavailable)
+extension SendFamilyWidgetHeartIntent: ForegroundContinuableIntent {}
+#endif
 
 /// Resolves the exact received image rendered by WidgetKit. The active manifest
 /// covers the newest generation; a short, bounded cache history covers an older

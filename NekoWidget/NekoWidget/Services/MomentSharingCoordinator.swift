@@ -224,11 +224,11 @@ actor MomentSharingCoordinator {
         handoffProcessor = MomentShareHandoffProcessor(moderation: moderation)
     }
 
-    private func makeNetworkClient() throws -> URLSessionMomentSharingAPIClient {
+    private func makeNetworkClient(requestTimeout: TimeInterval? = nil) throws -> URLSessionMomentSharingAPIClient {
 #if DEBUG
         runtimeNetworkClientConstructionCount += 1
 #endif
-        return try URLSessionMomentSharingAPIClient(configuration: configuration)
+        return try URLSessionMomentSharingAPIClient(configuration: configuration, requestTimeout: requestTimeout)
     }
 
     @discardableResult
@@ -253,6 +253,83 @@ actor MomentSharingCoordinator {
         }
         latestSynchronizationNotice = result?.notice
         return result?.succeeded ?? false
+    }
+
+    nonisolated static func canSendWidgetHeart(
+        isHostProcess: Bool, protectedDataAvailable: Bool
+    ) -> Bool {
+        isHostProcess && protectedDataAvailable
+    }
+
+    /// An interactive Widget needs only the explicitly queued reaction. Reuse
+    /// host serialization and authentication without starting a photo/name sync
+    /// or navigating the app. Keychain accessibility remains WhenUnlocked.
+    func sendQueuedWidgetHeart(
+        momentID: String, localWindowID: String, clientRequestID: UUID,
+        lifecycleToken: SharingLifecycleGate.Token,
+        protectedDataAvailable: Bool
+    ) async -> Bool {
+        guard Self.canSendWidgetHeart(
+            isHostProcess: Bundle.main.bundleURL.pathExtension != "appex",
+            protectedDataAvailable: protectedDataAvailable), configuration.isMediaAvailable
+        else { return false }
+        do {
+            return try await runMomentProcessOperation(request: MomentSynchronizationRequest()) { [self] in
+                try await performQueuedWidgetHeart(
+                    momentID: momentID, localWindowID: localWindowID,
+                    clientRequestID: clientRequestID, lifecycleToken: lifecycleToken)
+            }
+        } catch {
+            Self.logSynchronizationDeferred(error: error, trigger: "widget-heart")
+            return false
+        }
+    }
+
+    private func performQueuedWidgetHeart(
+        momentID: String, localWindowID: String, clientRequestID: UUID,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws -> Bool {
+        try Task.checkCancellation()
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let authorization = try loadAuthorization()
+        guard authorization.lifecycleToken == lifecycleToken,
+              let window = PrivateWindowCatalogStore.activeEntry(),
+              window.localWindowID.lowercased() == localWindowID.lowercased(),
+              window.spaceID == authorization.state.spaceID
+        else { throw MomentSharingError.stateUnavailable }
+        guard try MomentShareHandoffStore.reportOnlyHandoffDeadline(
+            validating: lifecycleToken, now: .now) == nil
+        else { return false }
+        do {
+            return try await sendQueuedWidgetHeartRequest(
+                api: makeNetworkClient(requestTimeout: 15), pairing: authorization.state,
+                credential: authorization.credential, momentID: momentID,
+                clientRequestID: clientRequestID, lifecycleToken: lifecycleToken)
+        } catch {
+            if Self.requiresLocalRevocationReset(error) {
+                try await resetLocalPairing(authorization: authorization, reason: .remoteAuthorizationTerminal)
+            }
+            throw error
+        }
+    }
+
+    private func sendQueuedWidgetHeartRequest(
+        api: any MomentReactionAPIClientProtocol, pairing: PairingState,
+        credential: PairingCredential, momentID: String, clientRequestID: UUID,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws -> Bool {
+        try Task.checkCancellation()
+        try SharingLifecycleGate.validate(lifecycleToken)
+        // Re-check expiry, retained JPEG and report-only state after waiting for
+        // the host permit, without replacing a concurrently deleted request.
+        let queued = try MomentSharingStateStore.validatedQueuedPaw(
+            momentID: momentID, clientRequestID: clientRequestID, validating: lifecycleToken)
+        if queued.phase == .sent { return true }
+        _ = try await sendPawOutbox(api: api, pairing: pairing, credential: credential,
+            lifecycleToken: lifecycleToken, onlyClientRequestID: clientRequestID)
+        return try MomentSharingStateStore.load(validating: lifecycleToken).pawOutbox.contains {
+            $0.clientRequestID == clientRequestID && $0.momentID == momentID && $0.phase == .sent
+        }
     }
 
     /// Runs only the encrypted presentation-name exchange and reports relay
@@ -2142,12 +2219,16 @@ actor MomentSharingCoordinator {
         api: any MomentReactionAPIClientProtocol,
         pairing: PairingState,
         credential: PairingCredential,
-        lifecycleToken: SharingLifecycleGate.Token
+        lifecycleToken: SharingLifecycleGate.Token,
+        onlyClientRequestID: UUID? = nil
     ) async throws -> Int {
         try SharingLifecycleGate.validate(lifecycleToken)
         let candidates = try MomentSharingStateStore.load(
             validating: lifecycleToken
-        ).pawOutbox.filter { $0.phase == .pending || $0.phase == .committing }
+        ).pawOutbox.filter {
+            ($0.phase == .pending || $0.phase == .committing)
+                && (onlyClientRequestID == nil || $0.clientRequestID == onlyClientRequestID)
+        }
             .sorted {
                 if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
                 return $0.clientRequestID.uuidString < $1.clientRequestID.uuidString
@@ -2413,6 +2494,22 @@ actor MomentSharingCoordinator {
     }
 
 #if DEBUG
+    /// Exercises the same single-request operation with a deterministic relay,
+    /// keeping Keychain and real network activity outside the runtime fixture.
+    func runtimeTestSendQueuedWidgetHeart(
+        api: any MomentReactionAPIClientProtocol, pairing: PairingState,
+        credential: PairingCredential, momentID: String, clientRequestID: UUID,
+        lifecycleToken: SharingLifecycleGate.Token,
+        isHostProcess: Bool = true, protectedDataAvailable: Bool = true
+    ) async throws -> Bool {
+        guard Self.canSendWidgetHeart(isHostProcess: isHostProcess,
+            protectedDataAvailable: protectedDataAvailable) else { return false }
+        return try await runMomentProcessOperation(request: MomentSynchronizationRequest()) { [self] in
+            try await sendQueuedWidgetHeartRequest(api: api, pairing: pairing, credential: credential,
+                momentID: momentID, clientRequestID: clientRequestID, lifecycleToken: lifecycleToken)
+        }
+    }
+
     func runtimeNetworkClientConstructions() -> Int {
         runtimeNetworkClientConstructionCount
     }

@@ -160,9 +160,10 @@ actor WidgetCacheBuilder {
             .filter { initial.eligiblePhotoIDs.contains($0.localIdentifier)
                 && (!existingIDs.contains($0.localIdentifier) || needsGeometryIDs.contains($0.localIdentifier))
                 && !skippingPhotoIDs.contains($0.localIdentifier) }
-        // Full, mostly unissued pools need no work. Issued candidates can be
-        // replaced later, once their live leases and history no longer pin them.
-        if existingIDs.count >= 100 && initial.remainingUnissuedCount > 30 {
+        // Refill once a displayed photo can safely retire. Waiting for seventy
+        // consumed slots would defer new photos for months at the daily cadence.
+        // Current/tomorrow entries and retained manual photos stay protected.
+        if existingIDs.count >= 100 && initial.retirableCandidateCount == 0 {
             ordered.removeAll { !needsGeometryIDs.contains($0.localIdentifier) }
         }
         let stage = container.appendingPathComponent("personal-widget-staging", isDirectory: true)

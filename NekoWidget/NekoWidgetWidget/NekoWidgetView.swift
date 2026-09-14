@@ -202,12 +202,19 @@ struct NekoWidgetView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("ハートを送る")
-            .accessibilityHint("アプリを開いて送信します")
+            .accessibilityHint("アプリを開かずに送信します")
         case .pending:
-            heartMark(status: .pending)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("ハートは送信待ちです")
-                .accessibilityHint("アプリの同期で送ります")
+            Button(
+                intent: SendFamilyWidgetHeartIntent(
+                    sourceDigest: sourceDigest,
+                    localWindowID: localWindowID
+                )
+            ) {
+                heartMark(status: .pending)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("ハートは送信待ちです")
+            .accessibilityHint("押すとアプリを開かずに再試行します")
         case .serverAccepted:
             heartMark(status: .serverAccepted)
                 .accessibilityElement(children: .ignore)
@@ -320,7 +327,7 @@ struct NekoWidgetView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("今日はめくりました")
-            .accessibilityHint("写真は自動で変わります。もう一度押すと操作の状態を更新します")
+            .accessibilityHint("この一枚を翌日まで表示します")
             .accessibilityIdentifier("personal-widget-turned")
         case .unavailable:
             EmptyView()
@@ -328,23 +335,14 @@ struct NekoWidgetView: View {
     }
 
     private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
-                .font(.system(size: 13, weight: .medium))
-                .invalidatableContent()
-            if family != .systemSmall && !isUsed {
-                Text("もう一枚")
-                    .font(.caption2.weight(.medium))
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .lineLimit(1)
-            }
-        }
+        Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
+        .font(.system(size: 13, weight: .medium))
+        .invalidatableContent()
         .foregroundStyle(.white)
-        .padding(.horizontal, family == .systemSmall || isUsed ? 0 : 10)
-        .frame(minWidth: 30, minHeight: 30)
-        .background(Color.black.opacity(0.64), in: Capsule())
-        .overlay { Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.5) }
-        .frame(minWidth: 44, minHeight: 44)
+        .frame(width: 30, height: 30)
+        .background(Color.black.opacity(0.64), in: Circle())
+        .overlay { Circle().stroke(Color.white.opacity(0.20), lineWidth: 0.5) }
+        .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
 

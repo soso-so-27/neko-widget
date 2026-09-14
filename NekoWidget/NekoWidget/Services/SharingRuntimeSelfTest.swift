@@ -9,6 +9,29 @@ private enum RuntimeReserveStep: Sendable {
     case success(SharingReserveResult)
 }
 
+private actor RuntimeWidgetHeartAPI: MomentReactionAPIClientProtocol {
+    private var failNextSend = true
+    private var requests: [(String, UUID)] = []
+
+    func sendPaw(momentID: String, clientRequestID: UUID, pairingState: PairingState,
+                 credential: PairingCredential) async throws -> MomentPawSendResult {
+        requests.append((momentID, clientRequestID))
+        if failNextSend {
+            failNextSend = false
+            throw URLError(.notConnectedToInternet)
+        }
+        return MomentPawSendResult(reactionID: "reaction_widget_heart_fixture",
+            momentID: momentID, alreadyReacted: false)
+    }
+
+    func pawChanges(after cursor: String?, pairingState: PairingState,
+                    credential: PairingCredential) async throws -> MomentPawChangesResult {
+        throw MomentSharingError.stateUnavailable
+    }
+
+    func recordedRequests() -> [(String, UUID)] { requests }
+}
+
 private actor RuntimeSharingAPI: DailySharingAPIClientProtocol {
     let manifest: Data
     let mediaByID: [String: Data]
@@ -536,8 +559,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("moment-sent-delivery-receipt-boundary") {
             try Self.testMomentSentDeliveryReceiptBoundary()
         })
-        results.append(run("moment-paw-reaction-boundary") {
+        results.append(await runAsync("moment-paw-reaction-boundary") {
             try Self.testMomentPawReactionBoundary()
+            try await Self.testWidgetHeartBackgroundSend()
         })
         results.append(run("moment-empty-cursor-normalization") {
             try Self.testMomentEmptyCursorNormalization()
@@ -4739,6 +4763,102 @@ actor SharingRuntimeSelfTestRunner {
               reportOnly.receivedPaws.isEmpty,
               reportOnly.reactionCursor == nil
         else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testWidgetHeartBackgroundSend() async throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let token = try SharingLifecycleGate.issueToken()
+        let now = Date()
+        func incoming(_ id: String, until: Date) throws -> MomentInboxItem {
+            try MomentInboxItem(id: id, senderParticipantID: "member_widget_heart_sender",
+                kind: .live, keyEpoch: 1, localJPEGFileName: "\(id).jpg",
+                capturedAt: nil, captureDateIsMissing: true, committedAt: now.addingTimeInterval(-60),
+                receivedAt: now.addingTimeInterval(-60), state: .available, accessExpiresAt: until).validated()
+        }
+        let target = try incoming("moment_widget_heart_target", until: now.addingTimeInterval(3_600))
+        let other = try incoming("moment_widget_heart_other", until: now.addingTimeInterval(3_600))
+        for item in [target, other] {
+            _ = try MomentSharingStateStore.publishReceivedJPEG(item,
+                jpeg: Data([0xff, 0xd8, 0xff, 0xd9]), validating: token)
+        }
+        let queued = try MomentSharingStateStore.queuePaw(momentID: target.id, validating: token)
+        let unrelated = try MomentSharingStateStore.queuePaw(momentID: other.id, validating: token)
+        var pairing = PairingState.unpaired(installationMarker: UUID().uuidString.lowercased())
+        pairing.phase = .paired
+        pairing.spaceID = "space_widget_heart_fixture"
+        pairing.memberID = "member_widget_heart_receiver"
+        let credential = PairingCredential(installationMarker: pairing.installationMarker,
+            account: UUID().uuidString.lowercased(), participantID: Data(repeating: 0x72, count: 16),
+            agreementPrivateKey: Data(repeating: 0x73, count: 32),
+            signingPrivateKey: Data(repeating: 0x74, count: 32),
+            roomKey: Data(repeating: 0x75, count: 32), enrollmentSecret: nil)
+        let api = RuntimeWidgetHeartAPI()
+        let coordinator = MomentSharingCoordinator()
+        for (host, unlocked) in [(false, true), (true, false)] {
+            let sent = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: target.id,
+                clientRequestID: queued.clientRequestID, lifecycleToken: token,
+                isHostProcess: host, protectedDataAvailable: unlocked)
+            guard !sent, await api.recordedRequests().isEmpty,
+                  try MomentSharingStateStore.load().pawOutbox.first?.phase == .pending
+            else { throw MomentSharingError.stateUnavailable }
+        }
+        do {
+            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: target.id,
+                clientRequestID: queued.clientRequestID, lifecycleToken: token)
+            throw MomentSharingError.stateUnavailable
+        } catch let error as URLError where error.code == .notConnectedToInternet {}
+        let afterFailure = try MomentSharingStateStore.load()
+        guard afterFailure.pawOutbox.first(where: { $0.id == queued.id })?.phase == .committing,
+              afterFailure.pawOutbox.first(where: { $0.id == unrelated.id })?.phase == .pending
+        else { throw MomentSharingError.stateUnavailable }
+        guard try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+            pairing: pairing, credential: credential, momentID: target.id,
+            clientRequestID: queued.clientRequestID, lifecycleToken: token)
+        else { throw MomentSharingError.stateUnavailable }
+        let calls = await api.recordedRequests()
+        let accepted = try MomentSharingStateStore.load().pawOutbox
+        guard calls.count == 2,
+              calls.allSatisfy({ $0.0 == target.id && $0.1 == queued.clientRequestID }),
+              accepted.first(where: { $0.id == queued.id })?.phase == .sent,
+              accepted.first(where: { $0.id == unrelated.id })?.phase == .pending,
+              try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: target.id,
+                clientRequestID: queued.clientRequestID, lifecycleToken: token),
+              await api.recordedRequests().count == 2
+        else { throw MomentSharingError.stateUnavailable }
+        // The correct request paired with a different photo must not send.
+        do {
+            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: other.id,
+                clientRequestID: queued.clientRequestID, lifecycleToken: token)
+            throw DailySharingError.stateUnavailable
+        } catch MomentSharingError.stateUnavailable {}
+        // Losing an outbox request must never create a replacement on retry.
+        do {
+            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: other.id,
+                clientRequestID: UUID(), lifecycleToken: token)
+            throw DailySharingError.stateUnavailable
+        } catch MomentSharingError.stateUnavailable {}
+        guard try MomentSharingStateStore.load().pawOutbox.count == 2 else {
+            throw MomentSharingError.stateUnavailable
+        }
+        var expired = other
+        expired.accessExpiresAt = now.addingTimeInterval(-1)
+        _ = try MomentSharingStateStore.mutate(validating: token) { state in
+            let index = state.inbox.firstIndex(where: { $0.id == other.id })!
+            state.inbox[index] = expired
+        }
+        do {
+            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
+                pairing: pairing, credential: credential, momentID: other.id,
+                clientRequestID: unrelated.clientRequestID, lifecycleToken: token)
+            throw DailySharingError.stateUnavailable
+        } catch MomentSharingError.stateUnavailable {}
+        guard await api.recordedRequests().count == 2 else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func testMomentEmptyCursorNormalization() throws {

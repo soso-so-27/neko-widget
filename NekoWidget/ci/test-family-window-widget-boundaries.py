@@ -309,8 +309,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SendFamilyWidgetHeartIntent(", ready)
         self.assertIn("sourceDigest: sourceDigest", ready)
         self.assertIn("localWindowID: localWindowID", ready)
-        self.assertEqual(heart_control.count("Button("), 1)
-        self.assertNotIn("Button(", heart_control.split("case .pending:", 1)[1])
+        pending = section(heart_control, "case .pending:", "case .serverAccepted:")
+        self.assertIn("Button(", pending)
+        self.assertIn("SendFamilyWidgetHeartIntent(", pending)
+        self.assertIn("sourceDigest: sourceDigest", pending)
+        self.assertIn("localWindowID: localWindowID", pending)
+        self.assertEqual(heart_control.count("Button("), 2)
+        self.assertNotIn("Button(", heart_control.split("case .serverAccepted:", 1)[1])
         self.assertIn('"ハートは送信待ちです"', heart_control)
         self.assertIn('"相手が確認したことを示す表示ではありません"', heart_control)
         self.assertIn("case .hidden:\n            unavailableHeartSlot", heart_control)
@@ -430,8 +435,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("PrivateWindowCatalogStore.activeEntry()", heart_intent)
         self.assertIn("localWindowID: canonicalWindowID", heart_intent)
 
-        # A successful mutation hands off the same photo through the existing
-        # cold-launch mailbox. Extension builds must not reference app UI.
+        # The exact durable request is sent by the background host, without
+        # routing to a photo screen or giving the extension room credentials.
         send_heart = section(
             heart_intent,
             "struct SendFamilyWidgetHeartIntent",
@@ -439,16 +444,20 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertLess(
             send_heart.index("MomentSharingStateStore.queuePaw("),
-            send_heart.index("await presentQueuedHeart("),
+            send_heart.index(".sendQueuedWidgetHeart("),
         )
-        handoff = send_heart.split("private func presentQueuedHeart(", 1)[1]
-        self.assertIn("$0.localWindowID == localWindowID", handoff)
-        self.assertIn("spaceID: spaceID", handoff)
-        self.assertIn("momentID: momentID", handoff)
-        self.assertIn("MomentNotificationTapMailbox.shared.enqueue(route)", handoff)
-        self.assertNotIn("queuePaw(", handoff)
-        self.assertNotIn("MomentSharingStateStore.", handoff)
-        self.assertIn("enqueueWidgetFeedback(message)", handoff)
+        self.assertIn("clientRequestID: item.clientRequestID", send_heart)
+        self.assertIn("lifecycleToken: lifecycleToken", send_heart)
+        self.assertIn("UIApplication.shared.isProtectedDataAvailable", send_heart)
+        self.assertNotIn("MomentNotificationTapMailbox", send_heart)
+        self.assertNotIn("presentQueuedHeart", send_heart)
+        self.assertIn("static var openAppWhenRun = false", send_heart)
+        self.assertIn("[.background, .foreground(.dynamic)]", send_heart)
+        self.assertIn("extension SendFamilyWidgetHeartIntent: ForegroundContinuableIntent", send_heart)
+        self.assertIn("@available(iOSApplicationExtension, unavailable)", send_heart)
+        self.assertNotIn("LiveActivityIntent", send_heart)
+        self.assertNotIn("requestToContinueInForeground", send_heart)
+        self.assertNotIn("continueInForeground(", send_heart)
         self.assertIn("#if NEKO_HOST_APP", send_heart)
         self.assertNotIn(".result(opensIntent: OpenURLIntent", send_heart)
 
@@ -921,11 +930,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "struct SendFamilyWidgetHeartIntent",
             "private enum FamilyWidgetActionTargetResolver",
         )
-        self.assertIn("static var openAppWhenRun = true", heart_intent)
+        self.assertIn("static var openAppWhenRun = false", heart_intent)
         self.assertIn("MomentSharingStateStore.queuePaw", heart_intent)
         self.assertEqual(
             heart_intent.count('reloadTimelines(ofKind: "NekoWidget")'),
-            2,
+            4,
         )
         self.assertNotIn("URLSession", heart_intent)
 
@@ -939,6 +948,33 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentSharingStore.swift in Sources", widget_sources)
         self.assertNotIn("MomentSharingAPIClient.swift in Sources", widget_sources)
         self.assertNotIn("PairingKeychainStore.swift in Sources", widget_sources)
+
+    def test_widget_heart_background_host_send_preserves_security_and_retry(self) -> None:
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        sending = section(coordinator, "func sendQueuedWidgetHeart(", "func synchronizeWindowNameForUser(")
+        for boundary in (
+            'Bundle.main.bundleURL.pathExtension != "appex"',
+            "configuration.isMediaAvailable", "runMomentProcessOperation(",
+            "SharingLifecycleGate.validate(lifecycleToken)", "loadAuthorization()",
+            "authorization.lifecycleToken == lifecycleToken", "PrivateWindowCatalogStore.activeEntry()",
+            "window.spaceID == authorization.state.spaceID", "reportOnlyHandoffDeadline(",
+            "makeNetworkClient(requestTimeout: 15)", "validatedQueuedPaw(",
+            "onlyClientRequestID: clientRequestID", "requiresLocalRevocationReset(error)",
+        ):
+            self.assertIn(boundary, sending)
+        self.assertNotIn(".synchronize(", sending)
+        self.assertNotIn("queuePaw(", sending)
+        self.assertNotIn("MomentNotificationTapMailbox", sending)
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        validation = section(store, "static func validatedQueuedPaw(", "private static func validatePawTarget(")
+        self.assertIn("withStateWhileLifecycleLocked", validation)
+        self.assertIn("validatePawTarget", validation)
+        self.assertIn("$0.clientRequestID == clientRequestID && $0.momentID == momentID", validation)
+        self.assertNotIn("mutate(", validation)
+        self.assertNotIn("append(", validation)
+        api = source("NekoWidget/Services/MomentSharingAPIClient.swift")
+        self.assertIn("self.requestTimeout = requestTimeout ?? 45", api)
+        self.assertIn("sessionConfiguration.timeoutIntervalForResource = requestTimeout", api)
 
     def test_heart_reaction_is_explicit_and_separate_from_private_memory(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")

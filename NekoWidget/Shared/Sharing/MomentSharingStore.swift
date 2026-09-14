@@ -1621,6 +1621,21 @@ enum MomentSharingStateStore {
         return queued
     }
 
+    /// A background sender revalidates the existing request without creating a
+    /// replacement if deletion or revocation won after the Widget queued it.
+    static func validatedQueuedPaw(
+        momentID: String, clientRequestID: UUID, now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentPawOutboxItem {
+        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+            try validatePawTarget(momentID: momentID, now: now, in: state)
+            guard let item = state.pawOutbox.first(where: {
+                $0.clientRequestID == clientRequestID && $0.momentID == momentID
+            }) else { throw MomentSharingError.stateUnavailable }
+            return item
+        }
+    }
+
     private static func validatePawTarget(
         momentID: String,
         now: Date,

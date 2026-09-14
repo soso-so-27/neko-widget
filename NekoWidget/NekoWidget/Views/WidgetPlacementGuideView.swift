@@ -62,8 +62,9 @@ struct WidgetPlacementGuideView: View {
                 .accessibilityIdentifier("widget-placement-steps")
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("このiPhoneの猫写真は自動で変わります。\n「もう一枚」で、自分でも1日1回めくれます。")
+                    Label("毎日一枚。1日1回だけ選び直せます。", systemImage: "arrow.clockwise")
                         .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("widget-placement-daily-rule")
                     Button("まどでめくった写真を見る") { showsRediscoveryHistory = true }
                         .font(.subheadline).frame(minHeight: 44)
                         .accessibilityIdentifier("widget-placement-rediscovery")
