@@ -215,9 +215,13 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('return "$composer_status"', runtime[normal_failure:])
         scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
         # Explicit Gallery lanes reject mapped scopes before any Simulator work.
-        for selected in scope.SCOPES[1:]:
+        for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
+                         scope.WIDGET_BEHAVIOR_SCOPE, scope.CI_SELECTION_SCOPE):
             with self.assertRaises(ValueError):
                 scope.lane_tests(selected, "gallery-white")
+        for selected in (scope.WIDGET_LAYOUT_SCOPE, scope.WIDGET_STYLE_SCOPE):
+            self.assertEqual(scope.lane_tests(selected, "gallery-white"),
+                             scope.lane_tests(scope.FULL_SCOPE, "gallery-white"))
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(
             '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'

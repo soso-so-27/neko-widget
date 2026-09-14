@@ -43,7 +43,7 @@ class LaneTests(unittest.TestCase):
         self.assertIn("LARGE_TEXT", scope.GALLERY_CONDITIONS["gallery-white"])
 
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
-        for selected in scope.SCOPES[1:]:
+        for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE):
             self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
             self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.native_tests(selected))
             with self.assertRaises(ValueError):
@@ -110,19 +110,26 @@ class LaneTests(unittest.TestCase):
         for selected in scope.SCOPES:
             with self.subTest(scope=selected):
                 remaining = scope.matrix_lanes(selected)
-                partition = ("app-ui",) + remaining
+                has_app_ui = "app-ui" in scope.lanes(selected)
+                partition = (("app-ui",) if has_app_ui else ()) + remaining
                 self.assertCountEqual(partition, scope.lanes(selected))
                 self.assertEqual(len(partition), len(set(partition)))
                 outputs = {"lanes": scope.lanes(selected), "matrix_lanes": remaining}
+                parallelism = 3 if selected == scope.WIDGET_STYLE_SCOPE else 2
                 maximum_running = 0
                 names = []
                 for identifier, body in jobs.items():
                     if "    runs-on: macos-15\n" not in body:
                         continue
+                    if identifier == "sharing-app-ui" and not has_app_ui:
+                        self.assertIn("if: needs.plan.outputs.app_ui == 'true'", body)
+                        continue
                     matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
                     expansion = outputs[matrix[1]] if matrix else (None,)
-                    limit = re.search(r"^      max-parallel: (\d+)$", body, re.M)
-                    maximum_running += min(len(expansion), int(limit[1])) if limit else len(expansion)
+                    limit = parallelism if matrix else len(expansion)
+                    if matrix:
+                        self.assertIn("max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}", body)
+                    maximum_running += min(len(expansion), limit)
                     # Every Mac check depends only on the planner. A failed
                     # sibling neither blocks another check nor forces its rerun.
                     self.assertIn("    needs: plan\n", body)
@@ -130,17 +137,19 @@ class LaneTests(unittest.TestCase):
                     name = re.search(r"^    name: (.+)$", body, re.M)[1]
                     for lane in expansion:
                         expanded_name = name.replace("${{ needs.plan.outputs.runtime_scope }}", selected)
+                        expanded_name = expanded_name.replace("${{ needs.plan.outputs.smoke_name }}", planner.smoke_job(selected))
                         if lane:
                             expanded_name = expanded_name.replace("${{ matrix.lane }}", lane)
                         names.append(expanded_name)
-                self.assertCountEqual(names, (planner.BUILD, planner.SMOKE) + scope.sharing_jobs(selected))
+                self.assertCountEqual(names, planner.required_jobs_from_scope(selected))
                 self.assertEqual(len(names), len(set(names)))
-                self.assertIn("    name: " + scope.lane_job(selected, "app-ui").replace(selected,
-                    "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
+                if has_app_ui:
+                    self.assertIn("    name: " + scope.lane_job(selected, "app-ui").replace(selected,
+                        "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
                 self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
-                self.assertEqual(maximum_running, 5 if selected == scope.FULL_SCOPE else 4)
-                if selected != scope.FULL_SCOPE:
+                self.assertEqual(maximum_running, 4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE) else 5)
+                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")

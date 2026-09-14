@@ -152,6 +152,7 @@ class PlanTests(unittest.TestCase):
                     planner.main()
                     outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                     self.assertEqual(outputs, {"build": "true", "smoke": "true", "sharing": "true",
+                        "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
                         "runtime_scope": scope.FULL_SCOPE,
                         "lanes": json.dumps(scope.LANES, separators=(",", ":")),
                         "matrix_lanes": '["runtime","gallery-normal","gallery-white","gallery-no-caption"]'})
@@ -165,7 +166,7 @@ class PlanTests(unittest.TestCase):
         selected = scope.select_scope({home: change, scope.OFFICIAL_VIEW: change})
         self.assertEqual(selected, scope.COMBINED_SCOPE)
         self.assertEqual(planner.required_jobs([home], scope.PHOTO_SCOPE),
-                         (planner.BUILD, planner.SMOKE) + scope.sharing_jobs(scope.PHOTO_SCOPE))
+                         (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.PHOTO_SCOPE))
         self.assertEqual(set(scope.native_tests(selected)), set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS))
         self.assertEqual(set(scope.native_tests(scope.FULL_SCOPE)),
                          set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests", scope.GALLERY_TEST)))
@@ -271,7 +272,7 @@ class PlanTests(unittest.TestCase):
                 result = json.loads(metadata.read_text())
                 self.assertEqual(result["scope"], selected)
                 self.assertEqual(result["sharingRuntime"], ["ios-18-5", "ios-26-2"])
-                self.assertEqual(result["widgetGallery"], selected == scope.FULL_SCOPE)
+                self.assertEqual(result["widgetGallery"], "gallery-normal" in scope.lanes(selected))
                 self.assertEqual(tests.read_text().splitlines(),
                                  ["-only-testing:" + name for name in result["nativeTests"]])
         with self.assertRaises(ValueError):
@@ -297,7 +298,7 @@ class PlanTests(unittest.TestCase):
         workflow = (project.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
         for identifier, output in (("build-without-signing", "build"),
                                    ("simulator-smoke-test", "smoke"),
-                                   ("sharing-app-ui", "sharing"),
+                                   ("sharing-app-ui", "app_ui"),
                                    ("sharing-runtime-matrix", "sharing")):
             body = re.split(r"\n  (?=\S)", workflow.split("\n  " + identifier + ":", 1)[1], maxsplit=1)[0]
             self.assertIn("    needs: plan\n", body)
@@ -336,6 +337,14 @@ class PlanTests(unittest.TestCase):
                 target.write_text('Text("after")\n')
                 commit()
                 self.assertEqual(selected(), scope.PHOTO_SCOPE)
+                handoff = root / "handoffs/change.md"
+                handoff.parent.mkdir()
+                handoff.write_text("The source change is described here.\n")
+                commit()
+                self.assertEqual(selected(), scope.PHOTO_SCOPE)
+                git("update-index", "--chmod=+x", "handoffs/change.md")
+                commit(stage=False)
+                self.assertEqual(selected(), scope.FULL_SCOPE)
                 env = dict(self.env, GITHUB_SHA=git("rev-parse", "HEAD"), GITHUB_EVENT_NAME="workflow_dispatch")
                 self.assertEqual(planner.runtime_scope([home], {}, env), scope.FULL_SCOPE)
                 git("checkout", "--detach", "-q", base)

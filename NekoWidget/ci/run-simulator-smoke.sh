@@ -65,6 +65,28 @@ MEMORY_SAMPLER_STOP_FILE=""
 mkdir -p "$ARTIFACT_DIRECTORY"
 exec > >(tee -a "$ARTIFACT_DIRECTORY/$HARNESS_LOG_FILENAME") 2>&1
 
+# BEGIN CI_SMOKE_SELECTION
+# Validate the scope before preparing a Simulator or building. Every smoke
+# selection keeps the real Photos authorization required by the scan below.
+RUNTIME_SCOPE="${NEKO_IOS_RUNTIME_SCOPE:-full-v1}"
+SMOKE_UI_SELECTION_FILE="$ARTIFACT_DIRECTORY/smoke-ui-selection.txt"
+python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
+    --scope "$RUNTIME_SCOPE" \
+    --lane smoke \
+    --metadata "$ARTIFACT_DIRECTORY/smoke-scope.json" \
+    --tests "$SMOKE_UI_SELECTION_FILE"
+SMOKE_TEST_ARGUMENTS=()
+while IFS= read -r test_argument; do
+    test_argument="${test_argument%$'\r'}"
+    [[ -n "$test_argument" ]] || continue
+    SMOKE_TEST_ARGUMENTS+=("$test_argument")
+done < "$SMOKE_UI_SELECTION_FILE"
+if (( ${#SMOKE_TEST_ARGUMENTS[@]} == 0 )); then
+    echo "The requested smoke scope did not select any native UI tests." >&2
+    exit 1
+fi
+# END CI_SMOKE_SELECTION
+
 # `simctl addmedia` has occasionally submitted work to Photos and then waited
 # indefinitely for the command response. A timeout therefore has an uncertain
 # outcome: retrying the same files can create duplicate PHAssets. Kill the
@@ -1006,9 +1028,7 @@ TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
     -resultBundlePath "$PERMISSION_RESULT_BUNDLE" \
-    -only-testing:NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess \
-    -only-testing:NekoWidgetUITests/OfficialWindowUITests \
-    -only-testing:NekoWidgetUITests/PersonalRediscoveryUITests \
+    "${SMOKE_TEST_ARGUMENTS[@]}" \
     -parallel-testing-enabled NO \
     COMPILER_INDEX_STORE_ENABLE=NO \
     CODE_SIGNING_ALLOWED=YES \

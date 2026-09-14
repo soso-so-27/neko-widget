@@ -12,11 +12,15 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job, sharing_jobs, lanes, matrix_lanes
+from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
+                          CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
+                          accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
+                          sharing_jobs, lane_job, lanes, matrix_lanes)
 
 
 BUILD = "Build disabled app and extensions without signing"
 SMOKE = "Launch app and scan fixtures in Simulator"
+BOOTSTRAP_SMOKE = SMOKE + " [photo-bootstrap-v1]"
 SHARING = sharing_job(FULL_SCOPE)
 FULL = (BUILD, SMOKE) + sharing_jobs(FULL_SCOPE)
 MOVIE_VIEW = "NekoWidget/NekoWidget/Views/SeasonalMovieView.swift"
@@ -33,15 +37,22 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
-    if not paths or not set(paths) <= MAPPED_VIEWS:
+    sources = source_paths(paths)
+    if not sources or not sources <= MAPPED_PATHS or not accepts_paths(runtime_scope, paths):
         runtime_scope = FULL_SCOPE
     return required_jobs_from_scope(runtime_scope)
+
+
+def smoke_job(scope: str) -> str:
+    if scope not in SCOPES:
+        raise ValueError("Unknown iOS runtime scope")
+    return SMOKE if scope == FULL_SCOPE else BOOTSTRAP_SMOKE
 
 
 def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
     if scope == "movie-screen-only":
         return (BUILD,)
-    return (BUILD, SMOKE) + sharing_jobs(scope)
+    return (BUILD, smoke_job(scope)) + sharing_jobs(scope)
 
 
 def git(*args: str) -> str:
@@ -77,13 +88,19 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
-    if not paths or not set(paths) <= MAPPED_VIEWS:
+    sources = source_paths(paths)
+    if not sources or not sources <= MAPPED_PATHS:
         return FULL_SCOPE
     try:
         base = comparison_base(event, env)
         if base is None:
             return FULL_SCOPE
         head = env["GITHUB_SHA"]
+        ci_only = sources <= CI_SELECTION_PATHS
+        if ci_only:
+            # A stale branch is not proof that the product is unchanged from
+            # current main. Every branch input still has to be accounted for.
+            git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head)
         # --no-renames exposes moves as delete/add. Exact raw modes exclude
         # symlinks, executable/type changes, new files and removals.
         records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
@@ -92,17 +109,34 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         if len(records) != 2 * len(paths):
             return FULL_SCOPE
         seen = set()
+        added_tests = set()
         for index in range(0, len(records), 2):
             header, path = records[index:index + 2]
             fields = header.split()
-            if len(fields) != 5 or fields[0:2] != [":100644", "100644"] or fields[4] != "M":
+            if len(fields) != 5:
                 return FULL_SCOPE
             if path not in paths or path in seen:
+                return FULL_SCOPE
+            # Normal handoff prose may accompany the actual source diff. It
+            # cannot introduce a symlink/executable or replace a product path.
+            if is_handoff(path):
+                valid = ((fields[0:2], fields[4]) in (
+                    ([":100644", "100644"], "M"),
+                    ([":000000", "100644"], "A"),
+                    ([":100644", "000000"], "D"),
+                ))
+            else:
+                valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
+                if ci_only and path in CI_NEW_TEST_PATHS and fields[0:2] == [":000000", "100644"] and fields[4] == "A":
+                    valid = True
+                    added_tests.add(path)
+            if not valid:
                 return FULL_SCOPE
             seen.add(path)
         if seen != set(paths):
             return FULL_SCOPE
-        return select_scope({path: (git("show", f"{base}:{path}"), git("show", f"{head}:{path}")) for path in paths})
+        return select_scope({path: ("" if path in added_tests else git("show", f"{base}:{path}"),
+                                   git("show", f"{head}:{path}")) for path in sources})
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return FULL_SCOPE
 
@@ -151,13 +185,15 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
     # Missing, skipped, failed or duplicate jobs are not evidence of execution.
     for name in required:
         acceptable = {name}
+        if name == BOOTSTRAP_SMOKE:
+            acceptable.add(SMOKE)
         for scope in SCOPES:
             # Full native/Gallery execution covers a mapped subset. A subset
             # never covers full or a different subset; legacy unscoped job
             # names are not proof of which tests actually ran.
-            scoped = sharing_jobs(scope)
-            if name in scoped:
-                acceptable.add(sharing_jobs(FULL_SCOPE)[scoped.index(name)])
+            for lane in lanes(scope):
+                if name == lane_job(scope, lane):
+                    acceptable.add(lane_job(FULL_SCOPE, lane))
         matching = [job for job in jobs if job.get("name") in acceptable]
         if len(matching) != 1:
             return False
@@ -276,11 +312,14 @@ def main() -> None:
         evidence = None  # API/permission/response failures never bypass checks.
     values = {
         "build": str(evidence is None).lower(),
-        "smoke": str(evidence is None and SMOKE in required).lower(),
+        "smoke": str(evidence is None and smoke_job(selected_scope) in required).lower(),
+        "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and required != (BUILD,)).lower(),
+        "app_ui": str(evidence is None and required != (BUILD,) and "app-ui" in lanes(selected_scope)).lower(),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
         "matrix_lanes": json.dumps(matrix_lanes(selected_scope), separators=(",", ":")),
+        "matrix_parallelism": "3" if selected_scope == WIDGET_STYLE_SCOPE else "2",
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():

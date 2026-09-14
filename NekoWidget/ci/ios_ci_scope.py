@@ -14,7 +14,12 @@ FULL_SCOPE = "full-v1"
 PHOTO_SCOPE = "photo-ui-v1"
 OFFICIAL_SCOPE = "official-ui-v1"
 COMBINED_SCOPE = "photo-official-ui-v1"
-SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE)
+WIDGET_BEHAVIOR_SCOPE = "widget-behavior-v1"
+WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
+WIDGET_STYLE_SCOPE = "widget-style-v1"
+CI_SELECTION_SCOPE = "ci-selection-v1"
+SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+          WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -35,6 +40,115 @@ PHOTO_VIEWS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
 OFFICIAL_VIEW = "NekoWidget/NekoWidget/Views/OfficialWindowView.swift"
 MAPPED_VIEWS = PHOTO_VIEWS | {OFFICIAL_VIEW}
 
+# Reviewed Widget-only consumers. General photo/cache builders, shared stores,
+# networking, app startup and navigation are deliberately outside this map.
+WIDGET_BEHAVIOR_PATHS = frozenset(
+    "NekoWidget/NekoWidgetWidget/" + name for name in (
+        "NekoWidgetEntry.swift", "NekoWidgetTimelineProvider.swift",
+        "WidgetManifestReader.swift", "DailyPersonalPhotoIntent.swift",
+        "ToggleWidgetLikeIntent.swift", "NekoWidgetConfigurationIntent.swift",
+    )
+) | {
+    "NekoWidget/Shared/Storage/PersonalRediscoveryStore.swift",
+    "NekoWidget/NekoWidget/Views/PersonalRediscoveryHistoryView.swift",
+    "NekoWidget/NekoWidget/Services/PersonalWidgetBackgroundRefresh.swift",
+}
+WIDGET_LAYOUT_PATHS = frozenset(
+    "NekoWidget/NekoWidgetWidget/" + name for name in (
+        "NekoWidgetView.swift", "WidgetCacheImageLoader.swift",
+    )
+)
+CI_WORKFLOW = ".github/workflows/ios-build.yml"
+CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
+CI_NEW_TEST_PATHS = frozenset({
+    "NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py",
+})
+CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
+    "NekoWidget/ci/" + name for name in (
+        "ios_ci_scope.py", "plan-ios-ci.py", "check-development-flow.py",
+        "test-plan-ios-ci.py", "test-ci-lanes.py", "test-runtime-preparation.py",
+        "test-app-store-screenshot-workflow.py",
+    )
+)
+MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS
+
+
+def workflow_execution(source: str) -> tuple[str, ...]:
+    """Ignore only reviewed selection wiring; keep builds/security/commands."""
+    selection_lines = {
+        "      smoke_name: ${{ steps.scope.outputs.smoke_name }}",
+        "      app_ui: ${{ steps.scope.outputs.app_ui }}",
+        "      matrix_parallelism: ${{ steps.scope.outputs.matrix_parallelism }}",
+        "    name: Launch app and scan fixtures in Simulator",
+        "    name: ${{ needs.plan.outputs.smoke_name }}",
+        "    if: needs.plan.outputs.sharing == 'true'",
+        "    if: needs.plan.outputs.app_ui == 'true'",
+        "        env:",
+        "          NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}",
+        "      max-parallel: 2",
+        "      max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}",
+    }
+    return tuple(line.rstrip() for line in source.splitlines()
+                 if line.strip() and not line.lstrip().startswith("#")
+                 and line.rstrip() not in selection_lines)
+
+
+def smoke_execution(source: str) -> str:
+    begin, end = "# BEGIN CI_SMOKE_SELECTION", "# END CI_SMOKE_SELECTION"
+    if begin in source or end in source:
+        if source.count(begin) != 1 or source.count(end) != 1:
+            raise ValueError("Ambiguous smoke selection block")
+        start, finish = source.index(begin), source.index(end)
+        if start >= finish:
+            raise ValueError("Invalid smoke selection block")
+        source = source[:start] + source[finish + len(end):]
+    selectors = {
+        '    -only-testing:NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess \\',
+        '    -only-testing:NekoWidgetUITests/OfficialWindowUITests \\',
+        '    -only-testing:NekoWidgetUITests/PersonalRediscoveryUITests \\',
+        '    "${SMOKE_TEST_ARGUMENTS[@]}" \\',
+    }
+    return "\n".join(line.rstrip() for line in source.splitlines()
+                     if line.strip() and line.rstrip() not in selectors)
+
+
+def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
+    if not changes or not set(changes) <= CI_SELECTION_PATHS:
+        return False
+    if CI_WORKFLOW in changes:
+        before, after = changes[CI_WORKFLOW]
+        if workflow_execution(before) != workflow_execution(after):
+            return False
+    if CI_SMOKE_SCRIPT in changes:
+        try:
+            before, after = changes[CI_SMOKE_SCRIPT]
+            if smoke_execution(before) != smoke_execution(after):
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def is_handoff(path: str) -> bool:
+    return path.startswith("handoffs/") and path.endswith(".md")
+
+
+def source_paths(paths):
+    return {path for path in paths if not is_handoff(path)} if paths else set()
+
+
+def accepts_paths(scope: str, paths) -> bool:
+    allowed = {
+        PHOTO_SCOPE: PHOTO_VIEWS, OFFICIAL_SCOPE: {OFFICIAL_VIEW},
+        COMBINED_SCOPE: MAPPED_VIEWS,
+        WIDGET_BEHAVIOR_SCOPE: WIDGET_BEHAVIOR_PATHS,
+        WIDGET_LAYOUT_SCOPE: WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS,
+        WIDGET_STYLE_SCOPE: WIDGET_LAYOUT_PATHS,
+        CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
+    }
+    sources = source_paths(paths)
+    return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
+
 PHOTO_TESTS = (
     "NekoWidgetUITests/MomentDeliveryComposerUITests",
     "NekoWidgetUITests/CatProfilePhotoFlowUITests",
@@ -45,6 +159,22 @@ GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
     "testCaptureSharedWidgetAllSupportedSizes"
 )
+WIDGET_UI_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
+    "OfficialWindowUITests/testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations",
+    "OfficialWindowUITests/testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto",
+    "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
+    "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
+    "SoloMemoriesUITests/testWidgetPhotoOutsideCurrentScopeOffersAPathBack",
+    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
+))
+
+
+def smoke_tests(scope: str) -> tuple[str, ...]:
+    if scope not in SCOPES:
+        raise ValueError("Unknown iOS runtime scope")
+    bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",)
+    return bootstrap + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",) if scope == FULL_SCOPE else bootstrap
 
 
 def sharing_job(scope: str) -> str:
@@ -54,6 +184,10 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
+        return WIDGET_UI_TESTS + (GALLERY_TEST,)
+    if scope == WIDGET_STYLE_SCOPE:
+        return (GALLERY_TEST,)
     if scope == PHOTO_SCOPE:
         return PHOTO_TESTS
     if scope == OFFICIAL_SCOPE:
@@ -67,6 +201,12 @@ def native_tests(scope: str) -> tuple[str, ...]:
 
 def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
+    if scope == WIDGET_STYLE_SCOPE:
+        return tuple(lane for lane in LANES if lane != "app-ui")
+    if scope in (WIDGET_BEHAVIOR_SCOPE, CI_SELECTION_SCOPE):
+        return LANES[:3]
+    if scope == WIDGET_LAYOUT_SCOPE:
+        return LANES
     return LANES if scope == FULL_SCOPE else LANES[:2]
 
 
@@ -86,6 +226,8 @@ def sharing_jobs(scope: str) -> tuple[str, ...]:
 
 
 def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
+    if lane == "smoke":
+        return smoke_tests(scope)
     if lane == "all":
         return native_tests(scope)  # Retain the local serial entry point.
     lane_job(scope, lane)
@@ -161,26 +303,47 @@ def pure_presentation_line(line: str) -> bool:
     return not line.strip() or PURE_PRESENTATION_LINE.fullmatch(line.strip()) is not None
 
 
-def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
-    # Callers must first prove existing regular files, modification-only and
-    # unchanged modes. No docs/unknown path exception is applied to UI scope.
-    if not changes or not set(changes) <= MAPPED_VIEWS:
-        return FULL_SCOPE
+def presentation_only(changes: dict[str, tuple[str, str]]) -> bool:
     for before, after in changes.values():
         # This first tier does not parse Swift. Ambiguous string contexts are
         # full, as are structures, control flow, actions, helper calls, state,
         # accessibility identifiers and every other unlisted changed line.
         if any('"""' in text or re.search(r'#+"', text) for text in (before, after)):
-            return FULL_SCOPE
+            return False
         protected = conditional_blocks(before)
         if protected is None or protected != conditional_blocks(after):
-            return FULL_SCOPE
+            return False
         old, new = before.splitlines(), after.splitlines()
         for kind, i, j, x, y in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
             if kind != "equal":
                 lines = old[i:j] + new[x:y]
                 if any(SENSITIVE.search(line) or not pure_presentation_line(line) for line in lines):
-                    return FULL_SCOPE
+                    return False
+    return True
+
+
+def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
+    # The planner first proves existing regular source files, modification-only
+    # and unchanged modes. Handoff prose is not an app or CI input.
+    if not changes:
+        return FULL_SCOPE
+    changes = {path: values for path, values in changes.items() if not is_handoff(path)}
+    if not changes or not set(changes) <= MAPPED_PATHS:
+        return FULL_SCOPE
+    if set(changes) <= CI_SELECTION_PATHS:
+        return CI_SELECTION_SCOPE if ci_selection_only(changes) else FULL_SCOPE
+    if set(changes) <= WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS:
+        # Inline fixtures and conditional implementations participate in other
+        # checks. Do not treat a changed test-only branch as a shipping style.
+        if any(conditional_blocks(before) is None
+               or conditional_blocks(before) != conditional_blocks(after)
+               for before, after in changes.values()):
+            return FULL_SCOPE
+        if set(changes) <= WIDGET_LAYOUT_PATHS and presentation_only(changes):
+            return WIDGET_STYLE_SCOPE
+        return WIDGET_LAYOUT_SCOPE if set(changes) & WIDGET_LAYOUT_PATHS else WIDGET_BEHAVIOR_SCOPE
+    if not set(changes) <= MAPPED_VIEWS or not presentation_only(changes):
+        return FULL_SCOPE
     has_photo = bool(set(changes) & PHOTO_VIEWS)
     has_official = OFFICIAL_VIEW in changes
     if has_photo and has_official:
@@ -191,7 +354,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", choices=SCOPES, required=True)
-    parser.add_argument("--lane", choices=("all",) + LANES, default="all")
+    parser.add_argument("--lane", choices=("all", "smoke") + LANES, default="all")
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--tests", type=Path, required=True)
     args = parser.parse_args()
@@ -201,11 +364,12 @@ def main() -> None:
         "scope": args.scope,
         "lane": args.lane,
         "commit": os.environ.get("GITHUB_SHA"),
-        "sharingRuntime": (["ios-18-5", "ios-26-2"] if args.lane in ("all", "runtime")
+        "sharingRuntime": ([] if args.lane == "smoke" else ["ios-18-5", "ios-26-2"] if args.lane in ("all", "runtime")
                            else ["ios-26-2"]),
+        "photoBootstrapRuntime": os.environ.get("SMOKE_IOS_RUNTIME") if args.lane == "smoke" else None,
         "nativeTests": tests,
-        "widgetGallery": args.scope == FULL_SCOPE and args.lane not in ("runtime", "app-ui"),
-        "fixtureConditions": ("" if args.lane == "runtime" else
+        "widgetGallery": "gallery-normal" in lanes(args.scope) and args.lane not in ("runtime", "app-ui", "smoke"),
+        "fixtureConditions": ("" if args.lane in ("runtime", "smoke") else
             "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE "
             + GALLERY_CONDITIONS.get(args.lane, "")).strip(),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")

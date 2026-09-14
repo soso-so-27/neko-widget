@@ -31,10 +31,13 @@ jobs:
     outputs:
       build: ${{ steps.scope.outputs.build }}
       smoke: ${{ steps.scope.outputs.smoke }}
+      smoke_name: ${{ steps.scope.outputs.smoke_name }}
       sharing: ${{ steps.scope.outputs.sharing }}
+      app_ui: ${{ steps.scope.outputs.app_ui }}
       runtime_scope: ${{ steps.scope.outputs.runtime_scope }}
       lanes: ${{ steps.scope.outputs.lanes }}
       matrix_lanes: ${{ steps.scope.outputs.matrix_lanes }}
+      matrix_parallelism: ${{ steps.scope.outputs.matrix_parallelism }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -954,7 +957,7 @@ jobs:
           retention-days: 7
 
   simulator-smoke-test:
-    name: Launch app and scan fixtures in Simulator
+    name: ${{ needs.plan.outputs.smoke_name }}
     # This runner builds and signs its own Simulator products. Release build
     # remains a separate required job in the same-SHA evidence policy.
     needs: plan
@@ -979,6 +982,8 @@ jobs:
       - name: Run Simulator smoke test
         working-directory: NekoWidget
         shell: bash
+        env:
+          NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
         run: bash ci/run-simulator-smoke.sh
 
       - name: Upload Simulator smoke-test artifacts
@@ -996,7 +1001,7 @@ jobs:
     # initial Mac slots. App UI, build and smoke each have one slot, while
     # the remaining runtime/Gallery matrix uses at most two slots below.
     needs: plan
-    if: needs.plan.outputs.sharing == 'true'
+    if: needs.plan.outputs.app_ui == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -1034,10 +1039,9 @@ jobs:
     runs-on: macos-15
     strategy:
       fail-fast: false
-      # Three independent Mac jobs plus this matrix's two slots fit the
-      # observed five-Mac capacity. No lane order or success dependency is
-      # needed, so a failed check can still be retried independently.
-      max-parallel: 2
+      # Literal Widget styling has no app-ui job, so its free slot can run a
+      # third visual/runtime lane. Both plans stay within five Mac runners.
+      max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}
       matrix:
         lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}
     timeout-minutes: 60
