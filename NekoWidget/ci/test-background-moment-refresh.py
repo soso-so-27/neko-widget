@@ -618,17 +618,17 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("guard let route = pendingNotificationRoute", consume)
         self.assertIn("route.target?.momentID", consume)
         self.assertIn("case .newMoment:", consume)
-        self.assertIn("selectedSection = .received", consume)
+        self.assertIn("selectedMomentForDetail = target", consume)
         self.assertIn("focusedMomentID = momentID", consume)
         self.assertIn("case .heart:", consume)
-        self.assertIn("selectedSection = .sent", consume)
+        self.assertIn("selectedSentRecord = matches[0]", consume)
         self.assertIn("focusedSentMomentID = momentID", consume)
 
         # A target-bearing route is one atomic capability. It remains pending
         # until both its authenticated window and exactly one photo resolve;
-        # only a legacy targetless v1 route may fall back to a section.
+        # only a legacy targetless v1 route may fall back to the collection.
         targeted = consume.split("if let target = route.target", 1)[1].split(
-            "// Legacy v1 notifications", 1
+            "// Legacy notifications", 1
         )[0]
         self.assertIn("model.pairingState?.spaceID == target.spaceID", targeted)
         self.assertEqual(targeted.count("guard matches.count == 1"), 2)
@@ -636,20 +636,18 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         first_resolution = targeted.index("guard matches.count == 1")
         first_consume = targeted.index("pendingNotificationRoute = nil")
         self.assertLess(first_resolution, first_consume)
-        legacy = consume.split("// Legacy v1 notifications", 1)[1]
+        legacy = consume.split("// Legacy notifications", 1)[1]
         self.assertIn("pendingNotificationRoute = nil", legacy)
-        self.assertIn("selectedSection = .received", legacy)
-        self.assertIn("selectedSection = .sent", legacy)
+        self.assertIn("selectedSharedPhoto = nil", legacy)
 
         sent_record = self.presentation.split(
             "struct MomentSentRecordPresentation", 1
         )[1].split("struct MomentOutgoingPresentation", 1)[0]
         self.assertIn("let momentID: String?", sent_record)
-        visible_sent = self.family_window.split(
-            "private var visibleSentRecords", 1
-        )[1].split("private var canManageOutgoingPresentation", 1)[0]
-        self.assertIn("focusedSentMomentID", visible_sent)
-        self.assertIn("$0.momentID == focusedSentMomentID", visible_sent)
+        self.assertIn("$0.momentID == momentID", targeted)
+        self.assertIn("item: $selectedSharedPhoto", self.family_window)
+        self.assertNotIn("item: $selectedSentRecord", self.family_window)
+        self.assertNotIn("item: $selectedMomentForDetail", self.family_window)
         self.assertIn("選んだ写真を開いています…", self.family_window)
         self.assertIn("family-window-notification-route-progress", self.family_window)
         self.assertIn("family-window-notification-route-retry", self.family_window)
