@@ -65,7 +65,14 @@ private actor FamilyWidgetPhotoActivationGate {
             else { waiters.removeFirst().resume() }
         }
         try Task.checkCancellation()
-        return try await PairingInstallationGuard.activatePrivateWindowAsync(localWindowID: localWindowID)
+        let result = try await PairingInstallationGuard.activatePrivateWindowAsync(localWindowID: localWindowID)
+        // Activation already committed even if the viewer has since closed.
+        // Retained screens and Widget outputs must observe that selection.
+        await MainActor.run {
+            NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
+            NotificationCenter.default.post(name: .momentSharingContentNeedsReload, object: nil)
+        }
+        return result
     }
 }
 

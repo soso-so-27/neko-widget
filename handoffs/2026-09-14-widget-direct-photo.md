@@ -22,3 +22,5 @@
 画素と取得先はオフラインfixture。実サービスの共有認証・iCloud取得・ユーザー端末でのWidgetKitタップを再現したという意味ではない。Appleの[URLを指定してアプリを開くUIテストAPI](https://developer.apple.com/documentation/xcuiautomation/xcuiapplication/open(_:))と[アプリのURL受信](https://developer.apple.com/documentation/swiftui/view/onopenurl(perform:))を使用。iOSがURLをアプリへ渡す前のホーム画面の起動演出は、この変更や試験の対象外。
 
 候補のMacビルド・実行・生成画面の確認と内部配布は、結果が揃ってから下へ記録する。研究worktree、CI構成、公式配信、外部公開・招待、課金は変更しない。
+
+初回候補5880b6cではReleaseビルドと通常Widget Galleryが成功。確認中、共有まど有効化後に写真がすぐ閉じられたり解決に失敗した場合、背景画面・Widget出力への通知が後続同期まで行われない経路を特定した。独立レビューで既存通知の非再帰性・lifecycle維持を確認し、有効化直後に通知する修正を追加。旧run34791253872は不要な継続を避けて取消。共有のキャッシュ表示前に通信完了を待つ変更ではない。
