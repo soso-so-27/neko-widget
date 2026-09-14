@@ -1139,38 +1139,23 @@ private struct WindowListView: View {
         .accessibilityIdentifier("window-discovery")
     }
 
-    private var addition: some View {
+    private var connectionOptions: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("猫の写真を受け取る").font(.headline)
-                    NavigationLink { discovery } label: {
-                        Label("公開まどを探す", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("window-list-discover")
-                }
-                if supportsPrivateWindows {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("身近な人と送り合う", systemImage: "lock")
-                            .font(.headline)
-                        windowAdditionControl
-                        if let message = model.operationErrorMessage {
-                            Text(message).font(.footnote).foregroundStyle(.orange)
-                                .accessibilityIdentifier("window-add-error")
-                        }
-                    }
+            VStack(alignment: .leading, spacing: 12) {
+                windowAdditionControl
+                if let message = model.operationErrorMessage {
+                    Text(message).font(.footnote).foregroundStyle(.orange)
+                        .accessibilityIdentifier("window-add-error")
                 }
             }
             .padding(20)
             .frame(maxWidth: 520)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("まどを追加")
+        .navigationTitle("相手とつなぐ")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .accessibilityIdentifier("window-addition")
+        .accessibilityIdentifier("window-connection-options")
     }
 
     var body: some View {
@@ -1221,13 +1206,21 @@ private struct WindowListView: View {
         }
         .navigationTitle("まど")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink { addition } label: {
-                    Image(systemName: "plus")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if supportsPrivateWindows {
+                    NavigationLink { connectionOptions } label: {
+                        Image(systemName: "person.badge.plus")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("相手とつなぐ")
+                    .accessibilityIdentifier("window-list-connect")
+                }
+                NavigationLink { discovery } label: {
+                    Image(systemName: "magnifyingglass")
                         .frame(minWidth: 44, minHeight: 44)
                 }
-                    .accessibilityLabel("まどを追加")
-                    .accessibilityIdentifier("window-list-addition")
+                .accessibilityLabel("まどを探す")
+                .accessibilityIdentifier("window-list-discover")
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -1325,7 +1318,7 @@ private struct WindowListView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            NavigationLink { addition } label: { Text("まどを追加") }
+            NavigationLink { discovery } label: { Text("まどを探す") }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("window-list-start")
         }

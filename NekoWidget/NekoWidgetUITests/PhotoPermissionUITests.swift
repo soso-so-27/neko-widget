@@ -265,10 +265,10 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-cat-window", "-AppleLanguages", "(ja)"]
         app.launch()
-        let addition = app.buttons["window-list-addition"]
-        XCTAssertTrue(addition.waitForExistence(timeout: 10))
-        addition.tap()
-        app.buttons["window-list-discover"].tap()
+        let discover = app.buttons["window-list-discover"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        discover.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         app.buttons["official-window-entry"].tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
                       "The chosen discovery card must open its own window")
@@ -301,8 +301,9 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["public-window-overview-official-cats"].buttons["official-window-subscribe"].exists,
                       "Opening a cat must not subscribe to its discovery source")
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
-        app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["public-window-entry-cat-tabby-nap"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["official-window-entry"].exists)
         capture("cat-window-receiving-list", app)
@@ -353,10 +354,10 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-two-public", "-AppleLanguages", "(ja)"]
         app.launch()
-        let addition = app.buttons["window-list-addition"]
-        XCTAssertTrue(addition.waitForExistence(timeout: 10))
-        addition.tap()
-        app.buttons["window-list-discover"].tap()
+        let discover = app.buttons["window-list-discover"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        discover.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         let nap = app.buttons["public-window-entry-nap-cats"]
         XCTAssertTrue(nap.waitForExistence(timeout: 5))
         for _ in 0..<3 { if nap.isHittable { break }; app.swipeUp() }
@@ -379,8 +380,9 @@ final class OfficialWindowUITests: XCTestCase {
         capture("nap-window-widget-guide", app)
         app.buttons["閉じる"].tap()
         app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
-        app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(nap.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["official-window-entry"].exists, "Receiving a theme must not subscribe to the other window")
         capture("nap-window-receiving-list", app)
@@ -421,11 +423,16 @@ final class OfficialWindowUITests: XCTestCase {
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["--window-list-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        let addition = app.buttons["window-list-addition"]
-        XCTAssertTrue(addition.waitForExistence(timeout: 10))
+        let discover = app.buttons["window-list-discover"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["window-list-connect"].exists,
+                       "A public-only configuration must not offer private connections")
         XCTAssertFalse(app.buttons["official-window-entry"].exists, "Unsubscribed windows belong in discovery")
-        addition.tap()
-        app.buttons["window-list-discover"].tap()
+        let start = app.buttons["window-list-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5),
+                      "The empty-list action must open discovery directly")
         app.buttons["official-window-entry"].tap()
         XCTAssertTrue(app.tabBars.buttons["写真"].exists)
         XCTAssertTrue(app.tabBars.buttons["思い出"].exists)
@@ -445,15 +452,17 @@ final class OfficialWindowUITests: XCTestCase {
         capture("window-widget-guide-existing", app)
         app.buttons["閉じる"].tap()
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
-        app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
         capture("window-list-after-receiving", app)
         app.buttons["official-window-entry"].tap()
         stopReceiving(app)
         XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(addition.waitForExistence(timeout: 5))
+        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+        XCTAssertTrue(start.isHittable)
         XCTAssertFalse(app.buttons["official-window-entry"].exists)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
@@ -468,7 +477,9 @@ final class OfficialWindowUITests: XCTestCase {
         let card = app.buttons["official-window-entry"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(card.isHittable)
-        XCTAssertTrue(app.buttons["window-list-addition"].isHittable)
+        let discover = app.buttons["window-list-discover"]
+        XCTAssertTrue(discover.isHittable)
+        XCTAssertGreaterThanOrEqual(discover.frame.height, 44)
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
         card.tap()
@@ -623,17 +634,40 @@ final class OfficialWindowUITests: XCTestCase {
                                   "Unfinished setup is a compact resume row, not another photo card")
             }
             capture(largeText ? "window-mixed-large-text" : "window-mixed-standard", app)
-            let addition = app.buttons["window-list-addition"]
-            XCTAssertTrue(addition.isHittable)
-            addition.tap()
             let discover = app.buttons["window-list-discover"]
-            XCTAssertTrue(discover.waitForExistence(timeout: 5))
+            let connect = app.buttons["window-list-connect"]
+            XCTAssertTrue(discover.isHittable)
+            XCTAssertTrue(connect.isHittable)
+            XCTAssertGreaterThanOrEqual(discover.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(discover.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(connect.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(connect.frame.height, 44)
+            discover.tap()
+            XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5),
+                          "Public discovery must open directly even when private setup needs recovery")
+            XCTAssertFalse(app.buttons["window-list-resume-setup"].exists)
+            capture(largeText ? "window-discovery-direct-large-text" : "window-discovery-direct-standard", app)
+            app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
+                          "One back from discovery must return to the window list")
+            XCTAssertTrue(connect.isHittable)
+            connect.tap()
+            XCTAssertTrue(app.navigationBars["相手とつなぐ"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
             let resume = app.buttons["window-list-resume-setup"]
             for _ in 0..<5 { if resume.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(resume.isHittable)
             XCTAssertTrue(resume.label.contains("ねことも"))
             XCTAssertFalse(app.buttons["window-list-create"].exists, "Resume the existing setup slot")
-            capture(largeText ? "window-addition-large-text" : "window-addition-standard", app)
+            XCTAssertFalse(app.buttons["window-list-join"].exists)
+            XCTAssertFalse(app.buttons["window-list-recover"].exists)
+            capture(largeText ? "window-connection-options-large-text" : "window-connection-options-standard", app)
+            app.navigationBars["相手とつなぐ"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
+                          "One back from connection options must return to the window list")
+            connect.tap()
+            XCTAssertTrue(resume.waitForExistence(timeout: 5))
             resume.tap()
             XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5))
             let restart = app.buttons["設定をやり直す"]
@@ -650,10 +684,11 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(create.waitForExistence(timeout: 5), "Recovery reuses the slot for the setup choices")
             XCTAssertTrue(create.isHittable)
             app.navigationBars["ねことも"].buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(addition.waitForExistence(timeout: 5), "Closing setup returns to the window list")
-            addition.tap()
+            XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
+                          "Closing setup returns to the window list")
             XCTAssertTrue(discover.waitForExistence(timeout: 5))
             discover.tap()
+            XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5),
                           "Private setup must not block public discovery")
             app.terminate()
