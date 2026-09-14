@@ -53,9 +53,13 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
 
     def test_app_refresh_registration_matches_plist(self) -> None:
         identifier = "jp.nekowidget.app.background-moment-refresh"
+        personal_identifier = "jp.nekowidget.app.personal-photo-refresh"
         self.assertEqual(
-            self.info["BGTaskSchedulerPermittedIdentifiers"], [identifier]
+            self.info["BGTaskSchedulerPermittedIdentifiers"], [identifier, personal_identifier]
         )
+        personal = (ROOT / "NekoWidget/Services/PersonalWidgetBackgroundRefresh.swift").read_text(encoding="utf-8")
+        self.assertIn(personal_identifier, personal)
+        self.assertIn("PersonalWidgetBackgroundRefresh.register()", self.service)
         self.assertEqual(
             self.info["UIBackgroundModes"], ["fetch", "remote-notification"]
         )
