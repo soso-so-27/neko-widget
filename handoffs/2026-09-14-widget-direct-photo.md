@@ -4,6 +4,17 @@
 
 利用者は通常の「写真一覧→個別写真→拡大・写真送り・保存→元の位置へ戻る」に違和感なしと確認。今回の対象は、すべての種類のWidgetから個別写真へ開くときの段階的な表示。
 
+## 最終結果（2026-09-14 12:16 JST）
+
+- 製品SHA `02cca223057be167115c5cde6b0e79be0b945f74` をmainへ反映済み。
+- [候補CI34799111006](https://github.com/soso-so-27/neko-widget/actions/runs/34799111006)の8項目が成功。最終候補は40分21秒。これは途中の検証コード修正・やり直しの時間を含まない。
+- iOS18.6 / iOS26.2で、追加3ケースがすべて成功。個人・共有・公式・お題の直接表示、cold、同一プロセスを維持したwarm、読み込み中・表示済みの差し替え、欠落写真の非代替、設定と既存全画面写真への1回の復帰、写真内の情報sheetから旧URLへの切り替えを確認。
+- [main CI34801390651](https://github.com/soso-so-27/neko-widget/actions/runs/34801390651)は同一SHAの成功証拠を再利用し、19秒で完了。
+- TestFlight **1.0 (166)** は[run34801498034](https://github.com/soso-so-27/neko-widget/actions/runs/34801498034)で12:14:56 JSTに `UPLOAD SUCCEEDED with no errors`。runも成功。Appleの処理完了・内部グループ表示・利用者端末での見え方は未確認。通常の完了証拠へApple画面の再ログインを追加していない。
+- 生成画面では、写真表示が背景を覆うことと、閉じた後の設定・既存写真の編集状態（変更回数1）が保持されることを確認。製品コードが同じd486のローカル画像は `output/d486-smoke/mainline-screen-attachments/`、最終SHAの両OSの成功ログは `output/widget-direct-02cc-smoke.log` / `output/widget-direct-02cc-app-ui.log` に保存。
+
+通常の写真一覧→個別写真→拡大・写真送り・保存→一覧位置へ戻る操作は、利用者確認済みとして台帳N03を更新。Widget入口はN11へ分離。過去の接続失敗・約76秒の待ちの原因未確定を解消済みとはせず、N02の特定済み修正を毎回未完了へ戻さない。
+
 ## 原因と変更
 
 - WidgetのURLは既に個人写真ID、共有まどID＋画像digest、公開まどID＋写真IDを含んでいる。URL形式・Widgetキャッシュは変更しない。
@@ -21,7 +32,7 @@
 
 画素と取得先はオフラインfixture。実サービスの共有認証・iCloud取得・ユーザー端末でのWidgetKitタップを再現したという意味ではない。Appleの[URLを指定してアプリを開くUIテストAPI](https://developer.apple.com/documentation/xcuiautomation/xcuiapplication/open(_:))と[アプリのURL受信](https://developer.apple.com/documentation/swiftui/view/onopenurl(perform:))を使用。iOSがURLをアプリへ渡す前のホーム画面の起動演出は、この変更や試験の対象外。
 
-候補のMacビルド・実行・生成画面の確認と内部配布は、結果が揃ってから下へ記録する。研究worktree、CI構成、公式配信、外部公開・招待、課金は変更しない。
+Macビルド・実行・生成画面の確認と内部配布の結果は上記。以下は途中の確認と誤判定の訂正記録。研究worktree、CI構成、公式配信、外部公開・招待、課金は変更しない。
 
 初回候補5880b6cではReleaseビルドと通常Widget Galleryが成功。確認中、共有まど有効化後に写真がすぐ閉じられたり解決に失敗した場合、背景画面・Widget出力への通知が後続同期まで行われない経路を特定した。独立レビューで既存通知の非再帰性・lifecycle維持を確認し、有効化直後に通知する修正を追加。旧run34791253872は不要な継続を避けて取消。共有のキャッシュ表示前に通信完了を待つ変更ではない。
 
