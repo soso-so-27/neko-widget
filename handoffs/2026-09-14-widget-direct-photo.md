@@ -34,3 +34,5 @@
 この失敗の根拠を訂正する。63aの`simulator-unified.log`では、設定を編集したプロセスはPID39336、続く`XCUIApplication.open`でPID39970が新規起動していた。テストAPIが毎回アプリを再起動しており、設定が失われるのはその結果だった。録画末尾は再起動に伴う表示と実際のAX階層が一致せず、録画だけから製品のdismiss不具合と断定したのも誤り。bc9f/63aまでの「warm切り替え成功」「設定復帰の製品不具合」という評価は撤回し、再起動なしのAPIとプロセス維持検査で改めて確認する。[AppleのXCUISystem.open](https://developer.apple.com/documentation/xcuiautomation/xcuisystem/open(_:))は既存アプリへOS経由でURLを開くためのAPI。推測による追加の製品変更は行わない。
 
 63aの通常Galleryは初期`app.launch()`のbackground assertion timeoutで失敗した（job103828915322、`WidgetPlacementScreenshotUITests.swift:163`）。製品のassertionではなく実行環境の失敗だが、今回はテストコードを修正するため旧SHAの再試行はせず新SHAで必要ジョブを実行する。Release、共有runtime、白写真・ひとことなしGalleryは成功していた。
+
+候補d486c83 / run34797923901では、同一プロセスを保持した全4種類のURL切り替え、設定sheetと既存全画面写真を閉じずに保持し1回で戻る検査が成功。coldと欠落写真も成功した。最後の旧URL用fixtureで表示文字が空になる失敗が残った。表示フラグとURL文字列を別々に保持するfixtureを、製品AppRootViewと同じ`sheet(item:)`へ変更し、表示する値をsheetのitemで渡す。製品のURLやdismiss処理は追加変更しない。

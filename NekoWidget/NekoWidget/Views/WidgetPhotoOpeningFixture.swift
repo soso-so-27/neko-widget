@@ -11,8 +11,7 @@ import SwiftUI
 struct WidgetPhotoOpeningFixture: View {
     @State private var showsSettings = false
     @State private var showsExistingPhoto = false
-    @State private var showsOtherURL = false
-    @State private var otherURL = ""
+    @State private var otherRoute: WidgetPhotoOpeningFixtureOtherRoute?
     @StateObject private var official = OfficialWindowFixtureModel(initiallySubscribed: true)
     @StateObject private var channel = OfficialWindowFixtureModel(
         definition: PublicWindowDefinition(
@@ -22,8 +21,7 @@ struct WidgetPhotoOpeningFixture: View {
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: { url in
-            otherURL = url.absoluteString
-            showsOtherURL = true
+            otherRoute = WidgetPhotoOpeningFixtureOtherRoute(url: url)
         }) {
             NavigationStack {
                 VStack(spacing: 24) {
@@ -45,17 +43,17 @@ struct WidgetPhotoOpeningFixture: View {
             .fullScreenCover(isPresented: $showsExistingPhoto) {
                 WidgetPhotoOpeningExistingPhotoFixture(close: { showsExistingPhoto = false })
             }
-            .sheet(isPresented: $showsOtherURL) {
+            .sheet(item: $otherRoute) { route in
                 NavigationStack {
                     VStack(spacing: 12) {
                         WidgetPhotoOpeningProcessLabel(surface: "fallback")
-                        Text(otherURL)
+                        Text(route.url.absoluteString)
                             .accessibilityIdentifier("widget-photo-fixture-other-url")
                     }
                         .navigationTitle("まどのリンク")
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
-                                Button("戻る") { showsOtherURL = false }
+                                Button("戻る") { otherRoute = nil }
                                     .accessibilityIdentifier("widget-photo-fixture-other-close")
                             }
                         }
@@ -67,6 +65,13 @@ struct WidgetPhotoOpeningFixture: View {
         }
         .preferredColorScheme(.dark)
     }
+}
+
+/// Pass the URL as the sheet's item, just like AppRootView's public-window
+/// route. Separate visibility and URL state can capture the pre-update value.
+private struct WidgetPhotoOpeningFixtureOtherRoute: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
 }
 
 /// One in-memory identity per process, with distinct accessibility IDs for
