@@ -30,13 +30,14 @@ final class OfficialWindowUITests: XCTestCase {
         let app = widgetPhotoApplication()
         app.launch()
         XCTAssertTrue(app.buttons["widget-photo-fixture-list"].waitForExistence(timeout: 10))
+        let process = widgetFixtureProcess(in: app)
         let routes = widgetPhotoRoutes()
         // Replace a destination while its lookup is still held, then replace
         // already displayed photos. Only the last selection may survive.
-        app.open(routes[3].url)
+        openWidgetURLInActiveApp(routes[3].url, app: app, process: process)
         assertWidgetPhotoOpening(routes[3], in: app)
         for route in routes {
-            app.open(route.url)
+            openWidgetURLInActiveApp(route.url, app: app, process: process)
             assertWidgetPhotoOpening(route, in: app)
             resolveWidgetPhoto(in: app)
         }
@@ -48,17 +49,18 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(editSettings.waitForExistence(timeout: 5))
         editSettings.tap()
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-settings-draft"].label, "変更回数：1")
-        app.open(routes[1].url)
+        openWidgetURLInActiveApp(routes[1].url, app: app, process: process)
         assertWidgetPhotoOpening(routes[1], in: app)
-        XCTAssertFalse(editSettings.isHittable, "The existing settings sheet must be covered while loading")
+        XCTAssertFalse(isWidgetElementHittable(editSettings), "The existing settings sheet must be covered while loading")
         resolveWidgetPhoto(in: app)
-        XCTAssertFalse(app.staticTexts["widget-photo-fixture-settings-draft"].isHittable)
+        XCTAssertFalse(isWidgetElementHittable(app.staticTexts["widget-photo-fixture-settings-draft"]))
         capture("widget-url-above-settings", app)
         app.buttons["widget-photo-close"].tap()
         XCTAssertTrue(editSettings.waitForExistence(timeout: 5))
         XCTAssertTrue(editSettings.isHittable)
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-settings-draft"].label, "変更回数：1",
                        "One close must restore the same settings draft")
+        capture("widget-url-restored-settings-draft", app)
         XCTAssertFalse(app.buttons["widget-photo-close"].exists)
         app.buttons["widget-photo-fixture-settings-close"].tap()
         XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
@@ -68,30 +70,31 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(editExistingPhoto.waitForExistence(timeout: 5))
         editExistingPhoto.tap()
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-existing-draft"].label, "変更回数：1")
-        app.open(routes[0].url)
+        openWidgetURLInActiveApp(routes[0].url, app: app, process: process)
         assertWidgetPhotoOpening(routes[0], in: app)
-        XCTAssertFalse(editExistingPhoto.isHittable,
+        XCTAssertFalse(isWidgetElementHittable(editExistingPhoto),
                        "An existing full-screen photo must be covered while the Widget loads")
         resolveWidgetPhoto(in: app)
-        XCTAssertFalse(app.staticTexts["widget-photo-fixture-existing-draft"].isHittable)
+        XCTAssertFalse(isWidgetElementHittable(app.staticTexts["widget-photo-fixture-existing-draft"]))
         capture("widget-url-above-existing-fullscreen-photo", app)
         app.buttons["widget-photo-close"].tap()
         XCTAssertTrue(editExistingPhoto.waitForExistence(timeout: 5))
         XCTAssertTrue(editExistingPhoto.isHittable)
         XCTAssertEqual(app.staticTexts["widget-photo-fixture-existing-draft"].label, "変更回数：1",
                        "One close must restore the existing full-screen photo and its draft")
+        capture("widget-url-restored-fullscreen-photo-draft", app)
         XCTAssertFalse(app.buttons["widget-photo-close"].exists)
         app.buttons["widget-photo-fixture-existing-close"].tap()
         XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 5))
 
-        app.open(routes[3].url)
+        openWidgetURLInActiveApp(routes[3].url, app: app, process: process)
         assertWidgetPhotoOpening(routes[3], in: app)
         resolveWidgetPhoto(in: app)
         app.buttons["official-photo-information"].tap()
         let closeInformation = app.buttons["official-photo-information-close"]
         XCTAssertTrue(closeInformation.waitForExistence(timeout: 5))
         let windowURL = URL(string: "nekowidget://official-window")!
-        app.open(windowURL)
+        openWidgetURLInActiveApp(windowURL, app: app, process: process)
         let fallback = app.staticTexts["widget-photo-fixture-other-url"]
         XCTAssertTrue(fallback.waitForExistence(timeout: 5))
         XCTAssertEqual(fallback.label, windowURL.absoluteString)
@@ -111,8 +114,9 @@ final class OfficialWindowUITests: XCTestCase {
         let app = widgetPhotoApplication()
         app.launch()
         XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 10))
+        let process = widgetFixtureProcess(in: app)
         for route in widgetPhotoRoutes(missing: true) {
-            app.open(route.url)
+            openWidgetURLInActiveApp(route.url, app: app, process: process)
             assertWidgetPhotoOpening(route, in: app)
             app.buttons["widget-photo-fixture-resolve"].tap()
             let unavailable = app.staticTexts.matching(NSPredicate(
@@ -168,6 +172,30 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    private func widgetFixtureProcess(in app: XCUIApplication) -> String {
+        let labels = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "widget-photo-fixture-process-"
+        ))
+        XCTAssertTrue(labels.firstMatch.waitForExistence(timeout: 5))
+        let identities = Set(labels.allElementsBoundByIndex.map(\.label))
+        XCTAssertEqual(identities.count, 1,
+                       "All retained fixture surfaces must belong to one process")
+        return identities.first ?? ""
+    }
+
+    @MainActor
+    private func openWidgetURLInActiveApp(_ url: URL, app: XCUIApplication, process: String) {
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertEqual(widgetFixtureProcess(in: app), process)
+        // XCUIApplication.open launches a new app process. The device's
+        // XCUISystem sends this URL to the already running default handler.
+        XCUIDevice.shared.system.open(url)
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        XCTAssertEqual(widgetFixtureProcess(in: app), process,
+                       "Every active URL must preserve the original app process and its drafts")
+    }
+
+    @MainActor
     private func assertWidgetPhotoOpening(_ route: WidgetPhotoTestRoute, in app: XCUIApplication) {
         let selectedRoute = app.staticTexts.matching(NSPredicate(
             format: "identifier == %@ AND label == %@", "widget-photo-fixture-route", route.key
@@ -205,12 +233,17 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    private func isWidgetElementHittable(_ element: XCUIElement) -> Bool {
+        element.exists && element.isHittable
+    }
+
+    @MainActor
     private func assertWidgetBackgroundHidden(in app: XCUIApplication) {
-        XCTAssertFalse(app.buttons["widget-photo-fixture-home"].isHittable)
-        XCTAssertFalse(app.buttons["widget-photo-fixture-list"].isHittable)
-        XCTAssertFalse(app.navigationBars["確認用ホーム"].isHittable)
-        XCTAssertFalse(app.navigationBars["どこかの猫"].isHittable)
-        XCTAssertFalse(app.navigationBars["おひるね"].isHittable)
+        XCTAssertFalse(isWidgetElementHittable(app.buttons["widget-photo-fixture-home"]))
+        XCTAssertFalse(isWidgetElementHittable(app.buttons["widget-photo-fixture-list"]))
+        XCTAssertFalse(isWidgetElementHittable(app.navigationBars["確認用ホーム"]))
+        XCTAssertFalse(isWidgetElementHittable(app.navigationBars["どこかの猫"]))
+        XCTAssertFalse(isWidgetElementHittable(app.navigationBars["おひるね"]))
     }
 
     @MainActor

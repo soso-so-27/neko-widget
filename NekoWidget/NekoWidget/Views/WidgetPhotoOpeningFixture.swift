@@ -27,6 +27,7 @@ struct WidgetPhotoOpeningFixture: View {
         }) {
             NavigationStack {
                 VStack(spacing: 24) {
+                    WidgetPhotoOpeningProcessLabel(surface: "background")
                     Button("写真ホーム") {}
                         .accessibilityIdentifier("widget-photo-fixture-home")
                     Button("まどの一覧") {}
@@ -46,8 +47,11 @@ struct WidgetPhotoOpeningFixture: View {
             }
             .sheet(isPresented: $showsOtherURL) {
                 NavigationStack {
-                    Text(otherURL)
-                        .accessibilityIdentifier("widget-photo-fixture-other-url")
+                    VStack(spacing: 12) {
+                        WidgetPhotoOpeningProcessLabel(surface: "fallback")
+                        Text(otherURL)
+                            .accessibilityIdentifier("widget-photo-fixture-other-url")
+                    }
                         .navigationTitle("まどのリンク")
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
@@ -65,6 +69,22 @@ struct WidgetPhotoOpeningFixture: View {
     }
 }
 
+/// One in-memory identity per process, with distinct accessibility IDs for
+/// retained surfaces so a covered view cannot make a singular query ambiguous.
+private enum WidgetPhotoOpeningFixtureProcess {
+    static let identity = "\(ProcessInfo.processInfo.processIdentifier)|\(UUID().uuidString)"
+}
+
+private struct WidgetPhotoOpeningProcessLabel: View {
+    let surface: String
+    var body: some View {
+        Text(WidgetPhotoOpeningFixtureProcess.identity)
+            .font(.caption2).lineLimit(1)
+            .accessibilityLabel(WidgetPhotoOpeningFixtureProcess.identity)
+            .accessibilityIdentifier("widget-photo-fixture-process-\(surface)")
+    }
+}
+
 /// The draft belongs to the sheet itself, so restoring a newly created sheet
 /// instead of preserving the existing presentation loses this counter.
 private struct WidgetPhotoOpeningSettingsFixture: View {
@@ -74,6 +94,7 @@ private struct WidgetPhotoOpeningSettingsFixture: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
+                WidgetPhotoOpeningProcessLabel(surface: "settings")
                 Text("変更回数：\(changeCount)")
                     .accessibilityIdentifier("widget-photo-fixture-settings-draft")
                 Button("設定を編集") { changeCount += 1 }
@@ -98,6 +119,7 @@ private struct WidgetPhotoOpeningExistingPhotoFixture: View {
         NavigationStack {
             MomentPhotoDetailBody(imageURL: MomentExperiencePhotoFixture.url(index: 2), caption: nil) {
                 VStack(spacing: 12) {
+                    WidgetPhotoOpeningProcessLabel(surface: "existing-photo")
                     Text("変更回数：\(changeCount)")
                         .accessibilityIdentifier("widget-photo-fixture-existing-draft")
                     Button("写真のメモを編集") { changeCount += 1 }
@@ -152,6 +174,7 @@ private struct WidgetPhotoOpeningFixtureDetail: View {
                 }
                 ToolbarItem(placement: .bottomBar) {
                     VStack(spacing: 4) {
+                        WidgetPhotoOpeningProcessLabel(surface: "photo")
                         Text(destinationKey).font(.caption2).lineLimit(1)
                             .accessibilityIdentifier("widget-photo-fixture-route")
                         if !hasResolved {

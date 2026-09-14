@@ -17,7 +17,7 @@
 
 既存共有境界62件（既存skip1）と写真権限bootstrap9件、開発手順事前確認が成功。製品側・URL入口側は担当を分けて相互レビュー。レビューで、既存のsheetとの競合、Widget詳細内のsheetを残したまま閉じる問題、個人詳細のreturn不足を修正した。
 
-既存アプリUIクラスへ3ケースを追加。実際の`XCUIApplication.open(URL)`で共通の製品入口にURLを渡し、個人・共有・公式・お題のcold/warm、読み込み中・表示中の別写真への切り替え、欠落した写真、1回で閉じる動作を確認する。通常の設定sheet・全画面写真の状態保持と、Widget写真の情報sheetから旧URLへの切り替えも同じケースにまとめる。
+既存アプリUIクラスへ3ケースを追加。coldは`XCUIApplication.open(URL)`、起動済みのwarmは`XCUIDevice.shared.system.open(URL)`で共通の製品入口にURLを渡す。個人・共有・公式・お題のcold/warm、読み込み中・表示中の別写真への切り替え、欠落した写真、1回で閉じる動作を確認する。通常の設定sheet・全画面写真の状態保持と、Widget写真の情報sheetから旧URLへの切り替えも同じケースにまとめる。warmでは同一プロセスの維持も検査する。
 
 画素と取得先はオフラインfixture。実サービスの共有認証・iCloud取得・ユーザー端末でのWidgetKitタップを再現したという意味ではない。Appleの[URLを指定してアプリを開くUIテストAPI](https://developer.apple.com/documentation/xcuiautomation/xcuiapplication/open(_:))と[アプリのURL受信](https://developer.apple.com/documentation/swiftui/view/onopenurl(perform:))を使用。iOSがURLをアプリへ渡す前のホーム画面の起動演出は、この変更や試験の対象外。
 
@@ -29,4 +29,8 @@
 
 候補183c042 / run34793545578ではURLを受けて読み込み画面と閉じる操作まで表示できたが、保持した背景要素の`exists == false`を求める新規試験が失敗。iOS 18.6の録画を抽出した`output/183c-loading-frame.png`で、画面全体が写真の読み込み表示に覆われ、ホーム・一覧・元のナビゲーションが見えないことを確認した。[Appleのexists仕様](https://developer.apple.com/documentation/xcuiautomation/xcuielement/exists)どおり、覆われた要素も階層に存在し得る。背景を保持する仕様に合わせ、非表示の操作は`isHittable == false`、対象の写真・閉じるは操作可能であることへ判定を修正。保持された別写真も存在だけで混同せず、現在表示中の写真を検査する。画像確認、対象URLの一致、欠落写真の非代替、閉じた後の状態保持の条件は維持する。
 
-候補bc9f1d3 / run34794569680では、iOS 18.6でcold 4経路、欠落写真4経路が成功。warmの読み込み中・表示中の切り替えも進んだが、設定sheetの上から開いたWidgetを閉じる場面で失敗。録画`output/bc9f-after-close.png`では写真画面が残った。独立レビューを加え、保持したSwiftUI presenterへdismissを呼ぶ処理を廃止。Widget自身の子sheetを先に閉じ、その完了後にWidget自身を閉じる。差し替え時も所有するWidget controllerから子だけを閉じる。遷移中ガードは全完了まで維持。既知の失敗を先に検出できるようwarmテストをActiveAppという名前にし、条件を削らず先に実行する。cold成功だけで完了扱いにせず、残りも新しいSHAで確認する。
+候補bc9f1d3 / run34794569680と63a174e / run34795924859では、iOS 18.6でcold 4経路、欠落写真4経路が成功。設定を開いた後のケースは失敗した。当初は製品のdismiss不具合と判断し、Widget自身の子sheetを先に閉じ、その完了後にWidget自身を閉じる処理へ変更したが、同じ失敗が続いた。
+
+この失敗の根拠を訂正する。63aの`simulator-unified.log`では、設定を編集したプロセスはPID39336、続く`XCUIApplication.open`でPID39970が新規起動していた。テストAPIが毎回アプリを再起動しており、設定が失われるのはその結果だった。録画末尾は再起動に伴う表示と実際のAX階層が一致せず、録画だけから製品のdismiss不具合と断定したのも誤り。bc9f/63aまでの「warm切り替え成功」「設定復帰の製品不具合」という評価は撤回し、再起動なしのAPIとプロセス維持検査で改めて確認する。[AppleのXCUISystem.open](https://developer.apple.com/documentation/xcuiautomation/xcuisystem/open(_:))は既存アプリへOS経由でURLを開くためのAPI。推測による追加の製品変更は行わない。
+
+63aの通常Galleryは初期`app.launch()`のbackground assertion timeoutで失敗した（job103828915322、`WidgetPlacementScreenshotUITests.swift:163`）。製品のassertionではなく実行環境の失敗だが、今回はテストコードを修正するため旧SHAの再試行はせず新SHAで必要ジョブを実行する。Release、共有runtime、白写真・ひとことなしGalleryは成功していた。
