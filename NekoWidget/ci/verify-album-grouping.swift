@@ -102,7 +102,7 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
     ], "valuable album order or zero filtering changed: \(ids)")
     try require(CuratedAlbumID.together.title == "人といっしょ",
                 "person-and-cat album title changed")
-    try require(CuratedAlbumID.multipleCats.title == "猫たち",
+    try require(CuratedAlbumID.multipleCats.title == "猫たちがいっしょ",
                 "multiple-cat album made an exact-count claim")
     try require(CuratedAlbumID.householdGrowth.title == "猫たちと過ごした時間",
                 "household timeline title changed")

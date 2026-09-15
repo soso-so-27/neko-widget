@@ -64,6 +64,8 @@ struct AlbumView: View {
                 ForEach(section.albums) { album in
                     albumLink(album, isPrimary: true)
                 }
+            } else if isEmbedded && section.id == .time {
+                timeAlbums(section.albums)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(sectionTitle(for: section.id))
@@ -80,6 +82,45 @@ struct AlbumView: View {
         }
     }
 
+    private func timeAlbums(_ albums: [CuratedAlbumPresentation]) -> some View {
+        let comparisons = albums.filter { $0.id.isGrowthComparison }
+        let periods = albums.filter { !$0.id.isGrowthComparison }
+        let years = periods.compactMap { album -> (year: Int, album: CuratedAlbumPresentation)? in
+            guard case let .calendarYear(year) = album.id else { return nil }
+            return (year, album)
+        }.sorted { $0.year > $1.year }.map(\.album)
+        let lifePeriods = periods.filter {
+            if case .calendarYear = $0.id { return false }
+            return true
+        }
+
+        return VStack(alignment: .leading, spacing: 24) {
+            ForEach(comparisons) { album in
+                albumLink(album, isPrimary: false)
+            }
+            if !lifePeriods.isEmpty {
+                periodShelf(lifePeriods, title: "時期ごと")
+            }
+            if !years.isEmpty {
+                periodShelf(years, title: "年ごと")
+            }
+        }
+    }
+
+    private func periodShelf(
+        _ albums: [CuratedAlbumPresentation], title: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
+            LazyVGrid(columns: cardColumns, spacing: 12) {
+                ForEach(albums) { album in
+                    albumLink(album, isPrimary: false)
+                }
+            }
+        }
+    }
+
     private func albumLink(
         _ album: CuratedAlbumPresentation,
         isPrimary: Bool
@@ -87,6 +128,10 @@ struct AlbumView: View {
         NavigationLink(value: AlbumRoute.album(album.id)) {
             if isPrimary {
                 PrimaryCuratedAlbumCard(album: album)
+            } else if isEmbedded && album.id.isGrowthComparison {
+                GrowthAlbumOverviewCard(album: album)
+            } else if isEmbedded && album.group == .time {
+                PeriodAlbumOverviewCard(album: album)
             } else if isEmbedded {
                 AlbumOverviewCard(
                     identifier: album.coverPhoto.localIdentifier,
@@ -103,7 +148,10 @@ struct AlbumView: View {
             isPrimary ? "album-primary-all-cat-photos" : "album-card-\(album.id.logKey)"
         )
         .accessibilityLabel("\(album.title)、\(album.countLabel)")
-        .accessibilityHint("写真の一覧を開きます")
+        .accessibilityValue(album.id.isGrowthComparison
+            ? GrowthAlbumOverviewCard.dateRange(for: album) : "")
+        .accessibilityHint(album.id.isGrowthComparison
+            ? "時期ごとの写真を開きます" : "写真の一覧を開きます")
     }
 
     private func isPrimaryAlbumSection(
@@ -235,6 +283,91 @@ struct AlbumView: View {
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 180 : 420)
         }
+    }
+}
+
+/// Reuses the selected (and user-overridden) period photos from the detail.
+/// A household comparison remains a household history, not an identity claim.
+private struct GrowthAlbumOverviewCard: View {
+    let album: CuratedAlbumPresentation
+
+    private var boundaryPhotos: [PhotoPresentation] {
+        guard let first = album.photos.first else { return [] }
+        guard let last = album.photos.last,
+              first.localIdentifier != last.localIdentifier else { return [first] }
+        return [first, last]
+    }
+
+    static func dateLabel(_ photo: PhotoPresentation) -> String {
+        photo.creationDate?.formatted(.dateTime.year().month()) ?? "撮影日不明"
+    }
+
+    static func dateRange(for album: CuratedAlbumPresentation) -> String {
+        guard let first = album.photos.first else { return "" }
+        guard let last = album.photos.last,
+              first.localIdentifier != last.localIdentifier else { return dateLabel(first) }
+        return "\(dateLabel(first))〜\(dateLabel(last))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(album.cardTitle).font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(boundaryPhotos) { photo in
+                    VStack(alignment: .leading, spacing: 8) {
+                        PhotoAssetImageView(
+                            localIdentifier: photo.localIdentifier,
+                            catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: 720, height: 720),
+                            targetAspectRatio: 1, networkAccessAllowed: true
+                        )
+                        .aspectRatio(1, contentMode: .fit)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        Text(Self.dateLabel(photo))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+/// Date folders remain directly reachable without competing with comparisons.
+private struct PeriodAlbumOverviewCard: View {
+    let album: CuratedAlbumPresentation
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PhotoAssetImageView(
+                localIdentifier: album.coverPhoto.localIdentifier,
+                catBoundingBox: album.coverPhoto.catBoundingBox,
+                targetPixelSize: CGSize(width: 180, height: 180),
+                targetAspectRatio: 1, networkAccessAllowed: true
+            )
+            .frame(width: 44, height: 44).clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(album.cardTitle).font(.subheadline.weight(.semibold))
+                Text(album.countLabel).font(.caption).foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14))
+        .contentShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -700,12 +833,23 @@ struct LikedPhotosView: View {
                 identifier: month.coverPhoto?.localIdentifier,
                 catBoundingBox: month.coverPhoto?.catBoundingBox,
                 title: month.title, subtitle: "\(month.yearNumber)年",
-                isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread
+                isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
+                previewPhotos: monthPreviewPhotos(month)
             )
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(isLatest ? "memories-monthly-window" : "albums-month-\(month.periodIdentifier)")
         .accessibilityLabel("\(month.accessibilityTitle)、\(month.photos.count.formatted())枚")
+    }
+
+    private func monthPreviewPhotos(_ month: MonthlyWindowPresentation) -> [PhotoPresentation] {
+        guard !month.photos.isEmpty else { return [] }
+        let candidates = [month.coverPhoto, month.photos.first, month.photos.last,
+                          month.photos[month.photos.count / 2]]
+        var identifiers: Set<String> = []
+        return Array(candidates.compactMap { $0 }.filter {
+            identifiers.insert($0.localIdentifier).inserted
+        }.prefix(3))
     }
 
     private func movieLink(_ movie: SeasonalMovieArchiveRecord, isLatest: Bool) -> some View {
@@ -733,6 +877,7 @@ private struct AlbumOverviewCard: View {
     let isMovie: Bool
     let isNew: Bool
     var networkAccessAllowed = false
+    var previewPhotos: [PhotoPresentation] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -740,7 +885,9 @@ private struct AlbumOverviewCard: View {
                 .aspectRatio(4.0 / 3.0, contentMode: .fit)
                 .overlay {
                     GeometryReader { geometry in
-                        if let identifier {
+                        if !previewPhotos.isEmpty {
+                            collage(size: geometry.size)
+                        } else if let identifier {
                             PhotoAssetImageView(
                                 localIdentifier: identifier, catBoundingBox: catBoundingBox,
                                 targetPixelSize: CGSize(width: 720, height: 540),
@@ -778,6 +925,42 @@ private struct AlbumOverviewCard: View {
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .contentShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    @ViewBuilder
+    private func collage(size: CGSize) -> some View {
+        if let first = previewPhotos.first {
+            if previewPhotos.count == 1 {
+                previewImage(first, size: size)
+            } else {
+                let mainWidth = max(size.width - 3, 0) * (previewPhotos.count == 2 ? 0.5 : 0.6)
+                let sideWidth = max(size.width - mainWidth - 3, 0)
+                HStack(spacing: 3) {
+                    previewImage(first, size: CGSize(width: mainWidth, height: size.height))
+                    if previewPhotos.count == 2 {
+                        previewImage(previewPhotos[1], size: CGSize(width: sideWidth, height: size.height))
+                    } else {
+                        let sideSize = CGSize(width: sideWidth, height: max((size.height - 3) / 2, 0))
+                        VStack(spacing: 3) {
+                            previewImage(previewPhotos[1], size: sideSize)
+                            previewImage(previewPhotos[2], size: sideSize)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func previewImage(_ photo: PhotoPresentation, size: CGSize) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 720, height: 720),
+            targetAspectRatio: size.width / max(size.height, 1),
+            networkAccessAllowed: networkAccessAllowed
+        )
+        .frame(width: size.width, height: size.height)
+        .clipped()
     }
 }
 

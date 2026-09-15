@@ -1487,6 +1487,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 returnFromFavorites(in: app)
                 let album = element("album-card-household_growth", in: app)
                 reveal(album, in: app)
+                assertComparisonDates(on: album)
+                capture("albums-comparison-standard")
                 album.tap()
                 XCTAssertTrue(app.navigationBars["猫たちと過ごした時間"].waitForExistence(timeout: 10))
                 app.navigationBars["猫たちと過ごした時間"].buttons.element(boundBy: 0).tap()
@@ -1872,7 +1874,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let readyApp = launch("monthly")
         assertAlbumsRoot(in: readyApp)
         XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
-        XCTAssertTrue(readyApp.staticTexts["solo-memories-loaded-2"].waitForExistence(timeout: 15))
+        waitForLoadedPhotos([1, 3, 5, 9], in: readyApp)
         capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
         assertAlbumsRoot(in: readyApp)
@@ -1881,6 +1883,9 @@ final class SoloMemoriesUITests: XCTestCase {
         archive.tap()
         XCTAssertTrue(element("albums-reflections-archive", in: readyApp).waitForExistence(timeout: 10))
         let previousMonth = element("albums-month-2025-07", in: readyApp)
+        reveal(previousMonth, in: readyApp)
+        XCTAssertTrue(previousMonth.label.contains("1枚"))
+        capture("albums-monthly-single-photo-cover")
         openCardAndReturn(previousMonth, expectedRoute: "monthly:2025-07", in: readyApp)
         XCTAssertTrue(readyApp.navigationBars["これまでのふりかえり"].waitForExistence(timeout: 10))
         XCTAssertTrue(element("albums-reflections-archive", in: readyApp).exists)
@@ -1897,13 +1902,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let seasonalCard = element("albums-seasonal-movie", in: app)
         XCTAssertTrue(seasonalCard.waitForExistence(timeout: 10))
         XCTAssertFalse(monthlyCard(in: app).exists)
-        let loadedPhotos = app.staticTexts["solo-memories-loaded-photos"]
-        let coverLoaded = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@",
-                                   "|app-store-screenshot-fixture-1|", "|app-store-screenshot-fixture-9|"),
-            object: loadedPhotos
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [coverLoaded], timeout: 15), .completed)
+        waitForLoadedPhotos([1, 9], in: app)
         capture("albums-seasonal-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
         assertAlbumsRoot(in: app)
@@ -1914,6 +1913,7 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.scrollViews.firstMatch.swipeDown() }
         let month = monthlyCard(in: app)
         reveal(month, in: app)
+        waitForLoadedPhotos([1, 3, 5], in: app)
         let monthFrame = month.frame
         XCTAssertGreaterThan(monthFrame.height, 0)
         XCTAssertGreaterThan(monthFrame.width, app.frame.width / 2)
@@ -1930,6 +1930,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-seasonal-cover-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
         for (identifier, route) in [("household_growth", "album:household_growth"),
+                                    ("calendar_year_2025", "album:calendar_year_2025"),
                                     ("close_up", "album:close_up")] {
             let cover = element("album-card-\(identifier)", in: app)
             reveal(cover, in: app)
@@ -1937,6 +1938,10 @@ final class SoloMemoriesUITests: XCTestCase {
                                  "Embedded album cards must inherit accessibility text size.")
             XCTAssertGreaterThanOrEqual(cover.frame.minX, app.frame.minX)
             XCTAssertLessThanOrEqual(cover.frame.maxX, app.frame.maxX)
+            if identifier == "household_growth" {
+                assertComparisonDates(on: cover)
+                waitForLoadedPhotos([8], in: app)
+            }
             capture("albums-\(identifier)-largest-text")
             openCardAndReturn(cover, expectedRoute: route, in: app)
         }
@@ -1962,6 +1967,28 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    private func assertComparisonDates(on cover: XCUIElement) {
+        let dates = cover.value as? String ?? ""
+        XCTAssertTrue(dates.contains("2022"), "The comparison must expose the earlier photograph's date.")
+        XCTAssertTrue(dates.contains("2025"), "The comparison must expose the later photograph's date.")
+        XCTAssertTrue(dates.contains("〜"))
+    }
+
+    @MainActor
+    private func waitForLoadedPhotos(_ numbers: [Int], in app: XCUIApplication) {
+        // Covers can load several photos, and lazy shelves may load more.
+        // Wait for the expected image identities instead of an exact total.
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: numbers.map {
+            NSPredicate(format: "value CONTAINS %@", "|app-store-screenshot-fixture-\($0)|")
+        })
+        let loaded = XCTNSPredicateExpectation(
+            predicate: predicate,
+            object: app.staticTexts["solo-memories-loaded-photos"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 15), .completed)
     }
 
     @MainActor

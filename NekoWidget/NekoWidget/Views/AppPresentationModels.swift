@@ -109,9 +109,9 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case let .calendarYear(year): "\(year)年"
         case .closeUp: "どアップ"
         case .together: "人といっしょ"
-        case .multipleCats: "猫たち"
+        case .multipleCats: "猫たちがいっしょ"
         case .outing: "おでかけ"
-        case .catDay: "猫の日"
+        case .catDay: "2月22日"
         }
     }
 

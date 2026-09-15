@@ -736,12 +736,19 @@ private struct SoloMemoriesFixtureView: View {
         guard scenario == "solo-memories-seasonal-large" else { return [] }
         let photos = AppStoreScreenshotFixture.photos
         var sections: [CuratedAlbumSectionPresentation] = []
-        if let growth = HouseholdGrowthAlbumBuilder().album(from: photos) {
-            sections.append(CuratedAlbumSectionPresentation(id: .time, albums: [growth]))
-        }
-        let themes = CuratedAlbumBuilder()
+        let curatedAlbums = CuratedAlbumBuilder()
             .sections(from: photos, lifeReference: nil, includesGrowth: false)
-            .flatMap(\.albums).filter { $0.id == .closeUp }
+            .flatMap(\.albums)
+        var timeAlbums = curatedAlbums.filter {
+            $0.id == .calendarYear(2024) || $0.id == .calendarYear(2025)
+        }
+        if let growth = HouseholdGrowthAlbumBuilder().album(from: photos) {
+            timeAlbums.insert(growth, at: 0)
+        }
+        if !timeAlbums.isEmpty {
+            sections.append(CuratedAlbumSectionPresentation(id: .time, albums: timeAlbums))
+        }
+        let themes = curatedAlbums.filter { $0.id == .closeUp }
         if !themes.isEmpty {
             sections.append(CuratedAlbumSectionPresentation(id: .cuteness, albums: themes))
         }
@@ -781,8 +788,9 @@ private struct SoloMemoriesFixtureView: View {
         let previous = MonthlyWindowPresentation(
             monthStart: Date(timeIntervalSince1970: 1_751_328_000),
             yearNumber: 2025, monthNumber: 7,
-            photos: Array(AppStoreScreenshotFixture.photos.prefix(2)),
-            availableSceneCount: 2
+            // Exercise an archived cover with only one available photograph.
+            photos: Array(AppStoreScreenshotFixture.photos.prefix(1)),
+            availableSceneCount: 1
         )
         return [monthlyLetter, previous]
     }
