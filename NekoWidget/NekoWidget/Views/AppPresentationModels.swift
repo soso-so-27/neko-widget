@@ -9,7 +9,7 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
     let isLiked: Bool
     let likedAt: Date?
     /// Apple Photos' separate favorite flag. `isLiked` is the app's explicit
-    /// 「思い出」 state and must remain the stronger, canonical user signal.
+    /// 「お気に入り」 state and must remain the stronger, canonical user signal.
     let isPhotoLibraryFavorite: Bool
     /// Album traits are intentionally reduced to the derived, privacy-minimal
     /// values needed by the UI. Raw pose joints, face rectangles and locations

@@ -701,7 +701,7 @@ struct FamilyWindowView: View {
             Text(memorySaveConfirmationMessage(for: item))
         }
         .confirmationDialog(
-            "思い出から外しますか？",
+            "お気に入りから外しますか？",
             isPresented: Binding(
                 get: { isDetail == isShowingReceivedPhotoDetail && memoryRemovalTarget != nil },
                 set: { if !$0 { memoryRemovalTarget = nil } }
@@ -709,7 +709,7 @@ struct FamilyWindowView: View {
             titleVisibility: .visible,
             presenting: memoryRemovalTarget
         ) { item in
-            Button("思い出から外す", role: .destructive) {
+            Button("お気に入りから外す", role: .destructive) {
                 memoryRemovalTarget = nil
                 performMemoryAction(item, shouldSave: false)
             }
@@ -717,7 +717,7 @@ struct FamilyWindowView: View {
                 memoryRemovalTarget = nil
             }
         } message: { _ in
-            Text("思い出一覧から外します。写真アプリへコピーした写真は削除されません。")
+            Text("お気に入りから外します。写真アプリへコピーした写真は削除されません。")
         }
     }
 
@@ -1031,7 +1031,7 @@ struct FamilyWindowView: View {
                     Text("写真は自動では共有されません。追加する1枚を選んで確認します。")
                 }
                 Section("写真の保存") {
-                    Text("届いた写真は最長90日です。自分の思い出に追加すると、写真アプリにもコピーします。相手には通知しません。")
+                    Text("届いた写真は最長90日です。自分のお気に入りに追加すると、写真アプリにもコピーします。相手には通知しません。")
                     Text("自分が追加した写真の控えは、このiPhoneに最長30日保存します。")
                     Text("この一覧は長期保管用ではありません。端末や追加した時期により、見られる写真は異なります。機種変更や再インストール後に、過去の全写真を復元する機能はありません。")
                 }
@@ -1088,7 +1088,7 @@ struct FamilyWindowView: View {
 
         if !model.receivedMoments.isEmpty {
             Label(
-                "届いた写真は最長90日です。保存するには「自分の思い出に追加」を選びます。",
+                "届いた写真は最長90日です。保存するには「自分のお気に入りに追加」を選びます。",
                 systemImage: "info.circle"
             )
             .font(.caption)
@@ -1343,7 +1343,7 @@ struct FamilyWindowView: View {
             parts.append("ひとこと。\(caption)")
         }
         if model.isSavedMemory(item) {
-            parts.append("思い出に残しました")
+            parts.append("お気に入りに追加しました")
         }
         if model.heartOutboxItem(for: item)?.phase == .sent {
             parts.append("ハートを送信済みです")
@@ -2194,7 +2194,7 @@ struct FamilyWindowView: View {
                 }
             }
             if model.isReportOnly, model.isSavedMemory(item) {
-                Label("思い出に残した", systemImage: "bookmark.fill")
+                Label("お気に入りに追加済み", systemImage: "bookmark.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(13)
@@ -2268,24 +2268,24 @@ struct FamilyWindowView: View {
 
     private var memorySaveDialogTitle: String {
         guard let target = widgetMemoryTarget else {
-            return "自分の思い出に追加しますか？"
+            return "自分のお気に入りに追加しますか？"
         }
         return model.hasImportedMemory(target)
-            ? "自分の思い出に戻しますか？"
-            : "自分の思い出に追加しますか？"
+            ? "自分のお気に入りに戻しますか？"
+            : "自分のお気に入りに追加しますか？"
     }
 
     private func memorySaveActionTitle(for item: MomentInboxItem) -> String {
         model.hasImportedMemory(item)
-            ? "自分の思い出に再追加"
-            : "自分の思い出に追加"
+            ? "自分のお気に入りに再追加"
+            : "自分のお気に入りに追加"
     }
 
     private func memorySaveConfirmationMessage(for item: MomentInboxItem) -> String {
         if model.hasImportedMemory(item) {
-            return "写真アプリにある写真を、もう一度思い出に加えます。相手には通知しません。"
+            return "写真アプリにある写真を、もう一度お気に入りに追加します。相手には通知しません。"
         }
-        return "写真アプリへコピーして、思い出に加えます。iCloud写真の設定により、iCloudにも同期される場合があります。相手には通知しません。"
+        return "写真アプリへコピーして、お気に入りに追加します。iCloud写真の設定により、iCloudにも同期される場合があります。相手には通知しません。"
     }
 
     private func performMemoryAction(
@@ -2606,10 +2606,10 @@ struct FamilyWindowView: View {
             Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("自分の思い出に追加した写真は、位置情報を除いて写真アプリへ保存します。通常の思い出と写真まとめに入り、相手へは通知しません。")
+            Text("自分のお気に入りに追加した写真は、位置情報を除いて写真アプリへ保存します。個人のお気に入りと写真まとめに入り、相手へは通知しません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、思い出から外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")
+            Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、お気に入りから外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -2632,7 +2632,7 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
         if model.isSavedMemory(item) {
-            return "このiPhoneの共有写真の一覧から削除します。自分の思い出、相手の写真一覧とまどはそのままです。取り消せません。"
+            return "このiPhoneの共有写真の一覧から削除します。自分のお気に入り、相手の写真一覧とまどはそのままです。取り消せません。"
         }
         if model.hasImportedMemory(item) {
             return "このiPhoneの共有写真の一覧から削除します。写真アプリへ取り込んだ写真、相手の写真一覧とまどはそのままです。取り消せません。"
@@ -2748,15 +2748,15 @@ struct MomentReceivedPhotoActions: View {
     private var memoryControl: some View {
         if isSaved {
             HStack(spacing: 6) {
-                Label("思い出に残した", systemImage: "bookmark.fill").lineLimit(1)
+                Label("お気に入りに追加済み", systemImage: "bookmark.fill").lineLimit(1)
                 Spacer(minLength: 2)
                 Menu {
-                    Button("思い出から外す", role: .destructive, action: requestMemoryRemoval)
+                    Button("お気に入りから外す", role: .destructive, action: requestMemoryRemoval)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
-                        .accessibilityLabel("思い出の操作")
+                        .accessibilityLabel("お気に入りの操作")
                 }
                 .disabled(memoryIsDisabled)
             }
@@ -2775,7 +2775,7 @@ struct MomentReceivedPhotoActions: View {
                     } else {
                         Image(systemName: "bookmark")
                     }
-                    Text(hasImportedMemory ? "自分の思い出に再追加" : "自分の思い出に追加")
+                    Text(hasImportedMemory ? "自分のお気に入りに再追加" : "自分のお気に入りに追加")
                 }
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)

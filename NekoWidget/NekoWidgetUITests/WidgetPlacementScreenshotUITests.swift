@@ -398,7 +398,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         // Assert exposed controls; reviewers also inspect the captured pixels
         // for the short cat-name footer and absence of overlaid action icons.
         XCTAssertFalse(surface.buttons["ハートを送る"].exists)
-        XCTAssertFalse(surface.buttons["思い出に残す"].exists)
+        XCTAssertFalse(surface.buttons["お気に入りに追加"].exists)
     }
 
     @MainActor

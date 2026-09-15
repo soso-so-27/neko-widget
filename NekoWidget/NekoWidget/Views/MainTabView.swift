@@ -78,7 +78,7 @@ struct MainTabView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
 
-    @State private var selectedTab: AppTab = .photos
+    @State private var selectedTab: AppTab = .memories
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var showsSettings = false
@@ -98,6 +98,40 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            NavigationStack(path: $memoriesPath) {
+                LikedPhotosView(
+                    photos: likedPhotos,
+                    hasPhotoAccess: hasPhotoAccess,
+                    monthlyWindowCollection: monthlyWindowCollection,
+                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
+                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
+                    seasonalMovies: seasonalMovieArchive.records,
+                    exportPhotoBook: exportPhotoBook,
+                    openPhotos: {
+                        photosPath = NavigationPath()
+                        selectedTab = .photos
+                    },
+                    albumSections: curatedAlbumSections,
+                    albumScan: scan,
+                    albumProfiles: catProfilesPresentation.profiles,
+                    albumOptions: catProfilesPresentation.photoAlbumOptions,
+                    albumProfileActions: catProfilesActions,
+                    albumScope: $selectedAlbumScope,
+                    showSettings: { showsSettings = true }
+                )
+                    .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
+                    .navigationDestination(
+                        for: MemoriesRoute.self,
+                        destination: memoriesDestination
+                    )
+            }
+            .tabItem {
+                Label("アルバム", systemImage: "photo.stack.fill")
+                    .accessibilityIdentifier("main-tab-memories")
+            }
+            .badge(hasUnreadMemoriesSummary ? 1 : 0)
+            .tag(AppTab.memories)
+
             NavigationStack(path: $photosPath) {
                 HomeView(
                     scan: scan,
@@ -117,8 +151,7 @@ struct MainTabView: View {
                     selectPhotoSourceAlbum: selectPhotoSourceAlbum,
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions,
-                    albumHighlights: homeAlbumHighlights
+                    catProfilesActions: catProfilesActions
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
                 .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
@@ -128,32 +161,6 @@ struct MainTabView: View {
                     .accessibilityIdentifier("main-tab-photos")
             }
             .tag(AppTab.photos)
-
-            NavigationStack(path: $memoriesPath) {
-                LikedPhotosView(
-                    photos: likedPhotos,
-                    hasPhotoAccess: hasPhotoAccess,
-                    monthlyWindowCollection: monthlyWindowCollection,
-                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
-                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
-                    seasonalMovies: seasonalMovieArchive.records,
-                    exportPhotoBook: exportPhotoBook,
-                    openPhotos: {
-                        photosPath = NavigationPath()
-                        selectedTab = .photos
-                    }
-                )
-                    .navigationDestination(
-                        for: MemoriesRoute.self,
-                        destination: memoriesDestination
-                    )
-            }
-            .tabItem {
-                Label("思い出", systemImage: "photo.stack.fill")
-                    .accessibilityIdentifier("main-tab-memories")
-            }
-            .badge(hasUnreadMemoriesSummary ? 1 : 0)
-            .tag(AppTab.memories)
 
             if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
                 NavigationStack {
@@ -476,7 +483,7 @@ struct MainTabView: View {
             profileActions: catProfilesActions,
             selectedScope: $selectedAlbumScope
         )
-        .navigationTitle("自動アルバム")
+        .navigationTitle("アルバム")
     }
 
     @ViewBuilder
@@ -597,12 +604,6 @@ struct MainTabView: View {
         return applyingGrowthPhotoOverrides(to: sections)
     }
 
-    private var homeAlbumHighlights: [CuratedAlbumPresentation] {
-        HomeAlbumHighlightSelector().select(
-            from: curatedAlbumSections,
-            prefersMultipleCats: catProfilesPresentation.profiles.count > 1
-        )
-    }
 
     private var monthlyWindowCollectionKey: MonthlyWindowCollectionKey {
         let sourceAlbumIdentifier: String?
@@ -1865,7 +1866,7 @@ struct WindowListNavigationFixture: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             Text("写真").tabItem { Label("写真", systemImage: "photo") }.tag(0)
-            Text("思い出").tabItem { Label("思い出", systemImage: "photo.stack") }.tag(1)
+            Text("アルバム").tabItem { Label("アルバム", systemImage: "photo.stack") }.tag(1)
             NavigationStack {
                 WindowListView(opensActiveWindow: $opensActiveWindow,
                                pendingFamilyMomentSourceDigest: .constant(nil),

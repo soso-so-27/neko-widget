@@ -1958,7 +1958,7 @@ final class PairingViewModel: ObservableObject {
             failedConnectionIssue = nil
             operationCompletionMessage = wasFailedSetup
                 ? "設定を取り消しました。つなぎ方を選び直せます。"
-                : "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した思い出は残ります。"
+                : "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した写真は残ります。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation

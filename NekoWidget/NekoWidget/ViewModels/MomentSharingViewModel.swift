@@ -566,8 +566,8 @@ final class MomentSharingViewModel: ObservableObject {
                         localIdentifier: existing.photoLocalIdentifier
                     )
                     showMemoryActionMessage(isSaved
-                        ? "思い出に残しました"
-                        : "思い出から外しました（写真アプリには残ります）")
+                        ? "お気に入りに追加しました"
+                        : "お気に入りから外しました（写真アプリには残ります）")
                     return
                 case .confirmedMissing:
                     _ = try SharedLikeStore.set(
@@ -586,7 +586,7 @@ final class MomentSharingViewModel: ObservableObject {
                     if !isSaved {
                         errorMessage = nil
                         try reload()
-                        showMemoryActionMessage("思い出から外しました")
+                        showMemoryActionMessage("お気に入りから外しました")
                         return
                     }
                 }
@@ -595,7 +595,7 @@ final class MomentSharingViewModel: ObservableObject {
             guard isSaved else {
                 errorMessage = nil
                 try reload()
-                showMemoryActionMessage("思い出から外しました")
+                showMemoryActionMessage("お気に入りから外しました")
                 return
             }
 
@@ -673,13 +673,13 @@ final class MomentSharingViewModel: ObservableObject {
             )
             errorMessage = nil
             try reload()
-            showMemoryActionMessage("写真を取り込み、思い出に残しました")
+            showMemoryActionMessage("写真を取り込み、お気に入りに追加しました")
         } catch {
             memoryActionMessage = nil
             errorMessage = photosWriteCompleted
-                ? "写真アプリへの保存は完了しました。思い出の登録確認に失敗したため、写真は再コピーせず次回に復旧確認します。"
+                ? "写真アプリへの保存は完了しました。お気に入りの登録確認に失敗したため、写真は再コピーせず次回に復旧確認します。"
                 : ((error as? LocalizedError)?.errorDescription
-                    ?? "思い出へ取り込めませんでした。時間をおいて、もう一度お試しください。")
+                    ?? "お気に入りへ取り込めませんでした。時間をおいて、もう一度お試しください。")
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",

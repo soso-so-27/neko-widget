@@ -279,8 +279,8 @@ struct NekoWidgetView: View {
                     if entry.isLiked {
                         memoryMark(isSelected: true)
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("思い出に残した写真")
-                            .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
+                            .accessibilityLabel("お気に入りの写真")
+                            .accessibilityHint("解除はアプリのお気に入りから確認して行えます")
                     } else {
                         Button(
                             intent: ToggleWidgetLikeIntent(
@@ -291,8 +291,8 @@ struct NekoWidgetView: View {
                             memoryMark(isSelected: false, invalidatesContent: true)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("思い出に残す")
-                        .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
+                        .accessibilityLabel("お気に入りに追加")
+                        .accessibilityHint("アプリを開かず、自分のお気に入りに追加します")
                     }
                 }
             }

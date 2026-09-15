@@ -58,118 +58,79 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments.append("--app-store-screenshot-fixture")
         app.launch()
 
-        guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 20),
-              app.buttons["photos-open-automatic-albums"].waitForExistence(timeout: 10) else {
-            fail("The deterministic cat-photo library did not appear.", application: app)
+        guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
+              app.descendants(matching: .any)["albums-favorites"].waitForExistence(timeout: 10) else {
+            fail("The Albums root did not appear first.", application: app)
             return
         }
-        guard waitForFixturePhotos(in: app, requirements: [(18, 1)]) else {
-            fail("The deterministic Window illustration did not finish loading.", application: app)
-            return
-        }
-        captureScreenshot(named: "02-local-photo-window")
+        XCTAssertFalse(app.segmentedControls["memories-section-picker"].exists)
+        XCTAssertFalse(app.buttons["album-primary-all-cat-photos"].exists)
+        captureScreenshot(named: "review-albums-root")
 
-        guard tapTab(
-            application: app,
-            identifier: "main-tab-memories",
-            fallbackLabel: "思い出"
-        ) else {
-            fail("The Memories tab was not available.", application: app)
-            return
-        }
-        let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
-        let photosSegment = memoriesSectionPicker.buttons["残した写真"]
-        guard memoriesSectionPicker.waitForExistence(timeout: 15),
-              photosSegment.waitForExistence(timeout: 5) else {
-            fail(
-                "The Memories information architecture did not appear.",
-                application: app
-            )
-            return
-        }
-        captureScreenshot(named: "review-memories-summary")
-        photosSegment.tap()
-        guard waitForFixturePhotos(
-            in: app,
-            requirements: [(9, 1), (10, 1), (11, 1)]
-        ) else {
-            fail("The deterministic Likes illustrations did not finish loading.", application: app)
-            return
-        }
-        let selectSavedPhotos = app.buttons["memories-create-from-photos-action"]
-        guard selectSavedPhotos.waitForExistence(timeout: 10),
-              waitForHittable(selectSavedPhotos) else {
-            fail("The saved-photo selection action was not reachable.", application: app)
-            return
-        }
-        captureScreenshot(named: "04-liked-photos")
-
-        selectSavedPhotos.tap()
-        guard app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 10),
-              app.buttons["saved-memories-selection-toggle"].exists else {
-            fail("The saved-photo selection flow did not open.", application: app)
-            return
-        }
-        guard app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
-            fail("PDF creation was not available after photo selection opened.", application: app)
-            return
-        }
-        captureScreenshot(named: "review-memories-selection")
-        let savedPhotosBackButton = app.navigationBars["写真を選ぶ"].buttons["思い出"]
-        guard savedPhotosBackButton.waitForExistence(timeout: 5) else {
-            fail("Photo selection could not return to Memories.", application: app)
-            return
-        }
-        savedPhotosBackButton.tap()
-
-        guard tapTab(
-            application: app,
-            identifier: "main-tab-photos",
-            fallbackLabel: "写真"
-        ) else {
-            fail("The Photos tab was not available.", application: app)
-            return
-        }
-
-        let photosAutomaticAlbums = app.buttons["photos-open-automatic-albums"]
-        guard scrollUpUntilHittable(photosAutomaticAlbums, application: app) else {
-            fail(
-                "The automatic-albums entry could not be reached from Photos.",
-                application: app
-            )
-            return
-        }
-        photosAutomaticAlbums.tap()
-        let allCatPhotosAlbum = app.buttons["album-primary-all-cat-photos"]
-        guard allCatPhotosAlbum.waitForExistence(timeout: 15) else {
-            fail(
-                "The deterministic primary album did not appear.",
-                application: app
-            )
-            return
-        }
-        // The primary uses fixture photo 1; household growth and 2022 both
-        // use fixture photo 8. Requiring those plus the intervening year
-        // covers proves that the full-width primary card and organized grid
-        // rendered real fixture pixels without depending on off-screen rows.
-        guard waitForFixturePhotos(
-            in: app,
-            requirements: [(1, 1), (8, 2), (6, 1), (4, 1)]
-        ) else {
-            fail("The deterministic album illustrations did not finish loading.", application: app)
+        let organizedAlbum = app.descendants(matching: .any)["album-card-household_growth"].firstMatch
+        guard scrollUpUntilHittable(organizedAlbum, application: app),
+              waitForFixturePhotos(in: app, requirements: [(8, 1)]) else {
+            fail("The direct album cover did not render its fixture photo.", application: app)
             return
         }
         captureScreenshot(named: "03-organized-memories")
-
-        let photosBackButton = app.navigationBars["自動アルバム"].buttons["写真"]
-        guard photosBackButton.waitForExistence(timeout: 5) else {
-            fail(
-                "The automatic-albums screen could not return to Photos.",
-                application: app
-            )
+        organizedAlbum.tap()
+        let albumTitle = app.navigationBars["猫たちと過ごした時間"]
+        guard albumTitle.waitForExistence(timeout: 10) else {
+            fail("The album cover did not open its collection directly.", application: app)
             return
         }
-        photosBackButton.tap()
+        albumTitle.buttons.element(boundBy: 0).tap()
+        guard app.navigationBars["アルバム"].waitForExistence(timeout: 10) else {
+            fail("The collection did not return to Albums.", application: app)
+            return
+        }
+
+        let favorites = app.descendants(matching: .any)["albums-favorites"].firstMatch
+        for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.swipeDown() }
+        guard favorites.isHittable else {
+            fail("The favorites entry was not reachable from Albums.", application: app)
+            return
+        }
+        favorites.tap()
+        guard app.navigationBars["お気に入り"].waitForExistence(timeout: 10),
+              waitForFixturePhotos(in: app, requirements: [(9, 1), (10, 1), (11, 1)]) else {
+            fail("The complete favorites gallery did not render.", application: app)
+            return
+        }
+        let selectSavedPhotos = app.buttons["saved-memories-selection-toggle"]
+        guard selectSavedPhotos.waitForExistence(timeout: 10), waitForHittable(selectSavedPhotos) else {
+            fail("The favorite-photo selection action was not reachable.", application: app)
+            return
+        }
+        XCTAssertFalse(app.buttons["photo-book-export"].exists)
+        captureScreenshot(named: "04-liked-photos")
+        selectSavedPhotos.tap()
+        guard app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 10),
+              app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
+            fail("PDF creation was not available after photo selection opened.", application: app)
+            return
+        }
+        captureScreenshot(named: "review-favorites-selection")
+        selectSavedPhotos.tap()
+        guard app.navigationBars["お気に入り"].waitForExistence(timeout: 10) else {
+            fail("Canceling selection did not restore favorites browsing.", application: app)
+            return
+        }
+        app.navigationBars["お気に入り"].buttons.element(boundBy: 0).tap()
+        guard app.navigationBars["アルバム"].waitForExistence(timeout: 10),
+              tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") else {
+            fail("Favorites could not return to Albums and open Photos.", application: app)
+            return
+        }
+        guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 15),
+              app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"].isHittable,
+              waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]) else {
+            fail("The scoped Photos grid did not render.", application: app)
+            return
+        }
+        XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)
+        captureScreenshot(named: "02-local-photo-window")
     }
 
     private var japaneseLaunchArguments: [String] {

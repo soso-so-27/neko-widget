@@ -333,16 +333,16 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             '"app-store-screenshot-fixture-photo-loaded-"',
             self.fixture,
         )
-        self.assertIn("requirements: [(18, 1)]", self.ui_test)
-        self.assertIn('app.buttons["memories-create-from-photos-action"]', self.ui_test)
+        self.assertIn("requirements: [(1, 1), (2, 1), (3, 1)]", self.ui_test)
+        self.assertIn('app.descendants(matching: .any)["albums-favorites"]', self.ui_test)
         self.assertIn('app.buttons["saved-memories-selection-toggle"]', self.ui_test)
         self.assertIn('app.buttons["photo-book-export"]', self.ui_test)
         self.assertIn('"album-primary-all-cat-photos"', self.album_view)
         self.assertIn(
-            'app.buttons["album-primary-all-cat-photos"]',
+            'app.descendants(matching: .any)["album-card-household_growth"]',
             self.ui_test,
         )
-        self.assertIn("requirements: [(1, 1), (8, 2), (6, 1), (4, 1)]", self.ui_test)
+        self.assertIn("requirements: [(8, 1)]", self.ui_test)
         self.assertIn("requirements: [(9, 1), (10, 1), (11, 1)]", self.ui_test)
         self.assertNotIn("waitForStableRendering", self.ui_test)
 

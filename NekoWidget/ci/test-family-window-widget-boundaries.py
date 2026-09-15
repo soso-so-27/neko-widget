@@ -345,8 +345,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ToggleWidgetLikeIntent(", photo_actions)
         self.assertIn("fallbackIsLiked: false", photo_actions)
         self.assertIn("memoryMark(isSelected: false, invalidatesContent: true)", photo_actions)
-        self.assertIn('"思い出に残した写真"', photo_actions)
-        self.assertIn('"思い出に残す"', photo_actions)
+        self.assertIn('"お気に入りの写真"', photo_actions)
+        self.assertIn('"お気に入りに追加"', photo_actions)
         self.assertNotIn("isFamilyWindowSourceID", photo_actions)
         self.assertNotIn("familyActionsRequireApp", photo_actions)
 
@@ -357,7 +357,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn(".frame(width: 44, height: 44)", memory_mark)
         self.assertIn(".contentShape(Rectangle())", memory_mark)
         self.assertIn(".buttonStyle(.plain)", photo_actions)
-        self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
+        self.assertNotIn('entry.isLiked ? "お気に入りから外す"', view)
 
         action_tray = section(
             view,
@@ -836,8 +836,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('alert("この写真は更新されました"', family_view)
         self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
-        self.assertIn('"自分の思い出に追加しますか？"', family_view)
-        self.assertIn('"自分の思い出に追加"', family_view)
+        self.assertIn('"自分のお気に入りに追加しますか？"', family_view)
+        self.assertIn('"自分のお気に入りに追加"', family_view)
         confirmation = section(
             family_view,
             ".confirmationDialog(\n            memorySaveDialogTitle",
@@ -1124,7 +1124,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertNotIn('"写真アプリへコピーしますか？"', family)
         self.assertNotIn("photoCopyTarget", family)
-        self.assertIn("通常の思い出と写真まとめに入り", family)
+        self.assertIn("個人のお気に入りと写真まとめに入り", family)
         self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
 
         heart_action = section(
@@ -1249,80 +1249,40 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('} else if photo.isLiked {', thumbnail)
         self.assertIn('Image(systemName: "bookmark.fill")', thumbnail)
 
-    def test_memories_use_photo_and_summary_sections_without_a_false_purchase_action(self) -> None:
+    def test_albums_open_favorites_and_scoped_collections_without_a_false_purchase_action(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         home = source("NekoWidget/Views/HomeView.swift")
         main_tab = source("NekoWidget/Views/MainTabView.swift")
-        memories_section = section(
-            memories,
-            "private enum MemoriesSection:",
-            "/// The entry point for photos the user deliberately kept as memories.",
-        )
-        memory_view = section(
-            memories,
-            "struct LikedPhotosView:",
-            "private struct LikedPhotoBookExportFile:",
-        )
-        self.assertIn("if hasPhotoAccess", memory_view)
-        self.assertIn("savedPhotosSection", memory_view)
-        self.assertIn("summarySection", memory_view)
-        self.assertNotIn("reflectionSection", memory_view)
-        self.assertNotIn("creationSection", memory_view)
-        self.assertIn('case .photos: "残した写真"', memories)
-        self.assertIn('case .summaries: "ふりかえり"', memories)
-        self.assertLess(
-            memories_section.index("case summaries"),
-            memories_section.index("case photos"),
-        )
-        self.assertNotIn('Text("残した写真")', memory_view)
-        self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
-        self.assertIn('"季節のムービー",', memory_view)
-        self.assertIn(
-            'Label("選ぶ", systemImage: "checkmark.circle")',
-            memory_view,
-        )
-        self.assertNotIn("creationPreviewCard", memory_view)
-        self.assertNotIn('Text("準備中・カード・卓上・小さな本")', memory_view)
-        self.assertNotIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-latest-summary")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-summary-empty-state")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-seasonal-movies")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-seasonal-movies-empty-state")', memory_view)
-        self.assertIn("summarySectionDivider", memory_view)
-        self.assertNotIn("if !seasonalMovies.isEmpty", memory_view)
-        self.assertIn('systemImage: "calendar"', memory_view)
-        self.assertIn('systemImage: "play.rectangle"', memory_view)
-        self.assertNotIn('Text("自動アルバム")', memory_view)
-        self.assertNotIn('accessibilityIdentifier("memories-open-automatic-albums")', memory_view)
-        self.assertIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
-        self.assertIn('NavigationLink(value: PhotosRoute.automaticAlbums)', home)
-        self.assertIn('case .automaticAlbums:', main_tab)
-        self.assertIn('Picker("表示する思い出"', memory_view)
-        self.assertIn('.pickerStyle(.segmented)', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-section-picker")', memory_view)
-        self.assertIn("dynamicTypeSize.isAccessibilitySize", memory_view)
-        self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
-        self.assertNotIn(
-            ".onChange(of: hasUnreadSummary, initial: true)",
-            memory_view,
-        )
-        self.assertIn("selectedSection: MemoriesSection?", memory_view)
-        self.assertIn("selection: sectionSelection", memory_view)
-        self.assertIn('Label("写真から選ぶ"', memory_view)
+        album_root = section(memories, "struct LikedPhotosView:", "private struct AlbumOverviewCard:")
+        self.assertIn("if hasPhotoAccess", album_root)
+        self.assertIn('accessibilityIdentifier("albums-root")', album_root)
+        self.assertIn('accessibilityIdentifier("albums-favorites")', album_root)
+        self.assertIn('.navigationTitle("アルバム")', album_root)
+        self.assertIn("MemoriesRoute.monthlyWindow(month)", album_root)
+        self.assertIn("MemoriesRoute.seasonalMovie(movie.periodID)", album_root)
+        self.assertIn('"memories-monthly-window"', album_root)
+        self.assertIn('"albums-seasonal-movie"', album_root)
+        self.assertIn('accessibilityIdentifier("albums-reflections-all")', album_root)
+        self.assertIn("ForEach(months)", album_root)
+        self.assertIn("ForEach(seasonalMovies)", album_root)
+        self.assertIn("sections: albumSections", album_root)
+        self.assertIn("showsAllPhotos: false", album_root)
+        self.assertIn("isEmbedded: true", album_root)
+        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 1 : 2", album_root)
+        self.assertNotIn("memories-section-picker", album_root)
+        self.assertNotIn("memories-section-menu", album_root)
+        self.assertNotIn("photos-open-automatic-albums", home)
+        self.assertNotIn("PhotosRoute.automaticAlbums", home)
         self.assertIn("photosPath = NavigationPath()", main_tab)
         self.assertIn("openPhotos: {", main_tab)
-        self.assertNotIn("showsCreationPreview", memory_view)
-        self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
-        self.assertIn(
-            "monthlyWindowCollection: monthlyWindowCollection",
-            main_tab,
-        )
+        self.assertIn("photos: likedPhotos", main_tab)
+        self.assertIn("albumSections: curatedAlbumSections", main_tab)
+        self.assertIn("monthlyWindowCollection: monthlyWindowCollection", main_tab)
         self.assertIn("presentation: refreshedMonthlyWindow(snapshot)", main_tab)
-
         self.assertNotIn("MemoryCreationPreviewSheet", memories)
-        self.assertNotIn('Button("購入', memory_view)
-        self.assertNotIn('Button("注文', memory_view)
-        self.assertNotIn("StoreKit", memory_view)
+        self.assertNotIn('Button("購入', album_root)
+        self.assertNotIn('Button("注文', album_root)
+        self.assertNotIn("StoreKit", album_root)
 
     def test_memories_show_the_complete_saved_collection_and_select_exports_separately(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
@@ -1336,33 +1296,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn(".safeAreaInset(edge: .top", memory_view)
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
-        self.assertIn("ForEach(photos)", memory_view)
         self.assertIn("SavedMemoriesGalleryView(", memory_view)
-        self.assertNotIn("startsInExportMode: false", memory_view)
-        self.assertNotIn('accessibilityIdentifier("memories-show-all-saved-photos")', memory_view)
-        self.assertIn("startsInExportMode: true", memory_view)
-        self.assertIn(
-            'accessibilityIdentifier("memories-create-from-photos-action")',
-            memory_view,
-        )
-        self.assertIn('identifier: "memories-latest-summary-title"', memory_view)
-        self.assertNotIn('identifier: "memories-automatic-albums-title"', memory_view)
-        self.assertIn('identifier: "memories-seasonal-movies-title"', memory_view)
-        self.assertIn('.frame(height: 148)', memory_view)
-        self.assertIn('Text("これまでの便り")', memory_view)
-        self.assertIn("MonthlyWindowArchiveCard(", memory_view)
-        self.assertIn(
-            'accessibilityIdentifier("memories-previous-monthly-windows")',
-            memory_view,
-        )
-        self.assertNotIn('Text("月の便り")\n                    .font(.caption', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-saved-section")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-summaries-section")', memory_view)
-
-        self.assertLess(
-            memory_view.index("savedPhotosSection"),
-            memory_view.index("summarySection"),
-        )
+        self.assertIn("photos: photos, startsInExportMode: false", memory_view)
+        self.assertIn('accessibilityIdentifier("albums-favorites")', memory_view)
+        self.assertNotIn('accessibilityIdentifier("memories-create-from-photos-action")', memory_view)
+        self.assertLess(memory_view.index("favoritesLink"), memory_view.index("reflectionShelf"))
 
         gallery = section(
             memories,
@@ -1471,11 +1409,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn('return "まとめ・未読"', memories)
 
         self.assertIn("写真は送信しません。", view)
-        self.assertIn('Button("思い出へ戻る")', view)
+        self.assertIn('Button("アルバムへ戻る")', view)
         self.assertIn("ScrollView", view)
         self.assertIn("LazyVStack(spacing: 0)", view)
         self.assertIn('Text("この月の便りは、ここまで")', view)
-        self.assertIn('isSaved ? "思い出に残した" : "思い出に残す"', view)
+        self.assertIn('isSaved ? "お気に入りに追加済み" : "お気に入りに追加"', view)
         self.assertIn("setMemorySaved(photo.localIdentifier, true)", view)
         self.assertIn(".toolbar(.hidden, for: .tabBar)", view)
         self.assertNotIn("TabView(selection:", view)
@@ -1523,7 +1461,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("seasonalMovieArchive.records.first.map { !$0.isFrozen }", main)
         self.assertIn("let latestSeasonalMovieIsNew: Bool", memories)
         self.assertNotIn(".onChange(of: hasUnreadSummary, initial: true)", memories)
-        self.assertIn("isNew: latestSeasonalMovieIsNew", memories)
+        self.assertIn("isNew: isLatest && latestSeasonalMovieIsNew", memories)
         self.assertIn("let service = SeasonalMovieCandidateService()", main)
         self.assertIn("await service.photoCandidates", main)
         self.assertIn("await service.videoCandidateBatch", main)
@@ -1591,7 +1529,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('return "次は\\(releaseMonth)月ごろ', view)
         self.assertIn("SeasonalMovieAboutSheet", view)
         self.assertIn("似た写真をまとめます", view)
-        self.assertIn("思い出と動く場面を優先します", view)
+        self.assertIn("お気に入りと動く場面を優先します", view)
         self.assertIn("写真が少ない季節は作りません", view)
         self.assertIn("monthMarkerIsVisible", view)
         self.assertIn("try await Task.sleep(nanoseconds: 800_000_000)", view)
@@ -1923,27 +1861,20 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"settings-support-page"', settings)
         self.assertNotIn('Text("プライバシーとアプリ情報")', settings)
 
-    def test_automatic_albums_have_one_photos_entry(self) -> None:
+    def test_automatic_albums_have_one_root_and_photos_keep_the_full_grid(self) -> None:
         main_tab = source("NekoWidget/Views/MainTabView.swift")
         home = source("NekoWidget/Views/HomeView.swift")
-        memories = source("NekoWidget/Views/LikedPhotosView.swift")
-        photos_routes = section(main_tab, "enum PhotosRoute:", "enum MemoriesRoute:")
-        memory_routes = section(
-            main_tab,
-            "enum MemoriesRoute:",
-            "private struct SeasonalMoviePreparationKey:",
-        )
-        self.assertIn("case automaticAlbums", photos_routes)
-        self.assertNotIn("case automaticAlbums", memory_routes)
-        self.assertIn("PhotosRoute.automaticAlbums", home)
-        self.assertNotIn("MemoriesRoute.automaticAlbums", memories)
-        self.assertIn('Text("自動アルバム")', home)
+        albums = source("NekoWidget/Views/LikedPhotosView.swift")
+        self.assertIn("albumSections: curatedAlbumSections", main_tab)
+        self.assertIn("AlbumRoute.album(album.id)", albums)
+        self.assertIn('"album-card-\\(album.id.logKey)"', albums)
+        self.assertIn("showsAllPhotos: false", albums)
+        self.assertNotIn("PhotosRoute.automaticAlbums", home)
+        self.assertNotIn('Text("自動アルバム")', home)
+        self.assertNotIn("HomeAlbumHighlightCard(", home)
+        self.assertNotIn("AlbumRoute.album(album.id)", home)
         self.assertIn('Text("すべての猫写真")', home)
-        self.assertIn("HomeAlbumHighlightCard(", home)
-        self.assertIn("AlbumRoute.album(album.id)", home)
-        self.assertNotIn('Text("成長・年ごと・写り方から探す")', home)
-        self.assertIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
-        self.assertNotIn('accessibilityIdentifier("memories-open-automatic-albums")', memories)
+        self.assertNotIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
 
     def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
         container = source("Shared/AppGroup/SharedContainer.swift")
@@ -2854,7 +2785,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             'Image(systemName: "rectangle.on.rectangle.angled")',
             home,
         )
-        self.assertIn('Label("思い出", systemImage: "photo.stack.fill")', main_tab)
+        self.assertIn('Label("アルバム", systemImage: "photo.stack.fill")', main_tab)
         self.assertIn('.navigationTitle("写真")', home)
         self.assertIn('"window-settings-button"', home)
         self.assertNotIn('"window-list-settings-button"', main_tab)
@@ -2872,8 +2803,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertNotIn('Text("今日の1枚")', home)
         self.assertNotIn('.navigationTitle("まど")', home)
-        self.assertIn("PhotosRoute.automaticAlbums", home)
-        self.assertIn('Text("自動アルバム")', home)
+        self.assertNotIn("PhotosRoute.automaticAlbums", home)
+        self.assertNotIn('Text("自動アルバム")', home)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.automaticAlbums)", liked)
         self.assertNotIn('"today-memory-saved-state"', home)
         self.assertIn("WindowListView(", main_tab)
@@ -2885,11 +2816,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("photosPath.append(PhotosRoute.photo(identifier))", main_tab)
         self.assertIn("selectedTab = .windows", main_tab)
         self.assertLess(
-            main_tab.index('.tag(AppTab.photos)'),
             main_tab.index('.tag(AppTab.memories)'),
+            main_tab.index('.tag(AppTab.photos)'),
         )
         self.assertLess(
-            main_tab.index('.tag(AppTab.memories)'),
+            main_tab.index('.tag(AppTab.photos)'),
             main_tab.index('.tag(AppTab.windows)'),
         )
         self.assertIn("Task.detached(priority: .userInitiated)", main_tab)
@@ -2899,7 +2830,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("猫写真のまどをひとつ。", onboarding)
 
         self.assertIn('"photo-browser-memory-saved-state"', liked)
-        self.assertIn('Button("思い出から外す", role: .destructive)', liked)
+        self.assertIn('Button("お気に入りから外す", role: .destructive)', liked)
 
         settings = source("NekoWidget/Views/SettingsView.swift")
         profiles = source("NekoWidget/Views/CatProfilesView.swift")
@@ -3111,7 +3042,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('.navigationTitle("送信状況")', family)
         self.assertNotIn('Text("履歴")', family)
         self.assertIn("届いた写真は最長90日です", family)
-        self.assertIn("保存するには「自分の思い出に追加」を選びます", family)
+        self.assertIn("保存するには「自分のお気に入りに追加」を選びます", family)
         self.assertIn("到着は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
@@ -3205,9 +3136,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         family = source("NekoWidget/Views/FamilyWindowView.swift")
 
         self.assertIn("memoryActionMessage", model)
-        self.assertIn("思い出に残しました", model)
+        self.assertIn("お気に入りに追加しました", model)
         self.assertIn("family-window-bookmark-result", family)
-        self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
+        self.assertIn('Label("お気に入りに追加済み", systemImage: "bookmark.fill")', family)
         set_action = section(
             model,
             "func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async",
@@ -3603,15 +3534,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("isSaved: model.isSavedMemory(item)", memory)
         self.assertIn("hasImportedMemory: model.hasImportedMemory(item)", memory)
         self.assertIn("if isSaved", shared_controls)
-        self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', shared_controls)
-        self.assertIn('Button("思い出から外す", role: .destructive, action: requestMemoryRemoval)', shared_controls)
+        self.assertIn('Label("お気に入りに追加済み", systemImage: "bookmark.fill")', shared_controls)
+        self.assertIn('Button("お気に入りから外す", role: .destructive, action: requestMemoryRemoval)', shared_controls)
         self.assertIn("Button(action: requestMemorySave)", shared_controls)
         self.assertIn("memoryRemovalTarget = item", memory)
         self.assertIn("widgetMemoryTarget = item", memory)
         self.assertIn("model.isShowingLastKnownState", memory)
         self.assertIn("model.isReportOnly", memory)
 
-        self.assertIn("写真アプリへコピーして、思い出に加えます", family)
+        self.assertIn("写真アプリへコピーして、お気に入りに追加します", family)
         self.assertIn("iCloud写真の設定により、iCloudにも同期される場合があります", family)
         self.assertIn("if model.hasImportedMemory(item)", family)
         self.assertIn("写真アプリへコピーした写真は削除されません", family)
@@ -3937,11 +3868,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("migratedSchema8.pendingMemoryImports.isEmpty", migration)
 
         family = source("NekoWidget/Views/FamilyWindowView.swift")
-        self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
-        self.assertIn('Button("思い出から外す", role: .destructive)', family)
-        self.assertIn('"自分の思い出に追加"', family)
-        self.assertIn('"自分の思い出に追加"', family)
-        self.assertIn("通常の思い出と写真まとめに入り", family)
+        self.assertIn('Label("お気に入りに追加済み", systemImage: "bookmark.fill")', family)
+        self.assertIn('Button("お気に入りから外す", role: .destructive)', family)
+        self.assertIn('"自分のお気に入りに追加"', family)
+        self.assertIn('"自分のお気に入りに追加"', family)
+        self.assertIn("個人のお気に入りと写真まとめに入り", family)
         self.assertIn("相手へは通知しません", family)
         self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
         self.assertNotIn('Label("写真アプリへコピー"', family)
@@ -3975,7 +3906,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("相手と接続済み", pairing)
         self.assertNotIn("2人のまどを設定済み", pairing)
         self.assertIn("一時的な届いた写真", pairing)
-        self.assertIn("写真アプリへ保存した思い出は残ります", pairing_model)
+        self.assertIn("写真アプリへ保存した写真は残ります", pairing_model)
         self.assertIn("FamilyWindowView(", main_tab)
         self.assertIn('Label("まど", systemImage: "rectangle.split.2x2")', main_tab)
         self.assertNotIn("届いた写真の履歴", main_tab)

@@ -22,7 +22,6 @@ struct HomeView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
-    let albumHighlights: [CuratedAlbumPresentation]
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -45,8 +44,7 @@ struct HomeView: View {
         selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
         refreshPhotoSourceAlbums: @escaping () async -> Void = {},
         catProfilesPresentation: CatProfilesPresentation = .init(),
-        catProfilesActions: CatProfilesViewActions = .noOp,
-        albumHighlights: [CuratedAlbumPresentation] = []
+        catProfilesActions: CatProfilesViewActions = .noOp
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -66,7 +64,6 @@ struct HomeView: View {
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
-        self.albumHighlights = albumHighlights
     }
 
     var body: some View {
@@ -81,10 +78,6 @@ struct HomeView: View {
 
                     if case .unavailable = photoSourceStatus {
                         photoSourceRecoveryLink
-                    }
-
-                    if !catPhotos.isEmpty {
-                        automaticAlbumsSection
                     }
 
                     if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
@@ -230,91 +223,6 @@ struct HomeView: View {
         // Append to the same grid. Reappearing cells from an earlier batch
         // cannot reveal another page or replace the user's scroll position.
         visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 24)
-    }
-
-    private var automaticAlbumsSection: some View {
-        let headerLayout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
-        return VStack(alignment: .leading, spacing: 10) {
-            headerLayout {
-                Text("自動アルバム")
-                    .font(.title3.bold())
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("photo-hub-automatic-albums")
-
-                if !dynamicTypeSize.isAccessibilitySize {
-                    Spacer(minLength: 8)
-                }
-
-                NavigationLink(value: PhotosRoute.automaticAlbums) {
-                    HStack(spacing: 3) {
-                        Text("すべて見る")
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("photos-open-automatic-albums")
-                .accessibilityHint("自動で整理されたすべてのアルバムを開きます")
-            }
-
-            if albumHighlights.isEmpty {
-                Text("写真がまとまると、ここにアルバムが表示されます")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-            } else if albumHighlights.count == 1, let album = albumHighlights.first {
-                albumHighlightLink(album, index: 0, aspectRatio: 16 / 9)
-            } else {
-                LazyVGrid(columns: albumHighlightColumns, spacing: 12) {
-                    ForEach(Array(albumHighlights.enumerated()), id: \.element.id) { index, album in
-                        albumHighlightLink(
-                            album,
-                            index: index,
-                            aspectRatio: dynamicTypeSize.isAccessibilitySize ? 16 / 9 : 1
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private var albumHighlightColumns: [GridItem] {
-        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
-        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
-    }
-
-    private func albumHighlightLink(
-        _ album: CuratedAlbumPresentation,
-        index: Int,
-        aspectRatio: CGFloat
-    ) -> some View {
-        NavigationLink(value: AlbumRoute.album(album.id)) {
-            HomeAlbumHighlightCard(
-                album: album,
-                coverPhoto: highlightCoverPhoto(for: album, index: index),
-                aspectRatio: aspectRatio
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("photos-album-highlight-\(album.id.logKey)")
-        .accessibilityLabel("\(album.cardTitle)、\(album.countLabel)")
-        .accessibilityHint("アルバムを開きます")
-    }
-
-    private func highlightCoverPhoto(
-        for album: CuratedAlbumPresentation,
-        index: Int
-    ) -> PhotoPresentation {
-        let precedingCoverIdentifiers = Set(
-            albumHighlights.prefix(index).map { $0.coverPhoto.localIdentifier }
-        )
-        return album.photos.first {
-            !precedingCoverIdentifiers.contains($0.localIdentifier)
-        } ?? album.coverPhoto
     }
 
     private var catProfilesSection: some View {

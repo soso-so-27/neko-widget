@@ -100,7 +100,7 @@ struct MonthlyWindowView: View {
                 .font(.title2.bold())
 
             if !savedIdentifiers.isEmpty {
-                Text("\(savedIdentifiers.count.formatted())枚は思い出に残っています")
+                Text("\(savedIdentifiers.count.formatted())枚はお気に入りに追加済みです")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -110,7 +110,7 @@ struct MonthlyWindowView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Button("思い出へ戻る") {
+            Button("アルバムへ戻る") {
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
@@ -165,13 +165,13 @@ struct MonthlyWindowView: View {
         return Group {
             if isSaved {
                 Menu {
-                    Button("思い出から外す", role: .destructive) {
+                    Button("お気に入りから外す", role: .destructive) {
                         setMemorySaved(photo.localIdentifier, false)
                     }
                 } label: {
                     memoryButtonLabel(isSaved: true)
                 }
-                .accessibilityHint("思い出から外す操作を開きます")
+                .accessibilityHint("お気に入りから外す操作を開きます")
             } else {
                 Button {
                     setMemorySaved(photo.localIdentifier, true)
@@ -188,7 +188,7 @@ struct MonthlyWindowView: View {
 
     private func memoryButtonLabel(isSaved: Bool) -> some View {
         Label(
-            isSaved ? "思い出に残した" : "思い出に残す",
+            isSaved ? "お気に入りに追加済み" : "お気に入りに追加",
             systemImage: isSaved ? "bookmark.fill" : "bookmark"
         )
         .font(.subheadline.bold())

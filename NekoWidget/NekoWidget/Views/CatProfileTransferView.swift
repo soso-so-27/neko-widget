@@ -33,7 +33,7 @@ struct CatProfileTransferView: View {
         Form {
             Section {
                 Text("猫の名前・誕生日・迎えた日を、ファイルに保存して別のiPhoneへ引き継げます。")
-                Text("写真や猫別の写真設定、思い出、共有まどは含まれません。")
+                Text("写真や猫別の写真設定、お気に入り、共有まどは含まれません。")
                     .foregroundStyle(.secondary)
             }
             Section("このiPhoneから") {

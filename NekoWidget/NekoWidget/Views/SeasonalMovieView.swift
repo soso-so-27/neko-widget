@@ -141,7 +141,7 @@ private struct SeasonalMovieAboutSheet: View {
                     VStack(alignment: .leading, spacing: 14) {
                         explanationRow("似た写真をまとめます", systemImage: "rectangle.on.rectangle")
                         explanationRow("撮影日が偏らないように選びます", systemImage: "calendar")
-                        explanationRow("思い出と動く場面を優先します", systemImage: "bookmark")
+                        explanationRow("お気に入りと動く場面を優先します", systemImage: "bookmark")
                         explanationRow("写真が少ない季節は作りません", systemImage: "leaf")
                     }
 

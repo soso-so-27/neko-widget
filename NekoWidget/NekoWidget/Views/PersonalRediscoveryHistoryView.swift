@@ -55,7 +55,7 @@ struct PersonalRediscoveryHistoryView: View {
                             }
                         }
                     }
-                    Text("48時間で履歴から消えます。残したい一枚は、開いて「思い出に残す」へ。")
+                    Text("48時間で履歴から消えます。残したい一枚は、開いて「お気に入りに追加」へ。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
                     ContentUnavailableView(loadFailed ? "履歴を読み込めませんでした" : "めくった写真はまだありません",

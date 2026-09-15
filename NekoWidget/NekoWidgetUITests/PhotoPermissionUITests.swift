@@ -435,7 +435,7 @@ final class OfficialWindowUITests: XCTestCase {
                       "The empty-list action must open discovery directly")
         app.buttons["official-window-entry"].tap()
         XCTAssertTrue(app.tabBars.buttons["写真"].exists)
-        XCTAssertTrue(app.tabBars.buttons["思い出"].exists)
+        XCTAssertTrue(app.tabBars.buttons["アルバム"].exists)
         for _ in 0..<5 { if app.buttons["official-window-subscribe"].isHittable { break }; app.swipeUp() }
         app.buttons["official-window-subscribe"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-subscription-confirmation"].firstMatch.waitForExistence(timeout: 5))
@@ -1159,10 +1159,10 @@ final class PhotoPermissionUITests: XCTestCase {
         guard firstExistingButton(
             in: app,
             identifiers: ["main-tab-memories"],
-            labels: ["思い出"],
+            labels: ["アルバム"],
             timeout: 10
         ) != nil else {
-            fail("The Memories tab disappeared from the tab bar.", app: app)
+            fail("The Albums tab disappeared from the tab bar.", app: app)
             return
         }
 
@@ -1192,7 +1192,7 @@ final class PhotoPermissionUITests: XCTestCase {
         }
 
         guard !app.tabBars.buttons["設定"].exists else {
-            fail("Settings remained a peer tab instead of moving under Home.", app: app)
+            fail("Settings remained a peer tab instead of a toolbar action.", app: app)
             return
         }
 
@@ -1209,12 +1209,12 @@ final class PhotoPermissionUITests: XCTestCase {
 
         let settingsButton = firstExistingButton(
             in: app,
-            identifiers: ["window-settings-button"],
+            identifiers: ["albums-settings-button"],
             labels: ["設定"],
             timeout: 10
         )
         guard let settingsButton else {
-            fail("Home did not expose its Settings action after onboarding.", app: app)
+            fail("Albums did not expose its Settings action after onboarding.", app: app)
             return
         }
         settingsButton.tap()
@@ -1304,17 +1304,12 @@ final class PhotoPermissionUITests: XCTestCase {
                 skip.tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "monthly-empty", "monthly-pending":
-                // With no completed reflection, Memories opens on saved
-                // photos. Explicitly visit the existing empty/pending state.
-                let summaries = app.segmentedControls["memories-section-picker"].buttons["ふりかえり"]
-                XCTAssertTrue(summaries.waitForExistence(timeout: 15))
-                summaries.tap()
-                let expected = scenario == "monthly-empty"
-                    ? "月の便りはまだありません" : "写真の確認を待っています"
-                // SwiftUI exposes the parent section's identifier on the
-                // combined card. Assert the actual visible title instead.
-                let emptyState = app.staticTexts[expected]
-                XCTAssertTrue(emptyState.waitForExistence(timeout: 15))
+                // Unavailable or still-preparing summaries have no empty
+                // cover. Favorites and the Photos route remain available.
+                XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 15))
+                XCTAssertTrue(app.descendants(matching: .any)["albums-favorites"].exists)
+                XCTAssertTrue(app.buttons["memories-open-photos"].isHittable)
+                XCTAssertFalse(app.descendants(matching: .any)["memories-monthly-window"].exists)
                 captureMainlineScreen(scenario)
             case "movie":
                 let ready = app.staticTexts["mainline-movie-ready"]
@@ -1403,6 +1398,7 @@ final class SoloMemoriesUITests: XCTestCase {
             if largeText { app.launchArguments.append("--ux-large-text") }
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
             app.launch()
+            openPhotosTab(in: app)
             XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
             XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
             XCTAssertFalse(app.staticTexts["写真の対象と整理"].exists)
@@ -1475,6 +1471,29 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)"]
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = scenario
             app.launch()
+            if scenario == "no-cats" {
+                assertAlbumsRoot(in: app)
+                XCTAssertEqual(element("albums-favorites", in: app).label, "お気に入り、9枚",
+                               "Favorites include saved photos outside the eight-photo source.")
+                capture("albums-root-standard")
+                openFavorites(in: app)
+                let favorite = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "猫の写真")).firstMatch
+                XCTAssertTrue(favorite.waitForExistence(timeout: 10))
+                favorite.tap()
+                XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+                XCTAssertTrue(element("photo-browser-memory-saved-state", in: app).exists)
+                app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 10))
+                returnFromFavorites(in: app)
+                let album = element("album-card-household_growth", in: app)
+                reveal(album, in: app)
+                album.tap()
+                XCTAssertTrue(app.navigationBars["猫たちと過ごした時間"].waitForExistence(timeout: 10))
+                app.navigationBars["猫たちと過ごした時間"].buttons.element(boundBy: 0).tap()
+                assertAlbumsRoot(in: app)
+                capture("albums-without-cat-registration")
+            }
+            openPhotosTab(in: app)
             XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
             let recovery = app.buttons["photo-hub-source-recovery"]
             if scenario == "source-unavailable" {
@@ -1556,7 +1575,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertTrue(image.isHittable)
         XCTAssertFalse(retry.exists)
-        app.buttons["思い出に残す"].tap()
+        app.buttons["お気に入りに追加"].tap()
         let saved = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|true"),
             object: app.staticTexts["solo-rediscovery-memory-request"]
@@ -1598,9 +1617,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(metric("zoom"), previousZoom, accuracy: 0.01)
         XCTAssertEqual(metric("offsetX"), previousX, accuracy: 1)
         XCTAssertEqual(metric("offsetY"), previousY, accuracy: 1)
-        XCTAssertTrue(app.buttons["思い出に残す"].isHittable)
+        XCTAssertTrue(app.buttons["お気に入りに追加"].isHittable)
         capture("local-photo-quality-recovered-same-viewport")
-        app.buttons["思い出に残す"].tap()
+        app.buttons["お気に入りに追加"].tap()
         let saved = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|true"),
             object: app.staticTexts["solo-rediscovery-memory-request"])
@@ -1646,6 +1665,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"
         app.launch()
+        openPhotosTab(in: app)
         let grid = element("photo-hub-detected-grid", in: app)
         XCTAssertTrue(grid.waitForExistence(timeout: 15))
         for number in [25, 49] {
@@ -1678,7 +1698,7 @@ final class SoloMemoriesUITests: XCTestCase {
             retry.tap()
             let save = app.buttons["monthly-window-memory-app-store-screenshot-fixture-1"]
             XCTAssertTrue(save.waitForExistence(timeout: 10))
-            XCTAssertEqual(save.label, "思い出に残す")
+            XCTAssertEqual(save.label, "お気に入りに追加")
             save.tap()
             let request = app.staticTexts["monthly-fixture-memory-request"]
             let requested = XCTNSPredicateExpectation(
@@ -1687,24 +1707,24 @@ final class SoloMemoriesUITests: XCTestCase {
             )
             XCTAssertEqual(XCTWaiter.wait(for: [requested], timeout: 5), .completed)
             if scenario == "monthly-save-unconfirmed" {
-                XCTAssertEqual(save.label, "思い出に残す", "A request alone is not a saved result")
+                XCTAssertEqual(save.label, "お気に入りに追加", "A request alone is not a saved result")
             } else {
                 let saved = XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "思い出に残した"), object: save
+                    predicate: NSPredicate(format: "label == %@", "お気に入りに追加済み"), object: save
                 )
                 XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
                 save.tap()
-                app.buttons["思い出から外す"].tap()
+                app.buttons["お気に入りから外す"].tap()
                 let removed = XCTNSPredicateExpectation(
                     predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|false"),
                     object: request
                 )
                 XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
-                XCTAssertEqual(save.label, "思い出に残す")
+                XCTAssertEqual(save.label, "お気に入りに追加")
                 XCTAssertEqual(app.alerts.count, 0)
                 save.tap()
                 XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "思い出に残した"), object: save
+                    predicate: NSPredicate(format: "label == %@", "お気に入りに追加済み"), object: save
                 )], timeout: 5), .completed)
                 capture("monthly-memory-resaved")
             }
@@ -1731,7 +1751,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["photo-browser-same-day"].exists,
                        "A photo opened in this day's collection must not push the same collection again")
 
-        let save = app.buttons["思い出に残す"]
+        let save = app.buttons["お気に入りに追加"]
         XCTAssertTrue(save.waitForExistence(timeout: 10))
         for _ in 0..<3 where !save.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(save.isHittable)
@@ -1745,14 +1765,14 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("solo-rediscovery-same-day-second-photo-saved")
 
         app.buttons["photo-browser-memory-saved-state"].tap()
-        app.buttons["思い出から外す"].tap()
+        app.buttons["お気に入りから外す"].tap()
         let removed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-2|false"),
             object: app.staticTexts["solo-rediscovery-memory-request"]
         )
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
         XCTAssertEqual(app.alerts.count, 0)
-        app.buttons["思い出に残す"].tap()
+        app.buttons["お気に入りに追加"].tap()
         XCTAssertTrue(element("photo-browser-memory-saved-state", in: app).waitForExistence(timeout: 5))
 
         let backToDay = app.navigationBars["写真"].buttons.element(boundBy: 0)
@@ -1768,124 +1788,151 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
         // The entry browser contains only the first photo; the same-day
         // collection contains two. Only its second photo was saved above.
-        XCTAssertTrue(app.buttons["思い出に残す"].isHittable,
+        XCTAssertTrue(app.buttons["お気に入りに追加"].isHittable,
                       "Two back actions return to the original, unsaved photo")
         XCTAssertFalse(element("photo-browser-memory-saved-state", in: app).exists)
         app.terminate()
     }
 
     @MainActor
-    func testEmptyAndSingleSavedPhotoStartWithPhotosIncludingDeniedAccess() {
+    func testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess() {
         for scenario in ["empty", "saved", "denied"] {
             let app = launch(scenario)
-            assertSection("残した写真", in: app)
+            assertAlbumsRoot(in: app)
+            let favorites = element("albums-favorites", in: app)
+            XCTAssertEqual(favorites.label, "お気に入り、\(scenario == "saved" ? 1 : 0)枚")
+            openFavorites(in: app)
             if scenario == "saved" {
                 XCTAssertTrue(app.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
-                XCTAssertEqual(app.staticTexts["photo-book-progress"].label, "1枚")
-                XCTAssertFalse(app.buttons["memories-open-photos"].exists)
-                capture("solo-memories-single-saved-photo")
+                let selection = app.buttons["saved-memories-selection-toggle"]
+                XCTAssertTrue(selection.isHittable)
+                XCTAssertFalse(app.buttons["photo-book-export"].exists,
+                               "Opening favorites must start in browsing mode.")
+                capture("albums-single-favorite")
+                selection.tap()
+                XCTAssertTrue(app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["photo-book-export"].exists)
+                selection.tap()
+                XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 5))
             } else {
-                let openPhotos = app.buttons["memories-open-photos"]
-                XCTAssertTrue(openPhotos.waitForExistence(timeout: 10))
-                XCTAssertTrue(openPhotos.isHittable)
-                if scenario == "empty" { capture("solo-memories-empty") }
-                openPhotos.tap()
+                XCTAssertTrue(app.staticTexts["まだありません"].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.buttons["saved-memories-selection-toggle"].exists)
+                if scenario == "empty" { capture("albums-empty-favorites") }
+            }
+            returnFromFavorites(in: app)
+            if scenario != "saved" {
+                let photos = app.buttons["memories-open-photos"]
+                XCTAssertTrue(photos.waitForExistence(timeout: 10))
+                XCTAssertTrue(photos.isHittable)
+                photos.tap()
                 let destination = app.staticTexts["solo-memories-other-screen"]
                 XCTAssertTrue(destination.waitForExistence(timeout: 10))
                 XCTAssertEqual(destination.label, "写真")
                 app.buttons["solo-memories-return"].tap()
-                assertSection("残した写真", in: app)
+                assertAlbumsRoot(in: app)
             }
             if scenario == "denied" {
                 fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスあり")
-                assertSection("残した写真", in: app)
-            }
-            // Both sections stay available, independently of the initial one.
-            selectSection("ふりかえり", in: app)
-            if scenario == "denied" {
-                XCTAssertTrue(monthlyCard(in: app).exists)
+                assertAlbumsRoot(in: app)
+                XCTAssertEqual(favorites.label, "お気に入り、1枚")
+                XCTAssertTrue(monthlyCard(in: app).waitForExistence(timeout: 10))
             } else {
-                XCTAssertTrue(app.staticTexts["月の便りはまだありません"].exists)
+                XCTAssertFalse(monthlyCard(in: app).exists)
             }
-            selectSection("残した写真", in: app)
             app.terminate()
         }
     }
 
     @MainActor
-    func testInitialReflectionAndLaterChangesPreserveTheChosenSection() {
+    func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations() {
         let app = launch("saved")
-        assertSection("残した写真", in: app)
+        assertAlbumsRoot(in: app)
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
-        assertSection("残した写真", in: app)
-        selectSection("ふりかえり", in: app)
+        assertAlbumsRoot(in: app)
         XCTAssertTrue(monthlyCard(in: app).waitForExistence(timeout: 10))
 
         fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスなし")
-        assertSection("ふりかえり", in: app)
-        XCTAssertTrue(app.staticTexts["写真へのアクセスを許可すると表示されます"].exists)
+        assertAlbumsRoot(in: app)
+        XCTAssertFalse(monthlyCard(in: app).exists)
+        XCTAssertTrue(app.buttons["memories-open-photos"].isHittable)
         fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスあり")
-        assertSection("ふりかえり", in: app)
-        XCTAssertTrue(monthlyCard(in: app).exists)
+        assertAlbumsRoot(in: app)
+        openCardAndReturn(monthlyCard(in: app), expectedRoute: "monthly:2025-08", in: app)
         visitOtherScreenAndReturn(in: app)
-        assertSection("ふりかえり", in: app)
+        assertAlbumsRoot(in: app)
 
-        selectSection("残した写真", in: app)
-        visitOtherScreenAndReturn(in: app)
-        assertSection("残した写真", in: app)
+        openFavorites(in: app)
+        let favorite = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "猫の写真")).firstMatch
+        openCardAndReturn(favorite, expectedRoute: "photo:app-store-screenshot-fixture-9", in: app)
+        XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 10))
+        returnFromFavorites(in: app)
         app.terminate()
 
-        // A fresh first display with a completed letter starts on that letter.
+        // A ready letter is a direct cover beside the same favorites entry.
         let readyApp = launch("monthly")
-        assertSection("ふりかえり", in: readyApp)
+        assertAlbumsRoot(in: readyApp)
         XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
-        XCTAssertTrue(readyApp.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
-        capture("solo-memories-monthly-ready")
+        XCTAssertTrue(readyApp.staticTexts["solo-memories-loaded-2"].waitForExistence(timeout: 15))
+        capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
-        assertSection("ふりかえり", in: readyApp)
+        assertAlbumsRoot(in: readyApp)
         readyApp.terminate()
     }
 
     @MainActor
-    func testSeasonalOnlyStartsFirstAndKeepsItsOrderWithLargestText() {
+    func testAlbumCoversAndFavoritesRemainReachableWithLargestText() {
         let app = launch("seasonal-large")
-        assertSection("ふりかえり", in: app, largeText: true)
-        XCTAssertTrue(app.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
-        // Native AX gives these children their section container's identifier.
-        // Match the actual heading text, retaining the visual order assertion.
-        let seasonalTitle = app.staticTexts["季節のムービー"]
-        let monthlyTitle = app.staticTexts["月の便り"]
-        XCTAssertTrue(seasonalTitle.waitForExistence(timeout: 10))
-        XCTAssertTrue(monthlyTitle.waitForExistence(timeout: 10))
-        XCTAssertGreaterThan(seasonalTitle.frame.height, 0)
-        XCTAssertGreaterThan(monthlyTitle.frame.height, 0)
-        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY)
-        let menu = app.buttons["memories-section-menu"]
-        XCTAssertTrue(menu.isHittable)
-        XCTAssertGreaterThanOrEqual(menu.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(menu.frame.minX, app.frame.minX)
-        XCTAssertLessThanOrEqual(menu.frame.maxX, app.frame.maxX)
-        capture("solo-memories-seasonal-first-largest-text")
-
-        let seasonalCard = app.buttons["2025年7月–9月の季節のムービー、3場面、新着"]
-        app.scrollViews.firstMatch.swipeUp()
-        XCTAssertTrue(seasonalCard.isHittable)
-        capture("solo-memories-seasonal-card-largest-text")
+        assertAlbumsRoot(in: app)
+        let seasonalCard = element("albums-seasonal-movie", in: app)
+        XCTAssertTrue(seasonalCard.waitForExistence(timeout: 10))
+        XCTAssertFalse(monthlyCard(in: app).exists)
+        let loadedPhotos = app.staticTexts["solo-memories-loaded-photos"]
+        let coverLoaded = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@",
+                                   "|app-store-screenshot-fixture-1|", "|app-store-screenshot-fixture-9|"),
+            object: loadedPhotos
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [coverLoaded], timeout: 15), .completed)
+        capture("albums-seasonal-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
-        assertSection("ふりかえり", in: app, largeText: true)
+        assertAlbumsRoot(in: app)
 
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
-        assertSection("ふりかえり", in: app, largeText: true)
-        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY,
-                          "A late monthly letter must not move the seasonal movie below it.")
-        openCardAndReturn(monthlyCard(in: app), expectedRoute: "monthly:2025-08", in: app)
-        for _ in 0..<6 where !menu.isHittable { app.scrollViews.firstMatch.swipeDown() }
-        XCTAssertTrue(menu.isHittable)
-        selectSection("残した写真", in: app, largeText: true)
-        visitOtherScreenAndReturn(in: app)
-        assertSection("残した写真", in: app, largeText: true)
-        selectSection("ふりかえり", in: app, largeText: true)
-        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY)
+        assertAlbumsRoot(in: app)
+        let favorites = element("albums-favorites", in: app)
+        for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.scrollViews.firstMatch.swipeDown() }
+        let month = monthlyCard(in: app)
+        reveal(month, in: app)
+        let monthFrame = month.frame
+        XCTAssertGreaterThan(monthFrame.height, 0)
+        XCTAssertGreaterThan(monthFrame.width, app.frame.width / 2)
+        XCTAssertGreaterThanOrEqual(monthFrame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(monthFrame.maxX, app.frame.maxX)
+        capture("albums-monthly-cover-largest-text")
+        openCardAndReturn(month, expectedRoute: "monthly:2025-08", in: app)
+        reveal(seasonalCard, in: app)
+        // Each visible cover occupies one column at accessibility sizes.
+        // Off-screen lazy cells are not used as geometry evidence.
+        XCTAssertGreaterThan(seasonalCard.frame.width, app.frame.width / 2)
+        XCTAssertGreaterThanOrEqual(seasonalCard.frame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(seasonalCard.frame.maxX, app.frame.maxX)
+        capture("albums-seasonal-cover-largest-text")
+        openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+        for (identifier, route) in [("household_growth", "album:household_growth"),
+                                    ("close_up", "album:close_up")] {
+            let cover = element("album-card-\(identifier)", in: app)
+            reveal(cover, in: app)
+            XCTAssertGreaterThan(cover.frame.width, app.frame.width / 2,
+                                 "Embedded album cards must inherit accessibility text size.")
+            XCTAssertGreaterThanOrEqual(cover.frame.minX, app.frame.minX)
+            XCTAssertLessThanOrEqual(cover.frame.maxX, app.frame.maxX)
+            capture("albums-\(identifier)-largest-text")
+            openCardAndReturn(cover, expectedRoute: route, in: app)
+        }
+        openFavorites(in: app)
+        XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].isHittable)
+        capture("albums-favorites-largest-text")
+        returnFromFavorites(in: app)
         app.terminate()
     }
 
@@ -1908,16 +1955,12 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func monthlyCard(in app: XCUIApplication) -> XCUIElement {
-        // Native AX identifies both the heading and card as
-        // memories-latest-summary. The card's full spoken name stays distinct.
-        app.buttons["2025年8月の小さな便り、5枚、未読"]
+        element("memories-monthly-window", in: app)
     }
 
     @MainActor
     private func openCardAndReturn(_ card: XCUIElement, expectedRoute: String, in app: XCUIApplication) {
-        XCTAssertTrue(card.waitForExistence(timeout: 10))
-        for _ in 0..<6 where !card.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(card.isHittable, "The real card must remain reachable at this text size.")
+        reveal(card, in: app)
         XCTAssertTrue(card.isEnabled)
         card.tap()
         let destination = app.staticTexts["solo-memories-detail-destination"]
@@ -1927,31 +1970,43 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func assertSection(_ title: String, in app: XCUIApplication, largeText: Bool = false) {
-        let identifier = title == "残した写真" ? "memories-saved-section" : "memories-summaries-section"
-        XCTAssertTrue(element(identifier, in: app).waitForExistence(timeout: 10))
-        if largeText {
-            let menu = app.buttons["memories-section-menu"]
-            XCTAssertTrue(menu.waitForExistence(timeout: 10))
-            XCTAssertTrue(menu.label.contains(title))
-        } else {
-            let selected = app.segmentedControls["memories-section-picker"].buttons[title]
-            XCTAssertTrue(selected.waitForExistence(timeout: 10))
-            XCTAssertTrue(selected.isSelected, "The visible section and selected control must agree.")
-        }
+    private func assertAlbumsRoot(in app: XCUIApplication) {
+        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 10))
+        XCTAssertTrue(element("albums-root", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(app.segmentedControls["memories-section-picker"].exists)
+        XCTAssertFalse(app.buttons["memories-section-menu"].exists)
     }
 
     @MainActor
-    private func selectSection(_ title: String, in app: XCUIApplication, largeText: Bool = false) {
-        if largeText {
-            app.buttons["memories-section-menu"].tap()
-            let option = app.buttons[title]
-            XCTAssertTrue(option.waitForExistence(timeout: 5))
-            option.tap()
-        } else {
-            app.segmentedControls["memories-section-picker"].buttons[title].tap()
-        }
-        assertSection(title, in: app, largeText: largeText)
+    private func openPhotosTab(in app: XCUIApplication) {
+        assertAlbumsRoot(in: app)
+        let photos = app.buttons["main-tab-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 10))
+        photos.tap()
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)
+    }
+
+    @MainActor
+    private func openFavorites(in app: XCUIApplication) {
+        let favorites = element("albums-favorites", in: app)
+        for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(favorites.isHittable)
+        favorites.tap()
+        XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    private func returnFromFavorites(in app: XCUIApplication) {
+        app.navigationBars["お気に入り"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: app)
+    }
+
+    @MainActor
+    private func reveal(_ card: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<8 where !(card.exists && card.isHittable) { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(card.isHittable, "The actual card must remain reachable at this text size.")
     }
 
     @MainActor
@@ -2070,7 +2125,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertEqual(photoZoom(), 1, accuracy: 0.05)
             XCTAssertGreaterThan(visiblePhoto.frame.height, app.frame.height * 0.55)
             XCTAssertGreaterThanOrEqual(deliver.frame.height, 44)
-            XCTAssertGreaterThanOrEqual(app.buttons["思い出に残す"].frame.height, 44)
+            XCTAssertGreaterThanOrEqual(app.buttons["お気に入りに追加"].frame.height, 44)
             attach(app, name: "photo-browser-compact-actions-\(variant)")
             visiblePhoto.doubleTap()
             expectation(for: NSPredicate { _, _ in photoZoom() > 1.1 }, evaluatedWith: app)
@@ -2359,20 +2414,20 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         second.tap()
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertFalse(saved.exists, "Another photo must not inherit the saved state.")
-        XCTAssertEqual(save.label, "自分の思い出に追加")
+        XCTAssertEqual(save.label, "自分のお気に入りに追加")
         XCTAssertEqual(heart.label, "写真を届けた相手にハートを送る")
         XCTAssertTrue(heart.isEnabled)
         tapReceivedDetailControl(app, identifier: "family-window-save-memory")
         XCTAssertEqual(request.label, "save|1", "The callback must name the currently displayed photo.")
         tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
-        tapReceivedDetailControl(app, identifier: "思い出の操作")
-        let remove = app.buttons["思い出から外す"].firstMatch
+        tapReceivedDetailControl(app, identifier: "お気に入りの操作")
+        let remove = app.buttons["お気に入りから外す"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
         remove.tap()
         XCTAssertEqual(request.label, "remove|1")
         tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
         XCTAssertFalse(saved.exists)
-        XCTAssertEqual(save.label, "自分の思い出に再追加",
+        XCTAssertEqual(save.label, "自分のお気に入りに再追加",
                        "Removing the saved state must retain the already-imported distinction.")
         closePhotoDetail(app)
         for _ in 0..<6 where !latest.isHittable { app.scrollViews.firstMatch.swipeDown() }
@@ -2774,7 +2829,7 @@ final class PersonalRediscoveryUITests: XCTestCase {
             reveal(oldResult, in: app)
             oldResult.tap()
             assertPhoto(yesterdayPhotoID, in: app)
-            let save = app.buttons.matching(NSPredicate(format: "label == %@", "思い出に残す"))
+            let save = app.buttons.matching(NSPredicate(format: "label == %@", "お気に入りに追加"))
                 .allElementsBoundByIndex.first { $0.isHittable }
             XCTAssertNotNil(save)
             save?.tap()

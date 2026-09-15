@@ -271,7 +271,7 @@ struct PairingView: View {
             Text("共有されるもの")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "写真は自動送信されません。思い出への追加も相手には送られません。"
+                ? "写真は自動送信されません。お気に入りへの追加も相手には送られません。"
                 : "このBuildでは、共有鍵のペアリングだけを行います。")
         }
     }
@@ -1246,7 +1246,7 @@ struct PairingView: View {
     private var cancelConfirmationMessage: String {
         if model.state?.phase == .paired {
             if model.isMediaSyncEnabled {
-                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「思い出に残す」で写真アプリへ保存した写真は削除できません。"
+                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"
             }
             return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と接続情報を削除します。通信に失敗した場合は削除しません。"
         }

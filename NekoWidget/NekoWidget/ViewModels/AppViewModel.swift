@@ -3727,9 +3727,9 @@ final class AppViewModel: ObservableObject {
         if let value = error as? SharedLikeStoreError {
             switch value {
             case .appGroupUnavailable:
-                return "「思い出」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+                return "「お気に入り」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
             case .lockOpenFailed, .lockFailed:
-                return "「思い出」を安全に保存できませんでした。少し待って、もう一度お試しください。"
+                return "「お気に入り」を安全に保存できませんでした。少し待って、もう一度お試しください。"
             case .measurementNotInitialized:
                 return "アプリを一度開き直してから、もう一度お試しください。"
             }

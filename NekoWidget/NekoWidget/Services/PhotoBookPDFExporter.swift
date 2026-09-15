@@ -20,7 +20,7 @@ enum MemoryPhotoJPEGExportError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .photoNotInMemories:
-            "この写真は現在「思い出」にありません。"
+            "この写真は現在「お気に入り」にありません。"
         case .photoUnavailable:
             "この写真を写真ライブラリで確認できませんでした。"
         case .imageUnavailable:

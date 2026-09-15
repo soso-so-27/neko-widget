@@ -344,7 +344,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             settings,
         )
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
-        self.assertIn("「思い出に残す」を選んだ届いた写真", info)
+        self.assertIn("「自分のお気に入りに追加」を選んだ届いた写真", info)
         self.assertIn("写真を自動で追加することはありません", info)
 
     def test_explicit_export_disclosure_stays_aligned_with_implementation(self):

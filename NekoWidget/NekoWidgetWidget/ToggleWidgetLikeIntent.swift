@@ -7,9 +7,9 @@ import Foundation
 import WidgetKit
 
 struct ToggleWidgetLikeIntent: AppIntent {
-    static var title: LocalizedStringResource = "写真を思い出に残す"
+    static var title: LocalizedStringResource = "写真をお気に入りに追加"
     static var description = IntentDescription(
-        "表示中の写真を思い出に残します。解除はアプリで確認して行います。"
+        "表示中の写真をお気に入りに追加します。解除はアプリで確認して行います。"
     )
     // Build 6 uses this intent only as the widget's private interaction. It is
     // deliberately not offered as a Siri or Shortcuts action.
@@ -99,7 +99,7 @@ struct ToggleWidgetLikeIntent: AppIntent {
 /// now matches the personal-library collection. It never creates a relay
 /// request or notifies the other participant.
 struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
-    static var title: LocalizedStringResource = "届いた写真を取り込んで残す"
+    static var title: LocalizedStringResource = "届いた写真を自分のお気に入りに追加"
     static var description = IntentDescription(
         "写真アプリへの取り込みを確認するため、ねこのまどを開きます。"
     )

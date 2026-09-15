@@ -141,9 +141,8 @@ enum AppStoreScreenshotFixture {
         }
     }
 
-    /// Uses identifiers that never appear in the Memories tab. Keeping each
-    /// capture screen's pixels disjoint lets UI tests prove that the active
-    /// tab, rather than an off-screen tab retained by `TabView`, has rendered.
+    /// Favorites use identifiers outside the scoped Photos collection. This
+    /// also exercises saved photos surviving a different album source.
     static var likedPhotos: [PhotoPresentation] {
         Array(identifiers[8...16]).enumerated().map { index, identifier in
             PhotoPresentation(
@@ -163,8 +162,8 @@ enum AppStoreScreenshotFixture {
         }
     }
 
-    /// The Window screen also owns a dedicated identifier, so a loaded image
-    /// left behind by that tab cannot satisfy the Memories or Likes wait gate.
+    /// Widget detail owns a dedicated identifier, separate from both scoped
+    /// photos and favorites.
     static var windowPhoto: PhotoPresentation {
         PhotoPresentation(
             localIdentifier: identifiers[17],
@@ -600,7 +599,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
     }
 }
 
-/// Keeps the shipping Memories view alive while its inputs change. Only
+/// Keeps the shipping Albums root alive while its inputs change. Only
 /// presentation values and existing in-memory illustrations are supplied;
 /// navigation destinations acknowledge the action without opening services.
 @MainActor
@@ -610,7 +609,7 @@ private struct SoloMemoriesFixtureView: View {
     @State private var hasPhotoAccess: Bool
     @State private var showsOtherScreen = false
     @State private var otherScreenTitle = "別の画面"
-    @State private var detailPath: [MemoriesRoute] = []
+    @State private var detailPath = NavigationPath()
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
@@ -636,7 +635,9 @@ private struct SoloMemoriesFixtureView: View {
                 openPhotos: {
                     otherScreenTitle = "写真"
                     showsOtherScreen = true
-                }
+                },
+                albumSections: albumSections,
+                albumScan: scenario == "solo-memories-seasonal-large" ? albumScan : nil
             )
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -665,7 +666,7 @@ private struct SoloMemoriesFixtureView: View {
                 VStack(spacing: 20) {
                     Text(otherScreenTitle)
                         .accessibilityIdentifier("solo-memories-other-screen")
-                    Button("思い出に戻る") { showsOtherScreen = false }
+                    Button("アルバムに戻る") { showsOtherScreen = false }
                         .accessibilityIdentifier("solo-memories-return")
                 }
             }
@@ -673,10 +674,21 @@ private struct SoloMemoriesFixtureView: View {
             // its real photo/letter/movie links remain enabled in this fixture.
             .navigationDestination(for: MemoriesRoute.self) { route in
                 VStack(spacing: 20) {
-                    Text("思い出の詳細")
+                    Text("アルバムの詳細")
                         .accessibilityIdentifier("solo-memories-detail-destination")
                         .accessibilityValue(detailRouteKey(route))
-                    Button("思い出に戻る") {
+                    Button("アルバムに戻る") {
+                        if !detailPath.isEmpty { detailPath.removeLast() }
+                    }
+                    .accessibilityIdentifier("solo-memories-detail-return")
+                }
+            }
+            .navigationDestination(for: AlbumRoute.self) { route in
+                VStack(spacing: 20) {
+                    Text("アルバムの詳細")
+                        .accessibilityIdentifier("solo-memories-detail-destination")
+                        .accessibilityValue(albumRouteKey(route))
+                    Button("アルバムに戻る") {
                         if !detailPath.isEmpty { detailPath.removeLast() }
                     }
                     .accessibilityIdentifier("solo-memories-detail-return")
@@ -685,11 +697,44 @@ private struct SoloMemoriesFixtureView: View {
         }
         .dynamicTypeSize(scenario.hasSuffix("-large") ? .accessibility5 : .large)
         .overlay(alignment: .topLeading) {
-            Text("loaded")
-                .accessibilityIdentifier("solo-memories-loaded-\(loadedCount)")
-                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
-                .allowsHitTesting(false)
+            VStack {
+                Text("loaded")
+                    .accessibilityIdentifier("solo-memories-loaded-\(loadedCount)")
+                Text("loaded photos")
+                    .accessibilityIdentifier("solo-memories-loaded-photos")
+                    .accessibilityValue("|" + loadedPhotoIdentifiers.joined(separator: "|") + "|")
+            }
+            .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+            .allowsHitTesting(false)
         }
+    }
+
+    private var albumSections: [CuratedAlbumSectionPresentation] {
+        guard scenario == "solo-memories-seasonal-large" else { return [] }
+        let photos = AppStoreScreenshotFixture.photos
+        var sections: [CuratedAlbumSectionPresentation] = []
+        if let growth = HouseholdGrowthAlbumBuilder().album(from: photos) {
+            sections.append(CuratedAlbumSectionPresentation(id: .time, albums: [growth]))
+        }
+        let themes = CuratedAlbumBuilder()
+            .sections(from: photos, lifeReference: nil, includesGrowth: false)
+            .flatMap(\.albums).filter { $0.id == .closeUp }
+        if !themes.isEmpty {
+            sections.append(CuratedAlbumSectionPresentation(id: .cuteness, albums: themes))
+        }
+        return sections
+    }
+
+    private var albumScan: ScanPresentation {
+        var scan = ScanPresentation()
+        scan.totalAssets = AppStoreScreenshotFixture.photos.count
+        scan.scannedAssets = scan.totalAssets
+        scan.finalCatAssets = scan.totalAssets
+        return scan
+    }
+
+    private var loadedPhotoIdentifiers: [String] {
+        Set(loadTracker.loadedImages.map(\.localIdentifier)).sorted()
     }
 
     private var savedPhotos: [PhotoPresentation] {
@@ -742,6 +787,13 @@ private struct SoloMemoriesFixtureView: View {
         case let .photo(identifier): "photo:\(identifier)"
         case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
         case let .seasonalMovie(period): "seasonal:\(period.id)"
+        }
+    }
+
+    private func albumRouteKey(_ route: AlbumRoute) -> String {
+        switch route {
+        case let .album(identifier): "album:\(identifier.logKey)"
+        case let .photo(album, identifier): "album-photo:\(album.logKey):\(identifier)"
         }
     }
 }

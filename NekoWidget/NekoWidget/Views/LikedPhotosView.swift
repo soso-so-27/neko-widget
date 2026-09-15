@@ -11,38 +11,48 @@ struct AlbumView: View {
     let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let profileActions: CatProfilesViewActions
     @Binding var selectedScope: CatProfileScopePresentation
+    var showsAllPhotos = true
+    var isEmbedded = false
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 26) {
-                if !profiles.isEmpty {
-                    profileScopeSection
-                }
-                if scan.isPreparingGroupedAlbums {
-                    groupedAlbumPreparationBanner
-                } else if scan.hasFinalResult, scan.hasDeferredAssets {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
-                            .font(.subheadline.weight(.semibold))
-                        Text("作成できたアルバムは表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+        if isEmbedded {
+            shelfContent
+        } else {
+            ScrollView {
+                shelfContent
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
+            .navigationTitle("アルバム")
+            .background(Color(.systemGroupedBackground))
+        }
+    }
 
-                ForEach(orderedSections) { section in
-                    albumSection(section)
-                }
-
-                if sections.isEmpty {
-                    emptyState
+    var shelfContent: some View {
+        LazyVStack(alignment: .leading, spacing: 26) {
+            if !profiles.isEmpty {
+                profileScopeSection
+            }
+            if scan.isPreparingGroupedAlbums {
+                groupedAlbumPreparationBanner
+            } else if scan.hasFinalResult, scan.hasDeferredAssets {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
+                        .font(.subheadline.weight(.semibold))
+                    Text("作成できたアルバムは表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+
+            ForEach(orderedSections) { section in
+                albumSection(section)
+            }
+
+            if orderedSections.isEmpty {
+                emptyState
+            }
         }
-        .navigationTitle("自動アルバム")
-        .background(Color(.systemGroupedBackground))
     }
 
     @ViewBuilder
@@ -77,6 +87,13 @@ struct AlbumView: View {
         NavigationLink(value: AlbumRoute.album(album.id)) {
             if isPrimary {
                 PrimaryCuratedAlbumCard(album: album)
+            } else if isEmbedded {
+                AlbumOverviewCard(
+                    identifier: album.coverPhoto.localIdentifier,
+                    catBoundingBox: album.coverPhoto.catBoundingBox,
+                    title: album.cardTitle, subtitle: album.countLabel,
+                    isMovie: false, isNew: false
+                )
             } else {
                 CuratedAlbumCard(album: album)
             }
@@ -96,7 +113,15 @@ struct AlbumView: View {
     }
 
     private var orderedSections: [CuratedAlbumSectionPresentation] {
-        sections.filter { isPrimaryAlbumSection($0) }
+        if !showsAllPhotos {
+            let time = sections.filter { $0.id == .time }
+            let themes = sections.filter { $0.id == .cuteness || $0.id == .special }
+                .flatMap(\.albums)
+            return time + (themes.isEmpty ? [] : [
+                CuratedAlbumSectionPresentation(id: .special, albums: themes)
+            ])
+        }
+        return sections.filter { isPrimaryAlbumSection($0) }
             + sections.filter { !isPrimaryAlbumSection($0) }
     }
 
@@ -109,7 +134,7 @@ struct AlbumView: View {
         case .cuteness:
             "近くで撮れた写真"
         case .special:
-            "いっしょ・特別な日"
+            showsAllPhotos ? "いっしょ・特別な日" : "テーマ"
         }
     }
 
@@ -153,11 +178,11 @@ struct AlbumView: View {
                 actions: profileActions
             )
         } label: {
-            Label("写真と設定", systemImage: "slider.horizontal.3")
+            Label("プロフィール", systemImage: "slider.horizontal.3")
                 .font(.caption.weight(.semibold))
         }
-        .accessibilityLabel("\(profile.displayName)の写真と設定")
-        .accessibilityHint("\(profile.displayName)の写真とプロフィールを確認します")
+        .accessibilityLabel("\(profile.displayName)のプロフィール")
+        .accessibilityHint("\(profile.displayName)の設定を開きます")
         .accessibilityIdentifier("album-profile-add-photos")
     }
 
@@ -201,14 +226,14 @@ struct AlbumView: View {
                 systemImage: "rectangle.stack.badge.plus",
                 description: Text("準備できた写真から、ここにまとまって表示されます。")
             )
-            .frame(maxWidth: .infinity, minHeight: 320)
+            .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else {
             ContentUnavailableView(
                 "猫のアルバムがまだありません",
                 systemImage: "photo.on.rectangle",
                 description: Text("猫の写真が見つかると、成長や撮影年ごとにまとまります。")
             )
-            .frame(maxWidth: .infinity, minHeight: 420)
+            .frame(maxWidth: .infinity, minHeight: isEmbedded ? 180 : 420)
         }
     }
 }
@@ -497,28 +522,12 @@ struct CuratedAlbumDetailView: View {
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         let date = photo.creationDate?.formatted(.dateTime.year().month().day().hour().minute())
             ?? "撮影日時不明"
-        return photo.isLiked ? "\(date)の猫の写真、思い出に残した写真" : "\(date)の猫の写真"
+        return photo.isLiked ? "\(date)の猫の写真、お気に入りの写真" : "\(date)の猫の写真"
     }
 }
 
-private enum MemoriesSection: String, CaseIterable, Identifiable {
-    case summaries
-    case photos
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .photos: "残した写真"
-        case .summaries: "ふりかえり"
-        }
-    }
-}
-
-/// The entry point for photos the user deliberately kept as memories.
-/// Opens on an available reflection, or the saved collection when none is
-/// ready. The first visible section is kept for this view's lifetime so new
-/// results never move someone away from the photos they are looking at.
+/// Album entry point. Explicit favorites keep their full personal collection;
+/// generated collections continue to use the independently scoped photo input.
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -530,572 +539,247 @@ struct LikedPhotosView: View {
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
     let openPhotos: () -> Void
+    var albumSections: [CuratedAlbumSectionPresentation] = []
+    var albumScan: ScanPresentation? = nil
+    var albumProfiles: [CatProfilePresentation] = []
+    var albumOptions: [CatProfilePhotoAlbumOptionPresentation] = []
+    var albumProfileActions: CatProfilesViewActions = .noOp
+    var albumScope: Binding<CatProfileScopePresentation> = .constant(.everyone)
+    var showSettings: (() -> Void)? = nil
 
-    @State private var selectedSection: MemoriesSection?
-    @State private var prefersSeasonalSummary: Bool?
-
-    private var initialSection: MemoriesSection {
-        hasPhotoAccess && (readyMonthlyWindow != nil || !seasonalMovies.isEmpty)
-            ? .summaries : .photos
+    private var months: [MonthlyWindowPresentation] {
+        monthlyWindowCollection?.letters ?? []
     }
 
-    private var displayedSection: MemoriesSection {
-        selectedSection ?? initialSection
-    }
-
-    private var sectionSelection: Binding<MemoriesSection> {
-        Binding(
-            get: { displayedSection },
-            set: { selectedSection = $0 }
-        )
-    }
-
-    private var showsSeasonalSummaryFirst: Bool {
-        prefersSeasonalSummary
-            ?? (readyMonthlyWindow == nil && !seasonalMovies.isEmpty)
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12),
+              count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
-                memoriesSectionControl
-
-                switch displayedSection {
-                case .photos:
-                    savedPhotosSection
-                case .summaries:
-                    summarySection
+            LazyVStack(alignment: .leading, spacing: 24) {
+                favoritesLink
+                if hasPhotoAccess {
+                    if !months.isEmpty || !seasonalMovies.isEmpty {
+                        reflectionShelf
+                    }
+                    if let albumScan {
+                        AlbumView(
+                            sections: albumSections, scan: albumScan,
+                            profiles: albumProfiles, photoAlbumOptions: albumOptions,
+                            profileActions: albumProfileActions,
+                            selectedScope: albumScope, showsAllPhotos: false,
+                            isEmbedded: true
+                        )
+                    }
+                }
+                if !hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
+                    && albumSections.allSatisfy({ $0.id == .all })) {
+                    Button(action: openPhotos) {
+                        Label("写真を見る", systemImage: "photo.on.rectangle.angled")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .accessibilityIdentifier("memories-open-photos")
                 }
             }
-            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
-        .navigationTitle("思い出")
+        .navigationTitle("アルバム")
         .background(Color(.systemGroupedBackground))
-        .onAppear {
-            // Resolve at presentation, not when an inactive tab is built.
-            // This also preserves the user's selection on return/navigation.
-            if selectedSection == nil {
-                selectedSection = initialSection
+        .accessibilityIdentifier("albums-root")
+        .toolbar {
+            if let showSettings {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: showSettings) {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("設定")
+                    .accessibilityIdentifier("albums-settings-button")
+                }
             }
         }
     }
 
-    @ViewBuilder
-    private var memoriesSectionControl: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            Menu {
-                ForEach(MemoriesSection.allCases) { section in
-                    Button {
-                        selectedSection = section
-                    } label: {
-                        if displayedSection == section {
-                            Label(section.title, systemImage: "checkmark")
-                        } else {
-                            Text(section.title)
-                        }
-                    }
-                }
-            } label: {
-                Label(
-                    "表示：\(displayedSection.title)",
-                    systemImage: "line.3.horizontal.decrease.circle"
-                )
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            }
-            .buttonStyle(.bordered)
-            .padding(.horizontal, 16)
-            .accessibilityIdentifier("memories-section-menu")
-        } else {
-            Picker("表示する思い出", selection: sectionSelection) {
-                ForEach(MemoriesSection.allCases) { section in
-                    Text(section.title).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .accessibilityIdentifier("memories-section-picker")
-        }
-    }
-
-    private var photoColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
-    }
-
-    private var savedPhotosSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !photos.isEmpty {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("\(photos.count.formatted())枚")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("photo-book-progress")
-
-                    Spacer()
-
-                    NavigationLink {
-                        SavedMemoriesGalleryView(
-                            photos: photos,
-                            startsInExportMode: true,
-                            exportPhotoBook: exportPhotoBook
-                        )
-                    } label: {
-                        Label("選ぶ", systemImage: "checkmark.circle")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .accessibilityIdentifier("memories-create-from-photos-action")
-                    .accessibilityHint("写真を選んで、PDFとして共有したり、本のイメージを確認したりできます")
-                }
-                .padding(.horizontal, 16)
-            }
-
-            if photos.isEmpty {
-                Button(action: openPhotos) {
-                    Label("写真から選ぶ", systemImage: "photo.on.rectangle.angled")
-                        .font(.headline)
-                        .foregroundStyle(Color.accentColor)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
-                .padding(.horizontal, 16)
-                .accessibilityIdentifier("memories-open-photos")
-                .accessibilityHint("猫写真の一覧を開きます")
-            } else {
-                LazyVGrid(columns: photoColumns, spacing: 3) {
-                    ForEach(photos) { photo in
-                        NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
-                            MemoryPhotoThumbnail(photo: photo)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
-                        .accessibilityHint("写真を大きく表示します")
-                    }
-                }
-                .padding(.horizontal, 3)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("残した写真")
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier("memories-saved-section")
-    }
-
-    private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            if hasPhotoAccess {
-                if showsSeasonalSummaryFirst {
-                    seasonalMovieSection(seasonalMovies)
-                    summarySectionDivider
-                    latestSummarySection
+    private var favoritesLink: some View {
+        NavigationLink {
+            SavedMemoriesGalleryView(
+                photos: photos, startsInExportMode: false,
+                exportPhotoBook: exportPhotoBook
+            )
+        } label: {
+            HStack(spacing: 12) {
+                if let cover = photos.first {
+                    PhotoAssetImageView(
+                        localIdentifier: cover.localIdentifier,
+                        catBoundingBox: cover.catBoundingBox,
+                        targetPixelSize: CGSize(width: 180, height: 180),
+                        targetAspectRatio: 1
+                    )
+                    .frame(width: 52, height: 52).clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 } else {
-                    latestSummarySection
-                    summarySectionDivider
-                    seasonalMovieSection(seasonalMovies)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "photo.badge.exclamationmark")
-                            .foregroundStyle(Color.accentColor)
-                        Text("写真へのアクセスを許可すると表示されます")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button("写真を確認する", systemImage: "arrow.right", action: openPhotos)
-                        .buttonStyle(.bordered)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
-                .padding(.horizontal, 16)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("ふりかえり")
-        .accessibilityIdentifier("memories-summaries-section")
-        .onAppear {
-            // A late monthly result must not move a movie already on screen.
-            if prefersSeasonalSummary == nil {
-                prefersSeasonalSummary = showsSeasonalSummaryFirst
-            }
-        }
-    }
-
-    private var latestSummarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            summarySectionTitle(
-                "月の便り",
-                subtitle: "直近の月を、写真で振り返る",
-                systemImage: "calendar",
-                identifier: "memories-latest-summary-title"
-            )
-
-            if let monthlyWindow = readyMonthlyWindow {
-                monthlyWindowCard(monthlyWindow)
-
-                if !previousMonthlyWindows.isEmpty {
-                    previousMonthlyWindowsSection
-                }
-            } else {
-                summaryEmptyState
-            }
-        }
-        .accessibilityIdentifier("memories-latest-summary")
-    }
-
-    private var readyMonthlyWindow: MonthlyWindowPresentation? {
-        monthlyWindowCollection?.letters.first
-    }
-
-    private var previousMonthlyWindows: [MonthlyWindowPresentation] {
-        guard let letters = monthlyWindowCollection?.letters,
-              letters.count > 1 else { return [] }
-        return Array(letters.dropFirst())
-    }
-
-    private func summarySectionTitle(
-        _ title: String,
-        subtitle: String,
-        systemImage: String,
-        badge: String? = nil,
-        identifier: String
-    ) -> some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title)
-                        .font(.headline)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let badge {
-                        Text(badge)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                standardSummarySectionTitle(
-                    title, subtitle: subtitle, systemImage: systemImage, badge: badge
-                )
-            }
-        }
-        .padding(.horizontal, 16)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier(identifier)
-    }
-
-    private func standardSummarySectionTitle(
-        _ title: String,
-        subtitle: String,
-        systemImage: String,
-        badge: String?
-    ) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(
-                    Color.accentColor.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 6)
-
-            if let badge {
-                Text(badge)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color(.tertiarySystemFill), in: Capsule())
-            }
-        }
-    }
-
-    private var summarySectionDivider: some View {
-        Divider()
-            .padding(.horizontal, 16)
-            .accessibilityHidden(true)
-    }
-
-    private func monthlyWindowCard(
-        _ presentation: MonthlyWindowPresentation
-    ) -> some View {
-        NavigationLink(value: MemoriesRoute.monthlyWindow(presentation)) {
-            MonthlySummaryHeroCard(
-                presentation: presentation,
-                isUnread: latestMonthlyWindowIsUnread
-            )
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 16)
-        .accessibilityIdentifier("memories-monthly-window")
-        .accessibilityLabel(
-            "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
-                + (latestMonthlyWindowIsUnread ? "、未読" : "")
-        )
-        .accessibilityHint("小さな便りを開きます")
-    }
-
-    private var previousMonthlyWindowsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("これまでの便り")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .accessibilityAddTraits(.isHeader)
-
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 12) {
-                    ForEach(previousMonthlyWindows) { presentation in
-                        NavigationLink(
-                            value: MemoriesRoute.monthlyWindow(presentation)
-                        ) {
-                            MonthlyWindowArchiveCard(
-                                presentation: presentation
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(
-                            "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
-                        )
-                        .accessibilityHint("小さな便りを開きます")
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-            .scrollIndicators(.hidden)
-        }
-        .accessibilityIdentifier("memories-previous-monthly-windows")
-    }
-
-    private var summaryEmptyState: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "sparkles.rectangle.stack")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 42, height: 42)
-                .background(
-                    Color.accentColor.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(summaryEmptyTitle)
-                    .font(.headline)
-                Text(summaryEmptyMessage)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 18)
-        )
-        .padding(.horizontal, 16)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("memories-summary-empty-state")
-    }
-
-    private var summaryEmptyTitle: String {
-        monthlyWindowCollection == nil
-            ? "写真の確認を待っています"
-            : "月の便りはまだありません"
-    }
-
-    private var summaryEmptyMessage: String {
-        guard monthlyWindowCollection != nil else {
-            return "写真の確認が終わると、対象の月の便りを表示します。"
-        }
-        return "月が終わると、その月の写真から便りをまとめます。異なる場面の写真が少ない月は、作られないことがあります。"
-    }
-
-    private func seasonalMovieSection(
-        _ records: [SeasonalMovieArchiveRecord]
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            summarySectionTitle(
-                "季節のムービー",
-                subtitle: "季節の写真を、短いムービーで見る",
-                systemImage: "play.rectangle",
-                badge: "このiPhone",
-                identifier: "memories-seasonal-movies-title"
-            )
-
-            if records.isEmpty {
-                HStack(spacing: 10) {
-                    Image(systemName: "film")
+                    Image(systemName: "bookmark")
+                        .font(.title2)
+                        .frame(width: 52, height: 52)
                         .foregroundStyle(Color.accentColor)
-                    Text("写真がそろうと表示されます")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 16)
-                )
-                .padding(.horizontal, 16)
-                .accessibilityIdentifier("memories-seasonal-movies-empty-state")
-            } else {
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(records) { record in
-                            NavigationLink(
-                                value: MemoriesRoute.seasonalMovie(record.periodID)
-                            ) {
-                                SeasonalMovieArchiveCard(
-                                    presentation: record.effectivePresentation,
-                                    isNew: latestSeasonalMovieIsNew
-                                        && record.periodID == records.first?.periodID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("お気に入り").font(.headline)
+                    Text("\(photos.count.formatted())枚")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .scrollIndicators(.hidden)
-            }
-        }
-        .accessibilityIdentifier("memories-seasonal-movies")
-    }
-
-}
-
-private struct MonthlySummaryHeroCard: View {
-    let presentation: MonthlyWindowPresentation
-    let isUnread: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            coverImage
-                .frame(maxWidth: .infinity)
-                .frame(height: 148)
-                .clipped()
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(presentation.title)
-                        .font(.title2.bold())
-
-                    if isUnread {
-                        Text("未読")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                    }
-                }
-                Text(detailText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 22))
-        .contentShape(RoundedRectangle(cornerRadius: 22))
-    }
-
-    @ViewBuilder
-    private var coverImage: some View {
-        if let cover = presentation.coverPhoto {
-            PhotoAssetImageView(
-                localIdentifier: cover.localIdentifier,
-                catBoundingBox: cover.catBoundingBox,
-                targetPixelSize: CGSize(width: 1_080, height: 720),
-                targetAspectRatio: 3.0 / 2.0
-            )
-        } else {
-            Image(systemName: "envelope.open")
-                .font(.largeTitle)
-                .foregroundStyle(Color.accentColor)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.accentColor.opacity(0.10))
-        }
-    }
-
-    private var detailText: String {
-        "\(presentation.yearNumber)年・\(presentation.photos.count.formatted())枚"
-    }
-}
-
-private struct MonthlyWindowArchiveCard: View {
-    let presentation: MonthlyWindowPresentation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            coverImage
-                .frame(width: 164, height: 108)
-                .clipped()
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(monthTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text("\(presentation.photos.count.formatted())枚")
-                    .font(.caption)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(12)
-            .frame(width: 164, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 18))
         }
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("albums-favorites")
+        .accessibilityLabel("お気に入り、\(photos.count.formatted())枚")
+        .accessibilityHint("自分で選んだ写真を開きます")
     }
 
-    @ViewBuilder
-    private var coverImage: some View {
-        if let cover = presentation.coverPhoto {
-            PhotoAssetImageView(
-                localIdentifier: cover.localIdentifier,
-                catBoundingBox: cover.catBoundingBox,
-                targetPixelSize: CGSize(width: 492, height: 324),
-                targetAspectRatio: 164.0 / 108.0
+    private var reflectionShelf: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ふりかえり").font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
+            LazyVGrid(columns: columns, spacing: 12) {
+                if let latest = months.first {
+                    monthLink(latest, isLatest: true)
+                }
+                if let latest = seasonalMovies.first {
+                    movieLink(latest, isLatest: true)
+                }
+            }
+            if months.count > 1 || seasonalMovies.count > 1 {
+                NavigationLink {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 20) {
+                            if !months.isEmpty {
+                                Text("月の便り").font(.headline)
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(months) { month in
+                                        monthLink(month, isLatest: month.id == months.first?.id)
+                                    }
+                                }
+                            }
+                            if !seasonalMovies.isEmpty {
+                                Text("季節のムービー").font(.headline)
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(seasonalMovies) { movie in
+                                        movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id)
+                                    }
+                                }
+                            }
+                        }.padding(16)
+                    }
+                    .navigationTitle("これまでのふりかえり")
+                    .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    HStack {
+                        Text("すべて見る")
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption)
+                    }.frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("albums-reflections-all")
+            }
+        }
+        .accessibilityIdentifier("memories-summaries-section")
+    }
+
+    private func monthLink(_ month: MonthlyWindowPresentation, isLatest: Bool) -> some View {
+        NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
+            AlbumOverviewCard(
+                identifier: month.coverPhoto?.localIdentifier,
+                catBoundingBox: month.coverPhoto?.catBoundingBox,
+                title: month.title, subtitle: "\(month.yearNumber)年",
+                isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread
             )
-        } else {
-            Image(systemName: "envelope.open")
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.accentColor.opacity(0.10))
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(isLatest ? "memories-monthly-window" : "albums-month-\(month.periodIdentifier)")
+        .accessibilityLabel("\(month.accessibilityTitle)、\(month.photos.count.formatted())枚")
     }
 
-    private var monthTitle: String {
-        "\(presentation.yearNumber)年\(presentation.monthNumber)月"
+    private func movieLink(_ movie: SeasonalMovieArchiveRecord, isLatest: Bool) -> some View {
+        let presentation = movie.effectivePresentation
+        return NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
+            AlbumOverviewCard(
+                identifier: presentation.coverScene?.localIdentifier,
+                catBoundingBox: presentation.coverScene?.catBoundingBox,
+                title: presentation.periodTitle, subtitle: "季節のムービー",
+                isMovie: true, isNew: isLatest && latestSeasonalMovieIsNew
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(isLatest ? "albums-seasonal-movie" : "albums-movie-\(movie.id)")
+        .accessibilityLabel("\(presentation.periodTitle)の季節のムービー、\(presentation.scenes.count)場面")
+        .accessibilityHint("開くと再生します")
     }
 }
+
+private struct AlbumOverviewCard: View {
+    let identifier: String?
+    let catBoundingBox: CGRect?
+    let title: String
+    let subtitle: String
+    let isMovie: Bool
+    let isNew: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color(.tertiarySystemFill)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geometry in
+                        if let identifier {
+                            PhotoAssetImageView(
+                                localIdentifier: identifier, catBoundingBox: catBoundingBox,
+                                targetPixelSize: CGSize(width: 720, height: 540),
+                                targetAspectRatio: 4.0 / 3.0,
+                                networkAccessAllowed: false
+                            )
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .clipped()
+                        }
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if isMovie {
+                        Image(systemName: "play.fill").font(.caption)
+                            .foregroundStyle(.white).padding(10)
+                            .background(.black.opacity(0.5), in: Circle())
+                            .padding(8)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title).font(.headline)
+                    if isNew {
+                        Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                            .accessibilityLabel("新着")
+                            .accessibilityIdentifier(isMovie ? "seasonal-movie-new-badge" : "monthly-window-new-badge")
+                    }
+                }
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+            .padding(12)
+        }
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
 
 private struct MemoryPhotoThumbnail: View {
     let photo: PhotoPresentation
@@ -1149,9 +833,9 @@ private struct MemoryPhotoThumbnail: View {
 private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
     if let likedAt = photo.likedAt {
         let date = likedAt.formatted(.dateTime.year().month().day())
-        return "\(date)に思い出へ残した猫の写真"
+        return "\(date)にお気に入りへ追加した猫の写真"
     }
-    return "思い出へ残した猫の写真"
+    return "お気に入りへ追加した猫の写真"
 }
 
 struct SavedMemoriesGalleryView: View {
@@ -1188,7 +872,7 @@ struct SavedMemoriesGalleryView: View {
                 ContentUnavailableView(
                     "まだありません",
                     systemImage: "bookmark",
-                    description: Text("写真で「思い出に残す」を押すと、ここに並びます")
+                    description: Text("写真で「お気に入りに追加」を押すと、ここに並びます")
                 )
             } else {
                 ScrollView {
@@ -1201,13 +885,13 @@ struct SavedMemoriesGalleryView: View {
                 }
             }
         }
-        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "残した写真")
+        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "お気に入り")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "選ぶ") {
+                    Button(isSelectingForExport ? "キャンセル" : "作成") {
                         toggleExportMode()
                     }
                     .disabled(isExportingPhotoBook)
@@ -1470,7 +1154,7 @@ private struct BookDemandPreviewView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("ねこの小さな本")
                         .font(.title2.bold())
-                    Text("残した写真20枚からつくる、15cm角・24ページの試作です。")
+                    Text("お気に入りの写真20枚からつくる、15cm角・24ページの試作です。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -1685,7 +1369,7 @@ private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
 
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
-/// with the primary private action, "思い出に残す".
+/// with the primary private action, "お気に入りに追加".
 struct PhotoBrowserView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -1900,7 +1584,7 @@ struct PhotoBrowserView: View {
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
         if selectedPhoto.isLiked {
             Menu {
-                Button("思い出から外す", role: .destructive) {
+                Button("お気に入りから外す", role: .destructive) {
                     let identifier = selectedPhoto.localIdentifier
                     // This changes saved membership only; the Photos asset
                     // and any previously imported copy remain in the library.
@@ -1911,8 +1595,8 @@ struct PhotoBrowserView: View {
                     .font(.title3)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("思い出に残した")
-            .accessibilityHint("思い出から外す操作を開きます")
+            .accessibilityLabel("お気に入りに追加済み")
+            .accessibilityHint("お気に入りから外す操作を開きます")
             .disabled(isExportingMemoryPhoto)
             .accessibilityIdentifier("photo-browser-memory-saved-state")
         } else {
@@ -1923,8 +1607,8 @@ struct PhotoBrowserView: View {
                     .font(.title3)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("思い出に残す")
-            .accessibilityHint("自分の思い出一覧に残します")
+            .accessibilityLabel("お気に入りに追加")
+            .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
             .disabled(isExportingMemoryPhoto)
         }
 
