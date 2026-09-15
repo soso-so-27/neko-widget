@@ -844,8 +844,10 @@ struct LikedPhotosView: View {
 
     private func monthPreviewPhotos(_ month: MonthlyWindowPresentation) -> [PhotoPresentation] {
         guard !month.photos.isEmpty else { return [] }
-        let candidates = [month.coverPhoto, month.photos.first, month.photos.last,
-                          month.photos[month.photos.count / 2]]
+        let candidates: [PhotoPresentation?] = [
+            month.coverPhoto, month.photos.first, month.photos.last,
+            month.photos[month.photos.count / 2]
+        ]
         var identifiers: Set<String> = []
         return Array(candidates.compactMap { $0 }.filter {
             identifiers.insert($0.localIdentifier).inserted
