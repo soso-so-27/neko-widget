@@ -2372,7 +2372,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(request.label, "remove|1")
         tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
         XCTAssertFalse(saved.exists)
-        XCTAssertEqual(save.label, "もう一度思い出に加える",
+        XCTAssertEqual(save.label, "自分の思い出に再追加",
                        "Removing the saved state must retain the already-imported distinction.")
         closePhotoDetail(app)
         for _ in 0..<6 where !latest.isHittable { app.scrollViews.firstMatch.swipeDown() }
@@ -2414,8 +2414,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             // Read the actual projection; a LazyVGrid need not instantiate offscreen cells.
             XCTAssertEqual(projection.value as? String, expectedIDs.joined(separator: ","),
                 "Sort by addition time, use a stable tie order, prefer received duplicates, and omit missing/invalid sent images.")
-            let first = app.buttons["shared-album-fixture-received-r1"]
-            let second = app.buttons["shared-album-fixture-sent-s1"]
+            // The grid exposes the identified card as an AX container with a Button child.
+            // Match its stable ID; tapping it must still open the exact photo below.
+            let first = app.descendants(matching: .any)["shared-album-fixture-received-r1"].firstMatch
+            let second = app.descendants(matching: .any)["shared-album-fixture-sent-s1"].firstMatch
             XCTAssertTrue(first.waitForExistence(timeout: 5))
             XCTAssertTrue(second.waitForExistence(timeout: 5))
             XCTAssertTrue(first.isHittable)
@@ -2437,7 +2439,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
             let scroll = app.scrollViews["shared-album-fixture-scroll"]
             for (index, photoID) in expectedIDs.enumerated() {
-                let tile = app.buttons["shared-album-fixture-\(photoID)"]
+                let tile = app.descendants(matching: .any)["shared-album-fixture-\(photoID)"].firstMatch
                 for _ in 0..<6 where !(tile.exists && tile.isHittable) { scroll.swipeUp() }
                 XCTAssertTrue(tile.exists && tile.isHittable, "Every projected photo remains reachable.")
                 // Exercise both existing detail directions without repeating every identical transition.
@@ -2455,7 +2457,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 }
             }
             for omittedID in ["sent-duplicate", "sent-missing", "sent-invalid"] {
-                XCTAssertFalse(app.buttons["shared-album-fixture-\(omittedID)"].exists)
+                XCTAssertFalse(app.descendants(matching: .any)["shared-album-fixture-\(omittedID)"].firstMatch.exists)
             }
             if variant == "large" { attach(app, name: "shared-album-large-later-photos") }
             app.terminate()
