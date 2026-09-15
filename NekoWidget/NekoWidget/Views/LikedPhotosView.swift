@@ -546,6 +546,7 @@ struct LikedPhotosView: View {
     var albumProfileActions: CatProfilesViewActions = .noOp
     var albumScope: Binding<CatProfileScopePresentation> = .constant(.everyone)
     var showSettings: (() -> Void)? = nil
+    var showsReflectionArchive = false
 
     private var months: [MonthlyWindowPresentation] {
         monthlyWindowCollection?.letters ?? []
@@ -558,39 +559,45 @@ struct LikedPhotosView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                favoritesLink
-                if hasPhotoAccess {
-                    if !months.isEmpty || !seasonalMovies.isEmpty {
-                        reflectionShelf
+            if showsReflectionArchive {
+                reflectionArchive
+                    .padding(16)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 24) {
+                    favoritesLink
+                    if hasPhotoAccess {
+                        if !months.isEmpty || !seasonalMovies.isEmpty {
+                            reflectionShelf
+                        }
+                        if let albumScan {
+                            AlbumView(
+                                sections: albumSections, scan: albumScan,
+                                profiles: albumProfiles, photoAlbumOptions: albumOptions,
+                                profileActions: albumProfileActions,
+                                selectedScope: albumScope, showsAllPhotos: false,
+                                isEmbedded: true
+                            )
+                        }
                     }
-                    if let albumScan {
-                        AlbumView(
-                            sections: albumSections, scan: albumScan,
-                            profiles: albumProfiles, photoAlbumOptions: albumOptions,
-                            profileActions: albumProfileActions,
-                            selectedScope: albumScope, showsAllPhotos: false,
-                            isEmbedded: true
-                        )
+                    if !hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
+                        && albumSections.allSatisfy({ $0.id == .all })) {
+                        Button(action: openPhotos) {
+                            Label("写真を見る", systemImage: "photo.on.rectangle.angled")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .accessibilityIdentifier("memories-open-photos")
                     }
                 }
-                if !hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
-                    && albumSections.allSatisfy({ $0.id == .all })) {
-                    Button(action: openPhotos) {
-                        Label("写真を見る", systemImage: "photo.on.rectangle.angled")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .accessibilityIdentifier("memories-open-photos")
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
-        .navigationTitle("アルバム")
+        .navigationTitle(showsReflectionArchive ? "これまでのふりかえり" : "アルバム")
+        .navigationBarTitleDisplayMode(showsReflectionArchive ? .inline : .large)
         .background(Color(.systemGroupedBackground))
-        .accessibilityIdentifier("albums-root")
+        .accessibilityIdentifier(showsReflectionArchive ? "albums-reflections-archive" : "albums-root")
         .toolbar {
-            if let showSettings {
+            if let showSettings, !showsReflectionArchive {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: showSettings) {
                         Image(systemName: "gearshape")
@@ -603,12 +610,7 @@ struct LikedPhotosView: View {
     }
 
     private var favoritesLink: some View {
-        NavigationLink {
-            SavedMemoriesGalleryView(
-                photos: photos, startsInExportMode: false,
-                exportPhotoBook: exportPhotoBook
-            )
-        } label: {
+        NavigationLink(value: MemoriesRoute.favorites) {
             HStack(spacing: 12) {
                 if let cover = photos.first {
                     PhotoAssetImageView(
@@ -658,30 +660,7 @@ struct LikedPhotosView: View {
                 }
             }
             if months.count > 1 || seasonalMovies.count > 1 {
-                NavigationLink {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 20) {
-                            if !months.isEmpty {
-                                Text("月の便り").font(.headline)
-                                LazyVGrid(columns: columns, spacing: 12) {
-                                    ForEach(months) { month in
-                                        monthLink(month, isLatest: month.id == months.first?.id)
-                                    }
-                                }
-                            }
-                            if !seasonalMovies.isEmpty {
-                                Text("季節のムービー").font(.headline)
-                                LazyVGrid(columns: columns, spacing: 12) {
-                                    ForEach(seasonalMovies) { movie in
-                                        movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id)
-                                    }
-                                }
-                            }
-                        }.padding(16)
-                    }
-                    .navigationTitle("これまでのふりかえり")
-                    .navigationBarTitleDisplayMode(.inline)
-                } label: {
+                NavigationLink(value: MemoriesRoute.reflectionsArchive) {
                     HStack {
                         Text("すべて見る")
                         Spacer()
@@ -692,6 +671,27 @@ struct LikedPhotosView: View {
             }
         }
         .accessibilityIdentifier("memories-summaries-section")
+    }
+
+    private var reflectionArchive: some View {
+        LazyVStack(alignment: .leading, spacing: 20) {
+            if !months.isEmpty {
+                Text("月の便り").font(.headline)
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(months) { month in
+                        monthLink(month, isLatest: month.id == months.first?.id)
+                    }
+                }
+            }
+            if !seasonalMovies.isEmpty {
+                Text("季節のムービー").font(.headline)
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(seasonalMovies) { movie in
+                        movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id)
+                    }
+                }
+            }
+        }
     }
 
     private func monthLink(_ month: MonthlyWindowPresentation, isLatest: Bool) -> some View {
@@ -772,7 +772,7 @@ private struct AlbumOverviewCard: View {
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
             }
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
             .padding(12)
         }
         .background(Color(.secondarySystemGroupedBackground))
@@ -809,22 +809,6 @@ private struct MemoryPhotoThumbnail: View {
                         isSelected ? Color.accentColor : Color.black.opacity(0.45)
                     )
                     .padding(7)
-            }
-        }
-        .overlay(alignment: .bottomLeading) {
-            if selectionState == nil, let likedAt = photo.likedAt {
-                HStack(spacing: 3) {
-                    Image(systemName: "bookmark.fill")
-                    Text(likedAt.formatted(.dateTime.year().month().day()))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(.black.opacity(0.58), in: Capsule())
-                .padding(5)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 5))

@@ -10,6 +10,8 @@ enum PhotosRoute: Hashable {
 }
 
 enum MemoriesRoute: Hashable {
+    case favorites
+    case reflectionsArchive
     case photo(String)
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
@@ -99,26 +101,7 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $memoriesPath) {
-                LikedPhotosView(
-                    photos: likedPhotos,
-                    hasPhotoAccess: hasPhotoAccess,
-                    monthlyWindowCollection: monthlyWindowCollection,
-                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
-                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
-                    seasonalMovies: seasonalMovieArchive.records,
-                    exportPhotoBook: exportPhotoBook,
-                    openPhotos: {
-                        photosPath = NavigationPath()
-                        selectedTab = .photos
-                    },
-                    albumSections: curatedAlbumSections,
-                    albumScan: scan,
-                    albumProfiles: catProfilesPresentation.profiles,
-                    albumOptions: catProfilesPresentation.photoAlbumOptions,
-                    albumProfileActions: catProfilesActions,
-                    albumScope: $selectedAlbumScope,
-                    showSettings: { showsSettings = true }
-                )
+                albumsView()
                     .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
                     .navigationDestination(
                         for: MemoriesRoute.self,
@@ -420,9 +403,40 @@ struct MainTabView: View {
         )
     }
 
+    private func albumsView(showsReflectionArchive: Bool = false) -> LikedPhotosView {
+        LikedPhotosView(
+            photos: likedPhotos,
+            hasPhotoAccess: hasPhotoAccess,
+            monthlyWindowCollection: monthlyWindowCollection,
+            latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
+            latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
+            seasonalMovies: seasonalMovieArchive.records,
+            exportPhotoBook: exportPhotoBook,
+            openPhotos: {
+                photosPath = NavigationPath()
+                selectedTab = .photos
+            },
+            albumSections: curatedAlbumSections,
+            albumScan: scan,
+            albumProfiles: catProfilesPresentation.profiles,
+            albumOptions: catProfilesPresentation.photoAlbumOptions,
+            albumProfileActions: catProfilesActions,
+            albumScope: $selectedAlbumScope,
+            showSettings: { showsSettings = true },
+            showsReflectionArchive: showsReflectionArchive
+        )
+    }
+
     @ViewBuilder
     private func memoriesDestination(for route: MemoriesRoute) -> some View {
         switch route {
+        case .favorites:
+            SavedMemoriesGalleryView(
+                photos: likedPhotos, startsInExportMode: false,
+                exportPhotoBook: exportPhotoBook
+            )
+        case .reflectionsArchive:
+            albumsView(showsReflectionArchive: true)
         case let .photo(localIdentifier):
             memoryDetailView(for: localIdentifier)
         case let .seasonalMovie(periodID):

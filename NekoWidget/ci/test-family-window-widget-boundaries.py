@@ -1255,9 +1255,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         main_tab = source("NekoWidget/Views/MainTabView.swift")
         album_root = section(memories, "struct LikedPhotosView:", "private struct AlbumOverviewCard:")
         self.assertIn("if hasPhotoAccess", album_root)
-        self.assertIn('accessibilityIdentifier("albums-root")', album_root)
+        self.assertIn('accessibilityIdentifier(showsReflectionArchive ? "albums-reflections-archive" : "albums-root")', album_root)
         self.assertIn('accessibilityIdentifier("albums-favorites")', album_root)
-        self.assertIn('.navigationTitle("アルバム")', album_root)
+        self.assertIn('.navigationTitle(showsReflectionArchive ? "これまでのふりかえり" : "アルバム")', album_root)
         self.assertIn("MemoriesRoute.monthlyWindow(month)", album_root)
         self.assertIn("MemoriesRoute.seasonalMovie(movie.periodID)", album_root)
         self.assertIn('"memories-monthly-window"', album_root)
@@ -1286,6 +1286,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
     def test_memories_show_the_complete_saved_collection_and_select_exports_separately(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
         memory_view = section(
             memories,
             "struct LikedPhotosView:",
@@ -1296,8 +1297,19 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn(".safeAreaInset(edge: .top", memory_view)
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
-        self.assertIn("SavedMemoriesGalleryView(", memory_view)
-        self.assertIn("photos: photos, startsInExportMode: false", memory_view)
+        self.assertIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
+        self.assertIn("NavigationLink(value: MemoriesRoute.reflectionsArchive)", memory_view)
+        destinations = section(
+            main_tab,
+            "private func memoriesDestination(for route: MemoriesRoute) -> some View",
+            "private func seasonalMovieDestination(",
+        )
+        self.assertIn("case .favorites:", destinations)
+        self.assertIn("SavedMemoriesGalleryView(", destinations)
+        self.assertIn("photos: likedPhotos", destinations)
+        self.assertIn("startsInExportMode: false", destinations)
+        self.assertIn("case .reflectionsArchive:", destinations)
+        self.assertIn("showsReflectionArchive: true", destinations)
         self.assertIn('accessibilityIdentifier("albums-favorites")', memory_view)
         self.assertNotIn('accessibilityIdentifier("memories-create-from-photos-action")', memory_view)
         self.assertLess(memory_view.index("favoritesLink"), memory_view.index("reflectionShelf"))

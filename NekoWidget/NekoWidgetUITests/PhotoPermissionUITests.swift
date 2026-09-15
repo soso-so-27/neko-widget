@@ -1876,6 +1876,17 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
         assertAlbumsRoot(in: readyApp)
+        let archive = element("albums-reflections-all", in: readyApp)
+        reveal(archive, in: readyApp)
+        archive.tap()
+        XCTAssertTrue(element("albums-reflections-archive", in: readyApp).waitForExistence(timeout: 10))
+        let previousMonth = element("albums-month-2025-07", in: readyApp)
+        openCardAndReturn(previousMonth, expectedRoute: "monthly:2025-07", in: readyApp)
+        XCTAssertTrue(readyApp.navigationBars["これまでのふりかえり"].waitForExistence(timeout: 10))
+        XCTAssertTrue(element("albums-reflections-archive", in: readyApp).exists)
+        capture("albums-reflections-archive-return")
+        readyApp.navigationBars["これまでのふりかえり"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: readyApp)
         readyApp.terminate()
     }
 

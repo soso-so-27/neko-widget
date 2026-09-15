@@ -614,7 +614,7 @@ jobs:
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'accessibilityIdentifier("albums-root")' \
+          grep -Fq 'accessibilityIdentifier(showsReflectionArchive ? "albums-reflections-archive" : "albums-root")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("albums-favorites")' \
             NekoWidget/Views/LikedPhotosView.swift

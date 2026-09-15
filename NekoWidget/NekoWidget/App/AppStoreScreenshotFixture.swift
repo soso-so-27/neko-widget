@@ -539,6 +539,14 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         seasonalMovies: [], exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
                         openPhotos: { finished = true }
                     )
+                    .navigationDestination(for: MemoriesRoute.self) { route in
+                        if case .favorites = route {
+                            SavedMemoriesGalleryView(
+                                photos: [], startsInExportMode: false,
+                                exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) }
+                            )
+                        }
+                    }
                 }
             } else if scenario == "movie" {
                 Text(movieStatus).accessibilityIdentifier("mainline-movie-\(movieStatus)")
@@ -622,23 +630,7 @@ private struct SoloMemoriesFixtureView: View {
 
     var body: some View {
         NavigationStack(path: $detailPath) {
-            LikedPhotosView(
-                photos: savedPhotos,
-                hasPhotoAccess: hasPhotoAccess,
-                monthlyWindowCollection: MonthlyWindowCollectionPresentation(
-                    letters: hasMonthlyLetter ? [monthlyLetter] : [], unavailable: nil
-                ),
-                latestMonthlyWindowIsUnread: hasMonthlyLetter,
-                latestSeasonalMovieIsNew: !seasonalMovies.isEmpty,
-                seasonalMovies: seasonalMovies,
-                exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
-                openPhotos: {
-                    otherScreenTitle = "写真"
-                    showsOtherScreen = true
-                },
-                albumSections: albumSections,
-                albumScan: scenario == "solo-memories-seasonal-large" ? albumScan : nil
-            )
+            albumsView()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -673,14 +665,24 @@ private struct SoloMemoriesFixtureView: View {
             // Match the shipping NavigationStack's registered value type so
             // its real photo/letter/movie links remain enabled in this fixture.
             .navigationDestination(for: MemoriesRoute.self) { route in
-                VStack(spacing: 20) {
-                    Text("アルバムの詳細")
-                        .accessibilityIdentifier("solo-memories-detail-destination")
-                        .accessibilityValue(detailRouteKey(route))
-                    Button("アルバムに戻る") {
-                        if !detailPath.isEmpty { detailPath.removeLast() }
+                switch route {
+                case .favorites:
+                    SavedMemoriesGalleryView(
+                        photos: savedPhotos, startsInExportMode: false,
+                        exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) }
+                    )
+                case .reflectionsArchive:
+                    albumsView(showsReflectionArchive: true)
+                case .photo, .monthlyWindow, .seasonalMovie:
+                    VStack(spacing: 20) {
+                        Text("アルバムの詳細")
+                            .accessibilityIdentifier("solo-memories-detail-destination")
+                            .accessibilityValue(detailRouteKey(route))
+                        Button("アルバムに戻る") {
+                            if !detailPath.isEmpty { detailPath.removeLast() }
+                        }
+                        .accessibilityIdentifier("solo-memories-detail-return")
                     }
-                    .accessibilityIdentifier("solo-memories-detail-return")
                 }
             }
             .navigationDestination(for: AlbumRoute.self) { route in
@@ -707,6 +709,27 @@ private struct SoloMemoriesFixtureView: View {
             .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
             .allowsHitTesting(false)
         }
+    }
+
+    private func albumsView(showsReflectionArchive: Bool = false) -> some View {
+        LikedPhotosView(
+            photos: savedPhotos,
+            hasPhotoAccess: hasPhotoAccess,
+            monthlyWindowCollection: MonthlyWindowCollectionPresentation(
+                letters: monthlyLetters, unavailable: nil
+            ),
+            latestMonthlyWindowIsUnread: hasMonthlyLetter,
+            latestSeasonalMovieIsNew: !seasonalMovies.isEmpty,
+            seasonalMovies: seasonalMovies,
+            exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
+            openPhotos: {
+                otherScreenTitle = "写真"
+                showsOtherScreen = true
+            },
+            albumSections: albumSections,
+            albumScan: scenario == "solo-memories-seasonal-large" ? albumScan : nil,
+            showsReflectionArchive: showsReflectionArchive
+        )
     }
 
     private var albumSections: [CuratedAlbumSectionPresentation] {
@@ -752,6 +775,18 @@ private struct SoloMemoriesFixtureView: View {
         )
     }
 
+    private var monthlyLetters: [MonthlyWindowPresentation] {
+        guard hasMonthlyLetter else { return [] }
+        guard scenario == "solo-memories-monthly" else { return [monthlyLetter] }
+        let previous = MonthlyWindowPresentation(
+            monthStart: Date(timeIntervalSince1970: 1_751_328_000),
+            yearNumber: 2025, monthNumber: 7,
+            photos: Array(AppStoreScreenshotFixture.photos.prefix(2)),
+            availableSceneCount: 2
+        )
+        return [monthlyLetter, previous]
+    }
+
     private var seasonalMovies: [SeasonalMovieArchiveRecord] {
         guard scenario == "solo-memories-seasonal-large" else { return [] }
         let start = Date(timeIntervalSince1970: 1_751_328_000)
@@ -784,6 +819,8 @@ private struct SoloMemoriesFixtureView: View {
 
     private func detailRouteKey(_ route: MemoriesRoute) -> String {
         switch route {
+        case .favorites: "favorites"
+        case .reflectionsArchive: "reflections-archive"
         case let .photo(identifier): "photo:\(identifier)"
         case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
         case let .seasonalMovie(period): "seasonal:\(period.id)"
