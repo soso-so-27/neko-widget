@@ -92,7 +92,7 @@ struct AlbumView: View {
                     identifier: album.coverPhoto.localIdentifier,
                     catBoundingBox: album.coverPhoto.catBoundingBox,
                     title: album.cardTitle, subtitle: album.countLabel,
-                    isMovie: false, isNew: false
+                    isMovie: false, isNew: false, networkAccessAllowed: true
                 )
             } else {
                 CuratedAlbumCard(album: album)
@@ -732,6 +732,7 @@ private struct AlbumOverviewCard: View {
     let subtitle: String
     let isMovie: Bool
     let isNew: Bool
+    var networkAccessAllowed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -744,7 +745,7 @@ private struct AlbumOverviewCard: View {
                                 localIdentifier: identifier, catBoundingBox: catBoundingBox,
                                 targetPixelSize: CGSize(width: 720, height: 540),
                                 targetAspectRatio: 4.0 / 3.0,
-                                networkAccessAllowed: false
+                                networkAccessAllowed: networkAccessAllowed
                             )
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .clipped()

@@ -608,24 +608,24 @@ jobs:
           exporter="NekoWidget/Services/PhotoBookPDFExporter.swift"
           grep -Fq 'options.isNetworkAccessAllowed = true' "$exporter"
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
-          grep -Fq 'Label("思い出", systemImage: "photo.stack.fill")' \
+          grep -Fq 'Label("アルバム", systemImage: "photo.stack.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("写真", systemImage: "photo.on.rectangle.angled")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Text("自動アルバム")' \
-            NekoWidget/Views/HomeView.swift
-          grep -Fq 'accessibilityIdentifier("photos-open-automatic-albums")' \
-            NekoWidget/Views/HomeView.swift
-          grep -Fq 'accessibilityIdentifier("memories-seasonal-movies-empty-state")' \
+          grep -Fq 'accessibilityIdentifier("albums-root")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'private var summarySectionDivider: some View' \
+          grep -Fq 'accessibilityIdentifier("albums-favorites")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'NavigationLink(value: PhotosRoute.automaticAlbums)' \
-            NekoWidget/Views/HomeView.swift
-          if grep -Fq 'reflectionSection' NekoWidget/Views/HomeView.swift; then
-            echo 'Photos must not duplicate the Memories summary collection.' >&2
+          grep -Fq 'accessibilityIdentifier(isLatest ? "albums-seasonal-movie"' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'private var reflectionShelf: some View' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'NavigationLink(value: AlbumRoute.album(album.id))' \
+            NekoWidget/Views/LikedPhotosView.swift
+          if grep -Eq 'reflectionSection|PhotosRoute[.]automaticAlbums' NekoWidget/Views/HomeView.swift; then
+            echo 'Photos must not duplicate the Albums collections.' >&2
             exit 1
           fi
           grep -Fq 'accessibilityIdentifier("memories-summaries-section")' \
@@ -641,13 +641,13 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var footerHeight: CGFloat = 48' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("選ぶ", systemImage: "checkmark.circle")' \
+          grep -Fq 'accessibilityIdentifier("saved-memories-selection-toggle")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Text("\(photos.count.formatted())枚")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
-          grep -Fq 'に思い出へ残した猫の写真' \
+          grep -Fq 'にお気に入りへ追加した猫の写真' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq '.navigationDestination(isPresented: $opensActiveWindow)' \
             NekoWidget/Views/MainTabView.swift
@@ -679,7 +679,7 @@ jobs:
           fi
           if grep -Eq 'photoYearSections|LikedPhotoYearSection' \
             NekoWidget/Views/LikedPhotosView.swift; then
-            echo "思い出 must remain one manually-added ordered collection" >&2
+            echo "Favorites must remain one manually-added ordered collection" >&2
             exit 1
           fi
           grep -Fq '"pager": "bounded-native-paging"' \
@@ -720,11 +720,11 @@ jobs:
           if [ "$badge_count" -ne 1 ] || ! grep -Fq \
             '.badge(hasUnreadMemoriesSummary ? 1 : 0)' \
             NekoWidget/Views/MainTabView.swift; then
-            echo "Only unread Memories summaries may badge a top-level tab" >&2
+            echo "Only unread Albums summaries may badge a top-level tab" >&2
             exit 1
           fi
           if grep -Fq '.tag(AppTab.settings)' NekoWidget/Views/MainTabView.swift; then
-            echo "Settings must stay under the Window instead of a peer tab" >&2
+            echo "Settings must remain a toolbar action instead of a peer tab" >&2
             exit 1
           fi
 
