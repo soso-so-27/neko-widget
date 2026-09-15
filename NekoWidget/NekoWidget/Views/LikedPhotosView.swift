@@ -651,6 +651,7 @@ struct LikedPhotosView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ふりかえり").font(.title3.bold())
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("memories-summaries-section")
             LazyVGrid(columns: columns, spacing: 12) {
                 if let latest = months.first {
                     monthLink(latest, isLatest: true)
@@ -670,7 +671,6 @@ struct LikedPhotosView: View {
                 .accessibilityIdentifier("albums-reflections-all")
             }
         }
-        .accessibilityIdentifier("memories-summaries-section")
     }
 
     private var reflectionArchive: some View {
