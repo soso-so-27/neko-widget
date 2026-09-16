@@ -1870,11 +1870,11 @@ final class SoloMemoriesUITests: XCTestCase {
         returnFromFavorites(in: app)
         app.terminate()
 
-        // A ready letter is a direct cover beside the same favorites entry.
+        // The latest letter keeps its photo preview; dated archive entries use rows.
         let readyApp = launch("monthly")
         assertAlbumsRoot(in: readyApp)
         XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
-        waitForLoadedPhotos([1, 3, 5, 9], in: readyApp)
+        waitForLoadedPhotos([1, 3, 5], in: readyApp)
         capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
         assertAlbumsRoot(in: readyApp)
@@ -1885,7 +1885,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let previousMonth = element("albums-month-2025-07", in: readyApp)
         reveal(previousMonth, in: readyApp)
         XCTAssertTrue(previousMonth.label.contains("1枚"))
-        capture("albums-monthly-single-photo-cover")
+        capture("albums-monthly-date-rows")
         openCardAndReturn(previousMonth, expectedRoute: "monthly:2025-07", in: readyApp)
         XCTAssertTrue(readyApp.navigationBars["これまでのふりかえり"].waitForExistence(timeout: 10))
         XCTAssertTrue(element("albums-reflections-archive", in: readyApp).exists)
@@ -1902,7 +1902,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let seasonalCard = element("albums-seasonal-movie", in: app)
         XCTAssertTrue(seasonalCard.waitForExistence(timeout: 10))
         XCTAssertFalse(monthlyCard(in: app).exists)
-        waitForLoadedPhotos([1, 9], in: app)
+        waitForLoadedPhotos([1], in: app)
         capture("albums-seasonal-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
         assertAlbumsRoot(in: app)
@@ -1922,7 +1922,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-monthly-cover-largest-text")
         openCardAndReturn(month, expectedRoute: "monthly:2025-08", in: app)
         reveal(seasonalCard, in: app)
-        // Each visible cover occupies one column at accessibility sizes.
+        // Both photo previews and date rows use the available width.
         // Off-screen lazy cells are not used as geometry evidence.
         XCTAssertGreaterThan(seasonalCard.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(seasonalCard.frame.minX, app.frame.minX)

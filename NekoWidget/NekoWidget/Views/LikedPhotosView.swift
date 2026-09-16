@@ -46,6 +46,9 @@ struct AlbumView: View {
             }
 
             ForEach(orderedSections) { section in
+                if isEmbedded && section.id != orderedSections.first?.id {
+                    Divider()
+                }
                 albumSection(section)
             }
 
@@ -98,6 +101,9 @@ struct AlbumView: View {
             ForEach(comparisons) { album in
                 albumLink(album, isPrimary: false)
             }
+            if !comparisons.isEmpty && !periods.isEmpty {
+                Divider()
+            }
             if !lifePeriods.isEmpty {
                 periodShelf(lifePeriods, title: "時期ごと")
             }
@@ -113,11 +119,16 @@ struct AlbumView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.bold())
                 .accessibilityAddTraits(.isHeader)
-            LazyVGrid(columns: cardColumns, spacing: 12) {
+            VStack(spacing: 0) {
                 ForEach(albums) { album in
                     albumLink(album, isPrimary: false)
+                    if album.id != albums.last?.id {
+                        Divider().padding(.horizontal, 16)
+                    }
                 }
             }
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -347,27 +358,56 @@ private struct PeriodAlbumOverviewCard: View {
     let album: CuratedAlbumPresentation
 
     var body: some View {
-        HStack(spacing: 10) {
-            PhotoAssetImageView(
-                localIdentifier: album.coverPhoto.localIdentifier,
-                catBoundingBox: album.coverPhoto.catBoundingBox,
-                targetPixelSize: CGSize(width: 180, height: 180),
-                targetAspectRatio: 1, networkAccessAllowed: true
-            )
-            .frame(width: 44, height: 44).clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(album.cardTitle).font(.subheadline.weight(.semibold))
-                Text(album.countLabel).font(.caption).foregroundStyle(.secondary)
+        AlbumNavigationRow(title: album.cardTitle, subtitle: album.countLabel)
+    }
+}
+
+/// A collection name or date is often a clearer destination than another cat cover.
+private struct AlbumNavigationRow: View {
+    let title: String
+    let subtitle: String
+    var symbol: String? = nil
+    var newBadgeIdentifier: String? = nil
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.title3).foregroundStyle(Color.accentColor)
+                    .frame(width: 24).accessibilityHidden(true)
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    name.fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 8)
+                    Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    name
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 14))
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var name: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title).font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+            if let newBadgeIdentifier {
+                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    .accessibilityLabel("新着")
+                    .accessibilityIdentifier(newBadgeIdentifier)
+            }
+        }
     }
 }
 
@@ -662,8 +702,6 @@ struct CuratedAlbumDetailView: View {
 /// Album entry point. Explicit favorites keep their full personal collection;
 /// generated collections continue to use the independently scoped photo input.
 struct LikedPhotosView: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
     let monthlyWindowCollection: MonthlyWindowCollectionPresentation?
@@ -685,11 +723,6 @@ struct LikedPhotosView: View {
         monthlyWindowCollection?.letters ?? []
     }
 
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 12),
-              count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
-    }
-
     var body: some View {
         ScrollView {
             if showsReflectionArchive {
@@ -703,6 +736,9 @@ struct LikedPhotosView: View {
                             reflectionShelf
                         }
                         if let albumScan {
+                            if !months.isEmpty || !seasonalMovies.isEmpty {
+                                Divider()
+                            }
                             AlbumView(
                                 sections: albumSections, scan: albumScan,
                                 profiles: albumProfiles, photoAlbumOptions: albumOptions,
@@ -744,35 +780,11 @@ struct LikedPhotosView: View {
 
     private var favoritesLink: some View {
         NavigationLink(value: MemoriesRoute.favorites) {
-            HStack(spacing: 12) {
-                if let cover = photos.first {
-                    PhotoAssetImageView(
-                        localIdentifier: cover.localIdentifier,
-                        catBoundingBox: cover.catBoundingBox,
-                        targetPixelSize: CGSize(width: 180, height: 180),
-                        targetAspectRatio: 1
-                    )
-                    .frame(width: 52, height: 52).clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                } else {
-                    Image(systemName: "bookmark")
-                        .font(.title2)
-                        .frame(width: 52, height: 52)
-                        .foregroundStyle(Color.accentColor)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("お気に入り").font(.headline)
-                    Text("\(photos.count.formatted())枚")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            AlbumNavigationRow(
+                title: "お気に入り", subtitle: "\(photos.count.formatted())枚", symbol: "bookmark"
+            )
             .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 18))
+                        in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("albums-favorites")
@@ -785,12 +797,12 @@ struct LikedPhotosView: View {
             Text("ふりかえり").font(.title3.bold())
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("memories-summaries-section")
-            LazyVGrid(columns: columns, spacing: 12) {
+            VStack(spacing: 12) {
                 if let latest = months.first {
                     monthLink(latest, isLatest: true)
                 }
                 if let latest = seasonalMovies.first {
-                    movieLink(latest, isLatest: true)
+                    movieLink(latest, isLatest: true, showsCover: months.isEmpty)
                 }
             }
             if months.count > 1 || seasonalMovies.count > 1 {
@@ -810,32 +822,54 @@ struct LikedPhotosView: View {
         LazyVStack(alignment: .leading, spacing: 20) {
             if !months.isEmpty {
                 Text("月の便り").font(.headline)
-                LazyVGrid(columns: columns, spacing: 12) {
+                    .accessibilityAddTraits(.isHeader)
+                VStack(spacing: 0) {
                     ForEach(months) { month in
-                        monthLink(month, isLatest: month.id == months.first?.id)
+                        monthLink(month, isLatest: month.id == months.first?.id, showsCover: false)
+                        if month.id != months.last?.id {
+                            Divider().padding(.horizontal, 16)
+                        }
                     }
                 }
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 16))
             }
             if !seasonalMovies.isEmpty {
+                if !months.isEmpty { Divider() }
                 Text("季節のムービー").font(.headline)
-                LazyVGrid(columns: columns, spacing: 12) {
+                    .accessibilityAddTraits(.isHeader)
+                VStack(spacing: 0) {
                     ForEach(seasonalMovies) { movie in
-                        movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id)
+                        movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id, showsCover: false)
+                        if movie.id != seasonalMovies.last?.id {
+                            Divider().padding(.horizontal, 16)
+                        }
                     }
                 }
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 16))
             }
         }
     }
 
-    private func monthLink(_ month: MonthlyWindowPresentation, isLatest: Bool) -> some View {
+    private func monthLink(
+        _ month: MonthlyWindowPresentation, isLatest: Bool, showsCover: Bool = true
+    ) -> some View {
         NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
-            AlbumOverviewCard(
-                identifier: month.coverPhoto?.localIdentifier,
-                catBoundingBox: month.coverPhoto?.catBoundingBox,
-                title: month.title, subtitle: "\(month.yearNumber)年",
-                isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
-                previewPhotos: monthPreviewPhotos(month)
-            )
+            if showsCover {
+                AlbumOverviewCard(
+                    identifier: month.coverPhoto?.localIdentifier,
+                    catBoundingBox: month.coverPhoto?.catBoundingBox,
+                    title: month.title, subtitle: "\(month.yearNumber)年",
+                    isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
+                    previewPhotos: monthPreviewPhotos(month)
+                )
+            } else {
+                AlbumNavigationRow(
+                    title: "\(month.yearNumber)年\(month.monthNumber)月", subtitle: "\(month.photos.count.formatted())枚",
+                    newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread ? "monthly-window-new-badge" : nil
+                )
+            }
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(isLatest ? "memories-monthly-window" : "albums-month-\(month.periodIdentifier)")
@@ -854,15 +888,26 @@ struct LikedPhotosView: View {
         }.prefix(3))
     }
 
-    private func movieLink(_ movie: SeasonalMovieArchiveRecord, isLatest: Bool) -> some View {
+    private func movieLink(
+        _ movie: SeasonalMovieArchiveRecord, isLatest: Bool, showsCover: Bool = true
+    ) -> some View {
         let presentation = movie.effectivePresentation
         return NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
-            AlbumOverviewCard(
-                identifier: presentation.coverScene?.localIdentifier,
-                catBoundingBox: presentation.coverScene?.catBoundingBox,
-                title: presentation.periodTitle, subtitle: "季節のムービー",
-                isMovie: true, isNew: isLatest && latestSeasonalMovieIsNew
-            )
+            if showsCover {
+                AlbumOverviewCard(
+                    identifier: presentation.coverScene?.localIdentifier,
+                    catBoundingBox: presentation.coverScene?.catBoundingBox,
+                    title: presentation.periodTitle, subtitle: "季節のムービー",
+                    isMovie: true, isNew: isLatest && latestSeasonalMovieIsNew
+                )
+            } else {
+                AlbumNavigationRow(
+                    title: presentation.periodTitle, subtitle: "季節のムービー", symbol: "play.fill",
+                    newBadgeIdentifier: isLatest && latestSeasonalMovieIsNew ? "seasonal-movie-new-badge" : nil
+                )
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 16))
+            }
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(isLatest ? "albums-seasonal-movie" : "albums-movie-\(movie.id)")
