@@ -20,4 +20,27 @@
 - 既存SoloMemoriesの3メソッド内で、比較期間・年別・過去月1枚を確認する。新しいテストケースやCIジョブは増やしていない。複数表紙で変わる読み込み完了条件は、合計枚数の完全一致から必要な写真IDの包含へ追従する。
 - CIの選択・必須構成は変更しない。今回の製品とfixture差分について、既存の自動判定による必要CIを使う。
 
-実際のCI・製品描画・TestFlightの結果は完了後に追記する。上のローカル成功をiOS実行済みと扱わない。
+## 実行結果
+
+- 製品SHA：`738329b6fecf0719c8eea85ec0e9df99497ba573`。
+- [候補CI 35033256033](https://github.com/soso-so-27/neko-widget/actions/runs/35033256033)：必要8項目すべて成功。アプリ画面操作43件、失敗0。写真アクセス・スキャン、runtime、描画条件、ビルドと既存安全確認を維持した。
+- [main CI 35037800907](https://github.com/soso-so-27/neko-widget/actions/runs/35037800907)：同一SHAの候補成功証拠を再利用して成功。全体の再実行なし。
+- 製品の描画6画像を確認。標準の比較写真と年月、年別2列、月3枚表紙と過去月1枚表紙、大文字の年月折り返し・年別1列を確認した。`albums-household_growth-largest-text` は比較の見出しが下端にある位置の撮影なので、比較カード全体の確認には次の `albums-calendar_year_2025-largest-text` を使用した。テスト成功だけで描画確認済みにしていない。
+- 画像はfixtureの図柄。利用者の実写真での選定の魅力・継続価値まで実証したものではない。
+- 証拠：`C:/dev/neko-evidence/album-content-20260916/` 内の `review-images/`、`app-ui-success.log`、`candidate-run.json`。
+- Build 174：[配布run 35037930734](https://github.com/soso-so-27/neko-widget/actions/runs/35037930734) を既存CLIでdry-run後に1回dispatch。同じSHA/buildの内部TestFlight環境を承認し、**2026-09-16 09:05:10 JSTに `UPLOAD SUCCEEDED with no errors`**。run全体も成功。Appleの処理完了・内部グループ画面・利用者の実機での見え方は未確認。外部招待・審査提出・課金開始は行っていない。
+
+## 所要時間と残る基盤課題
+
+- worktree作成07:41:14 JST、最初の実装commit07:48:16。実装とローカル確認はこの区間で約7分。
+- 最初の候補は、月表紙のoptional/nonoptional写真を並べる配列に型注釈がなくSwiftビルドが失敗した。こちらの実装ミス。初回CIは5分57秒。`[PhotoPresentation?]` の明示で修正し、新SHAを確認した。
+- 修正後CI：07:54:55〜08:50:06 JST、55分11秒。そのうち画面操作43件は41分31秒。main CIは55秒。
+- 配布run：08:57:39〜09:05:16 JST、承認待ちを含め7分37秒。worktree作成からAppleアップロードまで約84分であり、大半はCI・配布・描画成果物の取得待ちだった。今回の配布時間が改善済みとはしない。
+- 描画取得時に約583MBの成果物全体を取得し、追加の待ち時間を作った。既存の `C:/dev/neko-evidence/three-tabs-implementation-20260915/read-ci-zip.py` はHTTP Rangeでmanifestと必要PNGだけを取れる。次回はこの既存手段を先に使う。一式取得を高速化実績とは扱わない。
+- 今回はCIの必須範囲・証拠ルールを変更していない。先行少数チェックは失敗検出の改善候補であり、成功時の短縮ではない。表紙部品と専用fixture/testの境界を分ける限定scope案は、別の基盤候補で実測する。
+
+## 次の設計候補
+
+第2段階は、Widgetから開いた写真で既存の同日写真・お気に入り・比較にどう気づけるかを整理する。入口は既にあり、すべてを新機能として作り直さない。日付の写真束アイコン、追加後のお気に入りの置き場所、関連のある比較への導線が検討対象。文字を増やすことを先に決めず、猫が未確定の写真を「この子の成長」と呼ばない。
+
+読み取り結果とCI改善条件は `C:/dev/neko-evidence/album-content-20260916/next-step-findings.md` に集約。今回の製品候補には追加していない。長期共有保管・全体の入口とタブ・継続価値の判断は既存の別課題として残す。
