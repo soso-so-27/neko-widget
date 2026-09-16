@@ -643,7 +643,7 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("saved-memories-selection-toggle")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Text("\(photos.count.formatted())枚")' \
+          grep -Fq 'subtitle: "\(photos.count.formatted())枚"' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
