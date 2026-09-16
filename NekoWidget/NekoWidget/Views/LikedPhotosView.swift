@@ -125,24 +125,42 @@ struct AlbumView: View {
                 periodShelf(lifePeriods, title: "時期ごと")
             }
             if !years.isEmpty {
-                DisclosureGroup(isExpanded: $showsYears) {
-                    VStack(spacing: 0) {
-                        ForEach(years) { album in
-                            albumLink(album, isPrimary: false)
-                            if album.id != years.last?.id { Divider() }
+                VStack(spacing: 0) {
+                    Button {
+                        showsYears.toggle()
+                    } label: {
+                        HStack {
+                            Label("年から探す", systemImage: "calendar")
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 12)
+                            Image(systemName: showsYears ? "chevron.down" : "chevron.right")
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
                         }
-                    }
-                } label: {
-                    Label("年から探す", systemImage: "calendar")
                         .font(.headline)
                         .foregroundStyle(.primary)
-                        .frame(minHeight: 44)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("年から探す")
+                    .accessibilityValue(showsYears ? "展開中" : "閉じています")
+                    .accessibilityIdentifier("albums-years-toggle")
+
+                    if showsYears {
+                        Divider().padding(.horizontal, 16)
+                        ForEach(years) { album in
+                            albumLink(album, isPrimary: false)
+                            if album.id != years.last?.id {
+                                Divider().padding(.horizontal, 16)
+                            }
+                        }
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
                 .background(Color(.secondarySystemGroupedBackground),
                             in: RoundedRectangle(cornerRadius: 16))
-                .accessibilityIdentifier("albums-years-toggle")
             }
         }
     }

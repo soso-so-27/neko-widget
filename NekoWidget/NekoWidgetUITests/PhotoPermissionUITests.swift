@@ -2065,6 +2065,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(year.exists, "Year folders stay collapsed until the user chooses them.")
         capture("albums-years-collapsed-largest-text")
         years.tap()
+        XCTAssertEqual(years.value as? String, "展開中")
+        XCTAssertEqual(app.buttons.matching(identifier: "albums-years-toggle").count, 1,
+                       "Year links must remain separately identifiable from the toggle.")
         reveal(year, in: app)
         XCTAssertGreaterThan(year.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(year.frame.minX, app.frame.minX)
@@ -2171,7 +2174,10 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func openPhotosTab(in app: XCUIApplication) {
         assertAlbumsRoot(in: app)
-        let photos = app.buttons["main-tab-photos"]
+        // UIKit can omit SwiftUI's tab-item identifier after relaunch while
+        // preserving the visible, accessible tab label.
+        let identified = app.buttons["main-tab-photos"]
+        let photos = identified.exists ? identified : app.tabBars.buttons["写真"]
         XCTAssertTrue(photos.waitForExistence(timeout: 10))
         photos.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 10))
