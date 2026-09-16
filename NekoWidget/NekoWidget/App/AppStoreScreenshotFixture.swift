@@ -55,10 +55,14 @@ final class AppStoreScreenshotFixtureLoadTracker: ObservableObject {
     @Published private(set) var loadedImages = Set<AppStoreScreenshotFixtureLoadedImage>()
 
     func record(localIdentifier: String, loaderIdentifier: UUID) {
-        loadedImages.insert(AppStoreScreenshotFixtureLoadedImage(
+        let image = AppStoreScreenshotFixtureLoadedImage(
             localIdentifier: localIdentifier,
             loaderIdentifier: loaderIdentifier
-        ))
+        )
+        // Reappearing lazy cells can report the same load again. A no-op must
+        // not publish another change and rebuild the fixture's navigation root.
+        guard !loadedImages.contains(image) else { return }
+        loadedImages.insert(image)
     }
 }
 

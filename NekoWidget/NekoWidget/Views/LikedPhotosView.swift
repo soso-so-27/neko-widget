@@ -30,7 +30,9 @@ struct AlbumView: View {
     }
 
     var shelfContent: some View {
-        LazyVStack(alignment: .leading, spacing: 26) {
+        // This is a small catalog of sections, not a photo list. Keep its full
+        // height stable inside the parent's lazy shelf when scrolling back up.
+        VStack(alignment: .leading, spacing: 26) {
             if !profiles.isEmpty {
                 profileScopeSection
             }
