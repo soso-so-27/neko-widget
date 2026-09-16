@@ -14,6 +14,8 @@ struct AlbumView: View {
     var showsAllPhotos = true
     var isEmbedded = false
     var featuredContent: AnyView? = nil
+    var periodContent: AnyView? = nil
+    @State private var showsYears = false
 
     var body: some View {
         if isEmbedded {
@@ -59,7 +61,13 @@ struct AlbumView: View {
                 albumSection(section)
             }
 
-            if orderedSections.isEmpty {
+            if isEmbedded, periodContent != nil,
+               !orderedSections.contains(where: { $0.id == .time }) {
+                Divider()
+                timeAlbums([])
+            }
+
+            if orderedSections.isEmpty, featuredContent == nil, periodContent == nil {
                 emptyState
             }
         }
@@ -105,17 +113,36 @@ struct AlbumView: View {
         }
 
         return VStack(alignment: .leading, spacing: 24) {
+            Text("時期から見る").font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
             ForEach(comparisons) { album in
                 albumLink(album, isPrimary: false)
             }
-            if !comparisons.isEmpty && !periods.isEmpty {
-                Divider()
+            if let periodContent {
+                periodContent
             }
             if !lifePeriods.isEmpty {
                 periodShelf(lifePeriods, title: "時期ごと")
             }
             if !years.isEmpty {
-                periodShelf(years, title: "年ごと")
+                DisclosureGroup(isExpanded: $showsYears) {
+                    VStack(spacing: 0) {
+                        ForEach(years) { album in
+                            albumLink(album, isPrimary: false)
+                            if album.id != years.last?.id { Divider() }
+                        }
+                    }
+                } label: {
+                    Label("年から探す", systemImage: "calendar")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .frame(minHeight: 44)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 16))
+                .accessibilityIdentifier("albums-years-toggle")
             }
         }
     }
@@ -151,13 +178,7 @@ struct AlbumView: View {
             } else if isEmbedded && album.group == .time {
                 PeriodAlbumOverviewCard(album: album)
             } else if isEmbedded {
-                AlbumOverviewCard(
-                    identifier: themeCover(for: album).localIdentifier,
-                    catBoundingBox: album.id == .closeUp ? themeCover(for: album).catBoundingBox : nil,
-                    title: album.cardTitle, subtitle: album.countLabel,
-                    isMovie: false, isNew: false, networkAccessAllowed: true,
-                    preservesScene: album.id != .closeUp
-                )
+                AlbumThemeEntry(album: album)
             } else {
                 CuratedAlbumCard(album: album)
             }
@@ -177,22 +198,6 @@ struct AlbumView: View {
         _ section: CuratedAlbumSectionPresentation
     ) -> Bool {
         section.id == .all
-    }
-
-    // Adjacent themes should not all look like the same album. Keep relationship
-    // and outing covers uncropped around a single cat so their context survives.
-    private func themeCover(for album: CuratedAlbumPresentation) -> PhotoPresentation {
-        var used = Set<String>()
-        var previousIdentifier: String?
-        for candidate in sections.filter({ $0.id == .cuteness || $0.id == .special }).flatMap(\.albums) {
-            let cover = candidate.photos.first { !used.contains($0.localIdentifier) }
-                ?? candidate.photos.first { $0.localIdentifier != previousIdentifier }
-                ?? candidate.coverPhoto
-            if candidate.id == album.id { return cover }
-            used.insert(cover.localIdentifier)
-            previousIdentifier = cover.localIdentifier
-        }
-        return album.coverPhoto
     }
 
     private var orderedSections: [CuratedAlbumSectionPresentation] {
@@ -318,6 +323,45 @@ struct AlbumView: View {
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 180 : 420)
         }
+    }
+}
+
+/// Stable category controls stay quieter than the photo recommendations.
+/// Labels carry the meaning; symbols do not have to explain a theme alone.
+private struct AlbumThemeEntry: View {
+    let album: CuratedAlbumPresentation
+    @ScaledMetric(relativeTo: .title3) private var symbolWidth: CGFloat = 26
+
+    private var symbol: String {
+        switch album.id {
+        case .closeUp: "viewfinder"
+        case .together: "person.fill"
+        case .multipleCats: "pawprint.fill"
+        case .outing: "leaf.fill"
+        case .catDay: "calendar"
+        default: "square.grid.2x2"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: symbolWidth)
+                .accessibilityHidden(true)
+            Text(album.cardTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14))
+        .contentShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -804,6 +848,19 @@ struct LikedPhotosView: View {
             && (latestSeasonalMovieIsNew || featuredHighlight == nil)
     }
 
+    private var hasPeriodCollections: Bool {
+        hasPhotoAccess && albumScope.wrappedValue == .everyone
+            && (!months.isEmpty || !seasonalMovies.isEmpty)
+    }
+
+    private var hasPickupArchive: Bool {
+        !highlights.isEmpty || hasPeriodCollections
+    }
+
+    private var hasFeaturedContent: Bool {
+        featuresMonth || featuresMovie || featuredHighlight != nil
+    }
+
     var body: some View {
         ScrollView {
             if showsHighlightArchive {
@@ -826,14 +883,15 @@ struct LikedPhotosView: View {
                                 profileActions: albumProfileActions,
                                 selectedScope: albumScope, showsAllPhotos: false,
                                 isEmbedded: true,
-                                featuredContent: AnyView(featuredShelf)
+                                featuredContent: hasFeaturedContent ? AnyView(featuredShelf) : nil,
+                                periodContent: hasPeriodCollections ? AnyView(reflectionShelf) : nil
                             )
                         } else {
                             featuredShelf
-                        }
-                        if !months.isEmpty || !seasonalMovies.isEmpty {
-                            Divider()
-                            reflectionShelf
+                            if hasPeriodCollections {
+                                Divider()
+                                reflectionShelf
+                            }
                         }
                     }
                     if !hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
@@ -849,7 +907,7 @@ struct LikedPhotosView: View {
                 .padding(.vertical, 12)
             }
         }
-        .navigationTitle(showsHighlightArchive ? "見どころ" : showsReflectionArchive ? "これまでのふりかえり" : "アルバム")
+        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・ムービー" : "アルバム")
         .navigationBarTitleDisplayMode(showsReflectionArchive || showsHighlightArchive ? .inline : .large)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : "albums-root")
@@ -882,7 +940,7 @@ struct LikedPhotosView: View {
 
     private var reflectionShelf: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ふりかえり").font(.title3.bold())
+            Text("月のまとめ・ムービー").font(.headline)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("memories-summaries-section")
             VStack(spacing: 12) {
@@ -911,13 +969,13 @@ struct LikedPhotosView: View {
         if featuresMonth || featuresMovie || featuredHighlight != nil {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("見どころ").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    Text("ピックアップ").font(.title3.bold()).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    if !highlights.isEmpty {
+                    if hasPickupArchive {
                         NavigationLink(value: MemoriesRoute.highlightsArchive) {
                             Image(systemName: "square.stack").frame(width: 44, height: 44)
                         }
-                        .accessibilityLabel("見どころの一覧")
+                        .accessibilityLabel("ピックアップの一覧")
                         .accessibilityIdentifier("albums-highlights-all")
                     }
                 }
@@ -934,11 +992,27 @@ struct LikedPhotosView: View {
 
     private var highlightArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if highlights.isEmpty {
-                ContentUnavailableView("見どころはまだありません", systemImage: "photo.stack")
+            if !hasPickupArchive {
+                ContentUnavailableView("ピックアップはまだありません", systemImage: "photo.stack")
             } else {
                 ForEach(highlights) { highlight in
                     highlightLink(highlight, featured: false)
+                }
+                // Every kind offered in the featured slot must be reachable
+                // from this list, including letters and seasonal movies.
+                if hasPeriodCollections {
+                    if !months.isEmpty {
+                        Text("月のまとめ").font(.headline).accessibilityAddTraits(.isHeader)
+                        ForEach(months) { month in
+                            monthLink(month, isLatest: month.id == months.first?.id, showsCover: false)
+                        }
+                    }
+                    if !seasonalMovies.isEmpty {
+                        Text("季節のムービー").font(.headline).accessibilityAddTraits(.isHeader)
+                        ForEach(seasonalMovies) { movie in
+                            movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id, showsCover: false)
+                        }
+                    }
                 }
             }
         }
@@ -969,8 +1043,14 @@ struct LikedPhotosView: View {
 
     private var reflectionArchive: some View {
         LazyVStack(alignment: .leading, spacing: 20) {
-            if !months.isEmpty {
-                Text("月の便り").font(.headline)
+            if !hasPeriodCollections {
+                ContentUnavailableView(
+                    hasPhotoAccess ? "月のまとめ・ムービーはありません" : "写真へのアクセスが必要です",
+                    systemImage: "photo.stack"
+                )
+            }
+            if hasPeriodCollections, !months.isEmpty {
+                Text("月のまとめ").font(.headline)
                     .accessibilityAddTraits(.isHeader)
                 VStack(spacing: 0) {
                     ForEach(months) { month in
@@ -983,7 +1063,7 @@ struct LikedPhotosView: View {
                 .background(Color(.secondarySystemGroupedBackground),
                             in: RoundedRectangle(cornerRadius: 16))
             }
-            if !seasonalMovies.isEmpty {
+            if hasPeriodCollections, !seasonalMovies.isEmpty {
                 if !months.isEmpty { Divider() }
                 Text("季節のムービー").font(.headline)
                     .accessibilityAddTraits(.isHeader)

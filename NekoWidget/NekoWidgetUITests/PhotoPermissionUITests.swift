@@ -1490,8 +1490,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 assertComparisonDates(on: album)
                 capture("albums-comparison-standard")
                 album.tap()
-                XCTAssertTrue(app.navigationBars["猫たちと過ごした時間"].waitForExistence(timeout: 10))
-                app.navigationBars["猫たちと過ごした時間"].buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(app.navigationBars["あの頃と今"].waitForExistence(timeout: 10))
+                app.navigationBars["あの頃と今"].buttons.element(boundBy: 0).tap()
                 assertAlbumsRoot(in: app)
                 capture("albums-without-cat-registration")
             }
@@ -1878,6 +1878,15 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
         assertAlbumsRoot(in: readyApp)
+        let pickups = element("albums-highlights-all", in: readyApp)
+        reveal(pickups, in: readyApp)
+        pickups.tap()
+        XCTAssertTrue(element("albums-highlights-archive", in: readyApp).waitForExistence(timeout: 10))
+        capture("albums-pickups-monthly-entry")
+        openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
+        XCTAssertTrue(readyApp.navigationBars["ピックアップ"].waitForExistence(timeout: 10))
+        readyApp.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: readyApp)
         let archive = element("albums-reflections-all", in: readyApp)
         reveal(archive, in: readyApp)
         archive.tap()
@@ -1887,10 +1896,10 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(previousMonth.label.contains("1枚"))
         capture("albums-monthly-date-rows")
         openCardAndReturn(previousMonth, expectedRoute: "monthly:2025-07", in: readyApp)
-        XCTAssertTrue(readyApp.navigationBars["これまでのふりかえり"].waitForExistence(timeout: 10))
+        XCTAssertTrue(readyApp.navigationBars["月のまとめ・ムービー"].waitForExistence(timeout: 10))
         XCTAssertTrue(element("albums-reflections-archive", in: readyApp).exists)
         capture("albums-reflections-archive-return")
-        readyApp.navigationBars["これまでのふりかえり"].buttons.element(boundBy: 0).tap()
+        readyApp.navigationBars["月のまとめ・ムービー"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
         readyApp.terminate()
     }
@@ -1940,13 +1949,11 @@ final class SoloMemoriesUITests: XCTestCase {
             let closeUpFrame = closeUp.frame
             if scenario.hasSuffix("-large") {
                 XCTAssertGreaterThan(closeUpFrame.width, app.frame.width / 2)
-                waitForLoadedPhotos([3], in: app)
             } else {
                 let together = element("album-card-together", in: app)
                 XCTAssertTrue(together.isHittable)
                 XCTAssertEqual(closeUpFrame.minY, together.frame.minY, accuracy: 2)
                 XCTAssertLessThan(closeUpFrame.maxX, together.frame.minX)
-                waitForLoadedPhotos([3, 6], in: app)
             }
             capture("albums-\(scenario)-themes")
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
@@ -1967,7 +1974,7 @@ final class SoloMemoriesUITests: XCTestCase {
             assertHighlightPhotos(expectedNumbers, in: app, pagesThroughAll: false)
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
-            app.navigationBars["見どころ"].buttons.element(boundBy: 0).tap()
+            app.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
             assertAlbumsRoot(in: app)
             app.terminate()
         }
@@ -2026,20 +2033,10 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertLessThanOrEqual(monthFrame.maxX, app.frame.maxX)
         capture("albums-monthly-cover-largest-text")
         openCardAndReturn(month, expectedRoute: "monthly:2025-08", in: app)
-        reveal(seasonalCard, in: app)
-        // Both photo previews and date rows use the available width.
-        // Off-screen lazy cells are not used as geometry evidence.
-        XCTAssertGreaterThan(seasonalCard.frame.width, app.frame.width / 2)
-        XCTAssertGreaterThanOrEqual(seasonalCard.frame.minX, app.frame.minX)
-        XCTAssertLessThanOrEqual(seasonalCard.frame.maxX, app.frame.maxX)
-        capture("albums-seasonal-cover-largest-text")
-        openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
-        // The seasonal date row follows the theme/year shelves, so return to
-        // the top before checking those cards in their product order.
-        for _ in 0..<8 where !favorites.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        // Follow the visible shelf order: themes, comparison, month/movie,
+        // then the initially collapsed year list.
         for (identifier, route) in [("close_up", "album:close_up"),
-                                    ("household_growth", "album:household_growth"),
-                                    ("calendar_year_2025", "album:calendar_year_2025")] {
+                                    ("household_growth", "album:household_growth")] {
             let cover = element("album-card-\(identifier)", in: app)
             reveal(cover, in: app)
             XCTAssertGreaterThan(cover.frame.width, app.frame.width / 2,
@@ -2053,6 +2050,28 @@ final class SoloMemoriesUITests: XCTestCase {
             capture("albums-\(identifier)-largest-text")
             openCardAndReturn(cover, expectedRoute: route, in: app)
         }
+        reveal(seasonalCard, in: app)
+        // Both photo previews and date rows use the available width.
+        // Off-screen lazy cells are not used as geometry evidence.
+        XCTAssertGreaterThan(seasonalCard.frame.width, app.frame.width / 2)
+        XCTAssertGreaterThanOrEqual(seasonalCard.frame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(seasonalCard.frame.maxX, app.frame.maxX)
+        capture("albums-seasonal-row-largest-text")
+        openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+
+        let years = element("albums-years-toggle", in: app)
+        reveal(years, in: app)
+        let year = element("album-card-calendar_year_2025", in: app)
+        XCTAssertFalse(year.exists, "Year folders stay collapsed until the user chooses them.")
+        capture("albums-years-collapsed-largest-text")
+        years.tap()
+        reveal(year, in: app)
+        XCTAssertGreaterThan(year.frame.width, app.frame.width / 2)
+        XCTAssertGreaterThanOrEqual(year.frame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(year.frame.maxX, app.frame.maxX)
+        capture("albums-calendar_year_2025-largest-text")
+        openCardAndReturn(year, expectedRoute: "album:calendar_year_2025", in: app)
+        XCTAssertTrue(year.waitForExistence(timeout: 5))
         openFavorites(in: app)
         XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].isHittable)
         capture("albums-favorites-largest-text")

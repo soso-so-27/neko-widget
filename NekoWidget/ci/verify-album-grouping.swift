@@ -104,7 +104,7 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "person-and-cat album title changed")
     try require(CuratedAlbumID.multipleCats.title == "猫たちがいっしょ",
                 "multiple-cat album made an exact-count claim")
-    try require(CuratedAlbumID.householdGrowth.title == "猫たちと過ごした時間",
+    try require(CuratedAlbumID.householdGrowth.title == "あの頃と今",
                 "household timeline title changed")
     try require(CuratedAlbumID.householdGrowth.logKey == "household_growth",
                 "household growth log key changed")
@@ -276,7 +276,7 @@ private func verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears() throws {
     )
     try require(album?.countLabel == "2年分",
                 "household growth count was presented as a photo count")
-    try require(album?.cardTitle == "猫たちと過ごした時間",
+    try require(album?.cardTitle == "あの頃と今",
                 "household timeline card title no longer fits the shared card")
     try require(
         builder.album(from: [

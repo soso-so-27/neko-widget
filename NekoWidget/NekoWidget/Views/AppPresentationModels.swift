@@ -99,7 +99,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     var title: String {
         switch self {
         case .allCatPhotos: "すべての猫写真"
-        case .householdGrowth: "猫たちと過ごした時間"
+        case .householdGrowth: "あの頃と今"
         case .growth: "成長"
         case let .profileGrowth(_, displayName): "\(displayName)の成長"
         case .kitten: "子猫のころ"

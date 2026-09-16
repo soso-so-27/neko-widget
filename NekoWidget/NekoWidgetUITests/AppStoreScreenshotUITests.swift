@@ -75,7 +75,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "03-organized-memories")
         organizedAlbum.tap()
-        let albumTitle = app.navigationBars["猫たちと過ごした時間"]
+        let albumTitle = app.navigationBars["あの頃と今"]
         guard albumTitle.waitForExistence(timeout: 10) else {
             fail("The album cover did not open its collection directly.", application: app)
             return
