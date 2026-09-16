@@ -812,7 +812,11 @@ struct LikedPhotosView: View {
                 reflectionArchive
                     .padding(16)
             } else {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                // Each child is a whole shelf, not one photo. Estimating the
+                // large album shelf as one lazy row can repeatedly reposition
+                // it when scrolling upward with accessibility text sizes.
+                // Only the individual photo grids and archives need laziness.
+                VStack(alignment: .leading, spacing: 24) {
                     favoritesLink
                     if hasPhotoAccess {
                         if let albumScan {
