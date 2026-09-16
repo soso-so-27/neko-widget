@@ -609,7 +609,8 @@ private struct MainlineAcceptanceFixtureRootView: View {
 
 /// Keeps the shipping Albums root alive while its inputs change. Only
 /// presentation values and existing in-memory illustrations are supplied;
-/// navigation destinations acknowledge the action without opening services.
+/// highlight destinations use the shipping photo browser. Other destinations
+/// acknowledge navigation without opening services.
 @MainActor
 private struct SoloMemoriesFixtureView: View {
     let scenario: String
@@ -618,6 +619,7 @@ private struct SoloMemoriesFixtureView: View {
     @State private var showsOtherScreen = false
     @State private var otherScreenTitle = "別の画面"
     @State private var detailPath = NavigationPath()
+    @State private var highlightMemoryRequest = "none"
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
@@ -625,7 +627,7 @@ private struct SoloMemoriesFixtureView: View {
         _hasMonthlyLetter = State(initialValue: [
             "solo-memories-monthly", "solo-memories-denied",
         ].contains(scenario))
-        _hasPhotoAccess = State(initialValue: scenario != "solo-memories-denied")
+        _hasPhotoAccess = State(initialValue: !scenario.hasSuffix("-denied"))
     }
 
     var body: some View {
@@ -673,6 +675,10 @@ private struct SoloMemoriesFixtureView: View {
                     )
                 case .reflectionsArchive:
                     albumsView(showsReflectionArchive: true)
+                case .highlightsArchive:
+                    albumsView(showsHighlightArchive: true)
+                case let .highlight(highlight):
+                    highlightBrowser(highlight)
                 case .photo, .monthlyWindow, .seasonalMovie:
                     VStack(spacing: 20) {
                         Text("アルバムの詳細")
@@ -705,13 +711,18 @@ private struct SoloMemoriesFixtureView: View {
                 Text("loaded photos")
                     .accessibilityIdentifier("solo-memories-loaded-photos")
                     .accessibilityValue("|" + loadedPhotoIdentifiers.joined(separator: "|") + "|")
+                Text(highlightMemoryRequest)
+                    .accessibilityIdentifier("solo-memories-highlight-memory-request")
             }
             .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
             .allowsHitTesting(false)
         }
     }
 
-    private func albumsView(showsReflectionArchive: Bool = false) -> some View {
+    private func albumsView(
+        showsReflectionArchive: Bool = false,
+        showsHighlightArchive: Bool = false
+    ) -> some View {
         LikedPhotosView(
             photos: savedPhotos,
             hasPhotoAccess: hasPhotoAccess,
@@ -727,12 +738,78 @@ private struct SoloMemoriesFixtureView: View {
                 showsOtherScreen = true
             },
             albumSections: albumSections,
-            albumScan: scenario == "solo-memories-seasonal-large" ? albumScan : nil,
-            showsReflectionArchive: showsReflectionArchive
+            albumScan: scenario == "solo-memories-seasonal-large" || usesHighlightPhotos ? albumScan : nil,
+            showsReflectionArchive: showsReflectionArchive,
+            showsHighlightArchive: showsHighlightArchive,
+            referenceDate: referenceDate
         )
     }
 
+    private func highlightBrowser(_ highlight: AlbumHighlightPresentation) -> some View {
+        PhotoBrowserView(
+            photos: highlight.photos,
+            libraryPhotos: highlightPhotos,
+            initialPhoto: highlight.coverPhoto,
+            widgetShownAt: nil,
+            showsWidgetTiming: false,
+            setMemorySaved: { identifier, saved in
+                highlightMemoryRequest = "\(identifier)|\(saved)"
+            },
+            excludedCatCandidateIdentifiers: [],
+            excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
+            profiles: [], assignmentsByPhotoIdentifier: [:],
+            replaceProfileAssignments: { _ in true }
+        )
+        .overlay(alignment: .topLeading) {
+            // Route metadata is a fixture assertion aid. Actual paging and
+            // selected-photo identity are checked through browser actions.
+            Text(highlight.id)
+                .accessibilityIdentifier("solo-memories-highlight-destination")
+                .accessibilityValue(highlight.photos.map(\.localIdentifier).joined(separator: "|"))
+                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var usesHighlightPhotos: Bool {
+        scenario.hasPrefix("solo-memories-highlights")
+    }
+
+    private var referenceDate: Date {
+        // The same week and completed month in every simulator locale/run.
+        Date(timeIntervalSince1970: 1_757_937_600) // 2025-09-15 12:00 UTC
+    }
+
+    private var highlightPhotos: [PhotoPresentation] {
+        let photos = (0..<18).map { index in
+            let theme = index / 3
+            let position = index % 3
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let date = calendar.date(from: DateComponents(
+                year: 2025, month: theme == 4 ? 2 : (theme == 5 ? 7 : 8),
+                day: theme == 4 ? 22 : 3 + position * 7,
+                hour: theme == 4 ? 3 + position * 5 : 12
+            ))!
+            return PhotoPresentation(
+                localIdentifier: "app-store-screenshot-fixture-\(index + 1)",
+                creationDate: date,
+                catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
+                albumContainsPerson: theme == 1,
+                albumIsOuting: theme == 3,
+                detectedCatCount: theme == 2 ? 2 : 1,
+                largestCatAreaRatio: theme == 0 || theme == 5 ? 0.62 : 0.34,
+                hasCurrentAlbumAnalysis: true
+            )
+        }
+        return scenario.hasSuffix("-few") ? Array(photos.prefix(2)) : photos
+    }
+
     private var albumSections: [CuratedAlbumSectionPresentation] {
+        if usesHighlightPhotos {
+            return CuratedAlbumBuilder(timeZone: TimeZone(secondsFromGMT: 0)!)
+                .sections(from: highlightPhotos, lifeReference: nil, includesGrowth: false)
+        }
         guard scenario == "solo-memories-seasonal-large" else { return [] }
         let photos = AppStoreScreenshotFixture.photos
         var sections: [CuratedAlbumSectionPresentation] = []
@@ -757,7 +834,7 @@ private struct SoloMemoriesFixtureView: View {
 
     private var albumScan: ScanPresentation {
         var scan = ScanPresentation()
-        scan.totalAssets = AppStoreScreenshotFixture.photos.count
+        scan.totalAssets = usesHighlightPhotos ? highlightPhotos.count : AppStoreScreenshotFixture.photos.count
         scan.scannedAssets = scan.totalAssets
         scan.finalCatAssets = scan.totalAssets
         return scan
@@ -829,6 +906,8 @@ private struct SoloMemoriesFixtureView: View {
         switch route {
         case .favorites: "favorites"
         case .reflectionsArchive: "reflections-archive"
+        case .highlightsArchive: "highlights-archive"
+        case let .highlight(highlight): "highlight:\(highlight.id)"
         case let .photo(identifier): "photo:\(identifier)"
         case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
         case let .seasonalMovie(period): "seasonal:\(period.id)"

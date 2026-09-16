@@ -641,3 +641,148 @@ enum AppTab: Hashable {
     case memories
     case windows
 }
+
+/// A small, revisitable collection derived only from albums in the current
+/// personal-photo scope. Its identity survives weekly featured-card changes.
+struct AlbumHighlightPresentation: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let photos: [PhotoPresentation]
+    let sourceAlbumID: CuratedAlbumID
+
+    var subtitle: String { "\(photos.count.formatted())枚" }
+    var coverPhoto: PhotoPresentation { photos[0] }
+}
+
+struct AlbumHighlightBuilder {
+    static let minimumSceneCount = 3
+    static let maximumPhotoCount = 6
+
+    private static let sceneGap: TimeInterval = 30 * 60
+    private static let themeIDs: [CuratedAlbumID] = [
+        .closeUp, .together, .multipleCats, .outing, .catDay
+    ]
+
+    private struct Month: Hashable {
+        let year: Int
+        let month: Int
+
+        var key: String { String(format: "%04d-%02d", year, month) }
+    }
+
+    private let now: Date
+    private let calendar: Calendar
+
+    init(now: Date = Date(), timeZone: TimeZone = .current) {
+        self.now = now
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = timeZone
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        self.calendar = calendar
+    }
+
+    /// No candidate limit: the archive retains every eligible month/theme even
+    /// when the featured card can show only one. Callers supply scoped albums;
+    /// this builder never fetches photos or combines personal/shared sources.
+    func highlights(
+        from sections: [CuratedAlbumSectionPresentation]
+    ) -> [AlbumHighlightPresentation] {
+        let albums = sections.flatMap(\.albums)
+        var highlights: [AlbumHighlightPresentation] = []
+        for themeID in Self.themeIDs {
+            let dated = albums.filter { $0.id == themeID }
+                .flatMap(\.photos)
+                .filter {
+                    guard let date = $0.creationDate else { return false }
+                    return date.timeIntervalSinceReferenceDate.isFinite && date <= now
+                }
+                .sorted {
+                    if $0.creationDate == $1.creationDate { return $0.id < $1.id }
+                    return $0.creationDate! < $1.creationDate!
+                }
+            var seen = Set<String>()
+            var months: [Month: [PhotoPresentation]] = [:]
+            for photo in dated where seen.insert(photo.id).inserted {
+                let components = calendar.dateComponents([.year, .month], from: photo.creationDate!)
+                guard let year = components.year, year > 0,
+                      let month = components.month else { continue }
+                months[Month(year: year, month: month), default: []].append(photo)
+            }
+            for (month, photos) in months {
+                let scenes = sceneRepresentatives(from: photos)
+                guard scenes.count >= Self.minimumSceneCount else { continue }
+                highlights.append(AlbumHighlightPresentation(
+                    id: "highlight-\(month.key)-\(themeID.logKey)",
+                    title: themeID == .catDay
+                        ? "\(month.year)年2月22日"
+                        : "\(month.year)年\(month.month)月の\(themeID.title)",
+                    photos: spreadAcrossTime(scenes),
+                    sourceAlbumID: themeID
+                ))
+            }
+        }
+        return highlights.sorted { $0.id > $1.id }
+    }
+
+    /// A provisional weekly cadence, not a promise of new daily material.
+    /// Sorting before rotation makes the result independent of input ordering;
+    /// walking the entire list lets older collections surface as well.
+    func featured(
+        from highlights: [AlbumHighlightPresentation],
+        on date: Date
+    ) -> AlbumHighlightPresentation? {
+        let candidates = highlights.sorted { $0.id < $1.id }
+        guard !candidates.isEmpty,
+              let weekStart = calendar.dateInterval(of: .weekOfYear, for: date)?.start,
+              let epoch = calendar.date(from: DateComponents(year: 1970, month: 1, day: 5)),
+              let days = calendar.dateComponents([.day], from: epoch, to: weekStart).day else {
+            return nil
+        }
+        let week = days / 7
+        let index = ((week % candidates.count) + candidates.count) % candidates.count
+        return candidates[index]
+    }
+
+    private func sceneRepresentatives(
+        from photos: [PhotoPresentation]
+    ) -> [PhotoPresentation] {
+        var representatives: [PhotoPresentation] = []
+        var previousDate: Date?
+        for photo in photos {
+            guard let date = photo.creationDate else { continue }
+            // This is only a conservative burst/session heuristic. Consecutive
+            // gaps within 30 minutes do not count as evidence of a new scene.
+            if previousDate.map({ date.timeIntervalSince($0) > Self.sceneGap }) ?? true {
+                representatives.append(photo)
+            }
+            previousDate = date
+        }
+        return representatives
+    }
+
+    private func spreadAcrossTime(
+        _ photos: [PhotoPresentation]
+    ) -> [PhotoPresentation] {
+        guard photos.count > Self.maximumPhotoCount else { return photos }
+        var selected = Set([0, photos.count - 1])
+        while selected.count < Self.maximumPhotoCount {
+            var bestIndex: Int?
+            var greatestDistance: TimeInterval = -1
+            for index in photos.indices where !selected.contains(index) {
+                let date = photos[index].creationDate!
+                let distance = selected.map {
+                    abs(date.timeIntervalSince(photos[$0].creationDate!))
+                }.min() ?? 0
+                if distance > greatestDistance {
+                    bestIndex = index
+                    greatestDistance = distance
+                }
+            }
+            guard let bestIndex else { break }
+            selected.insert(bestIndex)
+        }
+        return selected.sorted().map { photos[$0] }
+    }
+}

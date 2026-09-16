@@ -1874,7 +1874,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let readyApp = launch("monthly")
         assertAlbumsRoot(in: readyApp)
         XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
-        waitForLoadedPhotos([1, 3, 5], in: readyApp)
+        waitForLoadedPhotos([1, 5], in: readyApp)
         capture("albums-monthly-ready")
         openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
         assertAlbumsRoot(in: readyApp)
@@ -1896,6 +1896,111 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testHighlightsPageThroughTheirPhotosAndReopenFromTheArchive() {
+        for scenario in ["highlights", "highlights-large"] {
+            let app = launch(scenario)
+            assertAlbumsRoot(in: app)
+            let featured = element("albums-highlight-featured", in: app)
+            XCTAssertTrue(featured.waitForExistence(timeout: 10))
+            reveal(featured, in: app)
+            XCTAssertTrue(element("albums-highlights-all", in: app).isHittable)
+            featured.tap()
+            let destination = app.staticTexts["solo-memories-highlight-destination"]
+            XCTAssertTrue(destination.waitForExistence(timeout: 10))
+            let highlightID = destination.label
+            let expectedNumbers: [Int]
+            switch highlightID {
+            case "highlight-2025-08-close_up": expectedNumbers = [1, 2, 3]
+            case "highlight-2025-08-together": expectedNumbers = [4, 5, 6]
+            case "highlight-2025-08-multiple_cats": expectedNumbers = [7, 8, 9]
+            case "highlight-2025-08-outing": expectedNumbers = [10, 11, 12]
+            case "highlight-2025-02-cat_day": expectedNumbers = [13, 14, 15]
+            case "highlight-2025-07-close_up": expectedNumbers = [16, 17, 18]
+            default:
+                XCTFail("Unexpected featured collection: \(highlightID)")
+                app.terminate()
+                return
+            }
+            assertHighlightPhotos(expectedNumbers, in: app,
+                                  pagesThroughAll: !scenario.hasSuffix("-large"))
+            capture("albums-\(scenario)-browser")
+            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            assertAlbumsRoot(in: app)
+            waitForLoadedPhotos([expectedNumbers[0], expectedNumbers[2]], in: app)
+            capture("albums-\(scenario)-featured")
+
+            let closeUp = element("album-card-close_up", in: app)
+            if !scenario.hasSuffix("-large") {
+                XCTAssertTrue(featured.isHittable)
+                XCTAssertTrue(closeUp.isHittable,
+                    "The first fixed themes must be reachable alongside the compact feature.")
+                XCTAssertGreaterThanOrEqual(closeUp.frame.minY, featured.frame.maxY)
+            }
+            reveal(closeUp, in: app)
+            let closeUpFrame = closeUp.frame
+            if scenario.hasSuffix("-large") {
+                XCTAssertGreaterThan(closeUpFrame.width, app.frame.width / 2)
+                waitForLoadedPhotos([3], in: app)
+            } else {
+                let together = element("album-card-together", in: app)
+                XCTAssertTrue(together.isHittable)
+                XCTAssertEqual(closeUpFrame.minY, together.frame.minY, accuracy: 2)
+                XCTAssertLessThan(closeUpFrame.maxX, together.frame.minX)
+                waitForLoadedPhotos([3, 6], in: app)
+            }
+            capture("albums-\(scenario)-themes")
+            openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
+
+            // Reopen the exact featured collection through the independent
+            // archive entry rather than relying on the week's featured slot.
+            let archive = element("albums-highlights-all", in: app)
+            for _ in 0..<8 where !archive.isHittable { app.scrollViews.firstMatch.swipeDown() }
+            XCTAssertTrue(archive.isHittable)
+            archive.tap()
+            XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
+            capture("albums-\(scenario)-archive")
+            let archived = element("albums-highlight-\(highlightID)", in: app)
+            reveal(archived, in: app)
+            archived.tap()
+            XCTAssertTrue(destination.waitForExistence(timeout: 10))
+            XCTAssertEqual(destination.label, highlightID)
+            assertHighlightPhotos(expectedNumbers, in: app, pagesThroughAll: false)
+            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
+            app.navigationBars["見どころ"].buttons.element(boundBy: 0).tap()
+            assertAlbumsRoot(in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testSparsePhotosAndDeniedAccessDoNotOfferEmptyHighlights() {
+        for scenario in ["highlights-few", "highlights-denied"] {
+            let app = launch(scenario)
+            assertAlbumsRoot(in: app)
+            XCTAssertFalse(element("albums-highlight-featured", in: app).exists)
+            XCTAssertFalse(element("albums-highlights-all", in: app).exists)
+            if scenario.hasSuffix("-few") {
+                let theme = element("album-card-close_up", in: app)
+                reveal(theme, in: app)
+                XCTAssertTrue(theme.label.contains("2枚"))
+                capture("albums-highlights-two-scenes")
+                openCardAndReturn(theme, expectedRoute: "album:close_up", in: app)
+            } else {
+                XCTAssertFalse(element("album-card-close_up", in: app).exists)
+                let photos = app.buttons["memories-open-photos"]
+                XCTAssertTrue(photos.isHittable)
+                capture("albums-highlights-denied")
+                photos.tap()
+                XCTAssertTrue(app.staticTexts["solo-memories-other-screen"].waitForExistence(timeout: 5))
+                app.buttons["solo-memories-return"].tap()
+            }
+            assertAlbumsRoot(in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testAlbumCoversAndFavoritesRemainReachableWithLargestText() {
         let app = launch("seasonal-large")
         assertAlbumsRoot(in: app)
@@ -1913,7 +2018,7 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.scrollViews.firstMatch.swipeDown() }
         let month = monthlyCard(in: app)
         reveal(month, in: app)
-        waitForLoadedPhotos([1, 3, 5], in: app)
+        waitForLoadedPhotos([1, 5], in: app)
         let monthFrame = month.frame
         XCTAssertGreaterThan(monthFrame.height, 0)
         XCTAssertGreaterThan(monthFrame.width, app.frame.width / 2)
@@ -1929,9 +2034,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertLessThanOrEqual(seasonalCard.frame.maxX, app.frame.maxX)
         capture("albums-seasonal-cover-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
-        for (identifier, route) in [("household_growth", "album:household_growth"),
-                                    ("calendar_year_2025", "album:calendar_year_2025"),
-                                    ("close_up", "album:close_up")] {
+        // The seasonal date row follows the theme/year shelves, so return to
+        // the top before checking those cards in their product order.
+        for _ in 0..<8 where !favorites.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        for (identifier, route) in [("close_up", "album:close_up"),
+                                    ("household_growth", "album:household_growth"),
+                                    ("calendar_year_2025", "album:calendar_year_2025")] {
             let cover = element("album-card-\(identifier)", in: app)
             reveal(cover, in: app)
             XCTAssertGreaterThan(cover.frame.width, app.frame.width / 2,
@@ -1950,6 +2058,32 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-favorites-largest-text")
         returnFromFavorites(in: app)
         app.terminate()
+    }
+
+    @MainActor
+    private func assertHighlightPhotos(
+        _ numbers: [Int], in app: XCUIApplication, pagesThroughAll: Bool
+    ) {
+        let identifiers = numbers.map { "app-store-screenshot-fixture-\($0)" }
+        XCTAssertEqual(app.staticTexts["solo-memories-highlight-destination"].value as? String,
+                       identifiers.joined(separator: "|"))
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
+        let image = app.images["photo-detail-zoom-surface"].firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        for index in 0..<(pagesThroughAll ? identifiers.count : 1) {
+            XCTAssertTrue(app.staticTexts["\(index + 1) / \(identifiers.count)"].waitForExistence(timeout: 5),
+                "The production browser must page only through this small collection.")
+            let save = app.buttons["お気に入りに追加"]
+            XCTAssertTrue(save.isHittable)
+            save.tap()
+            let selectedPhoto = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", "\(identifiers[index])|true"),
+                object: app.staticTexts["solo-memories-highlight-memory-request"]
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [selectedPhoto], timeout: 5), .completed,
+                "The selected photo's real action must retain its collection identity.")
+            if pagesThroughAll && index < identifiers.count - 1 { image.swipeLeft() }
+        }
     }
 
     @MainActor

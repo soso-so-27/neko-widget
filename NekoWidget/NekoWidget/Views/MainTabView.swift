@@ -12,6 +12,8 @@ enum PhotosRoute: Hashable {
 enum MemoriesRoute: Hashable {
     case favorites
     case reflectionsArchive
+    case highlightsArchive
+    case highlight(AlbumHighlightPresentation)
     case photo(String)
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
@@ -88,6 +90,7 @@ struct MainTabView: View {
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
     @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
+    @State private var albumHighlightsReferenceDate = Date()
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
@@ -212,6 +215,9 @@ struct MainTabView: View {
             // exist after the setting changes.
             memoriesPath = NavigationPath()
         }
+        .onChange(of: memoriesPath.count) { _, count in
+            if count == 0 { albumHighlightsReferenceDate = Date() }
+        }
         .onChange(of: catProfilesPresentation.availableScopes) { _, scopes in
             guard scopes.contains(selectedAlbumScope) else {
                 selectedAlbumScope = .everyone
@@ -226,6 +232,7 @@ struct MainTabView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
             await seasonalMovieArchive.load()
         }
     }
@@ -403,7 +410,7 @@ struct MainTabView: View {
         )
     }
 
-    private func albumsView(showsReflectionArchive: Bool = false) -> LikedPhotosView {
+    private func albumsView(showsReflectionArchive: Bool = false, showsHighlightArchive: Bool = false) -> LikedPhotosView {
         LikedPhotosView(
             photos: likedPhotos,
             hasPhotoAccess: hasPhotoAccess,
@@ -423,7 +430,9 @@ struct MainTabView: View {
             albumProfileActions: catProfilesActions,
             albumScope: $selectedAlbumScope,
             showSettings: { showsSettings = true },
-            showsReflectionArchive: showsReflectionArchive
+            showsReflectionArchive: showsReflectionArchive,
+            showsHighlightArchive: showsHighlightArchive,
+            referenceDate: albumHighlightsReferenceDate
         )
     }
 
@@ -437,6 +446,10 @@ struct MainTabView: View {
             )
         case .reflectionsArchive:
             albumsView(showsReflectionArchive: true)
+        case .highlightsArchive:
+            albumsView(showsHighlightArchive: true)
+        case let .highlight(snapshot):
+            highlightDestination(snapshot)
         case let .photo(localIdentifier):
             memoryDetailView(for: localIdentifier)
         case let .seasonalMovie(periodID):
@@ -449,6 +462,37 @@ struct MainTabView: View {
             .onAppear {
                 markMonthlyWindowReadIfLatest(snapshot)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func highlightDestination(_ snapshot: AlbumHighlightPresentation) -> some View {
+        // Resolve saved route identifiers against the current, scoped library.
+        // Permission changes, exclusions and changed cat scopes cannot restore
+        // stale photos merely because they were in an earlier preview.
+        let current = curatedAlbum(for: snapshot.sourceAlbumID)?.photos ?? []
+        let currentByID = Dictionary(current.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
+        let photos = hasPhotoAccess ? snapshot.photos.compactMap { currentByID[$0.localIdentifier] } : []
+        if let first = photos.first {
+            PhotoBrowserView(
+                photos: photos, libraryPhotos: libraryPhotos, initialPhoto: first,
+                widgetShownAt: nil, showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+        } else {
+            missingAlbumView
         }
     }
 

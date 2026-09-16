@@ -1051,6 +1051,111 @@ private func verifyBoundingBoxAspectDistribution() throws {
                 "unclassified cats were mislabeled as a second album")
 }
 
+private func verifyHighlightsRequireDatedDistinctScenesInScopedThemes() throws {
+    let capturedAt = date(2025, 9, 1)
+    let first = photo("first", capturedAt)
+    let burst = photo("burst", capturedAt.addingTimeInterval(30 * 60))
+    let second = photo("second", capturedAt.addingTimeInterval(60 * 60 + 1))
+    let third = photo("third", capturedAt.addingTimeInterval(90 * 60 + 2))
+    let builder = AlbumHighlightBuilder(now: date(2025, 9, 30), timeZone: utc)
+    func sections(_ photos: [PhotoPresentation]) -> [CuratedAlbumSectionPresentation] {
+        [CuratedAlbumSectionPresentation(id: .cuteness, albums: [
+            CuratedAlbumPresentation(id: .closeUp, group: .cuteness, photos: photos)
+        ])]
+    }
+    try require(builder.highlights(from: sections([])).isEmpty,
+                "an empty theme invented a highlight")
+    try require(builder.highlights(from: sections([first, first, burst, second])).isEmpty,
+                "duplicate IDs or a 30-minute burst invented a third scene")
+    try require(builder.highlights(from: sections([
+        first, second, photo("undated", nil), photo("future", date(2026, 9, 1))
+    ])).isEmpty, "unknown or future dates supplied a missing third scene")
+
+    let excluded = (1...3).map { photo("outside-\($0)", date(2024, 4, $0)) }
+    let nonThemeSections = [CuratedAlbumSectionPresentation(id: .time, albums: [
+        CuratedAlbumPresentation(id: .calendarYear(2024), group: .time, photos: excluded),
+        CuratedAlbumPresentation(id: .allCatPhotos, group: .all, photos: excluded),
+        CuratedAlbumPresentation(id: .growth, group: .time, photos: excluded)
+    ])]
+    try require(builder.highlights(from: nonThemeSections).isEmpty,
+                "a time, growth or all-photos album became a themed highlight")
+    let highlights = builder.highlights(
+        from: sections([third, first, burst, second, first]) + nonThemeSections
+    )
+    try require(highlights.count == 1, "three distinct scenes did not form one collection")
+    try require(highlights.first?.photos.map(\.id) == ["first", "second", "third"],
+                "a burst, duplicate or non-theme photo entered the scoped collection")
+    try require(highlights.first?.sourceAlbumID == .closeUp
+                    && highlights.first?.title == "2025年9月のどアップ"
+                    && highlights.first?.subtitle == "3枚",
+                "highlight title, photo count or source lost its meaning")
+}
+
+private func verifyHighlightsSpreadPhotosAndKeepEveryCollection() throws {
+    let builder = AlbumHighlightBuilder(now: date(2026, 9, 16), timeZone: utc)
+    let photos = (1...12).map { photo("day-\($0)", date(2025, 9, $0)) }
+    func sections(_ photos: [PhotoPresentation]) -> [CuratedAlbumSectionPresentation] {
+        [CuratedAlbumSectionPresentation(id: .special, albums: [
+            CuratedAlbumPresentation(id: .outing, group: .special, photos: photos)
+        ])]
+    }
+    let highlights = builder.highlights(from: sections(photos))
+    try require(highlights == builder.highlights(from: sections(Array(photos.reversed()))),
+                "highlight membership or ordering depended on input order")
+    try require(highlights.first?.photos.count == 6,
+                "a large collection did not use the six-photo limit")
+    try require(highlights.first?.photos.first?.id == "day-1"
+                    && highlights.first?.photos.last?.id == "day-12",
+                "selection discarded an end of the collection's time span")
+
+    let archivePhotos = (2024...2025).flatMap { year in
+        (1...12).flatMap { month in
+            (1...3).map { day in
+                photo("\(year)-\(month)-\(day)", date(year, month, day))
+            }
+        }
+    }
+    let archive = builder.highlights(from: sections(archivePhotos))
+    try require(archive.count == 24 && Set(archive.map(\.id)).count == 24,
+                "the featured-card limit truncated or merged eligible month collections")
+    let monday = date(2026, 9, 14)
+    let sunday = date(2026, 9, 20)
+    try require(builder.featured(from: [], on: monday) == nil,
+                "an empty archive invented a featured collection")
+    try require(builder.featured(from: archive, on: monday)
+                    == builder.featured(from: Array(archive.reversed()), on: sunday),
+                "the featured collection changed within a week or with input ordering")
+    try require(builder.featured(from: archive, on: monday)?.id
+                    != builder.featured(from: archive, on: date(2026, 9, 21))?.id,
+                "weekly rotation stayed fixed despite multiple eligible collections")
+    let visited = (0..<archive.count).compactMap { offset in
+        let week = calendar.date(byAdding: .day, value: 7 * offset, to: monday)!
+        return builder.featured(from: archive, on: week)?.id
+    }
+    try require(Set(visited) == Set(archive.map(\.id)),
+                "older collections were unreachable through weekly rotation")
+}
+
+private func verifyHighlightCalendarUsesInjectedTimeZone() throws {
+    let start = date(2025, 9, 30).addingTimeInterval(11 * 60 * 60)
+    let photos = (0...2).map {
+        photo("boundary-\($0)", start.addingTimeInterval(Double($0) * 2 * 60 * 60))
+    }
+    let sections = [CuratedAlbumSectionPresentation(id: .special, albums: [
+        CuratedAlbumPresentation(id: .together, group: .special, photos: photos)
+    ])]
+    let now = date(2025, 10, 2)
+    let japan = TimeZone(secondsFromGMT: 9 * 60 * 60)!
+    let japaneseHighlights = AlbumHighlightBuilder(now: now, timeZone: japan)
+        .highlights(from: sections)
+    try require(japaneseHighlights.count == 1
+                    && japaneseHighlights.first?.title == "2025年10月の人といっしょ",
+                "the month ignored the injected local calendar")
+    try require(AlbumHighlightBuilder(now: now, timeZone: utc)
+                    .highlights(from: sections).isEmpty,
+                "photos in two insufficient UTC months were merged")
+}
+
 private func requireObject(_ value: Any) throws -> [String: Any] {
     guard let object = value as? [String: Any] else {
         throw VerificationError.failed("encoded snapshot was not a JSON object")
@@ -1064,6 +1169,9 @@ private struct AlbumGroupingVerifier {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyAllCatPhotosIsFirstDeduplicatedAndUngated()
         try verifyHomeHighlightsPreferRelationshipsThenTime()
+        try verifyHighlightsRequireDatedDistinctScenesInScopedThemes()
+        try verifyHighlightsSpreadPhotosAndKeepEveryCollection()
+        try verifyHighlightCalendarUsesInjectedTimeZone()
         try verifyProfileGrowthNeverMixesCats()
         try verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears()
         try verifyKittenBoundaryAndAgeBuckets()
