@@ -1,6 +1,31 @@
 {
   "schemaVersion": 1,
-  "purpose": "Inactive until an explicitly reviewed app UI batch records exact contents.",
+  "purpose": "Album/photo actions: content-first cat albums, scoped photo browsing, consistent toolbar, pickup heading, explicit output and empty selection.",
   "visualReview": "user-device",
-  "files": {}
+  "files": {
+    "NekoWidget/NekoWidget/Views/CatProfilePhotoCurationViews.swift": {
+      "before": "30c22019468c656293aa0a246bdaecb8a87315e94822cb2a8507869cb3193db1",
+      "after": "4cf4ef8590d5c6663bcf56862c254e440ad32460f6f64ece7f36b0a63dd5e646"
+    },
+    "NekoWidget/NekoWidget/Views/HomeView.swift": {
+      "before": "3e3882727a20c3aaa587b28c160152676ac250a48fd052e2a4f9902135231833",
+      "after": "f462f6201fbb07ff1016eac5beab07485f2ef9faa77927b3a04b5d03b5f76086"
+    },
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "c4a71f477d82406305ec6fa2446ffb3525bd46a324be27273b2be9c3df85e746",
+      "after": "f34afdb999a54bb33e723c03a74e8ad8ccbfee1786d2859abeb79c516cd0be42"
+    },
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": {
+      "before": "c5b711a9ceb3b638f53b604447a858fb801e95f89aa9183c1bdd6692f8fcb43f",
+      "after": "c034b0562c36514a0ca790ba5b455e809cf4da555d6a927ca05720e51f8f5e22"
+    },
+    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift": {
+      "before": "f704597e9696a68218506dc48ed467fdae3aa2dcad671f77fcea79b8e53e2437",
+      "after": "a8f57114b4c059feddc398977edab06997b4a784d6209bf08d554becf87cb989"
+    },
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
+      "before": "54ce9a5c3d63b9543793b7a718fa7530deeaae477939a97374d45d06d9e0c1b7",
+      "after": "a8bff667d7a3b51df33e49f34ea5167401791def85de3ea9f354c194ffa2e706"
+    }
+  }
 }
