@@ -383,6 +383,60 @@ private struct CatProfileRow: View {
     }
 }
 
+/// Matching entrances to a cat's photos or albums; these navigate, not filter.
+struct CatProfileNavigationLabel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let profile: CatProfilePresentation
+
+    var body: some View {
+        HStack(spacing: 8) {
+            CatProfileThumbnail(photo: profile.coverPhoto)
+                .frame(width: 28, height: 28)
+                .clipShape(Circle())
+            Text(profile.displayName)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+    }
+}
+
+struct CatProfileNavigationStrip<Links: View, More: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ViewBuilder var links: () -> Links
+    @ViewBuilder var more: () -> More
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    links()
+                    more()
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 10) { links() }
+                    }
+                    .scrollIndicators(.hidden)
+                    more()
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 struct CatProfileThumbnail: View {
     let photo: CatProfilePhotoPresentation?
 

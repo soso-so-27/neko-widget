@@ -1033,21 +1033,13 @@ struct LikedPhotosView: View {
         .accessibilityHint("自分で選んだ写真を開きます")
     }
     private var catNavigation: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
-            : AnyLayout(HStackLayout(spacing: 10))
-        return layout {
-            if albumProfiles.count <= 3 {
-                ForEach(albumProfiles) { profile in catLink(profile) }
-            } else {
-                ForEach(Array(albumProfiles.prefix(2))) { profile in catLink(profile) }
-                NavigationLink(value: AlbumCatalogRoute.cats) {
-                    Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                }.accessibilityLabel("猫ごとのアルバムをすべて見る")
-            }
-            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+        CatProfileNavigationStrip {
+            ForEach(albumProfiles) { profile in catLink(profile) }
+        } more: {
+            NavigationLink(value: AlbumCatalogRoute.cats) {
+                Image(systemName: "ellipsis").frame(width: 44, height: 44)
+            }.accessibilityLabel("猫ごとのアルバムをすべて見る")
         }
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("albums-cat-navigation")
     }
 
@@ -1066,13 +1058,7 @@ struct LikedPhotosView: View {
 
     private func catLink(_ profile: CatProfilePresentation) -> some View {
         NavigationLink(value: MemoriesRoute.catAlbums(profile.identifier)) {
-            HStack(spacing: 6) {
-                Text(profile.displayName).lineLimit(2)
-                Image(systemName: "chevron.right").font(.caption2).accessibilityHidden(true)
-            }
-            .font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-            .padding(.horizontal, 12).frame(minHeight: 44)
-            .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+            CatProfileNavigationLabel(profile: profile)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(profile.displayName)のアルバム")

@@ -1398,6 +1398,13 @@ final class SoloMemoriesUITests: XCTestCase {
             if largeText { app.launchArguments.append("--ux-large-text") }
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
             app.launch()
+            if !largeText {
+                for number in [1, 2] {
+                    let loaded = element("app-store-screenshot-fixture-photo-loaded-app-store-screenshot-fixture-\(number)", in: app)
+                    XCTAssertTrue(loaded.waitForExistence(timeout: 15))
+                }
+                capture("albums-cat-shortcuts-standard")
+            }
             openPhotosTab(in: app)
             XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
             XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)

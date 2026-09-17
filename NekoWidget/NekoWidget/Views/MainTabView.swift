@@ -1492,6 +1492,7 @@ private struct WindowListView: View {
             .padding(.vertical, 12)
         }
         .navigationTitle("まど")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if supportsPrivateWindows {

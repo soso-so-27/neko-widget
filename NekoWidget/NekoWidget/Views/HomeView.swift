@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 
 struct HomeView: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let catPhotos: [PhotoPresentation]
     let scan: ScanPresentation
@@ -97,6 +96,7 @@ struct HomeView: View {
             .padding(.vertical, 12)
         }
         .navigationTitle("写真")
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -225,14 +225,34 @@ struct HomeView: View {
         visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 24)
     }
 
-    private var catProfilesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            NavigationLink {
-                CatProfilesView(
-                    presentation: catProfilesPresentation,
-                    actions: catProfilesActions
-                )
-            } label: {
+    @ViewBuilder private var catProfilesSection: some View {
+        if catProfilesPresentation.profiles.isEmpty {
+            catProfilesLink
+        } else {
+            CatProfileNavigationStrip {
+                ForEach(catProfilesPresentation.profiles) { profile in
+                    Button {
+                        openedCatProfileIdentifier = profile.identifier
+                    } label: {
+                        CatProfileNavigationLabel(profile: profile)
+                    }
+                    .accessibilityLabel("\(profile.displayName)の写真、\(profile.confirmedPhotoCount.formatted())枚")
+                    .accessibilityIdentifier("photo-hub-cat-\(profile.identifier)")
+                }
+            } more: {
+                catProfilesLink
+            }
+        }
+    }
+
+    private var catProfilesLink: some View {
+        NavigationLink {
+            CatProfilesView(
+                presentation: catProfilesPresentation,
+                actions: catProfilesActions
+            )
+        } label: {
+            if catProfilesPresentation.profiles.isEmpty {
                 HStack {
                     Label("猫ごとの写真", systemImage: "cat.fill")
                         .font(.headline)
@@ -245,38 +265,14 @@ struct HomeView: View {
                 }
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
-            }
-            .accessibilityIdentifier("photo-hub-cat-profiles")
-            .accessibilityHint("猫の一覧と追加を開きます")
-
-            if !catProfilesPresentation.profiles.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 12) {
-                        ForEach(catProfilesPresentation.profiles) { profile in
-                            Button {
-                                openedCatProfileIdentifier = profile.identifier
-                            } label: {
-                                VStack(spacing: 6) {
-                                    CatProfileThumbnail(photo: profile.coverPhoto)
-                                        .frame(width: 64, height: 64)
-                                    Text(profile.displayName)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.primary)
-                                        .multilineTextAlignment(.center)
-                                        .lineLimit(2)
-                                }
-                                .frame(width: dynamicTypeSize.isAccessibilitySize ? 132 : 84)
-                                .contentShape(Rectangle())
-                            }
-                            .accessibilityLabel("\(profile.displayName)の写真、\(profile.confirmedPhotoCount.formatted())枚")
-                            .accessibilityIdentifier("photo-hub-cat-\(profile.identifier)")
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
+            } else {
+                Image(systemName: "ellipsis")
+                    .frame(width: 44, height: 44)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("photo-hub-cat-profiles")
+        .accessibilityLabel("猫の一覧と追加")
     }
 
     private var photoSourceRecoveryLink: some View {
