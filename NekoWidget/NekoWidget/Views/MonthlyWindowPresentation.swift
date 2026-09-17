@@ -22,24 +22,63 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
     }
 
     var title: String {
-        "\(monthNumber)月の小さな便り"
+        "\(monthNumber)月の猫たち"
     }
 
     var accessibilityTitle: String {
-        "\(yearNumber)年\(monthNumber)月の小さな便り"
+        "\(yearNumber)年\(monthNumber)月の猫たち"
     }
 
     var coverPhoto: PhotoPresentation? {
-        photos.min { lhs, rhs in
-            if lhs.isLiked != rhs.isLiked { return lhs.isLiked }
-            let leftArea = lhs.largestCatAreaRatio ?? 0
-            let rightArea = rhs.largestCatAreaRatio ?? 0
-            if leftArea != rightArea { return leftArea > rightArea }
+        storyPhotos.first
+    }
+
+    /// The cover and the first browser page share the same chronological order.
+    /// Saving a later photo must not change the entry point on the way back.
+    var storyPhotos: [PhotoPresentation] {
+        photos.sorted { lhs, rhs in
             let leftDate = lhs.creationDate ?? .distantFuture
             let rightDate = rhs.creationDate ?? .distantFuture
             if leftDate != rightDate { return leftDate < rightDate }
             return lhs.localIdentifier < rhs.localIdentifier
         }
+    }
+
+    /// Re-resolve an open route against the accessible, currently scoped input.
+    /// Missing IDs never fall back to old metadata or a different photograph.
+    func refreshed(
+        from currentPhotos: [PhotoPresentation],
+        hasPhotoAccess: Bool,
+        excludedIdentifiers: Set<String> = [],
+        timeZone: TimeZone = .current
+    ) -> Self {
+        let currentByID = Dictionary(currentPhotos.map { ($0.localIdentifier, $0) },
+                                     uniquingKeysWith: { first, _ in first })
+        return refreshed(currentByID: currentByID, hasPhotoAccess: hasPhotoAccess,
+                         excludedIdentifiers: excludedIdentifiers, timeZone: timeZone)
+    }
+
+    fileprivate func refreshed(
+        currentByID: [String: PhotoPresentation],
+        hasPhotoAccess: Bool,
+        excludedIdentifiers: Set<String>,
+        timeZone: TimeZone
+    ) -> Self {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        var seen = Set<String>()
+        let resolved = hasPhotoAccess ? storyPhotos.compactMap { snapshot -> PhotoPresentation? in
+            guard seen.insert(snapshot.localIdentifier).inserted,
+                  !excludedIdentifiers.contains(snapshot.localIdentifier),
+                  let current = currentByID[snapshot.localIdentifier],
+                  let date = current.creationDate,
+                  date.timeIntervalSinceReferenceDate.isFinite,
+                  calendar.component(.year, from: date) == yearNumber,
+                  calendar.component(.month, from: date) == monthNumber else { return nil }
+            return current
+        } : []
+        return Self(monthStart: monthStart, yearNumber: yearNumber, monthNumber: monthNumber,
+                    photos: resolved, availableSceneCount: availableSceneCount)
     }
 
     var memoryPhotoCount: Int {
@@ -104,6 +143,21 @@ enum MonthlyWindowBuildResult: Hashable, Sendable {
 struct MonthlyWindowCollectionPresentation: Hashable, Sendable {
     let letters: [MonthlyWindowPresentation]
     let unavailable: MonthlyWindowUnavailablePresentation?
+
+    func refreshed(
+        from currentPhotos: [PhotoPresentation],
+        hasPhotoAccess: Bool,
+        excludedIdentifiers: Set<String> = [],
+        timeZone: TimeZone = .current
+    ) -> Self {
+        let currentByID = Dictionary(currentPhotos.map { ($0.localIdentifier, $0) },
+                                     uniquingKeysWith: { first, _ in first })
+        let currentLetters = letters.map {
+            $0.refreshed(currentByID: currentByID, hasPhotoAccess: hasPhotoAccess,
+                         excludedIdentifiers: excludedIdentifiers, timeZone: timeZone)
+        }.filter { !$0.photos.isEmpty }
+        return Self(letters: currentLetters, unavailable: unavailable)
+    }
 
     var latestResult: MonthlyWindowBuildResult? {
         if let latest = letters.first {

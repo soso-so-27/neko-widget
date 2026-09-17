@@ -99,7 +99,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     var title: String {
         switch self {
         case .allCatPhotos: "すべての猫写真"
-        case .householdGrowth: "あの頃と今"
+        case .householdGrowth: "昔と最近"
         case .growth: "成長"
         case let .profileGrowth(_, displayName): "\(displayName)の成長"
         case .kitten: "子猫のころ"
@@ -318,6 +318,8 @@ struct ProfileGrowthAlbumBuilder {
 enum AlbumRoute: Hashable {
     case album(CuratedAlbumID)
     case photo(album: CuratedAlbumID, localIdentifier: String)
+    case catAlbum(profileIdentifier: String, album: CuratedAlbumID)
+    case catPhoto(profileIdentifier: String, album: CuratedAlbumID, localIdentifier: String)
 }
 
 /// Builds the product's fixed, spoken-language albums from evidence already
@@ -784,5 +786,235 @@ struct AlbumHighlightBuilder {
             selected.insert(bestIndex)
         }
         return selected.sorted().map { photos[$0] }
+    }
+}
+
+/// Only collection identities and local viewing dates are persisted. Photo
+/// membership, image data and favorite state always come from current inputs.
+struct AlbumHighlightRecommendationState: Codable, Equatable {
+    struct Scope: Codable, Equatable {
+        var dayKey: String?
+        var selectedIDs: [String] = []
+        var openedAt: [String: Date] = [:]
+        var touchedAt: Date
+    }
+
+    var scopes: [String: Scope] = [:]
+}
+
+struct AlbumHighlightRecommendationSelector {
+    static let maximumRecommendations = 3
+    static let maximumScopes = 16
+    static let maximumOpenedPerScope = 128
+    private static let sceneGap: TimeInterval = 30 * 60
+    private let calendar: Calendar
+
+    init(timeZone: TimeZone = .autoupdatingCurrent) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = timeZone
+        self.calendar = calendar
+    }
+
+    /// The first nonempty selection of the local day fixes the collection IDs
+    /// and their order. Resolve those IDs against current, scoped candidates on
+    /// every call: a cached choice can never reintroduce an unavailable photo.
+    /// Missing candidates are not replaced during the day. Their IDs can still
+    /// resolve after a transient load only if the caller supplies them again.
+    func recommendations(
+        from candidates: [AlbumHighlightPresentation],
+        scopeKey: String,
+        on date: Date,
+        state: inout AlbumHighlightRecommendationState
+    ) -> [AlbumHighlightPresentation] {
+        guard validKey(scopeKey), let dayKey = dayKey(on: date) else { return [] }
+        trim(&state)
+        let groups = Dictionary(grouping: candidates, by: \.id)
+        let valid = groups.keys.sorted().compactMap { id -> AlbumHighlightPresentation? in
+            guard let group = groups[id], let first = group.first,
+                  group.allSatisfy({ $0 == first }), isEligible(first, on: date) else {
+                return nil
+            }
+            return first
+        }
+        var scope = state.scopes[scopeKey]
+            ?? AlbumHighlightRecommendationState.Scope(touchedAt: date)
+        if scope.dayKey == dayKey {
+            let current = Dictionary(uniqueKeysWithValues: valid.map { ($0.id, $0) })
+            return distinct(scope.selectedIDs.compactMap { current[$0] })
+        }
+        guard !valid.isEmpty else { return [] }
+
+        let previousIDs = Set(scope.selectedIDs)
+        let epoch = calendar.date(from: DateComponents(year: 1970, month: 1, day: 1))!
+        let day = calendar.dateComponents([.day], from: epoch,
+                                          to: calendar.startOfDay(for: date)).day ?? 0
+        let offset = (((day % valid.count) + valid.count) % valid.count
+                      * Self.maximumRecommendations) % valid.count
+        let rotated = Array(valid[offset...]) + Array(valid[..<offset])
+        let position = Dictionary(uniqueKeysWithValues: rotated.enumerated().map {
+            ($0.element.id, $0.offset)
+        })
+        let ranked = valid.sorted { lhs, rhs in
+            let leftOpened = scope.openedAt[lhs.id]
+            let rightOpened = scope.openedAt[rhs.id]
+            if (leftOpened == nil) != (rightOpened == nil) { return leftOpened == nil }
+            if let leftOpened, let rightOpened, leftOpened != rightOpened {
+                return leftOpened < rightOpened
+            }
+            if previousIDs.contains(lhs.id) != previousIDs.contains(rhs.id) {
+                return !previousIDs.contains(lhs.id)
+            }
+            return position[lhs.id]! < position[rhs.id]!
+        }
+        let selected = distinct(ranked)
+        scope.dayKey = dayKey
+        scope.selectedIDs = selected.map(\.id)
+        scope.touchedAt = date
+        state.scopes[scopeKey] = scope
+        trim(&state)
+        return selected
+    }
+
+    /// Opening an archive collection also counts, but never changes today's
+    /// selection. A profile and the household maintain separate histories.
+    func markOpened(
+        _ highlightID: String,
+        scopeKey: String,
+        on date: Date,
+        state: inout AlbumHighlightRecommendationState
+    ) {
+        guard validKey(scopeKey), validKey(highlightID), dayKey(on: date) != nil else { return }
+        var scope = state.scopes[scopeKey]
+            ?? AlbumHighlightRecommendationState.Scope(touchedAt: date)
+        scope.openedAt[highlightID] = date
+        scope.touchedAt = date
+        state.scopes[scopeKey] = scope
+        trim(&state)
+    }
+
+    private func dayKey(on date: Date) -> String? {
+        guard date.timeIntervalSinceReferenceDate.isFinite else { return nil }
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, year > 0,
+              let month = parts.month, let day = parts.day else { return nil }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private func validKey(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 256
+    }
+
+    private func isEligible(_ highlight: AlbumHighlightPresentation, on date: Date) -> Bool {
+        guard validKey(highlight.id),
+              [.closeUp, .together, .multipleCats, .outing, .catDay].contains(highlight.sourceAlbumID),
+              (AlbumHighlightBuilder.minimumSceneCount...AlbumHighlightBuilder.maximumPhotoCount)
+                .contains(highlight.photos.count),
+              Set(highlight.photos.map(\.id)).count == highlight.photos.count else { return false }
+        let dates = highlight.photos.compactMap(\.creationDate).sorted()
+        guard dates.count == highlight.photos.count,
+              dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite && $0 <= date }) else {
+            return false
+        }
+        return zip(dates, dates.dropFirst()).allSatisfy {
+            $1.timeIntervalSince($0) > Self.sceneGap
+        }
+    }
+
+    private func distinct(_ candidates: [AlbumHighlightPresentation]) -> [AlbumHighlightPresentation] {
+        var selected: [AlbumHighlightPresentation] = []
+        var photoIDs = Set<String>()
+        var sceneDates: [Date] = []
+        for candidate in candidates {
+            guard candidate.photos.allSatisfy({ photo in
+                !photoIDs.contains(photo.id) && !sceneDates.contains { date in
+                    abs(date.timeIntervalSince(photo.creationDate!)) <= Self.sceneGap
+                }
+            }) else { continue }
+            selected.append(candidate)
+            photoIDs.formUnion(candidate.photos.map(\.id))
+            sceneDates.append(contentsOf: candidate.photos.compactMap(\.creationDate))
+            if selected.count == Self.maximumRecommendations { break }
+        }
+        return selected
+    }
+
+    private func trim(_ state: inout AlbumHighlightRecommendationState) {
+        state.scopes = state.scopes.filter {
+            validKey($0.key) && $0.value.touchedAt.timeIntervalSinceReferenceDate.isFinite
+        }
+        for key in Array(state.scopes.keys) {
+            guard var scope = state.scopes[key] else { continue }
+            var seen = Set<String>()
+            scope.selectedIDs = Array(scope.selectedIDs.filter {
+                validKey($0) && seen.insert($0).inserted
+            }.prefix(Self.maximumRecommendations))
+            let opened = scope.openedAt.filter {
+                validKey($0.key) && $0.value.timeIntervalSinceReferenceDate.isFinite
+            }.sorted {
+                if $0.value != $1.value { return $0.value > $1.value }
+                return $0.key < $1.key
+            }.prefix(Self.maximumOpenedPerScope)
+            scope.openedAt = Dictionary(uniqueKeysWithValues: opened.map { ($0.key, $0.value) })
+            if let day = scope.dayKey, !validKey(day) { scope.dayKey = nil }
+            state.scopes[key] = scope
+        }
+        let retained = state.scopes.sorted {
+            if $0.value.touchedAt != $1.value.touchedAt { return $0.value.touchedAt > $1.value.touchedAt }
+            return $0.key < $1.key
+        }.prefix(Self.maximumScopes)
+        state.scopes = Dictionary(uniqueKeysWithValues: retained.map { ($0.key, $0.value) })
+    }
+}
+
+/// App-local convenience wrapper; it does not use the Widget app group,
+/// synchronize to a server, or write to the photo/favorites stores.
+@MainActor
+final class AlbumHighlightRecommendationStore {
+    static let shared = AlbumHighlightRecommendationStore()
+    private static let maximumStoredBytes = 1_048_576
+    private let defaults: UserDefaults
+    private let storageKey: String
+    private let selector: AlbumHighlightRecommendationSelector
+    private var state: AlbumHighlightRecommendationState
+
+    init(
+        defaults: UserDefaults = .standard,
+        storageKey: String = "album.highlightRecommendations.v1",
+        timeZone: TimeZone = .autoupdatingCurrent
+    ) {
+        self.defaults = defaults
+        self.storageKey = storageKey
+        self.selector = AlbumHighlightRecommendationSelector(timeZone: timeZone)
+        if let data = defaults.data(forKey: storageKey), data.count <= Self.maximumStoredBytes,
+           let decoded = try? JSONDecoder().decode(AlbumHighlightRecommendationState.self, from: data) {
+            state = decoded
+        } else {
+            state = AlbumHighlightRecommendationState()
+        }
+    }
+
+    func recommendations(
+        from candidates: [AlbumHighlightPresentation],
+        scopeKey: String,
+        on date: Date
+    ) -> [AlbumHighlightPresentation] {
+        let previous = state
+        let result = selector.recommendations(from: candidates, scopeKey: scopeKey,
+                                              on: date, state: &state)
+        persistIfChanged(from: previous)
+        return result
+    }
+
+    func markOpened(_ highlightID: String, scopeKey: String, on date: Date) {
+        let previous = state
+        selector.markOpened(highlightID, scopeKey: scopeKey, on: date, state: &state)
+        persistIfChanged(from: previous)
+    }
+
+    private func persistIfChanged(from previous: AlbumHighlightRecommendationState) {
+        guard state != previous, let data = try? JSONEncoder().encode(state),
+              data.count <= Self.maximumStoredBytes else { return }
+        defaults.set(data, forKey: storageKey)
     }
 }

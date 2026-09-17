@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import ImageIO
+import Photos
 
 enum PhotosRoute: Hashable {
     case photo(String)
@@ -17,6 +18,9 @@ enum MemoriesRoute: Hashable {
     case photo(String)
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
+    case catAlbums(String)
+    case catHighlightsArchive(String)
+    case catHighlight(String, AlbumHighlightPresentation)
 }
 
 private struct SeasonalMoviePreparationKey: Hashable {
@@ -32,6 +36,25 @@ private struct MonthlyWindowCollectionKey: Hashable {
     let currentMonthStart: Date?
     let sourceAlbumIdentifier: String?
     let photoPresentationVersion: LibraryPresentationVersion
+}
+
+private struct SeasonalMovieArchiveAccessKey: Hashable {
+    let canPresent: Bool
+    let sourceAlbumIdentifier: String?
+    let sourceResolutionRevision: Int
+    let excludedIdentifiers: Set<String>
+}
+
+private struct SeasonalMovieArchiveVideoPeriod: Hashable, Sendable {
+    let start: Date
+    let end: Date
+    let identifiers: Set<String>
+}
+
+private struct SeasonalMovieArchiveValidationKey: Hashable {
+    let access: SeasonalMovieArchiveAccessKey
+    let isActive: Bool
+    let videoPeriods: [SeasonalMovieArchiveVideoPeriod]
 }
 
 struct MainTabView: View {
@@ -96,6 +119,8 @@ struct MainTabView: View {
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     @State private var completedMonthlyWindowCollectionKey: MonthlyWindowCollectionKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
+    @State private var validatedSeasonalMovieArchiveKey: SeasonalMovieArchiveValidationKey?
+    @State private var accessibleSeasonalMovieVideoIdentifiers = Set<String>()
     @AppStorage(MonthlyWindowReadReceipt.storageKey)
     private var readMonthlyWindowPeriodIdentifier = ""
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
@@ -105,7 +130,9 @@ struct MainTabView: View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $memoriesPath) {
                 albumsView()
-                    .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
+                    .navigationDestination(for: AlbumRoute.self) { route in
+                        albumDestination(for: route, defaultScope: .everyone)
+                    }
                     .navigationDestination(
                         for: MemoriesRoute.self,
                         destination: memoriesDestination
@@ -140,7 +167,9 @@ struct MainTabView: View {
                     catProfilesActions: catProfilesActions
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
-                .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
+                .navigationDestination(for: AlbumRoute.self) { route in
+                    albumDestination(for: route, defaultScope: selectedAlbumScope)
+                }
             }
             .tabItem {
                 Label("写真", systemImage: "photo.on.rectangle.angled")
@@ -229,6 +258,9 @@ struct MainTabView: View {
         }
         .task(id: monthlyWindowCollectionKey) {
             await prepareMonthlyWindowCollection()
+        }
+        .task(id: seasonalMovieArchiveValidationKey) {
+            await resolveSeasonalMovieArchiveVideos()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -410,29 +442,41 @@ struct MainTabView: View {
         )
     }
 
-    private func albumsView(showsReflectionArchive: Bool = false, showsHighlightArchive: Bool = false) -> LikedPhotosView {
-        LikedPhotosView(
+    private func albumsView(
+        scope: CatProfileScopePresentation = .everyone,
+        showsReflectionArchive: Bool = false,
+        showsHighlightArchive: Bool = false
+    ) -> LikedPhotosView {
+        let profile: CatProfilePresentation?
+        if case let .profile(identifier) = scope {
+            profile = catProfilesPresentation.profile(identifier: identifier)
+        } else {
+            profile = nil
+        }
+        return LikedPhotosView(
             photos: likedPhotos,
             hasPhotoAccess: hasPhotoAccess,
-            monthlyWindowCollection: monthlyWindowCollection,
-            latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
-            latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
-            seasonalMovies: seasonalMovieArchive.records,
+            monthlyWindowCollection: scope == .everyone ? currentMonthlyWindowCollection : nil,
+            latestMonthlyWindowIsUnread: scope == .everyone && latestMonthlyWindowIsUnread,
+            latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew,
+            seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
             openPhotos: {
                 photosPath = NavigationPath()
                 selectedTab = .photos
             },
-            albumSections: curatedAlbumSections,
+            albumSections: curatedAlbumSections(for: scope),
             albumScan: scan,
             albumProfiles: catProfilesPresentation.profiles,
             albumOptions: catProfilesPresentation.photoAlbumOptions,
             albumProfileActions: catProfilesActions,
-            albumScope: $selectedAlbumScope,
+            albumScope: .constant(scope),
             showSettings: { showsSettings = true },
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
-            referenceDate: albumHighlightsReferenceDate
+            referenceDate: albumHighlightsReferenceDate,
+            isCatDetail: scope != .everyone,
+            navigationTitleOverride: profile.map { "\($0.displayName)のアルバム" }
         )
     }
 
@@ -448,6 +492,12 @@ struct MainTabView: View {
             albumsView(showsReflectionArchive: true)
         case .highlightsArchive:
             albumsView(showsHighlightArchive: true)
+        case let .catAlbums(identifier):
+            catAlbumsDestination(identifier, showsHighlightArchive: false)
+        case let .catHighlightsArchive(identifier):
+            catAlbumsDestination(identifier, showsHighlightArchive: true)
+        case let .catHighlight(identifier, snapshot):
+            highlightDestination(snapshot, scope: .profile(identifier))
         case let .highlight(snapshot):
             highlightDestination(snapshot)
         case let .photo(localIdentifier):
@@ -457,25 +507,200 @@ struct MainTabView: View {
         case let .monthlyWindow(snapshot):
             MonthlyWindowView(
                 presentation: refreshedMonthlyWindow(snapshot),
-                setMemorySaved: setMemorySaved
+                setMemorySaved: setMemorySaved,
+                libraryPhotos: libraryPhotos,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
             )
             .onAppear {
-                markMonthlyWindowReadIfLatest(snapshot)
+                if !refreshedMonthlyWindow(snapshot).photos.isEmpty {
+                    markMonthlyWindowReadIfLatest(snapshot)
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func highlightDestination(_ snapshot: AlbumHighlightPresentation) -> some View {
+    private func catAlbumsDestination(_ identifier: String, showsHighlightArchive: Bool) -> some View {
+        if catProfilesPresentation.profile(identifier: identifier) != nil {
+            albumsView(scope: .profile(identifier), showsHighlightArchive: showsHighlightArchive)
+        } else {
+            ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat",
+                description: Text("プロフィールが変更されました。アルバムに戻って選び直してください。"))
+        }
+    }
+
+    @ViewBuilder
+    private func highlightDestination(
+        _ snapshot: AlbumHighlightPresentation,
+        scope: CatProfileScopePresentation = .everyone
+    ) -> some View {
         // Resolve saved route identifiers against the current, scoped library.
         // Permission changes, exclusions and changed cat scopes cannot restore
         // stale photos merely because they were in an earlier preview.
-        let current = curatedAlbum(for: snapshot.sourceAlbumID)?.photos ?? []
+        let current = curatedAlbum(for: snapshot.sourceAlbumID, scope: scope)?.photos ?? []
         let currentByID = Dictionary(current.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
         let photos = hasPhotoAccess ? snapshot.photos.compactMap { currentByID[$0.localIdentifier] } : []
         if let first = photos.first {
             PhotoBrowserView(
-                photos: photos, libraryPhotos: libraryPhotos, initialPhoto: first,
+                photos: photos, libraryPhotos: browserLibraryPhotos(for: scope), initialPhoto: first,
+                widgetShownAt: nil, showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .onAppear {
+                AlbumHighlightRecommendationStore.shared.markOpened(snapshot.id, scopeKey: scope.id, on: Date())
+            }
+        } else {
+            missingAlbumView
+        }
+    }
+
+    @ViewBuilder
+    private func seasonalMovieDestination(
+        _ periodID: SeasonalMoviePeriodID
+    ) -> some View {
+        if let presentation = currentSeasonalMovieRecords.first(where: { $0.periodID == periodID })?.effectivePresentation {
+            SeasonalMovieView(
+                presentation: presentation,
+                setSceneExcluded: { identifier, excluded in
+                    let updated = try await seasonalMovieArchive.setSceneExcluded(
+                        identifier,
+                        excluded: excluded,
+                        in: periodID
+                    )
+                    if seasonalMovie.map({
+                        SeasonalMoviePeriodID(presentation: $0)
+                    }) == periodID {
+                        seasonalMovie = updated
+                    }
+                    return currentSeasonalMovieRecords.first(where: { $0.periodID == periodID })?.effectivePresentation
+                        ?? updated.replacingScenes([])
+                },
+                freezeRecipe: { reason in
+                    try await seasonalMovieArchive.freeze(
+                        periodID,
+                        reason: reason
+                    )
+                }
+            )
+            .id(seasonalMovieArchiveAccessKey)
+        } else {
+            ContentUnavailableView(
+                "この季節のムービーを開けません",
+                systemImage: "film.stack",
+                description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
+            )
+        }
+    }
+
+    private var automaticAlbumsView: some View {
+        AlbumView(
+            sections: curatedAlbumSections(for: selectedAlbumScope),
+            scan: scan,
+            profiles: catProfilesPresentation.profiles,
+            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+            profileActions: catProfilesActions,
+            selectedScope: $selectedAlbumScope
+        )
+        .navigationTitle("アルバム")
+    }
+
+    @ViewBuilder
+    private func albumDestination(
+        for route: AlbumRoute,
+        defaultScope: CatProfileScopePresentation
+    ) -> some View {
+        switch route {
+        case let .album(albumID):
+            albumDetail(for: albumID, scope: defaultScope)
+        case let .photo(albumID, localIdentifier):
+            albumPhotoDetail(for: albumID, localIdentifier: localIdentifier, scope: defaultScope)
+        case let .catAlbum(profileIdentifier, albumID):
+            albumDetail(for: albumID, scope: .profile(profileIdentifier))
+        case let .catPhoto(profileIdentifier, albumID, localIdentifier):
+            albumPhotoDetail(for: albumID, localIdentifier: localIdentifier, scope: .profile(profileIdentifier))
+        }
+    }
+
+    @ViewBuilder
+    private func albumDetail(
+        for albumID: CuratedAlbumID, scope: CatProfileScopePresentation
+    ) -> some View {
+        if let album = curatedAlbum(for: albumID, scope: scope) {
+            if albumID.isGrowthComparison {
+                GrowthAlbumDetailView(
+                    album: album,
+                    sourcePhotos: growthCandidatePhotos(for: albumID, scope: scope),
+                    lifeReference: growthLifeReference(for: albumID, scope: scope),
+                    setPhotoOverride: { period, photoIdentifier in
+                        setGrowthPhotoOverride(photoIdentifier, albumID: albumID,
+                                               period: period, scope: scope)
+                    },
+                    albumOpened: albumOpened,
+                    excludeFromCatCandidates: { identifiers in
+                        Task { await excludeFromCatCandidates(identifiers) }
+                    },
+                    profiles: catProfilesPresentation.profiles,
+                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                    replaceProfileAssignments: { values in
+                        await catProfilesActions.replacePhotoAssignments(values)
+                    },
+                    profileIdentifier: profileIdentifier(for: scope)
+                )
+            } else {
+                CuratedAlbumDetailView(
+                    album: album,
+                    albumOpened: albumOpened,
+                    excludeFromCatCandidates: { identifiers in
+                        Task { await excludeFromCatCandidates(identifiers) }
+                    },
+                    profiles: catProfilesPresentation.profiles,
+                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                    replaceProfileAssignments: { values in
+                        await catProfilesActions.replacePhotoAssignments(values)
+                    },
+                    profileIdentifier: profileIdentifier(for: scope)
+                )
+            }
+        } else {
+            missingAlbumView
+        }
+    }
+
+    @ViewBuilder
+    private func albumPhotoDetail(
+        for albumID: CuratedAlbumID,
+        localIdentifier: String,
+        scope: CatProfileScopePresentation
+    ) -> some View {
+        if let album = curatedAlbum(for: albumID, scope: scope),
+           let initialPhoto = album.photos.first(where: { $0.localIdentifier == localIdentifier }) {
+            PhotoBrowserView(
+                photos: album.photos,
+                libraryPhotos: browserLibraryPhotos(for: scope),
+                initialPhoto: initialPhoto,
                 widgetShownAt: nil, showsWidgetTiming: false,
                 setMemorySaved: setMemorySaved,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
@@ -496,153 +721,29 @@ struct MainTabView: View {
         }
     }
 
-    @ViewBuilder
-    private func seasonalMovieDestination(
-        _ periodID: SeasonalMoviePeriodID
-    ) -> some View {
-        if let presentation = seasonalMovieArchive.presentation(for: periodID) {
-            SeasonalMovieView(
-                presentation: presentation,
-                setSceneExcluded: { identifier, excluded in
-                    let updated = try await seasonalMovieArchive.setSceneExcluded(
-                        identifier,
-                        excluded: excluded,
-                        in: periodID
-                    )
-                    if seasonalMovie.map({
-                        SeasonalMoviePeriodID(presentation: $0)
-                    }) == periodID {
-                        seasonalMovie = updated
-                    }
-                    return updated
-                },
-                freezeRecipe: { reason in
-                    try await seasonalMovieArchive.freeze(
-                        periodID,
-                        reason: reason
-                    )
-                }
-            )
-        } else {
-            ContentUnavailableView(
-                "この季節のムービーを開けません",
-                systemImage: "film.stack",
-                description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
-            )
-        }
-    }
-
-    private var automaticAlbumsView: some View {
-        AlbumView(
-            sections: curatedAlbumSections,
-            scan: scan,
-            profiles: catProfilesPresentation.profiles,
-            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-            profileActions: catProfilesActions,
-            selectedScope: $selectedAlbumScope
-        )
-        .navigationTitle("アルバム")
-    }
-
-    @ViewBuilder
-    private func albumDestination(for route: AlbumRoute) -> some View {
-        switch route {
-        case let .album(albumID):
-            if let album = curatedAlbum(for: albumID) {
-                if albumID.isGrowthComparison {
-                    GrowthAlbumDetailView(
-                        album: album,
-                        sourcePhotos: growthCandidatePhotos(for: albumID),
-                        lifeReference: growthLifeReference(for: albumID),
-                        setPhotoOverride: { period, photoIdentifier in
-                            setGrowthPhotoOverride(
-                                photoIdentifier,
-                                albumID: albumID,
-                                period: period
-                            )
-                        },
-                        albumOpened: albumOpened,
-                        excludeFromCatCandidates: { identifiers in
-                            Task { await excludeFromCatCandidates(identifiers) }
-                        },
-                        profiles: catProfilesPresentation.profiles,
-                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-                        replaceProfileAssignments: { values in
-                            await catProfilesActions.replacePhotoAssignments(values)
-                        }
-                    )
-                } else {
-                    CuratedAlbumDetailView(
-                        album: album,
-                        albumOpened: albumOpened,
-                        excludeFromCatCandidates: { identifiers in
-                            Task { await excludeFromCatCandidates(identifiers) }
-                        },
-                        profiles: catProfilesPresentation.profiles,
-                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-                        replaceProfileAssignments: { values in
-                            await catProfilesActions.replacePhotoAssignments(values)
-                        }
-                    )
-                }
-            } else {
-                missingAlbumView
-            }
-
-        case let .photo(albumID, localIdentifier):
-            if let album = curatedAlbum(for: albumID) {
-                if let initialPhoto = album.photos.first(where: {
-                    $0.localIdentifier == localIdentifier
-                }) {
-                    PhotoBrowserView(
-                        photos: album.photos,
-                        libraryPhotos: libraryPhotos,
-                        initialPhoto: initialPhoto,
-                        widgetShownAt: nil,
-                        showsWidgetTiming: false,
-                        setMemorySaved: setMemorySaved,
-                        excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-                        excludeFromCatCandidates: { identifiers in
-                            Task { await excludeFromCatCandidates(identifiers) }
-                        },
-                        restoreCatCandidates: { identifiers in
-                            Task { await restoreCatCandidates(identifiers) }
-                        },
-                        profiles: catProfilesPresentation.profiles,
-                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-                        replaceProfileAssignments: { values in
-                            await catProfilesActions.replacePhotoAssignments(values)
-                        }
-                    )
-                } else {
-                    missingAlbumView
-                }
-            } else {
-                missingAlbumView
-            }
-        }
-    }
-
-    private var curatedAlbumSections: [CuratedAlbumSectionPresentation] {
+    private func curatedAlbumSections(for scope: CatProfileScopePresentation) -> [CuratedAlbumSectionPresentation] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        if case let .profile(identifier) = scope,
+           catProfilesPresentation.profile(identifier: identifier) == nil { return [] }
         let builder = CuratedAlbumBuilder()
         let includesScopedGrowth: Bool
-        if selectedAlbumScope == .everyone {
+        if scope == .everyone {
             includesScopedGrowth = false
         } else {
             includesScopedGrowth = catProfilesPresentation
-                .timePolicy(for: selectedAlbumScope)
+                .timePolicy(for: scope)
                 .showsGrowthComparison
         }
         let baseSections = builder.sections(
-            from: scopedCatPhotos,
-            lifeReference: scopedLifeReference,
+            from: scopedCatPhotos(for: scope),
+            lifeReference: scopedLifeReference(for: scope),
             includesGrowth: includesScopedGrowth
         )
 
         var sections = baseSections
-        if selectedAlbumScope == .everyone,
+        if scope == .everyone,
            let householdGrowth = HouseholdGrowthAlbumBuilder().album(
-               from: catPhotos
+               from: catPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
            ) {
             if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
                 sections[timeIndex] = CuratedAlbumSectionPresentation(
@@ -659,7 +760,7 @@ struct MainTabView: View {
                 )
             }
         }
-        return applyingGrowthPhotoOverrides(to: sections)
+        return applyingGrowthPhotoOverrides(to: sections, scope: scope)
     }
 
 
@@ -697,7 +798,7 @@ struct MainTabView: View {
     }
 
     private var latestMonthlyWindowPeriodIdentifier: String? {
-        monthlyWindowCollection?.letters.first?.periodIdentifier
+        currentMonthlyWindowCollection?.letters.first?.periodIdentifier
     }
 
     private var latestMonthlyWindowIsUnread: Bool {
@@ -708,7 +809,7 @@ struct MainTabView: View {
     }
 
     private var latestSeasonalMovieIsNew: Bool {
-        seasonalMovieArchive.records.first.map { !$0.isFrozen } ?? false
+        currentSeasonalMovieRecords.first.map { !$0.isFrozen } ?? false
     }
 
     private var hasUnreadMemoriesSummary: Bool {
@@ -894,33 +995,137 @@ struct MainTabView: View {
             : preparationKey
     }
 
-    private func refreshedMonthlyWindow(
-        _ snapshot: MonthlyWindowPresentation
-    ) -> MonthlyWindowPresentation {
-        var currentByIdentifier: [String: PhotoPresentation] = [:]
-        for photo in catPhotos {
-            currentByIdentifier[photo.localIdentifier] = photo
-        }
-        return MonthlyWindowPresentation(
-            monthStart: snapshot.monthStart,
-            yearNumber: snapshot.yearNumber,
-            monthNumber: snapshot.monthNumber,
-            photos: snapshot.photos.map {
-                currentByIdentifier[$0.localIdentifier] ?? $0
-            },
-            availableSceneCount: snapshot.availableSceneCount
+    private var currentMonthlyWindowCollection: MonthlyWindowCollectionPresentation? {
+        monthlyWindowCollection?.refreshed(
+            from: photoSourceStatus == .unavailable ? [] : catPhotos,
+            hasPhotoAccess: hasPhotoAccess && photoPresentationVersion.canPresent,
+            excludedIdentifiers: excludedCatCandidateIdentifiers
         )
     }
 
-    private var scopedCatPhotos: [PhotoPresentation] {
-        guard case let .profile(identifier) = selectedAlbumScope else {
-            return catPhotos
+    private var seasonalMovieArchiveAccessKey: SeasonalMovieArchiveAccessKey {
+        let sourceAlbumIdentifier: String?
+        if case let .selected(album) = photoSourceStatus {
+            sourceAlbumIdentifier = album.localIdentifier
+        } else {
+            sourceAlbumIdentifier = nil
         }
-        return profileAlbumPhotos[identifier] ?? []
+        return SeasonalMovieArchiveAccessKey(
+            canPresent: hasPhotoAccess && photoPresentationVersion.canPresent
+                && photoSourceStatus != .unavailable,
+            sourceAlbumIdentifier: sourceAlbumIdentifier,
+            sourceResolutionRevision: photoPresentationVersion.sourceResolutionRevision,
+            excludedIdentifiers: excludedCatCandidateIdentifiers
+        )
     }
 
-    private var scopedLifeReference: CatLifeReference? {
-        guard case let .profile(identifier) = selectedAlbumScope else {
+    private var seasonalMovieArchiveValidationKey: SeasonalMovieArchiveValidationKey {
+        SeasonalMovieArchiveValidationKey(
+            access: seasonalMovieArchiveAccessKey,
+            isActive: scenePhase == .active,
+            videoPeriods: seasonalMovieArchive.records.compactMap { record in
+                let identifiers = Set(record.presentation.scenes.filter { $0.mediaKind == .video }.map(\.localIdentifier))
+                guard !identifiers.isEmpty else { return nil }
+                return SeasonalMovieArchiveVideoPeriod(start: record.presentation.quarterStart,
+                    end: record.presentation.quarterEnd, identifiers: identifiers)
+            }
+        )
+    }
+
+    /// Only this transient projection changes with the current source. Frozen
+    /// archive recipes remain intact and can reappear when access is restored.
+    private var currentSeasonalMovieRecords: [SeasonalMovieArchiveRecord] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              photoSourceStatus != .unavailable else { return [] }
+        let currentPhotos = Dictionary(scopedCatPhotos(for: .everyone).map { ($0.localIdentifier, $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        let videoIdentifiers = validatedSeasonalMovieArchiveKey?.access == seasonalMovieArchiveAccessKey
+            ? accessibleSeasonalMovieVideoIdentifiers : []
+        return seasonalMovieArchive.records.compactMap { record in
+            let scenes = record.effectivePresentation.scenes.filter { scene in
+                guard !excludedCatCandidateIdentifiers.contains(scene.localIdentifier) else { return false }
+                if scene.mediaKind == .video { return videoIdentifiers.contains(scene.localIdentifier) }
+                guard let photo = currentPhotos[scene.localIdentifier], let date = photo.creationDate else { return false }
+                return date >= record.presentation.quarterStart && date < record.presentation.quarterEnd
+            }
+            guard !scenes.isEmpty else { return nil }
+            var current = record
+            current.presentation = record.presentation.replacingScenes(scenes)
+            return current
+        }
+    }
+
+    @MainActor
+    private func resolveSeasonalMovieArchiveVideos() async {
+        let key = seasonalMovieArchiveValidationKey
+        guard key.access.canPresent else {
+            accessibleSeasonalMovieVideoIdentifiers = []
+            validatedSeasonalMovieArchiveKey = nil
+            return
+        }
+        guard key.isActive else { return }
+        let periods = key.videoPeriods
+        let sourceAlbumIdentifier = key.access.sourceAlbumIdentifier
+        let resolutionTask = Task.detached(priority: .utility) {
+            var identifiers = Set<String>()
+            for period in periods {
+                guard !Task.isCancelled else { return Set<String>() }
+                guard let assets = SeasonalMovieVideoCatalog.fetchAssets(
+                        in: DateInterval(start: period.start, end: period.end),
+                        sourceAlbumIdentifier: sourceAlbumIdentifier
+                      ) else { continue }
+                for index in 0..<assets.count {
+                    guard !Task.isCancelled else { return Set<String>() }
+                    let identifier = assets.object(at: index).localIdentifier
+                    if period.identifiers.contains(identifier) { identifiers.insert(identifier) }
+                }
+            }
+            return identifiers
+        }
+        let identifiers = await withTaskCancellationHandler {
+            await resolutionTask.value
+        } onCancel: {
+            resolutionTask.cancel()
+        }
+        guard !Task.isCancelled, seasonalMovieArchiveValidationKey == key else { return }
+        accessibleSeasonalMovieVideoIdentifiers = identifiers
+        validatedSeasonalMovieArchiveKey = key
+    }
+
+    private func refreshedMonthlyWindow(
+        _ snapshot: MonthlyWindowPresentation
+    ) -> MonthlyWindowPresentation {
+        snapshot.refreshed(
+            from: photoSourceStatus == .unavailable ? [] : catPhotos,
+            hasPhotoAccess: hasPhotoAccess && photoPresentationVersion.canPresent,
+            excludedIdentifiers: excludedCatCandidateIdentifiers
+        )
+    }
+
+    private func profileIdentifier(for scope: CatProfileScopePresentation) -> String? {
+        guard case let .profile(identifier) = scope else { return nil }
+        return identifier
+    }
+
+    private func browserLibraryPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
+        scope == .everyone ? libraryPhotos : scopedCatPhotos(for: scope)
+    }
+
+    private func scopedCatPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        guard case let .profile(identifier) = scope else {
+            return catPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
+        }
+        guard let profile = catProfilesPresentation.profile(identifier: identifier) else { return [] }
+        let assignedIDs = Set(profile.confirmedPhotos.map(\.localIdentifier))
+        return (profileAlbumPhotos[identifier] ?? []).filter {
+            assignedIDs.contains($0.localIdentifier)
+                && !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
+        }
+    }
+
+    private func scopedLifeReference(for scope: CatProfileScopePresentation) -> CatLifeReference? {
+        guard case let .profile(identifier) = scope else {
             // Preserve the legacy single-cat birthday/adoption buckets until a
             // profile exists. Once profiles exist, "みんな" must not apply one
             // cat's date to the whole household. Household growth itself is
@@ -943,12 +1148,12 @@ struct MainTabView: View {
         )
     }
 
-    private func growthLifeReference(for albumID: CuratedAlbumID) -> CatLifeReference? {
+    private func growthLifeReference(for albumID: CuratedAlbumID, scope: CatProfileScopePresentation) -> CatLifeReference? {
         switch albumID {
         case .householdGrowth:
             return nil
         case .growth:
-            return scopedLifeReference
+            return scopedLifeReference(for: scope)
         case let .profileGrowth(profileIdentifier, _):
             return lifeReference(for: profileIdentifier)
         default:
@@ -956,24 +1161,24 @@ struct MainTabView: View {
         }
     }
 
-    private func growthCandidatePhotos(for albumID: CuratedAlbumID) -> [PhotoPresentation] {
+    private func growthCandidatePhotos(for albumID: CuratedAlbumID, scope: CatProfileScopePresentation) -> [PhotoPresentation] {
         switch albumID {
         case .householdGrowth:
-            return catPhotos.map(\.householdGrowthCandidate)
+            return scopedCatPhotos(for: .everyone).map(\.householdGrowthCandidate)
         case .growth:
-            return scopedCatPhotos
+            return scopedCatPhotos(for: scope)
         case let .profileGrowth(profileIdentifier, _):
-            return profileAlbumPhotos[profileIdentifier] ?? []
+            return scopedCatPhotos(for: .profile(profileIdentifier))
         default:
             return []
         }
     }
 
     private func growthOverrideNamespace(
-        for albumID: CuratedAlbumID
+        for albumID: CuratedAlbumID, scope: CatProfileScopePresentation
     ) -> String? {
         let selectedProfileIdentifier: String?
-        if case let .profile(identifier) = selectedAlbumScope {
+        if case let .profile(identifier) = scope {
             selectedProfileIdentifier = identifier
         } else {
             selectedProfileIdentifier = nil
@@ -984,7 +1189,7 @@ struct MainTabView: View {
     }
 
     private func applyingGrowthPhotoOverrides(
-        to sections: [CuratedAlbumSectionPresentation]
+        to sections: [CuratedAlbumSectionPresentation], scope: CatProfileScopePresentation
     ) -> [CuratedAlbumSectionPresentation] {
         let overrideDocument = GrowthAlbumPhotoOverrides.decode(
             growthPhotoOverridesJSON
@@ -994,12 +1199,12 @@ struct MainTabView: View {
         return sections.map { section in
             let albums = section.albums.map { album in
                 guard album.id.isGrowthComparison,
-                      let namespace = growthOverrideNamespace(for: album.id) else {
+                      let namespace = growthOverrideNamespace(for: album.id, scope: scope) else {
                     return album
                 }
 
-                let sourcePhotos = growthCandidatePhotos(for: album.id)
-                let lifeReference = growthLifeReference(for: album.id)
+                let sourcePhotos = growthCandidatePhotos(for: album.id, scope: scope)
+                let lifeReference = growthLifeReference(for: album.id, scope: scope)
                 let groups = selector.candidateGroups(
                     from: sourcePhotos,
                     lifeReference: lifeReference
@@ -1037,9 +1242,10 @@ struct MainTabView: View {
     private func setGrowthPhotoOverride(
         _ photoIdentifier: String?,
         albumID: CuratedAlbumID,
-        period: GrowthAlbumPeriod
+        period: GrowthAlbumPeriod,
+        scope: CatProfileScopePresentation
     ) {
-        guard let namespace = growthOverrideNamespace(for: albumID) else {
+        guard let namespace = growthOverrideNamespace(for: albumID, scope: scope) else {
             return
         }
         var overrideDocument = GrowthAlbumPhotoOverrides.decode(
@@ -1069,9 +1275,9 @@ struct MainTabView: View {
     }
 
     private func curatedAlbum(
-        for id: CuratedAlbumID
+        for id: CuratedAlbumID, scope: CatProfileScopePresentation
     ) -> CuratedAlbumPresentation? {
-        curatedAlbumSections
+        curatedAlbumSections(for: scope)
             .lazy
             .flatMap(\.albums)
             .first { $0.id == id }

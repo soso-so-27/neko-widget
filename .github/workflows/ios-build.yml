@@ -614,7 +614,7 @@ jobs:
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : "albums-root")' \
+          grep -Fq 'accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("albums-favorites")' \
             NekoWidget/Views/LikedPhotosView.swift
@@ -622,7 +622,9 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var reflectionShelf: some View' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'NavigationLink(value: AlbumRoute.album(album.id))' \
+          grep -Fq 'NavigationLink(value: route(for: album.id))' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq '.catAlbum(profileIdentifier: identifier, album: id)' \
             NekoWidget/Views/LikedPhotosView.swift
           if grep -Eq 'reflectionSection|PhotosRoute[.]automaticAlbums' NekoWidget/Views/HomeView.swift; then
             echo 'Photos must not duplicate the Albums collections.' >&2
@@ -643,7 +645,7 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("saved-memories-selection-toggle")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'subtitle: "\(photos.count.formatted())枚"' \
+          grep -Fq 'accessibilityLabel("お気に入り、\(photos.count.formatted())枚")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift

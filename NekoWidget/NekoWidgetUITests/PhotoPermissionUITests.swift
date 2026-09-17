@@ -1490,8 +1490,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 assertComparisonDates(on: album)
                 capture("albums-comparison-standard")
                 album.tap()
-                XCTAssertTrue(app.navigationBars["あの頃と今"].waitForExistence(timeout: 10))
-                app.navigationBars["あの頃と今"].buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(app.navigationBars["昔と最近"].waitForExistence(timeout: 10))
+                app.navigationBars["昔と最近"].buttons.element(boundBy: 0).tap()
                 assertAlbumsRoot(in: app)
                 capture("albums-without-cat-registration")
             }
@@ -1696,9 +1696,11 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             let retry = app.buttons["local-photo-retry"]
             XCTAssertTrue(retry.waitForExistence(timeout: 15))
-            XCTAssertTrue(retry.isHittable, "The letter decoration must not cover retry")
+            XCTAssertTrue(retry.isHittable, "The monthly browser must leave retry reachable")
             retry.tap()
-            let save = app.buttons["monthly-window-memory-app-store-screenshot-fixture-1"]
+            XCTAssertTrue(element("monthly-window-browser", in: app).waitForExistence(timeout: 10))
+            let save = app.buttons["お気に入りに追加"]
+            let savedState = app.buttons["photo-browser-memory-saved-state"]
             XCTAssertTrue(save.waitForExistence(timeout: 10))
             XCTAssertEqual(save.label, "お気に入りに追加")
             save.tap()
@@ -1710,24 +1712,22 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [requested], timeout: 5), .completed)
             if scenario == "monthly-save-unconfirmed" {
                 XCTAssertEqual(save.label, "お気に入りに追加", "A request alone is not a saved result")
+                XCTAssertFalse(savedState.exists)
             } else {
-                let saved = XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "お気に入りに追加済み"), object: save
-                )
-                XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
-                save.tap()
+                XCTAssertTrue(savedState.waitForExistence(timeout: 5))
+                XCTAssertEqual(savedState.label, "お気に入りに追加済み")
+                savedState.tap()
                 app.buttons["お気に入りから外す"].tap()
                 let removed = XCTNSPredicateExpectation(
                     predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|false"),
                     object: request
                 )
                 XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
-                XCTAssertEqual(save.label, "お気に入りに追加")
+                XCTAssertTrue(save.waitForExistence(timeout: 5))
+                XCTAssertFalse(savedState.exists)
                 XCTAssertEqual(app.alerts.count, 0)
                 save.tap()
-                XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "お気に入りに追加済み"), object: save
-                )], timeout: 5), .completed)
+                XCTAssertTrue(savedState.waitForExistence(timeout: 5))
                 capture("monthly-memory-resaved")
             }
             app.terminate()
@@ -1870,13 +1870,49 @@ final class SoloMemoriesUITests: XCTestCase {
         returnFromFavorites(in: app)
         app.terminate()
 
-        // The latest letter keeps its photo preview; dated archive entries use rows.
+        // The pickup and the fixed month list open the same chronological pager.
         let readyApp = launch("monthly")
         assertAlbumsRoot(in: readyApp)
         XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
-        waitForLoadedPhotos([1, 5], in: readyApp)
+        waitForLoadedPhotos([1], in: readyApp)
         capture("albums-monthly-ready")
-        openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
+        monthlyCard(in: readyApp).tap()
+        XCTAssertTrue(element("monthly-window-browser", in: readyApp).waitForExistence(timeout: 10))
+        let monthlyDestination = readyApp.staticTexts["solo-memories-monthly-destination"]
+        XCTAssertEqual(monthlyDestination.label, "2025-08")
+        XCTAssertEqual(monthlyDestination.value as? String,
+            (1...5).map { "app-store-screenshot-fixture-\($0)" }.joined(separator: "|"))
+        XCTAssertTrue(readyApp.staticTexts["1 / 5"].waitForExistence(timeout: 5))
+        let image = readyApp.images["photo-detail-zoom-surface"].firstMatch
+        image.swipeLeft()
+        XCTAssertTrue(readyApp.staticTexts["2 / 5"].waitForExistence(timeout: 5))
+        readyApp.buttons["お気に入りに追加"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-2|true"),
+            object: readyApp.staticTexts["solo-memories-highlight-memory-request"]
+        )], timeout: 5), .completed)
+        XCTAssertTrue(readyApp.buttons["photo-browser-memory-saved-state"].waitForExistence(timeout: 5))
+        readyApp.buttons["photo-browser-deliver"].tap()
+        let family = readyApp.buttons["photo-window-destination-fixture-family"]
+        XCTAssertTrue(family.waitForExistence(timeout: 10))
+        family.tap()
+        let cancel = readyApp.buttons["family-window-cancel-delivery"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.tap()
+        XCTAssertTrue(readyApp.staticTexts["2 / 5"].waitForExistence(timeout: 5))
+        XCTAssertEqual(readyApp.staticTexts["solo-memories-delivery-state"].label,
+                       "app-store-screenshot-fixture-2|0")
+        XCTAssertTrue(readyApp.buttons["photo-browser-memory-saved-state"].exists)
+        readyApp.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: readyApp)
+        monthlyCard(in: readyApp).tap()
+        XCTAssertTrue(readyApp.staticTexts["1 / 5"].waitForExistence(timeout: 5))
+        image.swipeLeft()
+        XCTAssertTrue(readyApp.staticTexts["2 / 5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(readyApp.buttons["photo-browser-memory-saved-state"].waitForExistence(timeout: 5),
+                      "The saved second photo must remain saved after leaving and reopening the month.")
+        capture("albums-monthly-second-photo-saved-and-reopened")
+        readyApp.navigationBars["写真"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
         let pickups = element("albums-highlights-all", in: readyApp)
         reveal(pickups, in: readyApp)
@@ -1887,32 +1923,90 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(readyApp.navigationBars["ピックアップ"].waitForExistence(timeout: 10))
         readyApp.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
-        let archive = element("albums-reflections-all", in: readyApp)
+        let archive = element("albums-months-all", in: readyApp)
         reveal(archive, in: readyApp)
         archive.tap()
-        XCTAssertTrue(element("albums-reflections-archive", in: readyApp).waitForExistence(timeout: 10))
+        XCTAssertTrue(readyApp.navigationBars["月の写真"].waitForExistence(timeout: 10))
         let previousMonth = element("albums-month-2025-07", in: readyApp)
         reveal(previousMonth, in: readyApp)
         XCTAssertTrue(previousMonth.label.contains("1枚"))
         capture("albums-monthly-date-rows")
         openCardAndReturn(previousMonth, expectedRoute: "monthly:2025-07", in: readyApp)
-        XCTAssertTrue(readyApp.navigationBars["月のまとめ・ムービー"].waitForExistence(timeout: 10))
-        XCTAssertTrue(element("albums-reflections-archive", in: readyApp).exists)
+        XCTAssertTrue(readyApp.navigationBars["月の写真"].waitForExistence(timeout: 10))
         capture("albums-reflections-archive-return")
-        readyApp.navigationBars["月のまとめ・ムービー"].buttons.element(boundBy: 0).tap()
+        readyApp.navigationBars["月の写真"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
         readyApp.terminate()
     }
 
     @MainActor
     func testHighlightsPageThroughTheirPhotosAndReopenFromTheArchive() {
-        for scenario in ["highlights", "highlights-large"] {
+        for scenario in ["highlights", "highlights-large", "highlights-cats"] {
             let app = launch(scenario)
             assertAlbumsRoot(in: app)
-            let featured = element("albums-highlight-featured", in: app)
-            XCTAssertTrue(featured.waitForExistence(timeout: 10))
-            reveal(featured, in: app)
+            if scenario == "highlights-cats" {
+                let favoritesLabel = element("albums-favorites", in: app).label
+                let cat = element("albums-cat-fixture-cat-0", in: app)
+                XCTAssertTrue(cat.waitForExistence(timeout: 10))
+                cat.tap()
+                XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 10))
+                XCTAssertTrue(element("albums-cat-detail", in: app).exists)
+                XCTAssertFalse(element("albums-months-all", in: app).exists)
+                XCTAssertFalse(element("albums-movies-all", in: app).exists)
+                XCTAssertEqual(element("albums-favorites", in: app).label, favoritesLabel,
+                               "Favorites remain the complete personal collection on a cat page.")
+                let catHighlight = element("albums-highlight-featured", in: app)
+                reveal(catHighlight, in: app)
+                catHighlight.tap()
+                let catDestination = app.staticTexts["solo-memories-highlight-destination"]
+                XCTAssertTrue(catDestination.waitForExistence(timeout: 10))
+                let catPhotoIDs = Set((catDestination.value as? String ?? "").split(separator: "|").map(String.init))
+                let allowed = Set(([1, 2, 3, 4, 5, 6, 16, 17, 18]).map {
+                    "app-store-screenshot-fixture-\($0)"
+                })
+                XCTAssertGreaterThanOrEqual(catPhotoIDs.count, 3)
+                XCTAssertTrue(catPhotoIDs.isSubset(of: allowed), "The cat browser must not pick household-only photos.")
+                XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+                app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+                app.navigationBars["ミケのアルバム"].buttons.element(boundBy: 0).tap()
+                assertAlbumsRoot(in: app)
+                for (identifier, title, route, cardID) in [
+                    ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
+                    ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
+                ] {
+                    let entry = element(identifier, in: app)
+                    reveal(entry, in: app)
+                    entry.tap()
+                    XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+                    openCardAndReturn(element(cardID, in: app), expectedRoute: route, in: app)
+                    XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
+                    app.navigationBars[title].buttons.element(boundBy: 0).tap()
+                    assertAlbumsRoot(in: app)
+                }
+                capture("albums-cat-return-preserves-household-entries")
+                app.terminate()
+                continue
+            }
+            let firstFeatured = element("albums-highlight-featured", in: app)
+            XCTAssertTrue(firstFeatured.waitForExistence(timeout: 10))
+            reveal(firstFeatured, in: app)
             XCTAssertTrue(element("albums-highlights-all", in: app).isHittable)
+            let firstLabel = firstFeatured.label
+            let carousel = element("albums-pickup-carousel", in: app)
+            carousel.swipeLeft()
+            let visible = app.buttons.matching(identifier: "albums-highlight-featured")
+                .allElementsBoundByIndex.filter { $0.isHittable }
+            guard let featured = visible.min(by: {
+                abs($0.frame.midX - carousel.frame.midX) < abs($1.frame.midX - carousel.frame.midX)
+            }) else {
+                XCTFail("The next pickup must be directly reachable by horizontal scrolling.")
+                app.terminate()
+                return
+            }
+            let featuredLabel = featured.label
+            XCTAssertNotEqual(featuredLabel, firstLabel)
+            let featuredX = featured.frame.minX
             featured.tap()
             let destination = app.staticTexts["solo-memories-highlight-destination"]
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
@@ -1935,15 +2029,21 @@ final class SoloMemoriesUITests: XCTestCase {
             capture("albums-\(scenario)-browser")
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             assertAlbumsRoot(in: app)
-            waitForLoadedPhotos([expectedNumbers[0], expectedNumbers[2]], in: app)
+            let returned = app.buttons.matching(identifier: "albums-highlight-featured")
+                .matching(NSPredicate(format: "label == %@", featuredLabel)).firstMatch
+            XCTAssertTrue(returned.waitForExistence(timeout: 10))
+            XCTAssertTrue(returned.isHittable)
+            XCTAssertEqual(returned.frame.minX, featuredX, accuracy: 12,
+                           "Returning from the browser must preserve the horizontal card position.")
+            waitForLoadedPhotos([expectedNumbers[0]], in: app)
             capture("albums-\(scenario)-featured")
 
             let closeUp = element("album-card-close_up", in: app)
             if !scenario.hasSuffix("-large") {
-                XCTAssertTrue(featured.isHittable)
+                XCTAssertTrue(returned.isHittable)
                 XCTAssertTrue(closeUp.isHittable,
                     "The first fixed themes must be reachable alongside the compact feature.")
-                XCTAssertGreaterThanOrEqual(closeUp.frame.minY, featured.frame.maxY)
+                XCTAssertGreaterThanOrEqual(closeUp.frame.minY, returned.frame.maxY)
             }
             reveal(closeUp, in: app)
             let closeUpFrame = closeUp.frame
@@ -1959,7 +2059,7 @@ final class SoloMemoriesUITests: XCTestCase {
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
 
             // Reopen the exact featured collection through the independent
-            // archive entry rather than relying on the week's featured slot.
+            // archive entry rather than relying on the daily featured slot.
             let archive = element("albums-highlights-all", in: app)
             for _ in 0..<8 where !archive.isHittable { app.scrollViews.firstMatch.swipeDown() }
             XCTAssertTrue(archive.isHittable)
@@ -1971,7 +2071,7 @@ final class SoloMemoriesUITests: XCTestCase {
             archived.tap()
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertEqual(destination.label, highlightID)
-            assertHighlightPhotos(expectedNumbers, in: app, pagesThroughAll: false)
+            assertHighlightPhotos(expectedNumbers, in: app, pagesThroughAll: false, alreadySaved: true)
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
             app.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
@@ -2022,52 +2122,53 @@ final class SoloMemoriesUITests: XCTestCase {
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
         assertAlbumsRoot(in: app)
         let favorites = element("albums-favorites", in: app)
-        for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.scrollViews.firstMatch.swipeDown() }
-        let month = monthlyCard(in: app)
-        reveal(month, in: app)
-        waitForLoadedPhotos([1, 5], in: app)
-        let monthFrame = month.frame
-        XCTAssertGreaterThan(monthFrame.height, 0)
-        XCTAssertGreaterThan(monthFrame.width, app.frame.width / 2)
-        XCTAssertGreaterThanOrEqual(monthFrame.minX, app.frame.minX)
-        XCTAssertLessThanOrEqual(monthFrame.maxX, app.frame.maxX)
-        capture("albums-monthly-cover-largest-text")
-        openCardAndReturn(month, expectedRoute: "monthly:2025-08", in: app)
-        // Follow the visible shelf order: themes, comparison, month/movie,
-        // then the initially collapsed year list.
-        for (identifier, route) in [("close_up", "album:close_up"),
-                                    ("household_growth", "album:household_growth")] {
-            let cover = element("album-card-\(identifier)", in: app)
-            reveal(cover, in: app)
-            XCTAssertGreaterThan(cover.frame.width, app.frame.width / 2,
-                                 "Embedded album cards must inherit accessibility text size.")
-            XCTAssertGreaterThanOrEqual(cover.frame.minX, app.frame.minX)
-            XCTAssertLessThanOrEqual(cover.frame.maxX, app.frame.maxX)
-            if identifier == "household_growth" {
-                assertComparisonDates(on: cover)
-                waitForLoadedPhotos([8], in: app)
-            }
+        XCTAssertTrue(favorites.isHittable, "The header keeps favorites reachable at maximum text size.")
+        let theme = element("album-card-close_up", in: app)
+        reveal(theme, in: app)
+        XCTAssertGreaterThan(theme.frame.width, app.frame.width / 2)
+        XCTAssertGreaterThanOrEqual(theme.frame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(theme.frame.maxX, app.frame.maxX)
+        capture("albums-close_up-largest-text")
+        openCardAndReturn(theme, expectedRoute: "album:close_up", in: app)
+
+        // Fixed destinations remain available even when today's carousel
+        // keeps its existing movie rather than replacing it with the new month.
+        for (identifier, title, route, cardID) in [
+            ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
+            ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
+        ] {
+            let entry = element(identifier, in: app)
+            reveal(entry, in: app)
+            XCTAssertGreaterThan(entry.frame.width, app.frame.width / 2)
+            XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
+            entry.tap()
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+            let item = element(cardID, in: app)
+            reveal(item, in: app)
+            XCTAssertGreaterThan(item.frame.width, app.frame.width / 2)
+            XCTAssertGreaterThanOrEqual(item.frame.minX, app.frame.minX)
+            XCTAssertLessThanOrEqual(item.frame.maxX, app.frame.maxX)
             capture("albums-\(identifier)-largest-text")
-            openCardAndReturn(cover, expectedRoute: route, in: app)
+            openCardAndReturn(item, expectedRoute: route, in: app)
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
+            app.navigationBars[title].buttons.element(boundBy: 0).tap()
+            assertAlbumsRoot(in: app)
         }
-        reveal(seasonalCard, in: app)
-        // Both photo previews and date rows use the available width.
-        // Off-screen lazy cells are not used as geometry evidence.
-        XCTAssertGreaterThan(seasonalCard.frame.width, app.frame.width / 2)
-        XCTAssertGreaterThanOrEqual(seasonalCard.frame.minX, app.frame.minX)
-        XCTAssertLessThanOrEqual(seasonalCard.frame.maxX, app.frame.maxX)
-        capture("albums-seasonal-row-largest-text")
-        openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+        let comparison = element("album-card-household_growth", in: app)
+        reveal(comparison, in: app)
+        assertComparisonDates(on: comparison)
+        XCTAssertGreaterThan(comparison.frame.width, app.frame.width / 2)
+        capture("albums-household_growth-largest-text")
+        openCardAndReturn(comparison, expectedRoute: "album:household_growth", in: app)
 
         let years = element("albums-years-toggle", in: app)
         reveal(years, in: app)
         let year = element("album-card-calendar_year_2025", in: app)
-        XCTAssertFalse(year.exists, "Year folders stay collapsed until the user chooses them.")
-        capture("albums-years-collapsed-largest-text")
+        XCTAssertFalse(year.exists, "Year folders belong to the year destination, not the album root.")
+        capture("albums-years-entry-largest-text")
         years.tap()
-        XCTAssertEqual(years.value as? String, "展開中")
-        XCTAssertEqual(app.buttons.matching(identifier: "albums-years-toggle").count, 1,
-                       "Year links must remain separately identifiable from the toggle.")
+        XCTAssertTrue(element("albums-years-list", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["年から探す"].exists)
         reveal(year, in: app)
         XCTAssertGreaterThan(year.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(year.frame.minX, app.frame.minX)
@@ -2075,6 +2176,9 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-calendar_year_2025-largest-text")
         openCardAndReturn(year, expectedRoute: "album:calendar_year_2025", in: app)
         XCTAssertTrue(year.waitForExistence(timeout: 5))
+        XCTAssertTrue(year.isHittable, "Returning from a year preserves its place in the list.")
+        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: app)
         openFavorites(in: app)
         XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].isHittable)
         capture("albums-favorites-largest-text")
@@ -2084,7 +2188,7 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func assertHighlightPhotos(
-        _ numbers: [Int], in app: XCUIApplication, pagesThroughAll: Bool
+        _ numbers: [Int], in app: XCUIApplication, pagesThroughAll: Bool, alreadySaved: Bool = false
     ) {
         let identifiers = numbers.map { "app-store-screenshot-fixture-\($0)" }
         XCTAssertEqual(app.staticTexts["solo-memories-highlight-destination"].value as? String,
@@ -2095,15 +2199,19 @@ final class SoloMemoriesUITests: XCTestCase {
         for index in 0..<(pagesThroughAll ? identifiers.count : 1) {
             XCTAssertTrue(app.staticTexts["\(index + 1) / \(identifiers.count)"].waitForExistence(timeout: 5),
                 "The production browser must page only through this small collection.")
-            let save = app.buttons["お気に入りに追加"]
-            XCTAssertTrue(save.isHittable)
-            save.tap()
-            let selectedPhoto = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "label == %@", "\(identifiers[index])|true"),
-                object: app.staticTexts["solo-memories-highlight-memory-request"]
-            )
-            XCTAssertEqual(XCTWaiter.wait(for: [selectedPhoto], timeout: 5), .completed,
-                "The selected photo's real action must retain its collection identity.")
+            // Fixture photo 9 is already a favorite before this flow starts.
+            if !alreadySaved && numbers[index] != 9 {
+                let save = app.buttons["お気に入りに追加"]
+                XCTAssertTrue(save.isHittable)
+                save.tap()
+                let selectedPhoto = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "\(identifiers[index])|true"),
+                    object: app.staticTexts["solo-memories-highlight-memory-request"]
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [selectedPhoto], timeout: 5), .completed,
+                    "The selected photo's real action must retain its collection identity.")
+            }
+            XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].waitForExistence(timeout: 5))
             if pagesThroughAll && index < identifiers.count - 1 { image.swipeLeft() }
         }
     }
@@ -2157,6 +2265,16 @@ final class SoloMemoriesUITests: XCTestCase {
         reveal(card, in: app)
         XCTAssertTrue(card.isEnabled)
         card.tap()
+        if expectedRoute.hasPrefix("monthly:") {
+            let destination = app.staticTexts["solo-memories-monthly-destination"]
+            XCTAssertTrue(destination.waitForExistence(timeout: 10))
+            XCTAssertEqual(destination.label, String(expectedRoute.dropFirst("monthly:".count)))
+            XCTAssertFalse((destination.value as? String ?? "").isEmpty)
+            XCTAssertTrue(element("monthly-window-browser", in: app).exists)
+            XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            return
+        }
         let destination = app.staticTexts["solo-memories-detail-destination"]
         XCTAssertTrue(destination.waitForExistence(timeout: 10))
         XCTAssertEqual(destination.value as? String, expectedRoute)

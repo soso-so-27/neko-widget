@@ -104,7 +104,7 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "person-and-cat album title changed")
     try require(CuratedAlbumID.multipleCats.title == "猫たちがいっしょ",
                 "multiple-cat album made an exact-count claim")
-    try require(CuratedAlbumID.householdGrowth.title == "あの頃と今",
+    try require(CuratedAlbumID.householdGrowth.title == "昔と最近",
                 "household timeline title changed")
     try require(CuratedAlbumID.householdGrowth.logKey == "household_growth",
                 "household growth log key changed")
@@ -276,7 +276,7 @@ private func verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears() throws {
     )
     try require(album?.countLabel == "2年分",
                 "household growth count was presented as a photo count")
-    try require(album?.cardTitle == "あの頃と今",
+    try require(album?.cardTitle == "昔と最近",
                 "household timeline card title no longer fits the shared card")
     try require(
         builder.album(from: [
@@ -1156,6 +1156,188 @@ private func verifyHighlightCalendarUsesInjectedTimeZone() throws {
                 "photos in two insufficient UTC months were merged")
 }
 
+private func recommendationFixtures() -> [AlbumHighlightPresentation] {
+    let photos = (1...8).flatMap { month in
+        (1...3).map { day in
+            photo("recommendation-source-\(month)-\(day)", date(2025, month, day))
+        }
+    }
+    return AlbumHighlightBuilder(now: date(2026, 9, 16), timeZone: utc).highlights(from: [
+        CuratedAlbumSectionPresentation(id: .special, albums: [
+            CuratedAlbumPresentation(id: .together, group: .special, photos: photos)
+        ])
+    ])
+}
+
+private func verifyRecommendationsStayDailyAndResolveCurrentScope() throws {
+    let candidates = recommendationFixtures()
+    let selector = AlbumHighlightRecommendationSelector(timeZone: utc)
+    let now = date(2026, 9, 16)
+    var state = AlbumHighlightRecommendationState()
+    let first = selector.recommendations(from: Array(candidates.prefix(6)),
+        scopeKey: "everyone", on: now, state: &state)
+    try require(first.count == 3, "eligible distinct collections did not fill the three slots")
+    let firstIDs = first.map(\.id)
+    for item in first {
+        selector.markOpened(item.id, scopeKey: "everyone", on: now, state: &state)
+    }
+    let updated = candidates.map { item in
+        AlbumHighlightPresentation(id: item.id, title: item.title,
+            photos: item.photos.map {
+                PhotoPresentation(localIdentifier: $0.id, creationDate: $0.creationDate, isLiked: true)
+            }, sourceAlbumID: item.sourceAlbumID)
+    }
+    let sameDay = selector.recommendations(from: Array(updated.reversed()),
+        scopeKey: "everyone", on: now.addingTimeInterval(60), state: &state)
+    try require(sameDay.map(\.id) == firstIDs && sameDay.allSatisfy { $0.photos.allSatisfy(\.isLiked) },
+                "opening, favorites or added candidates changed today's IDs or returned stale photos")
+
+    let restricted = candidates.filter { $0.id != firstIDs[0] }
+    try require(selector.recommendations(from: restricted, scopeKey: "everyone", on: now,
+        state: &state).map(\.id) == Array(firstIDs.dropFirst()),
+                "a removed candidate was resurrected or replaced from the daily cache")
+    try require(selector.recommendations(from: [], scopeKey: "everyone", on: now,
+        state: &state).isEmpty, "revoked access returned cached photo presentations")
+    try require(selector.recommendations(from: candidates, scopeKey: "everyone", on: now,
+        state: &state).map(\.id) == firstIDs,
+                "a transient empty load destroyed the valid daily selection")
+
+    let profileCandidates = candidates.map { item in
+        AlbumHighlightPresentation(id: item.id, title: item.title,
+            photos: item.photos.map {
+                PhotoPresentation(localIdentifier: "profile-only-\($0.id)", creationDate: $0.creationDate)
+            }, sourceAlbumID: item.sourceAlbumID)
+    }
+    let profile = selector.recommendations(from: profileCandidates, scopeKey: "profile:mugi",
+        on: now, state: &state)
+    try require(profile.count == 3 && profile.allSatisfy {
+        $0.photos.allSatisfy { $0.id.hasPrefix("profile-only-") }
+    }, "a stable collection ID leaked household photos into the profile scope")
+    let nextDay = selector.recommendations(from: candidates, scopeKey: "everyone",
+        on: date(2026, 9, 17), state: &state)
+    try require(nextDay.count == 3 && Set(nextDay.map(\.id)).isDisjoint(with: firstIDs),
+                "the next day preferred opened collections while unseen ones were available")
+}
+
+private func verifyRecommendationsRejectOverlappingScenesAndSparseInput() throws {
+    let candidates = recommendationFixtures()
+    let selector = AlbumHighlightRecommendationSelector(timeZone: utc)
+    let now = date(2026, 9, 16)
+    var state = AlbumHighlightRecommendationState()
+    try require(selector.recommendations(from: [], scopeKey: "everyone", on: now,
+        state: &state).isEmpty, "empty input invented recommendations")
+    let original = candidates[0]
+    let samePhotos = AlbumHighlightPresentation(id: "same-photos", title: "Same photos",
+        photos: original.photos, sourceAlbumID: .multipleCats)
+    let nearScenes = AlbumHighlightPresentation(id: "near-scenes", title: "Near scenes",
+        photos: original.photos.map {
+            photo("near-\($0.id)", $0.creationDate!.addingTimeInterval(30 * 60))
+        }, sourceAlbumID: .closeUp)
+    let overlapping = [original, samePhotos, nearScenes, original]
+    let result = selector.recommendations(from: overlapping, scopeKey: "everyone", on: now, state: &state)
+    try require(result.count == 1, "duplicate IDs or adjacent capture scenes padded the carousel")
+    var reordered = AlbumHighlightRecommendationState()
+    try require(selector.recommendations(from: Array(overlapping.reversed()), scopeKey: "everyone",
+        on: now, state: &reordered).map(\.id) == result.map(\.id),
+                "input ordering changed the selected collection")
+
+    let distinctScenes = AlbumHighlightPresentation(id: "distinct-scenes", title: "Distinct scenes",
+        photos: original.photos.map {
+            photo("distinct-\($0.id)", $0.creationDate!.addingTimeInterval(30 * 60 + 1))
+        }, sourceAlbumID: .outing)
+    var separate = AlbumHighlightRecommendationState()
+    try require(selector.recommendations(from: [original, distinctScenes], scopeKey: "everyone",
+        on: now, state: &separate).count == 2, "the scene boundary rejected distinct captures")
+
+    let sparse = AlbumHighlightPresentation(id: "sparse", title: "Sparse",
+        photos: Array(original.photos.prefix(2)), sourceAlbumID: .together)
+    let undated = AlbumHighlightPresentation(id: "undated", title: "Undated",
+        photos: (1...3).map { photo("undated-\($0)", nil) }, sourceAlbumID: .together)
+    let future = AlbumHighlightPresentation(id: "future", title: "Future",
+        photos: (1...3).map { photo("future-\($0)", date(2027, 1, $0)) }, sourceAlbumID: .together)
+    let wrongSource = AlbumHighlightPresentation(id: "all-photos", title: "All photos",
+        photos: original.photos, sourceAlbumID: .allCatPhotos)
+    var invalid = AlbumHighlightRecommendationState()
+    try require(selector.recommendations(from: [sparse, undated, future, wrongSource],
+        scopeKey: "everyone", on: now, state: &invalid).isEmpty,
+                "sparse, unavailable dates or a non-theme collection became a recommendation")
+}
+
+private func verifyRecommendationDaysFollowLocalMidnight() throws {
+    let candidates = recommendationFixtures()
+    let japan = TimeZone(secondsFromGMT: 9 * 60 * 60)!
+    let before = date(2026, 9, 16).addingTimeInterval(3 * 60 * 60 - 60)
+    let after = before.addingTimeInterval(120)
+    for zone in [japan, utc] {
+        let selector = AlbumHighlightRecommendationSelector(timeZone: zone)
+        var state = AlbumHighlightRecommendationState()
+        let first = selector.recommendations(from: candidates, scopeKey: "everyone", on: before, state: &state)
+        for item in first { selector.markOpened(item.id, scopeKey: "everyone", on: before, state: &state) }
+        let next = selector.recommendations(from: candidates, scopeKey: "everyone", on: after, state: &state)
+        try require((first.map(\.id) == next.map(\.id)) == (zone == utc),
+                    "recommendations used UTC or elapsed hours instead of the injected calendar day")
+    }
+    var newYork = Calendar(identifier: .gregorian)
+    newYork.timeZone = TimeZone(identifier: "America/New_York")!
+    let start = newYork.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 0, minute: 30))!
+    let nextMidnight = newYork.date(from: DateComponents(year: 2026, month: 3, day: 9, hour: 0, minute: 30))!
+    let selector = AlbumHighlightRecommendationSelector(timeZone: newYork.timeZone)
+    var state = AlbumHighlightRecommendationState()
+    let first = selector.recommendations(from: candidates, scopeKey: "everyone", on: start, state: &state)
+    for item in first { selector.markOpened(item.id, scopeKey: "everyone", on: start, state: &state) }
+    let next = selector.recommendations(from: candidates, scopeKey: "everyone", on: nextMidnight, state: &state)
+    try require(nextMidnight.timeIntervalSince(start) < 24 * 60 * 60
+                    && Set(first.map(\.id)).isDisjoint(with: next.map(\.id)),
+                "the short daylight-saving day prevented the next local day's refresh")
+}
+
+@MainActor
+private func verifyRecommendationHistoryIsBoundedAndAppLocal() throws {
+    let now = date(2026, 9, 16)
+    let selector = AlbumHighlightRecommendationSelector(timeZone: utc)
+    var state = AlbumHighlightRecommendationState()
+    for index in 0..<160 {
+        selector.markOpened("opened-\(index)", scopeKey: "everyone",
+            on: now.addingTimeInterval(Double(index)), state: &state)
+    }
+    try require(state.scopes["everyone"]?.openedAt.count == 128
+                    && state.scopes["everyone"]?.openedAt["opened-0"] == nil,
+                "viewing history grew without a bound or discarded the newest visits")
+    for index in 0..<20 {
+        selector.markOpened("one-collection", scopeKey: "profile:\(index)",
+            on: now.addingTimeInterval(1_000 + Double(index)), state: &state)
+    }
+    try require(state.scopes.count == 16 && state.scopes["profile:19"] != nil
+                    && state.scopes["everyone"] == nil,
+                "profile histories exceeded the bound or failed to expire old scopes")
+
+    let suite = "album-recommendation-verifier-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let existingPersonalData = Data([1, 2, 3, 4])
+    defaults.set(existingPersonalData, forKey: "existing-personal-data")
+    let candidates = recommendationFixtures()
+    let store = AlbumHighlightRecommendationStore(defaults: defaults, storageKey: "recommendations", timeZone: utc)
+    let first = store.recommendations(from: candidates, scopeKey: "everyone", on: now)
+    for item in first { store.markOpened(item.id, scopeKey: "everyone", on: now) }
+    let reloaded = AlbumHighlightRecommendationStore(defaults: defaults, storageKey: "recommendations", timeZone: utc)
+    try require(reloaded.recommendations(from: candidates, scopeKey: "everyone", on: now).map(\.id)
+                    == first.map(\.id), "app restart lost the same-day selection")
+    try require(Set(reloaded.recommendations(from: candidates, scopeKey: "everyone",
+        on: date(2026, 9, 17)).map(\.id)).isDisjoint(with: first.map(\.id)),
+                "app restart lost the opened-collection history")
+    let data = defaults.data(forKey: "recommendations")!
+    let decoded = try JSONDecoder().decode(AlbumHighlightRecommendationState.self, from: data)
+    try require(decoded.scopes["everyone"]?.openedAt.count == first.count
+                    && !String(decoding: data, as: UTF8.self).contains("recommendation-source-")
+                    && defaults.data(forKey: "existing-personal-data") == existingPersonalData,
+                "recommendations persisted photo IDs or changed unrelated personal data")
+    defaults.set(Data("invalid JSON".utf8), forKey: "recommendations")
+    let recovered = AlbumHighlightRecommendationStore(defaults: defaults, storageKey: "recommendations", timeZone: utc)
+    try require(recovered.recommendations(from: candidates, scopeKey: "everyone", on: now).count == 3,
+                "damaged optional viewing history prevented current photos from being selected")
+}
+
 private func requireObject(_ value: Any) throws -> [String: Any] {
     guard let object = value as? [String: Any] else {
         throw VerificationError.failed("encoded snapshot was not a JSON object")
@@ -1164,6 +1346,7 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 }
 
 @main
+@MainActor
 private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
@@ -1172,6 +1355,10 @@ private struct AlbumGroupingVerifier {
         try verifyHighlightsRequireDatedDistinctScenesInScopedThemes()
         try verifyHighlightsSpreadPhotosAndKeepEveryCollection()
         try verifyHighlightCalendarUsesInjectedTimeZone()
+        try verifyRecommendationsStayDailyAndResolveCurrentScope()
+        try verifyRecommendationsRejectOverlappingScenesAndSparseInput()
+        try verifyRecommendationDaysFollowLocalMidnight()
+        try verifyRecommendationHistoryIsBoundedAndAppLocal()
         try verifyProfileGrowthNeverMixesCats()
         try verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears()
         try verifyKittenBoundaryAndAgeBuckets()

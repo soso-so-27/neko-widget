@@ -1,209 +1,44 @@
 import SwiftUI
-import UIKit
 
-/// A short, finished photo letter. Opening the card enters one continuous
-/// reading surface; there is no gallery or playback mode to understand first.
+/// Monthly photos use the same full-resolution pager and explicit save/window
+/// actions as other photo collections. The caller supplies a refreshed recipe.
 struct MonthlyWindowView: View {
-    @Environment(\.dismiss) private var dismiss
-
     let presentation: MonthlyWindowPresentation
     let setMemorySaved: (String, Bool) -> Void
-
-    // The parent refreshes these presentation values after the shared save
-    // ledger succeeds. A void request callback alone is not a saved result.
-    private var savedIdentifiers: Set<String> {
-        Set(presentation.photos.lazy.filter(\.isLiked).map(\.localIdentifier))
-    }
+    var libraryPhotos: [PhotoPresentation]? = nil
+    var excludedCatCandidateIdentifiers: Set<String> = []
+    var excludeFromCatCandidates: ([String]) -> Void = { _ in }
+    var restoreCatCandidates: ([String]) -> Void = { _ in }
+    var profiles: [CatProfilePresentation] = []
+    var assignmentsByPhotoIdentifier: [String: Set<String>] = [:]
+    var replaceProfileAssignments: ([String: Set<String>]) async -> Bool = { _ in true }
+    var deliveryActions: PhotoWindowDeliveryActions? = nil
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(storyPhotos.indices, id: \.self) { index in
-                        photoSection(storyPhotos[index], at: index)
-                    }
-
-                    endingSection
-                }
-            }
-            .scrollIndicators(.hidden)
-
-            closeButton
-        }
-        .toolbar(.hidden, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
-        .statusBarHidden()
-    }
-
-    private func photoSection(
-        _ photo: PhotoPresentation,
-        at index: Int
-    ) -> some View {
-        ZStack {
-            PhotoAssetImageView(
-                localIdentifier: photo.localIdentifier,
-                catBoundingBox: photo.catBoundingBox,
-                targetPixelSize: CGSize(width: 1_600, height: 2_000),
-                targetAspectRatio: 4.0 / 5.0,
-                showsFullImage: true
-            )
-            .frame(maxWidth: .infinity)
-            .aspectRatio(4.0 / 5.0, contentMode: .fit)
-
-            LinearGradient(
-                colors: [
-                    .black.opacity(index == 0 ? 0.32 : 0.12),
-                    .clear,
-                    .black.opacity(0.84)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .allowsHitTesting(false)
-
-            VStack(alignment: .leading, spacing: 14) {
-                if index == 0 {
-                    Text(presentation.title)
-                        .font(.largeTitle.bold())
-                }
-
-                Spacer()
-
-                HStack(alignment: .bottom, spacing: 12) {
-                    if let creationDate = photo.creationDate {
-                        Text(creationDate.formatted(
-                            .dateTime.month().day().weekday(.abbreviated)
-                        ))
-                        .font(.title2.bold())
-                    }
-
-                    Spacer(minLength: 8)
-
-                    memoryButton(for: photo)
-                }
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, index == 0 ? 88 : 24)
-            .padding(.bottom, 24)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(photoAccessibilityLabel(photo, at: index))
-    }
-
-    private var endingSection: some View {
-        VStack(spacing: 14) {
-            Text("この月の便りは、ここまで")
-                .font(.title2.bold())
-
-            if !savedIdentifiers.isEmpty {
-                Text("\(savedIdentifiers.count.formatted())枚はお気に入りに追加済みです")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("このiPhoneの写真だけでつくりました。写真は送信しません。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button("アルバムへ戻る") {
-                dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("monthly-window-finish")
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 28)
-        .padding(.vertical, 72)
-        .background(Color(white: 0.08))
-    }
-
-    private var closeButton: some View {
-        VStack {
-            HStack {
-                Spacer()
-
-                Button("閉じる", systemImage: "xmark") {
-                    dismiss()
-                }
-                .labelStyle(.iconOnly)
-                .accessibilityLabel("閉じる")
-                .font(.headline)
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(.black.opacity(0.55), in: Capsule())
-                .accessibilityIdentifier("monthly-window-close")
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 10)
-    }
-
-    /// The visible letter always reads from the beginning to the end of the
-    /// month. The card may use a stronger cover, but opening it never jumps the
-    /// reader backward in time.
-    private var storyPhotos: [PhotoPresentation] {
-        presentation.photos.sorted {
-            let leftDate = $0.creationDate ?? .distantFuture
-            let rightDate = $1.creationDate ?? .distantFuture
-            if leftDate != rightDate { return leftDate < rightDate }
-            return $0.localIdentifier < $1.localIdentifier
-        }
-    }
-
-    private func memoryButton(
-        for photo: PhotoPresentation
-    ) -> some View {
-        let isSaved = savedIdentifiers.contains(photo.localIdentifier)
-        return Group {
-            if isSaved {
-                Menu {
-                    Button("お気に入りから外す", role: .destructive) {
-                        setMemorySaved(photo.localIdentifier, false)
-                    }
-                } label: {
-                    memoryButtonLabel(isSaved: true)
-                }
-                .accessibilityHint("お気に入りから外す操作を開きます")
+        Group {
+            if let first = presentation.coverPhoto {
+                PhotoBrowserView(
+                    photos: presentation.storyPhotos,
+                    libraryPhotos: libraryPhotos ?? presentation.storyPhotos,
+                    initialPhoto: first,
+                    widgetShownAt: nil, showsWidgetTiming: false,
+                    setMemorySaved: setMemorySaved,
+                    excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                    excludeFromCatCandidates: excludeFromCatCandidates,
+                    restoreCatCandidates: restoreCatCandidates,
+                    profiles: profiles,
+                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                    replaceProfileAssignments: replaceProfileAssignments,
+                    deliveryActions: deliveryActions
+                )
             } else {
-                Button {
-                    setMemorySaved(photo.localIdentifier, true)
-                } label: {
-                    memoryButtonLabel(isSaved: false)
-                }
+                ContentUnavailableView(
+                    "この月の写真を開けません", systemImage: "photo.stack",
+                    description: Text("写真へのアクセスや表示する写真の範囲を確認してください。")
+                )
             }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(
-            "monthly-window-memory-\(photo.localIdentifier)"
-        )
-    }
-
-    private func memoryButtonLabel(isSaved: Bool) -> some View {
-        Label(
-            isSaved ? "お気に入りに追加済み" : "お気に入りに追加",
-            systemImage: isSaved ? "bookmark.fill" : "bookmark"
-        )
-        .font(.subheadline.bold())
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(minHeight: 44)
-        .background(.black.opacity(0.52), in: Capsule())
-    }
-
-    private func photoAccessibilityLabel(
-        _ photo: PhotoPresentation,
-        at index: Int
-    ) -> String {
-        let date = photo.creationDate?.formatted(.dateTime.year().month().day())
-            ?? "撮影日時不明"
-        return "\(presentation.accessibilityTitle)、\((index + 1).formatted())枚目、\(date)の猫の写真"
+        .toolbar(.hidden, for: .tabBar)
+        .accessibilityIdentifier("monthly-window-browser")
     }
 }

@@ -112,8 +112,8 @@ private func verifyMinimumAndExactDuplicateBoundary() throws {
     try require(proposal.photos.count == 5, "the minimum ready proposal was not 5 scenes")
     try require(proposal.photos.map(\.localIdentifier) == (1...5).map { "photo-\($0)" },
                 "ready photos were not ordered as a story from oldest to newest")
-    try require(proposal.title == "8月の小さな便り", "monthly title changed")
-    try require(proposal.accessibilityTitle == "2026年8月の小さな便り",
+    try require(proposal.title == "8月の猫たち", "monthly title changed")
+    try require(proposal.accessibilityTitle == "2026年8月の猫たち",
                 "accessible monthly title lost its year")
     try require(proposal.periodIdentifier == "2026-08",
                 "monthly read receipt identifier changed")
@@ -648,6 +648,49 @@ private struct MonthlyWindowVerifier {
         try verifyLocalMonthBoundary()
         try verifyRapidNearIdenticalShotsCollapseDeterministically()
         try verifyTimingAndFramingKeepDistinctScenesSeparate()
+        try verifyBrowserCoverAndRefreshedMembership()
         print("Monthly window proposal: PASS")
     }
+}
+
+private func verifyBrowserCoverAndRefreshedMembership() throws {
+    let first = photo("first", date(2026, 8, 1))
+    let favorite = photo("favorite", date(2026, 8, 8), isMemory: true, area: 0.8)
+    let removed = photo("removed", date(2026, 8, 15))
+    let changedMonth = photo("changed-month", date(2026, 8, 18))
+    let excluded = photo("excluded", date(2026, 8, 20))
+    let snapshot = MonthlyWindowPresentation(
+        monthStart: date(2026, 8, 1), yearNumber: 2026, monthNumber: 8,
+        photos: [favorite, changedMonth, removed, first, excluded], availableSceneCount: 5
+    )
+    try require(snapshot.coverPhoto?.localIdentifier == "first",
+                "a stronger/later favorite displaced the first chronological photo from the cover")
+    try require(snapshot.storyPhotos.first == snapshot.coverPhoto,
+                "the monthly cover and first browser page diverged")
+    let current = [
+        photo("first", date(2026, 8, 1), isMemory: true),
+        favorite, photo("changed-month", date(2026, 9, 1)), excluded,
+        photo("new-unselected", date(2026, 8, 25))
+    ]
+    let refreshed = snapshot.refreshed(from: current, hasPhotoAccess: true,
+        excludedIdentifiers: ["excluded"], timeZone: utc)
+    try require(refreshed.storyPhotos.map(\.localIdentifier) == ["first", "favorite"],
+                "the open month retained removed/excluded/out-of-month photos or added new selections")
+    try require(refreshed.coverPhoto?.isLiked == true,
+                "the browser did not receive the current save state")
+    try require(snapshot.refreshed(from: current, hasPhotoAccess: false, timeZone: utc).photos.isEmpty,
+                "revoked photo access reused a route snapshot")
+    try require(snapshot.refreshed(from: [], hasPhotoAccess: true, timeZone: utc).photos.isEmpty,
+                "a missing current source reused old route photos")
+    let inaccessibleMonth = MonthlyWindowPresentation(
+        monthStart: date(2026, 7, 1), yearNumber: 2026, monthNumber: 7,
+        photos: [photo("missing-july", date(2026, 7, 3))], availableSceneCount: 1
+    )
+    let collection = MonthlyWindowCollectionPresentation(letters: [snapshot, inaccessibleMonth], unavailable: nil)
+    let refreshedCollection = collection.refreshed(from: current, hasPhotoAccess: true,
+        excludedIdentifiers: ["excluded"], timeZone: utc)
+    try require(refreshedCollection.letters == [refreshed],
+                "the overview retained an inaccessible month or stale monthly cover")
+    try require(collection.refreshed(from: current, hasPhotoAccess: false, timeZone: utc).letters.isEmpty,
+                "the overview retained covers after photo access was revoked")
 }

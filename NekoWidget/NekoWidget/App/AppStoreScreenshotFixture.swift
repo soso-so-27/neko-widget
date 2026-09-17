@@ -412,7 +412,10 @@ struct AppStoreScreenshotFixtureRootView: View {
             photoSourceAlbums: [],
             photoSourceStatus: sourceStatus,
             catProfilesPresentation: catProfiles,
-            profileAlbumPhotos: [:],
+            profileAlbumPhotos: Dictionary(uniqueKeysWithValues: catProfiles.profiles.map { profile in
+                let assigned = Set(profile.confirmedPhotos.map(\.localIdentifier))
+                return (profile.identifier, photos.filter { assigned.contains($0.localIdentifier) })
+            }),
             catProfilesActions: .noOp,
             hasPhotoAccess: true,
             isLimitedAccess: false,
@@ -613,24 +616,47 @@ private struct MainlineAcceptanceFixtureRootView: View {
 
 /// Keeps the shipping Albums root alive while its inputs change. Only
 /// presentation values and existing in-memory illustrations are supplied;
-/// highlight destinations use the shipping photo browser. Other destinations
-/// acknowledge navigation without opening services.
+/// Monthly, highlight and cat destinations use the shipping photo views.
+/// Remaining destinations acknowledge navigation without opening services.
+@MainActor
+private final class SoloMemoriesFixturePersistence: ObservableObject {
+    let defaults: UserDefaults
+    let recommendations: AlbumHighlightRecommendationStore
+
+    init(scenario: String) {
+        let suiteName = "neko.fixture.albums.\(scenario)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        self.defaults = defaults
+        recommendations = AlbumHighlightRecommendationStore(
+            defaults: defaults, timeZone: TimeZone(secondsFromGMT: 0)!
+        )
+    }
+}
+
 @MainActor
 private struct SoloMemoriesFixtureView: View {
     let scenario: String
+    @StateObject private var persistence: SoloMemoriesFixturePersistence
     @State private var hasMonthlyLetter: Bool
     @State private var hasPhotoAccess: Bool
     @State private var showsOtherScreen = false
     @State private var otherScreenTitle = "別の画面"
     @State private var detailPath = NavigationPath()
     @State private var highlightMemoryRequest = "none"
+    @State private var savedFixturePhotoIdentifiers: Set<String> = ["app-store-screenshot-fixture-9"]
+    @State private var excludedFixturePhotoIdentifiers = Set<String>()
+    @State private var clearedFirstCatAssignments = false
+    @State private var preparedDeliveryIdentifier = "none"
+    @State private var fixtureSendCount = 0
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
         self.scenario = scenario
+        _persistence = StateObject(wrappedValue: SoloMemoriesFixturePersistence(scenario: scenario))
         _hasMonthlyLetter = State(initialValue: [
             "solo-memories-monthly", "solo-memories-denied",
-        ].contains(scenario))
+        ].contains(scenario) || scenario.contains("-cats"))
         _hasPhotoAccess = State(initialValue: !scenario.hasSuffix("-denied"))
     }
 
@@ -645,6 +671,10 @@ private struct SoloMemoriesFixtureView: View {
                             .accessibilityIdentifier("solo-memories-add-letter")
                         Button("写真アクセスを切り替える") { hasPhotoAccess.toggle() }
                             .accessibilityIdentifier("solo-memories-toggle-access")
+                        if usesCatProfiles {
+                            Button("ミケの割り当てを外す") { clearedFirstCatAssignments = true }
+                                .accessibilityIdentifier("solo-memories-clear-first-cat")
+                        }
                         Button("別の画面へ") {
                             otherScreenTitle = "別の画面"
                             showsOtherScreen = true
@@ -681,9 +711,17 @@ private struct SoloMemoriesFixtureView: View {
                     albumsView(showsReflectionArchive: true)
                 case .highlightsArchive:
                     albumsView(showsHighlightArchive: true)
+                case let .catAlbums(identifier):
+                    albumsView(scope: .profile(identifier))
+                case let .catHighlightsArchive(identifier):
+                    albumsView(scope: .profile(identifier), showsHighlightArchive: true)
+                case let .catHighlight(identifier, highlight):
+                    highlightBrowser(highlight, scope: .profile(identifier))
                 case let .highlight(highlight):
                     highlightBrowser(highlight)
-                case .photo, .monthlyWindow, .seasonalMovie:
+                case let .monthlyWindow(snapshot):
+                    monthlyBrowser(snapshot)
+                case .photo, .seasonalMovie:
                     VStack(spacing: 20) {
                         Text("アルバムの詳細")
                             .accessibilityIdentifier("solo-memories-detail-destination")
@@ -696,14 +734,20 @@ private struct SoloMemoriesFixtureView: View {
                 }
             }
             .navigationDestination(for: AlbumRoute.self) { route in
-                VStack(spacing: 20) {
-                    Text("アルバムの詳細")
-                        .accessibilityIdentifier("solo-memories-detail-destination")
-                        .accessibilityValue(albumRouteKey(route))
-                    Button("アルバムに戻る") {
-                        if !detailPath.isEmpty { detailPath.removeLast() }
+                if case let .catAlbum(identifier, albumID) = route {
+                    catAlbumDestination(identifier, albumID: albumID)
+                } else if case let .catPhoto(identifier, albumID, photoID) = route {
+                    catPhotoDestination(identifier, albumID: albumID, photoID: photoID)
+                } else {
+                    VStack(spacing: 20) {
+                        Text("アルバムの詳細")
+                            .accessibilityIdentifier("solo-memories-detail-destination")
+                            .accessibilityValue(albumRouteKey(route))
+                        Button("アルバムに戻る") {
+                            if !detailPath.isEmpty { detailPath.removeLast() }
+                        }
+                        .accessibilityIdentifier("solo-memories-detail-return")
                     }
-                    .accessibilityIdentifier("solo-memories-detail-return")
                 }
             }
         }
@@ -717,6 +761,8 @@ private struct SoloMemoriesFixtureView: View {
                     .accessibilityValue("|" + loadedPhotoIdentifiers.joined(separator: "|") + "|")
                 Text(highlightMemoryRequest)
                     .accessibilityIdentifier("solo-memories-highlight-memory-request")
+                Text("\(preparedDeliveryIdentifier)|\(fixtureSendCount)")
+                    .accessibilityIdentifier("solo-memories-delivery-state")
             }
             .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
             .allowsHitTesting(false)
@@ -724,6 +770,7 @@ private struct SoloMemoriesFixtureView: View {
     }
 
     private func albumsView(
+        scope: CatProfileScopePresentation = .everyone,
         showsReflectionArchive: Bool = false,
         showsHighlightArchive: Bool = false
     ) -> some View {
@@ -731,48 +778,191 @@ private struct SoloMemoriesFixtureView: View {
             photos: savedPhotos,
             hasPhotoAccess: hasPhotoAccess,
             monthlyWindowCollection: MonthlyWindowCollectionPresentation(
-                letters: monthlyLetters, unavailable: nil
+                letters: scope == .everyone ? monthlyLetters : [], unavailable: nil
             ),
-            latestMonthlyWindowIsUnread: hasMonthlyLetter,
-            latestSeasonalMovieIsNew: !seasonalMovies.isEmpty,
-            seasonalMovies: seasonalMovies,
+            latestMonthlyWindowIsUnread: scope == .everyone && hasMonthlyLetter,
+            latestSeasonalMovieIsNew: scope == .everyone && !seasonalMovies.isEmpty,
+            seasonalMovies: scope == .everyone ? seasonalMovies : [],
             exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
             openPhotos: {
                 otherScreenTitle = "写真"
                 showsOtherScreen = true
             },
-            albumSections: albumSections,
+            albumSections: albumSections(for: scope),
             albumScan: scenario == "solo-memories-seasonal-large" || usesHighlightPhotos ? albumScan : nil,
+            albumProfiles: fixtureProfiles,
+            albumScope: .constant(scope),
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
-            referenceDate: referenceDate
+            referenceDate: referenceDate,
+            isCatDetail: scope != .everyone,
+            navigationTitleOverride: fixtureProfiles.first { $0.identifier == profileIdentifier(for: scope) }
+                .map { "\($0.displayName)のアルバム" },
+            recommendationStore: persistence.recommendations,
+            featuredSnapshotDefaults: persistence.defaults
         )
     }
 
-    private func highlightBrowser(_ highlight: AlbumHighlightPresentation) -> some View {
-        PhotoBrowserView(
-            photos: highlight.photos,
-            libraryPhotos: highlightPhotos,
-            initialPhoto: highlight.coverPhoto,
-            widgetShownAt: nil,
-            showsWidgetTiming: false,
-            setMemorySaved: { identifier, saved in
-                highlightMemoryRequest = "\(identifier)|\(saved)"
-            },
-            excludedCatCandidateIdentifiers: [],
-            excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
-            profiles: [], assignmentsByPhotoIdentifier: [:],
-            replaceProfileAssignments: { _ in true }
+    @ViewBuilder
+    private func highlightBrowser(_ highlight: AlbumHighlightPresentation,
+                                  scope: CatProfileScopePresentation = .everyone) -> some View {
+        let current = albumSections(for: scope).flatMap(\.albums)
+            .first { $0.id == highlight.sourceAlbumID }?.photos ?? []
+        let currentByID = Dictionary(current.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
+        let resolved = hasPhotoAccess ? highlight.photos.compactMap { currentByID[$0.localIdentifier] } : []
+        if let first = resolved.first {
+            PhotoBrowserView(
+                photos: resolved,
+                libraryPhotos: scopedFixturePhotos(for: scope),
+                initialPhoto: first,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: recordMemory,
+                excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
+                excludeFromCatCandidates: excludeFixturePhotos, restoreCatCandidates: { _ in },
+                profiles: [], assignmentsByPhotoIdentifier: [:],
+                replaceProfileAssignments: { _ in true }, deliveryActions: fixtureDeliveryActions
+            )
+            .overlay(alignment: .topLeading) {
+                // Route metadata is a fixture assertion aid. Actual paging and
+                // selected-photo identity are checked through browser actions.
+                Text(highlight.id)
+                    .accessibilityIdentifier("solo-memories-highlight-destination")
+                    .accessibilityValue(resolved.map(\.localIdentifier).joined(separator: "|"))
+                    .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+                    .allowsHitTesting(false)
+            }
+            .onAppear {
+                persistence.recommendations.markOpened(highlight.id, scopeKey: scope.id, on: referenceDate)
+            }
+        } else {
+            ContentUnavailableView("このピックアップを開けません", systemImage: "photo.stack")
+        }
+    }
+
+    private func monthlyBrowser(_ snapshot: MonthlyWindowPresentation) -> some View {
+        let refreshed = snapshot.refreshed(from: fixturePhotos, hasPhotoAccess: hasPhotoAccess,
+            excludedIdentifiers: excludedFixturePhotoIdentifiers, timeZone: TimeZone(secondsFromGMT: 0)!)
+        return MonthlyWindowView(
+            presentation: refreshed, setMemorySaved: recordMemory,
+            libraryPhotos: fixturePhotos,
+            excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
+            excludeFromCatCandidates: excludeFixturePhotos,
+            deliveryActions: fixtureDeliveryActions
         )
         .overlay(alignment: .topLeading) {
-            // Route metadata is a fixture assertion aid. Actual paging and
-            // selected-photo identity are checked through browser actions.
-            Text(highlight.id)
-                .accessibilityIdentifier("solo-memories-highlight-destination")
-                .accessibilityValue(highlight.photos.map(\.localIdentifier).joined(separator: "|"))
-                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
-                .allowsHitTesting(false)
+            Text(snapshot.periodIdentifier)
+                .accessibilityIdentifier("solo-memories-monthly-destination")
+                .accessibilityValue(refreshed.storyPhotos.map(\.localIdentifier).joined(separator: "|"))
+                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped().allowsHitTesting(false)
         }
+    }
+
+    @ViewBuilder
+    private func catAlbumDestination(_ identifier: String, albumID: CuratedAlbumID) -> some View {
+        if let album = albumSections(for: .profile(identifier)).flatMap(\.albums).first(where: { $0.id == albumID }) {
+            CuratedAlbumDetailView(album: album, albumOpened: { _, _ in },
+                excludeFromCatCandidates: excludeFixturePhotos,
+                profiles: [], assignmentsByPhotoIdentifier: [:], replaceProfileAssignments: { _ in true },
+                profileIdentifier: identifier)
+        } else {
+            ContentUnavailableView("この猫の写真はまだありません", systemImage: "cat")
+        }
+    }
+
+    @ViewBuilder
+    private func catPhotoDestination(_ identifier: String, albumID: CuratedAlbumID, photoID: String) -> some View {
+        let photos = albumSections(for: .profile(identifier)).flatMap(\.albums).first { $0.id == albumID }?.photos ?? []
+        if let first = photos.first(where: { $0.localIdentifier == photoID }) {
+            PhotoBrowserView(photos: photos, libraryPhotos: scopedFixturePhotos(for: .profile(identifier)),
+                initialPhoto: first, widgetShownAt: nil, showsWidgetTiming: false,
+                setMemorySaved: recordMemory, excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
+                excludeFromCatCandidates: excludeFixturePhotos, restoreCatCandidates: { _ in },
+                profiles: [], assignmentsByPhotoIdentifier: [:], replaceProfileAssignments: { _ in true },
+                deliveryActions: fixtureDeliveryActions)
+        } else {
+            ContentUnavailableView("この猫の写真を開けません", systemImage: "cat")
+        }
+    }
+
+    private func recordMemory(_ identifier: String, _ isSaved: Bool) {
+        highlightMemoryRequest = "\(identifier)|\(isSaved)"
+        if isSaved { savedFixturePhotoIdentifiers.insert(identifier) }
+        else { savedFixturePhotoIdentifiers.remove(identifier) }
+    }
+
+    private func excludeFixturePhotos(_ identifiers: [String]) {
+        excludedFixturePhotoIdentifiers.formUnion(identifiers)
+    }
+
+    private var fixtureDeliveryActions: PhotoWindowDeliveryActions {
+        PhotoWindowDeliveryActions(
+            destinations: { [MomentDeliveryDestination(localWindowID: "fixture-family",
+                bindingSHA256: Data(repeating: 1, count: 32), displayName: "家族のまど")] },
+            prepare: { photo in
+                guard let image = AppStoreScreenshotFixture.image(for: photo.localIdentifier) else {
+                    throw MemoryPhotoJPEGExportError.photoUnavailable
+                }
+                preparedDeliveryIdentifier = photo.localIdentifier
+                let preview = try MomentCanonicalPreviewBuilder.build(image: image)
+                return MomentShareIngressPhoto(canonicalJPEG: preview.jpeg,
+                    capturedAt: photo.creationDate, pixelWidth: preview.pixelWidth, pixelHeight: preview.pixelHeight)
+            },
+            send: { _, _, _ in
+                fixtureSendCount += 1
+                return nil
+            }
+        )
+    }
+
+    private var usesCatProfiles: Bool { scenario.contains("-cats") }
+
+    private func profileIdentifier(for scope: CatProfileScopePresentation) -> String? {
+        guard case let .profile(identifier) = scope else { return nil }
+        return identifier
+    }
+
+    private var fixtureProfiles: [CatProfilePresentation] {
+        guard usesCatProfiles else { return [] }
+        return (0..<2).map { index in
+            let identifier = "fixture-cat-\(index)"
+            let photos = scopedFixturePhotos(for: .profile(identifier)).map {
+                CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier, creationDate: $0.creationDate,
+                                            assignedProfileIdentifiers: [identifier])
+            }
+            return CatProfilePresentation(identifier: identifier, name: index == 0 ? "ミケ" : "ソラ",
+                coverPhoto: photos.first, confirmedPhotos: photos)
+        }
+    }
+
+    private func scopedFixturePhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
+        guard hasPhotoAccess else { return [] }
+        guard case let .profile(identifier) = scope else { return fixturePhotos }
+        guard usesCatProfiles, ["fixture-cat-0", "fixture-cat-1"].contains(identifier) else { return [] }
+        if identifier == "fixture-cat-0", clearedFirstCatAssignments { return [] }
+        return fixturePhotos.filter { photo in
+            let number = Int(photo.localIdentifier.replacingOccurrences(of: AppStoreScreenshotFixture.identifierPrefix, with: "")) ?? 0
+            let belongsToFirst = (1...6).contains(number) || (16...18).contains(number)
+            return identifier == "fixture-cat-0" ? belongsToFirst : !belongsToFirst
+        }
+    }
+
+    private var fixturePhotos: [PhotoPresentation] {
+        guard hasPhotoAccess else { return [] }
+        let photos = usesHighlightPhotos ? highlightPhotos : AppStoreScreenshotFixture.photos.enumerated().map { index, photo in
+            let date: Date?
+            if index < 5 {
+                date = Date(timeIntervalSince1970: 1_754_179_200 + Double(index) * 4 * 86_400)
+            } else if index == 5 {
+                date = Date(timeIntervalSince1970: 1_752_580_800) // 2025-07-15 12:00 UTC
+            } else { date = photo.creationDate }
+            return PhotoPresentation(localIdentifier: photo.localIdentifier, creationDate: date,
+                catBoundingBox: photo.catBoundingBox, isLiked: savedFixturePhotoIdentifiers.contains(photo.localIdentifier),
+                albumPostures: photo.albumPostures, albumContainsPerson: photo.albumContainsPerson,
+                albumIsOuting: photo.albumIsOuting, detectedCatCount: photo.detectedCatCount,
+                largestCatAreaRatio: photo.largestCatAreaRatio, hasCurrentAlbumAnalysis: true)
+        }
+        return photos.filter { !excludedFixturePhotoIdentifiers.contains($0.localIdentifier) }
     }
 
     private var usesHighlightPhotos: Bool {
@@ -799,6 +989,7 @@ private struct SoloMemoriesFixtureView: View {
                 localIdentifier: "app-store-screenshot-fixture-\(index + 1)",
                 creationDate: date,
                 catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
+                isLiked: savedFixturePhotoIdentifiers.contains("app-store-screenshot-fixture-\(index + 1)"),
                 albumContainsPerson: theme == 1,
                 albumIsOuting: theme == 3,
                 detectedCatCount: theme == 2 ? 2 : 1,
@@ -809,13 +1000,13 @@ private struct SoloMemoriesFixtureView: View {
         return scenario.hasSuffix("-few") ? Array(photos.prefix(2)) : photos
     }
 
-    private var albumSections: [CuratedAlbumSectionPresentation] {
+    private func albumSections(for scope: CatProfileScopePresentation) -> [CuratedAlbumSectionPresentation] {
         if usesHighlightPhotos {
             return CuratedAlbumBuilder(timeZone: TimeZone(secondsFromGMT: 0)!)
-                .sections(from: highlightPhotos, lifeReference: nil, includesGrowth: false)
+                .sections(from: scopedFixturePhotos(for: scope), lifeReference: nil, includesGrowth: false)
         }
         guard scenario == "solo-memories-seasonal-large" else { return [] }
-        let photos = AppStoreScreenshotFixture.photos
+        let photos = fixturePhotos
         var sections: [CuratedAlbumSectionPresentation] = []
         let curatedAlbums = CuratedAlbumBuilder()
             .sections(from: photos, lifeReference: nil, includesGrowth: false)
@@ -851,14 +1042,19 @@ private struct SoloMemoriesFixtureView: View {
     private var savedPhotos: [PhotoPresentation] {
         guard hasPhotoAccess,
               scenario != "solo-memories-empty" else { return [] }
-        return Array(AppStoreScreenshotFixture.likedPhotos.prefix(1))
+        let currentSaved = fixturePhotos.filter { savedFixturePhotoIdentifiers.contains($0.localIdentifier) }
+        let currentIDs = Set(currentSaved.map(\.localIdentifier))
+        return AppStoreScreenshotFixture.likedPhotos.prefix(1).filter {
+            savedFixturePhotoIdentifiers.contains($0.localIdentifier) && !currentIDs.contains($0.localIdentifier)
+        }
+            + currentSaved
     }
 
     private var monthlyLetter: MonthlyWindowPresentation {
         MonthlyWindowPresentation(
             monthStart: Date(timeIntervalSince1970: 1_754_006_400),
             yearNumber: 2025, monthNumber: 8,
-            photos: Array(AppStoreScreenshotFixture.photos.prefix(5)),
+            photos: Array(fixturePhotos.prefix(5)),
             availableSceneCount: 5
         )
     }
@@ -870,14 +1066,14 @@ private struct SoloMemoriesFixtureView: View {
             monthStart: Date(timeIntervalSince1970: 1_751_328_000),
             yearNumber: 2025, monthNumber: 7,
             // Exercise an archived cover with only one available photograph.
-            photos: Array(AppStoreScreenshotFixture.photos.prefix(1)),
+            photos: fixturePhotos.filter { $0.localIdentifier == "app-store-screenshot-fixture-6" },
             availableSceneCount: 1
         )
         return [monthlyLetter, previous]
     }
 
     private var seasonalMovies: [SeasonalMovieArchiveRecord] {
-        guard scenario == "solo-memories-seasonal-large" else { return [] }
+        guard hasPhotoAccess, scenario == "solo-memories-seasonal-large" || usesCatProfiles else { return [] }
         let start = Date(timeIntervalSince1970: 1_751_328_000)
         let end = Date(timeIntervalSince1970: 1_759_276_800)
         let scenes = AppStoreScreenshotFixture.photos.prefix(3).enumerated().map { index, photo in
@@ -911,6 +1107,9 @@ private struct SoloMemoriesFixtureView: View {
         case .favorites: "favorites"
         case .reflectionsArchive: "reflections-archive"
         case .highlightsArchive: "highlights-archive"
+        case let .catAlbums(identifier): "cat-albums:\(identifier)"
+        case let .catHighlightsArchive(identifier): "cat-highlights-archive:\(identifier)"
+        case let .catHighlight(identifier, highlight): "cat-highlight:\(identifier):\(highlight.id)"
         case let .highlight(highlight): "highlight:\(highlight.id)"
         case let .photo(identifier): "photo:\(identifier)"
         case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
@@ -922,6 +1121,8 @@ private struct SoloMemoriesFixtureView: View {
         switch route {
         case let .album(identifier): "album:\(identifier.logKey)"
         case let .photo(album, identifier): "album-photo:\(album.logKey):\(identifier)"
+        case let .catAlbum(profile, album): "cat-album:\(profile):\(album.logKey)"
+        case let .catPhoto(profile, album, identifier): "cat-album-photo:\(profile):\(album.logKey):\(identifier)"
         }
     }
 }
@@ -936,20 +1137,22 @@ private struct MonthlySaveFixtureView: View {
     @State private var lastRequest = ""
 
     var body: some View {
-        MonthlyWindowView(
-            presentation: MonthlyWindowPresentation(
-                monthStart: Date(timeIntervalSince1970: 1_754_006_400),
-                yearNumber: 2025, monthNumber: 8,
-                photos: [PhotoPresentation(
-                    localIdentifier: "app-store-screenshot-fixture-1",
-                    creationDate: Date(timeIntervalSince1970: 1_754_006_400),
-                    isLiked: isSaved
-                )], availableSceneCount: 1
-            ), setMemorySaved: { identifier, value in
-                lastRequest = "\(identifier)|\(value)"
-                if confirmsRequests { isSaved = value }
-            }
-        )
+        NavigationStack {
+            MonthlyWindowView(
+                presentation: MonthlyWindowPresentation(
+                    monthStart: Date(timeIntervalSince1970: 1_754_006_400),
+                    yearNumber: 2025, monthNumber: 8,
+                    photos: [PhotoPresentation(
+                        localIdentifier: "app-store-screenshot-fixture-1",
+                        creationDate: Date(timeIntervalSince1970: 1_754_006_400),
+                        isLiked: isSaved
+                    )], availableSceneCount: 1
+                ), setMemorySaved: { identifier, value in
+                    lastRequest = "\(identifier)|\(value)"
+                    if confirmsRequests { isSaved = value }
+                }
+            )
+        }
         .overlay(alignment: .topLeading) {
             Text(lastRequest).accessibilityIdentifier("monthly-fixture-memory-request")
                 .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()

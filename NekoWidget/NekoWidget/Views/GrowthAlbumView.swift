@@ -15,6 +15,7 @@ struct GrowthAlbumDetailView: View {
     let profiles: [CatProfilePresentation]
     let assignmentsByPhotoIdentifier: [String: Set<String>]
     let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
+    var profileIdentifier: String? = nil
 
     @State private var didRecordOpen = false
     @State private var pendingExclusionIdentifier: String?
@@ -224,10 +225,10 @@ struct GrowthAlbumDetailView: View {
         targetAspectRatio: CGFloat
     ) -> some View {
         NavigationLink(
-            value: AlbumRoute.photo(
-                album: album.id,
-                localIdentifier: item.photo.localIdentifier
-            )
+            value: profileIdentifier.map {
+                AlbumRoute.catPhoto(profileIdentifier: $0, album: album.id,
+                                    localIdentifier: item.photo.localIdentifier)
+            } ?? AlbumRoute.photo(album: album.id, localIdentifier: item.photo.localIdentifier)
         ) {
             Color.clear
                 .aspectRatio(targetAspectRatio, contentMode: .fit)
