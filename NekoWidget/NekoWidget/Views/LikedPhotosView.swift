@@ -105,14 +105,6 @@ struct AlbumView: View {
     private func timeAlbums(_ albums: [CuratedAlbumPresentation]) -> some View {
         let comparisons = albums.filter { $0.id.isGrowthComparison }
         let periods = albums.filter { !$0.id.isGrowthComparison }
-        let years = periods.compactMap { album -> (year: Int, album: CuratedAlbumPresentation)? in
-            guard case let .calendarYear(year) = album.id else { return nil }
-            return (year, album)
-        }.sorted { $0.year > $1.year }.map(\.album)
-        let lifePeriods = periods.filter {
-            if case .calendarYear = $0.id { return false }
-            return true
-        }
 
         return VStack(alignment: .leading, spacing: 24) {
             if let periodContent {
@@ -128,22 +120,8 @@ struct AlbumView: View {
                     .accessibilityLabel("昔と最近、\(GrowthAlbumOverviewCard.dateRange(for: album))")
                     .accessibilityValue(GrowthAlbumOverviewCard.dateRange(for: album))
                 }
-                if !years.isEmpty || !lifePeriods.isEmpty {
-                    NavigationLink {
-                        ScrollView {
-                            VStack(spacing: 12) {
-                                if !lifePeriods.isEmpty {
-                                    periodShelf(lifePeriods, title: "時期ごと")
-                                }
-                                ForEach(years) { album in
-                                    albumLink(album, isPrimary: false)
-                                }
-                            }.padding(16)
-                        }
-                        .navigationTitle("年から探す")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .accessibilityIdentifier("albums-years-list")
-                    } label: {
+                if !periods.isEmpty {
+                    NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
                         AlbumCatalogEntry(title: "年から探す", symbol: "calendar")
                     }
                     .buttonStyle(.plain)
@@ -151,6 +129,28 @@ struct AlbumView: View {
                 }
             }
         }
+    }
+
+    var yearArchive: some View {
+        let periods = sections.filter { $0.id == .time }.flatMap(\.albums)
+            .filter { !$0.id.isGrowthComparison }
+        let years = periods.compactMap { album -> (year: Int, album: CuratedAlbumPresentation)? in
+            guard case let .calendarYear(year) = album.id else { return nil }
+            return (year, album)
+        }.sorted { $0.year > $1.year }.map(\.album)
+        let lifePeriods = periods.filter {
+            if case .calendarYear = $0.id { return false }
+            return true
+        }
+        return ScrollView {
+            VStack(spacing: 12) {
+                if !lifePeriods.isEmpty { periodShelf(lifePeriods, title: "時期ごと") }
+                ForEach(years) { album in albumLink(album, isPrimary: false) }
+            }.padding(16)
+        }
+        .navigationTitle("年から探す")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("albums-years-list")
     }
 
     private func periodShelf(
@@ -245,8 +245,13 @@ struct AlbumView: View {
     }
 
     private var selectedProfile: CatProfilePresentation? {
-        guard case let .profile(identifier) = selectedScope else { return nil }
+        guard let identifier = selectedProfileIdentifier else { return nil }
         return profiles.first { $0.identifier == identifier }
+    }
+
+    private var selectedProfileIdentifier: String? {
+        guard case let .profile(identifier) = selectedScope else { return nil }
+        return identifier
     }
 
     private var profileScopeSection: some View {
@@ -1036,17 +1041,29 @@ struct LikedPhotosView: View {
                 ForEach(albumProfiles) { profile in catLink(profile) }
             } else {
                 ForEach(Array(albumProfiles.prefix(2))) { profile in catLink(profile) }
-                NavigationLink {
-                    List(albumProfiles) { profile in catLink(profile) }
-                        .navigationTitle("猫ごと").navigationBarTitleDisplayMode(.inline)
-                } label: {
+                NavigationLink(value: AlbumCatalogRoute.cats) {
                     Image(systemName: "ellipsis").frame(width: 44, height: 44)
                 }.accessibilityLabel("猫ごとのアルバムをすべて見る")
             }
             if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("albums-cat-navigation")
     }
+
+    var catArchive: some View {
+        List(albumProfiles) { profile in catLink(profile) }
+            .navigationTitle("猫ごと").navigationBarTitleDisplayMode(.inline)
+    }
+
+    var yearArchive: some View {
+        AlbumView(sections: albumSections, scan: albumScan ?? ScanPresentation(),
+            profiles: albumProfiles, photoAlbumOptions: albumOptions,
+            profileActions: albumProfileActions, selectedScope: albumScope,
+            showsAllPhotos: false, isEmbedded: true, showsProfilePicker: false)
+            .yearArchive
+    }
+
     private func catLink(_ profile: CatProfilePresentation) -> some View {
         NavigationLink(value: MemoriesRoute.catAlbums(profile.identifier)) {
             HStack(spacing: 6) {
@@ -1072,12 +1089,12 @@ struct LikedPhotosView: View {
     private var reflectionShelf: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             if !months.isEmpty {
-                NavigationLink { periodArchive(showsMovies: false) } label: {
+                NavigationLink(value: AlbumCatalogRoute.months) {
                     AlbumCatalogEntry(title: "月の写真", symbol: "photo.stack")
                 }.accessibilityIdentifier("albums-months-all")
             }
             if !seasonalMovies.isEmpty {
-                NavigationLink { periodArchive(showsMovies: true) } label: {
+                NavigationLink(value: AlbumCatalogRoute.movies) {
                     AlbumCatalogEntry(title: "ムービー", symbol: "play.fill")
                 }.accessibilityIdentifier("albums-movies-all")
             }
@@ -1085,7 +1102,7 @@ struct LikedPhotosView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("memories-summaries-section")
     }
-    private func periodArchive(showsMovies: Bool) -> some View {
+    func periodArchive(showsMovies: Bool) -> some View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 if showsMovies {

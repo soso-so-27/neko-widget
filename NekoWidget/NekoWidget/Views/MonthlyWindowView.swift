@@ -15,7 +15,7 @@ struct MonthlyWindowView: View {
     var deliveryActions: PhotoWindowDeliveryActions? = nil
 
     var body: some View {
-        Group {
+        ZStack {
             if let first = presentation.coverPhoto {
                 PhotoBrowserView(
                     photos: presentation.storyPhotos,
@@ -39,6 +39,7 @@ struct MonthlyWindowView: View {
             }
         }
         .toolbar(.hidden, for: .tabBar)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("monthly-window-browser")
     }
 }

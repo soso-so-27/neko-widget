@@ -700,6 +700,23 @@ private struct SoloMemoriesFixtureView: View {
             }
             // Match the shipping NavigationStack's registered value type so
             // its real photo/letter/movie links remain enabled in this fixture.
+            .navigationDestination(for: AlbumCatalogRoute.self) { route in
+                switch route {
+                case .months:
+                    albumsView().periodArchive(showsMovies: false)
+                case .movies:
+                    albumsView().periodArchive(showsMovies: true)
+                case .cats:
+                    albumsView().catArchive
+                case let .years(profileIdentifier):
+                    if let profileIdentifier,
+                       !fixtureProfiles.contains(where: { $0.identifier == profileIdentifier }) {
+                        ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat")
+                    } else {
+                        albumsView(scope: profileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone).yearArchive
+                    }
+                }
+            }
             .navigationDestination(for: MemoriesRoute.self) { route in
                 switch route {
                 case .favorites:
@@ -773,7 +790,7 @@ private struct SoloMemoriesFixtureView: View {
         scope: CatProfileScopePresentation = .everyone,
         showsReflectionArchive: Bool = false,
         showsHighlightArchive: Bool = false
-    ) -> some View {
+    ) -> LikedPhotosView {
         LikedPhotosView(
             photos: savedPhotos,
             hasPhotoAccess: hasPhotoAccess,
@@ -1060,7 +1077,7 @@ private struct SoloMemoriesFixtureView: View {
     }
 
     private var monthlyLetters: [MonthlyWindowPresentation] {
-        guard hasMonthlyLetter else { return [] }
+        guard hasMonthlyLetter, hasPhotoAccess else { return [] }
         guard scenario == "solo-memories-monthly" else { return [monthlyLetter] }
         let previous = MonthlyWindowPresentation(
             monthStart: Date(timeIntervalSince1970: 1_751_328_000),

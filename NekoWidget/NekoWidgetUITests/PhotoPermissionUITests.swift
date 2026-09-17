@@ -1878,7 +1878,8 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-monthly-ready")
         monthlyCard(in: readyApp).tap()
         XCTAssertTrue(element("monthly-window-browser", in: readyApp).waitForExistence(timeout: 10))
-        let monthlyDestination = readyApp.staticTexts["solo-memories-monthly-destination"]
+        let monthlyDestination = element("solo-memories-monthly-destination", in: readyApp)
+        XCTAssertTrue(monthlyDestination.waitForExistence(timeout: 10))
         XCTAssertEqual(monthlyDestination.label, "2025-08")
         XCTAssertEqual(monthlyDestination.value as? String,
             (1...5).map { "app-store-screenshot-fixture-\($0)" }.joined(separator: "|"))
@@ -1953,8 +1954,6 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertTrue(element("albums-cat-detail", in: app).exists)
                 XCTAssertFalse(element("albums-months-all", in: app).exists)
                 XCTAssertFalse(element("albums-movies-all", in: app).exists)
-                XCTAssertEqual(element("albums-favorites", in: app).label, favoritesLabel,
-                               "Favorites remain the complete personal collection on a cat page.")
                 let catHighlight = element("albums-highlight-featured", in: app)
                 reveal(catHighlight, in: app)
                 catHighlight.tap()
@@ -1971,6 +1970,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
                 app.navigationBars["ミケのアルバム"].buttons.element(boundBy: 0).tap()
                 assertAlbumsRoot(in: app)
+                XCTAssertEqual(element("albums-favorites", in: app).label, favoritesLabel,
+                               "Returning from a cat page must retain the complete personal favorites collection.")
                 for (identifier, title, route, cardID) in [
                     ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
                     ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
@@ -2266,12 +2267,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(card.isEnabled)
         card.tap()
         if expectedRoute.hasPrefix("monthly:") {
-            let destination = app.staticTexts["solo-memories-monthly-destination"]
+            XCTAssertTrue(element("monthly-window-browser", in: app).waitForExistence(timeout: 10))
+            XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+            let destination = element("solo-memories-monthly-destination", in: app)
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertEqual(destination.label, String(expectedRoute.dropFirst("monthly:".count)))
             XCTAssertFalse((destination.value as? String ?? "").isEmpty)
-            XCTAssertTrue(element("monthly-window-browser", in: app).exists)
-            XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             return
         }

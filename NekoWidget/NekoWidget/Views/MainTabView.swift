@@ -133,6 +133,7 @@ struct MainTabView: View {
                     .navigationDestination(for: AlbumRoute.self) { route in
                         albumDestination(for: route, defaultScope: .everyone)
                     }
+                    .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
                     .navigationDestination(
                         for: MemoriesRoute.self,
                         destination: memoriesDestination
@@ -170,6 +171,7 @@ struct MainTabView: View {
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: selectedAlbumScope)
                 }
+                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
             }
             .tabItem {
                 Label("写真", systemImage: "photo.on.rectangle.angled")
@@ -478,6 +480,26 @@ struct MainTabView: View {
             isCatDetail: scope != .everyone,
             navigationTitleOverride: profile.map { "\($0.displayName)のアルバム" }
         )
+    }
+
+    @ViewBuilder
+    private func albumCatalogDestination(for route: AlbumCatalogRoute) -> some View {
+        switch route {
+        case .months:
+            albumsView().periodArchive(showsMovies: false)
+        case .movies:
+            albumsView().periodArchive(showsMovies: true)
+        case .cats:
+            albumsView().catArchive
+        case let .years(profileIdentifier):
+            if let profileIdentifier,
+               catProfilesPresentation.profile(identifier: profileIdentifier) == nil {
+                ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat",
+                    description: Text("プロフィールが変更されました。アルバムに戻って選び直してください。"))
+            } else {
+                albumsView(scope: profileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone).yearArchive
+            }
+        }
     }
 
     @ViewBuilder

@@ -322,6 +322,15 @@ enum AlbumRoute: Hashable {
     case catPhoto(profileIdentifier: String, album: CuratedAlbumID, localIdentifier: String)
 }
 
+/// Catalog levels share the bound navigation path with their photo details.
+/// A cat's year catalog carries its scope instead of reading a mutable picker.
+enum AlbumCatalogRoute: Hashable {
+    case months
+    case movies
+    case years(profileIdentifier: String?)
+    case cats
+}
+
 /// Builds the product's fixed, spoken-language albums from evidence already
 /// stored on each photo. Membership can overlap, but empty albums are omitted.
 struct CuratedAlbumBuilder {

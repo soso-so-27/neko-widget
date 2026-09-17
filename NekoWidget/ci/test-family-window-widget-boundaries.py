@@ -1298,8 +1298,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn("periodArchive(showsMovies: false)", memory_view)
-        self.assertIn("periodArchive(showsMovies: true)", memory_view)
+        self.assertIn("NavigationLink(value: AlbumCatalogRoute.months)", memory_view)
+        self.assertIn("NavigationLink(value: AlbumCatalogRoute.movies)", memory_view)
+        self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
+        self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
             main_tab,
             "private func memoriesDestination(for route: MemoriesRoute) -> some View",
