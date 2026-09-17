@@ -1,31 +1,19 @@
 {
   "schemaVersion": 1,
-  "purpose": "Album/photo actions: content-first cat albums, scoped photo browsing, consistent toolbar, pickup heading, explicit output and empty selection.",
+  "purpose": "Album-first cat filtering with scoped browsing; daily pickup and factual past-photo date cues; optically smaller bookmarks.",
   "visualReview": "user-device",
   "files": {
-    "NekoWidget/NekoWidget/Views/CatProfilePhotoCurationViews.swift": {
-      "before": "30c22019468c656293aa0a246bdaecb8a87315e94822cb2a8507869cb3193db1",
-      "after": "4cf4ef8590d5c6663bcf56862c254e440ad32460f6f64ece7f36b0a63dd5e646"
-    },
-    "NekoWidget/NekoWidget/Views/HomeView.swift": {
-      "before": "3e3882727a20c3aaa587b28c160152676ac250a48fd052e2a4f9902135231833",
-      "after": "4c3d474ab4664fbf1a70806b2b365def95109bae96d6c24fb49f391fc19e8b42"
-    },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "c4a71f477d82406305ec6fa2446ffb3525bd46a324be27273b2be9c3df85e746",
-      "after": "f34afdb999a54bb33e723c03a74e8ad8ccbfee1786d2859abeb79c516cd0be42"
+      "before": "f34afdb999a54bb33e723c03a74e8ad8ccbfee1786d2859abeb79c516cd0be42",
+      "after": "450bc3344744b75295766df35b6e5532d221c5152101b779591e61203b414e8e"
     },
     "NekoWidget/NekoWidget/Views/MainTabView.swift": {
-      "before": "c5b711a9ceb3b638f53b604447a858fb801e95f89aa9183c1bdd6692f8fcb43f",
-      "after": "933d0c29f69bb9cdd3f4acf6ffe75241e5402f1c28b5f7fcb4d85e4cdb39d9b4"
-    },
-    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift": {
-      "before": "f704597e9696a68218506dc48ed467fdae3aa2dcad671f77fcea79b8e53e2437",
-      "after": "a8f57114b4c059feddc398977edab06997b4a784d6209bf08d554becf87cb989"
+      "before": "933d0c29f69bb9cdd3f4acf6ffe75241e5402f1c28b5f7fcb4d85e4cdb39d9b4",
+      "after": "bb01c6b626cf06c8fe204813b230555b4a557c239f75347a9343a62e6ddd6510"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "54ce9a5c3d63b9543793b7a718fa7530deeaae477939a97374d45d06d9e0c1b7",
-      "after": "a8bff667d7a3b51df33e49f34ea5167401791def85de3ea9f354c194ffa2e706"
+      "before": "a8bff667d7a3b51df33e49f34ea5167401791def85de3ea9f354c194ffa2e706",
+      "after": "9bd72d77f53da2a64bd09369771ce9667264fc68a92da115fa3c2d6108386a52"
     }
   }
 }

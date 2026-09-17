@@ -1398,11 +1398,52 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        for number in [1, 2] {
-            let loaded = element("app-store-screenshot-fixture-photo-loaded-app-store-screenshot-fixture-\(number)", in: app)
-            XCTAssertTrue(loaded.waitForExistence(timeout: 15))
-        }
-        capture("albums-cat-shortcuts-standard")
+        assertAlbumsRoot(in: app)
+        XCTAssertFalse(element("albums-cat-fixture-cat-0", in: app).exists)
+
+        // Choose a subject first, then filter inside its shipping destination.
+        let closeUp = element("album-card-close_up", in: app)
+        reveal(closeUp, in: app)
+        closeUp.tap()
+        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        let albumPhotos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
+        XCTAssertEqual(albumPhotos.count, 1)
+        selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
+        XCTAssertEqual(albumPhotos.count, 0, "A cat with no matching photos must not fall back to everyone.")
+        selectAlbumCatFilter(nil, in: app)
+        XCTAssertEqual(albumPhotos.count, 1)
+        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: app)
+
+        let years = element("albums-years-toggle", in: app)
+        reveal(years, in: app)
+        years.tap()
+        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
+        let year = element("album-card-calendar_year_2025", in: app)
+        reveal(year, in: app)
+        year.tap()
+        XCTAssertTrue(app.navigationBars["2025年"].waitForExistence(timeout: 5))
+        XCTAssertEqual(albumPhotos.count, 3)
+        selectAlbumCatFilter("fixture-cat-0", expectedName: "ミケ", in: app)
+        XCTAssertEqual(albumPhotos.count, 1)
+        albumPhotos.firstMatch.tap()
+        let filteredPhoto = app.images["photo-detail-zoom-surface"]
+        XCTAssertTrue(filteredPhoto.waitForExistence(timeout: 10))
+        let filteredDate = app.buttons["photo-browser-same-day"]
+        XCTAssertTrue(filteredDate.waitForExistence(timeout: 5))
+        XCTAssertEqual(filteredDate.value as? String, "2025年12月18日")
+        filteredPhoto.swipeLeft()
+        XCTAssertEqual(filteredDate.value as? String, "2025年12月18日",
+                       "The filtered year browser must not page into another cat's photos.")
+        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["2025年"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, "ミケ")
+        selectAlbumCatFilter(nil, in: app)
+        XCTAssertEqual(albumPhotos.count, 3)
+        app.navigationBars["2025年"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
+        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        assertAlbumsRoot(in: app)
         openPhotosTab(in: app)
         XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
@@ -1980,31 +2021,7 @@ final class SoloMemoriesUITests: XCTestCase {
             assertAlbumsRoot(in: app)
             if scenario == "highlights-cats" {
                 let favoritesLabel = element("albums-favorites", in: app).label
-                let cat = element("albums-cat-fixture-cat-0", in: app)
-                XCTAssertTrue(cat.waitForExistence(timeout: 10))
-                cat.tap()
-                XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 10))
-                XCTAssertTrue(element("albums-cat-detail", in: app).exists)
-                XCTAssertFalse(element("albums-months-all", in: app).exists)
-                XCTAssertFalse(element("albums-movies-all", in: app).exists)
-                let catHighlight = element("albums-highlight-featured", in: app)
-                reveal(catHighlight, in: app)
-                catHighlight.tap()
-                let catDestination = app.staticTexts["solo-memories-highlight-destination"]
-                XCTAssertTrue(catDestination.waitForExistence(timeout: 10))
-                let catPhotoIDs = Set((catDestination.value as? String ?? "").split(separator: "|").map(String.init))
-                let allowed = Set(([1, 2, 3, 4, 5, 6, 16, 17, 18]).map {
-                    "app-store-screenshot-fixture-\($0)"
-                })
-                XCTAssertGreaterThanOrEqual(catPhotoIDs.count, 3)
-                XCTAssertTrue(catPhotoIDs.isSubset(of: allowed), "The cat browser must not pick household-only photos.")
-                XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
-                app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
-                XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
-                app.navigationBars["ミケのアルバム"].buttons.element(boundBy: 0).tap()
-                assertAlbumsRoot(in: app)
-                XCTAssertEqual(element("albums-favorites", in: app).label, favoritesLabel,
-                               "Returning from a cat page must retain the complete personal favorites collection.")
+                XCTAssertFalse(element("albums-cat-fixture-cat-0", in: app).exists)
                 for (identifier, title, route, cardID) in [
                     ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
                     ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
@@ -2018,7 +2035,9 @@ final class SoloMemoriesUITests: XCTestCase {
                     app.navigationBars[title].buttons.element(boundBy: 0).tap()
                     assertAlbumsRoot(in: app)
                 }
-                capture("albums-cat-return-preserves-household-entries")
+                XCTAssertEqual(element("albums-favorites", in: app).label, favoritesLabel,
+                               "Household month and movie browsing must retain the complete favorites collection.")
+                capture("albums-household-entries-with-registered-cats")
                 app.terminate()
                 continue
             }
@@ -2256,6 +2275,21 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    private func selectAlbumCatFilter(
+        _ identifier: String?, expectedName: String = "すべての猫", in app: XCUIApplication
+    ) {
+        let filter = app.buttons["album-cat-filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+        filter.tap()
+        let choice = app.buttons["album-cat-filter-\(identifier ?? "everyone")"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expectedName), object: filter
+        )], timeout: 5), .completed)
     }
 
     @MainActor

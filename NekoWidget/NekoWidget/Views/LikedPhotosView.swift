@@ -2,6 +2,79 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// A filter belongs to the open album, rather than either tab's navigation.
+/// Retain a removed profile as an empty scope until the person chooses another.
+struct AlbumScopedContent<Content: View>: View {
+    let profiles: [CatProfilePresentation]
+    private let content: (CatProfileScopePresentation) -> Content
+    @State private var selectedScope: CatProfileScopePresentation
+
+    init(
+        profiles: [CatProfilePresentation],
+        initialScope: CatProfileScopePresentation = .everyone,
+        @ViewBuilder content: @escaping (CatProfileScopePresentation) -> Content
+    ) {
+        self.profiles = profiles
+        self.content = content
+        _selectedScope = State(initialValue: initialScope)
+    }
+
+    var body: some View {
+        content(selectedScope)
+            // Do not carry a selection or a comparison editor into another cat.
+            .id(selectedScope)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !profiles.isEmpty || selectedScope != .everyone {
+                    HStack {
+                        Menu {
+                            scopeButton(.everyone, title: "すべての猫", identifier: "everyone")
+                            ForEach(profiles) { profile in
+                                scopeButton(.profile(profile.identifier), title: profile.displayName,
+                                            identifier: profile.identifier)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Label(scopeTitle, systemImage: "cat")
+                                Image(systemName: "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .accessibilityLabel("表示する猫")
+                        .accessibilityValue(scopeTitle)
+                        .accessibilityIdentifier("album-cat-filter")
+                        Spacer(minLength: 0)
+                    }
+                    .font(.subheadline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                    .background(.bar)
+                }
+            }
+    }
+
+    private var scopeTitle: String {
+        guard case let .profile(identifier) = selectedScope else { return "すべての猫" }
+        return profiles.first { $0.identifier == identifier }?.displayName ?? "選択した猫"
+    }
+
+    private func scopeButton(
+        _ scope: CatProfileScopePresentation, title: String, identifier: String
+    ) -> some View {
+        Button {
+            selectedScope = scope
+        } label: {
+            if scope == selectedScope {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+        .accessibilityIdentifier("album-cat-filter-\(identifier)")
+    }
+}
+
 struct AlbumView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -142,6 +215,10 @@ struct AlbumView: View {
         }
         return ScrollView {
             VStack(spacing: 12) {
+                if years.isEmpty && lifePeriods.isEmpty {
+                    ContentUnavailableView("この範囲の写真はありません", systemImage: "calendar")
+                        .accessibilityIdentifier("album-scope-empty")
+                }
                 if !lifePeriods.isEmpty { periodShelf(lifePeriods, title: "時期ごと") }
                 ForEach(years) { album in albumLink(album, isPrimary: false) }
             }.padding(16)
@@ -970,7 +1047,6 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    if !isCatDetail && !albumProfiles.isEmpty { catNavigation }
                     if hasPhotoAccess {
                         if let albumScan {
                             AlbumView(
@@ -1025,6 +1101,7 @@ struct LikedPhotosView: View {
     private var favoritesLink: some View {
         NavigationLink(value: MemoriesRoute.favorites) {
             Image(systemName: "bookmark")
+                .imageScale(.small)
         }
         .accessibilityIdentifier("albums-favorites")
         .accessibilityLabel("お気に入り、\(photos.count.formatted())枚")
@@ -1116,7 +1193,7 @@ struct LikedPhotosView: View {
     }
     private var featuredShelf: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("ピックアップ")
+            Text("今日のピックアップ")
                 .font(.title3.bold()).accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 12) {
@@ -1164,10 +1241,15 @@ struct LikedPhotosView: View {
     private func highlightLink(_ highlight: AlbumHighlightPresentation, featured: Bool) -> some View {
         let route: MemoriesRoute = catIdentifier.map { .catHighlight($0, highlight) } ?? .highlight(highlight)
         let period = highlight.coverPhoto.creationDate?.formatted(.dateTime.year().month()) ?? ""
+        let timeContext = PhotoRediscoveryContext.yearsAgo(
+            for: highlight.coverPhoto.creationDate, relativeTo: referenceDate
+        )
+        let subtitle = [timeContext, period.isEmpty ? nil : period, highlight.subtitle]
+            .compactMap { $0 }.joined(separator: " · ")
         return NavigationLink(value: route) {
             if featured {
                 AlbumOverviewCard(identifier: highlight.coverPhoto.localIdentifier, catBoundingBox: highlight.coverPhoto.catBoundingBox,
-                    title: highlight.sourceAlbumID.title, subtitle: period + " · " + highlight.subtitle,
+                    title: highlight.sourceAlbumID.title, subtitle: subtitle,
                     isMovie: false, isNew: false, networkAccessAllowed: true,
                     isCompact: true, preservesScene: false)
             } else {
@@ -1221,6 +1303,21 @@ struct LikedPhotosView: View {
 private struct AlbumFeaturedSnapshot: Codable {
     let day: String
     let identifiers: [String]
+}
+
+/// A time cue based only on the photo's date, never inferred age or identity.
+private enum PhotoRediscoveryContext {
+    static func yearsAgo(for date: Date?, relativeTo now: Date = Date()) -> String? {
+        guard let date, date.timeIntervalSinceReferenceDate.isFinite, date <= now else { return nil }
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.startOfDay(for: now)
+        let years = calendar.dateComponents([.year], from: start, to: end).year ?? 0
+        guard years >= 1 else { return nil }
+        let original = calendar.dateComponents([.month, .day], from: start)
+        let today = calendar.dateComponents([.month, .day], from: end)
+        return original == today ? "\(years)年前の今日" : "\(years)年前"
+    }
 }
 
 private enum AlbumRecommendationItem: Identifiable {
@@ -2174,23 +2271,23 @@ struct PhotoBrowserView: View {
             let dateText = dynamicTypeSize.isAccessibilitySize
                 ? creationDate.formatted(date: .numeric, time: .omitted) : spokenDate
             if dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: creationDate) }) == true {
-                Text(dateText)
-                    .font(.subheadline)
+                photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 44)
                     .accessibilityLabel(spokenDate)
+                    .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
             } else {
                 NavigationLink {
                     dayPhotosView(for: creationDate)
                 } label: {
-                    Label(dateText, systemImage: "photo.stack")
-                        .font(.subheadline)
+                    photoDateLabel(dateText, photo: photo, showsCollectionIcon: true)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(minHeight: 44)
                 }
                 .accessibilityLabel("この日の写真をすべて見る")
                 .accessibilityValue(spokenDate)
+                .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
                 .accessibilityIdentifier("photo-browser-same-day")
             }
         } else {
@@ -2198,6 +2295,20 @@ struct PhotoBrowserView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(minHeight: 44)
+        }
+    }
+
+    private func photoDateLabel(_ dateText: String, photo: PhotoPresentation,
+                                showsCollectionIcon: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) {
+                Text(context).font(.caption).foregroundStyle(.secondary)
+            }
+            if showsCollectionIcon {
+                Label(dateText, systemImage: "photo.stack").font(.subheadline)
+            } else {
+                Text(dateText).font(.subheadline)
+            }
         }
     }
 
@@ -2214,6 +2325,7 @@ struct PhotoBrowserView: View {
             } label: {
                 Image(systemName: "bookmark.fill")
                     .font(.title3)
+                    .imageScale(.small)
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("お気に入りに追加済み")
@@ -2226,6 +2338,7 @@ struct PhotoBrowserView: View {
             } label: {
                 Image(systemName: "bookmark")
                     .font(.title3)
+                    .imageScale(.small)
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("お気に入りに追加")

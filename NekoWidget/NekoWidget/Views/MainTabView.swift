@@ -112,7 +112,6 @@ struct MainTabView: View {
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
-    @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
     @State private var albumHighlightsReferenceDate = Date()
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
@@ -169,7 +168,7 @@ struct MainTabView: View {
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
                 .navigationDestination(for: AlbumRoute.self) { route in
-                    albumDestination(for: route, defaultScope: selectedAlbumScope)
+                    albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
             }
@@ -253,12 +252,6 @@ struct MainTabView: View {
         }
         .onChange(of: memoriesPath.count) { _, count in
             if count == 0 { albumHighlightsReferenceDate = Date() }
-        }
-        .onChange(of: catProfilesPresentation.availableScopes) { _, scopes in
-            guard scopes.contains(selectedAlbumScope) else {
-                selectedAlbumScope = .everyone
-                return
-            }
         }
         .task(id: seasonalMoviePreparationKey) {
             await prepareSeasonalMovie()
@@ -497,12 +490,19 @@ struct MainTabView: View {
         case .cats:
             albumsView().catArchive
         case let .years(profileIdentifier):
-            if let profileIdentifier,
-               catProfilesPresentation.profile(identifier: profileIdentifier) == nil {
-                ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat",
-                    description: Text("プロフィールが変更されました。アルバムに戻って選び直してください。"))
-            } else {
-                albumsView(scope: profileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone).yearArchive
+            AlbumScopedContent(
+                profiles: catProfilesPresentation.profiles,
+                initialScope: profileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone
+            ) { scope in
+                AlbumView(
+                    sections: calendarAlbumSections(for: scope),
+                    scan: scan,
+                    profiles: catProfilesPresentation.profiles,
+                    photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                    profileActions: catProfilesActions,
+                    selectedScope: .constant(scope),
+                    showsAllPhotos: false, isEmbedded: true, showsProfilePicker: false
+                ).yearArchive
             }
         }
     }
@@ -644,12 +644,13 @@ struct MainTabView: View {
 
     private var automaticAlbumsView: some View {
         AlbumView(
-            sections: curatedAlbumSections(for: selectedAlbumScope),
+            sections: curatedAlbumSections(for: .everyone),
             scan: scan,
             profiles: catProfilesPresentation.profiles,
             photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
             profileActions: catProfilesActions,
-            selectedScope: $selectedAlbumScope
+            selectedScope: .constant(.everyone),
+            showsProfilePicker: false
         )
         .navigationTitle("アルバム")
     }
@@ -673,6 +674,17 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func albumDetail(
+        for albumID: CuratedAlbumID, scope: CatProfileScopePresentation
+    ) -> some View {
+        AlbumScopedContent(profiles: catProfilesPresentation.profiles, initialScope: scope) { selectedScope in
+            albumDetailContent(
+                for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func albumDetailContent(
         for albumID: CuratedAlbumID, scope: CatProfileScopePresentation
     ) -> some View {
         if let album = curatedAlbum(for: albumID, scope: scope) {
@@ -712,8 +724,25 @@ struct MainTabView: View {
                 )
             }
         } else {
-            missingAlbumView
+            ContentUnavailableView {
+                Label(albumID.isGrowthComparison ? "比較できる写真がまだありません" : "この範囲の写真はありません",
+                      systemImage: albumID.isGrowthComparison ? "rectangle.split.2x1" : "photo.on.rectangle")
+            } description: {
+                if albumID.isGrowthComparison {
+                    Text("違う時期の写真がそろうと表示します。")
+                }
+            }
+            .navigationTitle(albumID.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("album-scope-empty")
         }
+    }
+
+    private func comparisonAlbumID(
+        _ albumID: CuratedAlbumID, scope: CatProfileScopePresentation
+    ) -> CuratedAlbumID {
+        guard albumID.isGrowthComparison else { return albumID }
+        return scope == .everyone ? .householdGrowth : .growth
     }
 
     @ViewBuilder
@@ -788,6 +817,17 @@ struct MainTabView: View {
             }
         }
         return applyingGrowthPhotoOverrides(to: sections, scope: scope)
+    }
+
+    private func calendarAlbumSections(
+        for scope: CatProfileScopePresentation
+    ) -> [CuratedAlbumSectionPresentation] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        // Choosing a cat inside a year must keep that calendar year even when
+        // the cat has a birthday/adoption date used by its growth comparison.
+        return CuratedAlbumBuilder().sections(
+            from: scopedCatPhotos(for: scope), lifeReference: nil, includesGrowth: false
+        )
     }
 
 
@@ -1304,7 +1344,13 @@ struct MainTabView: View {
     private func curatedAlbum(
         for id: CuratedAlbumID, scope: CatProfileScopePresentation
     ) -> CuratedAlbumPresentation? {
-        curatedAlbumSections(for: scope)
+        let sections: [CuratedAlbumSectionPresentation]
+        if case .calendarYear = id {
+            sections = calendarAlbumSections(for: scope)
+        } else {
+            sections = curatedAlbumSections(for: scope)
+        }
+        return sections
             .lazy
             .flatMap(\.albums)
             .first { $0.id == id }
