@@ -943,6 +943,7 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         backToCatList(app)
 
         createCat("テスト猫B", photoIndex: 1, app: app)
+        app.buttons["cat-profile-more"].tap()
         app.buttons["cat-profile-add-photos"].tap()
         XCTAssertTrue(app.buttons.matching(identifier: "cat-profile-photo").firstMatch.waitForExistence(timeout: 5))
         guard let firstChoice = visiblePhotos(app).first else {
@@ -966,6 +967,7 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         XCTAssertEqual(visiblePhotos(app).count, 1, "Adding to B removed A's photo.")
         backToCatList(app)
         app.buttons.matching(identifier: "cat-profile-open").element(boundBy: 1).tap()
+        app.buttons["cat-profile-more"].tap()
         app.buttons["cat-profile-settings"].tap()
         let delete = app.buttons["プロフィールを削除"]
         for _ in 0..<4 {
@@ -1391,84 +1393,97 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings() {
-        for largeText in [false, true] {
-            let app = XCUIApplication()
-            app.launchArguments = ["--app-store-screenshot-fixture",
-                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-            if largeText { app.launchArguments.append("--ux-large-text") }
-            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
-            app.launch()
-            if !largeText {
-                for number in [1, 2] {
-                    let loaded = element("app-store-screenshot-fixture-photo-loaded-app-store-screenshot-fixture-\(number)", in: app)
-                    XCTAssertTrue(loaded.waitForExistence(timeout: 15))
-                }
-                capture("albums-cat-shortcuts-standard")
-            }
-            openPhotosTab(in: app)
-            XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
-            XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
-            XCTAssertFalse(app.staticTexts["写真の対象と整理"].exists)
-            capture(largeText ? "photo-hub-cats-largest-text" : "photo-hub-cats")
-            for (index, name) in ["ミケ", "ソラ"].enumerated() {
-                let shortcut = app.buttons["photo-hub-cat-fixture-cat-\(index)"]
-                XCTAssertTrue(shortcut.isHittable)
-                shortcut.tap()
-                XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
-                let photos = app.buttons.matching(identifier: "cat-profile-photo")
-                XCTAssertEqual(photos.count, 1, "The shortcut must retain the selected cat")
-                XCTAssertTrue(app.buttons["cat-profile-add-photos"].isHittable)
-                XCTAssertTrue(app.buttons["cat-profile-settings"].isHittable)
-                if index == 0 {
-                    capture(largeText ? "cat-photo-page-largest-text" : "cat-photo-page")
-                    photos.firstMatch.tap()
-                    XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
-                    app.buttons["閉じる"].tap()
-                }
-                app.navigationBars["\(name)の写真"].buttons.element(boundBy: 0).tap()
-                XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
-            }
-            app.buttons["window-settings-button"].tap()
-            let profiles = app.buttons["settings-cat-profiles"]
-            XCTAssertTrue(profiles.waitForExistence(timeout: 5))
-            for _ in 0..<5 where !profiles.isHittable { app.swipeUp() }
-            profiles.tap()
-            XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 5))
-            let firstCat = app.buttons.matching(identifier: "cat-profile-open").firstMatch
-            XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
-            let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
-            firstCat.tap()
-            XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["名前を変更"].exists, "Settings must open the profile, without a photo-grid intermediary")
-            XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
-            capture(largeText ? "cat-settings-direct-largest-text" : "cat-settings-direct")
-            app.navigationBars[catName].buttons.element(boundBy: 0).tap()
-            app.navigationBars["猫のプロフィール"].buttons.element(boundBy: 0).tap()
-
-            let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
-            for _ in 0..<5 where !photoSettings.isHittable { app.swipeDown() }
-            XCTAssertTrue(photoSettings.isHittable)
-            photoSettings.tap()
-            let source = app.buttons["settings-photo-source"]
-            for _ in 0..<5 where !source.isHittable { app.swipeUp() }
-            XCTAssertTrue(source.isHittable)
-            capture(largeText ? "photo-settings-shortcuts-largest-text" : "photo-settings-shortcuts")
-            source.tap()
-            XCTAssertTrue(app.navigationBars["写真の対象"].waitForExistence(timeout: 5))
-            capture(largeText ? "photo-source-direct-largest-text" : "photo-source-direct")
-            let allPhotos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "すべての写真")).firstMatch
-            XCTAssertTrue(allPhotos.isHittable)
-            allPhotos.tap()
-            XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5),
-                          "Selecting a source returns directly to photo settings")
-            let excluded = app.buttons["settings-excluded-photos"]
-            for _ in 0..<5 where !excluded.isHittable { app.swipeUp() }
-            XCTAssertTrue(excluded.isHittable)
-            excluded.tap()
-            XCTAssertTrue(app.navigationBars["除外した写真"].waitForExistence(timeout: 5))
-            XCTAssertFalse(app.buttons["写真の対象"].exists)
-            app.terminate()
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        for number in [1, 2] {
+            let loaded = element("app-store-screenshot-fixture-photo-loaded-app-store-screenshot-fixture-\(number)", in: app)
+            XCTAssertTrue(loaded.waitForExistence(timeout: 15))
         }
+        capture("albums-cat-shortcuts-standard")
+        openPhotosTab(in: app)
+        XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
+        XCTAssertFalse(app.staticTexts["写真の対象と整理"].exists)
+        capture("photo-hub-cats")
+        for (index, name) in ["ミケ", "ソラ"].enumerated() {
+            let shortcut = app.buttons["photo-hub-cat-fixture-cat-\(index)"]
+            XCTAssertTrue(shortcut.isHittable)
+            shortcut.tap()
+            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+            let photos = app.buttons.matching(identifier: "cat-profile-photo")
+            XCTAssertEqual(photos.count, 1, "The shortcut must retain the selected cat")
+            let more = app.buttons["cat-profile-more"]
+            XCTAssertTrue(more.isHittable)
+            more.tap()
+            XCTAssertTrue(app.buttons["cat-profile-add-photos"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["cat-profile-settings"].exists)
+            app.buttons["cat-profile-select"].tap()
+            XCTAssertEqual(app.buttons["cat-profile-select"].label, "完了")
+            app.buttons["cat-profile-select"].tap()
+            if index == 0 { capture("cat-photo-page") }
+
+            photos.firstMatch.tap()
+            let zoom = app.images["photo-detail-zoom-surface"]
+            XCTAssertTrue(zoom.waitForExistence(timeout: 10))
+            let date = app.buttons["photo-browser-same-day"]
+            XCTAssertTrue(date.waitForExistence(timeout: 5))
+            let expectedDate = index == 0 ? "2025年12月18日" : "2025年8月4日"
+            XCTAssertEqual(date.value as? String, expectedDate, "The browser opened another cat's photo")
+            XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].isHittable,
+                          "The cat photo must retain the normal favorite action")
+            // Each existing fixture cat has one photo. Paging cannot expose
+            // the other cat or the unassigned photos in the main library.
+            zoom.swipeLeft()
+            XCTAssertEqual(date.value as? String, expectedDate)
+            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+            XCTAssertEqual(photos.count, 1)
+            app.navigationBars["\(name)の写真"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
+        }
+        app.buttons["window-settings-button"].tap()
+        let profiles = app.buttons["settings-cat-profiles"]
+        XCTAssertTrue(profiles.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !profiles.isHittable { app.swipeUp() }
+        profiles.tap()
+        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 5))
+        let firstCat = app.buttons.matching(identifier: "cat-profile-open").firstMatch
+        XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
+        let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
+        firstCat.tap()
+        XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["名前を変更"].exists, "Settings must open the profile, without a photo-grid intermediary")
+        XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
+        capture("cat-settings-direct")
+        app.navigationBars[catName].buttons.element(boundBy: 0).tap()
+        app.navigationBars["猫のプロフィール"].buttons.element(boundBy: 0).tap()
+
+        let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
+        for _ in 0..<5 where !photoSettings.isHittable { app.swipeDown() }
+        XCTAssertTrue(photoSettings.isHittable)
+        photoSettings.tap()
+        let source = app.buttons["settings-photo-source"]
+        for _ in 0..<5 where !source.isHittable { app.swipeUp() }
+        XCTAssertTrue(source.isHittable)
+        capture("photo-settings-shortcuts")
+        source.tap()
+        XCTAssertTrue(app.navigationBars["写真の対象"].waitForExistence(timeout: 5))
+        capture("photo-source-direct")
+        let allPhotos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "すべての写真")).firstMatch
+        XCTAssertTrue(allPhotos.isHittable)
+        allPhotos.tap()
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5),
+                      "Selecting a source returns directly to photo settings")
+        let excluded = app.buttons["settings-excluded-photos"]
+        for _ in 0..<5 where !excluded.isHittable { app.swipeUp() }
+        XCTAssertTrue(excluded.isHittable)
+        excluded.tap()
+        XCTAssertTrue(app.navigationBars["除外した写真"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["写真の対象"].exists)
+        app.terminate()
     }
 
     @MainActor
@@ -1819,8 +1834,26 @@ final class SoloMemoriesUITests: XCTestCase {
                                "Opening favorites must start in browsing mode.")
                 capture("albums-single-favorite")
                 selection.tap()
+                let createPDF = app.buttons["saved-memories-create-pdf"]
+                XCTAssertTrue(createPDF.waitForExistence(timeout: 5))
+                createPDF.tap()
                 XCTAssertTrue(app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 5))
                 XCTAssertTrue(app.buttons["photo-book-export"].exists)
+                XCTAssertFalse(app.buttons["photo-book-export"].isEnabled)
+                XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
+                XCTAssertFalse(app.buttons["book-demand-preview"].exists)
+                selection.tap()
+                XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 5))
+
+                selection.tap()
+                let createBookPreview = app.buttons["saved-memories-create-book-preview"]
+                XCTAssertTrue(createBookPreview.waitForExistence(timeout: 5))
+                createBookPreview.tap()
+                XCTAssertTrue(app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["book-demand-preview"].exists)
+                XCTAssertFalse(app.buttons["book-demand-preview"].isEnabled)
+                XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
+                XCTAssertFalse(app.buttons["photo-book-export"].exists)
                 selection.tap()
                 XCTAssertTrue(app.navigationBars["お気に入り"].waitForExistence(timeout: 5))
             } else {
@@ -1922,15 +1955,8 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-monthly-second-photo-saved-and-reopened")
         readyApp.navigationBars["写真"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
-        let pickups = element("albums-highlights-all", in: readyApp)
-        reveal(pickups, in: readyApp)
-        pickups.tap()
-        XCTAssertTrue(element("albums-highlights-archive", in: readyApp).waitForExistence(timeout: 10))
-        capture("albums-pickups-monthly-entry")
-        openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
-        XCTAssertTrue(readyApp.navigationBars["ピックアップ"].waitForExistence(timeout: 10))
-        readyApp.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
-        assertAlbumsRoot(in: readyApp)
+        XCTAssertFalse(element("albums-highlights-all", in: readyApp).exists,
+                       "The heading must not create a redundant overview destination.")
         let archive = element("albums-months-all", in: readyApp)
         reveal(archive, in: readyApp)
         archive.tap()
@@ -1948,7 +1974,7 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testHighlightsPageThroughTheirPhotosAndReopenFromTheArchive() {
+    func testHighlightsPageThroughTheirPhotosAndReopenFromTheCard() {
         for scenario in ["highlights", "highlights-large", "highlights-cats"] {
             let app = launch(scenario)
             assertAlbumsRoot(in: app)
@@ -1999,7 +2025,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let firstFeatured = element("albums-highlight-featured", in: app)
             XCTAssertTrue(firstFeatured.waitForExistence(timeout: 10))
             reveal(firstFeatured, in: app)
-            XCTAssertTrue(element("albums-highlights-all", in: app).isHittable)
+            XCTAssertFalse(element("albums-highlights-all", in: app).exists)
             let firstLabel = firstFeatured.label
             let carousel = element("albums-pickup-carousel", in: app)
             carousel.swipeLeft()
@@ -2066,23 +2092,14 @@ final class SoloMemoriesUITests: XCTestCase {
             capture("albums-\(scenario)-themes")
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
 
-            // Reopen the exact featured collection through the independent
-            // archive entry rather than relying on the daily featured slot.
-            let archive = element("albums-highlights-all", in: app)
-            for _ in 0..<8 where !archive.isHittable { app.scrollViews.firstMatch.swipeDown() }
-            XCTAssertTrue(archive.isHittable)
-            archive.tap()
-            XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
-            capture("albums-\(scenario)-archive")
-            let archived = element("albums-highlight-\(highlightID)", in: app)
-            reveal(archived, in: app)
-            archived.tap()
+            // Reopen the same card; navigating into a theme must retain it.
+            for _ in 0..<8 where !returned.isHittable { app.scrollViews.firstMatch.swipeDown() }
+            XCTAssertTrue(returned.isHittable)
+            returned.tap()
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertEqual(destination.label, highlightID)
             assertHighlightPhotos(expectedNumbers, in: app, pagesThroughAll: false, alreadySaved: true)
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(element("albums-highlights-archive", in: app).waitForExistence(timeout: 10))
-            app.navigationBars["ピックアップ"].buttons.element(boundBy: 0).tap()
             assertAlbumsRoot(in: app)
             app.terminate()
         }

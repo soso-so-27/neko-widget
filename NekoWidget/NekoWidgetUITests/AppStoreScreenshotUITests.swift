@@ -106,11 +106,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertFalse(app.buttons["photo-book-export"].exists)
         captureScreenshot(named: "04-liked-photos")
         selectSavedPhotos.tap()
+        let createPDF = app.buttons["saved-memories-create-pdf"]
+        guard createPDF.waitForExistence(timeout: 10), waitForHittable(createPDF) else {
+            fail("The output choices did not open from favorites.", application: app)
+            return
+        }
+        captureScreenshot(named: "review-favorites-creation-options")
+        createPDF.tap()
         guard app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 10),
               app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
             fail("PDF creation was not available after photo selection opened.", application: app)
             return
         }
+        XCTAssertFalse(app.buttons["photo-book-export"].isEnabled)
+        XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
         captureScreenshot(named: "review-favorites-selection")
         selectSavedPhotos.tap()
         guard app.navigationBars["お気に入り"].waitForExistence(timeout: 10) else {

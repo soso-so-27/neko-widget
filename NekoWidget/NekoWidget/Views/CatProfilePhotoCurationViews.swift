@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// The photo tab supplies its current, scoped browser. Profile settings can
+/// continue to use the lightweight preview while organizing membership.
+typealias CatProfilePhotoDestination = (String, String) -> AnyView
+
+private struct CatProfilePhotoDestinationKey: EnvironmentKey {
+    static var defaultValue: CatProfilePhotoDestination? { nil }
+}
+
+extension EnvironmentValues {
+    var catProfilePhotoDestination: CatProfilePhotoDestination? {
+        get { self[CatProfilePhotoDestinationKey.self] }
+        set { self[CatProfilePhotoDestinationKey.self] = newValue }
+    }
+}
+
 struct CatProfileDetailView: View {
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
@@ -470,6 +485,8 @@ private struct CatProfileLifeReferenceEditor: View {
 }
 
 struct CatProfileConfirmedPhotosView: View {
+    @Environment(\.catProfilePhotoDestination) private var photoDestination
+
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
@@ -479,6 +496,8 @@ struct CatProfileConfirmedPhotosView: View {
     @State private var selection = Set<String>()
     @State private var isSelecting = false
     @State private var previewPhoto: CatProfilePhotoPresentation?
+    @State private var openedPhotoIdentifier: String?
+    @State private var showsProfileSettings = false
     @State private var showsAddPhotos = false
     @State private var showsAssignmentSheet = false
     @State private var showsRemoveConfirmation = false
@@ -503,7 +522,11 @@ struct CatProfileConfirmedPhotosView: View {
                     photos: profile.confirmedPhotos,
                     selection: .constant([]),
                     onChoose: { identifier in
-                        previewPhoto = profile.confirmedPhotos.first { $0.localIdentifier == identifier }
+                        if photoDestination != nil {
+                            openedPhotoIdentifier = identifier
+                        } else {
+                            previewPhoto = profile.confirmedPhotos.first { $0.localIdentifier == identifier }
+                        }
                     },
                     showsSelectionMarks: false
                 )
@@ -513,41 +536,59 @@ struct CatProfileConfirmedPhotosView: View {
         .navigationTitle("\(profile.displayName)の写真")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if !profile.confirmedPhotos.isEmpty {
-                    Button(isSelecting ? "完了" : "選択") {
+            ToolbarItem(placement: .topBarTrailing) {
+                if isSelecting {
+                    Button("完了") {
                         selection.removeAll()
-                        isSelecting.toggle()
+                        isSelecting = false
                     }
                     .disabled(isRemoving)
                     .accessibilityIdentifier("cat-profile-select")
-                }
-                if !isSelecting && !profile.confirmedPhotos.isEmpty {
-                    Button {
-                        showsAddPhotos = true
+                } else if !profile.confirmedPhotos.isEmpty || profileSettingsAlbumOptions != nil {
+                    Menu {
+                        if !profile.confirmedPhotos.isEmpty {
+                            Button("写真を選択", systemImage: "checkmark.circle") {
+                                selection.removeAll()
+                                isSelecting = true
+                            }
+                            .accessibilityIdentifier("cat-profile-select")
+
+                            Button("この子の写真を追加", systemImage: "photo.badge.plus") {
+                                showsAddPhotos = true
+                            }
+                            .accessibilityIdentifier("cat-profile-add-photos")
+                            .disabled(profile.manualCandidatePhotos.isEmpty)
+                        }
+                        if profileSettingsAlbumOptions != nil {
+                            Button("プロフィールを編集", systemImage: "cat") {
+                                showsProfileSettings = true
+                            }
+                            .accessibilityLabel("\(profile.displayName)のプロフィール設定")
+                            .accessibilityIdentifier("cat-profile-settings")
+                        }
                     } label: {
-                        Image(systemName: "photo.badge.plus")
+                        Image(systemName: "ellipsis")
                     }
-                    .accessibilityLabel("この子の写真を追加")
-                    .accessibilityIdentifier("cat-profile-add-photos")
-                    .disabled(profile.manualCandidatePhotos.isEmpty || isRemoving)
-                }
-                if let albums = profileSettingsAlbumOptions {
-                    NavigationLink {
-                        CatProfileDetailView(
-                            profile: profile,
-                            allProfiles: allProfiles,
-                            manualCandidatePhotos: profile.manualCandidatePhotos,
-                            photoAlbumOptions: albums,
-                            actions: actions
-                        )
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel("\(profile.displayName)のプロフィール設定")
-                    .accessibilityIdentifier("cat-profile-settings")
+                    .accessibilityLabel("\(profile.displayName)の写真のその他の操作")
+                    .accessibilityIdentifier("cat-profile-more")
                     .disabled(isRemoving)
                 }
+            }
+        }
+        .navigationDestination(item: $openedPhotoIdentifier) { identifier in
+            if let photoDestination {
+                photoDestination(profile.identifier, identifier)
+            }
+        }
+        .navigationDestination(isPresented: $showsProfileSettings) {
+            if let albums = profileSettingsAlbumOptions {
+                CatProfileDetailView(
+                    profile: profile,
+                    allProfiles: allProfiles,
+                    manualCandidatePhotos: profile.manualCandidatePhotos,
+                    photoAlbumOptions: albums,
+                    actions: actions
+                )
             }
         }
         .safeAreaInset(edge: .bottom) {

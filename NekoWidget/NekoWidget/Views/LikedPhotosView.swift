@@ -37,8 +37,6 @@ struct AlbumView: View {
         VStack(alignment: .leading, spacing: 26) {
             if showsProfilePicker && !profiles.isEmpty {
                 profileScopeSection
-            } else if let profile = selectedProfile {
-                profileSettingsLink(profile)
             }
             if scan.isPreparingGroupedAlbums {
                 groupedAlbumPreparationBanner
@@ -974,7 +972,6 @@ struct LikedPhotosView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if !isCatDetail && !albumProfiles.isEmpty { catNavigation }
                     if hasPhotoAccess {
-                        if isCatDetail { catPhotoLibraryLink }
                         if let albumScan {
                             AlbumView(
                                 sections: albumSections, scan: albumScan,
@@ -1014,19 +1011,20 @@ struct LikedPhotosView: View {
             if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive {
                 ToolbarItem(placement: .topBarTrailing) { favoritesLink }
                 if let showSettings {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .topBarLeading) {
                         Button(action: showSettings) { Image(systemName: "gearshape") }
                             .accessibilityLabel("設定").accessibilityIdentifier("albums-settings-button")
                     }
                 }
+            } else if isCatDetail && !showsHighlightArchive {
+                ToolbarItem(placement: .topBarTrailing) { catAlbumMenu }
             }
         }
     }
 
     private var favoritesLink: some View {
         NavigationLink(value: MemoriesRoute.favorites) {
-            Label("お気に入り", systemImage: "bookmark")
-                .font(.subheadline).frame(minHeight: 44)
+            Image(systemName: "bookmark")
         }
         .accessibilityIdentifier("albums-favorites")
         .accessibilityLabel("お気に入り、\(photos.count.formatted())枚")
@@ -1064,13 +1062,28 @@ struct LikedPhotosView: View {
         .accessibilityLabel("\(profile.displayName)のアルバム")
         .accessibilityIdentifier("albums-cat-\(profile.identifier)")
     }
-    @ViewBuilder private var catPhotoLibraryLink: some View {
-        if let identifier = catIdentifier,
-           let album = albumSections.flatMap(\.albums).first(where: { $0.id == .allCatPhotos }) {
-            NavigationLink(value: AlbumRoute.catAlbum(profileIdentifier: identifier, album: album.id)) {
-                AlbumNavigationRow(title: "写真", subtitle: album.countLabel, symbol: "photo.on.rectangle")
-            }.accessibilityIdentifier("albums-cat-photos")
+    private var catAlbumMenu: some View {
+        Menu {
+            if let identifier = catIdentifier,
+               let album = albumSections.flatMap(\.albums).first(where: { $0.id == .allCatPhotos }) {
+                NavigationLink(value: AlbumRoute.catAlbum(profileIdentifier: identifier, album: album.id)) {
+                    Label("この猫の写真", systemImage: "photo.on.rectangle")
+                }.accessibilityIdentifier("albums-cat-photos")
+            }
+            if let profile = albumProfiles.first(where: { $0.identifier == catIdentifier }) {
+                NavigationLink {
+                    CatProfileDetailView(profile: profile, allProfiles: albumProfiles,
+                        manualCandidatePhotos: profile.manualCandidatePhotos,
+                        photoAlbumOptions: albumOptions, actions: albumProfileActions)
+                } label: {
+                    Label("\(profile.displayName)の設定", systemImage: "slider.horizontal.3")
+                }.accessibilityIdentifier("album-profile-add-photos")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
         }
+        .accessibilityLabel("この猫のアルバムの操作")
+        .accessibilityIdentifier("albums-cat-more")
     }
     private var reflectionShelf: some View {
         LazyVGrid(columns: columns, spacing: 12) {
@@ -1103,14 +1116,8 @@ struct LikedPhotosView: View {
     }
     private var featuredShelf: some View {
         VStack(alignment: .leading, spacing: 10) {
-            NavigationLink(value: catIdentifier.map(MemoriesRoute.catHighlightsArchive) ?? .highlightsArchive) {
-                HStack {
-                    Text("ピックアップ").font(.title3.bold()).accessibilityAddTraits(.isHeader)
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.subheadline).accessibilityHidden(true)
-                }.foregroundStyle(.primary).frame(minHeight: 44)
-            }
-            .accessibilityLabel("ピックアップの一覧").accessibilityIdentifier("albums-highlights-all")
+            Text("ピックアップ")
+                .font(.title3.bold()).accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 12) {
                     ForEach(featuredRecommendations) { item in
@@ -1389,11 +1396,24 @@ private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String
 struct SavedMemoriesGalleryView: View {
     @Environment(\.dismiss) private var dismiss
 
+    private enum CreationOutput: Equatable {
+        case pdf
+        case bookPreview
+
+        var maximumPhotoCount: Int {
+            switch self {
+            case .pdf: PhotoBookPolicy.maximumPhotosPerExport
+            case .bookPreview: BookDemandValidationPolicy.requiredPhotoCount
+            }
+        }
+    }
+
     let photos: [PhotoPresentation]
     let isDedicatedPhotoBookFlow: Bool
     let exportPhotoBook: ([String]) async throws -> URL
 
-    @State private var isSelectingForExport: Bool
+    @State private var creationOutput: CreationOutput?
+    @State private var showsCreationOptions = false
     @State private var selectedExportIdentifiers: Set<String>
     @State private var isExportingPhotoBook = false
     @State private var photoBookExport: LikedPhotoBookExportFile?
@@ -1410,8 +1430,12 @@ struct SavedMemoriesGalleryView: View {
         self.photos = photos
         self.isDedicatedPhotoBookFlow = startsInExportMode
         self.exportPhotoBook = exportPhotoBook
-        _isSelectingForExport = State(initialValue: startsInExportMode)
+        _creationOutput = State(initialValue: startsInExportMode ? .pdf : nil)
         _selectedExportIdentifiers = State(initialValue: Set<String>())
+    }
+
+    private var isSelectingForExport: Bool {
+        creationOutput != nil
     }
 
     var body: some View {
@@ -1452,6 +1476,9 @@ struct SavedMemoriesGalleryView: View {
                 exportActionBar
             }
         }
+        .sheet(isPresented: $showsCreationOptions) {
+            creationOptions
+        }
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
         }
@@ -1478,7 +1505,8 @@ struct SavedMemoriesGalleryView: View {
         .onChange(of: Set(photos.map(\.localIdentifier))) { _, available in
             selectedExportIdentifiers.formIntersection(available)
             if available.isEmpty {
-                isSelectingForExport = false
+                creationOutput = nil
+                showsCreationOptions = false
             }
         }
         .onDisappear {
@@ -1489,6 +1517,48 @@ struct SavedMemoriesGalleryView: View {
 
     private var photoColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
+    }
+
+    private var creationOptions: some View {
+        NavigationStack {
+            List {
+                Button {
+                    beginCreation(.pdf)
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("PDF", systemImage: "doc.richtext")
+                            .font(.headline)
+                        Text("写真を1〜30枚選んで、PDFとして共有します。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 8)
+                }
+                .accessibilityIdentifier("saved-memories-create-pdf")
+
+                Button {
+                    beginCreation(.bookPreview)
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("本のイメージ", systemImage: "book.closed")
+                            .font(.headline)
+                        Text("写真を20枚選んで、このiPhoneで本の形を確認します。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 8)
+                }
+                .accessibilityIdentifier("saved-memories-create-book-preview")
+            }
+            .navigationTitle("作るものを選ぶ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { showsCreationOptions = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     @ViewBuilder
@@ -1505,7 +1575,7 @@ struct SavedMemoriesGalleryView: View {
                 isExportingPhotoBook
                     || (!isSelected
                         && selectedExportIdentifiers.count
-                            >= PhotoBookPolicy.maximumPhotosPerExport)
+                            >= (creationOutput?.maximumPhotoCount ?? 0))
             )
             .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
             .accessibilityValue(isSelected ? "選択中" : "未選択")
@@ -1522,57 +1592,57 @@ struct SavedMemoriesGalleryView: View {
     private var exportActionBar: some View {
         VStack(spacing: 8) {
             HStack {
+                Text(creationOutput == .pdf ? "PDF" : "本のイメージ")
+                    .font(.headline)
+                Spacer()
                 Text("\(selectedExportIdentifiers.count.formatted())枚を選択")
                     .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("最大\(PhotoBookPolicy.maximumPhotosPerExport.formatted())枚")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Button {
-                openBookDemandPreview()
-            } label: {
-                Label("本のイメージを見る", systemImage: "book.closed")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(
-                isExportingPhotoBook
-                    || !BookDemandValidationPolicy.canPreview(
-                        selectedPhotoCount: selectedExportIdentifiers.count
-                    )
-            )
-            .accessibilityIdentifier("book-demand-preview")
-            .accessibilityHint(bookDemandSelectionGuide)
-
-            Text(bookDemandSelectionGuide)
+            Text(creationOutput == .pdf
+                 ? "1〜30枚を選んで、PDFとして共有します。"
+                 : bookDemandSelectionGuide)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                if isExportingPhotoBook {
-                    photoBookExportTask?.cancel()
-                } else {
-                    createPhotoBookPDF()
-                }
-            } label: {
-                HStack {
+            if creationOutput == .pdf {
+                Button {
                     if isExportingPhotoBook {
-                        ProgressView()
+                        photoBookExportTask?.cancel()
                     } else {
-                        Image(systemName: "square.and.arrow.up")
+                        createPhotoBookPDF()
                     }
-                    Text(isExportingPhotoBook ? "作成をキャンセル" : "PDFとして共有")
+                } label: {
+                    HStack {
+                        if isExportingPhotoBook {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        Text(isExportingPhotoBook ? "作成をキャンセル" : "PDFとして共有")
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
+                .accessibilityIdentifier("photo-book-export")
+            } else {
+                Button {
+                    openBookDemandPreview()
+                } label: {
+                    Label("本のイメージを見る", systemImage: "book.closed")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!BookDemandValidationPolicy.canPreview(
+                    selectedPhotoCount: selectedExportIdentifiers.count
+                ))
+                .accessibilityIdentifier("book-demand-preview")
+                .accessibilityHint(bookDemandSelectionGuide)
             }
-            .buttonStyle(.bordered)
-            .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
-            .accessibilityIdentifier("photo-book-export")
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -1584,17 +1654,18 @@ struct SavedMemoriesGalleryView: View {
     private var bookDemandSelectionGuide: String {
         let selectedCount = selectedExportIdentifiers.count
         let requiredCount = BookDemandValidationPolicy.requiredPhotoCount
+        if photos.count < requiredCount {
+            return "本のイメージには20枚必要です。お気に入りにあと\((requiredCount - photos.count).formatted())枚追加してください。"
+        }
         if selectedCount < requiredCount {
             return "あと\((requiredCount - selectedCount).formatted())枚で、本のイメージを確認できます"
-        }
-        if selectedCount > requiredCount {
-            return "\((selectedCount - requiredCount).formatted())枚減らして、20枚にしてください"
         }
         return "選んだ20枚は端末の外へ送りません"
     }
 
     private func openBookDemandPreview() {
         guard !isExportingPhotoBook else { return }
+        guard creationOutput == .bookPreview else { return }
         let selectedPhotos = photos.filter {
             selectedExportIdentifiers.contains($0.localIdentifier)
         }
@@ -1612,28 +1683,30 @@ struct SavedMemoriesGalleryView: View {
             if isDedicatedPhotoBookFlow {
                 dismiss()
             } else {
-                isSelectingForExport = false
+                creationOutput = nil
             }
         } else {
-            isSelectingForExport = true
-            selectedExportIdentifiers = Set(
-                photos
-                    .prefix(PhotoBookPolicy.maximumPhotosPerExport)
-                    .map(\.localIdentifier)
-            )
+            showsCreationOptions = true
         }
     }
 
+    private func beginCreation(_ output: CreationOutput) {
+        selectedExportIdentifiers.removeAll()
+        creationOutput = output
+        showsCreationOptions = false
+    }
+
     private func toggleExportSelection(_ identifier: String) {
+        guard !isExportingPhotoBook, let creationOutput else { return }
         if selectedExportIdentifiers.contains(identifier) {
             selectedExportIdentifiers.remove(identifier)
-        } else if selectedExportIdentifiers.count < PhotoBookPolicy.maximumPhotosPerExport {
+        } else if selectedExportIdentifiers.count < creationOutput.maximumPhotoCount {
             selectedExportIdentifiers.insert(identifier)
         }
     }
 
     private func createPhotoBookPDF() {
-        guard !isExportingPhotoBook else { return }
+        guard !isExportingPhotoBook, creationOutput == .pdf else { return }
         let identifiers = Array(selectedExportIdentifiers)
         guard !identifiers.isEmpty else { return }
         isExportingPhotoBook = true

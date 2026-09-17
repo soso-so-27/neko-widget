@@ -165,7 +165,11 @@ struct MainTabView: View {
                     selectPhotoSourceAlbum: selectPhotoSourceAlbum,
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions
+                    catProfilesActions: catProfilesActions,
+                    catPhotoDestination: { profileID, photoID in
+                        AnyView(albumPhotoDetail(for: .allCatPhotos,
+                            localIdentifier: photoID, scope: .profile(profileID)))
+                    }
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
                 .navigationDestination(for: AlbumRoute.self) { route in
@@ -184,7 +188,8 @@ struct MainTabView: View {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
                         pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                        pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute
+                        pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
+                        showSettings: { showsSettings = true }
                     )
                 }
                 .tabItem {
@@ -1367,6 +1372,7 @@ private struct WindowListView: View {
 
     let supportsPrivateWindows: Bool
     let publicWindows: [PublicWindowPresentationSource]
+    let showSettings: (() -> Void)?
 
     init(opensActiveWindow: Binding<Bool>,
          pendingFamilyMomentSourceDigest: Binding<String?>,
@@ -1375,7 +1381,9 @@ private struct WindowListView: View {
          officialStore: OfficialWindowStore = .shared,
          refreshOfficialFeed: (() async throws -> Void)? = nil,
          previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
-         publicWindows: [PublicWindowPresentationSource]? = nil) {
+         publicWindows: [PublicWindowPresentationSource]? = nil,
+         showSettings: (() -> Void)? = nil) {
+        self.showSettings = showSettings
         _opensActiveWindow = opensActiveWindow
         _pendingFamilyMomentSourceDigest = pendingFamilyMomentSourceDigest
         _pendingFamilyNotificationRoute = pendingFamilyNotificationRoute
@@ -1494,13 +1502,19 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let showSettings {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: showSettings) { Image(systemName: "gearshape") }
+                        .accessibilityLabel("設定")
+                        .accessibilityIdentifier("windows-settings-button")
+                }
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if supportsPrivateWindows {
                     connectionEntry
                 }
                 NavigationLink { discovery } label: {
                     Image(systemName: "magnifyingglass")
-                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .accessibilityLabel("まどを探す")
                 .accessibilityIdentifier("window-list-discover")
@@ -1549,7 +1563,6 @@ private struct WindowListView: View {
         if setupWindows.count == 1, let pending = setupWindows.first {
             Button { open(pending) } label: {
                 Image(systemName: "person.badge.plus")
-                    .frame(minWidth: 44, minHeight: 44)
             }
             .disabled(model.isWorking || pausesWindowChanges || switchingWindowID != nil)
             .accessibilityLabel("\(pending.displayName)の設定を続ける")
@@ -1557,7 +1570,6 @@ private struct WindowListView: View {
         } else {
             NavigationLink { connectionOptions } label: {
                 Image(systemName: "person.badge.plus")
-                    .frame(minWidth: 44, minHeight: 44)
             }
             .accessibilityLabel("相手とつなぐ")
             .accessibilityIdentifier("window-list-connect")

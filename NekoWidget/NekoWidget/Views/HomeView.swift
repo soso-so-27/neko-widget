@@ -21,6 +21,7 @@ struct HomeView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
+    let catPhotoDestination: CatProfilePhotoDestination?
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -43,7 +44,8 @@ struct HomeView: View {
         selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
         refreshPhotoSourceAlbums: @escaping () async -> Void = {},
         catProfilesPresentation: CatProfilesPresentation = .init(),
-        catProfilesActions: CatProfilesViewActions = .noOp
+        catProfilesActions: CatProfilesViewActions = .noOp,
+        catPhotoDestination: CatProfilePhotoDestination? = nil
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -63,6 +65,7 @@ struct HomeView: View {
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
+        self.catPhotoDestination = catPhotoDestination
     }
 
     var body: some View {
@@ -99,7 +102,7 @@ struct HomeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button(action: showSettings) {
                     Image(systemName: "gearshape")
                 }
@@ -108,7 +111,8 @@ struct HomeView: View {
             }
         }
         .navigationDestination(item: $openedCatProfileIdentifier) { identifier in
-            if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
+            if hasPhotoAccess,
+               let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
                 CatProfileConfirmedPhotosView(
                     profile: profile,
                     allProfiles: catProfilesPresentation.profiles,
@@ -122,6 +126,10 @@ struct HomeView: View {
                 self.openedCatProfileIdentifier = nil
             }
         }
+        .onChange(of: hasPhotoAccess) { _, hasAccess in
+            if !hasAccess { openedCatProfileIdentifier = nil }
+        }
+        .environment(\.catProfilePhotoDestination, catPhotoDestination)
     }
 
     private var photoAccessCard: some View {
