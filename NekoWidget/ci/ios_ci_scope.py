@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,8 +19,10 @@ WIDGET_BEHAVIOR_SCOPE = "widget-behavior-v1"
 WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
+REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
-          WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE)
+          WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
+          REVIEWED_APP_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -62,6 +65,7 @@ CI_WORKFLOW = ".github/workflows/ios-build.yml"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
     "NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py",
+    "NekoWidget/ci/reviewed-app-ui.json",
 })
 CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
     "NekoWidget/ci/" + name for name in (
@@ -70,7 +74,46 @@ CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozen
         "test-app-store-screenshot-workflow.py",
     )
 )
-MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS
+REVIEW_MANIFEST = "NekoWidget/ci/reviewed-app-ui.json"
+REVIEWABLE_APP_PATHS = PHOTO_VIEWS | frozenset({
+    "NekoWidget/NekoWidget/Views/MainTabView.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
+})
+MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS
+
+
+def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """A reviewed batch is bound to exact old/new contents, never a file exemption.
+
+    The author records the reviewed UI diff and user-owned visual check. Builds,
+    runtime, photo access and security checks still run. Any extra edit, model,
+    storage, Widget, project or CI change falls back to the full suite.
+    """
+    if REVIEW_MANIFEST not in changes:
+        return False
+    app = {path: value for path, value in changes.items() if path != REVIEW_MANIFEST}
+    if not app or not set(app) <= REVIEWABLE_APP_PATHS:
+        return False
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1])
+        if review.get("schemaVersion") != 1 or review.get("visualReview") != "user-device":
+            return False
+        records = review["files"]
+        if set(records) != set(app) or not review.get("purpose", "").strip():
+            return False
+        for path, (before, after) in app.items():
+            expected = {"before": source_digest(before), "after": source_digest(after)}
+            if records[path] != expected:
+                return False
+        return True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def source_digest(source: str) -> str:
+    # Match git text reads on Windows and Mac without ignoring meaningful edits.
+    return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
 def workflow_execution(source: str) -> tuple[str, ...]:
@@ -145,6 +188,7 @@ def accepts_paths(scope: str, paths) -> bool:
         WIDGET_LAYOUT_SCOPE: WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS,
         WIDGET_STYLE_SCOPE: WIDGET_LAYOUT_PATHS,
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
+        REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
     }
     sources = source_paths(paths)
     return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
@@ -155,6 +199,12 @@ PHOTO_TESTS = (
     "NekoWidgetUITests/SoloMemoriesUITests",
 )
 OFFICIAL_TESTS = ("NekoWidgetUITests/OfficialWindowUITests",)
+REVIEWED_APP_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings",
+    "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
+    "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
+    "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
+))
 GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
     "testCaptureSharedWidgetAllSupportedSizes"
@@ -184,6 +234,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_APP_SCOPE:
+        return REVIEWED_APP_TESTS
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
         return WIDGET_UI_TESTS + (GALLERY_TEST,)
     if scope == WIDGET_STYLE_SCOPE:
@@ -330,6 +382,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_app_changes(changes):
+        return REVIEWED_APP_SCOPE
     if set(changes) <= CI_SELECTION_PATHS:
         return CI_SELECTION_SCOPE if ci_selection_only(changes) else FULL_SCOPE
     if set(changes) <= WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS:

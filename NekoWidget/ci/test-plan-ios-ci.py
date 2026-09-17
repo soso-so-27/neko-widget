@@ -22,6 +22,37 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_reviewed_app_batch_requires_exact_contents_and_entire_change_set(self):
+        path = "NekoWidget/NekoWidget/Views/MainTabView.swift"
+        pair = ("old app body\n", "new app body\n")
+        manifest = json.dumps({"schemaVersion": 1, "purpose": "User reviews visual layout on device",
+            "visualReview": "user-device", "files": {
+                path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}}})
+        changes = {path: pair, scope.REVIEW_MANIFEST: ("{}", manifest)}
+        self.assertEqual(scope.select_scope(changes), scope.REVIEWED_APP_SCOPE)
+        for altered in (
+            {path: pair},
+            dict(changes, **{path: (pair[0] + "unreviewed", pair[1])}),
+            dict(changes, **{path: (pair[0], pair[1] + "unreviewed")}),
+            dict(changes, **{"NekoWidget/Shared/Storage/AtomicJSON.swift": ("a", "b")}),
+            dict(changes, **{"NekoWidget/NekoWidget/Views/HomeView.swift": ("a", "b")}),
+            dict(changes, **{"NekoWidget/ci/ios_ci_scope.py": ("a", "b")}),
+            dict(changes, **{scope.REVIEW_MANIFEST: ("{}", "[]")}),
+            dict(changes, **{scope.REVIEW_MANIFEST: ("{}", manifest.replace("user-device", "none"))}),
+        ):
+            self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+        self.assertEqual(planner.required_jobs(list(changes), scope.REVIEWED_APP_SCOPE),
+            (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.REVIEWED_APP_SCOPE))
+        self.assertEqual(scope.lanes(scope.REVIEWED_APP_SCOPE), ("runtime", "app-ui"))
+        self.assertEqual(len(scope.native_tests(scope.REVIEWED_APP_SCOPE)), 4)
+
+    def test_reviewed_evidence_does_not_cover_full_or_missing_checks(self):
+        jobs = [{"name": name, "head_sha": "a" * 40, "status": "completed", "conclusion": "success"}
+                for name in planner.required_jobs_from_scope(scope.REVIEWED_APP_SCOPE)]
+        self.assertTrue(planner.covers_jobs(jobs, tuple(j["name"] for j in jobs), "a" * 40))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, "a" * 40))
+        self.assertFalse(planner.covers_jobs(jobs[:-1], tuple(j["name"] for j in jobs), "a" * 40))
+
     def setUp(self):
         self.sha = "a" * 40
         self.now = dt.datetime(2026, 9, 7, 12, tzinfo=dt.timezone.utc)
