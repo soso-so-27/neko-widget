@@ -29,4 +29,15 @@
 2. 「今日のピックアップ」と昔の撮影時期が伝わり、翌日も開きたくなるか。少ない候補では再登場しうる。
 3. 昔の写真を開いた時の時間の手がかりと保存マークの収まり。送りたい一枚があれば既存のまど送信へ進める。
 
-実装・CI・配布の結果は完了時に追記する。
+## 完了結果（2026-09-18）
+
+4点を実装しmainへ反映。製品SHA `aa55dbf4b132a1abb3054a635ef7ffc30ad6f592`、**TestFlight 1.0 (181)を9月18日00:08:04 JSTにAppleへアップロード成功**。実際のログで `UPLOAD SUCCEEDED with no errors` とarchiveアップロード成功を確認。Apple処理完了・内部グループでの表示・181の実機外観は未確認。
+
+- [候補CI 35234780175](https://github.com/soso-so-27/neko-widget/actions/runs/35234780175)：reviewed-app-ui-v1の全必須ジョブ成功。代表4件/0失敗、操作実行543秒（約9分）。CI全体21分05秒、UI job20分44秒。今回は失敗による再実行なし。操作件数を限定しても準備・ビルドを含む待ち時間は残る。
+- [main CI 35237230015](https://github.com/soso-so-27/neko-widget/actions/runs/35237230015)：同じSHA・scopeの成功証拠を再利用して成功。
+- [配布35237404031](https://github.com/soso-so-27/neko-widget/actions/runs/35237404031)：配布CLIのdry-runで旧予約180と同SHA証拠を確認し、181を一度だけdispatch。既存testflight環境のそのrunを承認し、署名/archive/export/upload成功。job6分26秒。App Store審査提出や一般公開はしていない。
+- 安価なローカル確認：開発フロー8群75.5秒、既存共有/Widget境界63件（既存skip1）成功。SwiftUI動作は上記4件で確認。独立担当のレビューを主担当に統合し、写真所属・権限・削除された猫の範囲保持・暦年維持・送信対象に新しい漏れは見つからなかった。
+
+代表テスト内で、どアップ→写真なしの猫→全猫に戻る、2025年→ミケ→正しい日付の1枚だけを閲覧/横送り→戻って猫選択維持→全猫に戻る、既存猫別写真・お気に入り作成・送信先確認を実行。外観全体や再訪率/送信意欲の改善を自動テスト済みとは扱わない。
+
+変更ファイルはLikedPhotosView.swift、MainTabView.swift、既存PhotoPermissionUITests.swiftとレビューmanifest。モデル/永続化/Widget/共有処理の変更なし。更新後は上の実機3項目を普段の写真で確認する。
