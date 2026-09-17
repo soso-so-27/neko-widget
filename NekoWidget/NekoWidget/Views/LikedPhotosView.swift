@@ -1063,7 +1063,7 @@ struct LikedPhotosView: View {
     }
     @ViewBuilder private var catPhotoLibraryLink: some View {
         if let identifier = catIdentifier,
-           let album = albumSections.flatMap(\.albums).first(where: { $0.id == .all }) {
+           let album = albumSections.flatMap(\.albums).first(where: { $0.id == .allCatPhotos }) {
             NavigationLink(value: AlbumRoute.catAlbum(profileIdentifier: identifier, album: album.id)) {
                 AlbumNavigationRow(title: "写真", subtitle: album.countLabel, symbol: "photo.on.rectangle")
             }.accessibilityIdentifier("albums-cat-photos")
