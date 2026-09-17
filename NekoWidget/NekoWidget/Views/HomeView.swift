@@ -21,7 +21,6 @@ struct HomeView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
-    let catPhotoDestination: CatProfilePhotoDestination?
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -44,8 +43,7 @@ struct HomeView: View {
         selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
         refreshPhotoSourceAlbums: @escaping () async -> Void = {},
         catProfilesPresentation: CatProfilesPresentation = .init(),
-        catProfilesActions: CatProfilesViewActions = .noOp,
-        catPhotoDestination: CatProfilePhotoDestination? = nil
+        catProfilesActions: CatProfilesViewActions = .noOp
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -65,7 +63,6 @@ struct HomeView: View {
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
-        self.catPhotoDestination = catPhotoDestination
     }
 
     var body: some View {
@@ -129,7 +126,6 @@ struct HomeView: View {
         .onChange(of: hasPhotoAccess) { _, hasAccess in
             if !hasAccess { openedCatProfileIdentifier = nil }
         }
-        .environment(\.catProfilePhotoDestination, catPhotoDestination)
     }
 
     private var photoAccessCard: some View {

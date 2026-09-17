@@ -165,11 +165,7 @@ struct MainTabView: View {
                     selectPhotoSourceAlbum: selectPhotoSourceAlbum,
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions,
-                    catPhotoDestination: { profileID, photoID in
-                        AnyView(albumPhotoDetail(for: .allCatPhotos,
-                            localIdentifier: photoID, scope: .profile(profileID)))
-                    }
+                    catProfilesActions: catProfilesActions
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
                 .navigationDestination(for: AlbumRoute.self) { route in
@@ -177,6 +173,10 @@ struct MainTabView: View {
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
             }
+            .environment(\.catProfilePhotoDestination, { profileID, photoID in
+                AnyView(albumPhotoDetail(for: .allCatPhotos,
+                    localIdentifier: photoID, scope: .profile(profileID)))
+            })
             .tabItem {
                 Label("写真", systemImage: "photo.on.rectangle.angled")
                     .accessibilityIdentifier("main-tab-photos")
