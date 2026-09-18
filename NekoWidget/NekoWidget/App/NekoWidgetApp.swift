@@ -48,6 +48,8 @@ struct NekoWidgetApp: App {
 #if DEBUG
             if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
+            } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
+                PersonalArchiveUIFixture()
             } else if CommandLine.arguments.contains("--widget-photo-opening-ui-fixture") {
                 WidgetPhotoOpeningFixture()
             } else if CommandLine.arguments.contains("--personal-rediscovery-ui-fixture") {

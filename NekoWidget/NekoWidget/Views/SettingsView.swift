@@ -140,6 +140,17 @@ struct SettingsView: View {
                 Text("写真とねこ")
             }
 
+            if PersonalArchiveStore.isConfigured {
+                Section {
+                    NavigationLink {
+                        PersonalArchiveView()
+                    } label: {
+                        Label("記録の保管", systemImage: "icloud")
+                    }
+                    .accessibilityIdentifier("settings-personal-archive")
+                }
+            }
+
             Section {
                 Button(action: showWidgetPlacementGuide) {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")

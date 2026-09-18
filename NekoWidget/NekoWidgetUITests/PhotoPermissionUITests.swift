@@ -1445,6 +1445,41 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let refresh = app.buttons["personal-archive-refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
+        refresh.tap()
+        let restored = app.buttons["personal-archive-record-11111111-1111-4111-8111-111111111111"]
+        for _ in 0..<4 { if restored.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(restored.waitForExistence(timeout: 10))
+        capture("personal-archive-restored-list")
+        restored.tap()
+        XCTAssertTrue(app.staticTexts["はじめて窓辺で眠った日"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.images["保管した写真"].exists)
+        capture("personal-archive-restored-record")
+        app.navigationBars["記録"].buttons.element(boundBy: 0).tap()
+        let compose = app.buttons["personal-archive-compose"]
+        for _ in 0..<4 { if compose.isHittable { break }; app.swipeDown() }
+        XCTAssertTrue(compose.isHittable)
+        compose.tap()
+        let text = app.textViews["personal-archive-text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.tap(); text.typeText("A quiet afternoon")
+        app.buttons["完了"].tap()
+        app.buttons["personal-archive-save"].tap()
+        XCTAssertTrue(app.navigationBars["記録の保管"].waitForExistence(timeout: 10))
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-"))
+        expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: rows)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.navigationBars["保管する記録"].exists)
+    }
+
+    @MainActor
     func testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings() {
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",

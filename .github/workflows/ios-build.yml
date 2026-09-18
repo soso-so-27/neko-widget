@@ -741,6 +741,23 @@ jobs:
             -o "$RUNNER_TEMP/verify-photo-memory-notes"
           "$RUNNER_TEMP/verify-photo-memory-notes"
 
+      - name: Verify private archive persistence and image preparation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
+            NekoWidget/Services/PersonalArchiveStore.swift \
+            NekoWidget/Services/PersonalArchiveCloudClient.swift \
+            ci/verify-personal-archive.swift \
+            -o "$RUNNER_TEMP/verify-personal-archive"
+          "$RUNNER_TEMP/verify-personal-archive"
+          xcrun swiftc -parse-as-library \
+            NekoWidget/Services/PersonalArchiveImage.swift \
+            ci/verify-personal-archive-image.swift \
+            -o "$RUNNER_TEMP/verify-personal-archive-image"
+          "$RUNNER_TEMP/verify-personal-archive-image"
+
       - name: Verify private memory text export and temporary file cleanup
         working-directory: NekoWidget
         shell: bash

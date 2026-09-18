@@ -40,6 +40,10 @@
 		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
 		A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000011 /* PhotoMemoryNoteStore.swift */; };
 		A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */; };
+		A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000201 /* PersonalArchiveStore.swift */; };
+		A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000202 /* PersonalArchiveCloudClient.swift */; };
+		A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000203 /* PersonalArchiveImage.swift */; };
+		A18500000000000000000104 /* PersonalArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000204 /* PersonalArchiveView.swift */; };
 		A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000012 /* PhotoMemoryNoteView.swift */; };
 		A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */; };
 		100000000000000000000112 /* PhotoAlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000212 /* PhotoAlbumService.swift */; };
@@ -287,6 +291,10 @@
 		F00000000000000000000211 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		A18200000000000000000011 /* PhotoMemoryNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteStore.swift; sourceTree = "<group>"; };
 		A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteExporter.swift; sourceTree = "<group>"; };
+		A18500000000000000000201 /* PersonalArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveStore.swift; sourceTree = "<group>"; };
+		A18500000000000000000202 /* PersonalArchiveCloudClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveCloudClient.swift; sourceTree = "<group>"; };
+		A18500000000000000000203 /* PersonalArchiveImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveImage.swift; sourceTree = "<group>"; };
+		A18500000000000000000204 /* PersonalArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveView.swift; sourceTree = "<group>"; };
 		A18200000000000000000012 /* PhotoMemoryNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteView.swift; sourceTree = "<group>"; };
 		A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteLibraryView.swift; sourceTree = "<group>"; };
 		F00000000000000000000212 /* PhotoAlbumService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAlbumService.swift; sourceTree = "<group>"; };
@@ -627,6 +635,9 @@
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
+				A18500000000000000000201 /* PersonalArchiveStore.swift */,
+				A18500000000000000000202 /* PersonalArchiveCloudClient.swift */,
+				A18500000000000000000203 /* PersonalArchiveImage.swift */,
 				F00000000000000000000212 /* PhotoAlbumService.swift */,
 				F00000000000000000000213 /* PhotoAuthorizationService.swift */,
 				F00000000000000000000214 /* PhotoImageLoader.swift */,
@@ -697,6 +708,7 @@
 				F00000000000000000000232 /* LikedPhotosView.swift */,
 				A18200000000000000000012 /* PhotoMemoryNoteView.swift */,
 				A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */,
+				A18500000000000000000204 /* PersonalArchiveView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
@@ -989,6 +1001,10 @@
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
+				A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */,
+				A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */,
+				A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */,
+				A18500000000000000000104 /* PersonalArchiveView.swift in Sources */,
 				A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */,
 				A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */,
 				100000000000000000000112 /* PhotoAlbumService.swift in Sources */,
@@ -1282,6 +1298,7 @@
 			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
 			buildSettings = {
 				APS_ENVIRONMENT = development;
+				ICLOUD_ENVIRONMENT = Development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -1310,6 +1327,7 @@
 			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				APS_ENVIRONMENT = production;
+				ICLOUD_ENVIRONMENT = Production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
