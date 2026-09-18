@@ -1798,7 +1798,28 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testWidgetPhotoConnectsToRelatedYearThemeAndExplicitCat() {
+    func testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin() throws {
+        func hittableElements(_ query: XCUIElementQuery, count: Int = 1, timeout: TimeInterval = 5,
+                              file: StaticString = #filePath, line: UInt = #line) throws -> [XCUIElement] {
+            let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == count
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: timeout), .completed,
+                           "Expected exactly \(count) foreground elements", file: file, line: line)
+            let matches = query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+            return try XCTUnwrap(matches.count == count ? matches : nil,
+                                 "Foreground elements changed before use", file: file, line: line)
+        }
+        func foreground(_ query: XCUIElementQuery, timeout: TimeInterval = 5,
+                        file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+            try hittableElements(query, timeout: timeout, file: file, line: line)[0]
+        }
+        func closeSheet(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) throws {
+            let close = app.buttons.matching(identifier: "photo-related-close")
+            try foreground(close, file: file, line: line).tap()
+            _ = try hittableElements(close, count: 0, file: file, line: line)
+        }
+
         for largeText in [false, true] {
             let app = XCUIApplication()
             app.launchArguments = ["--app-store-screenshot-fixture",
@@ -1806,95 +1827,82 @@ final class SoloMemoriesUITests: XCTestCase {
                 + (largeText ? ["--ux-large-text"] : [])
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "rediscovery"
             app.launch()
-            let related = app.buttons["photo-browser-related"]
-            XCTAssertTrue(related.waitForExistence(timeout: 15))
-            XCTAssertTrue(related.isHittable)
+            let related = app.buttons.matching(identifier: "photo-browser-related")
+            let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
+            let secondDayPhoto = app.buttons.matching(identifier: "day-photos-photo-app-store-screenshot-fixture-2")
+            let secondPage = app.staticTexts.matching(NSPredicate(format: "label == %@", "2 / 2"))
+            let back = app.buttons.matching(identifier: "BackButton")
+            _ = try foreground(related, timeout: 15)
             capture(largeText ? "photo-related-largest-text" : "photo-related-widget-detail")
-            related.tap()
-            let theme = app.buttons["photo-related-theme-close_up"]
-            let cat = app.buttons["photo-related-cat-fixture-cat-0"]
-            let year = app.buttons["photo-related-year-calendar_year_2025"]
-            XCTAssertTrue(theme.waitForExistence(timeout: 5))
-            XCTAssertTrue(cat.exists)
-            XCTAssertTrue(year.exists)
-            XCTAssertFalse(app.buttons["photo-related-cat-fixture-cat-1"].exists,
-                "The other household cat is not explicitly assigned to this photo")
+            try foreground(related).tap()
+            let theme = app.buttons.matching(identifier: "photo-related-theme-close_up")
+            let cat = app.buttons.matching(identifier: "photo-related-cat-fixture-cat-0")
+            let year = app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")
+            _ = try foreground(theme)
+            _ = try foreground(cat)
+            _ = try foreground(year)
+            _ = try hittableElements(app.buttons.matching(identifier: "photo-related-cat-fixture-cat-1"), count: 0)
             capture(largeText ? "photo-related-menu-largest-text" : "photo-related-menu")
             if largeText { app.terminate(); continue }
 
-            year.tap()
-            let thirdYearPhoto = app.buttons["curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"]
-            XCTAssertTrue(thirdYearPhoto.waitForExistence(timeout: 5))
-            app.buttons["photo-related-close"].tap()
-            let sameDay = app.buttons["photo-browser-same-day"]
-            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
-            sameDay.tap()
-            let secondDayPhoto = app.buttons["day-photos-photo-app-store-screenshot-fixture-2"]
-            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
-            secondDayPhoto.tap()
-            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
-            XCTAssertTrue(related.exists, "Related navigation must also work inside the same-day collection")
-            related.tap()
-            XCTAssertTrue(theme.waitForExistence(timeout: 5))
-            theme.tap()
-            let secondThemePhoto = app.buttons["curated-album-photo-close_up-app-store-screenshot-fixture-2"]
-            XCTAssertTrue(secondThemePhoto.waitForExistence(timeout: 5))
-            XCTAssertFalse(app.buttons["curated-album-photo-close_up-app-store-screenshot-fixture-3"].exists)
-            secondThemePhoto.tap()
-            XCTAssertTrue(related.waitForExistence(timeout: 5))
-            related.tap()
-            XCTAssertTrue(cat.waitForExistence(timeout: 5))
-            cat.tap()
-            let firstCatPhoto = app.buttons["curated-album-photo-all_cat_photos-app-store-screenshot-fixture-1"]
-            XCTAssertTrue(firstCatPhoto.waitForExistence(timeout: 5))
-            XCTAssertFalse(app.buttons["curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"].exists)
-            firstCatPhoto.tap()
-            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
-            sameDay.tap()
-            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
-            secondDayPhoto.tap()
-            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
-            XCTAssertTrue(related.waitForExistence(timeout: 5))
-            related.tap()
-            XCTAssertFalse(app.buttons["photo-related-cat-fixture-cat-1"].exists)
-            XCTAssertTrue(year.waitForExistence(timeout: 5))
-            year.tap()
-            XCTAssertTrue(app.buttons["curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-1"].waitForExistence(timeout: 5))
-            XCTAssertFalse(thirdYearPhoto.exists,
-                "The year opened inside one cat's album must preserve that explicit cat scope")
+            try foreground(year).tap()
+            let thirdYearPhoto = app.buttons.matching(identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3")
+            _ = try foreground(thirdYearPhoto)
+            try closeSheet(in: app)
+            try foreground(sameDay).tap()
+            try foreground(secondDayPhoto).tap()
+            _ = try foreground(secondPage)
+            try foreground(related).tap()
+            try foreground(theme).tap()
+            let secondThemePhoto = app.buttons.matching(identifier: "curated-album-photo-close_up-app-store-screenshot-fixture-2")
+            _ = try foreground(secondThemePhoto)
+            _ = try hittableElements(app.buttons.matching(identifier: "curated-album-photo-close_up-app-store-screenshot-fixture-3"), count: 0)
+            try foreground(secondThemePhoto).tap()
+            _ = try foreground(related)
+            _ = try foreground(app.buttons.matching(identifier: "photo-related-close"))
+            capture("photo-related-sheet-photo")
+            try foreground(related).tap()
+            try foreground(cat).tap()
+            let firstCatPhoto = app.buttons.matching(identifier: "curated-album-photo-all_cat_photos-app-store-screenshot-fixture-1")
+            _ = try foreground(firstCatPhoto)
+            _ = try hittableElements(app.buttons.matching(identifier: "curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"), count: 0)
+            try foreground(firstCatPhoto).tap()
+            try foreground(sameDay).tap()
+            try foreground(secondDayPhoto).tap()
+            _ = try foreground(secondPage)
+            try foreground(related).tap()
+            _ = try foreground(year)
+            _ = try hittableElements(app.buttons.matching(identifier: "photo-related-cat-fixture-cat-1"), count: 0)
+            try foreground(year).tap()
+            _ = try foreground(app.buttons.matching(identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-1"))
+            // All three fixture cards would be on screen; only this cat's two belong here.
+            _ = try hittableElements(thirdYearPhoto, count: 0)
             capture("photo-related-year-keeps-cat-scope")
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5),
-                "Back inside exploration preserves its same-day photo destination")
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
-            app.buttons["photo-related-close"].tap()
-            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5),
-                "Closing exploration returns to the same photo in the original day's collection")
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
-            app.navigationBars.buttons.firstMatch.tap()
-            let catShortcut = app.buttons["photo-hub-cat-fixture-cat-0"]
-            XCTAssertTrue(catShortcut.waitForExistence(timeout: 5))
-            catShortcut.tap()
+            try foreground(back).tap()
+            _ = try foreground(secondPage) // The sheet's same-day photo, not the original behind it.
+            try foreground(back).tap()
+            _ = try foreground(secondDayPhoto)
+            try closeSheet(in: app)
+            _ = try foreground(secondPage) // Closing preserves the original collection's second photo.
+            try foreground(back).tap()
+            _ = try foreground(secondDayPhoto)
+            try foreground(back).tap()
+            _ = try foreground(sameDay)
+            try foreground(back).tap()
+            let catShortcut = app.buttons.matching(identifier: "photo-hub-cat-fixture-cat-0")
+            try foreground(catShortcut).tap()
             let catPhotos = app.buttons.matching(identifier: "cat-profile-photo")
-            XCTAssertTrue(catPhotos.firstMatch.waitForExistence(timeout: 5))
-            catPhotos.firstMatch.tap()
-            XCTAssertTrue(related.waitForExistence(timeout: 5))
-            related.tap()
-            XCTAssertTrue(year.waitForExistence(timeout: 5))
-            year.tap()
-            XCTAssertTrue(app.buttons["photo-related-close"].waitForExistence(timeout: 5))
-            app.buttons["photo-related-close"].tap()
-            XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5),
-                "Item-based cat navigation must remain underneath the related-photo sheet")
-            XCTAssertEqual(catPhotos.count, 2)
-            app.navigationBars.buttons.firstMatch.tap()
-            XCTAssertTrue(catShortcut.waitForExistence(timeout: 5))
+            // This grid deliberately contains two choices; open its first visible card.
+            try hittableElements(catPhotos, count: 2)[0].tap()
+            try foreground(related).tap()
+            try foreground(year).tap()
+            try closeSheet(in: app)
+            _ = try foreground(app.buttons.matching(identifier: "photo-memory-note-open"))
+            try foreground(back).tap()
+            XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+            _ = try hittableElements(catPhotos, count: 2)
+            try foreground(back).tap()
+            _ = try foreground(catShortcut)
             app.terminate()
         }
     }
