@@ -5,6 +5,11 @@ import CloudKit
 import UniformTypeIdentifiers
 import ImageIO
 
+private func personalArchiveMessage(for error: Error) -> String {
+    (error as? PersonalArchiveError)?.errorDescription
+        ?? "記録を処理できませんでした。もう一度お試しください。"
+}
+
 /// An internal, opt-in CloudKit pilot. Existing photos and notes are never
 /// enrolled by opening this screen. Each Save is a separate immutable record.
 struct PersonalArchiveView: View {
@@ -147,7 +152,7 @@ struct PersonalArchiveView: View {
             records = loaded; errorMessage = nil
         } catch {
             guard generation == viewGeneration else { return }
-            records = []; errorMessage = error.localizedDescription
+            records = []; errorMessage = personalArchiveMessage(for: error)
         }
     }
 
@@ -162,7 +167,7 @@ struct PersonalArchiveView: View {
         } catch {
             let local = try? await store.records()
             guard generation == viewGeneration else { return }
-            records = local ?? []; errorMessage = error.localizedDescription
+            records = local ?? []; errorMessage = personalArchiveMessage(for: error)
         }
     }
 
@@ -179,7 +184,7 @@ struct PersonalArchiveView: View {
         } catch {
             let local = try? await store.records()
             guard generation == viewGeneration else { return }
-            records = local ?? []; errorMessage = error.localizedDescription
+            records = local ?? []; errorMessage = personalArchiveMessage(for: error)
         }
     }
 }
@@ -213,7 +218,7 @@ private struct PersonalArchiveRecordView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Text(record.state.archiveLabel).font(.caption).foregroundStyle(.secondary)
                 if let issue = record.issue {
-                    Text(issue.localizedDescription).font(.subheadline).foregroundStyle(.secondary)
+                    Text(personalArchiveMessage(for: issue)).font(.subheadline).foregroundStyle(.secondary)
                 }
             }.padding()
         }
@@ -249,72 +254,108 @@ private struct PersonalArchiveComposer: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    if let jpegData, let image = UIImage(data: jpegData) {
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .accessibilityLabel("保管する写真")
-                    }
-                    PhotosPicker(selection: $selection, matching: .images,
-                                 preferredItemEncoding: .current) {
-                        Label(jpegData == nil ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo")
-                    }.disabled(isSaving || isPreparing || hasAttemptedSave)
-                    if jpegData != nil {
-                        Button("写真を外す") { selection = nil; jpegData = nil; selectionVersion = UUID() }
-                            .disabled(isSaving || isPreparing || hasAttemptedSave)
-                    }
-                    if isPreparing { ProgressView("写真を準備しています…") }
-                }
-                Section("言葉（任意）") {
-                    TextEditor(text: $text).frame(minHeight: 140)
-                        .focused($isWriting).disabled(isSaving || hasAttemptedSave)
-                        .accessibilityLabel("保管する言葉")
-                        .accessibilityIdentifier("personal-archive-text")
-                } footer: { Text("\(text.count) / 500文字") }
-                Section {
-                    Text("この内容を自分のiCloudに保管します。相手には送られません。")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
-                if isSaving { ProgressView("保管しています…") }
-            }
+            composerForm
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("保管する記録").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("戻る") {
-                        isWriting = false
-                        if jpegData != nil || !text.isEmpty { confirmsDiscard = true } else { dismiss() }
-                    }.disabled(isSaving)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(hasAttemptedSave ? "再試行" : "保管") { Task { await save() } }
-                        .disabled(isSaving || isPreparing || accountContext == nil || accountChanged || text.count > 500 ||
-                                  (jpegData == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                        .accessibilityIdentifier("personal-archive-save")
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("完了") { isWriting = false }
-                }
-            }
+            .toolbar { composerToolbar }
             .interactiveDismissDisabled(jpegData != nil || !text.isEmpty || isSaving)
             .confirmationDialog(hasAttemptedSave ? "この画面を閉じますか？" : "入力を取り消しますか？", isPresented: $confirmsDiscard, titleVisibility: .visible) {
-                Button(hasAttemptedSave ? "閉じる" : "取り消して戻る", role: hasAttemptedSave ? nil : .destructive) { dismiss() }
-                Button("入力を続ける", role: .cancel) { }
+                discardActions
             } message: {
                 if hasAttemptedSave { Text("このiPhoneに保存済みの記録は、画面を閉じても削除されません。") }
             }
             .onChange(of: selection) { _, item in Task { await prepare(item) } }
             .task {
                 do { accountContext = try await store.accountContext() }
-                catch { errorMessage = error.localizedDescription }
+                catch { errorMessage = personalArchiveMessage(for: error) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
                 accountChanged = true
                 errorMessage = "Apple Accountの状態が変わったため、保管を止めました。入力内容はこの画面に残っています。元のアカウントを確認してください。"
             }
         }
+    }
+
+    private var composerForm: some View {
+        Form {
+            photoSection
+            textSection
+            privacySection
+            if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
+            if isSaving { ProgressView("保管しています…") }
+        }
+    }
+
+    private var photoSection: some View {
+        Section {
+            if let jpegData, let image = UIImage(data: jpegData) {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .accessibilityLabel("保管する写真")
+            }
+            PhotosPicker(selection: $selection, matching: .images,
+                         preferredItemEncoding: .current) {
+                Label(jpegData == nil ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo")
+            }.disabled(isSaving || isPreparing || hasAttemptedSave)
+            if jpegData != nil {
+                Button("写真を外す") { selection = nil; jpegData = nil; selectionVersion = UUID() }
+                    .disabled(isSaving || isPreparing || hasAttemptedSave)
+            }
+            if isPreparing { ProgressView("写真を準備しています…") }
+        }
+    }
+
+    private var textSection: some View {
+        Section {
+            TextEditor(text: $text).frame(minHeight: 140)
+                .focused($isWriting).disabled(isSaving || hasAttemptedSave)
+                .accessibilityLabel("保管する言葉")
+                .accessibilityIdentifier("personal-archive-text")
+        } header: {
+            Text("言葉（任意）")
+        } footer: {
+            Text("\(text.count) / 500文字")
+        }
+    }
+
+    private var privacySection: some View {
+        Section {
+            Text("この内容を自分のiCloudに保管します。相手には送られません。")
+                .font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var composerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("戻る") {
+                isWriting = false
+                if jpegData != nil || !text.isEmpty { confirmsDiscard = true } else { dismiss() }
+            }.disabled(isSaving)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button(hasAttemptedSave ? "再試行" : "保管") { Task { await save() } }
+                .disabled(saveDisabled)
+                .accessibilityIdentifier("personal-archive-save")
+        }
+        ToolbarItemGroup(placement: .keyboard) {
+            Spacer()
+            Button("完了") { isWriting = false }
+        }
+    }
+
+    private var saveDisabled: Bool {
+        isSaving || isPreparing || accountContext == nil || accountChanged || text.count > 500 ||
+            (jpegData == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    @ViewBuilder
+    private var discardActions: some View {
+        if hasAttemptedSave {
+            Button("閉じる") { dismiss() }
+        } else {
+            Button("取り消して戻る", role: .destructive) { dismiss() }
+        }
+        Button("入力を続ける", role: .cancel) { }
     }
 
     @MainActor private func prepare(_ item: PhotosPickerItem?) async {
@@ -347,7 +388,7 @@ private struct PersonalArchiveComposer: View {
             _ = try await store.save(id: saveID, jpegData: jpegData, text: text, capturedAt: nil,
                                      expectedAccount: accountContext)
             dismiss()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = personalArchiveMessage(for: error) }
     }
 }
 
