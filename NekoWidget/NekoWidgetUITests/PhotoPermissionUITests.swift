@@ -2424,6 +2424,87 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let entry = app.buttons["albums-memory-notes"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        XCTAssertEqual(entry.value as? String, "1件")
+        attach(app, name: "memory-library-album-entry")
+        entry.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        attach(app, name: "memory-library-list")
+        app.buttons["memory-notes-export"].tap()
+        XCTAssertTrue(app.staticTexts["本文・日付・記録した猫の名前を含みます。写真は含みません。"].waitForExistence(timeout: 5))
+        app.buttons["キャンセル"].tap()
+        row.tap()
+        let body = app.staticTexts["memory-note-body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertTrue(body.label.contains("小さな寝息"))
+        let photo = app.buttons["memory-note-photo"]
+        XCTAssertTrue(photo.isHittable)
+        photo.tap()
+        XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["photo-memory-note-excerpt"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        app.buttons["memory-note-edit"].tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("またここで眠ろう。")
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "またここで眠ろう。"), object: body)], timeout: 5), .completed)
+        attach(app, name: "memory-library-detail")
+        app.terminate()
+    }
+
+    @MainActor
+    func testMemoryLibraryWithoutPhotoSupportsLargestTextEditingAndDeletion() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
+                               "--memory-library-no-photo", "--photo-window-large",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let entry = app.buttons["albums-memory-notes"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Text must remain reachable without Photos access")
+        entry.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["memory-notes-export"].isEnabled)
+        row.tap()
+        let body = app.staticTexts["memory-note-body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["memory-note-photo"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["memory-note-photo-unavailable"].firstMatch.exists)
+        XCTAssertLessThanOrEqual(body.frame.maxX, app.frame.maxX)
+        attach(app, name: "memory-library-no-photo-largest-text")
+        app.buttons["memory-note-edit"].tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("文章は残っている。")
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "文章は残っている。"), object: body)], timeout: 5), .completed)
+        app.buttons["memory-note-menu"].tap()
+        app.buttons["メモを削除"].tap()
+        app.buttons["削除"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["memory-notes-empty"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["memory-notes-export"].isEnabled)
+        attach(app, name: "memory-library-empty-after-deletion")
+        app.terminate()
+    }
+
+    @MainActor
     func testPhotoDeliveryProgressAllowsOtherActionsAndShowsTruthfulStates() {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-delivery-progress-ui-fixture", "--delivery-progress-display-only",

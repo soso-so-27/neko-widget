@@ -12,6 +12,9 @@ enum PhotosRoute: Hashable {
 
 enum MemoriesRoute: Hashable {
     case favorites
+    case memoryNotes
+    case memoryNote(UUID)
+    case memoryNotePhoto(UUID)
     case reflectionsArchive
     case highlightsArchive
     case highlight(AlbumHighlightPresentation)
@@ -510,6 +513,17 @@ struct MainTabView: View {
     @ViewBuilder
     private func memoriesDestination(for route: MemoriesRoute) -> some View {
         switch route {
+        case .memoryNotes:
+            PhotoMemoryNotesListView(photos: memoryNotePhotos) {
+                photosPath = NavigationPath()
+                selectedTab = .photos
+            }
+        case let .memoryNote(identifier):
+            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos)
+        case let .memoryNotePhoto(identifier):
+            PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos) { photo in
+                photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false)
+            }
         case .favorites:
             SavedMemoriesGalleryView(
                 photos: likedPhotos, startsInExportMode: false,
@@ -1326,6 +1340,17 @@ struct MainTabView: View {
         growthPhotoOverridesJSON = overrideDocument.encoded()
     }
 
+    private var memoryNotePhotos: [PhotoPresentation] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        // Favorites already have a deliberate, source-independent route.
+        // Other records only resolve within the current source library.
+        var seen = Set<String>()
+        return (libraryPhotos + likedPhotos).filter {
+            !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
+                && seen.insert($0.localIdentifier).inserted
+        }
+    }
+
     private var excludedCatCandidateIdentifiers: Set<String> {
         Set(excludedCatPhotos.map(\.localIdentifier))
     }
@@ -1372,6 +1397,9 @@ struct MainTabView: View {
             return photo
         }
         if let photo = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+            return photo
+        }
+        if let photo = libraryPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
             return photo
         }
         // A widget can open while the in-memory snapshot is still loading. PhotoKit can still

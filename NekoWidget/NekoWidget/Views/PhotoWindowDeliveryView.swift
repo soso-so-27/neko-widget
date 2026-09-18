@@ -50,6 +50,14 @@ struct PhotoWindowDeliveryFixture: View {
     }
 
     var body: some View {
+        if CommandLine.arguments.contains("--memory-library-fixture") {
+            PhotoMemoryNoteLibraryFixture()
+        } else {
+            deliveryFixture
+        }
+    }
+
+    private var deliveryFixture: some View {
         NavigationStack {
             PhotoBrowserView(photos: photos, libraryPhotos: photos,
                 initialPhoto: photos[0], widgetShownAt: nil, showsWidgetTiming: false,

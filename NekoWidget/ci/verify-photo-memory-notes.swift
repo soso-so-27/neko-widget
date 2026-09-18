@@ -16,7 +16,11 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesConcurrentPhotos(at: root.appendingPathComponent("parallel/state.json"))
         try await verifiesInvalidStateAndRecovery(at: root.appendingPathComponent("invalid/state.json"))
         try await verifiesWriteFailureAndRetry(at: root.appendingPathComponent("write-failure/state.json"))
-        print("Photo memory note verifier passed: editing, conflict, persistence, isolation, failure recovery")
+        try await verifiesConcurrentMigration(at: root.appendingPathComponent("migration/state.json"))
+        try await verifiesMigrationFailureAndRetry(at: root.appendingPathComponent("migration-failure/state.json"))
+        try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
+        try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
+        print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
     }
 
     private static func verifiesReopenAndEditing(at url: URL) async throws {
@@ -30,6 +34,8 @@ enum PhotoMemoryNoteVerifier {
         let first = try await saved(store, text: "  はじめての窓辺\n\n風を見ていた  \n", id: "photo-a")
         try require(first.text == "はじめての窓辺\n\n風を見ていた", "trim damaged interior newlines")
         try require(UUID(uuidString: first.revision) != nil, "revision is not a UUID")
+        try require(first.writtenAt == first.updatedAt && first.context == nil,
+                    "new note did not record its writing date independently of capture date")
         let reopened = PhotoMemoryNoteStore(fileURL: url)
         let loaded = try await reopened.note(for: "photo-a")
         try require(loaded == first, "note did not survive reopening")
@@ -43,6 +49,8 @@ enum PhotoMemoryNoteVerifier {
         let updated = try await saved(reopened, text: "また窓辺に来た", id: "photo-a",
                                       revision: first.revision)
         try require(updated.revision != first.revision, "edit reused an old revision")
+        try require(updated.id == first.id && updated.writtenAt == first.writtenAt,
+                    "edit replaced the stable identity or original writing date")
         let committedBytes = try Data(contentsOf: url)
         try await expect(.conflict) {
             _ = try await store.save(text: "古い編集中の内容", for: "photo-a", expectedRevision: first.revision)
@@ -118,6 +126,11 @@ enum PhotoMemoryNoteVerifier {
         try await expect(.unsupportedSchema(99)) {
             _ = try await store.save(text: "上書き禁止", for: "photo-a", expectedRevision: original.revision)
         }
+        try await expect(.unsupportedSchema(99)) { _ = try await store.records() }
+        try await expect(.unsupportedSchema(99)) { _ = try await store.record(id: original.id) }
+        try await expect(.unsupportedSchema(99)) {
+            try await store.delete(id: original.id, expectedRevision: original.revision)
+        }
         try require(try Data(contentsOf: url) == future, "future schema was replaced")
 
         var invalidRecord = try JSONSerialization.jsonObject(with: originalBytes) as! [String: Any]
@@ -172,6 +185,196 @@ enum PhotoMemoryNoteVerifier {
         let reread = try await PhotoMemoryNoteStore(fileURL: url).note(for: "photo-a")
         let untouched = try await store.note(for: "photo-b")
         try require(reread == retry && untouched == other, "retry did not preserve unrelated notes")
+    }
+
+    private static func verifiesConcurrentMigration(at url: URL) async throws {
+        let legacy = try writeLegacyFixture(to: url)
+        var results: [[PhotoMemoryNoteRecord]] = []
+        try await withThrowingTaskGroup(of: [PhotoMemoryNoteRecord].self) { group in
+            for _ in 0..<12 {
+                group.addTask { try await PhotoMemoryNoteStore(fileURL: url).records() }
+            }
+            for try await records in group { results.append(records) }
+        }
+        guard let migrated = results.first else { throw Failure.failed("migration produced no result") }
+        try require(results.allSatisfy { $0 == migrated }, "parallel readers observed different migration identities")
+        try require(migrated.count == 2 && Set(migrated.map(\.id)).count == 2, "migration lost records or duplicated IDs")
+        try require(migrated.map(\.photoIdentifier) == ["legacy-photo-1", "legacy-photo-0"],
+                    "records are not ordered by newest update")
+        for record in migrated {
+            let original = legacy.notes[record.photoIdentifier]!
+            try require(record.note.text == original.text && record.note.updatedAt == original.updatedAt
+                        && record.note.revision == original.revision
+                        && record.note.writtenAt == nil && record.note.context == nil,
+                        "migration invented metadata or changed existing content")
+        }
+        let bytes = try Data(contentsOf: url)
+        let object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        try require(object["schemaVersion"] as? Int == 2, "migration did not commit schema 2")
+        let reopened = PhotoMemoryNoteStore(fileURL: url)
+        let repeated = try await reopened.records()
+        let lookedUp = try await reopened.record(id: migrated[0].id)
+        let oldEntryPoint = try await reopened.note(for: migrated[0].photoIdentifier)
+        try require(repeated == migrated && lookedUp == migrated[0] && oldEntryPoint == migrated[0].note,
+                    "reopening or photo lookup changed a migrated UUID")
+        try require(try Data(contentsOf: url) == bytes, "repeat read rewrote schema 2")
+        let updated = try await reopened.save(text: "写真がなくても読み返す", recordID: migrated[0].id,
+                                              expectedRevision: migrated[0].note.revision)
+        try require(updated?.id == migrated[0].id && updated?.note.writtenAt == nil,
+                    "editing legacy text invented an original writing date")
+    }
+
+    private static func verifiesMigrationFailureAndRetry(at url: URL) async throws {
+        _ = try writeLegacyFixture(to: url)
+        let bytes = try Data(contentsOf: url)
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        let manager = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        try manager.setAttributes([.posixPermissions: NSNumber(value: 0o500)], ofItemAtPath: directory.path)
+        defer { try? manager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: directory.path) }
+        try await expect(.storageUnavailable) { _ = try await store.records() }
+        try await expect(.storageUnavailable) { _ = try await store.note(for: "legacy-photo-0") }
+        try require(try Data(contentsOf: url) == bytes, "failed migration changed legacy bytes")
+        try manager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: directory.path)
+        let retried = try await store.records()
+        let reopened = try await PhotoMemoryNoteStore(fileURL: url).records()
+        try require(retried == reopened && retried.count == 2, "migration retry exposed unstable IDs")
+
+        // A v1 file with an invalid record must not be partially migrated.
+        var corrupt = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        var notes = corrupt["notes"] as! [String: [String: Any]]
+        notes["legacy-photo-1"]?["text"] = "  unnormalized text  "
+        corrupt["notes"] = notes
+        let damaged = try JSONSerialization.data(withJSONObject: corrupt)
+        try damaged.write(to: url)
+        try await expect(.corruptedState) { _ = try await store.records() }
+        try require(try Data(contentsOf: url) == damaged, "malformed v1 was partially migrated")
+    }
+
+    private static func verifiesRecordsAndContext(at url: URL) async throws {
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        let empty = try await store.records()
+        let unknown = try await store.record(id: UUID())
+        try require(empty.isEmpty && unknown == nil, "missing record store was not empty")
+        let initial = try await saved(store, text: "最初のメモ", id: "unavailable-photo")
+        let unrelated = try await saved(store, text: "別のメモ", id: "other-photo")
+        let withoutContext = try await store.save(text: initial.text, for: "unavailable-photo",
+                                                  expectedRevision: initial.revision,
+                                                  context: PhotoMemoryNoteContext(capturedAt: nil, cats: []))
+        try require(withoutContext == initial, "empty metadata blocked later enrichment")
+        let cat = PhotoMemoryNoteCat(id: UUID(), name: "むぎ")
+        let context = PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSince1970: 1_000), cats: [cat])
+        guard let enriched = try await store.save(text: initial.text, for: "unavailable-photo",
+                                                  expectedRevision: initial.revision, context: context) else {
+            throw Failure.failed("context enrichment lost note")
+        }
+        try require(enriched.id == initial.id && enriched.writtenAt == initial.writtenAt
+                    && enriched.context == context && enriched.revision != initial.revision,
+                    "first context enrichment changed identity/dates or failed to advance revision")
+        let renamedContext = PhotoMemoryNoteContext(capturedAt: Date(), cats: [PhotoMemoryNoteCat(id: cat.id, name: "後日の名前")])
+        let unchanged = try await store.save(text: enriched.text, for: "unavailable-photo",
+                                             expectedRevision: enriched.revision, context: renamedContext)
+        try require(unchanged == enriched, "later profile/capture data silently rewrote the snapshot")
+        guard let edited = try await store.save(text: "原本を失っても残る言葉", recordID: enriched.id,
+                                                expectedRevision: enriched.revision) else {
+            throw Failure.failed("record-only edit lost note")
+        }
+        try require(edited.id == enriched.id && edited.note.context == context
+                    && edited.note.writtenAt == initial.writtenAt
+                    && edited.photoIdentifier == "unavailable-photo",
+                    "record-only edit changed metadata or photo association")
+        let committed = try Data(contentsOf: url)
+        try await expect(.conflict) {
+            _ = try await store.save(text: "古い編集", recordID: enriched.id, expectedRevision: enriched.revision)
+        }
+        try await expect(.conflict) { try await store.delete(id: enriched.id, expectedRevision: enriched.revision) }
+        try require(try Data(contentsOf: url) == committed, "stale record editor changed data")
+        let duplicateCats = PhotoMemoryNoteContext(capturedAt: nil, cats: [cat, cat])
+        try await expect(.invalidContext) {
+            _ = try await store.save(text: "メモ", for: "new-photo", expectedRevision: nil, context: duplicateCats)
+        }
+        try await expect(.invalidContext) {
+            _ = try await store.save(text: "メモ", for: "new-photo", expectedRevision: nil,
+                                    context: PhotoMemoryNoteContext(capturedAt: nil, cats: [PhotoMemoryNoteCat(id: UUID(), name: " \n")]))
+        }
+        try require(try Data(contentsOf: url) == committed, "invalid context modified the file")
+        try await store.delete(id: edited.id, expectedRevision: edited.note.revision)
+        let removed = try await store.record(id: edited.id)
+        let retained = try await store.record(id: unrelated.id)
+        try require(removed == nil && retained?.note == unrelated, "record deletion affected another photo")
+        let recreated = try await saved(store, text: "同じ写真の新しい記録", id: "unavailable-photo")
+        let oldID = try await store.record(id: edited.id)
+        try require(recreated.id != edited.id && oldID == nil, "old record route opened a replacement note")
+        try await expect(.conflict) {
+            _ = try await store.save(text: "古い画面", recordID: edited.id, expectedRevision: edited.note.revision)
+        }
+        let blankDeleted = try await store.save(text: " \n", recordID: recreated.id, expectedRevision: recreated.revision)
+        let absent = try await store.note(for: "unavailable-photo")
+        try require(blankDeleted == nil && absent == nil, "blank record-only edit did not delete its note")
+    }
+
+    private static func verifiesRecordIntegrity(at url: URL) async throws {
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        let first = try await saved(store, text: "守るメモ", id: "photo-a")
+        let bytes = try Data(contentsOf: url)
+        let base = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        let originalNotes = base["notes"] as! [String: [String: Any]]
+        var malformedStates: [[String: [String: Any]]] = []
+        var duplicate = originalNotes
+        duplicate["photo-b"] = duplicate["photo-a"]
+        malformedStates.append(duplicate)
+        var missingID = originalNotes
+        missingID["photo-a"]?.removeValue(forKey: "id")
+        malformedStates.append(missingID)
+        var badID = originalNotes
+        badID["photo-a"]?["id"] = "not-a-uuid"
+        malformedStates.append(badID)
+        var badKey = originalNotes
+        let misplaced = badKey.removeValue(forKey: "photo-a")
+        badKey[" \n"] = misplaced
+        malformedStates.append(badKey)
+        var badDate = originalNotes
+        badDate["photo-a"]?["writtenAt"] = "not-a-date"
+        malformedStates.append(badDate)
+        var repeatedCat = originalNotes
+        let catObject: [String: Any] = ["id": UUID().uuidString, "name": "むぎ"]
+        repeatedCat["photo-a"]?["context"] = ["cats": [catObject, catObject]]
+        malformedStates.append(repeatedCat)
+        for notes in malformedStates {
+            var object = base
+            object["notes"] = notes
+            let invalid = try JSONSerialization.data(withJSONObject: object)
+            try invalid.write(to: url)
+            try await expect(.corruptedState) { _ = try await store.records() }
+            try await expect(.corruptedState) { _ = try await store.record(id: first.id) }
+            try await expect(.corruptedState) { try await store.delete(id: first.id, expectedRevision: first.revision) }
+            try require(try Data(contentsOf: url) == invalid, "invalid record data was partially normalized or deleted")
+        }
+        try bytes.write(to: url)
+        let recovered = try await store.record(id: first.id)
+        try require(recovered?.note == first, "integrity failure prevented recovery")
+    }
+
+    private struct LegacyFixture: Encodable {
+        let schemaVersion = 1
+        let notes: [String: LegacyNoteFixture]
+    }
+
+    private struct LegacyNoteFixture: Codable {
+        let text: String
+        let updatedAt: Date
+        let revision: String
+    }
+
+    private static func writeLegacyFixture(to url: URL) throws -> LegacyFixture {
+        let notes = Dictionary(uniqueKeysWithValues: (0..<2).map { index in
+            ("legacy-photo-\(index)", LegacyNoteFixture(text: "以前のメモ\(index)",
+                updatedAt: Date(timeIntervalSince1970: Double(1_000 + index)), revision: UUID().uuidString))
+        })
+        let fixture = LegacyFixture(notes: notes)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(fixture).write(to: url)
+        return fixture
     }
 
     private static func saved(

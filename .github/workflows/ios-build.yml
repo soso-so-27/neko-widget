@@ -741,6 +741,18 @@ jobs:
             -o "$RUNNER_TEMP/verify-photo-memory-notes"
           "$RUNNER_TEMP/verify-photo-memory-notes"
 
+      - name: Verify private memory text export and temporary file cleanup
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library \
+            NekoWidget/Services/PhotoMemoryNoteStore.swift \
+            NekoWidget/Services/PhotoMemoryNoteExporter.swift \
+            ci/verify-photo-memory-note-export.swift \
+            -o "$RUNNER_TEMP/verify-photo-memory-note-export"
+          "$RUNNER_TEMP/verify-photo-memory-note-export"
+
       - name: Verify cat candidate curation state and export privacy
         working-directory: NekoWidget
         shell: bash

@@ -908,6 +908,7 @@ struct LikedPhotosView: View {
     var referenceDate: Date
     var isCatDetail: Bool
     var navigationTitleOverride: String?
+    private let memoryNoteStore: PhotoMemoryNoteStore
     private let highlights: [AlbumHighlightPresentation]
     private let recommendedHighlights: [AlbumHighlightPresentation]
 
@@ -929,7 +930,8 @@ struct LikedPhotosView: View {
         referenceDate: Date = Date(),
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
         recommendationStore: AlbumHighlightRecommendationStore = .shared,
-        featuredSnapshotDefaults: UserDefaults = .standard
+        featuredSnapshotDefaults: UserDefaults = .standard,
+        memoryNoteStore: PhotoMemoryNoteStore = .shared
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
@@ -951,6 +953,7 @@ struct LikedPhotosView: View {
         self.referenceDate = referenceDate
         self.isCatDetail = isCatDetail
         self.navigationTitleOverride = navigationTitleOverride
+        self.memoryNoteStore = memoryNoteStore
         _featuredSnapshotJSON = AppStorage(wrappedValue: "", "album.featuredSnapshot.v1", store: featuredSnapshotDefaults)
         let builder = AlbumHighlightBuilder(now: referenceDate)
         let current = hasPhotoAccess ? builder.highlights(from: albumSections) : []
@@ -1047,6 +1050,7 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
+                    if !isCatDetail { PhotoMemoryNotesEntry(store: memoryNoteStore) }
                     if hasPhotoAccess {
                         if let albumScan {
                             AlbumView(
@@ -2464,10 +2468,20 @@ struct PhotoBrowserView: View {
         }
     }
 
+    private func memoryNoteContext(for photo: PhotoPresentation) -> PhotoMemoryNoteContext {
+        let assigned = assignmentsByPhotoIdentifier[photo.localIdentifier] ?? []
+        let cats = profiles.compactMap { profile -> PhotoMemoryNoteCat? in
+            guard assigned.contains(profile.identifier), let id = UUID(uuidString: profile.identifier) else { return nil }
+            return PhotoMemoryNoteCat(id: id, name: profile.displayName)
+        }
+        return PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: cats)
+    }
+
     private var browserDialogs: some View {
         browserNavigation
         .sheet(item: $personalNotePhoto) { photo in
-            PhotoMemoryNoteEditor(photo: photo, store: personalNote.store) {
+            PhotoMemoryNoteEditor(photo: photo, store: personalNote.store,
+                context: memoryNoteContext(for: photo)) {
                 Task { await personalNote.load(for: selectedPhotoIdentifier) }
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)

@@ -738,7 +738,7 @@ private struct SoloMemoriesFixtureView: View {
                     highlightBrowser(highlight)
                 case let .monthlyWindow(snapshot):
                     monthlyBrowser(snapshot)
-                case .photo, .seasonalMovie:
+                case .photo, .seasonalMovie, .memoryNotes, .memoryNote, .memoryNotePhoto:
                     VStack(spacing: 20) {
                         Text("アルバムの詳細")
                             .accessibilityIdentifier("solo-memories-detail-destination")
@@ -1122,6 +1122,9 @@ private struct SoloMemoriesFixtureView: View {
     private func detailRouteKey(_ route: MemoriesRoute) -> String {
         switch route {
         case .favorites: "favorites"
+        case .memoryNotes: "memory-notes"
+        case let .memoryNote(id): "memory-note:\(id)"
+        case let .memoryNotePhoto(id): "memory-note-photo:\(id)"
         case .reflectionsArchive: "reflections-archive"
         case .highlightsArchive: "highlights-archive"
         case let .catAlbums(identifier): "cat-albums:\(identifier)"

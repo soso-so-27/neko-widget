@@ -39,7 +39,9 @@
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
 		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
 		A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000011 /* PhotoMemoryNoteStore.swift */; };
+		A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */; };
 		A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000012 /* PhotoMemoryNoteView.swift */; };
+		A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */; };
 		100000000000000000000112 /* PhotoAlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000212 /* PhotoAlbumService.swift */; };
 		100000000000000000000113 /* PhotoAuthorizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000213 /* PhotoAuthorizationService.swift */; };
 		100000000000000000000114 /* PhotoImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000214 /* PhotoImageLoader.swift */; };
@@ -284,7 +286,9 @@
 		F00000000000000000000210 /* JSONExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONExporter.swift; sourceTree = "<group>"; };
 		F00000000000000000000211 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		A18200000000000000000011 /* PhotoMemoryNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteStore.swift; sourceTree = "<group>"; };
+		A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteExporter.swift; sourceTree = "<group>"; };
 		A18200000000000000000012 /* PhotoMemoryNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteView.swift; sourceTree = "<group>"; };
+		A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteLibraryView.swift; sourceTree = "<group>"; };
 		F00000000000000000000212 /* PhotoAlbumService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAlbumService.swift; sourceTree = "<group>"; };
 		F00000000000000000000213 /* PhotoAuthorizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAuthorizationService.swift; sourceTree = "<group>"; };
 		F00000000000000000000214 /* PhotoImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoImageLoader.swift; sourceTree = "<group>"; };
@@ -622,6 +626,7 @@
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
+				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				F00000000000000000000212 /* PhotoAlbumService.swift */,
 				F00000000000000000000213 /* PhotoAuthorizationService.swift */,
 				F00000000000000000000214 /* PhotoImageLoader.swift */,
@@ -691,6 +696,7 @@
 				F00000000000000000000231 /* HomeView.swift */,
 				F00000000000000000000232 /* LikedPhotosView.swift */,
 				A18200000000000000000012 /* PhotoMemoryNoteView.swift */,
+				A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
@@ -982,7 +988,9 @@
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
+				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */,
+				A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */,
 				100000000000000000000112 /* PhotoAlbumService.swift in Sources */,
 				100000000000000000000113 /* PhotoAuthorizationService.swift in Sources */,
 				100000000000000000000114 /* PhotoImageLoader.swift in Sources */,

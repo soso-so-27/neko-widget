@@ -35,10 +35,14 @@ final class PhotoMemoryNotePresentation: ObservableObject {
 /// `photo` is frozen when the editor opens, including when its parent pages.
 /// This local text is intentionally not fed into the photo delivery composer.
 struct PhotoMemoryNoteEditor: View {
-    let photo: PhotoPresentation
+    let photo: PhotoPresentation?
     let store: PhotoMemoryNoteStore
     let onSaved: () -> Void
+    private let recordID: UUID?
+    private let context: PhotoMemoryNoteContext?
+    @StateObject private var photoAccess = PhotoMemoryNotePhotoAccess()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isWriting: Bool
     @State private var original: PhotoMemoryNote?
     @State private var text = ""
@@ -49,6 +53,24 @@ struct PhotoMemoryNoteEditor: View {
     @State private var saveError: String?
     @State private var confirmsDiscard = false
     @State private var confirmsDelete = false
+
+    init(photo: PhotoPresentation, store: PhotoMemoryNoteStore,
+         context: PhotoMemoryNoteContext? = nil, onSaved: @escaping () -> Void) {
+        self.photo = photo
+        self.store = store
+        self.context = context ?? PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: [])
+        self.onSaved = onSaved
+        recordID = nil
+    }
+
+    init(record: PhotoMemoryNoteRecord, photo: PhotoPresentation?, store: PhotoMemoryNoteStore,
+         onSaved: @escaping () -> Void) {
+        self.photo = photo
+        self.store = store
+        self.context = nil
+        self.recordID = record.id
+        self.onSaved = onSaved
+    }
 
     private var normalizedText: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -61,7 +83,8 @@ struct PhotoMemoryNoteEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
+                if let photo, photoAccess.photo(for: photo.localIdentifier) != nil {
+                    Section {
                     HStack(spacing: 12) {
                         PhotoAssetImageView(
                             localIdentifier: photo.localIdentifier,
@@ -76,6 +99,7 @@ struct PhotoMemoryNoteEditor: View {
                             Text(date.formatted(.dateTime.year().month().day()))
                                 .font(.subheadline)
                         }
+                    }
                     }
                 }
 
@@ -163,7 +187,15 @@ struct PhotoMemoryNoteEditor: View {
                 Text(saveError ?? "入力内容は残っています。もう一度保存してください。")
             }
             .interactiveDismissDisabled(hasChanges || isSaving)
-            .task { await load() }
+            .task {
+                photoAccess.start(photos: photo.map { [$0] } ?? [])
+                await load()
+            }
+            .onChange(of: photo) { _, value in photoAccess.start(photos: value.map { [$0] } ?? []) }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { photoAccess.refresh() }
+            }
+            .onDisappear { photoAccess.stop() }
         }
     }
 
@@ -172,7 +204,17 @@ struct PhotoMemoryNoteEditor: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let loaded = try await store.note(for: photo.localIdentifier)
+            let loaded: PhotoMemoryNote?
+            if let recordID {
+                guard let record = try await store.record(id: recordID) else {
+                    throw PhotoMemoryNoteStoreError.conflict
+                }
+                loaded = record.note
+            } else if let photo {
+                loaded = try await store.note(for: photo.localIdentifier)
+            } else {
+                throw PhotoMemoryNoteStoreError.invalidIdentifier
+            }
             guard !Task.isCancelled else { return }
             original = loaded
             text = loaded?.text ?? ""
@@ -190,9 +232,12 @@ struct PhotoMemoryNoteEditor: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            _ = try await store.save(
-                text: value, for: photo.localIdentifier, expectedRevision: original?.revision
-            )
+            if let recordID, let original {
+                _ = try await store.save(text: value, recordID: recordID, expectedRevision: original.revision)
+            } else if let photo {
+                _ = try await store.save(text: value, for: photo.localIdentifier,
+                    expectedRevision: original?.revision, context: context)
+            } else { throw PhotoMemoryNoteStoreError.invalidIdentifier }
             onSaved()
             dismiss()
         } catch PhotoMemoryNoteStoreError.conflict {
