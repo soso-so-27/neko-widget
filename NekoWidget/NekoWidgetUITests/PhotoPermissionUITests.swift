@@ -2439,7 +2439,15 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "memory-library-list")
         app.buttons["memory-notes-export"].tap()
         XCTAssertTrue(app.staticTexts["本文・日付・記録した猫の名前を含みます。写真は含みません。"].waitForExistence(timeout: 5))
-        app.buttons["キャンセル"].tap()
+        // iOS presents this as a toolbar-anchored popover, which omits the
+        // cancel action and instead exposes its native dismissal region.
+        if app.buttons["キャンセル"].exists {
+            app.buttons["キャンセル"].tap()
+        } else {
+            let dismissal = app.otherElements["PopoverDismissRegion"]
+            XCTAssertTrue(dismissal.waitForExistence(timeout: 5))
+            dismissal.tap()
+        }
         row.tap()
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
@@ -2498,7 +2506,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["memory-note-menu"].tap()
         app.buttons["メモを削除"].tap()
         app.buttons["削除"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["memory-notes-empty"].firstMatch.waitForExistence(timeout: 5))
+        // Group-level identifiers are forwarded to the empty state's children.
+        // Verify its visible content and the disabled export action instead.
+        XCTAssertTrue(app.staticTexts["写真に思い出を添えると、ここで読み返せます。"].waitForExistence(timeout: 5))
+        XCTAssertFalse(row.exists)
         XCTAssertFalse(app.buttons["memory-notes-export"].isEnabled)
         attach(app, name: "memory-library-empty-after-deletion")
         app.navigationBars.buttons.firstMatch.tap()
