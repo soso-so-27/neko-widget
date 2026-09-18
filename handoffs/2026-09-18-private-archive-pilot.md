@@ -33,3 +33,13 @@ Swiftの保存境界検証（永続化・再試行・account・generation・部�
 実装・独立レビューを実施。レビューで見つけた、再試行失敗時の一覧消失、初回zone準備失敗後の再試行不能、同じdraftの重複、古いaccountの遅延応答を修正。先行候補b404f49ではMac native build、Swift保存境界7群、画像処理検証が成功。追加の配布gateにはPython関連66件が成功し、Swift設定境界を8群目として追加した。最終候補の必要CI・実画面・署名配布はこれから確認する。
 
 実機では設定→記録の保管で試しの写真と言葉を1件だけ保管し、「iCloudから読み込む」で写真と言葉を開く。アプリ削除は依頼しない。同じ端末の読込成功だけで空端末復元を確認済みとせず、実CloudKit接続・別端末復旧・販売可能を分けて記録する。
+
+## 最終候補の検証
+
+製品SHA `2fd468a956238fec74ae543ef9253c5182c16a67`。候補CI `35351409059` はfull-v1全8 job成功、全体58分45秒（app-ui 57分34秒）。アプリUI51件、今回の保管操作は21.722秒で成功。Swift保管検証は設定境界を含む8群、画像変換検証も成功。初回のSwiftUI型推論・生のエラー表示を修正しており、この全体時間を短縮の実績とは扱わない。
+
+実際の製品View/Storeを使った一覧・詳細の2画像を確認し、写真領域・本文・戻る操作・内部試用の説明に欠けや重なりがないことを確認した。画像はテスト用に生成したもの。オフラインtransportなので、表示された保管済み表示は実CloudKitの成功証拠ではない。証拠は `C:/dev/neko-evidence/n29-solo-cloud-ci-2fd468a-20260918/README.md` と同ディレクトリ内のログ/画像。
+
+mainへ同じSHAをfast-forwardし、main CI `35357546375` が候補の成功証拠を再利用して20秒で成功。標準CLIのdry-runで次番号185と同一SHA・必要CI・内部media-staging設定を確認してからdispatch。配布run `35357759789` は対象を照合し既存testflight環境を承認。**TestFlight 1.0 (185)は2026-09-18 23:50:57 JST（14:50:57 UTC）にUPLOAD SUCCEEDED with no errors**。archive/export/署名検証も成功。appのarchive用entitlementsにProduction、`iCloud.jp.nekowidget.app.personal`、CloudKitを確認し、release build185/media-staging/PersonalArchiveEnabled=YESの照合も成功した。証拠は `C:/dev/neko-evidence/n29-testflight185-20260918/testflight-success.log`。Apple側の処理完了・内部グループ画面・実CloudKit保存/読込・別端末復元は未確認。
+
+Apple Developer Portalには2026-10-02までの契約更新案内が表示されていた。契約への同意は行っていない。今回のprofile再生成は完了しており、将来の運用上の確認事項として記録する。
