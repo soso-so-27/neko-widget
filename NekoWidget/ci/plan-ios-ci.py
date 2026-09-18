@@ -14,6 +14,7 @@ import urllib.request
 
 from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
+                          WIDGET_ENTRY_TEST_PATH, reviewed_widget_entry_changes,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes)
 
@@ -135,8 +136,12 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             seen.add(path)
         if seen != set(paths):
             return FULL_SCOPE
-        return select_scope({path: ("" if path in added_tests else git("show", f"{base}:{path}"),
-                                   git("show", f"{head}:{path}")) for path in sources})
+        changes = {path: ("" if path in added_tests else git("show", f"{base}:{path}"),
+                          git("show", f"{head}:{path}")) for path in sources}
+        widget_tests = None
+        if reviewed_widget_entry_changes(changes) and WIDGET_ENTRY_TEST_PATH not in changes:
+            widget_tests = git("show", f"{head}:{WIDGET_ENTRY_TEST_PATH}")
+        return select_scope(changes, widget_entry_test_source=widget_tests)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return FULL_SCOPE
 

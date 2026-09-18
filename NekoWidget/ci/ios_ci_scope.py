@@ -20,9 +20,10 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
+REVIEWED_WIDGET_ENTRY_SCOPE = "reviewed-widget-entry-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          REVIEWED_APP_SCOPE)
+          REVIEWED_APP_SCOPE, REVIEWED_WIDGET_ENTRY_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -80,7 +81,16 @@ REVIEWABLE_APP_PATHS = PHOTO_VIEWS | frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
 })
-MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS
+WIDGET_ENTRY_TEST_PATH = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
+# These paths are not generally exempt. Only the complete, hash-bound reviewed
+# entry diff can use this scope; startup, stores and Widget code remain full.
+REVIEWABLE_WIDGET_ENTRY_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Views/MainTabView.swift",
+    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift",
+    "NekoWidget/NekoWidget/Views/WidgetPhotoOpeningFixture.swift",
+    WIDGET_ENTRY_TEST_PATH,
+})
+MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | REVIEWABLE_WIDGET_ENTRY_PATHS
 
 
 def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -97,6 +107,8 @@ def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     try:
         review = json.loads(changes[REVIEW_MANIFEST][1])
+        if review.get("scope", REVIEWED_APP_SCOPE) != REVIEWED_APP_SCOPE:
+            return False
         if review.get("schemaVersion") != 1 or review.get("visualReview") != "user-device":
             return False
         records = review["files"]
@@ -109,6 +121,127 @@ def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
         return True
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
+
+
+def reviewed_widget_entry_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """One explicit review profile, not a caller-supplied test or path DSL."""
+    app = set(changes) - {REVIEW_MANIFEST}
+    if REVIEW_MANIFEST not in changes or not app or not app <= REVIEWABLE_WIDGET_ENTRY_PATHS:
+        return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "files"}:
+            return False
+        if (type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_WIDGET_ENTRY_SCOPE
+                or review["visualReview"] != "user-device"
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != app):
+            return False
+        for path in app:
+            before, after = changes[path]
+            if not before or not after or review["files"][path] != {
+                "before": source_digest(before), "after": source_digest(after)
+            }:
+                return False
+        return True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def swift_declaration_source(source: str) -> str | None:
+    """Mask comments/ordinary strings, including interpolation; do not parse Swift.
+
+    Nested block comments are supported. Extended/multiline literals and
+    conditional declarations are deliberately unknown and therefore full.
+    """
+    masked = ["\n" if char == "\n" else " " for char in source]
+    states = [("code", 0)]
+    index = 0
+    while index < len(source):
+        mode, depth = states[-1]
+        char = source[index]
+        pair = source[index:index + 2]
+        if mode == "comment":
+            if pair == "/*":
+                states[-1] = (mode, depth + 1)
+                index += 2
+                continue
+            if pair == "*/":
+                if depth == 1:
+                    states.pop()
+                else:
+                    states[-1] = (mode, depth - 1)
+                index += 2
+                continue
+        elif mode == "string":
+            if pair == "\\(":
+                states.append(("interpolation", 1))
+                index += 2
+                continue
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                states.pop()
+            elif char in "\r\n":
+                return None
+        else:
+            if pair == "//":
+                end = source.find("\n", index)
+                index = len(source) if end == -1 else end
+                continue
+            if pair == "/*":
+                states.append(("comment", 1))
+                index += 2
+                continue
+            if pair in ("*/", '#"', "#/") or source.startswith('"""', index):
+                return None
+            if char == '"':
+                states.append(("string", 0))
+            elif mode == "interpolation":
+                if char == "(":
+                    states[-1] = (mode, depth + 1)
+                elif char == ")":
+                    if depth == 1:
+                        states.pop()
+                    else:
+                        states[-1] = (mode, depth - 1)
+            else:
+                masked[index] = char
+        index += 1
+    if len(states) != 1:
+        return None
+    result = "".join(masked)
+    if re.search(r"^\s*#(?:if|elseif|else|endif)\b", result, re.M):
+        return None
+    return result
+
+
+def widget_entry_tests_available(source: str | None) -> bool:
+    # The dedicated regression initially lives on the product branch. Read the
+    # current head even when tests are unchanged; never select missing methods.
+    if not source:
+        return False
+    source = swift_declaration_source(source)
+    if source is None:
+        return False
+    classes = list(re.finditer(r"^\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase\b", source, re.M))
+    methods = []
+    for index, match in enumerate(classes):
+        end = classes[index + 1].start() if index + 1 < len(classes) else len(source)
+        methods.extend(f"NekoWidgetUITests/{match.group(1)}/{method}" for method in
+                       re.findall(r"\bfunc\s+(test\w+)\s*\(", source[match.end():end]))
+    return all(methods.count(test) == 1 for test in REVIEWED_WIDGET_ENTRY_TESTS)
 
 
 def source_digest(source: str) -> str:
@@ -189,6 +322,7 @@ def accepts_paths(scope: str, paths) -> bool:
         WIDGET_STYLE_SCOPE: WIDGET_LAYOUT_PATHS,
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
+        REVIEWED_WIDGET_ENTRY_SCOPE: REVIEWABLE_WIDGET_ENTRY_PATHS | {REVIEW_MANIFEST},
     }
     sources = source_paths(paths)
     return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
@@ -204,6 +338,14 @@ REVIEWED_APP_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
     "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
     "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
     "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
+))
+REVIEWED_WIDGET_ENTRY_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "OfficialWindowUITests/testWidgetURLPersonalPhotoOpensRelatedAlbumAndReturnsToOriginal",
+    "OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
+    "OfficialWindowUITests/testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations",
+    "OfficialWindowUITests/testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto",
+    "SoloMemoriesUITests/testWidgetPhotoOutsideCurrentScopeOffersAPathBack",
+    "SoloMemoriesUITests/testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
 ))
 GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
@@ -234,6 +376,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_WIDGET_ENTRY_SCOPE:
+        return REVIEWED_WIDGET_ENTRY_TESTS
     if scope == REVIEWED_APP_SCOPE:
         return REVIEWED_APP_TESTS
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
@@ -374,7 +518,8 @@ def presentation_only(changes: dict[str, tuple[str, str]]) -> bool:
     return True
 
 
-def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
+def select_scope(changes: dict[str, tuple[str, str]] | None, *,
+                 widget_entry_test_source: str | None = None) -> str:
     # The planner first proves existing regular source files, modification-only
     # and unchanged modes. Handoff prose is not an app or CI input.
     if not changes:
@@ -382,6 +527,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_widget_entry_changes(changes):
+        source = changes.get(WIDGET_ENTRY_TEST_PATH, (None, widget_entry_test_source))[1]
+        return REVIEWED_WIDGET_ENTRY_SCOPE if widget_entry_tests_available(source) else FULL_SCOPE
     if reviewed_app_changes(changes):
         return REVIEWED_APP_SCOPE
     if set(changes) <= CI_SELECTION_PATHS:
