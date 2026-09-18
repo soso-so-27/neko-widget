@@ -730,6 +730,17 @@ jobs:
             exit 1
           fi
 
+      - name: Verify private photo memory note persistence
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library \
+            NekoWidget/Services/PhotoMemoryNoteStore.swift \
+            ci/verify-photo-memory-notes.swift \
+            -o "$RUNNER_TEMP/verify-photo-memory-notes"
+          "$RUNNER_TEMP/verify-photo-memory-notes"
+
       - name: Verify cat candidate curation state and export privacy
         working-directory: NekoWidget
         shell: bash

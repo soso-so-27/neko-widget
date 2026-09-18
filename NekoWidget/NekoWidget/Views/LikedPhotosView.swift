@@ -2130,6 +2130,8 @@ struct PhotoBrowserView: View {
     @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
     @State private var showsRediscoveryHistory = false
+    @StateObject private var personalNote: PhotoMemoryNotePresentation
+    @State private var personalNotePhoto: PhotoPresentation?
 
     init(
         photos: [PhotoPresentation],
@@ -2147,7 +2149,8 @@ struct PhotoBrowserView: View {
         replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool,
         deliveryActions: PhotoWindowDeliveryActions? = nil,
         dayCollectionDate: Date? = nil,
-        rediscoveryStore: PersonalRediscoveryStore? = nil
+        rediscoveryStore: PersonalRediscoveryStore? = nil,
+        memoryNoteStore: PhotoMemoryNoteStore = .shared
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -2194,6 +2197,7 @@ struct PhotoBrowserView: View {
             )
         )
         _selectedPhotoIdentifier = State(initialValue: initialPhoto.localIdentifier)
+        _personalNote = StateObject(wrappedValue: PhotoMemoryNotePresentation(store: memoryNoteStore))
     }
 
     private var browserContent: some View {
@@ -2242,6 +2246,23 @@ struct PhotoBrowserView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         photoActions(selectedPhoto)
                     }
+                }
+                if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
+                    Button {
+                        personalNotePhoto = selectedPhoto
+                    } label: {
+                        Text(note.text)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("思い出のメモ")
+                    .accessibilityValue(note.text)
+                    .accessibilityHint("メモを開いて読み、編集できます")
+                    .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
             }
 
@@ -2314,6 +2335,18 @@ struct PhotoBrowserView: View {
 
     @ViewBuilder
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
+        Button {
+            personalNotePhoto = selectedPhoto
+        } label: {
+            Image(systemName: "square.and.pencil")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "思い出を添える" : "思い出のメモを開く")
+        .accessibilityHint("自分だけのメモです。相手には送られません")
+        .accessibilityIdentifier("photo-memory-note-open")
+        .disabled(isExportingMemoryPhoto)
+
         if selectedPhoto.isLiked {
             Menu {
                 Button("お気に入りから外す", role: .destructive) {
@@ -2433,6 +2466,12 @@ struct PhotoBrowserView: View {
 
     private var browserDialogs: some View {
         browserNavigation
+        .sheet(item: $personalNotePhoto) { photo in
+            PhotoMemoryNoteEditor(photo: photo, store: personalNote.store) {
+                Task { await personalNote.load(for: selectedPhotoIdentifier) }
+            }
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+        }
         .sheet(isPresented: $showsRediscoveryHistory) {
             NavigationStack {
                 PersonalRediscoveryHistoryView(store: rediscoveryStore ?? .shared)
@@ -2483,6 +2522,9 @@ struct PhotoBrowserView: View {
 
     var body: some View {
         browserDialogs
+        .task(id: selectedPhotoIdentifier) {
+            await personalNote.load(for: selectedPhotoIdentifier)
+        }
         .sheet(item: $deliveryPhoto) { photo in
             PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
                 onCancel: { deliveryPhoto = nil },

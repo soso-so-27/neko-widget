@@ -36,6 +36,8 @@ struct PhotoWindowDeliveryActions {
 #if DEBUG
 /// No server, Keychain, PhotoKit writes, or persistent handoffs in this fixture.
 struct PhotoWindowDeliveryFixture: View {
+    private static let memoryNotes = PhotoMemoryNoteStore(fileURL:
+        FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteUIFixture/state.json"))
     @State private var sendCount = 0
     @State private var sendAttempts = 0
     @State private var sentSource = ""
@@ -54,7 +56,8 @@ struct PhotoWindowDeliveryFixture: View {
                 setMemorySaved: { _, _ in }, excludedCatCandidateIdentifiers: [],
                 excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
                 profiles: [], assignmentsByPhotoIdentifier: [:],
-                replaceProfileAssignments: { _ in true }, deliveryActions: fixtureActions)
+                replaceProfileAssignments: { _ in true }, deliveryActions: fixtureActions,
+                memoryNoteStore: Self.memoryNotes)
         }
         .overlay(alignment: .top) {
             Text("\(sendCount)|\(sentSource)|\(sentDestination)|\(sentCaption)")

@@ -2471,6 +2471,83 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let open = app.buttons["photo-memory-note-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        open.tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        // The fixture has its own file, never the user's store. Clear a note
+        // from an interrupted prior run before starting the lifecycle check.
+        if app.buttons["photo-memory-note-delete"].exists {
+            app.buttons["photo-memory-note-delete"].tap()
+            app.buttons["削除"].tap()
+            XCTAssertTrue(open.waitForExistence(timeout: 5))
+            open.tap()
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+        }
+        let note = "窓辺で初めて寝た日。"
+        input.tap()
+        input.typeText(note)
+        let done = app.buttons["photo-memory-note-keyboard-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        attach(app, name: "personal-memory-note-editor")
+        app.buttons["photo-memory-note-save"].tap()
+        let excerpt = app.buttons["photo-memory-note-excerpt"]
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
+        XCTAssertEqual(excerpt.value as? String, note)
+        attach(app, name: "personal-memory-note-photo")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 15))
+        XCTAssertEqual(excerpt.value as? String, note)
+
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.30))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.30))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
+        XCTAssertFalse(excerpt.exists, "The second photo must not inherit the first photo's note")
+        open.tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("保存しないメモ")
+        app.buttons["photo-memory-note-close"].tap()
+        app.buttons["変更を破棄"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertFalse(excerpt.exists)
+        end.press(forDuration: 0.05, thenDragTo: start)
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
+        XCTAssertEqual(excerpt.value as? String, note)
+
+        app.buttons["photo-browser-deliver"].tap()
+        let family = app.buttons["photo-window-destination-family"]
+        XCTAssertTrue(family.waitForExistence(timeout: 10))
+        family.tap()
+        let editCaption = app.buttons["family-window-caption-edit"]
+        XCTAssertTrue(editCaption.waitForExistence(timeout: 10))
+        editCaption.tap()
+        let caption = app.descendants(matching: .any)["family-window-caption-input"].firstMatch
+        XCTAssertTrue(caption.waitForExistence(timeout: 5))
+        XCTAssertFalse((caption.value as? String ?? "").contains(note), "Private memories must not be sent automatically")
+        app.buttons["family-window-caption-done-top"].tap()
+        app.buttons["photo-window-cancel"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        open.tap()
+        let delete = app.buttons["photo-memory-note-delete"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        delete.tap()
+        app.buttons["削除"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertFalse(excerpt.exists)
+        XCTAssertTrue(app.buttons["お気に入りに追加"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation() {
         var standardDestinationHeight: CGFloat = 0
         for variant in ["standard", "large"] {
