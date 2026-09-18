@@ -232,7 +232,7 @@ struct PhotoMemoryNoteDetailView: View {
         self.store = store
     }
 
-    var body: some View {
+    private var detailContent: some View {
         Group {
             if failed {
                 ContentUnavailableView {
@@ -291,27 +291,13 @@ struct PhotoMemoryNoteDetailView: View {
                     description: Text("一覧に戻って確認してください。"))
             } else { ProgressView() }
         }
+    }
+
+    var body: some View {
+        detailContent
         .navigationTitle("思い出のメモ")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if record != nil && !failed {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { editing = true } label: { Image(systemName: "square.and.pencil") }
-                        .accessibilityLabel("メモを編集")
-                        .accessibilityIdentifier("memory-note-edit")
-                        .disabled(deleting || export.isPreparing)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { confirmsExport = true } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
-                        Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
-                    } label: { Image(systemName: "ellipsis.circle") }
-                    .accessibilityLabel("メモの操作")
-                    .accessibilityIdentifier("memory-note-menu")
-                    .disabled(deleting || export.isPreparing)
-                }
-            }
-        }
+        .toolbar { detailToolbar }
         .sheet(isPresented: $editing, onDismiss: { Task { await reload() } }) {
             if let record {
                 PhotoMemoryNoteEditor(record: record, photo: access.photo(for: record.photoIdentifier), store: store) {
@@ -340,6 +326,27 @@ struct PhotoMemoryNoteDetailView: View {
             if phase == .active { access.refresh(); if !editing { Task { await reload() } } }
         }
         .onDisappear { access.stop() }
+    }
+
+    @ToolbarContentBuilder
+    private var detailToolbar: some ToolbarContent {
+            if record != nil && !failed {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { editing = true } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("メモを編集")
+                        .accessibilityIdentifier("memory-note-edit")
+                        .disabled(deleting || export.isPreparing)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { confirmsExport = true } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
+                        Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                    .accessibilityLabel("メモの操作")
+                    .accessibilityIdentifier("memory-note-menu")
+                    .disabled(deleting || export.isPreparing)
+                }
+            }
     }
 
     private func reload() async {
