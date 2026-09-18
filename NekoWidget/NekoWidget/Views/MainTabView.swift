@@ -136,11 +136,13 @@ struct MainTabView: View {
                         albumDestination(for: route, defaultScope: .everyone)
                     }
                     .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+                    .navigationDestination(for: PhotoRediscoveryRoute.self, destination: photoRediscoveryDestination)
                     .navigationDestination(
                         for: MemoriesRoute.self,
                         destination: memoriesDestination
                     )
             }
+            .environment(\.photoRelatedAlbums, relatedAlbums)
             .tabItem {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
@@ -174,7 +176,9 @@ struct MainTabView: View {
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+                .navigationDestination(for: PhotoRediscoveryRoute.self, destination: photoRediscoveryDestination)
             }
+            .environment(\.photoRelatedAlbums, relatedAlbums)
             .environment(\.catProfilePhotoDestination, { profileID, photoID in
                 AnyView(albumPhotoDetail(for: .allCatPhotos,
                     localIdentifier: photoID, scope: .profile(profileID)))
@@ -396,6 +400,126 @@ struct MainTabView: View {
         )
     }
 
+    /// Related albums use today's permission/source/explicit-assignment state,
+    /// never a Widget snapshot or inferred identity. A link must lead beyond
+    /// the current photo to be useful.
+    private func relatedAlbums(
+        for localIdentifier: String, scope: CatProfileScopePresentation
+    ) -> [PhotoRelatedAlbumLink] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              photoSourceStatus != .unavailable else { return [] }
+        let photos = scopedCatPhotos(for: scope)
+        guard photos.contains(where: { $0.localIdentifier == localIdentifier }) else { return [] }
+        let albums = CuratedAlbumBuilder().sections(
+            from: photos, lifeReference: nil, includesGrowth: false
+        ).flatMap(\.albums).filter { album in
+            album.photos.contains { $0.localIdentifier == localIdentifier }
+                && album.photos.contains { $0.localIdentifier != localIdentifier }
+        }
+        func route(for albumID: CuratedAlbumID) -> AlbumRoute {
+            if case let .profile(identifier) = scope {
+                return .catAlbum(profileIdentifier: identifier, album: albumID)
+            }
+            return .album(albumID)
+        }
+        var links: [PhotoRelatedAlbumLink] = albums.compactMap { album in
+            switch album.id {
+            case .closeUp, .together, .multipleCats, .outing, .catDay:
+                return PhotoRelatedAlbumLink(
+                    group: .theme, title: album.title, route: route(for: album.id),
+                    accessibilityIdentifier: "photo-related-theme-\(album.id.logKey)"
+                )
+            default:
+                return nil
+            }
+        }
+        let assigned = assignmentsByPhotoIdentifier[localIdentifier] ?? []
+        for profile in catProfilesPresentation.profiles where assigned.contains(profile.identifier) {
+            // A photo containing several cats must not silently widen a
+            // browser that the person already filtered to one of them.
+            if case let .profile(identifier) = scope, identifier != profile.identifier { continue }
+            let catPhotos = scopedCatPhotos(for: .profile(profile.identifier))
+            guard catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
+                  catPhotos.contains(where: { $0.localIdentifier != localIdentifier }) else { continue }
+            links.append(PhotoRelatedAlbumLink(
+                group: .cat, title: profile.displayName,
+                route: .catAlbum(profileIdentifier: profile.identifier, album: .allCatPhotos),
+                accessibilityIdentifier: "photo-related-cat-\(profile.identifier)"
+            ))
+        }
+        for album in albums {
+            guard case .calendarYear = album.id else { continue }
+            links.append(PhotoRelatedAlbumLink(
+                group: .year, title: album.title, route: route(for: album.id),
+                accessibilityIdentifier: "photo-related-year-\(album.id.logKey)"
+            ))
+        }
+        return links
+    }
+
+    @ViewBuilder
+    private func photoRediscoveryDestination(for route: PhotoRediscoveryRoute) -> some View {
+        switch route {
+        case let .day(context):
+            DayPhotosView(date: context.date, photos: currentDayPhotos(context), navigationContext: context)
+        case let .dayPhoto(context, localIdentifier):
+            let photos = currentDayPhotos(context)
+            if let initialPhoto = photos.first(where: { $0.localIdentifier == localIdentifier }) {
+                PhotoBrowserView(
+                    photos: photos, libraryPhotos: browserLibraryPhotos(for: context.scope),
+                    initialPhoto: initialPhoto, widgetShownAt: nil, showsWidgetTiming: false,
+                    setMemorySaved: setMemorySaved,
+                    exportMemoryPhoto: context.allowsPhotoExport ? exportMemoryPhoto : nil,
+                    excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                    excludeFromCatCandidates: { identifiers in
+                        Task { await excludeFromCatCandidates(identifiers) }
+                    },
+                    restoreCatCandidates: { identifiers in
+                        Task { await restoreCatCandidates(identifiers) }
+                    },
+                    profiles: catProfilesPresentation.profiles,
+                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                    replaceProfileAssignments: { values in
+                        await catProfilesActions.replacePhotoAssignments(values)
+                    },
+                    dayCollectionDate: context.date
+                )
+                .environment(\.photoRediscoveryScope, context.scope)
+            } else {
+                unavailableRediscoveryView
+            }
+        case let .album(sourcePhotoIdentifier, scope, album):
+            if relatedAlbums(for: sourcePhotoIdentifier, scope: scope).contains(where: { $0.route == album }) {
+                albumDestination(for: album, defaultScope: scope)
+            } else {
+                unavailableRediscoveryView
+            }
+        }
+    }
+
+    private func currentDayPhotos(_ context: PhotoRediscoveryDay) -> [PhotoPresentation] {
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              photoSourceStatus != .unavailable else { return [] }
+        var seen = Set<String>()
+        return browserLibraryPhotos(for: context.scope).filter { photo in
+            guard let date = photo.creationDate,
+                  !excludedCatCandidateIdentifiers.contains(photo.localIdentifier),
+                  Calendar.current.isDate(date, inSameDayAs: context.date) else { return false }
+            return seen.insert(photo.localIdentifier).inserted
+        }.sorted {
+            if $0.creationDate == $1.creationDate { return $0.localIdentifier < $1.localIdentifier }
+            return ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast)
+        }
+    }
+
+    private var unavailableRediscoveryView: some View {
+        ContentUnavailableView("この写真の続きを開けません", systemImage: "photo.on.rectangle",
+                               description: Text("写真の範囲や猫の指定が変わりました。前の画面に戻って選び直してください。"))
+            .navigationTitle("写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("photo-rediscovery-unavailable")
+    }
+
     @ViewBuilder
     private func collectionDetailView(for localIdentifier: String) -> some View {
         PhotoBrowserView(
@@ -610,6 +734,7 @@ struct MainTabView: View {
                     await catProfilesActions.replacePhotoAssignments(values)
                 }
             )
+            .environment(\.photoRediscoveryScope, scope)
             .onAppear {
                 AlbumHighlightRecommendationStore.shared.markOpened(snapshot.id, scopeKey: scope.id, on: Date())
             }
@@ -694,6 +819,7 @@ struct MainTabView: View {
             albumDetailContent(
                 for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope
             )
+            .environment(\.photoRediscoveryScope, selectedScope)
         }
     }
 
@@ -786,6 +912,7 @@ struct MainTabView: View {
                     await catProfilesActions.replacePhotoAssignments(values)
                 }
             )
+            .environment(\.photoRediscoveryScope, scope)
         } else {
             missingAlbumView
         }

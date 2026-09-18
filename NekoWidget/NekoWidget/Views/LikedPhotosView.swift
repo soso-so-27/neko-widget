@@ -808,6 +808,7 @@ struct CuratedAlbumDetailView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(photoAccessibilityLabel(photo))
+            .accessibilityIdentifier("curated-album-photo-\(album.id.logKey)-\(photo.localIdentifier)")
             .contextMenu {
                 if !profiles.isEmpty {
                     Button {
@@ -2104,11 +2105,61 @@ private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
     ) {}
 }
 
+struct PhotoRediscoveryDay: Hashable {
+    let date: Date
+    let scope: CatProfileScopePresentation
+    let allowsPhotoExport: Bool
+}
+
+enum PhotoRediscoveryRoute: Hashable {
+    case day(PhotoRediscoveryDay)
+    case dayPhoto(PhotoRediscoveryDay, localIdentifier: String)
+    case album(sourcePhotoIdentifier: String, scope: CatProfileScopePresentation, album: AlbumRoute)
+}
+
+struct PhotoRelatedAlbumLink: Identifiable {
+    enum Group: String, CaseIterable {
+        case theme = "同じテーマ"
+        case cat = "この猫"
+        case year = "同じ年"
+    }
+
+    let group: Group
+    let title: String
+    let route: AlbumRoute
+    let accessibilityIdentifier: String
+    var id: AlbumRoute { route }
+}
+
+typealias PhotoRelatedAlbums = (String, CatProfileScopePresentation) -> [PhotoRelatedAlbumLink]
+
+private struct PhotoRelatedAlbumsKey: EnvironmentKey {
+    static var defaultValue: PhotoRelatedAlbums? { nil }
+}
+
+private struct PhotoRediscoveryScopeKey: EnvironmentKey {
+    static var defaultValue: CatProfileScopePresentation { .everyone }
+}
+
+extension EnvironmentValues {
+    var photoRelatedAlbums: PhotoRelatedAlbums? {
+        get { self[PhotoRelatedAlbumsKey.self] }
+        set { self[PhotoRelatedAlbumsKey.self] = newValue }
+    }
+
+    var photoRediscoveryScope: CatProfileScopePresentation {
+        get { self[PhotoRediscoveryScopeKey.self] }
+        set { self[PhotoRediscoveryScopeKey.self] = newValue }
+    }
+}
+
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
 /// with the primary private action, "お気に入りに追加".
 struct PhotoBrowserView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.photoRelatedAlbums) private var relatedAlbums
+    @Environment(\.photoRediscoveryScope) private var rediscoveryScope
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -2317,14 +2368,7 @@ struct PhotoBrowserView: View {
                     .accessibilityLabel(spokenDate)
                     .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
             } else {
-                NavigationLink {
-                    dayPhotosView(for: creationDate)
-                } label: {
-                    photoDateLabel(dateText, photo: photo, showsCollectionIcon: true)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 44)
-                }
+                sameDayLink(for: photo, date: creationDate, dateText: dateText)
                 .accessibilityLabel("この日の写真をすべて見る")
                 .accessibilityValue(spokenDate)
                 .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
@@ -2336,6 +2380,32 @@ struct PhotoBrowserView: View {
                 .foregroundStyle(.secondary)
                 .frame(minHeight: 44)
         }
+    }
+
+    @ViewBuilder
+    private func sameDayLink(for photo: PhotoPresentation, date: Date, dateText: String) -> some View {
+        if relatedAlbums != nil {
+            NavigationLink(value: PhotoRediscoveryRoute.day(PhotoRediscoveryDay(
+                date: date, scope: rediscoveryScope, allowsPhotoExport: exportMemoryPhoto != nil
+            ))) {
+                sameDayLinkLabel(photo: photo, dateText: dateText)
+            }
+        } else {
+            // Standalone previews supply their own browser callbacks. Shipping
+            // stacks inject typed routing, including this day's nested photos.
+            NavigationLink {
+                dayPhotosView(for: date)
+            } label: {
+                sameDayLinkLabel(photo: photo, dateText: dateText)
+            }
+        }
+    }
+
+    private func sameDayLinkLabel(photo: PhotoPresentation, dateText: String) -> some View {
+        photoDateLabel(dateText, photo: photo, showsCollectionIcon: true)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minHeight: 44)
     }
 
     private func photoDateLabel(_ dateText: String, photo: PhotoPresentation,
@@ -2420,6 +2490,7 @@ struct PhotoBrowserView: View {
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { relatedAlbumsMenu }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button { showsRediscoveryHistory = true } label: {
@@ -2480,6 +2551,35 @@ struct PhotoBrowserView: View {
                     Label("写真メニュー", systemImage: "ellipsis.circle")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var relatedAlbumsMenu: some View {
+        let links = relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []
+        if !links.isEmpty {
+            Menu {
+                ForEach(PhotoRelatedAlbumLink.Group.allCases, id: \.self) { group in
+                    let groupLinks = links.filter { $0.group == group }
+                    if !groupLinks.isEmpty {
+                        Section(group.rawValue) {
+                            ForEach(groupLinks) { link in
+                                NavigationLink(value: PhotoRediscoveryRoute.album(
+                                    sourcePhotoIdentifier: selectedPhotoIdentifier,
+                                    scope: rediscoveryScope, album: link.route
+                                )) {
+                                    Text(link.title)
+                                }
+                                .accessibilityIdentifier(link.accessibilityIdentifier)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label("関連する写真", systemImage: "photo.stack")
+            }
+            .accessibilityIdentifier("photo-browser-related")
+            .accessibilityLabel("関連する写真")
         }
     }
 
@@ -3111,10 +3211,19 @@ private final class PhotoBrowserPerformanceProbe: ObservableObject {
     }
 }
 
-private struct DayPhotosView: View {
+struct DayPhotosView: View {
     let date: Date
     let photos: [PhotoPresentation]
-    let photoDestination: (PhotoPresentation) -> PhotoBrowserView
+    let navigationContext: PhotoRediscoveryDay?
+    let photoDestination: ((PhotoPresentation) -> PhotoBrowserView)?
+
+    init(date: Date, photos: [PhotoPresentation], navigationContext: PhotoRediscoveryDay? = nil,
+         photoDestination: ((PhotoPresentation) -> PhotoBrowserView)? = nil) {
+        self.date = date
+        self.photos = photos
+        self.navigationContext = navigationContext
+        self.photoDestination = photoDestination
+    }
 
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 2),
@@ -3133,17 +3242,7 @@ private struct DayPhotosView: View {
             } else {
                 LazyVGrid(columns: columns, spacing: 2) {
                     ForEach(photos) { photo in
-                        NavigationLink {
-                            photoDestination(photo)
-                        } label: {
-                            PhotoAssetImageView(
-                                localIdentifier: photo.localIdentifier,
-                                catBoundingBox: photo.catBoundingBox,
-                                targetPixelSize: CGSize(width: 360, height: 360),
-                                targetAspectRatio: 1
-                            )
-                            .aspectRatio(1, contentMode: .fit)
-                        }
+                        photoLink(photo)
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("day-photos-photo-\(photo.localIdentifier)")
                         .accessibilityLabel(
@@ -3158,5 +3257,32 @@ private struct DayPhotosView: View {
         }
         .navigationTitle(date.formatted(.dateTime.year().month().day()))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func photoLink(_ photo: PhotoPresentation) -> some View {
+        if let navigationContext {
+            NavigationLink(value: PhotoRediscoveryRoute.dayPhoto(
+                navigationContext, localIdentifier: photo.localIdentifier
+            )) {
+                thumbnail(photo)
+            }
+        } else if let photoDestination {
+            NavigationLink {
+                photoDestination(photo)
+            } label: {
+                thumbnail(photo)
+            }
+        }
+    }
+
+    private func thumbnail(_ photo: PhotoPresentation) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 360, height: 360),
+            targetAspectRatio: 1
+        )
+        .aspectRatio(1, contentMode: .fit)
     }
 }

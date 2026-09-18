@@ -108,8 +108,6 @@ struct PhotoMemoryNotesListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
-    @StateObject private var export = PhotoMemoryNoteExportPresentation()
-    @State private var confirmsExport = false
 
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          openPhotos: @escaping () -> Void) {
@@ -169,21 +167,6 @@ struct PhotoMemoryNotesListView: View {
         .navigationTitle("思い出のメモ")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("memory-notes-list")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { confirmsExport = true } label: { Image(systemName: "square.and.arrow.up") }
-                    .accessibilityLabel("すべてのメモを書き出す")
-                    .accessibilityIdentifier("memory-notes-export")
-                    .disabled(library.records.isEmpty || library.failed || export.isPreparing)
-            }
-        }
-        .confirmationDialog("\(library.records.count)件のメモを書き出しますか？", isPresented: $confirmsExport, titleVisibility: .visible) {
-            Button("書き出す") { export.begin(records: library.records) }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("本文・日付・記録した猫の名前を含みます。写真は含みません。")
-        }
-        .modifier(PhotoMemoryNoteExportModifier(export: export))
         .task {
             access.start(photos: photos)
             await library.reload()
@@ -206,13 +189,11 @@ struct PhotoMemoryNoteDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
-    @StateObject private var export = PhotoMemoryNoteExportPresentation()
     @State private var record: PhotoMemoryNoteRecord?
     @State private var loaded = false
     @State private var failed = false
     @State private var editing = false
     @State private var confirmsDelete = false
-    @State private var confirmsExport = false
     @State private var deleting = false
     @State private var error: String?
     @State private var request = UUID()
@@ -300,14 +281,9 @@ struct PhotoMemoryNoteDetailView: View {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("写真とお気に入りはそのまま残ります。") }
-        .confirmationDialog("このメモを書き出しますか？", isPresented: $confirmsExport, titleVisibility: .visible) {
-            Button("書き出す") { if let record { export.begin(records: [record]) } }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("本文・日付・記録した猫の名前を含みます。写真は含みません。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }
-        .modifier(PhotoMemoryNoteExportModifier(export: export))
         .task(id: recordID) {
             access.start(photos: photos)
             await reload()
@@ -326,16 +302,15 @@ struct PhotoMemoryNoteDetailView: View {
                     Button { editing = true } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("メモを編集")
                         .accessibilityIdentifier("memory-note-edit")
-                        .disabled(deleting || export.isPreparing)
+                        .disabled(deleting)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button { confirmsExport = true } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
                         Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
                     } label: { Image(systemName: "ellipsis.circle") }
                     .accessibilityLabel("メモの操作")
                     .accessibilityIdentifier("memory-note-menu")
-                    .disabled(deleting || export.isPreparing)
+                    .disabled(deleting)
                 }
             }
     }
@@ -414,107 +389,6 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
         record = value
         loaded = true
     }
-}
-
-@MainActor
-final class PhotoMemoryNoteExportPresentation: ObservableObject {
-    @Published var payload: PhotoMemoryNoteExportPayload?
-    @Published var error: String?
-    @Published private(set) var isPreparing = false
-    private var retainedPayload: PhotoMemoryNoteExportPayload?
-    private var preparation: Task<Void, Never>?
-
-    func begin(records: [PhotoMemoryNoteRecord]) {
-        guard !isPreparing, payload == nil, !records.isEmpty else { return }
-        finishShare()
-        guard retainedPayload == nil else { return }
-        isPreparing = true
-        let worker = Task.detached(priority: .userInitiated) {
-            try PhotoMemoryNoteExporter.create(records: records)
-        }
-        preparation = Task {
-            defer {
-                isPreparing = false
-                preparation = nil
-            }
-            do {
-                let result = try await withTaskCancellationHandler {
-                    try await worker.value
-                } onCancel: { worker.cancel() }
-                retainedPayload = result
-                guard !Task.isCancelled else { finishShare(); return }
-                payload = result
-            } catch let pending as PhotoMemoryNoteExportCleanupPending {
-                retainedPayload = pending.payload
-                self.error = "書き出し用の一時ファイルを片付けられませんでした。もう一度お試しください。"
-            } catch is CancellationError {
-                // Cancelling export never changes the saved records.
-            } catch {
-                self.error = "書き出せませんでした。メモはそのまま残っています。もう一度お試しください。"
-            }
-        }
-    }
-
-    func cancelPreparation() {
-        preparation?.cancel()
-        // Wait for the worker to acknowledge cancellation and clean up before
-        // allowing another export to reuse this presentation state.
-    }
-
-    func finishShare() {
-        guard let retainedPayload else { return }
-        do {
-            try retainedPayload.cleanup()
-            self.retainedPayload = nil
-        } catch {
-            self.error = "書き出し用の一時ファイルを片付けられませんでした。もう一度お試しください。"
-        }
-    }
-}
-
-private struct PhotoMemoryNoteExportModifier: ViewModifier {
-    @ObservedObject var export: PhotoMemoryNoteExportPresentation
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .bottom) {
-                if export.isPreparing {
-                    HStack {
-                        ProgressView()
-                        Text("書き出しています…")
-                        Button("やめる") { export.cancelPreparation() }
-                    }
-                    .padding().background(.regularMaterial, in: Capsule()).padding()
-                }
-            }
-            .sheet(item: $export.payload, onDismiss: { export.finishShare() }) { payload in
-                PhotoMemoryNoteShareSheet(url: payload.fileURL) { failed in
-                    if failed { export.error = "書き出し先に渡せませんでした。メモはそのまま残っています。" }
-                    export.payload = nil
-                }
-            }
-            .alert("書き出しを完了できませんでした", isPresented: Binding(
-                get: { export.error != nil }, set: { if !$0 { export.error = nil } })) {
-                Button("閉じる", role: .cancel) { export.finishShare() }
-            } message: { Text(export.error ?? "") }
-            .onDisappear { export.cancelPreparation() }
-    }
-}
-
-private struct PhotoMemoryNoteShareSheet: UIViewControllerRepresentable {
-    let url: URL
-    let completed: (Bool) -> Void
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        controller.view.accessibilityIdentifier = "memory-note-share-sheet"
-        controller.completionWithItemsHandler = { _, _, _, error in
-            DispatchQueue.main.async { completed(error != nil) }
-        }
-        return controller
-    }
-
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 #if DEBUG

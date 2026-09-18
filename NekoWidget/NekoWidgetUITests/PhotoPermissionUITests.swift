@@ -1798,6 +1798,71 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetPhotoConnectsToRelatedYearThemeAndExplicitCat() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                + (largeText ? ["--ux-large-text"] : [])
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "rediscovery"
+            app.launch()
+            let related = app.buttons["photo-browser-related"]
+            XCTAssertTrue(related.waitForExistence(timeout: 15))
+            XCTAssertTrue(related.isHittable)
+            capture(largeText ? "photo-related-largest-text" : "photo-related-widget-detail")
+            related.tap()
+            let theme = app.buttons["photo-related-theme-close_up"]
+            let cat = app.buttons["photo-related-cat-fixture-cat-0"]
+            let year = app.buttons["photo-related-year-calendar_year_2025"]
+            XCTAssertTrue(theme.waitForExistence(timeout: 5))
+            XCTAssertTrue(cat.exists)
+            XCTAssertTrue(year.exists)
+            XCTAssertFalse(app.buttons["photo-related-cat-fixture-cat-1"].exists,
+                "The other household cat is not explicitly assigned to this photo")
+            capture(largeText ? "photo-related-menu-largest-text" : "photo-related-menu")
+            if largeText { app.terminate(); continue }
+
+            year.tap()
+            let thirdYearPhoto = app.buttons["curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"]
+            XCTAssertTrue(thirdYearPhoto.waitForExistence(timeout: 5))
+            app.navigationBars.buttons.firstMatch.tap()
+            let sameDay = app.buttons["photo-browser-same-day"]
+            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
+            sameDay.tap()
+            let secondDayPhoto = app.buttons["day-photos-photo-app-store-screenshot-fixture-2"]
+            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
+            secondDayPhoto.tap()
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
+            XCTAssertTrue(related.exists, "Related navigation must also work inside the same-day collection")
+            related.tap()
+            XCTAssertTrue(theme.waitForExistence(timeout: 5))
+            theme.tap()
+            let secondThemePhoto = app.buttons["curated-album-photo-close_up-app-store-screenshot-fixture-2"]
+            XCTAssertTrue(secondThemePhoto.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["curated-album-photo-close_up-app-store-screenshot-fixture-3"].exists)
+            secondThemePhoto.tap()
+            XCTAssertTrue(related.waitForExistence(timeout: 5))
+            related.tap()
+            XCTAssertTrue(cat.waitForExistence(timeout: 5))
+            cat.tap()
+            let firstCatPhoto = app.buttons["curated-album-photo-all_cat_photos-app-store-screenshot-fixture-1"]
+            XCTAssertTrue(firstCatPhoto.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"].exists)
+            firstCatPhoto.tap()
+            XCTAssertTrue(related.waitForExistence(timeout: 5))
+            related.tap()
+            XCTAssertFalse(app.buttons["photo-related-cat-fixture-cat-1"].exists)
+            XCTAssertTrue(year.waitForExistence(timeout: 5))
+            year.tap()
+            XCTAssertTrue(app.buttons["curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-1"].waitForExistence(timeout: 5))
+            XCTAssertFalse(thirdYearPhoto.exists,
+                "The year opened inside one cat's album must preserve that explicit cat scope")
+            capture("photo-related-year-keeps-cat-scope")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testSameDayRediscoveryOpensAndSavesTheTappedPhoto() {
         let app = launch("rediscovery")
         let sameDay = app.buttons["この日の写真をすべて見る"]
@@ -2437,17 +2502,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         attach(app, name: "memory-library-list")
-        app.buttons["memory-notes-export"].tap()
-        XCTAssertTrue(app.staticTexts["本文・日付・記録した猫の名前を含みます。写真は含みません。"].waitForExistence(timeout: 5))
-        // iOS presents this as a toolbar-anchored popover, which omits the
-        // cancel action and instead exposes its native dismissal region.
-        if app.buttons["キャンセル"].exists {
-            app.buttons["キャンセル"].tap()
-        } else {
-            let dismissal = app.otherElements["PopoverDismissRegion"]
-            XCTAssertTrue(dismissal.waitForExistence(timeout: 5))
-            dismissal.tap()
-        }
+        XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         row.tap()
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
@@ -2485,7 +2540,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["memory-notes-export"].isEnabled)
+        XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         row.tap()
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
@@ -2504,13 +2559,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "文章は残っている。"), object: body)], timeout: 5), .completed)
         app.buttons["memory-note-menu"].tap()
+        XCTAssertFalse(app.buttons["書き出す"].exists)
         app.buttons["メモを削除"].tap()
         app.buttons["削除"].tap()
         // Group-level identifiers are forwarded to the empty state's children.
-        // Verify its visible content and the disabled export action instead.
+        // Verify its visible content and keep export out of the current UI.
         XCTAssertTrue(app.staticTexts["写真に思い出を添えると、ここで読み返せます。"].waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
-        XCTAssertFalse(app.buttons["memory-notes-export"].isEnabled)
+        XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         attach(app, name: "memory-library-empty-after-deletion")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(

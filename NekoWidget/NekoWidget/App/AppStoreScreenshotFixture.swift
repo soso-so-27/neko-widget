@@ -324,6 +324,17 @@ struct AppStoreScreenshotFixtureRootView: View {
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     private var photos: [PhotoPresentation] {
+        if widgetRecoveryCase == "rediscovery" {
+            return AppStoreScreenshotFixture.photos.enumerated().map { index, photo in
+                PhotoPresentation(localIdentifier: photo.localIdentifier,
+                    creationDate: index == 1 ? AppStoreScreenshotFixture.photos[0].creationDate : photo.creationDate,
+                    catBoundingBox: photo.catBoundingBox, isLiked: photo.isLiked, likedAt: photo.likedAt,
+                    albumPostures: photo.albumPostures, albumContainsPerson: photo.albumContainsPerson,
+                    albumIsOuting: photo.albumIsOuting, detectedCatCount: photo.detectedCatCount,
+                    largestCatAreaRatio: index < 2 ? 0.62 : photo.largestCatAreaRatio,
+                    isGrowthEligible: photo.isGrowthEligible, hasCurrentAlbumAnalysis: true)
+            }
+        }
         guard ProcessInfo.processInfo.environment["NEKO_UX_RECOVERY_CASE"] == "paging" else {
             return AppStoreScreenshotFixture.photos
         }
@@ -354,19 +365,25 @@ struct AppStoreScreenshotFixtureRootView: View {
         }
     }
     private var catProfiles: CatProfilesPresentation {
-        guard widgetRecoveryCase == "cats" else { return CatProfilesPresentation() }
+        guard ["cats", "rediscovery"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation() }
         let all = photos.map {
             CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                                         creationDate: $0.creationDate)
         }
         return CatProfilesPresentation(profiles: (0..<2).map { index in
             let identifier = "fixture-cat-\(index)"
-            var photo = all[index]
-            photo.assignedProfileIdentifiers = [identifier]
+            let selected = widgetRecoveryCase == "rediscovery"
+                ? Array(all[(index * 2)..<(index * 2 + 2)]) : [all[index]]
+            let confirmed = selected.map { source in
+                var photo = source
+                photo.assignedProfileIdentifiers = [identifier]
+                return photo
+            }
+            let assigned = Set(confirmed.map(\.localIdentifier))
             return CatProfilePresentation(
                 identifier: identifier, name: index == 0 ? "ミケ" : "ソラ",
-                coverPhoto: photo, confirmedPhotos: [photo],
-                manualCandidatePhotos: all.filter { $0.localIdentifier != photo.localIdentifier }
+                coverPhoto: confirmed[0], confirmedPhotos: confirmed,
+                manualCandidatePhotos: all.filter { !assigned.contains($0.localIdentifier) }
             )
         })
     }
@@ -452,7 +469,7 @@ struct AppStoreScreenshotFixtureRootView: View {
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
         .task {
-            if ["excluded", "scoped", "available"].contains(widgetRecoveryCase ?? "") {
+            if ["excluded", "scoped", "available", "rediscovery"].contains(widgetRecoveryCase ?? "") {
                 selectedPhotoIdentifier = photos[0].localIdentifier
                 selectedPhotoShownAt = Date()
             }
