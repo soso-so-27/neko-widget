@@ -3,7 +3,11 @@ import Foundation
 
 enum PersonalArchiveCloudConfiguration {
     static var containerIdentifier: String? {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "PersonalArchiveContainerIdentifier") as? String else { return nil }
+        containerIdentifier(in: Bundle.main.infoDictionary ?? [:])
+    }
+    static func containerIdentifier(in info: [String: Any]) -> String? {
+        guard let enabled = info["PersonalArchiveEnabled"] as? String, enabled == "YES",
+              let value = info["PersonalArchiveContainerIdentifier"] as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty || trimmed.contains("$(") ? nil : trimmed
     }

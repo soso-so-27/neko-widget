@@ -75,6 +75,8 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertEqual(values["APP_PRIVACY_URL"], APP_PRIVACY_XCCONFIG)
         self.assertEqual(values["APP_SUPPORT_URL"], APP_SUPPORT_XCCONFIG)
         base_values = assignments(BASE_CONFIG)
+        self.assertEqual(base_values["PERSONAL_ARCHIVE_ENABLED"], "NO")
+        self.assertEqual(values.get("PERSONAL_ARCHIVE_ENABLED", base_values["PERSONAL_ARCHIVE_ENABLED"]), "NO")
         self.assertEqual(base_values["APP_PRIVACY_URL"], "")
         self.assertEqual(base_values["APP_SUPPORT_URL"], "")
         self.assertNotIn("workers.dev", source)
@@ -107,6 +109,13 @@ class DisabledReleaseConfigTests(unittest.TestCase):
                 )[0]
                 self.assertIn(disabled_reference, block)
         self.assertEqual(project.count(disabled_reference), 4)
+        host_debug = project.split("A00000000000000000000052 /* Debug */", 1)[1].split(
+            "\n\t\t};", 1
+        )[0]
+        self.assertIn("PERSONAL_ARCHIVE_ENABLED = YES;", host_debug)
+        self.assertEqual(project.count("PERSONAL_ARCHIVE_ENABLED = YES;"), 1)
+        app_info = plistlib.loads((ROOT / "NekoWidget/Info.plist").read_bytes())
+        self.assertEqual(app_info["PersonalArchiveEnabled"], "$(PERSONAL_ARCHIVE_ENABLED)")
         self.assertIn(
             'INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";',
             project,

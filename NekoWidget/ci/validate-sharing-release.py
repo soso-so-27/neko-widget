@@ -535,6 +535,15 @@ def validate_expected_mode(
     if share_mode != app_mode:
         failures.append("App and Share Extension SharingReleaseMode do not match.")
 
+    # This is the internal archive pilot's release gate, not a runtime dependency
+    # on sharing. Match the exact build-setting String consumed by the app.
+    expected_archive_flag = "YES" if expected_mode == "media-staging" else "NO"
+    if app_info.get("PersonalArchiveEnabled") != expected_archive_flag:
+        failures.append(
+            f"App PersonalArchiveEnabled must be exactly {expected_archive_flag} "
+            f"for {expected_mode}."
+        )
+
     release_binding_supplied = bool(
         expected_release_environment or expected_build_number
     )

@@ -221,6 +221,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
 
     def test_existing_shipping_and_pairing_defaults_are_unchanged(self) -> None:
         base = assignments(BASE_CONFIG)
+        self.assertEqual(base["PERSONAL_ARCHIVE_ENABLED"], "NO")
         self.assertEqual(
             (
                 base["SHARING_RELEASE_MODE"],
@@ -233,6 +234,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             ("review-preview", "NO", "NO", "NO", "NO", "YES"),
         )
         pairing = assignments(PAIRING_CONFIG)
+        self.assertEqual(pairing.get("PERSONAL_ARCHIVE_ENABLED", base["PERSONAL_ARCHIVE_ENABLED"]), "NO")
         self.assertEqual(
             (
                 pairing["SHARING_RELEASE_MODE"],
@@ -249,6 +251,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         source = MEDIA_CONFIG.read_text(encoding="utf-8")
         self.assertIn('#include "Config.xcconfig"', source)
         values = assignments(MEDIA_CONFIG)
+        self.assertEqual(values["PERSONAL_ARCHIVE_ENABLED"], "YES")
         self.assertEqual(
             (
                 values["SHARING_RELEASE_MODE"],
@@ -335,6 +338,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         archive_and_preflight_fragments = (
             'SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE"',
             'SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED"',
+            'PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED"',
             'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED"',
             'SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED"',
             'APP_PRIVACY_URL="$RELEASE_APP_PRIVACY_URL"',

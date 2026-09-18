@@ -112,6 +112,7 @@ enum PersonalArchiveVerifier {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("personal-archive-verify-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try configurationBoundary()
         try await roundTrip(root.appendingPathComponent("roundtrip"))
         try await inputBoundaries(root.appendingPathComponent("input"))
         try await stableRetry(root.appendingPathComponent("retry"))
@@ -119,7 +120,34 @@ enum PersonalArchiveVerifier {
         try await partialImages(root.appendingPathComponent("partial"))
         try await zoneGeneration(root.appendingPathComponent("generation"))
         try await localFailure(root.appendingPathComponent("failure"))
-        print("Personal archive verifier passed: 7 boundary groups; no CloudKit network or account access")
+        print("Personal archive verifier passed: 8 boundary groups; no CloudKit network or account access")
+    }
+
+    private static func configurationBoundary() throws {
+        let identifier = "iCloud.example.personal"
+        let configured: [String: Any] = [
+            "PersonalArchiveEnabled": "YES", "PersonalArchiveContainerIdentifier": identifier
+        ]
+        try require(PersonalArchiveCloudConfiguration.containerIdentifier(in: configured) == identifier,
+                    "Explicit pilot configuration was rejected")
+        let invalidFlags: [Any] = ["NO", "", "yes", "true", "1", " YES", "YES ",
+                                  "$(PERSONAL_ARCHIVE_ENABLED)", true, false, 1, 0, NSNull()]
+        for flag in invalidFlags {
+            var info = configured; info["PersonalArchiveEnabled"] = flag
+            try require(PersonalArchiveCloudConfiguration.containerIdentifier(in: info) == nil,
+                        "Implicit or malformed pilot flag enabled CloudKit")
+        }
+        try require(PersonalArchiveCloudConfiguration.containerIdentifier(in: [
+            "PersonalArchiveContainerIdentifier": identifier
+        ]) == nil, "Container alone enabled CloudKit")
+        for value in ["", " ", "$(PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER)"] {
+            var info = configured; info["PersonalArchiveContainerIdentifier"] = value
+            try require(PersonalArchiveCloudConfiguration.containerIdentifier(in: info) == nil,
+                        "Missing or unresolved container enabled CloudKit")
+        }
+        try require(PersonalArchiveCloudConfiguration.containerIdentifier(in: [
+            "PersonalArchiveEnabled": "YES"
+        ]) == nil, "Pilot flag without a container enabled CloudKit")
     }
 
     private static func roundTrip(_ root: URL) async throws {

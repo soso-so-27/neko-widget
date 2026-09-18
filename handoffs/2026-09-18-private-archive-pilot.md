@@ -18,9 +18,11 @@
 
 ## Apple側の接続条件
 
-`PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER` は新規登録した `iCloud.jp.nekowidget.app.personal`。値を空にしたビルドではclientを作らず、設定入口も表示しない。App本体だけにCloudKit entitlementを追加し、DebugはDevelopment、ReleaseはProductionを明示。Widget/Share Extension/研究アプリの権限は変更しない。
+`PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER` は新規登録した `iCloud.jp.nekowidget.app.personal`。別の `PERSONAL_ARCHIVE_ENABLED` は既定NOとし、host Debugと内部media-stagingだけYES。処理済みInfo.plistの文字列YES完全一致と有効containerの両方がなければclientを作らず、設定入口も表示しない。disabled/review-preview/pairing-onlyでは無効を配布時に検証する。App本体だけにCloudKit entitlementを追加し、DebugはDevelopment、ReleaseはProductionを明示。Widget/Share Extension/研究アプリの権限は変更しない。
 
-2026-09-18、Apple Developerへのログインを確認し、専用containerを登録、`jp.nekowidget.app`へ割当保存済み。既存のApp配布profileはcapability変更で無効になったため、同じ証明書のまま再生成中。新profileのCI登録と開発／配布schemaは配布前に完了させる。通常のTestFlight成功確認のための再ログインではない。
+2026-09-18、専用container登録とApp IDへの割当を完了。同じ配布証明書でApp profileを再生成し、TestFlight環境の既存profile secretを更新済み。UUID `b1ee5473-b96a-4676-83a5-de431a8f7cbf`、SHA256 `f0b47a20ec2f2137336a3427186c63ead47dbbe5b68cd1de7fd40dedd0679ec8`。他のprofile/secretは変更しない。
+
+CloudKit Consoleで `PersonalArchiveEntryV1`（jpeg:Asset、payload:Encrypted Bytes、schema:Int64）と `PersonalArchiveGenerationV1`（generation/writeNonce:String）を作成し、Productionへschemaを配布した。新規型のPublic DB用world読取・icloud作成権限は外している。アプリはPrivate DBだけを使う。実データの保存・復旧は未確認。設定証拠は `C:/dev/neko-evidence/n29-apple-setup-20260918.json`。この設定はアプリの一般公開・課金開始を意味しない。
 
 ## 必要な検証
 
@@ -28,4 +30,6 @@ Swiftの保存境界検証（永続化・再試行・account・generation・部�
 
 設定・接続・実機復元・提供可能という段階を混同しない。既存noteの成功済み確認やアプリ全体の利用者確認を改めて依頼しない。CIの必須条件は維持し、必要な失敗箇所だけ修正する。
 
-実装・独立レビューを実施。レビューで見つけた、再試行失敗時の一覧消失、初回zone準備失敗後の再試行不能、同じdraftの重複、古いaccountの遅延応答を修正。ローカル開発フロー検証8項目は31.3秒で成功。CloudKit実接続、Swiftコンパイル、実画面描画、TestFlightはまだ未完了。
+実装・独立レビューを実施。レビューで見つけた、再試行失敗時の一覧消失、初回zone準備失敗後の再試行不能、同じdraftの重複、古いaccountの遅延応答を修正。先行候補b404f49ではMac native build、Swift保存境界7群、画像処理検証が成功。追加の配布gateにはPython関連66件が成功し、Swift設定境界を8群目として追加した。最終候補の必要CI・実画面・署名配布はこれから確認する。
+
+実機では設定→記録の保管で試しの写真と言葉を1件だけ保管し、「iCloudから読み込む」で写真と言葉を開く。アプリ削除は依頼しない。同じ端末の読込成功だけで空端末復元を確認済みとせず、実CloudKit接続・別端末復旧・販売可能を分けて記録する。

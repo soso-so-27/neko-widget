@@ -1299,6 +1299,7 @@
 			buildSettings = {
 				APS_ENVIRONMENT = development;
 				ICLOUD_ENVIRONMENT = Development;
+				PERSONAL_ARCHIVE_ENABLED = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;

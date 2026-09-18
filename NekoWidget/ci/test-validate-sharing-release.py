@@ -145,6 +145,7 @@ def info(
         "AppPrivacyURL": app_privacy_url,
         "AppSupportURL": app_support_url,
         "SharingReleaseMode": release_mode,
+        "PersonalArchiveEnabled": "YES" if release_mode == "media-staging" else "NO",
         "SharingFeatureEnabled": pairing,
         "SharingMediaEnabled": media,
         "SharingShareExtensionSendEnabled": share_extension_send,
@@ -375,6 +376,27 @@ class SharingReleasePreflightTests(unittest.TestCase):
         result = self.run_preflight(info("NO", "NO"), privacy(), "NO")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("sharing is disabled", result.stdout)
+
+    def test_personal_archive_pilot_requires_exact_processed_mode_flag(self) -> None:
+        cases = (
+            (info("NO", "NO"), privacy()),
+            (info("NO", "NO", review_preview="YES"), privacy()),
+            (info("YES", "NO", ENDPOINT), privacy(USER_ID)),
+            (info("YES", "YES", ENDPOINT), privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)),
+        )
+        for app, manifest in cases:
+            mode = app["SharingReleaseMode"]
+            wrong_flag = "NO" if mode == "media-staging" else "YES"
+            for value in (None, wrong_flag, "", "$(PERSONAL_ARCHIVE_ENABLED)", "yes", "true", "1", " YES", "NO ", True, False, 1, 0):
+                with self.subTest(mode=mode, value=value):
+                    malformed = dict(app)
+                    if value is None:
+                        malformed.pop("PersonalArchiveEnabled")
+                    else:
+                        malformed["PersonalArchiveEnabled"] = value
+                    result = self.run_preflight(malformed, manifest)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("PersonalArchiveEnabled", result.stderr)
 
     def test_disabled_rejects_every_sharing_surface_flag(self) -> None:
         flag_cases = {

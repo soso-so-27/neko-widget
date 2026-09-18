@@ -8,7 +8,9 @@ SHARE_EXTENSION_BUNDLE_IDENTIFIER = jp.nekowidget.app.share
 APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 
 // Registered, opt-in internal archive pilot. Only explicit saves enroll records.
-// Clearing this value hides its entry; distribution also requires the matching profile and schema.
+// Host Debug and the explicit media-staging pilot may enable this independent gate.
+// A configured container alone must not activate CloudKit in local-only releases.
+PERSONAL_ARCHIVE_ENABLED = NO
 PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER = iCloud.jp.nekowidget.app.personal
 
 // v1 supports iOS 17.1 and later.
