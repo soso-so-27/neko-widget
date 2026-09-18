@@ -111,6 +111,7 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .memories
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
+    @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
     @State private var showsSettings = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
@@ -136,13 +137,13 @@ struct MainTabView: View {
                         albumDestination(for: route, defaultScope: .everyone)
                     }
                     .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                    .navigationDestination(for: PhotoRediscoveryRoute.self, destination: photoRediscoveryDestination)
                     .navigationDestination(
                         for: MemoriesRoute.self,
                         destination: memoriesDestination
                     )
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
             .tabItem {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
@@ -176,9 +177,9 @@ struct MainTabView: View {
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                .navigationDestination(for: PhotoRediscoveryRoute.self, destination: photoRediscoveryDestination)
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
             .environment(\.catProfilePhotoDestination, { profileID, photoID in
                 AnyView(albumPhotoDetail(for: .allCatPhotos,
                     localIdentifier: photoID, scope: .profile(profileID)))
@@ -208,8 +209,17 @@ struct MainTabView: View {
         .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
             settingsSheet
         }
+        .sheet(item: $relatedPhotoRoute) { route in
+            PhotoRelatedAlbumsSheet(
+                root: route,
+                relatedAlbums: relatedAlbums,
+                albumDestination: { AnyView(albumDestination(for: $0, defaultScope: .everyone)) },
+                relatedDestination: { AnyView(photoRediscoveryDestination(for: $0)) }
+            )
+        }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
+            relatedPhotoRoute = nil
             let isOutsideScopedSource = photoSourceStatus != .allLibrary
                 && !catPhotos.contains(where: {
                     $0.localIdentifier == identifier
@@ -237,11 +247,13 @@ struct MainTabView: View {
         }
         .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
             guard isPresented else { return }
+            relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
         }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
+            relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
             deepLinkedFamilyWindowIsPresented = true
@@ -1547,6 +1559,36 @@ struct MainTabView: View {
         showWidgetPlacementGuide()
     }
 
+}
+
+/// Keep exploration separate from the originating browser's navigation style.
+/// The root stays fixed while subsequent related links append to this sheet.
+private struct PhotoRelatedAlbumsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var path = NavigationPath()
+
+    let root: PhotoRediscoveryRoute
+    let relatedAlbums: PhotoRelatedAlbums
+    let albumDestination: (AlbumRoute) -> AnyView
+    let relatedDestination: (PhotoRediscoveryRoute) -> AnyView
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            relatedDestination(root)
+                .toolbar { PhotoRelatedCloseToolbar(close: { dismiss() }) }
+                .navigationDestination(for: AlbumRoute.self) { route in
+                    albumDestination(route)
+                        .toolbar { PhotoRelatedCloseToolbar(close: { dismiss() }) }
+                }
+                .navigationDestination(for: PhotoRediscoveryRoute.self) { route in
+                    relatedDestination(route)
+                        .toolbar { PhotoRelatedCloseToolbar(close: { dismiss() }) }
+                }
+        }
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { path.append($0) })
+        .environment(\.closePhotoRelatedAlbums, { dismiss() })
+    }
 }
 
 private struct WindowListView: View {

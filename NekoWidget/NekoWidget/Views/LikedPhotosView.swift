@@ -2111,10 +2111,12 @@ struct PhotoRediscoveryDay: Hashable {
     let allowsPhotoExport: Bool
 }
 
-enum PhotoRediscoveryRoute: Hashable {
+enum PhotoRediscoveryRoute: Hashable, Identifiable {
+    case album(sourcePhotoIdentifier: String, scope: CatProfileScopePresentation, album: AlbumRoute)
     case day(PhotoRediscoveryDay)
     case dayPhoto(PhotoRediscoveryDay, localIdentifier: String)
-    case album(sourcePhotoIdentifier: String, scope: CatProfileScopePresentation, album: AlbumRoute)
+
+    var id: Self { self }
 }
 
 struct PhotoRelatedAlbumLink: Identifiable {
@@ -2132,9 +2134,18 @@ struct PhotoRelatedAlbumLink: Identifiable {
 }
 
 typealias PhotoRelatedAlbums = (String, CatProfileScopePresentation) -> [PhotoRelatedAlbumLink]
+typealias OpenPhotoRelatedAlbum = (PhotoRediscoveryRoute) -> Void
 
 private struct PhotoRelatedAlbumsKey: EnvironmentKey {
     static var defaultValue: PhotoRelatedAlbums? { nil }
+}
+
+private struct OpenPhotoRelatedAlbumKey: EnvironmentKey {
+    static var defaultValue: OpenPhotoRelatedAlbum? { nil }
+}
+
+private struct ClosePhotoRelatedAlbumsKey: EnvironmentKey {
+    static var defaultValue: (() -> Void)? { nil }
 }
 
 private struct PhotoRediscoveryScopeKey: EnvironmentKey {
@@ -2147,9 +2158,35 @@ extension EnvironmentValues {
         set { self[PhotoRelatedAlbumsKey.self] = newValue }
     }
 
+    var openPhotoRelatedAlbum: OpenPhotoRelatedAlbum? {
+        get { self[OpenPhotoRelatedAlbumKey.self] }
+        set { self[OpenPhotoRelatedAlbumKey.self] = newValue }
+    }
+
+    var closePhotoRelatedAlbums: (() -> Void)? {
+        get { self[ClosePhotoRelatedAlbumsKey.self] }
+        set { self[ClosePhotoRelatedAlbumsKey.self] = newValue }
+    }
+
     var photoRediscoveryScope: CatProfileScopePresentation {
         get { self[PhotoRediscoveryScopeKey.self] }
         set { self[PhotoRediscoveryScopeKey.self] = newValue }
+    }
+}
+
+struct PhotoRelatedCloseToolbar: ToolbarContent {
+    let close: (() -> Void)?
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            if let close {
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                }
+                .accessibilityLabel("関連する写真を閉じる")
+                .accessibilityIdentifier("photo-related-close")
+            }
+        }
     }
 }
 
@@ -2159,6 +2196,8 @@ extension EnvironmentValues {
 struct PhotoBrowserView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.photoRelatedAlbums) private var relatedAlbums
+    @Environment(\.openPhotoRelatedAlbum) private var openRelatedAlbum
+    @Environment(\.closePhotoRelatedAlbums) private var closeRelatedAlbums
     @Environment(\.photoRediscoveryScope) private var rediscoveryScope
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
@@ -2384,15 +2423,15 @@ struct PhotoBrowserView: View {
 
     @ViewBuilder
     private func sameDayLink(for photo: PhotoPresentation, date: Date, dateText: String) -> some View {
-        if relatedAlbums != nil {
+        if closeRelatedAlbums != nil {
+            // Only the independent exploration sheet registers these routes.
+            // Outside it, preserve item/destination-based navigation and Back.
             NavigationLink(value: PhotoRediscoveryRoute.day(PhotoRediscoveryDay(
                 date: date, scope: rediscoveryScope, allowsPhotoExport: exportMemoryPhoto != nil
             ))) {
                 sameDayLinkLabel(photo: photo, dateText: dateText)
             }
         } else {
-            // Standalone previews supply their own browser callbacks. Shipping
-            // stacks inject typed routing, including this day's nested photos.
             NavigationLink {
                 dayPhotosView(for: date)
             } label: {
@@ -2557,17 +2596,19 @@ struct PhotoBrowserView: View {
     @ViewBuilder
     private var relatedAlbumsMenu: some View {
         let links = relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []
-        if !links.isEmpty {
+        if let openRelatedAlbum, !links.isEmpty {
             Menu {
                 ForEach(PhotoRelatedAlbumLink.Group.allCases, id: \.self) { group in
                     let groupLinks = links.filter { $0.group == group }
                     if !groupLinks.isEmpty {
                         Section(group.rawValue) {
                             ForEach(groupLinks) { link in
-                                NavigationLink(value: PhotoRediscoveryRoute.album(
-                                    sourcePhotoIdentifier: selectedPhotoIdentifier,
-                                    scope: rediscoveryScope, album: link.route
-                                )) {
+                                Button {
+                                    openRelatedAlbum(.album(
+                                        sourcePhotoIdentifier: selectedPhotoIdentifier,
+                                        scope: rediscoveryScope, album: link.route
+                                    ))
+                                } label: {
                                     Text(link.title)
                                 }
                                 .accessibilityIdentifier(link.accessibilityIdentifier)

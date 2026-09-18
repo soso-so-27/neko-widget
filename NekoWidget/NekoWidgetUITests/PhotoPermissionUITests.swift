@@ -1825,7 +1825,7 @@ final class SoloMemoriesUITests: XCTestCase {
             year.tap()
             let thirdYearPhoto = app.buttons["curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"]
             XCTAssertTrue(thirdYearPhoto.waitForExistence(timeout: 5))
-            app.navigationBars.buttons.firstMatch.tap()
+            app.buttons["photo-related-close"].tap()
             let sameDay = app.buttons["photo-browser-same-day"]
             XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
             sameDay.tap()
@@ -1849,6 +1849,11 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(firstCatPhoto.waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"].exists)
             firstCatPhoto.tap()
+            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
+            sameDay.tap()
+            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
+            secondDayPhoto.tap()
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
             XCTAssertTrue(related.waitForExistence(timeout: 5))
             related.tap()
             XCTAssertFalse(app.buttons["photo-related-cat-fixture-cat-1"].exists)
@@ -1858,6 +1863,38 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(thirdYearPhoto.exists,
                 "The year opened inside one cat's album must preserve that explicit cat scope")
             capture("photo-related-year-keeps-cat-scope")
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5),
+                "Back inside exploration preserves its same-day photo destination")
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
+            app.buttons["photo-related-close"].tap()
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5),
+                "Closing exploration returns to the same photo in the original day's collection")
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(secondDayPhoto.waitForExistence(timeout: 5))
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
+            app.navigationBars.buttons.firstMatch.tap()
+            let catShortcut = app.buttons["photo-hub-cat-fixture-cat-0"]
+            XCTAssertTrue(catShortcut.waitForExistence(timeout: 5))
+            catShortcut.tap()
+            let catPhotos = app.buttons.matching(identifier: "cat-profile-photo")
+            XCTAssertTrue(catPhotos.firstMatch.waitForExistence(timeout: 5))
+            catPhotos.firstMatch.tap()
+            XCTAssertTrue(related.waitForExistence(timeout: 5))
+            related.tap()
+            XCTAssertTrue(year.waitForExistence(timeout: 5))
+            year.tap()
+            XCTAssertTrue(app.buttons["photo-related-close"].waitForExistence(timeout: 5))
+            app.buttons["photo-related-close"].tap()
+            XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5),
+                "Item-based cat navigation must remain underneath the related-photo sheet")
+            XCTAssertEqual(catPhotos.count, 2)
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(catShortcut.waitForExistence(timeout: 5))
             app.terminate()
         }
     }
