@@ -76,12 +76,7 @@ final class PhotoMemoryNotePhotoAccess: ObservableObject {
 }
 
 struct PhotoMemoryNotesEntry: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var library: PhotoMemoryNoteLibraryPresentation
-
-    init(store: PhotoMemoryNoteStore = .shared) {
-        _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store))
-    }
+    @ObservedObject var library: PhotoMemoryNoteLibraryPresentation
 
     var body: some View {
         Group {
@@ -103,10 +98,6 @@ struct PhotoMemoryNotesEntry: View {
                 .accessibilityIdentifier("albums-memory-notes")
                 .accessibilityValue(library.failed ? "読み込めませんでした" : "\(library.records.count)件")
             }
-        }
-        .task { await library.reload() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await library.reload() } }
         }
     }
 }

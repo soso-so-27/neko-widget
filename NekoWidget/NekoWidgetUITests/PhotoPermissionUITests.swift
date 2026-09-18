@@ -2430,7 +2430,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["albums-memory-notes"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertEqual(entry.value as? String, "1件")
         attach(app, name: "memory-library-album-entry")
         entry.tap()
@@ -2473,7 +2473,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["albums-memory-notes"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Text must remain reachable without Photos access")
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Text must remain reachable without Photos access.\n\(app.debugDescription)")
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -2501,6 +2501,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["memory-notes-empty"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].isEnabled)
         attach(app, name: "memory-library-empty-after-deletion")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: entry)], timeout: 5), .completed)
         app.terminate()
     }
 

@@ -96,7 +96,8 @@ class LaneTests(unittest.TestCase):
             body = jobs[identifier]
             self.assertNotIn("download-artifact", body)
             self.assertNotIn("continue-on-error", body)
-            self.assertIn("timeout-minutes: 60", body)
+            expected_timeout = 75 if identifier == "sharing-app-ui" else 60
+            self.assertIn(f"timeout-minutes: {expected_timeout}", body)
             # Scheduling must not change checkout isolation, commands, flags,
             # artifact provenance or whether a failure is propagated.
             steps = body.split("    steps:\n", 1)[1]

@@ -885,6 +885,7 @@ struct CuratedAlbumDetailView: View {
 @MainActor
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("album.featuredSnapshot.v1") private var featuredSnapshotJSON = ""
     @State private var visibleRecommendationID: String?
 
@@ -908,7 +909,7 @@ struct LikedPhotosView: View {
     var referenceDate: Date
     var isCatDetail: Bool
     var navigationTitleOverride: String?
-    private let memoryNoteStore: PhotoMemoryNoteStore
+    @StateObject private var memoryNotes: PhotoMemoryNoteLibraryPresentation
     private let highlights: [AlbumHighlightPresentation]
     private let recommendedHighlights: [AlbumHighlightPresentation]
 
@@ -953,7 +954,7 @@ struct LikedPhotosView: View {
         self.referenceDate = referenceDate
         self.isCatDetail = isCatDetail
         self.navigationTitleOverride = navigationTitleOverride
-        self.memoryNoteStore = memoryNoteStore
+        _memoryNotes = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: memoryNoteStore))
         _featuredSnapshotJSON = AppStorage(wrappedValue: "", "album.featuredSnapshot.v1", store: featuredSnapshotDefaults)
         let builder = AlbumHighlightBuilder(now: referenceDate)
         let current = hasPhotoAccess ? builder.highlights(from: albumSections) : []
@@ -1050,7 +1051,9 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    if !isCatDetail { PhotoMemoryNotesEntry(store: memoryNoteStore) }
+                    if !isCatDetail && (!memoryNotes.records.isEmpty || memoryNotes.failed) {
+                        PhotoMemoryNotesEntry(library: memoryNotes)
+                    }
                     if hasPhotoAccess {
                         if let albumScan {
                             AlbumView(
@@ -1078,6 +1081,18 @@ struct LikedPhotosView: View {
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
+            }
+        }
+        .task {
+            // Load from the persistent scroll view, even while the optional
+            // entry has no content. An empty Group has no task lifecycle.
+            if !isCatDetail && !showsHighlightArchive && !showsReflectionArchive {
+                await memoryNotes.reload()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && !isCatDetail && !showsHighlightArchive && !showsReflectionArchive {
+                Task { await memoryNotes.reload() }
             }
         }
         .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月の写真・ムービー" : navigationTitleOverride ?? "アルバム")

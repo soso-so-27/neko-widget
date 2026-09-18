@@ -1028,7 +1028,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.app_ui == 'true'
     runs-on: macos-15
-    timeout-minutes: 60
+    # Full UI execution can consume 60 minutes before result/attachment export.
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 
