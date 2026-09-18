@@ -318,6 +318,8 @@ enum AppStoreScreenshotFixture {
 
 @MainActor
 struct AppStoreScreenshotFixtureRootView: View {
+    var widgetPhotoIdentifier: String? = nil
+    var widgetPhotoShownAt: Date? = nil
     @State private var selectedPhotoIdentifier: String?
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
@@ -391,18 +393,26 @@ struct AppStoreScreenshotFixtureRootView: View {
     private let windowPhoto = AppStoreScreenshotFixture.windowPhoto
 
     var body: some View {
-#if targetEnvironment(simulator)
-        if let scenario = ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] {
-            MainlineAcceptanceFixtureRootView(scenario: scenario)
+        if let widgetPhotoIdentifier {
+            // Match AppRootView's direct destination call inside its own
+            // NavigationStack. MainTabView.body must not supply environments.
+            mainTabContent.widgetPhotoDestination(
+                for: widgetPhotoIdentifier, shownAt: widgetPhotoShownAt
+            )
         } else {
-            productScreens
-        }
+#if targetEnvironment(simulator)
+            if let scenario = ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] {
+                MainlineAcceptanceFixtureRootView(scenario: scenario)
+            } else {
+                productScreens
+            }
 #else
-        productScreens
+            productScreens
 #endif
+        }
     }
 
-    private var productScreens: some View {
+    private var mainTabContent: MainTabView {
         MainTabView(
             currentPhoto: windowPhoto,
             likedPhotos: likedPhotos,
@@ -466,6 +476,10 @@ struct AppStoreScreenshotFixtureRootView: View {
             refreshPhotoSourceAlbums: {},
             exportJSON: { nil }
         )
+    }
+
+    private var productScreens: some View {
+        mainTabContent
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
         .task {

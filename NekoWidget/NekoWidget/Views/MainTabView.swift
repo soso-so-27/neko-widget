@@ -210,12 +210,7 @@ struct MainTabView: View {
             settingsSheet
         }
         .sheet(item: $relatedPhotoRoute) { route in
-            PhotoRelatedAlbumsSheet(
-                root: route,
-                relatedAlbums: relatedAlbums,
-                albumDestination: { AnyView(albumDestination(for: $0, defaultScope: .everyone)) },
-                relatedDestination: { AnyView(photoRediscoveryDestination(for: $0)) }
-            )
+            relatedAlbumsSheet(for: route)
         }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
@@ -373,15 +368,30 @@ struct MainTabView: View {
 
     @ViewBuilder
     func widgetPhotoDestination(for localIdentifier: String, shownAt: Date?) -> some View {
-        if hasPhotoAccess,
-           catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
-           !excludedCatCandidateIdentifiers.contains(localIdentifier) {
-            photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true)
-        } else {
-            ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                   description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
-                .accessibilityIdentifier("unavailable-widget-photo")
+        // AppRoot calls this destination directly, outside MainTabView.body.
+        // The installed host must own presentation state and supply the same
+        // related-photo actions as the in-app browser.
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+            if hasPhotoAccess,
+               catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
+               !excludedCatCandidateIdentifiers.contains(localIdentifier) {
+                photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true)
+            } else {
+                ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                       description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
+                    .accessibilityIdentifier("unavailable-widget-photo")
+            }
         }
+        .id(localIdentifier)
+    }
+
+    private func relatedAlbumsSheet(for route: PhotoRediscoveryRoute) -> some View {
+        PhotoRelatedAlbumsSheet(
+            root: route,
+            relatedAlbums: relatedAlbums,
+            albumDestination: { AnyView(albumDestination(for: $0, defaultScope: .everyone)) },
+            relatedDestination: { AnyView(photoRediscoveryDestination(for: $0)) }
+        )
     }
 
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
@@ -1559,6 +1569,30 @@ struct MainTabView: View {
         showWidgetPlacementGuide()
     }
 
+}
+
+/// Direct Widget destinations are installed without MainTabView.body. Own
+/// their related-photo state in the destination's actual view hierarchy.
+private struct PhotoRelatedAlbumsHost<Content: View, Sheet: View>: View {
+    @State private var route: PhotoRediscoveryRoute?
+    let relatedAlbums: PhotoRelatedAlbums
+    let sheet: (PhotoRediscoveryRoute) -> Sheet
+    let content: Content
+
+    init(relatedAlbums: @escaping PhotoRelatedAlbums,
+         sheet: @escaping (PhotoRediscoveryRoute) -> Sheet,
+         @ViewBuilder content: () -> Content) {
+        self.relatedAlbums = relatedAlbums
+        self.sheet = sheet
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .environment(\.photoRelatedAlbums, relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, { route = $0 })
+            .sheet(item: $route, content: sheet)
+    }
 }
 
 /// Keep exploration separate from the originating browser's navigation style.

@@ -25,6 +25,59 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetURLPersonalPhotoOpensRelatedAlbumAndReturnsToOriginal() throws {
+        func foreground(_ query: XCUIElementQuery, timeout: TimeInterval = 5,
+                        file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+            let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: timeout), .completed,
+                           "Expected exactly one foreground element", file: file, line: line)
+            let matches = query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+            return try XCTUnwrap(matches.count == 1 ? matches.first : nil,
+                                 "Foreground element changed before use", file: file, line: line)
+        }
+
+        continueAfterFailure = false
+        let app = widgetPhotoApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["widget-photo-fixture-home"].waitForExistence(timeout: 10))
+        let route = widgetPhotoRoutes()[0]
+        openWidgetURLInActiveApp(route.url, app: app, process: widgetFixtureProcess(in: app))
+        assertWidgetPhotoOpening(route, in: app)
+        resolveWidgetPhoto(in: app)
+
+        // The URL host calls the same direct destination as AppRootView; it
+        // must work without MainTabView.body's environment or navigation path.
+        let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
+        let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
+        try foreground(app.buttons.matching(identifier: "photo-browser-related")).tap()
+        try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
+        try foreground(app.buttons.matching(
+            identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"
+        )).tap()
+        _ = try foreground(app.images.matching(identifier: "photo-detail-zoom-surface"))
+        let relatedDate = try XCTUnwrap(try foreground(sameDay).value as? String)
+        XCTAssertNotEqual(relatedDate, originalDate, "The related album must open the selected different photo")
+        capture("widget-url-personal-related-photo", app)
+
+        let closeRelated = app.buttons.matching(identifier: "photo-related-close")
+        try foreground(closeRelated).tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            closeRelated.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.isEmpty
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        XCTAssertEqual(try foreground(sameDay).value as? String, originalDate,
+                       "Closing related photos must retain the original Widget photo")
+        _ = try foreground(app.images.matching(identifier: "photo-detail-zoom-surface"))
+        XCTAssertEqual(try foreground(app.staticTexts.matching(identifier: "widget-photo-fixture-route")).label,
+                       route.key)
+        _ = try foreground(app.buttons.matching(identifier: "photo-browser-related"))
+        capture("widget-url-personal-related-return", app)
+        closeWidgetPhotoOnce(in: app)
+    }
+
+    @MainActor
     func testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations() {
         continueAfterFailure = false
         let app = widgetPhotoApplication()

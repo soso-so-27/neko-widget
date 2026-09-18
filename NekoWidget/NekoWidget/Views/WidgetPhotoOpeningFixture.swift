@@ -197,18 +197,9 @@ private struct WidgetPhotoOpeningFixtureDetail: View {
         switch opening.destination {
         case let .personal(identifier, shownAt):
             if AppStoreScreenshotFixture.isFixtureIdentifier(identifier) {
-                let photo = PhotoPresentation(localIdentifier: identifier,
-                    creationDate: Date(timeIntervalSince1970: 1_783_008_000))
-                PhotoBrowserView(photos: [photo], libraryPhotos: [photo], initialPhoto: photo,
-                    widgetShownAt: shownAt, showsWidgetTiming: true,
-                    setMemorySaved: { _, _ in }, excludedCatCandidateIdentifiers: [],
-                    excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
-                    profiles: [], assignmentsByPhotoIdentifier: [:],
-                    replaceProfileAssignments: { _ in true },
-                    deliveryActions: PhotoWindowDeliveryActions(
-                        destinations: { [] },
-                        prepare: { _ in throw MemoryPhotoJPEGExportError.photoUnavailable },
-                        send: { _, _, _ in "確認用のため送信しません" }))
+                AppStoreScreenshotFixtureRootView(
+                    widgetPhotoIdentifier: identifier, widgetPhotoShownAt: shownAt
+                )
             } else {
                 unavailablePhoto
             }
