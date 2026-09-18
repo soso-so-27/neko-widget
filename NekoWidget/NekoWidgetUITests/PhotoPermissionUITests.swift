@@ -2534,7 +2534,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(caption.waitForExistence(timeout: 5))
         XCTAssertFalse((caption.value as? String ?? "").contains(note), "Private memories must not be sent automatically")
         app.buttons["family-window-caption-done-top"].tap()
-        app.buttons["photo-window-cancel"].tap()
+        app.buttons["family-window-cancel-delivery"].tap()
         XCTAssertTrue(open.waitForExistence(timeout: 5))
         open.tap()
         let delete = app.buttons["photo-memory-note-delete"]
@@ -3056,9 +3056,21 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 "Ordinary captions must not reserve an empty footer that shrinks the photo.")
         }
         attach(app, name: name)
+        let beforeZoomValue = image.value as? String ?? "nil"
+        let beforeZoomFrame = image.frame
         image.doubleTap()
-        expectation(for: NSPredicate { _, _ in (Self.detailValue(image.value as? String, field: "zoom") ?? 0) > 1.1 }, evaluatedWith: image)
-        waitForExpectations(timeout: 5)
+        let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (Self.detailValue(image.value as? String, field: "zoom") ?? 0) > 1.1
+        }, object: image)
+        let zoomResult = XCTWaiter.wait(for: [zoomed], timeout: 5)
+        if zoomResult != .completed {
+            let state = XCTAttachment(string: "before=\(beforeZoomValue)\nafter=\(image.value as? String ?? "nil")\nbeforeFrame=\(beforeZoomFrame)\nafterFrame=\(image.frame)")
+            state.name = "\(name)-zoom-failure-state"
+            state.lifetime = .keepAlways
+            add(state)
+            attach(app, name: "\(name)-zoom-failed")
+        }
+        XCTAssertEqual(zoomResult, .completed, "Double-tap must enlarge the visible photo.")
         attach(app, name: "\(name)-zoomed")
         image.doubleTap()
         expectation(for: NSPredicate { _, _ in abs((Self.detailValue(image.value as? String, field: "zoom") ?? 0) - 1) < 0.05 }, evaluatedWith: image)
