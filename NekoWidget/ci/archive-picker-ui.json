@@ -1,6 +1,19 @@
 {
   "schemaVersion": 1,
   "scope": "archive-picker-ui-v1",
-  "purpose": "Inactive until the complete picker presentation, real-picker regression and seed diff is reviewed.",
-  "files": {}
+  "purpose": "Stable screen-owned archive PhotosPicker; real cancel/reopen/import/remove and existing record restoration.",
+  "files": {
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
+      "before": "8417e5d1ca5a1a57d6afba502a77d807402b8e208483ec134c24a09738d0cf3d",
+      "after": "34f1316064b809883dbdccb010f2d71f60a04afa708e0348409c1b5be9ef8e16"
+    },
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
+      "before": "196f601e60ce1aac46ec26d88a35912efa02c401458c3f82055755cd11967d4c",
+      "after": "cf40e16d49a7a8204a05ce1064ea8d6de7b33931312b6ee55d9c895e33fbc7c0"
+    },
+    "NekoWidget/ci/run-sharing-runtime-matrix.sh": {
+      "before": "3150b15f9b73598fefd3bdb65780456a926d6c35d43ed17e004178392d5a59d2",
+      "after": "244b5b09c2d8ae45d852c9c04ded831da5a3e13596055fdc57a0b75af98bba97"
+    }
+  }
 }
