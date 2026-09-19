@@ -2836,17 +2836,35 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     @MainActor
     func testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto() {
         let app = XCUIApplication()
-        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-cloud",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["albums-memory-notes"]
         XCTAssertTrue(entry.waitForExistence(timeout: 15), app.debugDescription)
-        XCTAssertEqual(entry.value as? String, "1件")
+        XCTAssertTrue(entry.label.contains("写真と言葉"))
         attach(app, name: "memory-library-album-entry")
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
+        XCTAssertTrue(archived.waitForExistence(timeout: 10), "Cloud-only records belong in the same reading list.")
         attach(app, name: "memory-library-list")
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("おふろ")
+        XCTAssertTrue(archived.waitForExistence(timeout: 5))
+        XCTAssertFalse(row.exists)
+        attach(app, name: "memory-library-search")
+        archived.tap()
+        XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        if app.buttons["キャンセル"].exists { app.buttons["キャンセル"].tap() }
+        if !row.exists {
+            search.tap()
+            if search.buttons.firstMatch.exists { search.buttons.firstMatch.tap() }
+            app.buttons["キャンセル"].tap()
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         row.tap()
         let body = app.staticTexts["memory-note-body"]
@@ -2909,14 +2927,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["削除"].tap()
         // Group-level identifiers are forwarded to the empty state's children.
         // Verify its visible content and keep export out of the current UI.
-        XCTAssertTrue(app.staticTexts["写真に思い出を添えると、ここで読み返せます。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["「はじめてのおふろ」「いつもの寝場所」。写真に添えた言葉を、ここで読み返せます。"].waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         attach(app, name: "memory-library-empty-after-deletion")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "An empty library must still offer the cloud restore route.")
-        XCTAssertEqual(entry.value as? String, "0件")
         entry.tap()
+        app.buttons["memory-notes-menu"].tap()
         XCTAssertTrue(app.buttons["memory-notes-archive"].waitForExistence(timeout: 5))
         app.terminate()
     }
@@ -2949,6 +2967,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(body.waitForExistence(timeout: 10))
         XCTAssertEqual(body.label, original)
         app.navigationBars.buttons.firstMatch.tap()
+        // One exact preserved copy must not become two identical reading rows.
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "iCloudに保管済み"), object: row)], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch.exists)
+        app.buttons["memory-notes-menu"].tap()
         app.buttons["memory-notes-archive"].tap()
         let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-")).firstMatch
         XCTAssertTrue(archived.waitForExistence(timeout: 10)); archived.tap()

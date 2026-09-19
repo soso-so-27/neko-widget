@@ -211,8 +211,9 @@ private extension PersonalArchiveRecordState {
     }
 }
 
-private struct PersonalArchiveRecordView: View {
+struct PersonalArchiveRecordView: View {
     let store: PersonalArchiveStore
+    private let expectedAccount: String?
     @Environment(\.dismiss) private var dismiss
     @State private var record: PersonalArchiveRecord
     @State private var account: String?
@@ -222,13 +223,17 @@ private struct PersonalArchiveRecordView: View {
     @State private var deleteID = UUID()
     @State private var errorMessage: String?
 
-    init(record: PersonalArchiveRecord, store: PersonalArchiveStore) {
+    init(record: PersonalArchiveRecord, store: PersonalArchiveStore, expectedAccount: String? = nil) {
         _record = State(initialValue: record)
         self.store = store
+        self.expectedAccount = expectedAccount
     }
 
     var body: some View {
         ScrollView {
+            if expectedAccount != nil && account == nil {
+                ProgressView()
+            } else {
             VStack(alignment: .leading, spacing: 20) {
                 if let data = record.jpegData, let image = UIImage(data: data) {
                     Image(uiImage: image).resizable().scaledToFit()
@@ -258,6 +263,7 @@ private struct PersonalArchiveRecordView: View {
                 if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
                 if deleting { ProgressView("削除しています…") }
             }.padding()
+            }
         }
         .navigationTitle("記録").navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -276,8 +282,14 @@ private struct PersonalArchiveRecordView: View {
             }
         }
         .task {
-            do { account = try await store.accountContext() }
-            catch { errorMessage = personalArchiveMessage(for: error) }
+            do {
+                let current = try await store.accountContext()
+                guard expectedAccount == nil || current == expectedAccount else { dismiss(); return }
+                account = current
+            } catch {
+                if expectedAccount != nil { dismiss() }
+                else { errorMessage = personalArchiveMessage(for: error) }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
             .receive(on: DispatchQueue.main)) { _ in account = nil; editing = false; dismiss() }

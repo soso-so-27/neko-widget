@@ -21,9 +21,17 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
     private var pauseCommit = false
     private var pausedCommit: CheckedContinuation<Void, Never>?
     private var commitStarted: CheckedContinuation<Void, Never>?
+    private var accountSwitchCountdown: Int?
 
     func account() -> PersonalArchiveAccount { current }
-    func isCurrent(_ account: PersonalArchiveAccount) -> Bool { current == account }
+    func isCurrent(_ account: PersonalArchiveAccount) -> Bool {
+        if let remaining = accountSwitchCountdown {
+            if remaining == 0 { accountSwitchCountdown = nil; switchAccount("fixture-b") }
+            else { accountSwitchCountdown = remaining - 1 }
+        }
+        return current == account
+    }
+    func switchAccountAfterCurrentChecks(_ count: Int) { accountSwitchCountdown = count }
     func switchAccount(_ name: String) {
         current = PersonalArchiveAccount(key: PersonalArchiveFiles.digest(Data(name.utf8)), generation: current.generation + 1)
     }
@@ -149,7 +157,78 @@ enum PersonalArchiveVerifier {
         try await sourcePreservation(root.appendingPathComponent("source"))
         try await mutations(root.appendingPathComponent("mutations"))
         try await staleResponses(root.appendingPathComponent("stale"))
-        print("Personal archive verifier passed: 11 boundary groups; no CloudKit network or account access")
+        try await readingSnapshots(root.appendingPathComponent("reading"))
+        print("Personal archive verifier passed: 12 boundary groups; no CloudKit network or account access")
+    }
+
+    private static func readingSnapshots(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root, transport: cloud)
+        let account = try await store.accountContext()
+        let identity = await cloud.account()
+        let source = PersonalArchiveSourceSnapshot(noteID: UUID(), revision: "note-v1", photoIdentifier: "local-photo-a")
+        let linked = try await store.preserve(source: source, jpegData: jpeg, text: "窓辺で昼寝",
+            capturedAt: date, context: nil, expectedAccount: account)
+        let cloudOnly = try await save(store, text: "はじめてのおふろ")
+        let stateURL = root.appendingPathComponent(identity.key).appendingPathComponent("state.json")
+        let stateBefore = try Data(contentsOf: stateURL), countsBefore = await cloud.counts()
+        let snapshot = try await store.readingSnapshot(expectedAccount: account)
+        try require(snapshot.account == identity && Set(snapshot.records.map(\.id)) == [linked.id, cloudOnly.id],
+                    "Reading omitted a cloud-only record or changed its account")
+        try require(snapshot.associations == [PersonalArchiveReadingAssociation(source: source, recordID: linked.id)]
+                    && snapshot.exactLinkedRecordIDs(matching: [source]) == [source.noteID: linked.id],
+                    "Explicit unchanged source was not linked exactly")
+        let edited = PersonalArchiveSourceSnapshot(noteID: source.noteID, revision: "note-v2", photoIdentifier: source.photoIdentifier)
+        let reassigned = PersonalArchiveSourceSnapshot(noteID: source.noteID, revision: source.revision, photoIdentifier: "other-photo")
+        try require(snapshot.exactLinkedRecordIDs(matching: [edited, reassigned]).isEmpty,
+                    "Edited or reassigned local note hid its distinct copy")
+        let countsAfter = await cloud.counts()
+        try require(try Data(contentsOf: stateURL) == stateBefore && countsAfter.uploads == countsBefore.uploads,
+                    "Reading changed local state or sent records")
+
+        _ = try await store.update(id: linked.id, operationID: UUID(), expectedRevision: linked.revision,
+            text: "保管したコピーだけを編集", capturedAt: date, context: nil, expectedAccount: account)
+        let diverged = try await store.readingSnapshot()
+        try require(diverged.records.count == 2 && diverged.associations.isEmpty,
+                    "Independently edited copy was silently coalesced")
+        let otherClient = PersonalArchiveStore(directory: root.appendingPathComponent("other-client"), transport: cloud)
+        let remoteRecords = try await otherClient.refresh()
+        guard let remoteCopy = remoteRecords.first(where: { $0.id == linked.id }) else {
+            throw Failure(message: "Missing remote copy")
+        }
+        _ = try await otherClient.update(id: remoteCopy.id, operationID: UUID(), expectedRevision: remoteCopy.revision,
+            text: "別端末で変更", capturedAt: date, context: nil, expectedAccount: account)
+        let conflicting = try await store.preserve(source: source, jpegData: jpeg, text: "窓辺で昼寝",
+            capturedAt: date, context: nil, expectedAccount: account)
+        let conflictSnapshot = try await store.readingSnapshot()
+        try require(conflicting.state == .conflict && conflictSnapshot.associations.isEmpty,
+                    "A conflict with a matching local source fingerprint was silently coalesced")
+
+        let secondSource = PersonalArchiveSourceSnapshot(noteID: UUID(), revision: "note-v1", photoIdentifier: "local-photo-b")
+        await cloud.failNext(.beforeCommit)
+        let pending = try await store.preserve(source: secondSource, jpegData: jpeg, text: "庭で遊ぶ",
+            capturedAt: date, context: nil, expectedAccount: account)
+        let pendingSnapshot = try await store.readingSnapshot()
+        try require(pending.state == .pending && pendingSnapshot.associations.isEmpty && pendingSnapshot.records.count == 3,
+                    "Pending preservation was hidden or treated as an acknowledged copy")
+        try await store.retryPending()
+        await cloud.damageImage(pending.id)
+        _ = try await store.refresh()
+        let partial = try await store.readingSnapshot()
+        try require(partial.records.first(where: { $0.id == pending.id })?.state == .partial && partial.associations.isEmpty,
+                    "Partial image restoration was silently coalesced")
+        await cloud.failNext(.beforeCommit)
+        _ = try await store.delete(id: pending.id, operationID: UUID(), expectedRevision: pending.revision, expectedAccount: account)
+        let deleting = try await store.readingSnapshot()
+        try require(deleting.records.first(where: { $0.id == pending.id })?.isDeletionPending == true
+                    && deleting.associations.isEmpty, "Pending deletion was silently coalesced")
+
+        // Switch at the post-read identity assertion, not only before entering.
+        await cloud.switchAccountAfterCurrentChecks(2)
+        try await expect(.accountChanged) { _ = try await store.readingSnapshot(expectedAccount: account) }
+        try await expect(.accountChanged) { _ = try await store.readingSnapshot(expectedAccount: account) }
+        let other = try await store.readingSnapshot()
+        try require(other.account != identity && other.records.isEmpty && other.associations.isEmpty,
+                    "Another account received the prior account's reading snapshot")
     }
 
     private static func configurationBoundary() throws {

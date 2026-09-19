@@ -76,6 +76,32 @@ struct PersonalArchiveSourceSnapshot: Codable, Equatable, Sendable {
     let photoIdentifier: String?
 }
 
+/// A local, explicit relationship, never inferred from text, dates or cat names.
+struct PersonalArchiveReadingAssociation: Equatable, Sendable {
+    let source: PersonalArchiveSourceSnapshot
+    let recordID: UUID
+}
+
+struct PersonalArchiveReadingSnapshot: Equatable, Sendable {
+    let account: PersonalArchiveAccount
+    let records: [PersonalArchiveRecord]
+    let associations: [PersonalArchiveReadingAssociation]
+
+    /// The caller supplies its current notes. An edited or reassigned source
+    /// must remain visible independently of the older preserved copy.
+    func exactLinkedRecordIDs(matching sources: [PersonalArchiveSourceSnapshot]) -> [UUID: UUID] {
+        let byNote = Dictionary(associations.map { ($0.source.noteID, $0) },
+                                uniquingKeysWith: { first, _ in first })
+        var result: [UUID: UUID] = [:]
+        for source in sources {
+            if let association = byNote[source.noteID], association.source == source {
+                result[source.noteID] = association.recordID
+            }
+        }
+        return result
+    }
+}
+
 enum PersonalArchivePreservationStatus: String, Sendable {
     case localOnly, pending, stored, changed, partial, conflict, deleted
 }
@@ -243,6 +269,28 @@ actor PersonalArchiveStore {
         let account = try await currentAccount()
         try await assertCurrent(account)
         return try readRecords(account)
+    }
+
+    /// One local catalog/image read for the personal reading surface. This does
+    /// not fetch records, retry pending operations, persist links or upload.
+    func readingSnapshot(expectedAccount: String? = nil) async throws -> PersonalArchiveReadingSnapshot {
+        let account: PersonalArchiveAccount
+        if let expectedAccount { account = try await checkedAccount(expectedAccount) }
+        else { account = try await currentAccount() }
+        try await assertCurrent(account)
+        let state = try readState(account)
+        let records = try readRecords(account, state: state)
+        let completeIDs = Set(records.filter { $0.state == .stored && !$0.isDeletionPending }.map(\.id))
+        let associations = (state.sources ?? [:]).values.compactMap { link -> PersonalArchiveReadingAssociation? in
+            guard let entry = state.entries[link.recordID.uuidString],
+                  entry.state == .stored, !entry.payload.isDeleted,
+                  completeIDs.contains(link.recordID),
+                  link.fingerprint == entry.payload.fingerprint else { return nil }
+            return PersonalArchiveReadingAssociation(source: link.source, recordID: link.recordID)
+        }.sorted { $0.source.noteID.uuidString < $1.source.noteID.uuidString }
+        // Account notifications may arrive while either identity check awaits.
+        try await assertCurrent(account)
+        return PersonalArchiveReadingSnapshot(account: account, records: records, associations: associations)
     }
 
     func pendingOperationCount() async throws -> Int {
@@ -623,7 +671,10 @@ actor PersonalArchiveStore {
         return data
     }
     private func readRecords(_ account: PersonalArchiveAccount) throws -> [PersonalArchiveRecord] {
-        let state = try readState(account), folder = try accountFolder(account)
+        try readRecords(account, state: readState(account))
+    }
+    private func readRecords(_ account: PersonalArchiveAccount, state: State) throws -> [PersonalArchiveRecord] {
+        let folder = try accountFolder(account)
         return try state.entries.values.compactMap { entry -> PersonalArchiveRecord? in
             let payload: PersonalArchivePayload
             if entry.payload.isDeleted {

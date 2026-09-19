@@ -671,12 +671,13 @@ struct MainTabView: View {
     private func memoriesDestination(for route: MemoriesRoute) -> some View {
         switch route {
         case .memoryNotes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos) {
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, archiveStore: personalArchiveStore) {
                 photosPath = NavigationPath()
                 selectedTab = .photos
             }
         case let .memoryNote(identifier):
-            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos)
+            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos,
+                                      archiveStore: personalArchiveStore)
         case let .memoryNotePhoto(identifier):
             PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos) { photo in
                 photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false)

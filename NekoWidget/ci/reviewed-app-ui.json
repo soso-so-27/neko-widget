@@ -1,19 +1,33 @@
 {
   "schemaVersion": 1,
-  "purpose": "Album-first cat filtering with scoped browsing; daily pickup and factual past-photo date cues; optically smaller bookmarks.",
+  "scope": "reviewed-memory-read-ui-v1",
+  "purpose": "One photo-and-words reading place for local notes and explicitly preserved personal records; exact read-only associations, search, dates, account-scoped presentation. Independent read-projection and lifecycle review completed; no storage schema or write transport changes.",
   "visualReview": "user-device",
+  "dataReview": "read-only-projection",
   "files": {
-    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "f34afdb999a54bb33e723c03a74e8ad8ccbfee1786d2859abeb79c516cd0be42",
-      "after": "450bc3344744b75295766df35b6e5532d221c5152101b779591e61203b414e8e"
+    "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift": {
+      "before": "2f7f7593af6ebe6dfb834660a60e2ea9878d7f35ed2d5e8074250afd0ab597e8",
+      "after": "0604da63f3f731de12bbceecafc64ee649870dac0e0f7c3678ca316764f6851c"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
+      "before": "733027fc67f69e0900ef7555775c5acc7f7841281c7257516a6ff17d9fe95173",
+      "after": "5cd1565d80d46b547dfcf0158307b6e7f2cc320da2be0439fa8168a7f06f6a5f"
+    },
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
+      "before": "ad7369a294edda664b027866ea51cd62e76a0e18d233fa024e54ded9b0348ee9",
+      "after": "6569c6b31c997d63a9749aa2dd224e356328347772ca2e10a1d533f159313787"
     },
     "NekoWidget/NekoWidget/Views/MainTabView.swift": {
-      "before": "933d0c29f69bb9cdd3f4acf6ffe75241e5402f1c28b5f7fcb4d85e4cdb39d9b4",
-      "after": "bb01c6b626cf06c8fe204813b230555b4a557c239f75347a9343a62e6ddd6510"
+      "before": "abcb3e2861382b0a8173fbb4862debac0b3fd92b23f4fcc229ee90624a2851b1",
+      "after": "3da86bbda7f16a612bce5c7a5a3055315e67812a01a0dc9457a7085331af33d7"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "a8bff667d7a3b51df33e49f34ea5167401791def85de3ea9f354c194ffa2e706",
-      "after": "9bd72d77f53da2a64bd09369771ce9667264fc68a92da115fa3c2d6108386a52"
+      "before": "2ee39f02f58b39dae7039a796e96202e0c40e72ae6a3f5ed97e2063d45cc51f8",
+      "after": "3bf5ba5f8a11b1635b3f3f4612b66b2e07dab1bd14466fb34cb9cf64a78cbb9a"
+    },
+    "NekoWidget/ci/verify-personal-archive.swift": {
+      "before": "0fe88c785274ed78642c61823ff9eff0ace0c5a52781f8bfb1f29028f6995f8d",
+      "after": "3d3324ab1d6e897c63e9d01fd59d41c395d933ead2f36b5900aef1ee547849d6"
     }
   }
 }
