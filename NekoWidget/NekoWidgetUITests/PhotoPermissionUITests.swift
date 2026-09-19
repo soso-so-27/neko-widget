@@ -1662,7 +1662,14 @@ final class SoloMemoriesUITests: XCTestCase {
                       String(hittable), String(describing: photo.frame))
                 loggedPickerPhoto = true
             }
-            return hittable ? photo : nil
+            // PhotosUI can report a visible remote image as non-hittable.
+            // Require its real frame to be inside the visible grid; selection
+            // below must still produce the imported preview, never a test skip.
+            let frame = photo.frame
+            let grid = app.scrollViews["photosView_content_scroll_view"].frame
+            guard frame.width > 1, frame.height > 1, !frame.isInfinite,
+                  grid.contains(frame), app.frame.contains(frame) else { return nil }
+            return photo
         }
 
         tap(choose, stage: "first-system-open")
@@ -1685,7 +1692,10 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         capture("archive-picker-second-system-picker")
         try require("seeded-library-photo-reopened", timeout: 30) { pickerPhoto() != nil }
-        tap(try XCTUnwrap(pickerPhoto()), stage: "select-real-library-photo")
+        let libraryPhoto = try XCTUnwrap(pickerPhoto())
+        NSLog("ARCHIVE_PICKER_STAGE:select-real-library-photo")
+        // Hit the center of the observed image, not a hard-coded screen point.
+        libraryPhoto.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let preview = app.images["保管する写真"]
         try require("imported-preview", timeout: 20) {
             pickerCancel() == nil && preview.exists && preview.isHittable

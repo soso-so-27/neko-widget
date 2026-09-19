@@ -13,10 +13,10 @@ concurrency:
 jobs:
   diagnose:
     if: github.ref == 'refs/heads/codex/archive-picker-diagnosis-20260919' && github.repository == 'soso-so-27/neko-widget'
-    runs-on: xcode-27
+    runs-on: macos-15
     timeout-minutes: 20
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -41,7 +41,7 @@ jobs:
           print('Testing screen-owned PhotosPicker; background-host experiment reverted')
           PY
           xcrun simctl list runtimes --json > "$artifact/runtimes.json"
-          device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
+          device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-2)
           trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
