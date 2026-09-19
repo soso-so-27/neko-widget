@@ -488,7 +488,8 @@ jobs:
             -o "$RUNNER_TEMP/verify-album-grouping"
           "$RUNNER_TEMP/verify-album-grouping"
           main_tab="NekoWidget/Views/MainTabView.swift"
-          grep -Fq 'from: catPhotos' "$main_tab"
+          grep -Fq 'let photos = catPhotos' "$main_tab"
+          grep -Fq 'from: photos, excludedIdentifiers: excludedIdentifiers' "$main_tab"
           grep -Fq '? settings.catLifeReference' "$main_tab"
           grep -Fq '.onChange(of: settings.catLifeReference)' "$main_tab"
 

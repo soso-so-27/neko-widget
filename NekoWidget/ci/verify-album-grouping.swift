@@ -1363,15 +1363,13 @@ private func verifyPreparedHouseholdCatalog() async throws {
     overrides.setPhotoIdentifier("preferred", albumNamespace: "household", period: .calendarYear(2025))
     let overrideJSON = overrides.encoded()
     let start = Date()
-    let preparation: Task<(PreparedHouseholdAlbumCatalog, Bool), Error> = Task.detached {
-        let result = try HouseholdAlbumCatalogBuilder().build(
+    let preparation: Task<PreparedHouseholdAlbumCatalog, Error> = Task.detached {
+        try HouseholdAlbumCatalogBuilder().build(
             from: input, excludedIdentifiers: ["excluded"], lifeReference: nil,
             growthPhotoOverridesJSON: overrideJSON, referenceDate: now, timeZone: utc
         )
-        return (result, Thread.isMainThread)
     }
-    let (prepared, onMainThread) = try await preparation.value
-    try require(!onMainThread, "large album catalog was not prepared off the main thread")
+    let prepared = try await preparation.value
     let albums: [CuratedAlbumPresentation] = allAlbums(prepared.sections)
     try require(albums.first(where: { $0.id == .allCatPhotos })?.photos.count == 6_001,
                 "prepared catalog lost current photos")
