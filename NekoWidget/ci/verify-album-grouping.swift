@@ -1348,9 +1348,13 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 @MainActor
 private func verifyPreparedHouseholdCatalog() async throws {
     let now = date(2026, 9, 19)
-    var photos = (0..<6_000).map { index in
-        photo("catalog-\(index)", now.addingTimeInterval(-Double(index) * 86_400),
-              person: index % 3 == 0, catCount: index % 5 == 0 ? 2 : 1)
+    var photos: [PhotoPresentation] = []
+    for index in 0..<6_000 {
+        let capturedAt: Date = now.addingTimeInterval(-Double(index) * 86_400)
+        let containsPerson: Bool = index % 3 == 0
+        let catCount: Int = index % 5 == 0 ? 2 : 1
+        photos.append(photo("catalog-\(index)", capturedAt,
+                            person: containsPerson, catCount: catCount))
     }
     photos += [photo("preferred", date(2025, 4, 1)),
                photo("excluded", date(2024, 2, 22), person: true, catCount: 2)]
@@ -1359,15 +1363,16 @@ private func verifyPreparedHouseholdCatalog() async throws {
     overrides.setPhotoIdentifier("preferred", albumNamespace: "household", period: .calendarYear(2025))
     let overrideJSON = overrides.encoded()
     let start = Date()
-    let (prepared, onMainThread) = try await Task.detached {
+    let preparation: Task<(PreparedHouseholdAlbumCatalog, Bool), Error> = Task.detached {
         let result = try HouseholdAlbumCatalogBuilder().build(
             from: input, excludedIdentifiers: ["excluded"], lifeReference: nil,
             growthPhotoOverridesJSON: overrideJSON, referenceDate: now, timeZone: utc
         )
         return (result, Thread.isMainThread)
-    }.value
+    }
+    let (prepared, onMainThread) = try await preparation.value
     try require(!onMainThread, "large album catalog was not prepared off the main thread")
-    let albums = allAlbums(prepared.sections)
+    let albums: [CuratedAlbumPresentation] = allAlbums(prepared.sections)
     try require(albums.first(where: { $0.id == .allCatPhotos })?.photos.count == 6_001,
                 "prepared catalog lost current photos")
     try require(!albums.flatMap(\.photos).contains(where: { $0.id == "excluded" })
@@ -1382,7 +1387,7 @@ private func verifyPreparedHouseholdCatalog() async throws {
     )
     try require(!allAlbums(refreshed.sections).flatMap(\.photos).contains(where: { $0.id == "preferred" }),
                 "a saved comparison override restored an excluded photo")
-    let cancelled = Task.detached {
+    let cancelled: Task<PreparedHouseholdAlbumCatalog, Error> = Task.detached {
         withUnsafeCurrentTask { $0?.cancel() }
         return try HouseholdAlbumCatalogBuilder().build(
             from: input, excludedIdentifiers: [], lifeReference: nil,
