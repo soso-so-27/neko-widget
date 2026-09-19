@@ -1399,10 +1399,91 @@ private func verifyPreparedHouseholdCatalog() async throws {
     print("Prepared catalog: 6002 input photos, exclusion/override/cancellation PASS (\(Date().timeIntervalSince(start))s)")
 }
 
+private func verifyReadablePhotoProjection() throws {
+    var access = LibraryReadablePhotoProjection()
+    try require(!access.isResolved && !access.contains("removed"),
+        "Unresolved permission must not mean an unrestricted library")
+    access.allowFullLibrary()
+    try require(access.isResolved && access.contains("new-photo"),
+        "Full authorization must accept new photos without an ID fetch")
+
+    let firstLimited = access.invalidate()
+    try require(!access.isResolved && !access.contains("removed"),
+        "Entering limited access must revoke the previous full-library projection")
+    try require(access.resolve(["kept", "removed"], generation: firstLimited),
+        "The current limited result should resolve")
+    let shrinking = access.invalidate()
+    let latest = access.invalidate()
+    try require(!access.resolve(["kept", "removed"], generation: shrinking)
+                && !access.isResolved,
+        "A late limited result must not reopen access while a newer selection is resolving")
+    try require(access.resolve(["kept"], generation: latest)
+                && access.contains("kept") && !access.contains("removed"),
+        "A limited-to-limited shrink must keep only currently readable IDs")
+
+    let beforeDenial = access.invalidate()
+    access.invalidate()
+    try require(!access.resolve(["removed"], generation: beforeDenial)
+                && !access.isResolved && !access.contains("removed"),
+        "A completion after permission denial must remain closed")
+    let beforeGrant = access.invalidate()
+    access.allowFullLibrary()
+    try require(!access.resolve(["kept"], generation: beforeGrant)
+                && access.isUnrestricted && access.contains("new-photo"),
+        "A late limited result must not replace a newer full-authorization state")
+
+    let emptySelection = access.invalidate()
+    try require(access.resolve([], generation: emptySelection)
+                && access.isResolved && !access.contains("kept"),
+        "A successfully resolved empty selection must be empty, not pending or unrestricted")
+    print("PASS readable photo projection: limited shrink, stale completion, denial, full grant, empty")
+}
+
+private func verifyPhotoPublicationRevisions() throws {
+    var first = LibrarySnapshot.empty
+    first.assets = [AssetRecord(localIdentifier: "first", creationDate: date(2020, 1, 1),
+        isFavorite: false, isScreenshot: false, burstIdentifier: nil,
+        cat: CatDetection(detected: true, confidence: 0.99, boundingBox: nil, areaRatio: 0.2, catCount: 1),
+        analysisStatus: .detected, analysisFingerprint: first.settings.analysisFingerprint)]
+    var revisions = LibraryPhotoPresentationRevisions()
+    revisions.update(from: .empty, to: first)
+    let initial = revisions.content
+    var progress = first
+    for tick in 1...100 {
+        var next = progress
+        next.updatedAt = first.updatedAt.addingTimeInterval(Double(tick))
+        next.scanState.scannedAssets = tick
+        next.albumLocalIdentifier = "managed-album"
+        revisions.update(from: progress, to: next)
+        progress = next
+    }
+    try require(revisions.content == initial && revisions.removedPhotos == 0,
+        "Progress and persistence timestamps must not restart the album catalog")
+    var edited = progress
+    edited.assets[0].liked = true
+    revisions.update(from: progress, to: edited)
+    try require(revisions.content == initial + 1 && revisions.removedPhotos == 0,
+        "An actual photo edit must request new content without hiding safe visible albums")
+    var replaced = edited
+    replaced.assets[0].localIdentifier = "replacement"
+    revisions.update(from: edited, to: replaced)
+    try require(revisions.removedPhotos == 1,
+        "A same-count photo replacement must revoke albums containing the removed identifier")
+    var reclassified = replaced
+    reclassified.assets[0].cat.detected = false
+    revisions.update(from: replaced, to: reclassified)
+    try require(revisions.removedPhotos == 2,
+        "Losing cat eligibility must invalidate previously visible candidate albums")
+    print("PASS photo publication revisions: progress, content, replacement, eligibility")
+}
+
 @main
 @MainActor
 private struct AlbumGroupingVerifier {
     static func main() async throws {
+        try await verifyAlbumCatalogCoordinator()
+        try verifyReadablePhotoProjection()
+        try verifyPhotoPublicationRevisions()
         try await verifyPreparedHouseholdCatalog()
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyAllCatPhotosIsFirstDeduplicatedAndUngated()

@@ -109,6 +109,7 @@
 		100000000000000000000174 /* PairingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000258 /* PairingPresentation.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
+		BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */; };
 		100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025B /* MonthlyWindowPresentation.swift */; };
 		10000000000000000000017A /* MonthlyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025C /* MonthlyWindowView.swift */; };
 		10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025D /* SeasonalMoviePresentation.swift */; };
@@ -316,6 +317,7 @@
 		F0000000000000000000022C /* HomeLocationClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationClassifier.swift; sourceTree = "<group>"; };
 		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
+		BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdAlbumCatalogCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000025B /* MonthlyWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowPresentation.swift; sourceTree = "<group>"; };
 		F0000000000000000000025C /* MonthlyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025D /* SeasonalMoviePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMoviePresentation.swift; sourceTree = "<group>"; };
@@ -700,6 +702,7 @@
 			children = (
 				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
+				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
 				F0000000000000000000025C /* MonthlyWindowView.swift */,
 				F0000000000000000000025D /* SeasonalMoviePresentation.swift */,
@@ -1029,6 +1032,7 @@
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
+				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
 				10000000000000000000017A /* MonthlyWindowView.swift in Sources */,
 				10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */,

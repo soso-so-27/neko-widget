@@ -395,80 +395,169 @@ private struct PersonalArchiveComposer: View {
 }
 
 #if DEBUG
-/// The production settings-sheet host, settings navigation and archive views.
-/// Only archive persistence uses a temporary directory and fixture transport;
-/// unrelated settings receive the existing presentation defaults and no-op actions.
-/// This does not exercise AppRoot lifecycle tasks or a real CloudKit account.
+/// Runs the shipping AppRoot/MainTab and settings/composer lifecycle with a
+/// large, changing library. Only external library input and archive transport
+/// are fixtures; catalog scheduling, view identity and scene handling are real.
 @MainActor
 struct PersonalArchiveUIFixture: View {
-    @State private var store: PersonalArchiveStore?
-    @State private var failure = false
-    @State private var showsSettings = false
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var driver = PersonalArchiveRootFixtureDriver()
+
     var body: some View {
-        Group {
-            if store != nil {
-                Button("設定") { showsSettings = true }
-                    .accessibilityIdentifier("personal-archive-fixture-settings-open")
-            }
-            else if failure { Text("Fixture unavailable") }
-            else { ProgressView() }
-        }
-        .sheet(isPresented: $showsSettings) {
-            if let store {
-                SettingsSheetHost(onClose: { showsSettings = false }) {
-                    fixtureSettings(store: store)
+        AppRootView(viewModel: driver.viewModel, personalArchiveStore: driver.archiveStore)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HStack(spacing: 12) {
+                    Text("進捗")
+                        .accessibilityIdentifier("archive-root-fixture-progress")
+                        .accessibilityValue(String(driver.progressUpdates))
+                    Button("内容更新") { driver.changePhotoContent() }
+                        .accessibilityIdentifier("archive-root-fixture-content")
+                    Button("写真削除") { driver.removeProbePhoto() }
+                        .accessibilityIdentifier("archive-root-fixture-remove")
+                    Button(driver.hasPhotoAccess ? "権限を外す" : "権限を戻す") {
+                        driver.togglePhotoAccess()
+                    }
+                    .accessibilityIdentifier("archive-root-fixture-access")
+                    .accessibilityValue(driver.hasPhotoAccess ? "allowed" : "denied")
                 }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .padding(4)
+                .background(.regularMaterial)
             }
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await driver.publishProgress()
+            }
+    }
+}
+
+@MainActor
+private final class PersonalArchiveRootFixtureDriver: ObservableObject {
+    let viewModel: AppViewModel
+    let archiveStore: PersonalArchiveStore
+    @Published private(set) var progressUpdates = 0
+    @Published private(set) var hasPhotoAccess = true
+    private var snapshot: LibrarySnapshot
+    private var contentTask: Task<Void, Never>?
+
+    init() {
+        let seed = Self.makeSnapshot()
+        snapshot = seed
+        viewModel = AppViewModel(uiFixtureSnapshot: seed, uiFixtureIdentity: Self.makeIdentity(for: seed))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 300), format: format).image { context in
+            UIColor.systemBrown.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+            UIImage(systemName: "pawprint.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal)
+                .draw(in: CGRect(x: 100, y: 50, width: 200, height: 200))
         }
-        .task {
-            guard store == nil else { return }
-            let format = UIGraphicsImageRendererFormat(); format.scale = 1
-            let image = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 300), format: format).image { context in
-                UIColor.systemBrown.setFill(); context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
-                UIImage(systemName: "pawprint.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal)
-                    .draw(in: CGRect(x: 100, y: 50, width: 200, height: 200))
-            }
-            guard let jpeg = image.jpegData(compressionQuality: 0.9) else { failure = true; return }
-            let payload = PersonalArchivePayload(
-                id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
-                text: "はじめて窓辺で眠った日", createdAt: Date(timeIntervalSince1970: 1_789_700_000),
-                capturedAt: nil, jpegSHA256: PersonalArchiveFiles.digest(jpeg), jpegByteCount: jpeg.count)
-            let cloud = PersonalArchiveFixtureTransport(record: .init(payload: payload, jpegData: jpeg))
-            store = PersonalArchiveStore(directory: FileManager.default.temporaryDirectory
-                .appendingPathComponent("personal-archive-ui-\(UUID().uuidString)", isDirectory: true), transport: cloud)
+        let jpeg = image.jpegData(compressionQuality: 0.9)!
+        let payload = PersonalArchivePayload(
+            id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+            text: "はじめて窓辺で眠った日", createdAt: Date(timeIntervalSince1970: 1_789_700_000),
+            capturedAt: nil, jpegSHA256: PersonalArchiveFiles.digest(jpeg), jpegByteCount: jpeg.count)
+        archiveStore = PersonalArchiveStore(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("personal-archive-ui-\(UUID().uuidString)", isDirectory: true),
+            transport: PersonalArchiveFixtureTransport(record: .init(payload: payload, jpegData: jpeg)))
+    }
+
+    func publishProgress() async {
+        // No library content changes here. Frequent published scan snapshots
+        // must not cancel/restart a prepared catalog or hide its ready content.
+        // Finite bursts preserve XCTest's eventual idle boundary. Foreground
+        // entry repeats the burst while the real composer sheet remains open.
+        for _ in 0..<30 {
+            guard !Task.isCancelled else { return }
+            do { try await Task.sleep(for: .milliseconds(200)) }
+            catch { return }
+            progressUpdates += 1
+            snapshot.scanState.scannedAssets = 6_000 + progressUpdates
+            snapshot.scanState.scanDurationMilliseconds = Double(progressUpdates * 200)
+            publish()
         }
     }
 
-    private func fixtureSettings(store: PersonalArchiveStore) -> SettingsView {
-        SettingsView(
-            settings: SettingsPresentation(),
-            detectionAccuracySample: DetectionAccuracySamplePresentation(),
-            highResolutionRecoverySample: DetectionAccuracySamplePresentation(),
-            hasPhotoAccess: false,
-            isScanning: false,
-            albumState: .ready(photoCount: 0, updatedAt: nil),
-            canUpdatePhotoLibraryAlbum: false,
-            requestPhotoAccess: {},
-            updatePhotoLibraryAlbum: {},
-            savePhotoSettings: { _, _ in },
-            saveDetectionSettings: { _, _ in },
-            saveLifeReference: { _ in },
-            rescan: {},
-            excludedCatPhotos: [],
-            photoSourceAlbums: [],
-            photoSourceStatus: .allLibrary,
-            isLimitedAccess: false,
-            chooseMorePhotos: {},
-            restoreCatCandidates: { _ in },
-            selectPhotoSourceAlbum: { _ in },
-            refreshPhotoSourceAlbums: {},
-            exportJSON: { nil },
-            catProfilesPresentation: CatProfilesPresentation(),
-            catProfilesActions: .noOp,
-            privateWindowDisplayName: "確認用のまど",
-            showWidgetPlacementGuide: {},
-            personalArchiveStore: store
-        )
+    func changePhotoContent() {
+        guard contentTask == nil else { return }
+        contentTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.contentTask = nil }
+            // Several real edits arrive during one delayed catalog build. The
+            // latest version must complete without replacing ready UI by a spinner.
+            for _ in 0..<6 {
+                guard !Task.isCancelled, self.snapshot.assets.count > 1 else { return }
+                self.snapshot.assets[1].creationDate = self.snapshot.assets[1].creationDate?
+                    .addingTimeInterval(60)
+                self.publish()
+                do { try await Task.sleep(for: .milliseconds(150)) }
+                catch { return }
+            }
+        }
+    }
+
+    func removeProbePhoto() {
+        snapshot.assets.removeAll { $0.localIdentifier == "app-store-screenshot-fixture-page-1" }
+        snapshot.scanState.catAssets = snapshot.assets.count
+        publish()
+    }
+
+    func togglePhotoAccess() {
+        hasPhotoAccess.toggle()
+        viewModel.setUIFixturePhotoAccess(hasPhotoAccess)
+    }
+
+    private func publish() {
+        snapshot.updatedAt = .now
+        viewModel.updateUIFixtureSnapshot(snapshot)
+    }
+
+    private static func makeSnapshot() -> LibrarySnapshot {
+        var result = LibrarySnapshot.empty
+        let capturedAt = Date(timeIntervalSince1970: 1_789_700_000)
+        let box = NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+        result.assets = (1...6_000).map { index in
+            AssetRecord(
+                localIdentifier: "app-store-screenshot-fixture-page-\(index)",
+                creationDate: capturedAt.addingTimeInterval(-Double(index - 1) * 86_400),
+                isFavorite: false, isScreenshot: false, burstIdentifier: nil,
+                cat: CatDetection(detected: true, confidence: 0.99, boundingBox: box,
+                                  areaRatio: 0.64, catCount: 1, instanceBoundingBoxes: [box]),
+                analysisStatus: .detected, analysisFingerprint: result.settings.analysisFingerprint,
+                analyzedAt: capturedAt, albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+                albumTraits: CatAlbumTraits(postures: [.curled], containsPerson: index % 3 == 0,
+                                            isOuting: false, largestCatAreaRatio: 0.64,
+                                            analyzedAt: capturedAt)
+            )
+        }
+        result.scanState.phase = .fullScan
+        result.scanState.resultKind = .provisional
+        result.scanState.totalAssets = 60_000
+        result.scanState.scannedAssets = 6_000
+        result.scanState.catAssets = result.assets.count
+        result.scanState.widgetEligibleAssets = result.assets.count
+        result.scanState.oldestCatPhotoDate = result.assets.last?.creationDate
+        result.updatedAt = capturedAt
+        return result
+    }
+
+    private static func makeIdentity(for snapshot: LibrarySnapshot) -> CatHouseholdIdentityState {
+        let ids = [UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
+                   UUID(uuidString: "33333333-3333-4333-8333-333333333333")!]
+        let profiles = ids.enumerated().map { index, id in
+            CatProfile(id: id, displayName: index == 0 ? "ミケ" : "ソラ",
+                       keyPhotoLocalIdentifier: snapshot.assets[index * 3_000].localIdentifier,
+                       createdAt: snapshot.updatedAt, updatedAt: snapshot.updatedAt)
+        }
+        let memberships = snapshot.assets.enumerated().map { index, photo in
+            CatAssetProfileMembership(assetLocalIdentifier: photo.localIdentifier,
+                profileID: ids[index / 3_000], decision: .included,
+                subjectBoundingBox: photo.cat.boundingBox, decidedAt: snapshot.updatedAt)
+        }
+        return CatHouseholdIdentityState(mode: .profiled, profiles: profiles,
+            memberships: memberships, globalExcludedAssets: [], legacyUnscoped: nil,
+            createdAt: snapshot.updatedAt, updatedAt: snapshot.updatedAt)
     }
 }
 

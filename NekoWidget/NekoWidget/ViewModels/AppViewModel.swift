@@ -64,7 +64,8 @@ private actor MomentNotificationRoutingGate {
 private let momentNotificationRoutingGate = MomentNotificationRoutingGate()
 
 struct LibraryPresentationVersion: Hashable {
-    let snapshotUpdatedAt: Date
+    let photoContentRevision: Int
+    let removedPhotoRevision: Int
     let snapshotAssetCount: Int
     let analysisFingerprint: String
     let curationMutationRevision: Int
@@ -75,8 +76,16 @@ struct LibraryPresentationVersion: Hashable {
 
 @MainActor
 final class AppViewModel: ObservableObject {
-    @Published private(set) var authorizationStatus: PHAuthorizationStatus
-    @Published private(set) var snapshot: LibrarySnapshot = .empty
+    @Published private(set) var authorizationStatus: PHAuthorizationStatus {
+        didSet {
+            guard oldValue != authorizationStatus else { return }
+            updatePhotoReadAuthority()
+        }
+    }
+    @Published private(set) var snapshot: LibrarySnapshot = .empty {
+        didSet { photoPresentationRevisions.update(from: oldValue, to: snapshot) }
+    }
+    private var photoPresentationRevisions = LibraryPhotoPresentationRevisions()
     @Published private(set) var scanState: ScanState = .idle
     @Published private(set) var settings: AppSettings = .default
     @Published private(set) var isScanning = false
@@ -112,19 +121,20 @@ final class AppViewModel: ObservableObject {
            cachedPresentationSnapshot.version == version {
             return cachedPresentationSnapshot.snapshot
         }
-        let value = canPresentCatIdentity ? candidateSnapshot(snapshot) : .empty
+        let value = canPresentPhotoCandidates ? candidateSnapshot(snapshot) : .empty
         cachedPresentationSnapshot = (version, value)
         return value
     }
     var presentationVersion: LibraryPresentationVersion {
         LibraryPresentationVersion(
-            snapshotUpdatedAt: snapshot.updatedAt,
+            photoContentRevision: photoPresentationRevisions.content,
+            removedPhotoRevision: photoPresentationRevisions.removedPhotos,
             snapshotAssetCount: snapshot.assets.count,
             analysisFingerprint: snapshot.settings.analysisFingerprint,
             curationMutationRevision: catCandidateCuration.mutationRevision,
             identityMutationRevision: catHouseholdIdentity?.mutationRevision,
             sourceResolutionRevision: presentationSourceResolutionRevision,
-            canPresent: canPresentCatIdentity
+            canPresent: canPresentPhotoCandidates
         )
     }
     var catAssets: [AssetRecord] {
@@ -281,14 +291,125 @@ final class AppViewModel: ObservableObject {
     /// records outside that album disappear from candidate surfaces at once.
     private var selectedSourceAssetIdentifiers: Set<String>? {
         didSet {
+            guard oldValue != selectedSourceAssetIdentifiers else { return }
             presentationSourceResolutionRevision &+= 1
             cachedPresentationSnapshot = nil
         }
     }
     private var presentationSourceResolutionRevision = 0
+    @Published private var readablePhotoProjection = LibraryReadablePhotoProjection()
+    private var readablePhotoResolution: (
+        generation: Int,
+        task: Task<Set<String>?, Never>
+    )?
+
+    private func invalidateReadablePhotoProjection() {
+        readablePhotoResolution?.task.cancel()
+        readablePhotoResolution = nil
+        readablePhotoProjection.invalidate()
+        presentationSourceResolutionRevision &+= 1
+        cachedPresentationSnapshot = nil
+        currentAsset = nil
+        widgetPhotoLibraryLoadSucceeded = canReadPhotos ? nil : false
+    }
+
+    private func updatePhotoReadAuthority() {
+        invalidateReadablePhotoProjection()
+        // Full authorization needs no library-wide query. Normal scan progress
+        // and our own managed-album notifications retain their ready catalog.
+        if authorizationStatus == .authorized {
+            readablePhotoProjection.allowFullLibrary()
+        }
+    }
+
+    private func resolveReadablePhotoProjectionIfNeeded() async -> Bool {
+        guard canReadPhotos else { return false }
+        if readablePhotoProjection.isResolved { return true }
+#if DEBUG
+        if isUIFixture {
+            readablePhotoProjection.resolve(Set(snapshot.assets.map(\.localIdentifier)),
+                generation: readablePhotoProjection.generation)
+            return true
+        }
+#endif
+        guard authorizationStatus == .limited else { return false }
+        let generation = readablePhotoProjection.generation
+        let task: Task<Set<String>?, Never>
+        if let pending = readablePhotoResolution, pending.generation == generation {
+            task = pending.task
+        } else {
+            task = Task.detached(priority: .utility) {
+                guard !Task.isCancelled else { return nil }
+                let assets = PHAsset.fetchAssets(with: .image, options: nil)
+                var identifiers = Set<String>()
+                assets.enumerateObjects { asset, _, stop in
+                    if Task.isCancelled { stop.pointee = true }
+                    else { identifiers.insert(asset.localIdentifier) }
+                }
+                return Task.isCancelled ? nil : identifiers
+            }
+            readablePhotoResolution = (generation, task)
+        }
+        let identifiers = await task.value
+        guard generation == readablePhotoProjection.generation else { return false }
+        // A permission change can precede its main-actor notification.
+        let currentStatus = authorizationService.status
+        guard currentStatus == .limited else {
+            authorizationStatus = currentStatus
+            return readablePhotoProjection.isResolved
+        }
+        readablePhotoResolution = nil
+        guard let identifiers else { return false }
+        guard readablePhotoProjection.resolve(identifiers, generation: generation) else { return false }
+        cachedPresentationSnapshot = nil
+        return true
+    }
+
+#if DEBUG
+    private var isUIFixture = false
+
+    convenience init(uiFixtureSnapshot: LibrarySnapshot,
+                     uiFixtureIdentity: CatHouseholdIdentityState? = nil) {
+        self.init()
+        isUIFixture = true
+        hasStarted = true
+        hasFinishedSnapshotLoad = true
+        catIdentityLoadState = .ready
+        catHouseholdIdentity = uiFixtureIdentity
+        authorizationStatus = .authorized
+        updateUIFixtureSnapshot(uiFixtureSnapshot)
+    }
+
+    func updateUIFixtureSnapshot(_ value: LibrarySnapshot) {
+        precondition(isUIFixture)
+        settings = value.settings
+        scanState = value.scanState
+        isScanning = value.scanState.phase == .quickScan || value.scanState.phase == .fullScan
+        // Uses the exact same publication observer as production updates.
+        snapshot = value
+        if authorizationStatus == .limited {
+            // Fixture authority is the supplied snapshot, never real PhotoKit.
+            readablePhotoProjection.resolve(Set(value.assets.map(\.localIdentifier)),
+                generation: readablePhotoProjection.generation)
+        }
+    }
+
+    func setUIFixturePhotoAccess(_ allowed: Bool) {
+        precondition(isUIFixture)
+        authorizationStatus = allowed ? .authorized : .denied
+    }
+#endif
 
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
-        self?.libraryChangePending = true
+        guard let self else { return }
+        self.libraryChangePending = true
+        let previousStatus = self.authorizationStatus
+        self.authorizationStatus = self.authorizationService.status
+        guard self.authorizationStatus == .limited else { return }
+        // A limited selection can shrink without changing authorizationStatus.
+        // Revoke the old projection before scheduling any asynchronous work.
+        if previousStatus == .limited { self.invalidateReadablePhotoProjection() }
+        Task { [weak self] in await self?.refreshPhotoSourceAlbums() }
     }
 
     init() {
@@ -387,6 +508,7 @@ final class AppViewModel: ObservableObject {
                 self?.chooseCurrentAssetIfNeeded()
             }
         }
+        updatePhotoReadAuthority()
     }
 
     deinit {
@@ -465,6 +587,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func start() async {
+#if DEBUG
+        if isUIFixture { return }
+#endif
         guard !hasStarted else { return }
         hasStarted = true
         var startupSnapshotNeedsSave = false
@@ -555,7 +680,6 @@ final class AppViewModel: ObservableObject {
             await saveSnapshot(reportErrors: false)
         }
         hasFinishedSnapshotLoad = true
-        openPendingDeepLinkIfNeeded()
         authorizationStatus = authorizationService.status
         SharedLog.app.info(
             "permission",
@@ -563,6 +687,7 @@ final class AppViewModel: ObservableObject {
             metadata: ["status": Self.authorizationName(authorizationStatus)]
         )
         guard canReadPhotos else {
+            discardPendingDeepLink(reason: "photo-access-unavailable")
             SharedLog.app.warning("permission", "Photo library is not readable")
             await clearWidgetOutput(reportErrors: false)
             return
@@ -574,7 +699,7 @@ final class AppViewModel: ObservableObject {
         // already-current empty curation state.
         await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
         libraryObserver.start()
-        await syncOnActive()
+        await synchronizeOnActive(refreshLimitedAccess: false)
     }
 
     func requestAccess() async {
@@ -609,6 +734,9 @@ final class AppViewModel: ObservableObject {
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
     func pollMomentSharingWhileActive(isSceneActive: Bool) async {
+#if DEBUG
+        if isUIFixture { return }
+#endif
         let configuration = SharingAPIConfiguration.current
         let pairingState: PairingState?
         do {
@@ -633,6 +761,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func syncOnActive() async {
+        await synchronizeOnActive(refreshLimitedAccess: true)
+    }
+
+    private func synchronizeOnActive(refreshLimitedAccess: Bool) async {
+#if DEBUG
+        if isUIFixture { return }
+#endif
         Task { @MainActor [weak self] in
             await self?.synchronizeMomentSharing(trigger: "foreground")
         }
@@ -641,6 +776,11 @@ final class AppViewModel: ObservableObject {
             return
         }
         authorizationStatus = authorizationService.status
+        // Limited selections may change while inactive even if the status is
+        // still .limited. A normal authorized activation needs no extra fetch.
+        if refreshLimitedAccess, isLimitedAccess, readablePhotoProjection.isResolved {
+            invalidateReadablePhotoProjection()
+        }
         let likesChanged = synchronizeSharedLikes(
             importLegacyLikes: true,
             trigger: "foreground"
@@ -707,6 +847,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func suspendScan() {
+#if DEBUG
+        if isUIFixture { return }
+#endif
         personalReplenishmentTask?.cancel()
         personalPreparationGeneration += 1
         guard isScanning else { return }
@@ -807,6 +950,7 @@ final class AppViewModel: ObservableObject {
             profilePhotoAlbumAssetDates = [:]
             return
         }
+        guard await resolveReadablePhotoProjectionIfNeeded() else { return }
         let albums = PhotoSourceAlbumCatalog.availableAlbums(
             excluding: snapshot.albumLocalIdentifier
         )
@@ -868,6 +1012,7 @@ final class AppViewModel: ObservableObject {
         await refreshProfilePhotoAlbumLinks(availableAlbums: albums)
         reconcileCandidatePostureState()
         chooseCurrentAssetIfNeeded()
+        if hasFinishedSnapshotLoad { openPendingDeepLinkIfNeeded() }
     }
 
     private func refreshProfilePhotoAlbumLinks(
@@ -2219,6 +2364,7 @@ final class AppViewModel: ObservableObject {
         guard let readyRoute = candidatePhotoRouteGate.receive(
             route,
             candidateStateIsReady: hasFinishedSnapshotLoad
+                && (readablePhotoProjection.isResolved || !canReadPhotos)
         ) else {
             // A cold-start Widget tap can arrive before the curation and
             // snapshot stores finish loading. Keep only the latest tap and
@@ -2356,6 +2502,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func openPendingDeepLinkIfNeeded() {
+        guard canPresentPhotoCandidates else { return }
         widgetPhotoLibraryLoadSucceeded = true
         guard let route = candidatePhotoRouteGate.finishLoading(
             succeeded: true
@@ -2623,7 +2770,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func candidateSnapshot(_ input: LibrarySnapshot) -> LibrarySnapshot {
-        if catIdentityLoadState == .failed {
+        if catIdentityLoadState == .failed || !readablePhotoProjection.isResolved {
             var value = input
             value.assets.removeAll()
             return value
@@ -2642,6 +2789,7 @@ final class AppViewModel: ObservableObject {
         let usesSelectedSource = catCandidateCuration.usesSelectedAlbum
         var value = input
         value.assets.removeAll { asset in
+            if !readablePhotoProjection.contains(asset.localIdentifier) { return true }
             if excludedIdentifiers.contains(asset.localIdentifier) { return true }
             guard usesSelectedSource else { return false }
             // No known membership is fail-closed, never an implicit full library.
@@ -2652,6 +2800,10 @@ final class AppViewModel: ObservableObject {
 
     private var canPresentCatIdentity: Bool {
         !hasStarted || catIdentityLoadState == .ready
+    }
+
+    private var canPresentPhotoCandidates: Bool {
+        canPresentCatIdentity && canReadPhotos && readablePhotoProjection.isResolved
     }
 
     /// While the app is still in the Build 13 compatibility mode, the legacy

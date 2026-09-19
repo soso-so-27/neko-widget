@@ -6,6 +6,7 @@ import UIKit
 @MainActor
 struct AppRootView: View {
     @ObservedObject var viewModel: AppViewModel
+    var personalArchiveStore: PersonalArchiveStore? = nil
 
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasSeenInitialScanResult.v1") private var hasSeenInitialScanResult = false
@@ -392,7 +393,8 @@ struct AppRootView: View {
             },
             exportJSON: {
                 await viewModel.exportJSON()
-            }
+            },
+            personalArchiveStore: personalArchiveStore
         )
     }
 

@@ -1449,8 +1449,43 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_ALBUM_CATALOG_DEBUG"] = "1"
+        app.launchEnvironment["NEKO_ALBUM_CATALOG_DELAY_MS"] = "2500"
         app.launch()
-        let settings = app.buttons["personal-archive-fixture-settings-open"]
+
+        let catalog = app.staticTexts["album-catalog-debug-state"]
+        let progress = app.staticTexts["archive-root-fixture-progress"]
+        func waitForCatalog(_ fields: [String], timeout: TimeInterval = 15) {
+            let predicate = NSCompoundPredicate(andPredicateWithSubpredicates:
+                fields.map { NSPredicate(format: "value CONTAINS %@", $0) })
+            let ready = XCTNSPredicateExpectation(predicate: predicate, object: catalog)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: timeout), .completed)
+        }
+        func catalogNumber(_ key: String) -> Int {
+            let fields = (catalog.value as? String ?? "").split(separator: ";")
+            return fields.first(where: { $0.hasPrefix(key + ":") })
+                .flatMap { Int($0.dropFirst(key.count + 1)) } ?? -1
+        }
+        func assertReadyRemainsVisible(for seconds: TimeInterval) {
+            // A single root-exists check also passes while its child is an
+            // endlessly restarting ProgressView. Observe the actual ready state.
+            let hidden = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false OR value CONTAINS %@", ";visible:0;"),
+                object: catalog)
+            hidden.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: seconds), .completed)
+            XCTAssertFalse(app.progressIndicators["albums-preparing"].exists)
+        }
+
+        XCTAssertTrue(catalog.waitForExistence(timeout: 15))
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
+        let initialStarted = catalogNumber("started")
+        XCTAssertEqual(initialStarted, 1, "Progress-only publications must not restart the catalog")
+        let initialProgress = Int(progress.value as? String ?? "") ?? -1
+        XCTAssertGreaterThan(initialProgress, 0)
+        assertReadyRemainsVisible(for: 2)
+        capture("personal-archive-albums-ready-under-progress")
+        let settings = app.buttons["albums-settings-button"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
         let archive = app.buttons["settings-personal-archive"]
@@ -1486,6 +1521,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(compose.isHittable)
         compose.tap()
         XCTAssertTrue(text.waitForExistence(timeout: 5))
+        // Exercise real AppRoot/MainTab scene transitions underneath the real
+        // settings/composer sheets, with another finite scan-progress burst.
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(composerBar.waitForExistence(timeout: 10))
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("A quiet afternoon")
         app.buttons["完了"].tap()
         app.buttons["personal-archive-save"].tap()
@@ -1497,6 +1538,35 @@ final class SoloMemoriesUITests: XCTestCase {
         expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: rows)
         waitForExpectations(timeout: 10)
         XCTAssertFalse(app.navigationBars["保管する記録"].exists)
+
+        app.navigationBars["記録の保管"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["設定"].buttons["閉じる"].tap()
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
+        XCTAssertEqual(catalogNumber("started"), initialStarted,
+                       "Opening sheets and returning to the foreground must retain the same catalog")
+        XCTAssertGreaterThan(Int(progress.value as? String ?? "") ?? -1, initialProgress)
+        assertReadyRemainsVisible(for: 2)
+        capture("personal-archive-albums-after-composer")
+
+        app.buttons["archive-root-fixture-content"].tap()
+        assertReadyRemainsVisible(for: 3)
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
+        XCTAssertGreaterThan(catalogNumber("started"), initialStarted)
+        XCTAssertLessThanOrEqual(catalogNumber("started") - initialStarted, 2,
+                                 "A burst of real edits should use one worker and its latest pending input")
+
+        app.buttons["archive-root-fixture-remove"].tap()
+        waitForCatalog(["visibleContainsProbe:0"], timeout: 2)
+        app.buttons["archive-root-fixture-access"].tap()
+        XCTAssertEqual(app.buttons["archive-root-fixture-access"].value as? String, "denied")
+        waitForCatalog([";visible:0;", "visibleCount:0;visibleContainsProbe:0"])
+        let staleResult = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", ";visible:1;"), object: catalog)
+        staleResult.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [staleResult], timeout: 3), .completed)
+        app.buttons["archive-root-fixture-access"].tap()
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"])
+        XCTAssertEqual(app.state, .runningForeground)
     }
 
     @MainActor

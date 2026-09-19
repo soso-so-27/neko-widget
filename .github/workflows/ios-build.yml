@@ -484,12 +484,15 @@ jobs:
             Shared/Models/LibrarySnapshot.swift \
             NekoWidget/Views/GrowthAlbumSelector.swift \
             NekoWidget/Views/AppPresentationModels.swift \
+            NekoWidget/Views/HouseholdAlbumCatalogCoordinator.swift \
+            ci/verify-album-catalog-coordinator.swift \
             ci/verify-album-grouping.swift \
             -o "$RUNNER_TEMP/verify-album-grouping"
           "$RUNNER_TEMP/verify-album-grouping"
           main_tab="NekoWidget/Views/MainTabView.swift"
-          grep -Fq 'let photos = catPhotos' "$main_tab"
-          grep -Fq 'from: photos, excludedIdentifiers: excludedIdentifiers' "$main_tab"
+          grep -Fq 'householdAlbumCatalog.submit(HouseholdAlbumCatalogRequest(' "$main_tab"
+          grep -Fq 'photos: key.access.canBuild ? catPhotos : []' "$main_tab"
+          grep -Fq 'HouseholdAlbumCatalogBuilder().build(' NekoWidget/Views/HouseholdAlbumCatalogCoordinator.swift
           grep -Fq '? settings.catLifeReference' "$main_tab"
           grep -Fq '.onChange(of: settings.catLifeReference)' "$main_tab"
 

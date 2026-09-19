@@ -60,32 +60,6 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
     let videoPeriods: [SeasonalMovieArchiveVideoPeriod]
 }
 
-private struct HouseholdAlbumProfileKey: Equatable {
-    let identifier: String
-    let lifeReference: CatProfileLifeReferencePresentation?
-}
-
-/// Compare publication revisions and small settings only. Never hash/compare
-/// the library's photo arrays while SwiftUI is evaluating the root body.
-private struct HouseholdAlbumCatalogKey: Equatable {
-    let canBuild: Bool
-    let isLimitedAccess: Bool
-    let photoPresentationVersion: LibraryPresentationVersion
-    let sourceStatus: PhotoSourceAlbumStatus
-    let photoCount: Int
-    let excludedCount: Int
-    let profiles: [HouseholdAlbumProfileKey]
-    let legacyLifeReference: CatLifeReference?
-    let growthPhotoOverridesJSON: String
-    let referenceDay: Date
-    let timeZoneIdentifier: String
-}
-
-private struct VersionedHouseholdAlbumCatalog {
-    let key: HouseholdAlbumCatalogKey
-    let catalog: PreparedHouseholdAlbumCatalog
-}
-
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
 
@@ -133,6 +107,7 @@ struct MainTabView: View {
     let selectPhotoSourceAlbum: (String?) async -> Void
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
+    var personalArchiveStore: PersonalArchiveStore? = nil
 
     @State private var selectedTab: AppTab = .memories
     @State private var photosPath = NavigationPath()
@@ -143,8 +118,7 @@ struct MainTabView: View {
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
     @State private var albumHighlightsReferenceDate = Date()
-    @State private var preparedHouseholdAlbumCatalog: VersionedHouseholdAlbumCatalog?
-    @State private var requestedHouseholdAlbumCatalogKey: HouseholdAlbumCatalogKey?
+    @StateObject private var householdAlbumCatalog = HouseholdAlbumCatalogCoordinator()
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
@@ -296,7 +270,18 @@ struct MainTabView: View {
             if count == 0 { albumHighlightsReferenceDate = Date() }
         }
         .task(id: householdAlbumCatalogKey) {
-            await prepareHouseholdAlbumCatalog()
+            submitHouseholdAlbumCatalog()
+        }
+        .overlay(alignment: .bottomLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["NEKO_ALBUM_CATALOG_DEBUG"] == "1" {
+                Text("catalog")
+                    .font(.system(size: 1))
+                    .opacity(0.01)
+                    .accessibilityIdentifier("album-catalog-debug-state")
+                    .accessibilityValue(householdAlbumCatalog.debugState(for: householdAlbumCatalogKey.access))
+            }
+            #endif
         }
         .task(id: seasonalMoviePreparationKey) {
             await prepareSeasonalMovie()
@@ -346,7 +331,8 @@ struct MainTabView: View {
                 showWidgetPlacementGuide: {
                     replaysWidgetGuideAfterSettingsDismiss = true
                     showsSettings = false
-                }
+                },
+                personalArchiveStore: personalArchiveStore
             )
         }
     }
@@ -639,7 +625,7 @@ struct MainTabView: View {
                 : curatedAlbumSections(for: scope),
             preparedHighlights: scope == .everyone ? currentHouseholdAlbumCatalog?.highlights ?? [] : nil,
             isPreparingAlbums: scope == .everyone
-                && householdAlbumCatalogKey.canBuild && currentHouseholdAlbumCatalog == nil,
+                && householdAlbumCatalogKey.access.canBuild && currentHouseholdAlbumCatalog == nil,
             albumScan: scan,
             albumProfiles: catProfilesPresentation.profiles,
             albumOptions: catProfilesPresentation.photoAlbumOptions,
@@ -969,77 +955,54 @@ struct MainTabView: View {
         let timeZone = TimeZone.current
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
+        let sourceAlbumIdentifier: String?
+        if case let .selected(album) = photoSourceStatus { sourceAlbumIdentifier = album.localIdentifier }
+        else { sourceAlbumIdentifier = nil }
         return HouseholdAlbumCatalogKey(
-            canBuild: hasPhotoAccess && photoPresentationVersion.canPresent
-                && photoSourceStatus != .unavailable,
-            isLimitedAccess: isLimitedAccess,
-            photoPresentationVersion: photoPresentationVersion,
-            sourceStatus: photoSourceStatus,
-            photoCount: catPhotos.count,
-            excludedCount: excludedCatPhotos.count,
-            profiles: catProfilesPresentation.profiles.map {
-                HouseholdAlbumProfileKey(identifier: $0.identifier, lifeReference: $0.lifeReference)
-            },
-            legacyLifeReference: settings.catLifeReference,
-            growthPhotoOverridesJSON: growthPhotoOverridesJSON,
-            referenceDay: calendar.startOfDay(for: albumHighlightsReferenceDate),
-            timeZoneIdentifier: timeZone.identifier
+            access: HouseholdAlbumCatalogAccessKey(
+                canBuild: hasPhotoAccess && photoPresentationVersion.canPresent
+                    && photoSourceStatus != .unavailable,
+                isLimitedAccess: isLimitedAccess,
+                analysisFingerprint: photoPresentationVersion.analysisFingerprint,
+                curationMutationRevision: photoPresentationVersion.curationMutationRevision,
+                identityMutationRevision: photoPresentationVersion.identityMutationRevision,
+                sourceResolutionRevision: photoPresentationVersion.sourceResolutionRevision,
+                removedPhotoRevision: photoPresentationVersion.removedPhotoRevision,
+                sourceAlbumIdentifier: sourceAlbumIdentifier
+            ),
+            content: HouseholdAlbumCatalogContentKey(
+                photoContentRevision: photoPresentationVersion.photoContentRevision,
+                photoCount: catPhotos.count,
+                legacyLifeReference: settings.catLifeReference,
+                growthPhotoOverridesJSON: growthPhotoOverridesJSON,
+                referenceDay: calendar.startOfDay(for: albumHighlightsReferenceDate),
+                timeZoneIdentifier: timeZone.identifier
+            )
         )
     }
 
     private var currentHouseholdAlbumCatalog: PreparedHouseholdAlbumCatalog? {
-        let key = householdAlbumCatalogKey
-        guard key.canBuild, let preparedHouseholdAlbumCatalog,
-              preparedHouseholdAlbumCatalog.key == key else { return nil }
-        return preparedHouseholdAlbumCatalog.catalog
+        householdAlbumCatalog.catalog(for: householdAlbumCatalogKey.access)
     }
 
     @MainActor
-    private func prepareHouseholdAlbumCatalog() async {
+    private func submitHouseholdAlbumCatalog() {
         let key = householdAlbumCatalogKey
-        requestedHouseholdAlbumCatalogKey = key
-        guard key.canBuild else {
-            preparedHouseholdAlbumCatalog = nil
-            return
-        }
-        guard preparedHouseholdAlbumCatalog?.key != key else { return }
-
-        // Array captures are CoW snapshots. Filtering, deduplication, all
-        // sorting, growth selection, and highlight building happen off-main.
-        let photos = catPhotos
-        let excludedIdentifiers = excludedCatCandidateIdentifiers
-        let lifeReference = catProfilesPresentation.profiles.isEmpty ? settings.catLifeReference : nil
-        let overrides = growthPhotoOverridesJSON
-        let referenceDate = albumHighlightsReferenceDate
-        let timeZone = TimeZone.current
-        let buildTask = Task.detached(priority: .utility) {
-            try HouseholdAlbumCatalogBuilder().build(
-                from: photos, excludedIdentifiers: excludedIdentifiers,
-                lifeReference: lifeReference, growthPhotoOverridesJSON: overrides,
-                referenceDate: referenceDate, timeZone: timeZone
+        householdAlbumCatalog.submit(HouseholdAlbumCatalogRequest(
+            key: key,
+            input: HouseholdAlbumCatalogInput(
+                photos: key.access.canBuild ? catPhotos : [],
+                excludedIdentifiers: key.access.canBuild ? excludedCatCandidateIdentifiers : [],
+                lifeReference: catProfilesPresentation.profiles.isEmpty ? settings.catLifeReference : nil,
+                growthPhotoOverridesJSON: growthPhotoOverridesJSON,
+                referenceDate: albumHighlightsReferenceDate,
+                timeZone: .current
             )
-        }
-        do {
-            let catalog = try await withTaskCancellationHandler {
-                try await buildTask.value
-            } onCancel: {
-                buildTask.cancel()
-            }
-            // A cancelled/older publication may finish after the next task.
-            // It must neither re-expose old photos nor overwrite a newer cache.
-            guard !Task.isCancelled, requestedHouseholdAlbumCatalogKey == key else { return }
-            preparedHouseholdAlbumCatalog = VersionedHouseholdAlbumCatalog(key: key, catalog: catalog)
-        } catch {
-            // Cancellation is the pure builder's only failure. The current-key
-            // read guard keeps a superseded result invisible immediately.
-        }
+        ))
     }
 
     private func curatedAlbumSections(for scope: CatProfileScopePresentation) -> [CuratedAlbumSectionPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
-        if scope == .everyone, let currentHouseholdAlbumCatalog {
-            return currentHouseholdAlbumCatalog.sections
-        }
         if case let .profile(identifier) = scope,
            catProfilesPresentation.profile(identifier: identifier) == nil { return [] }
         let scopedPhotos = scopedCatPhotos(for: scope)
@@ -1205,7 +1168,7 @@ struct MainTabView: View {
             sourceIsAvailable = false
         }
         let videoCatalogDigest: Int
-        if hasPhotoAccess, sourceIsAvailable, scenePhase == .active, let interval {
+        if hasPhotoAccess, sourceIsAvailable, !isScanning, scenePhase == .active, let interval {
             videoCatalogDigest = SeasonalMovieVideoCatalog.digest(
                 in: interval,
                 sourceAlbumIdentifier: sourceAlbumIdentifier

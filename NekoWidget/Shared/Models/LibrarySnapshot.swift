@@ -1,5 +1,58 @@
 import Foundation
 
+/// Ephemeral PhotoKit authority. A missing result means unresolved/denied,
+/// never an unrestricted library. Persisted scan records are kept separately.
+struct LibraryReadablePhotoProjection: Sendable {
+    private(set) var generation = 0
+    private(set) var identifiers: Set<String>?
+    private(set) var isUnrestricted = false
+
+    var isResolved: Bool { isUnrestricted || identifiers != nil }
+
+    mutating func allowFullLibrary() {
+        invalidate()
+        isUnrestricted = true
+    }
+
+    @discardableResult
+    mutating func invalidate() -> Int {
+        generation &+= 1
+        identifiers = nil
+        isUnrestricted = false
+        return generation
+    }
+
+    @discardableResult
+    mutating func resolve(_ identifiers: Set<String>, generation: Int) -> Bool {
+        guard generation == self.generation else { return false }
+        self.identifiers = identifiers
+        return true
+    }
+
+    func contains(_ identifier: String) -> Bool {
+        isUnrestricted || identifiers?.contains(identifier) == true
+    }
+}
+
+/// In-memory UI generations, separate from the persistence/scan timestamp.
+/// Advance at snapshot publication, never by comparing a library in View.body.
+struct LibraryPhotoPresentationRevisions {
+    private(set) var content = 0
+    private(set) var removedPhotos = 0
+
+    mutating func update(from previous: LibrarySnapshot, to next: LibrarySnapshot) {
+        guard previous.assets != next.assets
+            || previous.settings.analysisFingerprint != next.settings.analysisFingerprint else { return }
+        content &+= 1
+        // Content additions/edits can prepare behind the current album. A
+        // removal or loss of cat eligibility must invalidate old cards at once.
+        let nextCandidateIDs = Set(next.catAssets.map(\.localIdentifier))
+        if previous.catAssets.contains(where: { !nextCandidateIDs.contains($0.localIdentifier) }) {
+            removedPhotos &+= 1
+        }
+    }
+}
+
 struct LibrarySnapshot: Codable, Equatable, Sendable {
     var schemaVersion: Int
     var assets: [AssetRecord]

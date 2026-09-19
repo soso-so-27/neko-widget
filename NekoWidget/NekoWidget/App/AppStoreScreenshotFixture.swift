@@ -90,7 +90,7 @@ enum AppStoreScreenshotFixture {
         if let number = Int(localIdentifier.replacingOccurrences(
             of: "app-store-screenshot-fixture-page-", with: "")),
            localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
-           (1...50).contains(number) {
+           (1...6_000).contains(number) {
             // Many unique assets, eight shared image objects: the paging test
             // must not manufacture a large decoded-image memory footprint.
             return image(for: "\(identifierPrefix)\((number - 1) % 8 + 1)")
@@ -109,7 +109,7 @@ enum AppStoreScreenshotFixture {
     static func isFixtureIdentifier(_ localIdentifier: String) -> Bool {
         if localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
            let number = Int(localIdentifier.dropFirst("app-store-screenshot-fixture-page-".count)),
-           (1...50).contains(number) { return true }
+           (1...6_000).contains(number) { return true }
         return identifiers.contains(localIdentifier)
     }
 
@@ -419,7 +419,8 @@ struct AppStoreScreenshotFixtureRootView: View {
             catPhotos: scopedPhotos,
             libraryPhotos: photos,
             photoPresentationVersion: LibraryPresentationVersion(
-                snapshotUpdatedAt: .distantPast,
+                photoContentRevision: 0,
+                removedPhotoRevision: 0,
                 snapshotAssetCount: photos.count,
                 analysisFingerprint: "app-store-screenshot-fixture",
                 curationMutationRevision: 0,

@@ -8,6 +8,15 @@ struct NekoWidgetApp: App {
 
     init() {
 #if DEBUG
+        if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
+            // This fixture exercises the real AppRoot/MainTab lifecycle after
+            // onboarding, rather than substituting a settings-only root.
+            UserDefaults.standard.set(
+                OnboardingPresentationPersistence.currentCompletedVersion,
+                forKey: OnboardingPresentationPersistence.completedVersionKey
+            )
+            UserDefaults.standard.set(true, forKey: "hasSeenInitialScanResult.v1")
+        }
         let shouldRunLaunchCleanup = !BillingInternalDiagnosticsLaunch.isActive
             && !CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")
             && !CommandLine.arguments.contains("--photo-window-ui-fixture")
