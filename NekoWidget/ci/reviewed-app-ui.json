@@ -23,7 +23,7 @@
     },
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
       "before": "901017e89858dfdd06a43c89aba0b34ee142da01df40024ff1c720f16c1bc5a1",
-      "after": "bd60573e1728629d71c82a5c7d7194e403f96337337e17a1f8a7cbaacbe9b22a"
+      "after": "0b58e269580bf40a85ddc40a9cbe1abf839100cb38311aac55a759e345d192da"
     },
     "NekoWidget/NekoWidget/Views/SettingsView.swift": {
       "before": "94ef6896c1ff417411eaafe016796075895b84ee357992b26a803ba123feed22",
@@ -35,7 +35,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706",
-      "after": "29709112742b1f148dbdcef262bdab9494028e6ac9feca590b84b5ec5cafe0d1"
+      "after": "6f963d10576766b5f0ae56242520cfefc7cf8c0b351e45f4b711fb947ee49b84"
     },
     "NekoWidget/ci/test-app-store-screenshot-workflow.py": {
       "before": "cfbbcf86804c1de1c1a6250b4dba4589436b2c25b24a1956b1dae2249125c2d7",

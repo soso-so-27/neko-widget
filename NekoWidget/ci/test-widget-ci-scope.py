@@ -3,9 +3,12 @@
 
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -40,6 +43,78 @@ CHANGE = ("return currentPhoto\n", "return nextPhoto\n")
 
 
 class WidgetScopeTests(unittest.TestCase):
+    @staticmethod
+    def photo_source_check_blocks():
+        pairs = (
+            ('accessibilityIdentifier("albums-favorites")', 'accessibilityIdentifier("saved-memories-gallery")'),
+            (r'accessibilityLabel("お気に入り、\(photos.count.formatted())枚")',
+             r'accessibilityValue("お気に入り、\(photos.count.formatted())枚")'),
+        )
+        target = "            NekoWidget/Views/LikedPhotosView.swift\n"
+        return [(old, new, f"\n          grep -Fq '{old}' \\\n" + target,
+                 "\n          grep -Fq \\\n" + f"            -e '{old}' \\\n"
+                 + f"            -e '{new}' \\\n" + target) for old, new in pairs]
+
+    def test_exact_photo_source_check_upgrade_keeps_ci_selection_and_required_jobs(self):
+        workflow = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        legacy = workflow
+        for _, _, old, compatible in self.photo_source_check_blocks():
+            self.assertEqual(workflow.count(compatible), 1)
+            legacy = legacy.replace(compatible, old)
+        changes = {scope.CI_WORKFLOW: (legacy, workflow)}
+        selected = scope.select_scope(changes)
+        self.assertEqual(selected, scope.CI_SELECTION_SCOPE)
+        self.assertEqual(planner.required_jobs(list(changes), selected),
+                         planner.required_jobs_from_scope(scope.CI_SELECTION_SCOPE))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui", "gallery-normal"))
+        self.assertEqual(set(scope.lane_tests(selected, "app-ui")), UI_TESTS)
+        self.assertIn(planner.BUILD, planner.required_jobs_from_scope(selected))
+        self.assertIn(planner.BOOTSTRAP_SMOKE, planner.required_jobs_from_scope(selected))
+        # A product change cannot borrow the CI-only exception.
+        self.assertEqual(scope.select_scope(dict(changes, **{
+            "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": CHANGE})), scope.FULL_SCOPE)
+
+    def test_photo_source_check_exception_rejects_removed_alternatives_and_unrelated_commands(self):
+        workflow = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        for old, new, legacy, compatible in self.photo_source_check_blocks():
+            variants = (
+                legacy, legacy.replace(old, new),  # Neither one-sided rollback is equivalent.
+                compatible.replace("Views/LikedPhotosView.swift", "Views/HomeView.swift"),
+                compatible.replace("grep -Fq", "grep -Fqv"),
+                compatible.replace(new, 'accessibilityIdentifier("unknown")'),
+                compatible.rstrip("\n") + " || true\n",
+                compatible + compatible,
+                "\n",
+            )
+            for replacement in variants:
+                with self.subTest(replacement=replacement):
+                    changed = workflow.replace(compatible, replacement)
+                    self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (workflow, changed)}),
+                                     scope.FULL_SCOPE)
+                    before = workflow.replace(compatible, legacy)
+                    # A different command/path may not hitchhike on an upgrade.
+                    if replacement != legacy:
+                        self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (before, changed)}),
+                                         scope.FULL_SCOPE)
+        changed = workflow.replace('grep -Fq', 'grep -Fqv', 1)
+        self.assertNotEqual(changed, workflow)
+        self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (workflow, changed)}), scope.FULL_SCOPE)
+
+    def test_compatible_source_checks_accept_old_or_new_but_not_missing_values(self):
+        git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+        bash = str(git_bash) if os.name == "nt" and git_bash.is_file() else shutil.which("bash")
+        self.assertIsNotNone(bash)
+        with tempfile.TemporaryDirectory(prefix="neko-photo-source-") as directory:
+            target = Path(directory) / "NekoWidget/Views/LikedPhotosView.swift"
+            target.parent.mkdir(parents=True)
+            for old, new, _, compatible in self.photo_source_check_blocks():
+                for value, expected in ((old, 0), (new, 0), ("unrelated", 1)):
+                    with self.subTest(value=value):
+                        target.write_text(value + "\n", encoding="utf-8")
+                        result = subprocess.run([bash, "-c", compatible.strip()], cwd=directory,
+                                                capture_output=True, timeout=10)
+                        self.assertEqual(result.returncode, expected, result.stderr)
+
     def widget_scopes(self):
         return (scope.WIDGET_BEHAVIOR_SCOPE, scope.WIDGET_LAYOUT_SCOPE, scope.WIDGET_STYLE_SCOPE,
                 scope.CI_SELECTION_SCOPE)

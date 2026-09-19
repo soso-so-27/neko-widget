@@ -353,6 +353,31 @@ def smoke_execution(source: str) -> str:
                      if line.strip() and line.rstrip() not in selectors)
 
 
+def normalize_photo_source_check_upgrade(before: str, after: str) -> str:
+    """Allow only the reviewed old-to-compatible AX source checks.
+
+    The command, literals, indentation and target file are exact. Normalize
+    only the before side: removing either alternative after rollout is not
+    equivalent. No other grep/build/privacy/runtime command is ignored.
+    """
+    checks = (
+        ('accessibilityIdentifier("albums-favorites")',
+         'accessibilityIdentifier("saved-memories-gallery")'),
+        (r'accessibilityLabel("お気に入り、\(photos.count.formatted())枚")',
+         r'accessibilityValue("お気に入り、\(photos.count.formatted())枚")'),
+    )
+    for old, new in checks:
+        target = "            NekoWidget/Views/LikedPhotosView.swift\n"
+        legacy = f"\n          grep -Fq '{old}' \\\n" + target
+        compatible = ("\n          grep -Fq \\\n"
+                      f"            -e '{old}' \\\n"
+                      f"            -e '{new}' \\\n" + target)
+        if (before.count(legacy) == 1 and after.count(compatible) == 1
+                and compatible not in before and legacy not in after):
+            before = before.replace(legacy, compatible)
+    return before
+
+
 def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
     if not changes or not set(changes) <= CI_SELECTION_PATHS:
         return False
@@ -360,6 +385,7 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         before, after = changes[CI_WORKFLOW]
         if ("verify-app-icon.py" in before or "verify-app-icon.py" in after) and not icon_workflow_wired(after):
             return False
+        before = normalize_photo_source_check_upgrade(before, after)
         if workflow_execution(before) != workflow_execution(after):
             return False
     if CI_SMOKE_SCRIPT in changes:
