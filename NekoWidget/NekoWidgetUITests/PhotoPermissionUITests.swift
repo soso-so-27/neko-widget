@@ -1570,6 +1570,108 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto() throws {
+        // The run seeds a real photo with simctl addmedia. The large library and
+        // archive transport remain fixtures; PhotosPicker and its import do not.
+        let app = XCUIApplication()
+        app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+
+        func diagnostic(_ stage: String) {
+            capture("archive-picker-\(stage)")
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "archive-picker-\(stage)-accessibility"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        func require(_ stage: String, timeout: TimeInterval = 10,
+                     _ condition: @escaping () -> Bool) throws {
+            let expectation = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in condition() }, object: nil)
+            let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
+            if result != .completed { diagnostic("failed-\(stage)") }
+            _ = try XCTUnwrap(result == .completed ? true : nil,
+                              "PhotosPicker stage failed: \(stage)")
+        }
+        func tap(_ element: XCUIElement, stage: String) {
+            XCTContext.runActivity(named: "PhotosPicker: \(stage)") { _ in
+                // Keep this before tap: a frozen presentation may never return
+                // from XCTest's tap/idle wait, leaving this as the last stage.
+                capture("archive-picker-before-\(stage)")
+                XCTAssertTrue(element.isHittable, stage)
+                element.tap()
+            }
+        }
+        let settings = app.buttons["albums-settings-button"]
+        try require("real-albums-settings", timeout: 20) { settings.exists && settings.isHittable }
+        tap(settings, stage: "settings")
+        let archive = app.buttons["settings-personal-archive"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 10))
+        for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
+        tap(archive, stage: "archive")
+        let compose = app.buttons["personal-archive-compose"]
+        try require("archive-ready") { compose.exists && compose.isEnabled && compose.isHittable }
+        tap(compose, stage: "composer")
+
+        let choose = app.buttons["写真を選ぶ"]
+        let text = app.textViews["personal-archive-text"]
+        try require("composer-ready") { choose.exists && choose.isHittable && text.exists }
+        XCTAssertFalse(app.images["保管する写真"].exists)
+        // UIKit's picker can retain its system localization. Accept its two
+        // expected Cancel labels, never the composer's own 戻る/閉じる buttons.
+        let cancelButtons = app.buttons.matching(NSPredicate(
+            format: "label == %@ OR label == %@", "キャンセル", "Cancel"))
+        func pickerCancel() -> XCUIElement? {
+            cancelButtons.allElementsBoundByIndex.first { $0.isHittable }
+        }
+        func pickerPhoto() -> XCUIElement? {
+            app.collectionViews.cells.allElementsBoundByIndex.first { cell in
+                guard cell.isHittable else { return false }
+                return cell.label.contains("写真")
+                    || cell.label.localizedCaseInsensitiveContains("photo")
+                    || cell.label.contains("画像")
+                    || cell.label.localizedCaseInsensitiveContains("image")
+                    || cell.images.count > 0
+            }
+        }
+
+        tap(choose, stage: "first-system-open")
+        try require("first-system-picker", timeout: 15) {
+            pickerCancel() != nil
+        }
+        diagnostic("first-system-picker")
+        try require("seeded-library-photo", timeout: 15) { pickerPhoto() != nil }
+        tap(try XCTUnwrap(pickerCancel()), stage: "system-cancel")
+        try require("cancel-returned-to-composer") {
+            pickerCancel() == nil && choose.isHittable && text.isHittable
+        }
+        XCTAssertFalse(app.images["保管する写真"].exists,
+                       "Cancel must not manufacture a selected photo")
+        capture("archive-picker-cancelled")
+
+        tap(choose, stage: "second-system-open")
+        try require("second-system-picker", timeout: 15) {
+            pickerCancel() != nil
+        }
+        diagnostic("second-system-picker")
+        try require("seeded-library-photo-reopened", timeout: 15) { pickerPhoto() != nil }
+        tap(try XCTUnwrap(pickerPhoto()), stage: "select-real-library-photo")
+        let preview = app.images["保管する写真"]
+        try require("imported-preview", timeout: 20) {
+            pickerCancel() == nil && preview.exists && preview.isHittable
+        }
+        diagnostic("imported-preview")
+        let remove = app.buttons["写真を外す"]
+        for _ in 0..<3 where !remove.isHittable { app.swipeUp() }
+        try require("remove-ready") { remove.exists && remove.isEnabled && remove.isHittable }
+        tap(remove, stage: "remove-photo")
+        try require("removed-photo") { !preview.exists && choose.isHittable }
+        XCTAssertEqual(app.state, .runningForeground)
+        capture("archive-picker-removed")
+    }
+
+    @MainActor
     func testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings() {
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",

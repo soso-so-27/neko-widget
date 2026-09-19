@@ -1,49 +1,65 @@
-name: Resolve Build 185 watchdog frames
+name: Diagnose archive system photo picker (isolated branch only)
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
-  group: build185-symbols
+  group: archive-picker-diagnosis
   cancel-in-progress: false
 
 jobs:
-  resolve:
-    if: github.ref == 'refs/heads/main' && github.repository == 'soso-so-27/neko-widget'
+  diagnose:
+    if: github.ref == 'refs/heads/codex/archive-picker-diagnosis-20260919' && github.repository == 'soso-so-27/neko-widget'
     runs-on: macos-15
-    timeout-minutes: 15
-    environment: testflight
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
-      - name: Check out diagnostic code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-
-      - name: Authenticate and resolve the fixed Build 185 frames
+          fetch-depth: 0
+      - name: Run the real picker on unchanged Build 187 product code
+        working-directory: NekoWidget
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
-          set -euo pipefail
-          umask 077
-          diagnostic="$(mktemp -d "$RUNNER_TEMP/neko-build185-symbols.XXXXXX")"
-          cleanup() {
-            case "$diagnostic" in
-              "$RUNNER_TEMP"/neko-build185-symbols.*) rm -rf -- "$diagnostic" ;;
-              *) return 1 ;;
-            esac
-          }
-          trap cleanup EXIT
-          trap 'exit 130' INT
-          trap 'exit 143' TERM
-          gh api repos/soso-so-27/neko-widget/actions/runs/35357759789 > "$diagnostic/run.json"
-          gh api repos/soso-so-27/neko-widget/actions/artifacts/10553770172 > "$diagnostic/artifact.json"
-          gh api repos/soso-so-27/neko-widget/actions/artifacts/10553770172/zip > "$diagnostic/artifact.zip"
-          python3 NekoWidget/ci/resolve-build185-symbols.py --input-directory "$diagnostic"
+          set -Eeuo pipefail
+          artifact="$RUNNER_TEMP/archive-picker-diagnosis"
+          mkdir -p "$artifact"
+          xcodebuild -version > "$artifact/xcode-version.txt"
+          git rev-parse HEAD > "$artifact/test-sha.txt"
+          git diff 5c812f7 -- NekoWidget Shared NekoWidgetWidget > "$artifact/product-diff.txt"
+          test ! -s "$artifact/product-diff.txt"
+          device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl addmedia "$device" ci/fixtures/cats/cat-orange-square.png
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+          xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLanguages -array ja
+          xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLocale -string ja_JP
+          xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleKeyboards -array ja_JP-Kana en_US
+          status=0
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
+            -derivedDataPath "$RUNNER_TEMP/ArchivePickerDerivedData" \
+            -resultBundlePath "$artifact/Picker.xcresult" \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES test > "$artifact/test.log" 2>&1 || status=$?
+          if [[ -d "$artifact/Picker.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$artifact/Picker.xcresult" --output-path "$artifact/attachments" || true
+            xcrun xcresulttool get test-results tests --path "$artifact/Picker.xcresult" > "$artifact/tests.json" || true
+          fi
+          tail -60 "$artifact/test.log"
+          exit "$status"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: archive-picker-diagnosis-${{ github.sha }}
+          path: ${{ runner.temp }}/archive-picker-diagnosis
+          retention-days: 3
