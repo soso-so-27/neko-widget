@@ -267,7 +267,7 @@ class PlanTests(unittest.TestCase):
                     (root / "output").write_text("")
                     planner.main()
                     outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
-                    self.assertEqual(outputs, {"build": "true", "smoke": "true", "sharing": "true",
+                    self.assertEqual(outputs, {"build": "true", "build_name": planner.BUILD, "smoke": "true", "sharing": "true",
                         "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
                         "runtime_scope": scope.FULL_SCOPE,
                         "lanes": json.dumps(scope.LANES, separators=(",", ":")),

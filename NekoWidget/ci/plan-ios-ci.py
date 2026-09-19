@@ -12,6 +12,8 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
+
 from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
@@ -19,6 +21,7 @@ from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
 
 
 BUILD = "Build disabled app and extensions without signing"
+ICON_BUILD = "Build and display app icons"
 SMOKE = "Launch app and scan fixtures in Simulator"
 BOOTSTRAP_SMOKE = SMOKE + " [photo-bootstrap-v1]"
 SHARING = sharing_job(FULL_SCOPE)
@@ -50,6 +53,8 @@ def smoke_job(scope: str) -> str:
 
 
 def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
+    if scope == ICON_SCOPE:
+        return (ICON_BUILD,)
     if scope == "movie-screen-only":
         return (BUILD,)
     return (BUILD, smoke_job(scope)) + sharing_jobs(scope)
@@ -97,6 +102,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             return FULL_SCOPE
         head = env["GITHUB_SHA"]
         ci_only = sources <= CI_SELECTION_PATHS
+        icon_only = icon_paths_only(sources)
         if ci_only:
             # A stale branch is not proof that the product is unchanged from
             # current main. Every branch input still has to be accounted for.
@@ -127,6 +133,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 ))
             else:
                 valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
+                if icon_only and path in ICON_DOC_PATHS:
+                    valid = valid or (fields[0:2] == [":000000", "100644"] and fields[4] == "A")
                 if ci_only and path in CI_NEW_TEST_PATHS and fields[0:2] == [":000000", "100644"] and fields[4] == "A":
                     valid = True
                     added_tests.add(path)
@@ -135,6 +143,13 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             seen.add(path)
         if seen != set(paths):
             return FULL_SCOPE
+        if icon_only:
+            # Never decode PNGs as UTF-8 or classify just the last commit.
+            # Every changed path above must remain an existing regular file.
+            for path in ICON_PATHS:
+                data = subprocess.check_output(["git", "show", f"{head}:{path}"])
+                validate_png(data)
+            return ICON_SCOPE
         return select_scope({path: ("" if path in added_tests else git("show", f"{base}:{path}"),
                                    git("show", f"{head}:{path}")) for path in sources})
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
@@ -312,9 +327,10 @@ def main() -> None:
         evidence = None  # API/permission/response failures never bypass checks.
     values = {
         "build": str(evidence is None).lower(),
+        "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
         "smoke": str(evidence is None and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
-        "sharing": str(evidence is None and required != (BUILD,)).lower(),
+        "sharing": str(evidence is None and bool(set(required) & set(sharing_jobs(selected_scope)))).lower(),
         "app_ui": str(evidence is None and required != (BUILD,) and "app-ui" in lanes(selected_scope)).lower(),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
@@ -324,7 +340,7 @@ def main() -> None:
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
-    scope = "movie-screen-only" if required == (BUILD,) else selected_scope
+    scope = "movie-screen-only" if required == (BUILD,) and selected_scope != ICON_SCOPE else selected_scope
     print("IOS_CI_PLAN_JSON=" + json.dumps({
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,

@@ -42,6 +42,7 @@ pathlib.Path(sys.argv[sys.argv.index("--tests") + 1]).write_text("\\n\\n")
 ''', encoding="utf-8")
             else:
                 shutil.copyfile(CI / "ios_ci_scope.py", selector)
+                shutil.copyfile(CI / "app_icon_ci.py", ci / "app_icon_ci.py")
             script = ci / "run-simulator-smoke.sh"
             if full_script:
                 script.write_text(source, encoding="utf-8")

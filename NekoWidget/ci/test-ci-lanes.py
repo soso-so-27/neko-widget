@@ -122,6 +122,8 @@ class LaneTests(unittest.TestCase):
                 for identifier, body in jobs.items():
                     if "    runs-on: macos-15\n" not in body:
                         continue
+                    if selected == scope.ICON_SCOPE and identifier != "build-without-signing":
+                        continue
                     if identifier == "sharing-app-ui" and not has_app_ui:
                         self.assertIn("if: needs.plan.outputs.app_ui == 'true'", body)
                         continue
@@ -138,6 +140,8 @@ class LaneTests(unittest.TestCase):
                     name = re.search(r"^    name: (.+)$", body, re.M)[1]
                     for lane in expansion:
                         expanded_name = name.replace("${{ needs.plan.outputs.runtime_scope }}", selected)
+                        expanded_name = expanded_name.replace("${{ needs.plan.outputs.build_name }}",
+                            planner.ICON_BUILD if selected == scope.ICON_SCOPE else planner.BUILD)
                         expanded_name = expanded_name.replace("${{ needs.plan.outputs.smoke_name }}", planner.smoke_job(selected))
                         if lane:
                             expanded_name = expanded_name.replace("${{ matrix.lane }}", lane)
@@ -149,7 +153,8 @@ class LaneTests(unittest.TestCase):
                         "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
                 self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
-                self.assertEqual(maximum_running, 4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE) else 5)
+                self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
+                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE) else 5)
                 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
