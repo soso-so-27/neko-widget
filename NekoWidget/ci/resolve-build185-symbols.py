@@ -185,9 +185,12 @@ def symbol_lines(output: str) -> list[str]:
     require(0 < len(lines) <= 64, "Unexpected inline symbol count.")
     symbols = []
     for line in lines:
-        match = re.fullmatch(r"(.+?) \(in NekoWidget\)(?: \((.+)\))?", line.strip())
-        require(match is not None and not re.match(r"^(?:0x[0-9a-fA-F]+|\?\?\?)(?:\s|$)", match[1]),
-                "An app frame could not be resolved.")
+        match = re.fullmatch(r"(.+?) \(in NekoWidget\)(?: \((.+)\))?(?: \+ \d+)?", line.strip())
+        if match is None or re.match(r"^(?:0x[0-9a-fA-F]+|\?\?\?)(?:\s|$)", match[1]):
+            # Optimized compiler/runtime thunks may have no source symbol. Keep
+            # their position and continue resolving the useful caller frames.
+            symbols.append("[unresolved optimized frame]")
+            continue
         location = match[2]
         symbols.append(match[1] + (f" ({location.rsplit('/', 1)[-1]})" if location else ""))
     return symbols
