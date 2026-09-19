@@ -23,7 +23,9 @@ WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
 ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
-REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v1"
+# v2 also covers the reviewed Photos sections and their existing fixture.
+# The version separates its nine required operations from v1's seven-test proof.
+REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, ICON_SCOPE)
@@ -37,8 +39,9 @@ GALLERY_CONDITIONS = {
 }
 
 # FamilyWindowView contains shared detail/zoom and settings; PairingView and
-# SettingsView also own permission/security actions. They intentionally remain
-# full. New files, helpers and test/fixture changes need a fresh mapping review.
+# SettingsView also own permission/security actions. They remain outside the
+# generic map; a Settings UI diff needs the exact reviewed-memory manifest.
+# New files, helpers and test/fixture changes need a fresh mapping review.
 PHOTO_VIEWS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
     "HomeView.swift", "LikedPhotosView.swift", "MonthlyWindowView.swift",
     "PhotoAssetImageView.swift", "CatProfilesView.swift",
@@ -100,6 +103,9 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift",
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift",
     "NekoWidget/NekoWidget/Views/MainTabView.swift",
+    "NekoWidget/NekoWidget/Views/HomeView.swift",
+    "NekoWidget/NekoWidget/Views/SettingsView.swift",
+    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift",
     MEMORY_TEST_PATH,
 }) | MEMORY_PROJECTION_PATHS
 ARCHIVE_PICKER_MANIFEST = "NekoWidget/ci/archive-picker-ui.json"
@@ -407,6 +413,8 @@ REVIEWED_MEMORY_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier i
     "SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
     "SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
     "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
+    "SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings",
+    "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
 ))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",

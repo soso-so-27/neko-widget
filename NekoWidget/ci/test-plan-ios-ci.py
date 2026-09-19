@@ -59,7 +59,7 @@ class PlanTests(unittest.TestCase):
                       "NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift",
                       "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
                       "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
-                      "NekoWidget/NekoWidget/Views/HomeView.swift", scope.CI_WORKFLOW,
+                      "NekoWidget/NekoWidget/Views/FamilyWindowView.swift", scope.CI_WORKFLOW,
                       "NekoWidget/ci/ios_ci_scope.py", "unknown.swift", "../MainTabView.swift"):
             with self.subTest(extra=extra):
                 self.assertEqual(scope.select_scope(dict(changes, **{extra: ("before", "after")})), scope.FULL_SCOPE)
@@ -74,6 +74,7 @@ class PlanTests(unittest.TestCase):
         review = json.loads(changes[scope.REVIEW_MANIFEST][1])
         malformed = ["[]", "null", "{", json.dumps(dict(review, scope="unknown-v1")),
                      json.dumps(dict(review, scope=scope.REVIEWED_APP_SCOPE)),
+                     json.dumps(dict(review, scope="reviewed-memory-read-ui-v1")),
                      json.dumps(dict(review, schemaVersion=2)), json.dumps(dict(review, schemaVersion=True)),
                      json.dumps(dict(review, purpose=" ")), json.dumps(dict(review, visualReview="none")),
                      json.dumps(dict(review, dataReview="unchecked")),
@@ -163,6 +164,9 @@ class PlanTests(unittest.TestCase):
             "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift",
             "NekoWidget/NekoWidget/Views/LikedPhotosView.swift",
             "NekoWidget/NekoWidget/Views/MainTabView.swift",
+            "NekoWidget/NekoWidget/Views/HomeView.swift",
+            "NekoWidget/NekoWidget/Views/SettingsView.swift",
+            "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift",
             "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
             "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
             "NekoWidget/ci/verify-personal-archive.swift",
@@ -247,8 +251,10 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
         tests = scope.lane_tests(selected, "app-ui")
-        self.assertEqual(len(tests), 7)
-        self.assertEqual(len(set(tests)), 7)
+        self.assertEqual(len(tests), 9)
+        self.assertEqual(len(set(tests)), 9)
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings", tests)
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess", tests)
         full = scope.native_tests(scope.FULL_SCOPE)
         for test in tests:
             self.assertTrue(any(test.startswith(suite + "/") for suite in full), test)
@@ -259,6 +265,9 @@ class PlanTests(unittest.TestCase):
                 for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertTrue(planner.covers_jobs(self.jobs, required, self.sha))
+        old_jobs = [dict(job, name=job["name"].replace("reviewed-memory-read-ui-v2", "reviewed-memory-read-ui-v1"))
+                    for job in jobs]
+        self.assertFalse(planner.covers_jobs(old_jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, planner.required_jobs_from_scope(scope.REVIEWED_APP_SCOPE), self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
