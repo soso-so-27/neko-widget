@@ -13,10 +13,10 @@ concurrency:
 jobs:
   diagnose:
     if: github.ref == 'refs/heads/codex/archive-picker-diagnosis-20260919' && github.repository == 'soso-so-27/neko-widget'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 20
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -33,7 +33,8 @@ jobs:
           git rev-parse HEAD > "$artifact/test-sha.txt"
           git diff 5c812f7 -- NekoWidget Shared NekoWidgetWidget > "$artifact/product-diff.txt"
           test ! -s "$artifact/product-diff.txt"
-          device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          xcrun simctl list runtimes --json > "$artifact/runtimes.json"
+          device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
           trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
@@ -42,6 +43,23 @@ jobs:
           xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLanguages -array ja
           xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLocale -string ja_JP
           xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleKeyboards -array ja_JP-Kana en_US
+          # One bounded stack sample after the exact user-reported tap. This
+          # disposable Simulator has only the seeded CC0 image and fake account.
+          (
+            for attempt in {1..480}; do
+              if [[ -f "$artifact/test.log" ]] && grep -q 'ARCHIVE_PICKER_STAGE:first-system-open' "$artifact/test.log"; then
+                sleep 8
+                app_pid=$(pgrep -x NekoWidget | head -1 || true)
+                if [[ -n "$app_pid" ]]; then
+                  sample "$app_pid" 3 1 -file "$artifact/picker-main-thread-sample.txt" > "$artifact/sample-command.log" 2>&1 || true
+                  xcrun simctl io "$device" screenshot "$artifact/picker-after-tap.png" >/dev/null 2>&1 || true
+                fi
+                break
+              fi
+              sleep 2
+            done
+          ) &
+          sample_watcher=$!
           status=0
           xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
@@ -51,6 +69,8 @@ jobs:
             -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES test > "$artifact/test.log" 2>&1 || status=$?
+          kill "$sample_watcher" >/dev/null 2>&1 || true
+          wait "$sample_watcher" 2>/dev/null || true
           if [[ -d "$artifact/Picker.xcresult" ]]; then
             xcrun xcresulttool export attachments --path "$artifact/Picker.xcresult" --output-path "$artifact/attachments" || true
             xcrun xcresulttool get test-results tests --path "$artifact/Picker.xcresult" > "$artifact/tests.json" || true

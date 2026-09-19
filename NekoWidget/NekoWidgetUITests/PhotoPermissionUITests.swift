@@ -1600,6 +1600,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 // from XCTest's tap/idle wait, leaving this as the last stage.
                 capture("archive-picker-before-\(stage)")
                 XCTAssertTrue(element.isHittable, stage)
+                NSLog("ARCHIVE_PICKER_STAGE:%@", stage)
                 element.tap()
             }
         }
@@ -1626,14 +1627,14 @@ final class SoloMemoriesUITests: XCTestCase {
             cancelButtons.allElementsBoundByIndex.first { $0.isHittable }
         }
         func pickerPhoto() -> XCUIElement? {
-            app.collectionViews.cells.allElementsBoundByIndex.first { cell in
-                guard cell.isHittable else { return false }
-                return cell.label.contains("写真")
-                    || cell.label.localizedCaseInsensitiveContains("photo")
-                    || cell.label.contains("画像")
-                    || cell.label.localizedCaseInsensitiveContains("image")
-                    || cell.images.count > 0
-            }
+            // Observed in the iOS 26.2 system-picker AX attachment: assets are
+            // images in this scroll view, not collection cells. Scope to its
+            // photo tiles so an underlying Form row/header can never be tapped.
+            app.scrollViews["photosView_content_scroll_view"].images
+                .matching(NSPredicate(format:
+                    "identifier == %@ AND (label BEGINSWITH %@ OR label BEGINSWITH %@)",
+                    "PXGGridLayout-Info", "写真,", "Photo,"))
+                .allElementsBoundByIndex.first { $0.isHittable }
         }
 
         tap(choose, stage: "first-system-open")
