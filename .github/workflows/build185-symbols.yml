@@ -1,0 +1,49 @@
+name: Resolve Build 185 watchdog frames
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: build185-symbols
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main' && github.repository == 'soso-so-27/neko-widget'
+    runs-on: macos-15
+    timeout-minutes: 15
+    environment: testflight
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out diagnostic code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Authenticate and resolve the fixed Build 185 frames
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          diagnostic="$(mktemp -d "$RUNNER_TEMP/neko-build185-symbols.XXXXXX")"
+          cleanup() {
+            case "$diagnostic" in
+              "$RUNNER_TEMP"/neko-build185-symbols.*) rm -rf -- "$diagnostic" ;;
+              *) return 1 ;;
+            esac
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          gh api repos/soso-so-27/neko-widget/actions/runs/35357759789 > "$diagnostic/run.json"
+          gh api repos/soso-so-27/neko-widget/actions/artifacts/10553770172 > "$diagnostic/artifact.json"
+          gh api repos/soso-so-27/neko-widget/actions/artifacts/10553770172/zip > "$diagnostic/artifact.zip"
+          python3 NekoWidget/ci/resolve-build185-symbols.py --input-directory "$diagnostic"
