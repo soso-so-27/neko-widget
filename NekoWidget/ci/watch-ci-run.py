@@ -3,11 +3,12 @@
 
 Print start, newly completed jobs, and a final JSON summary. Step changes and
 unchanged polls stay silent. The local result contains only selected metadata,
-never logs, steps, credentials, or raw gh errors. Exit: 0 success, 1 unsuccessful
+never logs, step bodies, credentials, or raw gh errors. Exit: 0 success, 1 unsuccessful
 run, 2 unverified/error, 3 approval/action required, 130 interrupted.
 
-runner_minutes is the sum of reported job execution durations, not billed
-minutes or an OS-weighted estimate. Missing timestamps make it incomplete.
+runner_minutes sums each job's first valid step start to last valid step end,
+not queue time, billed minutes, or an OS-weighted estimate. A cancelled job
+with no reported steps contributes zero. Missing step evidence is incomplete.
 """
 
 from __future__ import annotations
@@ -28,7 +29,21 @@ REPOSITORY = "soso-so-27/neko-widget"
 STATES = {"queued", "requested", "pending", "waiting", "in_progress", "completed", "action_required"}
 CONCLUSIONS = {"success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale", "startup_failure"}
 FIELDS = "databaseId,headSha,attempt,status,conclusion,createdAt,startedAt,updatedAt,jobs"
-SELECT_METADATA = "{databaseId,headSha,attempt,status,conclusion,createdAt,startedAt,updatedAt,jobs:[.jobs[]|{databaseId,name,status,conclusion,startedAt,completedAt}]}"
+# gh applies this projection before emitting stdout: no step names/body/status
+# or logs leave the CLI, only boundary timestamps and evidence counts.
+SELECT_METADATA = """
+def valid_time: select(type == "string" and . != "" and (startswith("0001-") | not));
+{databaseId,headSha,attempt,status,conclusion,createdAt,startedAt,updatedAt,
+ jobs:[.jobs[] |
+   (.steps | if type == "array" then . else null end) as $steps |
+   [$steps[]? | .startedAt | valid_time] as $starts |
+   [$steps[]? | .completedAt | valid_time] as $ends |
+   {databaseId,name,status,conclusion,startedAt,completedAt,
+    stepCount: (if $steps == null then null else ($steps | length) end),
+    startedStepCount: (if $steps == null then null else ($starts | length) end),
+    completedStepCount: (if $steps == null then null else ($ends | length) end),
+    firstStepStartedAt: ($starts | min), lastStepCompletedAt: ($ends | max)}]}
+"""
 
 
 class WatchError(Exception):
@@ -136,12 +151,20 @@ def normalize(raw: dict, run_id: int, expected_sha: str | None, identity=None) -
         job_status, job_conclusion = state(job)
         if not isinstance(job.get("name"), str):
             raise WatchError("invalid_job_name")
-        for key in ("startedAt", "completedAt"):
+        for key in ("startedAt", "completedAt", "firstStepStartedAt", "lastStepCompletedAt"):
             timestamp(job.get(key))
+        counts = [job.get(key) for key in ("stepCount", "startedStepCount", "completedStepCount")]
+        if any(value is not None and (type(value) is not int or value < 0) for value in counts):
+            raise WatchError("invalid_step_count")
+        if all(value is not None for value in counts) and any(value > counts[0] for value in counts[1:]):
+            raise WatchError("invalid_step_count")
         selected.append({
             "id": job_id, "name": "".join(c if c.isprintable() else " " for c in job["name"])[:120],
             "status": job_status, "conclusion": job_conclusion,
             "started_at": job.get("startedAt"), "completed_at": job.get("completedAt"),
+            "step_count": counts[0], "started_step_count": counts[1], "completed_step_count": counts[2],
+            "first_step_started_at": job.get("firstStepStartedAt"),
+            "last_step_completed_at": job.get("lastStepCompletedAt"),
         })
     return {
         "run_id": run_id, "head_sha": sha, "attempt": attempt, "status": status,
@@ -165,20 +188,19 @@ def duration_metrics(run, observed_at):
     total = max(0, (end - timestamp(run["created_at"])).total_seconds()) if end else None
     seconds, complete = 0.0, completed
     for job in run["jobs"]:
-        start, finish = timestamp(job["started_at"]), timestamp(job["completed_at"])
-        if job["conclusion"] == "skipped":
+        start = timestamp(job["first_step_started_at"])
+        finish = timestamp(job["last_step_completed_at"])
+        counts = (job["step_count"], job["started_step_count"], job["completed_step_count"])
+        # Job startedAt may be set while still queued. Never use it as an
+        # execution start, including jobs cancelled before a runner was assigned.
+        if counts == (0, 0, 0) and start is None and finish is None and job["conclusion"] in {"cancelled", "skipped"}:
             continue
-        if job["status"] in {"queued", "requested", "pending", "waiting", "action_required"}:
+        if (any(value is None for value in counts) or counts[1] == 0 or
+                counts[1] != counts[2] or start is None or finish is None):
             complete = False
             continue
-        if start is None:
+        if job["status"] != "completed":
             complete = False
-            continue
-        if finish is None:
-            if job["status"] == "completed":
-                complete = False
-                continue
-            finish = observed_at
         elapsed = (finish - start).total_seconds()
         if elapsed < 0:
             complete = False
@@ -230,7 +252,11 @@ def watch(args) -> int:
             summary["reason"] = reason
         document = {
             "schema_version": 1, "repository": args.repo, "observed_at": now.isoformat(),
-            "runner_minutes_definition": "Sum of reported job execution durations; not billed or OS-weighted minutes.",
+            "runner_minutes_definition": (
+                "Sum of each job's first valid step start to last valid step end, including gaps between steps; "
+                "excludes queue time and is not billed or OS-weighted minutes. Cancelled/skipped jobs with no "
+                "reported steps contribute zero. Missing or unfinished step evidence makes the sum incomplete."
+            ),
             "summary": summary, "run": latest, "events": events,
         }
         try:

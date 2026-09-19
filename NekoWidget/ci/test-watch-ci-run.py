@@ -27,6 +27,10 @@ def fixture(status="in_progress", conclusion=None):
         "jobs": [{"databaseId": 101, "name": "Build", "status": status,
                   "conclusion": conclusion, "startedAt": "2026-09-19T00:01:00Z",
                   "completedAt": "2026-09-19T00:03:00Z" if status == "completed" else None,
+                  "stepCount": 2, "startedStepCount": 2,
+                  "completedStepCount": 2 if status == "completed" else 1,
+                  "firstStepStartedAt": "2026-09-19T00:01:00Z",
+                  "lastStepCompletedAt": "2026-09-19T00:03:00Z" if status == "completed" else "2026-09-19T00:02:00Z",
                   "steps": [{"name": "not retained", "status": "in_progress"}]}],
     }
 
@@ -48,6 +52,7 @@ class WatchTests(unittest.TestCase):
         initial = fixture()
         step_changed = copy.deepcopy(initial)
         step_changed["jobs"][0]["steps"][0]["status"] = "completed"
+        step_changed["jobs"][0].update(completedStepCount=2, lastStepCompletedAt="2026-09-19T00:03:00Z")
         step_changed["updatedAt"] = "2026-09-19T00:02:00Z"
         final = fixture("completed", "success")
         second = copy.deepcopy(final["jobs"][0])
@@ -60,7 +65,7 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(result["summary"]["runner_minutes"], 4)
         self.assertEqual(result["summary"]["total_seconds"], 300)
         self.assertTrue(result["summary"]["runner_minutes_complete"])
-        self.assertNotIn("steps", json.dumps(result))
+        self.assertNotIn('"steps":', json.dumps(result))
         self.assertNotIn("not retained", json.dumps(result))
         self.assertEqual(calls, 5)
 
@@ -143,9 +148,30 @@ class WatchTests(unittest.TestCase):
         with patch.object(watcher.time, "sleep") as sleep:
             watcher.sleep_chunked(180)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 60, 60])
-        response = fixture("completed", "success")
-        response["jobs"][0]["completedAt"] = None
-        _, result, _, _, _ = self.run_watch([response])
+        for missing in ({"lastStepCompletedAt": None}, {"stepCount": None}, {"completedStepCount": 1}):
+            with self.subTest(missing=missing):
+                response = fixture("completed", "success")
+                response["jobs"][0].update(missing)
+                _, result, _, _, _ = self.run_watch([response])
+                self.assertFalse(result["summary"]["runner_minutes_complete"])
+
+    def test_queued_then_cancelled_twenty_minutes_is_zero_execution(self):
+        queued = fixture("queued")
+        queued["jobs"][0].update(
+            startedAt="2026-09-19T00:00:00Z", stepCount=0, startedStepCount=0,
+            completedStepCount=0, firstStepStartedAt=None, lastStepCompletedAt=None, steps=[],
+        )
+        cancelled = copy.deepcopy(queued)
+        cancelled.update(status="completed", conclusion="cancelled", updatedAt="2026-09-19T00:20:00Z")
+        cancelled["jobs"][0].update(status="completed", conclusion="cancelled", completedAt="2026-09-19T00:20:00Z")
+        code, result, _, calls, _ = self.run_watch([queued, cancelled])
+        self.assertEqual((code, calls), (1, 2))
+        self.assertEqual(result["summary"]["total_seconds"], 1200)
+        self.assertEqual(result["summary"]["runner_minutes"], 0)
+        self.assertTrue(result["summary"]["runner_minutes_complete"])
+        # No step metadata is unknown, not evidence of zero execution.
+        cancelled["jobs"][0].update(stepCount=None, startedStepCount=None, completedStepCount=None)
+        _, result, _, _, _ = self.run_watch([cancelled])
         self.assertFalse(result["summary"]["runner_minutes_complete"])
 
 
