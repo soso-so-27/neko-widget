@@ -501,18 +501,16 @@ struct PhotoMemoryNoteArchiveView: View {
             let identifier = access.photo(for: record.photoIdentifier)?.localIdentifier
             let bytes: Data?
             if let identifier {
-                bytes = try await Task.detached(priority: .userInitiated) {
-                    var image: UIImage?
 #if DEBUG
-                    if CommandLine.arguments.contains("--memory-library-fixture") {
-                        image = AppStoreScreenshotFixture.image(for: identifier)
-                    }
+                let fixtureJPEG = CommandLine.arguments.contains("--memory-library-fixture")
+                    ? AppStoreScreenshotFixture.image(for: identifier)?.jpegData(compressionQuality: 0.96) : nil
+#else
+                let fixtureJPEG: Data? = nil
 #endif
-                    if image == nil {
-                        image = PhotoImageLoader().image(localIdentifier: identifier,
-                            targetSize: CGSize(width: 4096, height: 4096), contentMode: .aspectFit)
-                    }
-                    guard let raw = image?.jpegData(compressionQuality: 0.96) else { return nil as Data? }
+                bytes = try await Task.detached(priority: .userInitiated) {
+                    let raw = fixtureJPEG ?? PhotoImageLoader().image(localIdentifier: identifier,
+                        targetSize: CGSize(width: 4096, height: 4096), contentMode: .aspectFit)?.jpegData(compressionQuality: 0.96)
+                    guard let raw else { return nil as Data? }
                     return try PersonalArchiveImage.jpeg(from: raw)
                 }.value
             } else { bytes = nil }
