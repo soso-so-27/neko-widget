@@ -106,6 +106,9 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/HomeView.swift",
     "NekoWidget/NekoWidget/Views/SettingsView.swift",
     "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift",
+    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
+    "NekoWidget/ci/test-family-window-widget-boundaries.py",
+    "NekoWidget/ci/test-app-store-screenshot-workflow.py",
     MEMORY_TEST_PATH,
 }) | MEMORY_PROJECTION_PATHS
 ARCHIVE_PICKER_MANIFEST = "NekoWidget/ci/archive-picker-ui.json"
