@@ -2,7 +2,24 @@
 
 This batch connects the existing private window to an independent encrypted record
 catalog. It does not turn the delivery inbox/TTL into a long-term original or
-provide all-device-loss recovery. No worker deployment was performed by the implementer.
+provide all-device-loss recovery. The initial implementation handoff below preceded
+deployment; the root completed the internal worker rollout on 2026-09-19.
+
+## Current delivery status (2026-09-19)
+
+App `04e637b` / TestFlight 1.0 (190) uploaded to Apple at 23:17:18 JST, run
+`35447825611`. Candidate full-v1 `35444894339` passed; main reused that exact
+SHA in `35447741311`. Native family runtime/UI passed. Apple processing and real
+two-device synchronization have not been confirmed.
+
+Separated worker source `1986ccd` is deployed as version
+`64707b0f-e436-49ad-858d-88c8d2f61a06`, internal family gate YES. Only migration
+0027 was applied; unrelated billing migrations/code were not deployed. Authenticated
+dashboard inspection confirmed no completed-object expiration rules on MEDIA:
+only incomplete multipart uploads are aborted after 7 days. Public access remains
+disabled. Prior bindings, secret binding names and three crons remain unchanged.
+Health returned 200; family records and existing delivery rejected unsigned requests
+with 401. No real customer records/photos were created or deleted by verification.
 
 ## Implemented path and boundaries
 
@@ -97,5 +114,7 @@ for external rollout; this gate is an internal pilot only.
   owns the single UI regression wiring. This fixture does not prove system
   PhotosPicker behavior or production two-device synchronization.
 
-Native family UI, actual two-device service synchronization, actual R2 lifecycle
-configuration and worker rollout remain unverified at this handoff.
+Native family UI, R2 lifecycle configuration and internal worker rollout are now
+verified as described above. Actual two-device service synchronization remains
+unverified. The report/evidence and retention/recovery limitations above still
+apply; this is not authorization or readiness for external rollout or billing.
