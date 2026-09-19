@@ -1591,7 +1591,9 @@ final class SoloMemoriesUITests: XCTestCase {
 
         func diagnostic(_ stage: String) {
             capture("archive-picker-\(stage)")
-            let hierarchy = XCTAttachment(string: app.debugDescription)
+            let description = app.debugDescription
+            NSLog("ARCHIVE_PICKER_AX:%@\n%@\nARCHIVE_PICKER_AX_END", stage, description)
+            let hierarchy = XCTAttachment(string: description)
             hierarchy.name = "archive-picker-\(stage)-accessibility"
             hierarchy.lifetime = .keepAlways
             add(hierarchy)
@@ -1609,7 +1611,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTContext.runActivity(named: "PhotosPicker: \(stage)") { _ in
                 // Keep this before tap: a frozen presentation may never return
                 // from XCTest's tap/idle wait, leaving this as the last stage.
-                capture("archive-picker-before-\(stage)")
+                if stage == "first-system-open" { capture("archive-picker-before-\(stage)") }
                 XCTAssertTrue(element.isHittable, stage)
                 NSLog("ARCHIVE_PICKER_STAGE:%@", stage)
                 element.tap()
@@ -1645,23 +1647,30 @@ final class SoloMemoriesUITests: XCTestCase {
         func pickerCancel() -> XCUIElement? {
             cancelButtons.allElementsBoundByIndex.first { $0.isHittable }
         }
+        var loggedPickerPhoto = false
         func pickerPhoto() -> XCUIElement? {
-            // Observed in the iOS 26.2 system-picker AX attachment: assets are
-            // images in this scroll view, not collection cells. Scope to its
-            // photo tiles so an underlying Form row/header can never be tapped.
-            app.scrollViews["photosView_content_scroll_view"].images
+            // Resolve a fresh first match after the system library has loaded.
+            // Index-bound snapshots can go stale while Photos builds its grid.
+            let photo = app.scrollViews["photosView_content_scroll_view"].images
                 .matching(NSPredicate(format:
                     "identifier == %@ AND (label BEGINSWITH %@ OR label BEGINSWITH %@)",
-                    "PXGGridLayout-Info", "写真,", "Photo,"))
-                .allElementsBoundByIndex.first { $0.isHittable }
+                    "PXGGridLayout-Info", "写真,", "Photo,")).firstMatch
+            guard photo.exists else { return nil }
+            let hittable = photo.isHittable
+            if !loggedPickerPhoto {
+                NSLog("ARCHIVE_PICKER_PHOTO:exists=1 hittable=%@ frame=%@",
+                      String(hittable), NSStringFromCGRect(photo.frame))
+                loggedPickerPhoto = true
+            }
+            return hittable ? photo : nil
         }
 
         tap(choose, stage: "first-system-open")
         try require("first-system-picker", timeout: 15) {
             pickerCancel() != nil
         }
-        diagnostic("first-system-picker")
-        try require("seeded-library-photo", timeout: 15) { pickerPhoto() != nil }
+        capture("archive-picker-first-system-picker")
+        try require("seeded-library-photo", timeout: 45) { pickerPhoto() != nil }
         tap(try XCTUnwrap(pickerCancel()), stage: "system-cancel")
         try require("cancel-returned-to-composer") {
             pickerCancel() == nil && choose.isHittable && text.isHittable
@@ -1674,14 +1683,14 @@ final class SoloMemoriesUITests: XCTestCase {
         try require("second-system-picker", timeout: 15) {
             pickerCancel() != nil
         }
-        diagnostic("second-system-picker")
-        try require("seeded-library-photo-reopened", timeout: 15) { pickerPhoto() != nil }
+        capture("archive-picker-second-system-picker")
+        try require("seeded-library-photo-reopened", timeout: 30) { pickerPhoto() != nil }
         tap(try XCTUnwrap(pickerPhoto()), stage: "select-real-library-photo")
         let preview = app.images["保管する写真"]
         try require("imported-preview", timeout: 20) {
             pickerCancel() == nil && preview.exists && preview.isHittable
         }
-        diagnostic("imported-preview")
+        capture("archive-picker-imported-preview")
         let remove = app.buttons["写真を外す"]
         for _ in 0..<3 where !remove.isHittable { app.swipeUp() }
         try require("remove-ready") { remove.exists && remove.isEnabled && remove.isHittable }

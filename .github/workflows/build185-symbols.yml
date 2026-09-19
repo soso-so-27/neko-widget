@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Run the real picker with stable screen presentation
-        timeout-minutes: 11
+        timeout-minutes: 14
         working-directory: NekoWidget
         shell: bash
         run: |
