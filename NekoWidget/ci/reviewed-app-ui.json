@@ -23,7 +23,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "2ee39f02f58b39dae7039a796e96202e0c40e72ae6a3f5ed97e2063d45cc51f8",
-      "after": "3bf5ba5f8a11b1635b3f3f4612b66b2e07dab1bd14466fb34cb9cf64a78cbb9a"
+      "after": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706"
     },
     "NekoWidget/ci/verify-personal-archive.swift": {
       "before": "0fe88c785274ed78642c61823ff9eff0ace0c5a52781f8bfb1f29028f6995f8d",

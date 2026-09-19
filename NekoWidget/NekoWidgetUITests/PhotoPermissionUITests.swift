@@ -2862,7 +2862,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         if !row.exists {
             search.tap()
             if search.buttons.firstMatch.exists { search.buttons.firstMatch.tap() }
-            app.buttons["キャンセル"].tap()
+            // iOS 26 presents Close here; Cancel is not present after clearing.
+            if app.buttons["閉じる"].exists { app.buttons["閉じる"].tap() }
         }
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
