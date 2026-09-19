@@ -22,6 +22,254 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    @staticmethod
+    def memory_changes():
+        classes = {}
+        for identifier in scope.REVIEWED_MEMORY_TESTS:
+            _, owner, method = identifier.split("/")
+            classes.setdefault(owner, []).append(f"    func {method}() {{}}")
+        source = "\n".join(f"final class {owner}: XCTestCase {{\n" + "\n".join(methods) + "\n}"
+                           for owner, methods in classes.items())
+        changes = {path: ("before", source if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.REVIEWABLE_MEMORY_PATHS}
+        review = {"schemaVersion": 1, "scope": scope.REVIEWED_MEMORY_SCOPE,
+                  "purpose": "Reviewed personal memory reading experience", "visualReview": "user-device",
+                  "dataReview": "read-only-projection",
+                  "files": {path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}
+                            for path, pair in changes.items()}}
+        changes[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
+        return changes
+
+    def test_memory_review_requires_exact_complete_batch_and_known_profile(self):
+        changes = self.memory_changes()
+        self.assertEqual(scope.select_scope(changes), scope.REVIEWED_MEMORY_SCOPE)
+        for path in changes:
+            with self.subTest(missing=path):
+                altered = dict(changes)
+                del altered[path]
+                self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+        for path in scope.REVIEWABLE_MEMORY_PATHS:
+            for index in (0, 1):
+                with self.subTest(path=path, side=index):
+                    pair = list(changes[path])
+                    pair[index] += "unreviewed"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(pair)})), scope.FULL_SCOPE)
+        for extra in ("NekoWidget/NekoWidget/App/AppRootView.swift",
+                      "NekoWidget/Shared/Storage/PhotoStore.swift",
+                      "NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift",
+                      "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
+                      "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                      "NekoWidget/NekoWidget/Views/HomeView.swift", scope.CI_WORKFLOW,
+                      "NekoWidget/ci/ios_ci_scope.py", "unknown.swift", "../MainTabView.swift"):
+            with self.subTest(extra=extra):
+                self.assertEqual(scope.select_scope(dict(changes, **{extra: ("before", "after")})), scope.FULL_SCOPE)
+                self.assertEqual(planner.required_jobs(list(changes) + [extra], scope.REVIEWED_MEMORY_SCOPE), planner.FULL)
+        self.assertEqual(scope.select_scope({path: changes[path] for path in scope.REVIEWABLE_MEMORY_PATHS}),
+                         scope.FULL_SCOPE)
+        self.assertEqual(scope.select_scope(dict(changes, **{"handoffs/review.md": ("", "review")})),
+                         scope.REVIEWED_MEMORY_SCOPE)
+
+    def test_memory_review_rejects_malformed_stale_and_duplicate_manifests(self):
+        changes = self.memory_changes()
+        review = json.loads(changes[scope.REVIEW_MANIFEST][1])
+        malformed = ["[]", "null", "{", json.dumps(dict(review, scope="unknown-v1")),
+                     json.dumps(dict(review, scope=scope.REVIEWED_APP_SCOPE)),
+                     json.dumps(dict(review, schemaVersion=2)), json.dumps(dict(review, schemaVersion=True)),
+                     json.dumps(dict(review, purpose=" ")), json.dumps(dict(review, visualReview="none")),
+                     json.dumps(dict(review, dataReview="unchecked")),
+                     json.dumps({k: v for k, v in review.items() if k != "dataReview"}),
+                     json.dumps(dict(review, files={})), json.dumps(dict(review, tests=[])),
+                     changes[scope.REVIEW_MANIFEST][1][:-1] + ', "purpose": "duplicate"}']
+        path = next(iter(scope.REVIEWABLE_MEMORY_PATHS))
+        stale = copy.deepcopy(review)
+        stale["files"][path]["after"] = "f" * 64
+        malformed.append(json.dumps(stale))
+        for manifest in malformed:
+            with self.subTest(manifest=manifest):
+                self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ("{}", manifest)})),
+                                 scope.FULL_SCOPE)
+
+    def test_memory_review_requires_all_selected_test_methods_in_head(self):
+        changes = self.memory_changes()
+        for test in scope.REVIEWED_MEMORY_TESTS:
+            for duplicate in (False, True):
+                altered = copy.deepcopy(changes)
+                path = scope.MEMORY_TEST_PATH
+                before, after = altered[path]
+                method = test.rsplit("/", 1)[1]
+                declaration = f"    func {method}() {{}}"
+                after = after.replace(declaration, declaration * 2 if duplicate else "")
+                altered[path] = (before, after)
+                review = json.loads(altered[scope.REVIEW_MANIFEST][1])
+                review["files"][path]["after"] = scope.source_digest(after)
+                altered[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
+                with self.subTest(test=test, duplicate=duplicate):
+                    self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+
+    def test_memory_single_file_review_reads_fixed_test_dependency_from_head(self):
+        full = self.memory_changes()
+        source = full[scope.MEMORY_TEST_PATH][1]
+        for path in scope.REVIEWABLE_MEMORY_PATHS - scope.MEMORY_PROJECTION_PATHS:
+            review = json.loads(full[scope.REVIEW_MANIFEST][1])
+            review["files"] = {path: review["files"][path]}
+            changes = {path: full[path], scope.REVIEW_MANIFEST: ("{}", json.dumps(review))}
+            self.assertEqual(scope.select_scope(changes, memory_test_source=source),
+                             scope.REVIEWED_MEMORY_SCOPE)
+            if path == scope.MEMORY_TEST_PATH:
+                continue
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            paths = sorted(changes)
+            base = "b" * 40
+            raw = "".join(f":100644 100644 {'c' * 40} {'d' * 40} M\0{item}\0" for item in paths)
+            for dependency in (source, source.replace("testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto", "absent"), None):
+                def git(*args):
+                    if args[0] == "diff":
+                        return raw
+                    if args[0] == "show":
+                        revision, item = args[1].split(":", 1)
+                        if item == scope.MEMORY_TEST_PATH:
+                            self.assertEqual(revision, self.sha)
+                            if dependency is None:
+                                raise subprocess.CalledProcessError(1, ["git", *args])
+                            return dependency
+                        return changes[item][0 if revision == base else 1]
+                    return self.sha
+                with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                    self.assertEqual(planner.runtime_scope(paths, {}, self.env),
+                                     scope.REVIEWED_MEMORY_SCOPE if dependency == source else scope.FULL_SCOPE)
+
+    def test_memory_projection_requires_the_exact_store_and_existing_verifier_together(self):
+        full = self.memory_changes()
+        source = full[scope.MEMORY_TEST_PATH][1]
+        review = json.loads(full[scope.REVIEW_MANIFEST][1])
+        for paths in (scope.MEMORY_PROJECTION_PATHS, *({p} for p in scope.MEMORY_PROJECTION_PATHS)):
+            manifest = dict(review, files={p: review["files"][p] for p in paths})
+            changes = {p: full[p] for p in paths}
+            changes[scope.REVIEW_MANIFEST] = ("{}", json.dumps(manifest))
+            self.assertEqual(scope.select_scope(changes, memory_test_source=source),
+                             scope.REVIEWED_MEMORY_SCOPE if paths == scope.MEMORY_PROJECTION_PATHS else scope.FULL_SCOPE)
+        # An unknown named profile with only a legacy-allowed UI path must not
+        # silently downgrade to the older four-test profile.
+        path = "NekoWidget/NekoWidget/Views/MainTabView.swift"
+        for claimed in (scope.REVIEWED_MEMORY_SCOPE, "unknown-v1", scope.REVIEWED_APP_SCOPE):
+            manifest = dict(review, scope=claimed, files={path: review["files"][path]})
+            manifest.pop("dataReview")
+            self.assertEqual(scope.select_scope({path: full[path], scope.REVIEW_MANIFEST: ("{}", json.dumps(manifest))},
+                                               memory_test_source=source), scope.FULL_SCOPE)
+
+    def test_memory_allowlist_and_current_test_declarations_are_explicit(self):
+        self.assertEqual(scope.REVIEWABLE_MEMORY_PATHS, {
+            "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
+            "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift",
+            "NekoWidget/NekoWidget/Views/LikedPhotosView.swift",
+            "NekoWidget/NekoWidget/Views/MainTabView.swift",
+            "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+            "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
+            "NekoWidget/ci/verify-personal-archive.swift",
+        })
+        root = Path(__file__).resolve().parents[2]
+        source = (root / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8")
+        self.assertTrue(scope.memory_tests_available(source))
+
+    def test_memory_test_names_in_comments_and_strings_do_not_count(self):
+        changes = self.memory_changes()
+        path = scope.MEMORY_TEST_PATH
+        before, source = changes[path]
+        declaration = "func testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto() {}"
+        class_declaration = "final class MomentDeliveryComposerUITests: XCTestCase {"
+        hidden = (
+            source.replace(declaration, "// " + declaration),
+            source.replace(declaration, "/* " + declaration + " */"),
+            source.replace(declaration, "/* outer /* nested */ " + declaration + " */"),
+            source.replace(declaration, 'let text = "' + declaration + '"'),
+            source.replace(declaration, 'let text = "value \\(flag ? "' + declaration + '" : "b")"'),
+            source.replace(declaration, 'let text = """\n' + declaration + '\n"""'),
+            source.replace(declaration, 'let text = #"' + declaration + '"#'),
+            source.replace(class_declaration, "// " + class_declaration),
+            source.replace(class_declaration, "/* " + class_declaration + " */"),
+            source.replace(class_declaration, 'let text = "' + class_declaration + '"'),
+            'let text = """\n' + source + '\n"""',
+            'let text = #"""\n' + source + '\n"""#',
+            "#if false\n" + source + "\n#endif",
+            source + "\n/* unterminated",
+            source + '\nlet text = "unterminated',
+        )
+        for after in hidden:
+            altered = copy.deepcopy(changes)
+            altered[path] = (before, after)
+            review = json.loads(altered[scope.REVIEW_MANIFEST][1])
+            review["files"][path]["after"] = scope.source_digest(after)
+            altered[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
+            with self.subTest(source=after):
+                self.assertFalse(scope.memory_tests_available(after))
+                self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+        # Decoys beside real declarations must not become duplicate methods.
+        decoys = ('\n// ' + declaration + '\n/* ' + class_declaration + ' */\n'
+                  + 'let text = "' + declaration + '"\n'
+                  + 'let interpolation = "value \\(flag ? "' + declaration + '" : "b")"\n')
+        self.assertTrue(scope.memory_tests_available(source + decoys))
+
+    def test_memory_planner_rejects_added_deleted_renamed_and_nonregular_files(self):
+        changes = self.memory_changes()
+        paths = sorted(changes)
+        base = "b" * 40
+        def selected(headers):
+            raw = "".join(f"{headers.get(path, ':100644 100644')} {'c' * 40} {'d' * 40} M\0{path}\0"
+                          for path in paths)
+            def git(*args):
+                if args[0] == "diff":
+                    return raw
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        self.assertEqual(selected({}), scope.REVIEWED_MEMORY_SCOPE)
+        for path in paths:
+            for modes in (":000000 100644", ":100644 000000", ":100644 100755", ":100644 120000"):
+                self.assertEqual(selected({path: modes}), scope.FULL_SCOPE)
+        # Status is checked independently of modes, including copy/rename.
+        for status in ("A", "D", "R100", "C100", "T"):
+            raw = "".join(f":100644 100644 {'c' * 40} {'d' * 40} {status}\0{path}\0" for path in paths)
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", return_value=raw):
+                self.assertEqual(planner.runtime_scope(paths, {}, self.env), scope.FULL_SCOPE)
+        self.assertEqual(planner.runtime_scope(paths, {}, dict(self.env, GITHUB_EVENT_NAME="workflow_dispatch")),
+                         scope.FULL_SCOPE)
+
+    def test_memory_selection_keeps_safety_jobs_and_cannot_supply_full_evidence(self):
+        selected = scope.REVIEWED_MEMORY_SCOPE
+        changes = self.memory_changes()
+        required = planner.required_jobs(list(changes), selected)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
+        self.assertEqual(scope.smoke_tests(selected),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
+        tests = scope.lane_tests(selected, "app-ui")
+        self.assertEqual(len(tests), 7)
+        self.assertEqual(len(set(tests)), 7)
+        full = scope.native_tests(scope.FULL_SCOPE)
+        for test in tests:
+            self.assertTrue(any(test.startswith(suite + "/") for suite in full), test)
+        for gallery in scope.LANES[2:]:
+            with self.assertRaises(ValueError):
+                scope.lane_tests(selected, gallery)
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"}
+                for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        self.assertTrue(planner.covers_jobs(self.jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.required_jobs_from_scope(scope.REVIEWED_APP_SCOPE), self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            self.assertFalse(planner.covers_jobs(jobs + [jobs[index]], required, self.sha))
+            for conclusion in ("failure", "skipped", "cancelled"):
+                altered = copy.deepcopy(jobs)
+                altered[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(altered, required, self.sha))
+
     def archive_picker_batch(self):
         changes = {path: ("before " + path, "after " + path)
                    for path in scope.ARCHIVE_PICKER_PATHS}

@@ -17,7 +17,8 @@ from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only,
 from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
-                          sharing_jobs, lane_job, lanes, matrix_lanes)
+                          sharing_jobs, lane_job, lanes, matrix_lanes,
+                          reviewed_memory_changes, MEMORY_TEST_PATH)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -150,8 +151,12 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 data = subprocess.check_output(["git", "show", f"{head}:{path}"])
                 validate_png(data)
             return ICON_SCOPE
-        return select_scope({path: ("" if path in added_tests else git("show", f"{base}:{path}"),
-                                   git("show", f"{head}:{path}")) for path in sources})
+        changes = {path: ("" if path in added_tests else git("show", f"{base}:{path}"),
+                          git("show", f"{head}:{path}")) for path in sources}
+        memory_tests = None
+        if reviewed_memory_changes(changes) and MEMORY_TEST_PATH not in changes:
+            memory_tests = git("show", f"{head}:{MEMORY_TEST_PATH}")
+        return select_scope(changes, memory_test_source=memory_tests)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return FULL_SCOPE
 
