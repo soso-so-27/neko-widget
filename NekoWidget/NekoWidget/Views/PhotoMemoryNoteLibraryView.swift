@@ -167,6 +167,7 @@ struct PhotoMemoryNotesListView: View {
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var search = ""
+    @State private var isSearchPresented = false
     @State private var selectedArchive: PersonalArchiveRecord?
     @State private var selectedArchiveAccount: String?
     @State private var selectedSourceNote: UUID?
@@ -268,6 +269,7 @@ struct PhotoMemoryNotesListView: View {
                 if access.photo(for: local.photoIdentifier) == nil, let copy = item.preserved {
                     Button {
                         guard let account else { return }
+                        isSearchPresented = false
                         selectedArchiveAccount = account
                         selectedSourceNote = local.id
                         selectedArchive = copy
@@ -282,6 +284,7 @@ struct PhotoMemoryNotesListView: View {
         } else if let copy = item.preserved {
             Button {
                 guard let account else { return }
+                isSearchPresented = false
                 selectedArchiveAccount = account
                 selectedSourceNote = nil
                 selectedArchive = copy
@@ -294,7 +297,8 @@ struct PhotoMemoryNotesListView: View {
     var body: some View {
         readingList
         .listStyle(.insetGrouped)
-        .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
+        .searchable(text: $search, isPresented: $isSearchPresented,
+                    placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "言葉・猫の名前で探す")
         .refreshable { await library.reload() }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
@@ -330,7 +334,12 @@ struct PhotoMemoryNotesListView: View {
                 library.clearArchive()
                 if scenePhase == .active { Task { await library.reload() } }
             }
-        .onDisappear { access.stop() }
+        .onDisappear {
+            // Search presentation belongs to this list, not to a pushed photo.
+            // Keep the query but restore the native bars when returning.
+            isSearchPresented = false
+            access.stop()
+        }
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {

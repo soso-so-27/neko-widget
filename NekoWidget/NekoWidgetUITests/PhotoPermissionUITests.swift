@@ -2862,7 +2862,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
         XCTAssertTrue(archived.waitForExistence(timeout: 10), "Cloud-only records belong in the same reading list.")
         attach(app, name: "memory-library-list")
-        let search = app.searchFields.firstMatch
+        let search = app.searchFields["言葉・猫の名前で探す"]
         XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("おふろ")
         XCTAssertTrue(archived.waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
@@ -2871,10 +2871,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].exists)
         app.navigationBars.buttons.firstMatch.tap()
-        if app.buttons["キャンセル"].exists { app.buttons["キャンセル"].tap() }
-        if !row.exists {
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
+        attach(app, name: "memory-library-return-from-search")
+        if (search.value as? String) == "おふろ" {
             search.tap()
-            if search.buttons.firstMatch.exists { search.buttons.firstMatch.tap() }
+            let clearSearch = search.buttons.firstMatch
+            XCTAssertTrue(clearSearch.waitForExistence(timeout: 5))
+            clearSearch.tap()
             // iOS 26 presents Close here; Cancel is not present after clearing.
             if app.buttons["閉じる"].exists { app.buttons["閉じる"].tap() }
         }
@@ -2941,7 +2945,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["削除"].tap()
         // Group-level identifiers are forwarded to the empty state's children.
         // Verify its visible content and keep export out of the current UI.
-        XCTAssertTrue(app.staticTexts["「はじめてのおふろ」「いつもの寝場所」。写真に添えた言葉を、ここで読み返せます。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["写真を開き、メモのアイコンから書けます。"].waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         attach(app, name: "memory-library-empty-after-deletion")
@@ -3006,6 +3010,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["personal-archive-delete"].tap()
         app.buttons["コピーを削除"].tap()
         XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
+        app.navigationBars["記録の保管"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))
         app.buttons["閉じる"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
         XCTAssertTrue(body.waitForExistence(timeout: 5))

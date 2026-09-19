@@ -26,6 +26,12 @@
 
 最初の製品候補a485ecfのBuildは、workflowに直書きされた旧albums-favoritesの存在チェックで停止した。移設に伴うPython検証とUI操作は追従したが、.github側の旧期待を見落とした。製品に不要な旧IDを戻す回避はせず、実際のお気に入り一覧を示すsaved-memories-galleryへ期待を更新した。
 
-workflowの変更を含むため、次候補は既存のfail-closed規則によるfull検証になる。今回の途中で更なるCI基盤試作を重ねない。最初の限定候補の成功とは扱わず、手戻り時間も記録する。
+workflowの変更を含むため、49d2038は既存のfail-closed規則によるfull検証になった。最初の限定候補の成功とは扱わず、手戻り時間も記録する。
 
 78c81a3でも同じstepの古いaccessibilityLabel期待が停止原因になった。現在の一覧は同じ枚数をaccessibilityValueで提供しているため期待を修正。workflowの当該静的shellブロック全体を抽出してGit Bashで実行し、後続の全grep/awk/件数条件までexit 0を確認した（`C:/dev/neko-evidence/photo-library-sections-20260920/photo-boundary-static-current.log`）。先頭の一件だけで再pushした確認不足を記録する。
+
+49d2038のrun35471758947は、Build・実行時・写真権限/スキャン・Widget描画など他7jobが成功したが、app-uiが75分上限に到達。全体78分56秒、runner合計165.33分。53操作開始・49成功・3失敗・1未完了であり、成功とは扱わない。失敗には変更後の空状態文言と設定の戻り操作へのテスト追従不足が含まれる。検索失敗時の回収画像では検索入口だけでなく「おふろ」の絞り込みも成功しており、検索機能が欠落したとは判断しない。製品の標準検索UIは維持し、失敗した操作位置を修正する。
+
+検索については詳細から一覧へ戻った後、ナビゲーションバーと検索欄が両方消える状態を失敗時AXと録画最終フレームで確認した。これは製品側の検索・画面遷移の問題として扱う。標準searchableのisPresentedを明示管理し、詳細を開く時と一覧を離れる時に検索の表示状態を終了させる。検索文字列は保持する。テストは別区分への切り替えで回避せず、戻った画面の検索欄とバーの復帰、検索解除後の元メモ表示まで確認する。API根拠は[Appleの検索表示管理](https://developer.apple.com/documentation/swiftui/managing-search-interface-activation)。
+
+全画面75分を再実行するために製品を変えることはしない。別のCI-only候補46c4f22で、旧/新双方を許容する上記2箇所の静的検査への正確な移行だけを既存CI選択scopeとして検証する。製品や他の検査の変更は引き続きfullとなる。成功後に同じworkflowを製品へ取り込み、既存reviewed-memory-read-ui-v2の固定9操作と必須Build/境界検証へ戻す。今回の所要時間は20〜30分の目標を超過しており、速度改善達成とは報告しない。
