@@ -150,7 +150,7 @@ def extract_dwarf(bundle: Path, directory: Path, metadata: dict) -> Path:
         require(member.isfile() and 0 < member.size <= MAXIMUM_FILE_BYTES,
                 "The app DWARF must be a bounded regular file.")
         # Read only this exact regular member; never extract archive paths or links.
-        dwarf = directory / "NekoWidget.dwarf"
+        dwarf = directory / "NekoWidget"
         with archive.extractfile(member) as source, dwarf.open("xb") as target:
             shutil.copyfileobj(source, target)
     return dwarf
@@ -185,14 +185,19 @@ def symbol_lines(output: str) -> list[str]:
     require(0 < len(lines) <= 64, "Unexpected inline symbol count.")
     symbols = []
     for line in lines:
-        match = re.fullmatch(r"(.+?) \(in NekoWidget\)(?: \((.+)\))?(?: \+ \d+)?", line.strip())
-        if match is None or re.match(r"^(?:0x[0-9a-fA-F]+|\?\?\?)(?:\s|$)", match[1]):
+        line = line.strip()
+        if re.match(r"^(?:0x[0-9a-fA-F]+|\?\?\?)(?:\s|$)", line):
             # Optimized compiler/runtime thunks may have no source symbol. Keep
             # their position and continue resolving the useful caller frames.
             symbols.append("[unresolved optimized frame]")
             continue
-        location = match[2]
-        symbols.append(match[1] + (f" ({location.rsplit('/', 1)[-1]})" if location else ""))
+        # atos uses the DWARF filename as its image label. Its formatting also
+        # differs for inlined symbols. Retain symbol text and basename:line only.
+        line = re.sub(r" \(in [^)]+\)", "", line)
+        line = re.sub(r"\(([^()]*[/\\])([^()/\\]+)\)", r"(\2)", line)
+        require(len(line) <= 4096 and not any(ord(c) < 32 for c in line),
+                "Invalid symbol output.")
+        symbols.append(line)
     return symbols
 
 
