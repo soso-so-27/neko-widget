@@ -331,6 +331,18 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
     private let decoder: JSONDecoder
     private let requestTimeout: TimeInterval
 
+    /// Reuses the existing signed, ephemeral, no-redirect transport. Callers
+    /// must retain the current pairing lifecycle token across the await.
+    func familyRecordRequest(path: String, method: String, body: Data,
+                             pairingState: PairingState, credential: PairingCredential) async throws -> Data {
+        guard path == "/v2/family-records" || path.hasPrefix("/v2/family-records/") else {
+            throw MomentSharingError.invalidPayload
+        }
+        return try await sendData(path: path, method: method, body: body,
+            contentType: body.isEmpty ? nil : "application/json", maximumResponseBytes: 48 * 1024 * 1024,
+            pairingState: pairingState, credential: credential).data
+    }
+
     init(configuration: SharingAPIConfiguration = .current, requestTimeout: TimeInterval? = nil) throws {
         // Window-name synchronization remains available when the independent
         // photo runtime is paused. Individual media entry points are still

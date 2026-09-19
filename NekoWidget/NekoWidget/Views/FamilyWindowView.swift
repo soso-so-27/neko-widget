@@ -934,6 +934,9 @@ struct FamilyWindowView: View {
 
                 if !model.isReportOnly {
                     manualRefreshResult
+                    if let spaceID = model.pairingState?.spaceID {
+                        FamilyRecordEntryButton(spaceID: spaceID).id(spaceID)
+                    }
                 }
             }
             .padding(16)

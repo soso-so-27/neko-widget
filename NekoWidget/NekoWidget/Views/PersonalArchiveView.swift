@@ -4,6 +4,7 @@ import CoreTransferable
 import CloudKit
 import UniformTypeIdentifiers
 import ImageIO
+import Photos
 
 private func personalArchiveMessage(for error: Error) -> String {
     (error as? PersonalArchiveError)?.errorDescription
@@ -11,7 +12,7 @@ private func personalArchiveMessage(for error: Error) -> String {
 }
 
 /// An internal, opt-in CloudKit pilot. Existing photos and notes are never
-/// enrolled by opening this screen. Each Save is a separate immutable record.
+/// enrolled by opening this screen. Changes to copies are explicit operations.
 struct PersonalArchiveView: View {
     let store: PersonalArchiveStore
     @Environment(\.scenePhase) private var scenePhase
@@ -22,6 +23,7 @@ struct PersonalArchiveView: View {
     @State private var showsComposer = false
     @State private var selectedRecord: PersonalArchiveRecord?
     @State private var viewGeneration = UUID()
+    @State private var pendingCount = 0
 
     init(store: PersonalArchiveStore = .shared) { self.store = store }
 
@@ -32,7 +34,7 @@ struct PersonalArchiveView: View {
                 Text("同じApple AccountのiPhoneから取り戻せます。iCloudの空き容量を使います。")
                     .font(.subheadline).foregroundStyle(.secondary)
             } footer: {
-                Text("内部テスト中です。写真は鑑賞用のコピーで、原本のバックアップではありません。編集・削除にはまだ対応していません。まず試しの1件で確認してください。")
+                Text("内部テスト中です。写真は鑑賞用のコピーで、原本のバックアップではありません。")
             }
 
             Section {
@@ -46,8 +48,8 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-refresh")
                 .disabled(isLoading || isWorking)
-                if records.contains(where: { $0.state == .pending }) {
-                    Button("保管待ちを再試行") { Task { await retryPending() } }
+                if pendingCount > 0 {
+                    Button("未完了の操作を再試行") { Task { await retryPending() } }
                         .accessibilityIdentifier("personal-archive-retry")
                         .disabled(isLoading || isWorking)
                 }
@@ -86,9 +88,12 @@ struct PersonalArchiveView: View {
             get: { selectedRecord != nil },
             set: { if !$0 { selectedRecord = nil } }
         )) {
-            if let selectedRecord { PersonalArchiveRecordView(record: selectedRecord) }
+            if let selectedRecord { PersonalArchiveRecordView(record: selectedRecord, store: store) }
         }
         .task { await loadLocalRecords() }
+        .onChange(of: selectedRecord) { _, value in
+            if value == nil { Task { await loadLocalRecords() } }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 records = []; selectedRecord = nil; viewGeneration = UUID()
@@ -125,8 +130,9 @@ struct PersonalArchiveView: View {
                 Text(record.text.isEmpty ? "写真" : record.text).lineLimit(2)
                 Text(record.createdAt.formatted(date: .abbreviated, time: .omitted))
                     .font(.caption).foregroundStyle(.secondary)
-                if record.state != .stored {
-                    Text(record.state.archiveLabel).font(.caption).foregroundStyle(.secondary)
+                if record.isDeletionPending || record.state != .stored {
+                    Text(record.isDeletionPending ? "削除待ち" : record.state.archiveLabel)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -149,8 +155,9 @@ struct PersonalArchiveView: View {
         defer { if generation == viewGeneration { isLoading = false } }
         do {
             let loaded = try await store.records()
+            let pending = try await store.pendingOperationCount()
             guard generation == viewGeneration else { return }
-            records = loaded; errorMessage = nil
+            records = loaded; pendingCount = pending; errorMessage = nil
         } catch {
             guard generation == viewGeneration else { return }
             records = []; errorMessage = personalArchiveMessage(for: error)
@@ -163,8 +170,9 @@ struct PersonalArchiveView: View {
         defer { if generation == viewGeneration { isWorking = false } }
         do {
             let loaded = try await store.refresh()
+            let pending = try await store.pendingOperationCount()
             guard generation == viewGeneration else { return }
-            records = loaded; errorMessage = nil
+            records = loaded; pendingCount = pending; errorMessage = nil
         } catch {
             let local = try? await store.records()
             guard generation == viewGeneration else { return }
@@ -179,8 +187,10 @@ struct PersonalArchiveView: View {
         do {
             try await store.retryPending()
             let loaded = try await store.records()
+            let pending = try await store.pendingOperationCount()
             guard generation == viewGeneration else { return }
             records = loaded
+            pendingCount = pending
             errorMessage = nil
         } catch {
             let local = try? await store.records()
@@ -202,7 +212,21 @@ private extension PersonalArchiveRecordState {
 }
 
 private struct PersonalArchiveRecordView: View {
-    let record: PersonalArchiveRecord
+    let store: PersonalArchiveStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var record: PersonalArchiveRecord
+    @State private var account: String?
+    @State private var editing = false
+    @State private var confirmsDelete = false
+    @State private var deleting = false
+    @State private var deleteID = UUID()
+    @State private var errorMessage: String?
+
+    init(record: PersonalArchiveRecord, store: PersonalArchiveStore) {
+        _record = State(initialValue: record)
+        self.store = store
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -217,13 +241,316 @@ private struct PersonalArchiveRecordView: View {
                 }
                 Text("保管日 \(record.createdAt.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption).foregroundStyle(.secondary)
-                Text(record.state.archiveLabel).font(.caption).foregroundStyle(.secondary)
+                archiveContext(capturedAt: record.capturedAt, context: record.context)
+                Text(record.isDeletionPending ? "削除待ち・完了するまで、このiPhoneに内容を残しています" : record.state.archiveLabel)
+                    .font(.caption).foregroundStyle(.secondary)
                 if let issue = record.issue {
                     Text(personalArchiveMessage(for: issue)).font(.subheadline).foregroundStyle(.secondary)
                 }
+                if let remoteText = record.conflictingText {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("別の端末で変更された言葉").font(.headline)
+                        Text(remoteText.isEmpty ? "言葉なし" : remoteText).textSelection(.enabled)
+                        Text("上の手元の内容は上書きしていません。必要な言葉を控えてください。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
+                if deleting { ProgressView("削除しています…") }
             }.padding()
         }
         .navigationTitle("記録").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("言葉を編集", systemImage: "pencil") { editing = true }
+                        .disabled(record.state != .stored && record.state != .partial || record.isDeletionPending)
+                        .accessibilityIdentifier("personal-archive-edit")
+                    Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                        .disabled(record.isDeletionPending || record.state == .conflict)
+                        .accessibilityIdentifier("personal-archive-delete")
+                } label: { Image(systemName: "ellipsis") }
+                .accessibilityLabel("記録の操作")
+                .accessibilityIdentifier("personal-archive-record-menu")
+                .disabled(account == nil || deleting)
+            }
+        }
+        .task {
+            do { account = try await store.accountContext() }
+            catch { errorMessage = personalArchiveMessage(for: error) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+            .receive(on: DispatchQueue.main)) { _ in account = nil; editing = false; dismiss() }
+        .sheet(isPresented: $editing) {
+            if let account {
+                PersonalArchiveTextEditor(record: record, store: store, account: account) { record = $0 }
+            }
+        }
+        .confirmationDialog("保管したコピーを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
+            Button("コピーを削除", role: .destructive) { Task { await delete() } }
+        } message: {
+            Text("iCloudとこのアプリの保管一覧から削除します。別のiPhoneには次の読み込み時に反映されます。写真アプリの原本、元のメモ、相手と共有したコピーは残ります。")
+        }
+    }
+
+    @MainActor private func delete() async {
+        guard let account, !deleting else { return }
+        deleting = true
+        defer { deleting = false }
+        do {
+            let result = try await store.delete(id: record.id, operationID: deleteID,
+                expectedRevision: record.revision, expectedAccount: account)
+            if result == .stored { dismiss(); return }
+            if let latest = try await store.records().first(where: { $0.id == record.id }) { record = latest }
+        } catch {
+            if let latest = try? await store.records().first(where: { $0.id == record.id }) { record = latest }
+            errorMessage = personalArchiveMessage(for: error)
+        }
+    }
+}
+
+@ViewBuilder
+private func archiveContext(capturedAt: Date?, context: PersonalArchiveContext?) -> some View {
+    if capturedAt != nil || context != nil {
+        VStack(alignment: .leading, spacing: 6) {
+            if let date = capturedAt { Text("撮影 \(date.formatted(date: .abbreviated, time: .omitted))") }
+            if let date = context?.writtenAt { Text("書いた日 \(date.formatted(date: .abbreviated, time: .omitted))") }
+            if let names = context?.catNames, !names.isEmpty { Text(names.joined(separator: "・")) }
+        }.font(.caption).foregroundStyle(.secondary)
+    }
+}
+
+private struct PersonalArchiveTextEditor: View {
+    let record: PersonalArchiveRecord
+    let store: PersonalArchiveStore
+    let account: String
+    let didUpdate: (PersonalArchiveRecord) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var saving = false
+    @State private var attempted = false
+    @State private var operation = UUID()
+    @State private var accountChanged = false
+    @State private var errorMessage: String?
+    @FocusState private var writing: Bool
+
+    init(record: PersonalArchiveRecord, store: PersonalArchiveStore, account: String,
+         didUpdate: @escaping (PersonalArchiveRecord) -> Void) {
+        self.record = record; self.store = store; self.account = account; self.didUpdate = didUpdate
+        _text = State(initialValue: record.text)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $text).frame(minHeight: 160).focused($writing)
+                        .disabled(saving || attempted).accessibilityIdentifier("personal-archive-edit-text")
+                } footer: { Text("\(text.count) / 500文字") }
+                Text("保管したコピーの言葉を変更します。元のメモと共有済みの内容は変わりません。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if saving { ProgressView() }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("言葉を編集").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(attempted ? "閉じる" : "キャンセル") { dismiss() }.disabled(saving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(attempted ? "再試行" : "保存") { Task { await save() } }
+                        .disabled(saving || accountChanged || text.count > 500 ||
+                                  (record.jpegData == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                        .accessibilityIdentifier("personal-archive-edit-save")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer(); Button("完了") { writing = false }
+                }
+            }
+            .interactiveDismissDisabled(saving || text != record.text)
+            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+                .receive(on: DispatchQueue.main)) { _ in
+                accountChanged = true
+                errorMessage = personalArchiveMessage(for: PersonalArchiveError.accountChanged)
+            }
+        }
+    }
+
+    @MainActor private func save() async {
+        guard !saving, !accountChanged else { return }
+        saving = true; attempted = true; writing = false
+        defer { saving = false }
+        do {
+            let context = PersonalArchiveContext(writtenAt: record.context?.writtenAt,
+                updatedAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)),
+                catNames: record.context?.catNames ?? [])
+            // Keep operation metadata fixed on retries as well as its identifier.
+            if editContext == nil { editContext = context }
+            let updated = try await store.update(id: record.id, operationID: operation,
+                expectedRevision: record.revision, text: text, capturedAt: record.capturedAt,
+                context: editContext ?? context, expectedAccount: account)
+            didUpdate(updated); dismiss()
+        } catch { errorMessage = personalArchiveMessage(for: error) }
+    }
+    @State private var editContext: PersonalArchiveContext?
+}
+
+/// An explicit snapshot of an existing note. Opening it never enrolls data.
+struct PhotoMemoryNoteArchiveView: View {
+    let record: PhotoMemoryNoteRecord
+    let photos: [PhotoPresentation]
+    let noteStore: PhotoMemoryNoteStore
+    let archiveStore: PersonalArchiveStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var access = PhotoMemoryNotePhotoAccess()
+    @State private var jpeg: Data?
+    @State private var preparing = false
+    @State private var prepared = false
+    @State private var withoutPhoto = false
+    @State private var saving = false
+    @State private var attempted = false
+    @State private var account: String?
+    @State private var invalidated = false
+    @State private var generation = UUID()
+    @State private var status: PersonalArchivePreservationStatus = .localOnly
+    @State private var errorMessage: String?
+
+    private var source: PersonalArchiveSourceSnapshot {
+        .init(noteID: record.id, revision: record.note.revision, photoIdentifier: record.photoIdentifier)
+    }
+    private var context: PersonalArchiveContext {
+        .init(writtenAt: record.note.writtenAt, updatedAt: record.note.updatedAt,
+              catNames: record.note.context?.cats.map(\.name) ?? [])
+    }
+    private var title: String {
+        if attempted { return "再試行" }
+        switch status {
+        case .stored: return "保管済み"
+        case .changed: return "コピーを更新"
+        case .deleted: return "新しく保管"
+        default: return "保管"
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let jpeg, let image = UIImage(data: jpeg), !withoutPhoto {
+                    Image(uiImage: image).resizable().scaledToFit().accessibilityLabel("保管する写真")
+                } else if preparing { ProgressView("写真を準備しています…") }
+                else if prepared && !withoutPhoto {
+                    Section {
+                        Text("元の写真を読み込めません。メモの言葉は保管できます。")
+                        Button("写真をもう一度読み込む") { Task { await prepare() } }.disabled(attempted)
+                        Button("言葉だけ保管する") { withoutPhoto = true }.disabled(attempted)
+                            .accessibilityIdentifier("memory-note-archive-text-only")
+                    }
+                }
+                Section {
+                    Text(record.note.text).textSelection(.enabled)
+                        .accessibilityIdentifier("memory-note-archive-preview")
+                    archiveContext(capturedAt: record.note.context?.capturedAt, context: context)
+                }
+                Section {
+                    Text("この内容を自分のiCloudに保管します。相手には送られません。")
+                    if withoutPhoto { Text("写真を含めず、言葉と日付を保管します。") }
+                    if status == .changed { Text("以前に保管したコピーを、この内容に更新します。") }
+                    if status == .deleted { Text("削除したコピーとは別の記録として保管します。") }
+                } footer: { Text("写真は鑑賞用のコピーです。原本のバックアップではありません。") }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
+                if saving { ProgressView("保管しています…") }
+            }
+            .navigationTitle("メモを保管").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("戻る") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(title) { Task { await preserve() } }
+                        .disabled(preparing || !prepared || saving || invalidated || account == nil ||
+                                  (jpeg == nil && !withoutPhoto) || (status == .stored && !attempted))
+                        .accessibilityIdentifier("memory-note-archive-save")
+                }
+            }
+            .interactiveDismissDisabled(saving)
+            .task { access.start(photos: photos); await prepare() }
+            .onChange(of: photos) { _, value in
+                access.start(photos: value)
+                if access.photo(for: record.photoIdentifier) == nil && !attempted { jpeg = nil; withoutPhoto = false }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background && preparing { generation = UUID(); preparing = false; prepared = false }
+                if phase == .active { access.refresh(); if !prepared && !attempted { Task { await prepare() } } }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+                .receive(on: DispatchQueue.main)) { _ in
+                invalidated = true; generation = UUID(); preparing = false
+                errorMessage = personalArchiveMessage(for: PersonalArchiveError.accountChanged)
+            }
+            .onDisappear { access.stop(); generation = UUID() }
+        }
+    }
+
+    @MainActor private func prepare() async {
+        guard !attempted, !saving, !invalidated else { return }
+        let token = UUID(); generation = token; preparing = true; prepared = false
+        jpeg = nil; withoutPhoto = false; errorMessage = nil
+        defer { if generation == token { preparing = false; prepared = true } }
+        do {
+            let identity = try await archiveStore.accountContext()
+            let identifier = access.photo(for: record.photoIdentifier)?.localIdentifier
+            let bytes: Data?
+            if let identifier {
+                bytes = try await Task.detached(priority: .userInitiated) {
+                    var image: UIImage?
+#if DEBUG
+                    if CommandLine.arguments.contains("--memory-library-fixture") {
+                        image = AppStoreScreenshotFixture.image(for: identifier)
+                    }
+#endif
+                    if image == nil {
+                        image = PhotoImageLoader().image(localIdentifier: identifier,
+                            targetSize: CGSize(width: 4096, height: 4096), contentMode: .aspectFit)
+                    }
+                    guard let raw = image?.jpegData(compressionQuality: 0.96) else { return nil as Data? }
+                    return try PersonalArchiveImage.jpeg(from: raw)
+                }.value
+            } else { bytes = nil }
+            guard generation == token, !invalidated else { return }
+            access.refresh()
+            jpeg = access.photo(for: record.photoIdentifier) == nil ? nil : bytes
+            account = identity
+            let currentStatus = try await archiveStore.preservationStatus(source: source, jpegData: jpeg, expectedAccount: identity)
+            guard generation == token, !invalidated else { return }
+            status = currentStatus
+        } catch {
+            guard generation == token else { return }
+            errorMessage = personalArchiveMessage(for: error)
+        }
+    }
+
+    @MainActor private func preserve() async {
+        guard let account, !saving, !invalidated else { return }
+        saving = true
+        defer { saving = false }
+        do {
+            guard try await noteStore.record(id: record.id) == record else {
+                throw PhotoMemoryNoteStoreError.conflict
+            }
+            access.refresh()
+            guard withoutPhoto || access.photo(for: record.photoIdentifier) != nil else {
+                jpeg = nil
+                throw PersonalArchiveImage.PreparationError.unreadable
+            }
+            attempted = true
+            let result = try await archiveStore.preserve(source: source, jpegData: withoutPhoto ? nil : jpeg,
+                text: record.note.text, capturedAt: record.note.context?.capturedAt, context: context,
+                expectedAccount: account, recreateDeleted: status == .deleted)
+            if result.state == .stored { dismiss() }
+            else { errorMessage = result.state.archiveLabel }
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? personalArchiveMessage(for: error)
+        }
     }
 }
 
@@ -568,11 +895,13 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
     }
 }
 
-private actor PersonalArchiveFixtureTransport: PersonalArchiveTransport {
+actor PersonalArchiveFixtureTransport: PersonalArchiveTransport {
     private let identity = PersonalArchiveAccount(key: PersonalArchiveFiles.digest(Data("fixture-account".utf8)), generation: 0)
     private let generation = UUID()
     private var remote: [UUID: PersonalArchiveRemoteRecord]
-    init(record: PersonalArchiveRemoteRecord) { remote = [record.payload.id: record] }
+    init(record: PersonalArchiveRemoteRecord? = nil) {
+        remote = record.map { [$0.payload.id: $0] } ?? [:]
+    }
     func account() async throws -> PersonalArchiveAccount { identity }
     func isCurrent(_ account: PersonalArchiveAccount) async -> Bool { account == identity }
     func prepareZone(for account: PersonalArchiveAccount, allowCreation: Bool, expectedGeneration: UUID?) async throws -> UUID {
@@ -581,9 +910,16 @@ private actor PersonalArchiveFixtureTransport: PersonalArchiveTransport {
         return generation
     }
     func upload(_ payload: PersonalArchivePayload, jpegData: Data?, account: PersonalArchiveAccount, generation: UUID) async throws {
+        try await commit(payload, jpegData: jpegData, precondition: .create, account: account, generation: generation)
+    }
+    func commit(_ payload: PersonalArchivePayload, jpegData: Data?, precondition: PersonalArchivePrecondition,
+                account: PersonalArchiveAccount, generation: UUID) async throws {
         guard account == identity else { throw PersonalArchiveError.accountChanged }
         guard generation == self.generation else { throw PersonalArchiveError.archiveChanged }
-        if let existing = remote[payload.id], existing.payload != payload { throw PersonalArchiveError.conflict }
+        if let existing = remote[payload.id] {
+            if existing.payload == payload { return }
+            guard precondition.expectedRevisions.contains(existing.payload.fingerprint) else { throw PersonalArchiveError.conflict }
+        } else if !precondition.allowsCreation { throw PersonalArchiveError.conflict }
         remote[payload.id] = .init(payload: payload, jpegData: jpegData)
     }
     func fetch(account: PersonalArchiveAccount, expectedGeneration: UUID?) async throws -> PersonalArchiveRemoteSnapshot {

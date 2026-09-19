@@ -2914,9 +2914,101 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         attach(app, name: "memory-library-empty-after-deletion")
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: entry)], timeout: 5), .completed)
+        XCTAssertTrue(entry.waitForExistence(timeout: 5), "An empty library must still offer the cloud restore route.")
         app.terminate()
+    }
+
+    @MainActor
+    func testExistingMemoryPreservesCopyEditsAndDeletesWithoutChangingOriginal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let entry = app.buttons["albums-memory-notes"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15)); entry.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
+        let body = app.staticTexts["memory-note-body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        let original = body.label
+        app.buttons["memory-note-menu"].tap()
+        app.buttons["memory-note-preserve"].tap()
+        let save = app.buttons["memory-note-archive-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: save)], timeout: 15), .completed)
+        XCTAssertEqual(app.staticTexts["memory-note-archive-preview"].label, original)
+        XCTAssertFalse(app.textViews["personal-archive-text"].exists, "Do not ask to retype an existing note.")
+        attach(app, name: "memory-archive-prefilled-confirmation")
+        save.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: save)], timeout: 10), .completed)
+        XCTAssertTrue(body.waitForExistence(timeout: 10))
+        XCTAssertEqual(body.label, original)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["memory-notes-archive"].tap()
+        let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-")).firstMatch
+        XCTAssertTrue(archived.waitForExistence(timeout: 10)); archived.tap()
+        XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
+        app.buttons["personal-archive-record-menu"].tap()
+        app.buttons["personal-archive-edit"].tap()
+        let input = app.textViews["personal-archive-edit-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("また一緒に。")
+        app.buttons["personal-archive-edit-save"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+        XCTAssertTrue(app.buttons["personal-archive-record-menu"].waitForExistence(timeout: 10))
+        attach(app, name: "memory-archive-edited-copy")
+        app.buttons["personal-archive-record-menu"].tap()
+        app.buttons["personal-archive-delete"].tap()
+        app.buttons["コピーを削除"].tap()
+        XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(body.label, original, "Cloud-copy edits and deletion must leave the source note intact.")
+    }
+
+    @MainActor
+    func testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let add = app.buttons["family-record-add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: add)], timeout: 10), .completed)
+        add.tap()
+        let pick = app.buttons["family-record-pick-photo"]
+        XCTAssertTrue(pick.waitForExistence(timeout: 5)); pick.tap()
+        app.buttons["キャンセル"].tap()
+        XCTAssertTrue(pick.waitForExistence(timeout: 5)); pick.tap()
+        app.buttons["family-record-fixture-choose"].tap()
+        let input = app.textViews["family-record-words-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("初めて一緒に過ごした日")
+        app.buttons["完了"].tap()
+        let save = app.buttons["family-record-save"]
+        for _ in 0..<3 where !save.isHittable { app.swipeUp() }
+        XCTAssertTrue(save.isHittable)
+        attach(app, name: "family-record-explicit-sharing")
+        save.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+        app.buttons["family-record-fixture-peer"].tap()
+        let peerWords = app.staticTexts["相手が添えた言葉"]
+        for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
+        XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
+        let withdraw = app.buttons.matching(identifier: "family-record-withdraw-photo").firstMatch
+        for _ in 0..<3 where !withdraw.isHittable { app.swipeUp() }
+        withdraw.tap(); app.buttons["取り下げる"].tap()
+        XCTAssertTrue(peerWords.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["写真は取り下げられました"].exists)
+        attach(app, name: "family-record-withdrawal-retains-peer-words")
+        app.buttons["family-record-fixture-leave"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: peerWords)], timeout: 10), .completed)
+        XCTAssertTrue(app.staticTexts["共同記録を確認できませんでした。接続を確認して、もう一度読み込んでください。"].exists)
     }
 
     @MainActor

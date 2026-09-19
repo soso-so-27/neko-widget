@@ -119,8 +119,15 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
     }
 
     func upload(_ payload: PersonalArchivePayload, jpegData: Data?, account: PersonalArchiveAccount, generation: UUID) async throws {
+        try await commit(payload, jpegData: jpegData, precondition: .create, account: account, generation: generation)
+    }
+
+    func commit(_ payload: PersonalArchivePayload, jpegData: Data?, precondition: PersonalArchivePrecondition,
+                account: PersonalArchiveAccount, generation: UUID) async throws {
         try payload.validate()
-        guard payload.jpegSHA256 == nil ? jpegData == nil : jpegData.map(payload.accepts) == true else {
+        guard jpegData.map(payload.accepts) ?? true,
+              payload.jpegSHA256 != nil || jpegData == nil,
+              precondition.expectedRevisions.allSatisfy(PersonalArchiveFiles.isDigest) else {
             throw PersonalArchiveError.corruptedState
         }
         let zoneID = try boundZoneID(account)
@@ -128,17 +135,38 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
         do {
             let marker = try await generationMarker(zoneID, expected: generation)
             try assertCurrent(account)
-            if let existing = try await existingRecord(recordID) {
-                try assertCurrent(account)
-                try verifyExisting(existing, matches: payload)
-                _ = try await generationMarker(zoneID, expected: generation)
-                try assertCurrent(account)
-                return
-            }
+            let existing = try await existingRecord(recordID)
             try assertCurrent(account)
-            let record = CKRecord(recordType: Self.recordType, recordID: recordID)
+            if let existing {
+                let current = try decode(existing)
+                if current.fingerprint == payload.fingerprint || (current.isDeleted && payload.isDeleted) {
+                    if !payload.isDeleted {
+                        try verifyExisting(existing, matches: payload,
+                            allowMissingPhoto: jpegData == nil && !precondition.expectedRevisions.isEmpty)
+                    }
+                    _ = try await generationMarker(zoneID, expected: generation)
+                    try assertCurrent(account)
+                    return
+                }
+                guard !current.isDeleted, precondition.expectedRevisions.contains(current.fingerprint) else {
+                    throw PersonalArchiveError.conflict
+                }
+                // A metadata-only edit may retain the same server asset when its
+                // local bytes could not be restored. It must never substitute another image.
+                if payload.jpegSHA256 != nil && jpegData == nil {
+                    guard current.jpegSHA256 == payload.jpegSHA256 && current.jpegByteCount == payload.jpegByteCount else {
+                        throw PersonalArchiveError.corruptedState
+                    }
+                }
+            } else {
+                guard precondition.allowsCreation else { throw PersonalArchiveError.conflict }
+                guard payload.jpegSHA256 == nil || jpegData != nil else { throw PersonalArchiveError.corruptedState }
+            }
+            // Keep the fetched record's changeTag. Never turn a conditional edit
+            // into an unconditional creation, even when another client deleted it.
+            let record = existing ?? CKRecord(recordType: Self.recordType, recordID: recordID)
             record["schema"] = NSNumber(value: 1)
-            // Words, dates and image checksums share one encrypted field. No plaintext text-derived hash.
+            // Extended context and tombstones use the existing encrypted field/schema.
             record.encryptedValues["payload"] = try JSONEncoder().encode(payload) as NSData
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("PersonalArchiveUpload-" + UUID().uuidString, isDirectory: true)
             defer { try? FileManager.default.removeItem(at: temporary) }
@@ -146,6 +174,8 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
                 let file = temporary.appendingPathComponent("photo.jpg")
                 try PersonalArchiveFiles.write(jpegData, to: file, excludedFromBackup: true)
                 record["jpeg"] = CKAsset(fileURL: file)
+            } else if payload.jpegSHA256 == nil {
+                record["jpeg"] = nil // A tombstone retains no photo, words or cat/date context.
             }
             try assertCurrent(account)
             do {
@@ -161,12 +191,23 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
                 try assertCurrent(account)
             } catch {
                 try assertCurrent(account)
-                // A retry may race with the previous request's successful commit. Never overwrite it.
                 if Self.isServerConflict(error) {
                     _ = try await generationMarker(zoneID, expected: generation)
                     guard let existing = try await existingRecord(recordID) else { throw PersonalArchiveError.networkUnavailable }
                     try assertCurrent(account)
-                    try verifyExisting(existing, matches: payload)
+                    let current = try decode(existing)
+                    if current.fingerprint == payload.fingerprint || (current.isDeleted && payload.isDeleted) {
+                        if !payload.isDeleted {
+                            try verifyExisting(existing, matches: payload,
+                                allowMissingPhoto: jpegData == nil && !precondition.expectedRevisions.isEmpty)
+                        }
+                    } else if !current.isDeleted && precondition.expectedRevisions.contains(current.fingerprint) {
+                        // Another record changed the shared generation guard. Keep this
+                        // operation pending for an explicit retry; do not invent a content conflict.
+                        throw PersonalArchiveError.networkUnavailable
+                    } else { throw PersonalArchiveError.conflict }
+                    _ = try await generationMarker(zoneID, expected: generation)
+                    try assertCurrent(account)
                 } else { throw error }
             }
         } catch { throw Self.safeError(error) }
@@ -256,9 +297,9 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
         let partial = error.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error]
         return partial?.values.contains(where: isServerConflict) == true
     }
-    private func verifyExisting(_ record: CKRecord, matches payload: PersonalArchivePayload) throws {
+    private func verifyExisting(_ record: CKRecord, matches payload: PersonalArchivePayload, allowMissingPhoto: Bool = false) throws {
         guard try decode(record).fingerprint == payload.fingerprint else { throw PersonalArchiveError.conflict }
-        if payload.jpegSHA256 != nil, assetBytes(record, payload: payload) == nil { throw PersonalArchiveError.corruptedState }
+        if !allowMissingPhoto, payload.jpegSHA256 != nil, assetBytes(record, payload: payload) == nil { throw PersonalArchiveError.corruptedState }
     }
     private func decode(_ record: CKRecord) throws -> PersonalArchivePayload {
         guard record.recordType == Self.recordType, let id = UUID(uuidString: record.recordID.recordName),

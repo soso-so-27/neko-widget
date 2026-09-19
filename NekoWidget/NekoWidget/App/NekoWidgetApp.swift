@@ -59,6 +59,8 @@ struct NekoWidgetApp: App {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
                 PersonalArchiveUIFixture()
+            } else if CommandLine.arguments.contains("--family-record-ui-fixture") {
+                FamilyRecordUIFixture()
             } else if CommandLine.arguments.contains("--widget-photo-opening-ui-fixture") {
                 WidgetPhotoOpeningFixture()
             } else if CommandLine.arguments.contains("--personal-rediscovery-ui-fixture") {

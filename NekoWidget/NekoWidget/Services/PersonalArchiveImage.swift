@@ -2,7 +2,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// A viewing copy made only after an explicit system-picker selection.
+/// A viewing copy made only after an explicit photo selection or note preservation.
 /// Original resources, location metadata and PhotoKit identifiers are not stored.
 enum PersonalArchiveImage {
     static let maximumPixelSize = 4096
@@ -11,7 +11,19 @@ enum PersonalArchiveImage {
     static func jpeg(from url: URL) throws -> Data {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [
             kCGImageSourceShouldCache: false
-        ] as CFDictionary), CGImageSourceGetCount(source) > 0,
+        ] as CFDictionary) else { throw PreparationError.unreadable }
+        return try jpeg(from: source)
+    }
+
+    static func jpeg(from data: Data) throws -> Data {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary) else { throw PreparationError.unreadable }
+        return try jpeg(from: source)
+    }
+
+    private static func jpeg(from source: CGImageSource) throws -> Data {
+        guard CGImageSourceGetCount(source) > 0,
         let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

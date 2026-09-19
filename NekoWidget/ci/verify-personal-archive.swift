@@ -18,6 +18,9 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
     private var uploadCount = 0
     private var creations = 0
     private var commitHook: (@Sendable () throws -> Void)?
+    private var pauseCommit = false
+    private var pausedCommit: CheckedContinuation<Void, Never>?
+    private var commitStarted: CheckedContinuation<Void, Never>?
 
     func account() -> PersonalArchiveAccount { current }
     func isCurrent(_ account: PersonalArchiveAccount) -> Bool { current == account }
@@ -41,15 +44,31 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
         if case .afterPreparation = failure { failure = .none; throw PersonalArchiveError.networkUnavailable }
         return generation
     }
-    func upload(_ payload: PersonalArchivePayload, jpegData: Data?, account: PersonalArchiveAccount, generation: UUID) throws {
+    func upload(_ payload: PersonalArchivePayload, jpegData: Data?, account: PersonalArchiveAccount, generation: UUID) async throws {
+        try await commit(payload, jpegData: jpegData, precondition: .create, account: account, generation: generation)
+    }
+    func commit(_ payload: PersonalArchivePayload, jpegData: Data?, precondition: PersonalArchivePrecondition,
+                account: PersonalArchiveAccount, generation: UUID) async throws {
         _ = try checkedGeneration(account, expected: generation)
         uploadCount += 1
         let mode = failure; failure = .none
         if case .beforeCommit = mode { throw PersonalArchiveError.networkUnavailable }
         if let existing = zones[account.key]?.entries[payload.id] {
-            guard existing.payload.fingerprint == payload.fingerprint else { throw PersonalArchiveError.conflict }
+            if existing.payload.isDeleted && payload.isDeleted { return }
+            guard existing.payload.fingerprint == payload.fingerprint
+                    || (!existing.payload.isDeleted && precondition.expectedRevisions.contains(existing.payload.fingerprint)) else { throw PersonalArchiveError.conflict }
+            let retained = existing.payload.jpegSHA256 == payload.jpegSHA256 ? existing.jpegData : nil
+            zones[account.key]?.entries[payload.id] = PersonalArchiveRemoteRecord(payload: payload,
+                jpegData: payload.jpegSHA256 == nil ? nil : (jpegData ?? retained))
         } else {
+            guard precondition.allowsCreation else { throw PersonalArchiveError.conflict }
             zones[account.key]?.entries[payload.id] = PersonalArchiveRemoteRecord(payload: payload, jpegData: jpegData)
+        }
+        if pauseCommit {
+            pauseCommit = false
+            await withCheckedContinuation { continuation in
+                pausedCommit = continuation; commitStarted?.resume(); commitStarted = nil
+            }
         }
         if let hook = commitHook { commitHook = nil; try hook() }
         if case .afterCommit = mode { throw PersonalArchiveError.networkUnavailable }
@@ -72,6 +91,12 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
         await withCheckedContinuation { started = $0 }
     }
     func resumeFetch() { paused?.resume(); paused = nil }
+    func suspendNextCommit() { pauseCommit = true }
+    func waitForPausedCommit() async {
+        if pausedCommit != nil { return }
+        await withCheckedContinuation { commitStarted = $0 }
+    }
+    func resumeCommit() { pausedCommit?.resume(); pausedCommit = nil }
     func replaceZone(withMarker: Bool = true) {
         zones[current.key] = Zone(generation: withMarker ? UUID() : nil)
     }
@@ -80,7 +105,8 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
             zones[current.key]?.entries[id] = PersonalArchiveRemoteRecord(payload: old.payload, jpegData: Data([0]))
         }
     }
-    func count() -> Int { zones[current.key]?.entries.count ?? 0 }
+    func count() -> Int { zones[current.key]?.entries.values.filter { !$0.payload.isDeleted }.count ?? 0 }
+    func payload(_ id: UUID) -> PersonalArchivePayload? { zones[current.key]?.entries[id]?.payload }
     func counts() -> (uploads: Int, creations: Int) { (uploadCount, creations) }
     private func checkedGeneration(_ account: PersonalArchiveAccount, expected: UUID?) throws -> UUID {
         guard isCurrent(account) else { throw PersonalArchiveError.accountChanged }
@@ -120,7 +146,10 @@ enum PersonalArchiveVerifier {
         try await partialImages(root.appendingPathComponent("partial"))
         try await zoneGeneration(root.appendingPathComponent("generation"))
         try await localFailure(root.appendingPathComponent("failure"))
-        print("Personal archive verifier passed: 8 boundary groups; no CloudKit network or account access")
+        try await sourcePreservation(root.appendingPathComponent("source"))
+        try await mutations(root.appendingPathComponent("mutations"))
+        try await staleResponses(root.appendingPathComponent("stale"))
+        print("Personal archive verifier passed: 11 boundary groups; no CloudKit network or account access")
     }
 
     private static func configurationBoundary() throws {
@@ -287,5 +316,125 @@ enum PersonalArchiveVerifier {
         try await expect(.corruptedState) { _ = try await store.records() }
         try await expect(.corruptedState) { _ = try await save(store) }
         try require(try Data(contentsOf: file) == invalid, "Corrupted catalog was overwritten")
+    }
+
+    private static func sourcePreservation(_ root: URL) async throws {
+        let legacyJSON = Data(#"{"id":"00000000-0000-0000-0000-000000000001","text":"legacy","createdAt":721692800,"jpegByteCount":0}"#.utf8)
+        let legacy = try JSONDecoder().decode(PersonalArchivePayload.self, from: legacyJSON)
+        try require(legacy.context == nil && legacy.changeID == nil && !legacy.isDeleted
+            && legacy.fingerprint == "8ce0043d15796e2f086ea8fedb952e98e5a25e7b2121bb164eba36f2cfa9adb0", "Legacy payload identity changed")
+
+        let cloud = ArchiveCloudFixture(), folder = root.appendingPathComponent("first")
+        let first = PersonalArchiveStore(directory: folder, transport: cloud)
+        let source = PersonalArchiveSourceSnapshot(noteID: UUID(), revision: "private-note-revision", photoIdentifier: "private-photokit-id")
+        let context = PersonalArchiveContext(writtenAt: date, updatedAt: date.addingTimeInterval(3), catNames: ["ミケ", "ソラ"])
+        let account = try await first.accountContext()
+        await cloud.failNext(.afterCommit)
+        let pending = try await first.preserve(source: source, jpegData: jpeg, text: "はじめてのおふろ",
+            capturedAt: date, context: context, expectedAccount: account)
+        try require(pending.state == .pending, "Lost response counted as acknowledged preservation")
+        let reopened = PersonalArchiveStore(directory: folder, transport: cloud)
+        let saved = try await reopened.preserve(source: source, jpegData: jpeg, text: "はじめてのおふろ",
+            capturedAt: date, context: context, expectedAccount: account)
+        try require(saved.id == pending.id && saved.state == .stored && saved.context == context, "Source retry lost identity or context")
+        try require(await cloud.count() == 1, "Source retry duplicated the archive")
+        try require(try await reopened.preservationStatus(source: source, jpegData: jpeg, expectedAccount: account) == .stored, "Preserved source was not recognized")
+        guard let payload = await cloud.payload(saved.id) else { throw Failure(message: "Missing fixture payload") }
+        let encoded = String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
+        try require(!encoded.contains(source.noteID.uuidString) && !encoded.contains(source.revision)
+            && !encoded.contains(source.photoIdentifier!), "Local source identity entered the cloud payload")
+        let changed = PersonalArchiveSourceSnapshot(noteID: source.noteID, revision: "next-private-revision", photoIdentifier: source.photoIdentifier)
+        try require(try await reopened.preservationStatus(source: changed, expectedAccount: account) == .changed, "Local edit was mistaken for preserved content")
+        let edited = try await reopened.preserve(source: changed, jpegData: jpeg, text: "おふろのあと",
+            capturedAt: date, context: context, expectedAccount: account)
+        try require(edited.id == saved.id && edited.revision != saved.revision, "Explicit preservation created a second source record")
+        let blank = PersonalArchiveStore(directory: root.appendingPathComponent("blank"), transport: cloud)
+        let restored = try await blank.refresh()
+        try require(restored.count == 1 && restored[0].context == context && restored[0].text == edited.text
+            && restored[0].jpegData == jpeg, "Blank restore lost words, context or bytes")
+        _ = try await reopened.delete(id: edited.id, operationID: UUID(), expectedRevision: edited.revision, expectedAccount: account)
+        try require(try await reopened.preservationStatus(source: changed, expectedAccount: account) == .deleted, "Deleted source lost its local link")
+        try await expect(.conflict) {
+            _ = try await reopened.preserve(source: changed, jpegData: jpeg, text: edited.text, capturedAt: date, context: context, expectedAccount: account)
+        }
+        let recreated = try await reopened.preserve(source: changed, jpegData: jpeg, text: edited.text,
+            capturedAt: date, context: context, expectedAccount: account, recreateDeleted: true)
+        try require(recreated.id != edited.id && recreated.state == .stored, "Explicit new preservation reused a tombstoned ID")
+        await cloud.switchAccount("fixture-b")
+        let otherAccount = try await reopened.accountContext()
+        try require(try await reopened.preservationStatus(source: changed, expectedAccount: otherAccount) == .localOnly, "Source linkage crossed accounts")
+    }
+
+    private static func mutations(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), folder = root.appendingPathComponent("first")
+        let first = PersonalArchiveStore(directory: folder, transport: cloud)
+        let original = try await save(first)
+        guard let originalPayload = await cloud.payload(original.id) else { throw Failure(message: "Missing original payload") }
+        let other = PersonalArchiveStore(directory: root.appendingPathComponent("other"), transport: cloud)
+        _ = try await other.refresh()
+        let account = try await first.accountContext(), operation = UUID()
+        await cloud.failNext(.afterCommit)
+        let pending = try await first.update(id: original.id, operationID: operation, expectedRevision: original.revision,
+            text: "更新した言葉", capturedAt: original.capturedAt, context: original.context, expectedAccount: account)
+        try require(pending.state == .pending, "Update response loss discarded the pending operation")
+        let reopened = PersonalArchiveStore(directory: folder, transport: cloud)
+        let edited = try await reopened.update(id: original.id, operationID: operation, expectedRevision: original.revision,
+            text: "更新した言葉", capturedAt: original.capturedAt, context: original.context, expectedAccount: account)
+        try require(edited.state == .stored && edited.id == original.id && edited.jpegData == jpeg, "Update retry changed identity or photo")
+        try await expect(.conflict) {
+            _ = try await reopened.update(id: original.id, operationID: operation, expectedRevision: original.revision,
+                text: "同じ操作IDの別内容", capturedAt: original.capturedAt, context: nil, expectedAccount: account)
+        }
+        let conflict = try await other.update(id: original.id, operationID: UUID(), expectedRevision: original.revision,
+            text: "別端末の未保存の言葉", capturedAt: original.capturedAt, context: nil, expectedAccount: account)
+        try require(conflict.state == .conflict && conflict.text == "別端末の未保存の言葉", "Conflict silently discarded the local edit")
+        let conflicted = try await other.refresh()
+        try require(conflicted.first?.conflictingText == edited.text && conflicted.first?.text == conflict.text, "Conflict failed to retain both versions")
+
+        let deletion = UUID()
+        await cloud.failNext(.beforeCommit)
+        try require(try await reopened.delete(id: edited.id, operationID: deletion, expectedRevision: edited.revision,
+            expectedAccount: account) == .pending, "Offline delete was reported complete")
+        let waiting = try await reopened.records()
+        try require(waiting.first?.text == edited.text && waiting.first?.isDeletionPending == true, "Pending delete discarded the local words")
+        let retry = PersonalArchiveStore(directory: folder, transport: cloud)
+        try await retry.retryPending()
+        try require(try await retry.records().isEmpty, "Acknowledged deletion remained visible")
+        guard let tombstone = await cloud.payload(edited.id) else { throw Failure(message: "Deletion lost its revival guard") }
+        try require(tombstone.isDeleted && tombstone.text.isEmpty && tombstone.context == nil
+            && tombstone.capturedAt == nil && tombstone.jpegSHA256 == nil, "Deletion retained private payload content")
+        let active = await cloud.account()
+        let generation = try await cloud.prepareZone(for: active, allowCreation: false, expectedGeneration: nil)
+        try await expect(.conflict) { try await cloud.upload(originalPayload, jpegData: jpeg, account: active, generation: generation) }
+        try require(await cloud.count() == 0, "Old client's creation revived a deleted record")
+        let blank = PersonalArchiveStore(directory: root.appendingPathComponent("deleted-restore"), transport: cloud)
+        try require(try await blank.refresh().isEmpty, "Blank restore exposed deleted words or photo")
+    }
+
+    private static func staleResponses(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root, transport: cloud)
+        let original = try await save(store), account = try await store.accountContext()
+        await cloud.suspendNextFetch()
+        let fetch = Task { try await store.refresh() }
+        await cloud.waitForPausedFetch()
+        let edited = try await store.update(id: original.id, operationID: UUID(), expectedRevision: original.revision,
+            text: "取得開始より新しい内容", capturedAt: original.capturedAt, context: nil, expectedAccount: account)
+        await cloud.resumeFetch()
+        try require(try await fetch.value.first?.text == edited.text, "Stale refresh replaced a newer committed edit")
+
+        await cloud.suspendNextCommit()
+        let update = Task { try await store.update(id: original.id, operationID: UUID(), expectedRevision: edited.revision,
+            text: "送信の応答待ち", capturedAt: original.capturedAt, context: nil, expectedAccount: account) }
+        await cloud.waitForPausedCommit()
+        guard let inFlight = try await store.records().first else { throw Failure(message: "Missing in-flight draft") }
+        await cloud.failNext(.beforeCommit)
+        _ = try await store.delete(id: inFlight.id, operationID: UUID(), expectedRevision: inFlight.revision, expectedAccount: account)
+        await cloud.resumeCommit()
+        _ = try await update.value
+        let afterOldReply = try await store.records()
+        try require(afterOldReply.first?.state == .pending && afterOldReply.first?.isDeletionPending == true,
+            "Old update acknowledgement incorrectly completed a newer deletion")
+        try await store.retryPending()
+        try require(try await store.records().isEmpty, "Pending deletion did not survive the old response")
     }
 }

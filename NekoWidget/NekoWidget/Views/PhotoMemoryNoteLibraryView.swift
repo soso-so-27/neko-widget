@@ -80,7 +80,8 @@ struct PhotoMemoryNotesEntry: View {
 
     var body: some View {
         Group {
-            if !library.records.isEmpty || library.failed {
+            // Keep the restore entry reachable on a new iPhone with no local notes.
+            if library.isLoaded || library.failed {
                 NavigationLink(value: MemoriesRoute.memoryNotes) {
                     HStack(spacing: 12) {
                         Image(systemName: "note.text").foregroundStyle(.secondary)
@@ -88,7 +89,7 @@ struct PhotoMemoryNotesEntry: View {
                         Spacer(minLength: 8)
                         if library.failed {
                             Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
-                        } else {
+                        } else if !library.records.isEmpty {
                             Text("\(library.records.count)件").foregroundStyle(.secondary)
                         }
                         Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
@@ -104,14 +105,19 @@ struct PhotoMemoryNotesEntry: View {
 
 struct PhotoMemoryNotesListView: View {
     let photos: [PhotoPresentation]
+    let archiveStore: PersonalArchiveStore
+    private let archiveEnabled: Bool
     let openPhotos: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
 
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
+         archiveStore: PersonalArchiveStore? = nil,
          openPhotos: @escaping () -> Void) {
         self.photos = photos
+        self.archiveEnabled = archiveStore != nil || PersonalArchiveStore.isConfigured
+        self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
         _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store))
     }
@@ -166,6 +172,17 @@ struct PhotoMemoryNotesListView: View {
         }
         .navigationTitle("思い出のメモ")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if archiveEnabled {
+                    NavigationLink { PersonalArchiveView(store: archiveStore) } label: {
+                        Image(systemName: "icloud.and.arrow.down")
+                    }
+                    .accessibilityLabel("保管した記録を開く")
+                    .accessibilityIdentifier("memory-notes-archive")
+                }
+            }
+        }
         .accessibilityIdentifier("memory-notes-list")
         .task {
             access.start(photos: photos)
@@ -186,6 +203,8 @@ struct PhotoMemoryNoteDetailView: View {
     let recordID: UUID
     let photos: [PhotoPresentation]
     let store: PhotoMemoryNoteStore
+    let archiveStore: PersonalArchiveStore
+    private let archiveEnabled: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
@@ -193,15 +212,19 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var loaded = false
     @State private var failed = false
     @State private var editing = false
+    @State private var preserving = false
     @State private var confirmsDelete = false
     @State private var deleting = false
     @State private var error: String?
     @State private var request = UUID()
 
-    init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared) {
+    init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
+         archiveStore: PersonalArchiveStore? = nil) {
         self.recordID = recordID
         self.photos = photos
         self.store = store
+        self.archiveEnabled = archiveStore != nil || PersonalArchiveStore.isConfigured
+        self.archiveStore = archiveStore ?? .shared
     }
 
     private var detailContent: some View {
@@ -277,10 +300,16 @@ struct PhotoMemoryNoteDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $preserving, onDismiss: { Task { await reload() } }) {
+            if let record {
+                PhotoMemoryNoteArchiveView(record: record, photos: photos,
+                                           noteStore: store, archiveStore: archiveStore)
+            }
+        }
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入りはそのまま残ります。") }
+        } message: { Text("写真とお気に入りはそのまま残ります。iCloudに保管したコピーも削除されません。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -306,6 +335,12 @@ struct PhotoMemoryNoteDetailView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        if archiveEnabled {
+                            Button { preserving = true } label: {
+                                Label("iCloudに保管", systemImage: "icloud.and.arrow.up")
+                            }
+                            .accessibilityIdentifier("memory-note-preserve")
+                        }
                         Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
                     } label: { Image(systemName: "ellipsis.circle") }
                     .accessibilityLabel("メモの操作")
@@ -398,6 +433,9 @@ struct PhotoMemoryNoteLibraryFixture: View {
     private static let store = PhotoMemoryNoteStore(fileURL:
         FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoMemoryLibraryUIFixture/\(UUID().uuidString)/state.json"))
+    private static let archiveStore = PersonalArchiveStore(directory:
+        FileManager.default.temporaryDirectory.appendingPathComponent("MemoryArchiveFixture/\(UUID().uuidString)"),
+        transport: PersonalArchiveFixtureTransport())
     @State private var ready = false
     @State private var failure = false
     @State private var path: [MemoriesRoute] = []
@@ -423,9 +461,10 @@ struct PhotoMemoryNoteLibraryFixture: View {
             .navigationDestination(for: MemoriesRoute.self) { route in
                 switch route {
                 case .memoryNotes:
-                    PhotoMemoryNotesListView(photos: photos, store: Self.store, openPhotos: {})
+                    PhotoMemoryNotesListView(photos: photos, store: Self.store,
+                        archiveStore: Self.archiveStore, openPhotos: {})
                 case let .memoryNote(id):
-                    PhotoMemoryNoteDetailView(recordID: id, photos: photos, store: Self.store)
+                    PhotoMemoryNoteDetailView(recordID: id, photos: photos, store: Self.store, archiveStore: Self.archiveStore)
                 case let .memoryNotePhoto(id):
                     PhotoMemoryNotePhotoDestination(recordID: id, photos: photos, store: Self.store) { photo in
                         PhotoBrowserView(photos: [photo], libraryPhotos: photos, initialPhoto: photo,

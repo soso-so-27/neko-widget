@@ -44,6 +44,9 @@
 		A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000202 /* PersonalArchiveCloudClient.swift */; };
 		A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000203 /* PersonalArchiveImage.swift */; };
 		A18500000000000000000104 /* PersonalArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000204 /* PersonalArchiveView.swift */; };
+		A19000000000000000000101 /* FamilyRecordCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000201 /* FamilyRecordCore.swift */; };
+		A19000000000000000000102 /* FamilyRecordClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000202 /* FamilyRecordClient.swift */; };
+		A19000000000000000000103 /* FamilyRecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000203 /* FamilyRecordView.swift */; };
 		A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000012 /* PhotoMemoryNoteView.swift */; };
 		A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */; };
 		100000000000000000000112 /* PhotoAlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000212 /* PhotoAlbumService.swift */; };
@@ -296,6 +299,9 @@
 		A18500000000000000000202 /* PersonalArchiveCloudClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveCloudClient.swift; sourceTree = "<group>"; };
 		A18500000000000000000203 /* PersonalArchiveImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveImage.swift; sourceTree = "<group>"; };
 		A18500000000000000000204 /* PersonalArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveView.swift; sourceTree = "<group>"; };
+		A19000000000000000000201 /* FamilyRecordCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordCore.swift; sourceTree = "<group>"; };
+		A19000000000000000000202 /* FamilyRecordClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordClient.swift; sourceTree = "<group>"; };
+		A19000000000000000000203 /* FamilyRecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordView.swift; sourceTree = "<group>"; };
 		A18200000000000000000012 /* PhotoMemoryNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteView.swift; sourceTree = "<group>"; };
 		A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteLibraryView.swift; sourceTree = "<group>"; };
 		F00000000000000000000212 /* PhotoAlbumService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAlbumService.swift; sourceTree = "<group>"; };
@@ -593,6 +599,7 @@
 			isa = PBXGroup;
 			children = (
 				F000000000000000000001A0 /* PairingCore.swift */,
+				A19000000000000000000201 /* FamilyRecordCore.swift */,
 				F000000000000000000001A1 /* PairingKeychainStore.swift */,
 				F000000000000000000001A2 /* DailySharingCore.swift */,
 				F000000000000000000001A3 /* MomentSharingCore.swift */,
@@ -638,6 +645,7 @@
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				A18500000000000000000201 /* PersonalArchiveStore.swift */,
+				A19000000000000000000202 /* FamilyRecordClient.swift */,
 				A18500000000000000000202 /* PersonalArchiveCloudClient.swift */,
 				A18500000000000000000203 /* PersonalArchiveImage.swift */,
 				F00000000000000000000212 /* PhotoAlbumService.swift */,
@@ -712,6 +720,7 @@
 				A18200000000000000000012 /* PhotoMemoryNoteView.swift */,
 				A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */,
 				A18500000000000000000204 /* PersonalArchiveView.swift */,
+				A19000000000000000000203 /* FamilyRecordView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
@@ -1008,6 +1017,9 @@
 				A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */,
 				A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */,
 				A18500000000000000000104 /* PersonalArchiveView.swift in Sources */,
+				A19000000000000000000101 /* FamilyRecordCore.swift in Sources */,
+				A19000000000000000000102 /* FamilyRecordClient.swift in Sources */,
+				A19000000000000000000103 /* FamilyRecordView.swift in Sources */,
 				A18200000000000000000002 /* PhotoMemoryNoteView.swift in Sources */,
 				A18300000000000000000002 /* PhotoMemoryNoteLibraryView.swift in Sources */,
 				100000000000000000000112 /* PhotoAlbumService.swift in Sources */,

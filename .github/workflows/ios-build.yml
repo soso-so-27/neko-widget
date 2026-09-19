@@ -178,6 +178,21 @@ jobs:
           "$RUNNER_TEMP/verify-sharing-api-responses" \
             ci/fixtures/sharing-api-v1-responses.json
 
+      - name: Verify encrypted family record boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Sharing/MomentSharingCore.swift \
+            Shared/Sharing/FamilyRecordCore.swift \
+            ci/verify-family-records.swift \
+            -o "$RUNNER_TEMP/verify-family-records"
+          "$RUNNER_TEMP/verify-family-records"
+
       - name: Verify append-only one-photo moment contract
         working-directory: NekoWidget
         shell: bash
