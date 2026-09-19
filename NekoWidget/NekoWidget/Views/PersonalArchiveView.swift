@@ -240,6 +240,7 @@ private struct PersonalArchiveComposer: View {
     let store: PersonalArchiveStore
     @Environment(\.dismiss) private var dismiss
     @State private var selection: PhotosPickerItem?
+    @State private var showsPhotoPicker = false
     @State private var jpegData: Data?
     @State private var text = ""
     @State private var isPreparing = false
@@ -276,6 +277,10 @@ private struct PersonalArchiveComposer: View {
                 errorMessage = "Apple Accountの状態が変わったため、保管を止めました。入力内容はこの画面に残っています。元のアカウントを確認してください。"
             }
         }
+        // Keep the system presentation attached to this stable screen, rather
+        // than to a Form row that SwiftUI can rebuild during sheet layout.
+        .photosPicker(isPresented: $showsPhotoPicker, selection: $selection,
+                      matching: .images, preferredItemEncoding: .current)
     }
 
     private var composerForm: some View {
@@ -294,8 +299,10 @@ private struct PersonalArchiveComposer: View {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel("保管する写真")
             }
-            PhotosPicker(selection: $selection, matching: .images,
-                         preferredItemEncoding: .current) {
+            Button {
+                isWriting = false
+                showsPhotoPicker = true
+            } label: {
                 Label(jpegData == nil ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo")
             }.disabled(isSaving || isPreparing || hasAttemptedSave)
             if jpegData != nil {
