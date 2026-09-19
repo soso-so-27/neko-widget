@@ -409,7 +409,7 @@ struct PersonalArchiveUIFixture: View {
                 HStack(spacing: 12) {
                     Text("進捗")
                         .accessibilityIdentifier("archive-root-fixture-progress")
-                        .accessibilityValue(String(driver.progressUpdates))
+                        .accessibilityValue(driver.progressAccessibilityValue)
                     Button("内容更新") { driver.changePhotoContent() }
                         .accessibilityIdentifier("archive-root-fixture-content")
                     Button("写真削除") { driver.removeProbePhoto() }
@@ -438,11 +438,14 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
     let archiveStore: PersonalArchiveStore
     @Published private(set) var progressUpdates = 0
     @Published private(set) var hasPhotoAccess = true
+    private let usesCompletedSnapshot: Bool
     private var snapshot: LibrarySnapshot
     private var contentTask: Task<Void, Never>?
 
     init() {
-        let seed = Self.makeSnapshot()
+        let completed = ProcessInfo.processInfo.environment["NEKO_ARCHIVE_FIXTURE_COMPLETED"] == "1"
+        usesCompletedSnapshot = completed
+        let seed = Self.makeSnapshot(completed: completed)
         snapshot = seed
         viewModel = AppViewModel(uiFixtureSnapshot: seed, uiFixtureIdentity: Self.makeIdentity(for: seed))
         let format = UIGraphicsImageRendererFormat()
@@ -463,7 +466,19 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
             transport: PersonalArchiveFixtureTransport(record: .init(payload: payload, jpegData: jpeg)))
     }
 
+    var progressAccessibilityValue: String {
+        guard usesCompletedSnapshot else { return String(progressUpdates) }
+        let current = viewModel.snapshot
+        let state = current.scanState
+        return "updates:\(progressUpdates);phase:\(state.phase.rawValue);result:\(state.resultKind.rawValue)"
+            + ";scanned:\(state.scannedAssets);total:\(state.totalAssets)"
+            + ";requiresFullRescan:\(state.requiresFullRescan ? 1 : 0)"
+            + ";isFinal:\(DetectionAccuracySampler.isFinal(current) ? 1 : 0)"
+            + ";photos:\(current.assets.count);profiles:\(viewModel.catProfiles.count)"
+    }
+
     func publishProgress() async {
+        guard !usesCompletedSnapshot else { return }
         // No library content changes here. Frequent published scan snapshots
         // must not cancel/restart a prepared catalog or hide its ready content.
         // Finite bursts preserve XCTest's eventual idle boundary. Foreground
@@ -513,7 +528,7 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
         viewModel.updateUIFixtureSnapshot(snapshot)
     }
 
-    private static func makeSnapshot() -> LibrarySnapshot {
+    private static func makeSnapshot(completed: Bool) -> LibrarySnapshot {
         var result = LibrarySnapshot.empty
         let capturedAt = Date(timeIntervalSince1970: 1_789_700_000)
         let box = NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
@@ -538,6 +553,13 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
         result.scanState.catAssets = result.assets.count
         result.scanState.widgetEligibleAssets = result.assets.count
         result.scanState.oldestCatPhotoDate = result.assets.last?.creationDate
+        if completed {
+            result.scanState.phase = .completed
+            result.scanState.resultKind = .final
+            result.scanState.totalAssets = result.assets.count
+            result.scanState.scannedAssets = result.assets.count
+            result.scanState.requiresFullRescan = false
+        }
         result.updatedAt = capturedAt
         return result
     }

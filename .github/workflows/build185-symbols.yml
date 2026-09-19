@@ -22,7 +22,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Run the real picker on unchanged Build 187 product code
+      - name: Run the real picker with isolated background view
+        timeout-minutes: 16
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -32,7 +33,19 @@ jobs:
           xcodebuild -version > "$artifact/xcode-version.txt"
           git rev-parse HEAD > "$artifact/test-sha.txt"
           git diff 5c812f7 -- NekoWidget Shared NekoWidgetWidget > "$artifact/product-diff.txt"
-          test ! -s "$artifact/product-diff.txt"
+          # Record the focused presentation experiment; archive release logic stays unchanged.
+          python3 - <<'PY'
+          import pathlib, subprocess
+          changed = subprocess.check_output(['git', 'diff', '--name-only', '5c812f7', '--', 'NekoWidget', 'Shared', 'NekoWidgetWidget'], text=True, encoding='utf-8').splitlines()
+          allowed = 'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift'
+          assert set(changed) <= {allowed, 'NekoWidget/NekoWidget/Views/WidgetPhotoOpening.swift'}, changed
+          baseline = subprocess.check_output(['git', 'show', '5c812f7:' + allowed], text=True, encoding='utf-8')
+          current = pathlib.Path('NekoWidget/Views/PersonalArchiveView.swift').read_text(encoding='utf-8')
+          marker = '\n#if DEBUG\n'
+          assert baseline.count(marker) == current.count(marker) == 1
+          assert baseline.split(marker)[0] == current.split(marker)[0]
+          print('Archive release view code unchanged; testing WidgetPhotoOpening background isolation')
+          PY
           xcrun simctl list runtimes --json > "$artifact/runtimes.json"
           device=$(xcrun simctl create ArchivePickerDiagnosis com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0)
           trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
@@ -66,7 +79,9 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/ArchivePickerDerivedData" \
             -resultBundlePath "$artifact/Picker.xcresult" \
             -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto \
-            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 180 \
+            -testLanguage ja -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES test > "$artifact/test.log" 2>&1 || status=$?
           kill "$sample_watcher" >/dev/null 2>&1 || true

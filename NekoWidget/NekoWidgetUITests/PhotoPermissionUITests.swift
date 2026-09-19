@@ -1571,11 +1571,22 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto() throws {
+        try assertPersonalArchiveSystemPhotoPicker(completedScan: false)
+    }
+
+    @MainActor
+    func testPersonalArchiveCompletedScanSystemPhotoPicker() throws {
+        try assertPersonalArchiveSystemPhotoPicker(completedScan: true)
+    }
+
+    @MainActor
+    private func assertPersonalArchiveSystemPhotoPicker(completedScan: Bool) throws {
         // The run seeds a real photo with simctl addmedia. The large library and
         // archive transport remain fixtures; PhotosPicker and its import do not.
         let app = XCUIApplication()
         app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        if completedScan { app.launchEnvironment["NEKO_ARCHIVE_FIXTURE_COMPLETED"] = "1" }
         app.launch()
 
         func diagnostic(_ stage: String) {
@@ -1606,6 +1617,14 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         let settings = app.buttons["albums-settings-button"]
         try require("real-albums-settings", timeout: 20) { settings.exists && settings.isHittable }
+        if completedScan {
+            let scan = app.staticTexts["archive-root-fixture-progress"]
+            try require("completed-scan-fixture") {
+                let value = scan.value as? String ?? ""
+                return value.contains("phase:completed;result:final;")
+                    && value.contains("scanned:6000;total:6000;requiresFullRescan:0;isFinal:1;")
+            }
+        }
         tap(settings, stage: "settings")
         let archive = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archive.waitForExistence(timeout: 10))

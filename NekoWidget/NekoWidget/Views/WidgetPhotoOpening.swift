@@ -37,20 +37,20 @@ struct WidgetPhotoPresentationHost<Background: View, Photo: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var opening: WidgetPhotoOpening?
     @State private var pendingOtherURL: URL?
-    private let background: Background
+    private let background: () -> Background
     private let photo: (WidgetPhotoOpening, @escaping () -> Void) -> Photo
     private let onOtherURL: (URL) -> Void
 
     init(onOtherURL: @escaping (URL) -> Void = { _ in },
-         @ViewBuilder background: () -> Background,
+         @ViewBuilder background: @escaping () -> Background,
          @ViewBuilder photo: @escaping (WidgetPhotoOpening, @escaping () -> Void) -> Photo) {
-        self.background = background()
+        self.background = background
         self.photo = photo
         self.onOtherURL = onOtherURL
     }
 
     var body: some View {
-        background
+        WidgetPhotoBackground(content: background)
             // A slow destination shows its own loading state, never an
             // intermediate tab or a different photograph beneath the cover.
             .opacity(opening == nil ? 1 : 0)
@@ -89,6 +89,16 @@ struct WidgetPhotoPresentationHost<Background: View, Photo: View>: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { opening = nil }
     }
+}
+
+/// Evaluate the app tree in its own view body. The presentation host must not
+/// store the complete tab value (including every photo and profile array):
+/// presentation/environment changes would recursively diff those collections
+/// through each of the host's modifiers before a system picker can appear.
+private struct WidgetPhotoBackground<Content: View>: View {
+    let content: () -> Content
+
+    var body: some View { content() }
 }
 
 /// SwiftUI sheets belong to their presenting subtree. A Widget can be opened
