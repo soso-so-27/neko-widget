@@ -96,7 +96,8 @@ struct PersonalArchiveView: View {
             }
             else { Task { await loadLocalRecords() } }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+            .receive(on: DispatchQueue.main)) { _ in
             records = []
             selectedRecord = nil
             viewGeneration = UUID()
@@ -269,7 +270,8 @@ private struct PersonalArchiveComposer: View {
                 do { accountContext = try await store.accountContext() }
                 catch { errorMessage = personalArchiveMessage(for: error) }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+                .receive(on: DispatchQueue.main)) { _ in
                 accountChanged = true
                 errorMessage = "Apple Accountの状態が変わったため、保管を止めました。入力内容はこの画面に残っています。元のアカウントを確認してください。"
             }
@@ -393,17 +395,30 @@ private struct PersonalArchiveComposer: View {
 }
 
 #if DEBUG
-/// The same shipping view and store with a fixture-only transport. No iCloud,
-/// PhotoKit library, existing note store or shared App Group is accessed.
+/// The production settings-sheet host, settings navigation and archive views.
+/// Only archive persistence uses a temporary directory and fixture transport;
+/// unrelated settings receive the existing presentation defaults and no-op actions.
+/// This does not exercise AppRoot lifecycle tasks or a real CloudKit account.
 @MainActor
 struct PersonalArchiveUIFixture: View {
     @State private var store: PersonalArchiveStore?
     @State private var failure = false
+    @State private var showsSettings = false
     var body: some View {
-        NavigationStack {
-            if let store { PersonalArchiveView(store: store) }
+        Group {
+            if store != nil {
+                Button("設定") { showsSettings = true }
+                    .accessibilityIdentifier("personal-archive-fixture-settings-open")
+            }
             else if failure { Text("Fixture unavailable") }
             else { ProgressView() }
+        }
+        .sheet(isPresented: $showsSettings) {
+            if let store {
+                SettingsSheetHost(onClose: { showsSettings = false }) {
+                    fixtureSettings(store: store)
+                }
+            }
         }
         .task {
             guard store == nil else { return }
@@ -422,6 +437,38 @@ struct PersonalArchiveUIFixture: View {
             store = PersonalArchiveStore(directory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("personal-archive-ui-\(UUID().uuidString)", isDirectory: true), transport: cloud)
         }
+    }
+
+    private func fixtureSettings(store: PersonalArchiveStore) -> SettingsView {
+        SettingsView(
+            settings: SettingsPresentation(),
+            detectionAccuracySample: DetectionAccuracySamplePresentation(),
+            highResolutionRecoverySample: DetectionAccuracySamplePresentation(),
+            hasPhotoAccess: false,
+            isScanning: false,
+            albumState: .ready(photoCount: 0, updatedAt: nil),
+            canUpdatePhotoLibraryAlbum: false,
+            requestPhotoAccess: {},
+            updatePhotoLibraryAlbum: {},
+            savePhotoSettings: { _, _ in },
+            saveDetectionSettings: { _, _ in },
+            saveLifeReference: { _ in },
+            rescan: {},
+            excludedCatPhotos: [],
+            photoSourceAlbums: [],
+            photoSourceStatus: .allLibrary,
+            isLimitedAccess: false,
+            chooseMorePhotos: {},
+            restoreCatCandidates: { _ in },
+            selectPhotoSourceAlbum: { _ in },
+            refreshPhotoSourceAlbums: {},
+            exportJSON: { nil },
+            catProfilesPresentation: CatProfilesPresentation(),
+            catProfilesActions: .noOp,
+            privateWindowDisplayName: "確認用のまど",
+            showWidgetPlacementGuide: {},
+            personalArchiveStore: store
+        )
     }
 }
 

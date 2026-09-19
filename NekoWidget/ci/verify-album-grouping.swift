@@ -1345,10 +1345,62 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
     return object
 }
 
+@MainActor
+private func verifyPreparedHouseholdCatalog() async throws {
+    let now = date(2026, 9, 19)
+    var photos = (0..<6_000).map { index in
+        photo("catalog-\(index)", now.addingTimeInterval(-Double(index) * 86_400),
+              person: index % 3 == 0, catCount: index % 5 == 0 ? 2 : 1)
+    }
+    photos += [photo("preferred", date(2025, 4, 1)),
+               photo("excluded", date(2024, 2, 22), person: true, catCount: 2)]
+    let input = photos
+    var overrides = GrowthAlbumPhotoOverrides()
+    overrides.setPhotoIdentifier("preferred", albumNamespace: "household", period: .calendarYear(2025))
+    let overrideJSON = overrides.encoded()
+    let start = Date()
+    let (prepared, onMainThread) = try await Task.detached {
+        let result = try HouseholdAlbumCatalogBuilder().build(
+            from: input, excludedIdentifiers: ["excluded"], lifeReference: nil,
+            growthPhotoOverridesJSON: overrideJSON, referenceDate: now, timeZone: utc
+        )
+        return (result, Thread.isMainThread)
+    }.value
+    try require(!onMainThread, "large album catalog was not prepared off the main thread")
+    let albums = allAlbums(prepared.sections)
+    try require(albums.first(where: { $0.id == .allCatPhotos })?.photos.count == 6_001,
+                "prepared catalog lost current photos")
+    try require(!albums.flatMap(\.photos).contains(where: { $0.id == "excluded" })
+                && !prepared.highlights.flatMap(\.photos).contains(where: { $0.id == "excluded" }),
+                "excluded photo leaked into a prepared album or pickup")
+    try require(albums.first(where: { $0.id == .householdGrowth })?.photos
+                    .contains(where: { $0.id == "preferred" }) == true,
+                "background preparation ignored an explicit household comparison choice")
+    let refreshed = try HouseholdAlbumCatalogBuilder().build(
+        from: input, excludedIdentifiers: ["excluded", "preferred"], lifeReference: nil,
+        growthPhotoOverridesJSON: overrideJSON, referenceDate: now, timeZone: utc
+    )
+    try require(!allAlbums(refreshed.sections).flatMap(\.photos).contains(where: { $0.id == "preferred" }),
+                "a saved comparison override restored an excluded photo")
+    let cancelled = Task.detached {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try HouseholdAlbumCatalogBuilder().build(
+            from: input, excludedIdentifiers: [], lifeReference: nil,
+            growthPhotoOverridesJSON: "", referenceDate: now, timeZone: utc
+        )
+    }
+    do {
+        _ = try await cancelled.value
+        throw VerificationError.failed("cancelled catalog preparation returned a usable result")
+    } catch is CancellationError { }
+    print("Prepared catalog: 6002 input photos, exclusion/override/cancellation PASS (\(Date().timeIntervalSince(start))s)")
+}
+
 @main
 @MainActor
 private struct AlbumGroupingVerifier {
-    static func main() throws {
+    static func main() async throws {
+        try await verifyPreparedHouseholdCatalog()
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyAllCatPhotosIsFirstDeduplicatedAndUngated()
         try verifyHomeHighlightsPreferRelationshipsThenTime()

@@ -899,6 +899,7 @@ struct LikedPhotosView: View {
     let exportPhotoBook: ([String]) async throws -> URL
     let openPhotos: () -> Void
     var albumSections: [CuratedAlbumSectionPresentation]
+    let isPreparingAlbums: Bool
     var albumScan: ScanPresentation?
     var albumProfiles: [CatProfilePresentation]
     var albumOptions: [CatProfilePhotoAlbumOptionPresentation]
@@ -922,6 +923,8 @@ struct LikedPhotosView: View {
         exportPhotoBook: @escaping ([String]) async throws -> URL,
         openPhotos: @escaping () -> Void,
         albumSections: [CuratedAlbumSectionPresentation] = [],
+        preparedHighlights: [AlbumHighlightPresentation]? = nil,
+        isPreparingAlbums: Bool = false,
         albumScan: ScanPresentation? = nil,
         albumProfiles: [CatProfilePresentation] = [],
         albumOptions: [CatProfilePhotoAlbumOptionPresentation] = [],
@@ -944,6 +947,7 @@ struct LikedPhotosView: View {
         self.exportPhotoBook = exportPhotoBook
         self.openPhotos = openPhotos
         self.albumSections = albumSections
+        self.isPreparingAlbums = isPreparingAlbums
         self.albumScan = albumScan
         self.albumProfiles = albumProfiles
         self.albumOptions = albumOptions
@@ -958,7 +962,8 @@ struct LikedPhotosView: View {
         _memoryNotes = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: memoryNoteStore))
         _featuredSnapshotJSON = AppStorage(wrappedValue: "", "album.featuredSnapshot.v1", store: featuredSnapshotDefaults)
         let builder = AlbumHighlightBuilder(now: referenceDate)
-        let current = hasPhotoAccess ? builder.highlights(from: albumSections) : []
+        let current = hasPhotoAccess
+            ? (preparedHighlights ?? builder.highlights(from: albumSections)) : []
         highlights = current
         let scopeKey: String
         if case let .profile(id) = albumScope.wrappedValue { scopeKey = "profile:\(id)" }
@@ -1026,7 +1031,7 @@ struct LikedPhotosView: View {
         return distinctRecommendations(snapshot.identifiers.prefix(3).compactMap { current[$0] })
     }
     private func freezeRecommendations(allowAppend: Bool = false) {
-        guard !isCatDetail, !showsReflectionArchive, !showsHighlightArchive,
+        guard !isPreparingAlbums, !isCatDetail, !showsReflectionArchive, !showsHighlightArchive,
               !proposedRecommendations.isEmpty else { return }
         var items = proposedRecommendations
         if let data = featuredSnapshotJSON.data(using: .utf8),
@@ -1046,7 +1051,13 @@ struct LikedPhotosView: View {
 
     var body: some View {
         ScrollView {
-            if showsHighlightArchive {
+            if isPreparingAlbums {
+                ProgressView()
+                    .accessibilityLabel("アルバムを準備中")
+                    .accessibilityIdentifier("albums-preparing")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 36)
+            } else if showsHighlightArchive {
                 highlightArchive.padding(16)
             } else if showsReflectionArchive {
                 reflectionArchive.padding(16)
@@ -1101,6 +1112,9 @@ struct LikedPhotosView: View {
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
+        .onChange(of: isPreparingAlbums) { _, isPreparing in
+            if !isPreparing { freezeRecommendations(allowAppend: true) }
+        }
         .onChange(of: availableRecommendations.map(\.id)) { _, _ in freezeRecommendations() }
         .onChange(of: recommendationDay) { _, _ in freezeRecommendations() }
         .toolbar {

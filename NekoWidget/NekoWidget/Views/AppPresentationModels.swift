@@ -58,7 +58,7 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
     }
 }
 
-enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
+enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable, Sendable {
     case all
     case time
     case cuteness
@@ -78,7 +78,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
     var logKey: String { rawValue }
 }
 
-enum CuratedAlbumID: Hashable, Identifiable {
+enum CuratedAlbumID: Hashable, Identifiable, Sendable {
     case allCatPhotos
     case householdGrowth
     case growth
@@ -159,7 +159,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     }
 }
 
-struct CuratedAlbumPresentation: Identifiable, Hashable {
+struct CuratedAlbumPresentation: Identifiable, Hashable, Sendable {
     let id: CuratedAlbumID
     let group: CuratedAlbumGroup
     let photos: [PhotoPresentation]
@@ -174,7 +174,7 @@ struct CuratedAlbumPresentation: Identifiable, Hashable {
     }
 }
 
-struct CuratedAlbumSectionPresentation: Identifiable, Hashable {
+struct CuratedAlbumSectionPresentation: Identifiable, Hashable, Sendable {
     let id: CuratedAlbumGroup
     let albums: [CuratedAlbumPresentation]
 
@@ -281,6 +281,65 @@ struct HouseholdGrowthAlbumBuilder {
             group: .time,
             photos: photos
         )
+    }
+}
+
+/// The expensive household root projection crosses back to the main actor as
+/// one value. It contains no images, stores, callbacks, or inferred cat scope.
+struct PreparedHouseholdAlbumCatalog: Sendable {
+    let sections: [CuratedAlbumSectionPresentation]
+    let highlights: [AlbumHighlightPresentation]
+}
+
+struct HouseholdAlbumCatalogBuilder {
+    func build(
+        from inputPhotos: [PhotoPresentation],
+        excludedIdentifiers: Set<String>,
+        lifeReference: CatLifeReference?,
+        growthPhotoOverridesJSON: String,
+        referenceDate: Date,
+        timeZone: TimeZone = .current
+    ) throws -> PreparedHouseholdAlbumCatalog {
+        try Task.checkCancellation()
+        let photos = inputPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
+        var sections = CuratedAlbumBuilder(timeZone: timeZone).sections(
+            from: photos, lifeReference: lifeReference, includesGrowth: false
+        )
+        try Task.checkCancellation()
+
+        // The household comparison remains calendar based even when the legacy
+        // single-cat reference controls the other time albums.
+        let candidates = photos.map(\.householdGrowthCandidate)
+        let selector = GrowthAlbumSelector(timeZone: timeZone)
+        let overrides = GrowthAlbumPhotoOverrides.decode(growthPhotoOverridesJSON)
+        var preferredIdentifiers: [GrowthAlbumPeriod: String] = [:]
+        if overrides.albums["household"] != nil {
+            for group in selector.candidateGroups(from: candidates, lifeReference: nil) {
+                preferredIdentifiers[group.period] = overrides.photoIdentifier(
+                    albumNamespace: "household", period: group.period
+                )
+            }
+        }
+        let comparisonPhotos = selector.select(
+            from: candidates, lifeReference: nil, preferredPhotoIdentifiers: preferredIdentifiers
+        ).map(\.photo)
+        if comparisonPhotos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods {
+            let comparison = CuratedAlbumPresentation(
+                id: .householdGrowth, group: .time, photos: comparisonPhotos
+            )
+            if let index = sections.firstIndex(where: { $0.id == .time }) {
+                sections[index] = CuratedAlbumSectionPresentation(
+                    id: .time, albums: [comparison] + sections[index].albums
+                )
+            } else {
+                sections.insert(CuratedAlbumSectionPresentation(id: .time, albums: [comparison]), at: 0)
+            }
+        }
+        try Task.checkCancellation()
+        let highlights = AlbumHighlightBuilder(now: referenceDate, timeZone: timeZone)
+            .highlights(from: sections)
+        try Task.checkCancellation()
+        return PreparedHouseholdAlbumCatalog(sections: sections, highlights: highlights)
     }
 }
 
@@ -655,7 +714,7 @@ enum AppTab: Hashable {
 
 /// A small, revisitable collection derived only from albums in the current
 /// personal-photo scope. Its identity survives weekly featured-card changes.
-struct AlbumHighlightPresentation: Identifiable, Hashable {
+struct AlbumHighlightPresentation: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let photos: [PhotoPresentation]

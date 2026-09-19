@@ -6,6 +6,32 @@ private struct DetectionSettingsSaveRequest: Equatable {
     let minimumAreaRatio: Double
 }
 
+/// The production settings sheet's presentation shell, also used by isolated UI fixtures.
+struct SettingsSheetHost<Content: View>: View {
+    let onClose: () -> Void
+    private let content: Content
+
+    init(onClose: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.onClose = onClose
+        self.content = content()
+    }
+
+    var body: some View {
+        NavigationStack {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("閉じる")
+                    }
+                }
+        }
+        .presentationDragIndicator(.visible)
+    }
+}
+
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
@@ -33,6 +59,7 @@ struct SettingsView: View {
     let catProfilesActions: CatProfilesViewActions
     let privateWindowDisplayName: String
     let showWidgetPlacementGuide: () -> Void
+    private let personalArchiveStore: PersonalArchiveStore?
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
@@ -75,7 +102,8 @@ struct SettingsView: View {
         catProfilesPresentation: CatProfilesPresentation,
         catProfilesActions: CatProfilesViewActions,
         privateWindowDisplayName: String,
-        showWidgetPlacementGuide: @escaping () -> Void
+        showWidgetPlacementGuide: @escaping () -> Void,
+        personalArchiveStore: PersonalArchiveStore? = nil
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
@@ -103,6 +131,7 @@ struct SettingsView: View {
         self.catProfilesActions = catProfilesActions
         self.privateWindowDisplayName = privateWindowDisplayName
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
+        self.personalArchiveStore = personalArchiveStore
         _draft = State(initialValue: settings)
     }
 
@@ -140,10 +169,10 @@ struct SettingsView: View {
                 Text("写真とねこ")
             }
 
-            if PersonalArchiveStore.isConfigured {
+            if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
                 Section {
                     NavigationLink {
-                        PersonalArchiveView()
+                        PersonalArchiveView(store: personalArchiveStore ?? .shared)
                     } label: {
                         Label("記録の保管", systemImage: "icloud")
                     }

@@ -29,7 +29,7 @@ enum MemoriesRoute: Hashable {
 private struct SeasonalMoviePreparationKey: Hashable {
     let canPrepare: Bool
     let quarterStart: Date?
-    let photoDigest: Int
+    let photoPresentationVersion: LibraryPresentationVersion
     let videoCatalogDigest: Int
     let sourceAlbumIdentifier: String?
 }
@@ -58,6 +58,32 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
     let access: SeasonalMovieArchiveAccessKey
     let isActive: Bool
     let videoPeriods: [SeasonalMovieArchiveVideoPeriod]
+}
+
+private struct HouseholdAlbumProfileKey: Equatable {
+    let identifier: String
+    let lifeReference: CatProfileLifeReferencePresentation?
+}
+
+/// Compare publication revisions and small settings only. Never hash/compare
+/// the library's photo arrays while SwiftUI is evaluating the root body.
+private struct HouseholdAlbumCatalogKey: Equatable {
+    let canBuild: Bool
+    let isLimitedAccess: Bool
+    let photoPresentationVersion: LibraryPresentationVersion
+    let sourceStatus: PhotoSourceAlbumStatus
+    let photoCount: Int
+    let excludedCount: Int
+    let profiles: [HouseholdAlbumProfileKey]
+    let legacyLifeReference: CatLifeReference?
+    let growthPhotoOverridesJSON: String
+    let referenceDay: Date
+    let timeZoneIdentifier: String
+}
+
+private struct VersionedHouseholdAlbumCatalog {
+    let key: HouseholdAlbumCatalogKey
+    let catalog: PreparedHouseholdAlbumCatalog
 }
 
 struct MainTabView: View {
@@ -117,6 +143,8 @@ struct MainTabView: View {
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
     @State private var albumHighlightsReferenceDate = Date()
+    @State private var preparedHouseholdAlbumCatalog: VersionedHouseholdAlbumCatalog?
+    @State private var requestedHouseholdAlbumCatalogKey: HouseholdAlbumCatalogKey?
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
@@ -267,6 +295,9 @@ struct MainTabView: View {
         .onChange(of: memoriesPath.count) { _, count in
             if count == 0 { albumHighlightsReferenceDate = Date() }
         }
+        .task(id: householdAlbumCatalogKey) {
+            await prepareHouseholdAlbumCatalog()
+        }
         .task(id: seasonalMoviePreparationKey) {
             await prepareSeasonalMovie()
         }
@@ -284,7 +315,7 @@ struct MainTabView: View {
     }
 
     private var settingsSheet: some View {
-        NavigationStack {
+        SettingsSheetHost(onClose: { showsSettings = false }) {
             SettingsView(
                 settings: settings,
                 detectionAccuracySample: detectionAccuracySample,
@@ -317,18 +348,7 @@ struct MainTabView: View {
                     showsSettings = false
                 }
             )
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        showsSettings = false
-                    } label: {
-                        Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
-                    }
-                    .accessibilityLabel("閉じる")
-                }
-            }
         }
-        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -614,7 +634,12 @@ struct MainTabView: View {
                 photosPath = NavigationPath()
                 selectedTab = .photos
             },
-            albumSections: curatedAlbumSections(for: scope),
+            albumSections: scope == .everyone
+                ? currentHouseholdAlbumCatalog?.sections ?? []
+                : curatedAlbumSections(for: scope),
+            preparedHighlights: scope == .everyone ? currentHouseholdAlbumCatalog?.highlights ?? [] : nil,
+            isPreparingAlbums: scope == .everyone
+                && householdAlbumCatalogKey.canBuild && currentHouseholdAlbumCatalog == nil,
             albumScan: scan,
             albumProfiles: catProfilesPresentation.profiles,
             albumOptions: catProfilesPresentation.photoAlbumOptions,
@@ -805,7 +830,7 @@ struct MainTabView: View {
 
     private var automaticAlbumsView: some View {
         AlbumView(
-            sections: curatedAlbumSections(for: .everyone),
+            sections: currentHouseholdAlbumCatalog?.sections ?? [],
             scan: scan,
             profiles: catProfilesPresentation.profiles,
             photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
@@ -940,10 +965,84 @@ struct MainTabView: View {
         }
     }
 
+    private var householdAlbumCatalogKey: HouseholdAlbumCatalogKey {
+        let timeZone = TimeZone.current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return HouseholdAlbumCatalogKey(
+            canBuild: hasPhotoAccess && photoPresentationVersion.canPresent
+                && photoSourceStatus != .unavailable,
+            isLimitedAccess: isLimitedAccess,
+            photoPresentationVersion: photoPresentationVersion,
+            sourceStatus: photoSourceStatus,
+            photoCount: catPhotos.count,
+            excludedCount: excludedCatPhotos.count,
+            profiles: catProfilesPresentation.profiles.map {
+                HouseholdAlbumProfileKey(identifier: $0.identifier, lifeReference: $0.lifeReference)
+            },
+            legacyLifeReference: settings.catLifeReference,
+            growthPhotoOverridesJSON: growthPhotoOverridesJSON,
+            referenceDay: calendar.startOfDay(for: albumHighlightsReferenceDate),
+            timeZoneIdentifier: timeZone.identifier
+        )
+    }
+
+    private var currentHouseholdAlbumCatalog: PreparedHouseholdAlbumCatalog? {
+        let key = householdAlbumCatalogKey
+        guard key.canBuild, let preparedHouseholdAlbumCatalog,
+              preparedHouseholdAlbumCatalog.key == key else { return nil }
+        return preparedHouseholdAlbumCatalog.catalog
+    }
+
+    @MainActor
+    private func prepareHouseholdAlbumCatalog() async {
+        let key = householdAlbumCatalogKey
+        requestedHouseholdAlbumCatalogKey = key
+        guard key.canBuild else {
+            preparedHouseholdAlbumCatalog = nil
+            return
+        }
+        guard preparedHouseholdAlbumCatalog?.key != key else { return }
+
+        // Array captures are CoW snapshots. Filtering, deduplication, all
+        // sorting, growth selection, and highlight building happen off-main.
+        let photos = catPhotos
+        let excludedIdentifiers = excludedCatCandidateIdentifiers
+        let lifeReference = catProfilesPresentation.profiles.isEmpty ? settings.catLifeReference : nil
+        let overrides = growthPhotoOverridesJSON
+        let referenceDate = albumHighlightsReferenceDate
+        let timeZone = TimeZone.current
+        let buildTask = Task.detached(priority: .utility) {
+            try HouseholdAlbumCatalogBuilder().build(
+                from: photos, excludedIdentifiers: excludedIdentifiers,
+                lifeReference: lifeReference, growthPhotoOverridesJSON: overrides,
+                referenceDate: referenceDate, timeZone: timeZone
+            )
+        }
+        do {
+            let catalog = try await withTaskCancellationHandler {
+                try await buildTask.value
+            } onCancel: {
+                buildTask.cancel()
+            }
+            // A cancelled/older publication may finish after the next task.
+            // It must neither re-expose old photos nor overwrite a newer cache.
+            guard !Task.isCancelled, requestedHouseholdAlbumCatalogKey == key else { return }
+            preparedHouseholdAlbumCatalog = VersionedHouseholdAlbumCatalog(key: key, catalog: catalog)
+        } catch {
+            // Cancellation is the pure builder's only failure. The current-key
+            // read guard keeps a superseded result invisible immediately.
+        }
+    }
+
     private func curatedAlbumSections(for scope: CatProfileScopePresentation) -> [CuratedAlbumSectionPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        if scope == .everyone, let currentHouseholdAlbumCatalog {
+            return currentHouseholdAlbumCatalog.sections
+        }
         if case let .profile(identifier) = scope,
            catProfilesPresentation.profile(identifier: identifier) == nil { return [] }
+        let scopedPhotos = scopedCatPhotos(for: scope)
         let builder = CuratedAlbumBuilder()
         let includesScopedGrowth: Bool
         if scope == .everyone {
@@ -954,7 +1053,7 @@ struct MainTabView: View {
                 .showsGrowthComparison
         }
         let baseSections = builder.sections(
-            from: scopedCatPhotos(for: scope),
+            from: scopedPhotos,
             lifeReference: scopedLifeReference(for: scope),
             includesGrowth: includesScopedGrowth
         )
@@ -962,7 +1061,7 @@ struct MainTabView: View {
         var sections = baseSections
         if scope == .everyone,
            let householdGrowth = HouseholdGrowthAlbumBuilder().album(
-               from: catPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
+               from: scopedPhotos
            ) {
             if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
                 sections[timeIndex] = CuratedAlbumSectionPresentation(
@@ -1105,24 +1204,8 @@ struct MainTabView: View {
             sourceAlbumIdentifier = nil
             sourceIsAvailable = false
         }
-        var hasher = Hasher()
-        if let interval {
-            for photo in catPhotos
-                .filter({ photo in
-                    guard let date = photo.creationDate else { return false }
-                    return date >= interval.start && date < interval.end
-                })
-                .sorted(by: { $0.localIdentifier < $1.localIdentifier }) {
-                hasher.combine(photo.localIdentifier)
-                hasher.combine(photo.creationDate)
-                hasher.combine(photo.catBoundingBox)
-                hasher.combine(photo.largestCatAreaRatio)
-                hasher.combine(photo.isLiked)
-                hasher.combine(photo.isPhotoLibraryFavorite)
-            }
-        }
         let videoCatalogDigest: Int
-        if hasPhotoAccess, sourceIsAvailable, let interval {
+        if hasPhotoAccess, sourceIsAvailable, scenePhase == .active, let interval {
             videoCatalogDigest = SeasonalMovieVideoCatalog.digest(
                 in: interval,
                 sourceAlbumIdentifier: sourceAlbumIdentifier
@@ -1136,7 +1219,7 @@ struct MainTabView: View {
                 && !isScanning
                 && scenePhase == .active,
             quarterStart: interval?.start,
-            photoDigest: hasher.finalize(),
+            photoPresentationVersion: photoPresentationVersion,
             videoCatalogDigest: videoCatalogDigest,
             sourceAlbumIdentifier: sourceAlbumIdentifier
         )
@@ -1343,14 +1426,15 @@ struct MainTabView: View {
 
     private func scopedCatPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        let excludedIdentifiers = excludedCatCandidateIdentifiers
         guard case let .profile(identifier) = scope else {
-            return catPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
+            return catPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
         }
         guard let profile = catProfilesPresentation.profile(identifier: identifier) else { return [] }
         let assignedIDs = Set(profile.confirmedPhotos.map(\.localIdentifier))
         return (profileAlbumPhotos[identifier] ?? []).filter {
             assignedIDs.contains($0.localIdentifier)
-                && !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
+                && !excludedIdentifiers.contains($0.localIdentifier)
         }
     }
 
@@ -1491,11 +1575,12 @@ struct MainTabView: View {
 
     private var memoryNotePhotos: [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
+        let excludedIdentifiers = excludedCatCandidateIdentifiers
         // Favorites already have a deliberate, source-independent route.
         // Other records only resolve within the current source library.
         var seen = Set<String>()
         return (libraryPhotos + likedPhotos).filter {
-            !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
+            !excludedIdentifiers.contains($0.localIdentifier)
                 && seen.insert($0.localIdentifier).inserted
         }
     }

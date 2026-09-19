@@ -1450,6 +1450,14 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
+        let settings = app.buttons["personal-archive-fixture-settings-open"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 15))
+        settings.tap()
+        let archive = app.buttons["settings-personal-archive"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
+        XCTAssertTrue(archive.isHittable)
+        archive.tap()
         let refresh = app.buttons["personal-archive-refresh"]
         XCTAssertTrue(refresh.waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
@@ -1469,9 +1477,21 @@ final class SoloMemoriesUITests: XCTestCase {
         compose.tap()
         let text = app.textViews["personal-archive-text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
+        capture("personal-archive-composer-from-settings-sheet")
+        let composerBar = app.navigationBars["保管する記録"]
+        composerBar.buttons["戻る"].tap()
+        let composerClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: composerBar)
+        XCTAssertEqual(XCTWaiter.wait(for: [composerClosed], timeout: 5), .completed)
+        XCTAssertTrue(compose.isHittable)
+        compose.tap()
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("A quiet afternoon")
         app.buttons["完了"].tap()
         app.buttons["personal-archive-save"].tap()
+        let savedComposerClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: composerBar)
+        XCTAssertEqual(XCTWaiter.wait(for: [savedComposerClosed], timeout: 10), .completed)
         XCTAssertTrue(app.navigationBars["記録の保管"].waitForExistence(timeout: 10))
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-"))
         expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: rows)
