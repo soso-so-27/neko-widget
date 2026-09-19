@@ -2915,6 +2915,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "memory-library-empty-after-deletion")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "An empty library must still offer the cloud restore route.")
+        XCTAssertEqual(entry.value as? String, "0件")
+        entry.tap()
+        XCTAssertTrue(app.buttons["memory-notes-archive"].waitForExistence(timeout: 5))
         app.terminate()
     }
 

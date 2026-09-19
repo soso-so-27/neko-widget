@@ -1063,7 +1063,7 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    if !isCatDetail && (!memoryNotes.records.isEmpty || memoryNotes.failed) {
+                    if !isCatDetail {
                         PhotoMemoryNotesEntry(library: memoryNotes)
                     }
                     if hasPhotoAccess {
