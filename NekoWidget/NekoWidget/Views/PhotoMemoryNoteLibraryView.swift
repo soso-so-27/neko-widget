@@ -128,32 +128,6 @@ final class PhotoMemoryNotePhotoAccess: ObservableObject {
     }
 }
 
-struct PhotoMemoryNotesEntry: View {
-    @ObservedObject var library: PhotoMemoryNoteLibraryPresentation
-
-    var body: some View {
-        Group {
-            // Keep the restore entry reachable on a new iPhone with no local notes.
-            if library.isLoaded || library.failed {
-                NavigationLink(value: MemoriesRoute.memoryNotes) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "note.text").foregroundStyle(.secondary)
-                        Text("写真と言葉").foregroundStyle(.primary)
-                        Spacer(minLength: 8)
-                        if library.failed {
-                            Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
-                        }
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("albums-memory-notes")
-                .accessibilityHint("写真に添えた言葉と、iCloudに保管した記録を読み返す")
-            }
-        }
-    }
-}
-
 private struct MemoryReadingItem: Identifiable {
     let local: PhotoMemoryNoteRecord?
     let preserved: PersonalArchiveRecord?
@@ -186,6 +160,7 @@ struct PhotoMemoryNotesListView: View {
     let photos: [PhotoPresentation]
     let archiveStore: PersonalArchiveStore
     private let archiveEnabled: Bool
+    let isEmbedded: Bool
     let openPhotos: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -198,12 +173,14 @@ struct PhotoMemoryNotesListView: View {
 
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          archiveStore: PersonalArchiveStore? = nil,
+         isEmbedded: Bool = false,
          openPhotos: @escaping () -> Void) {
         self.photos = photos
         let enabled = archiveStore != nil || PersonalArchiveStore.isConfigured
         self.archiveEnabled = enabled
         self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
+        self.isEmbedded = isEmbedded
         _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store,
             archiveStore: enabled ? (archiveStore ?? .shared) : nil))
     }
@@ -224,6 +201,8 @@ struct PhotoMemoryNotesListView: View {
             MemoryReadingItem(local: nil, preserved: $0)
         }
         return (local + other).filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.filter {
             search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || ([$0.text] + $0.cats + [$0.date.formatted(.dateTime.year().month().day())])
                     .joined(separator: " ").localizedStandardContains(search)
@@ -254,9 +233,9 @@ struct PhotoMemoryNotesListView: View {
                 ContentUnavailableView.search(text: search)
             } else if visible.isEmpty && !library.failed {
                 ContentUnavailableView {
-                    Label("写真に、その日のことを", systemImage: "photo.badge.plus")
+                    Label("メモを付けた写真が並びます", systemImage: "note.text")
                 } description: {
-                    Text("「はじめてのおふろ」「いつもの寝場所」。写真に添えた言葉を、ここで読み返せます。")
+                    Text("写真を開き、メモのアイコンから書けます。")
                 } actions: {
                     Button("写真を選ぶ", action: openPhotos)
                     if archiveEnabled {
@@ -318,7 +297,7 @@ struct PhotoMemoryNotesListView: View {
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "言葉・猫の名前で探す")
         .refreshable { await library.reload() }
-        .navigationTitle("写真と言葉")
+        .navigationTitle(isEmbedded ? "写真" : "メモあり")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { readingToolbar }
         .navigationDestination(isPresented: Binding(
@@ -356,16 +335,15 @@ struct PhotoMemoryNotesListView: View {
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if !isEmbedded {
                 Button(action: openPhotos) { Image(systemName: "plus") }
                     .accessibilityLabel("写真に思い出を添える")
+                }
                 if archiveEnabled {
                     Menu {
                         Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
                             Task { await library.refreshFromCloud() }
                         }.disabled(library.isRefreshingCloud)
-                        NavigationLink { PersonalArchiveView(store: archiveStore) } label: {
-                            Label("iCloudの保管を管理", systemImage: "icloud")
-                        }.accessibilityIdentifier("memory-notes-archive")
                     } label: { Image(systemName: "ellipsis") }
                     .accessibilityLabel("保管の操作")
                     .accessibilityIdentifier("memory-notes-menu")
@@ -422,6 +400,106 @@ struct PhotoMemoryNotesListView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }.padding(.vertical, 6)
+    }
+}
+
+/// Explicitly preserved copies stay readable without PhotoKit permission.
+/// Hide a duplicate only with an exact note/revision link AND an accessible original.
+struct PersonalArchivePhotosSection: View {
+    let photos: [PhotoPresentation]
+    private let archiveStore: PersonalArchiveStore
+    private let enabled: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var library: PhotoMemoryNoteLibraryPresentation
+    @StateObject private var access = PhotoMemoryNotePhotoAccess()
+    @State private var selected: PersonalArchiveRecord?
+    @State private var selectedAccount: String?
+
+    init(photos: [PhotoPresentation], archiveStore: PersonalArchiveStore? = nil,
+         store: PhotoMemoryNoteStore = .shared) {
+        self.photos = photos
+        let canRead = archiveStore != nil || PersonalArchiveStore.isConfigured
+        let resolvedStore = archiveStore ?? .shared
+        self.enabled = canRead
+        self.archiveStore = resolvedStore
+        _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(
+            store: store, archiveStore: canRead ? resolvedStore : nil))
+    }
+
+    private var copies: [PersonalArchiveRecord] {
+        let sources = library.records.filter { access.photo(for: $0.photoIdentifier) != nil }.map {
+            PersonalArchiveSourceSnapshot(noteID: $0.id, revision: $0.note.revision,
+                                          photoIdentifier: $0.photoIdentifier)
+        }
+        let linked = Set(library.archive?.exactLinkedRecordIDs(matching: sources).values.map { $0 } ?? [])
+        return (library.archive?.records ?? []).filter { !linked.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if enabled, !copies.isEmpty {
+                Text("iCloudに保管した写真").font(.headline)
+                archiveGrid
+            }
+            if enabled, let error = library.archiveError {
+                Text(error).font(.footnote).foregroundStyle(.secondary)
+                Button("もう一度読み込む") { Task { await library.reload() } }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("photos-preserved-copies")
+        .navigationDestination(isPresented: Binding(
+            get: { selected != nil }, set: { if !$0 { selected = nil } }
+        )) {
+            if let selected, let selectedAccount {
+                PersonalArchiveRecordView(record: selected, store: archiveStore,
+                                          expectedAccount: selectedAccount)
+            }
+        }
+        .task {
+            guard enabled else { return }
+            library.setSceneActive(scenePhase == .active)
+            access.start(photos: photos)
+            await library.reload()
+        }
+        .onChange(of: photos) { _, value in access.start(photos: value) }
+        .onChange(of: scenePhase) { _, phase in
+            library.setSceneActive(phase == .active)
+            if phase == .active && enabled {
+                access.refresh()
+                Task { await library.reload() }
+            } else { selected = nil }
+        }
+        .onChange(of: selected) { _, value in
+            if value == nil && scenePhase == .active { Task { await library.reload() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+            .receive(on: DispatchQueue.main)) { _ in
+                selected = nil
+                library.clearArchive()
+                if enabled && scenePhase == .active { Task { await library.reload() } }
+            }
+        .onDisappear { access.stop() }
+    }
+
+    private var archiveGrid: some View {
+        let account = library.archive?.account.context
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
+            ForEach(copies) { copy in
+                Button {
+                    guard let account else { return }
+                    selectedAccount = account
+                    selected = copy
+                } label: {
+                    Color.clear.aspectRatio(1, contentMode: .fit)
+                        .overlay { MemoryReadingThumbnail(data: copy.jpegData ?? Data()) }
+                        .clipped()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copy.text.isEmpty ? "保管した写真" : copy.text)
+                .accessibilityIdentifier("preserved-photo-\(copy.id.uuidString)")
+            }
+        }
     }
 }
 
@@ -694,6 +772,9 @@ struct PhotoMemoryNoteLibraryFixture: View {
     @State private var ready = false
     @State private var failure = false
     @State private var path: [MemoriesRoute] = []
+    @State private var section: PhotoLibrarySection = .all
+    @State private var showsSettings = false
+    @State private var readingRevision = 0
 
     private var photos: [PhotoPresentation] {
         if CommandLine.arguments.contains("--memory-library-no-photo") { return [] }
@@ -705,11 +786,18 @@ struct PhotoMemoryNoteLibraryFixture: View {
         NavigationStack(path: $path) {
             Group {
                 if ready {
-                    LikedPhotosView(photos: photos, hasPhotoAccess: !photos.isEmpty,
-                        monthlyWindowCollection: nil, latestMonthlyWindowIsUnread: false,
-                        latestSeasonalMovieIsNew: false, seasonalMovies: [],
-                        exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
-                        openPhotos: {}, memoryNoteStore: Self.store)
+                    VStack(spacing: 0) {
+                        PhotoLibrarySectionPicker(selection: $section)
+                        fixtureSection.id(readingRevision)
+                    }
+                    .navigationTitle("写真").navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button { showsSettings = true } label: { Image(systemName: "gearshape") }
+                                .accessibilityLabel("設定")
+                                .accessibilityIdentifier("window-settings-button")
+                        }
+                    }
                 } else if failure { Text("Fixture preparation failed") }
                 else { ProgressView() }
             }
@@ -737,6 +825,12 @@ struct PhotoMemoryNoteLibraryFixture: View {
                 }
             }
         }
+        .sheet(isPresented: $showsSettings, onDismiss: { readingRevision &+= 1 }) {
+            SettingsSheetHost(onClose: { showsSettings = false }) {
+                List { PersonalArchiveSettingsLink(store: Self.archiveStore) }
+                    .navigationTitle("設定").navigationBarTitleDisplayMode(.inline)
+            }
+        }
         .task {
             guard !ready else { return }
             do {
@@ -759,6 +853,22 @@ struct PhotoMemoryNoteLibraryFixture: View {
         }
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--photo-window-large") ? .accessibility5 : .large)
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder private var fixtureSection: some View {
+        switch section {
+        case .all:
+            ScrollView {
+                PersonalArchivePhotosSection(photos: photos, archiveStore: Self.archiveStore,
+                                             store: Self.store).padding(16)
+            }
+        case .favorites:
+            SavedMemoriesGalleryView(photos: [], startsInExportMode: false, isEmbedded: true,
+                                    exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
+        case .notes:
+            PhotoMemoryNotesListView(photos: photos, store: Self.store,
+                archiveStore: Self.archiveStore, isEmbedded: true) { section = .all }
+        }
     }
 }
 #endif

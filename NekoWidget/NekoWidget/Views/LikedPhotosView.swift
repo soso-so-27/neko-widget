@@ -886,7 +886,6 @@ struct CuratedAlbumDetailView: View {
 @MainActor
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("album.featuredSnapshot.v1") private var featuredSnapshotJSON = ""
     @State private var visibleRecommendationID: String?
 
@@ -911,7 +910,6 @@ struct LikedPhotosView: View {
     var referenceDate: Date
     var isCatDetail: Bool
     var navigationTitleOverride: String?
-    @StateObject private var memoryNotes: PhotoMemoryNoteLibraryPresentation
     private let highlights: [AlbumHighlightPresentation]
     private let recommendedHighlights: [AlbumHighlightPresentation]
 
@@ -935,8 +933,7 @@ struct LikedPhotosView: View {
         referenceDate: Date = Date(),
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
         recommendationStore: AlbumHighlightRecommendationStore = .shared,
-        featuredSnapshotDefaults: UserDefaults = .standard,
-        memoryNoteStore: PhotoMemoryNoteStore = .shared
+        featuredSnapshotDefaults: UserDefaults = .standard
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
@@ -959,7 +956,6 @@ struct LikedPhotosView: View {
         self.referenceDate = referenceDate
         self.isCatDetail = isCatDetail
         self.navigationTitleOverride = navigationTitleOverride
-        _memoryNotes = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: memoryNoteStore))
         _featuredSnapshotJSON = AppStorage(wrappedValue: "", "album.featuredSnapshot.v1", store: featuredSnapshotDefaults)
         let builder = AlbumHighlightBuilder(now: referenceDate)
         let current = hasPhotoAccess
@@ -1063,9 +1059,6 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    if !isCatDetail {
-                        PhotoMemoryNotesEntry(library: memoryNotes)
-                    }
                     if hasPhotoAccess {
                         if let albumScan {
                             AlbumView(
@@ -1095,18 +1088,6 @@ struct LikedPhotosView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
         }
-        .task {
-            // Load from the persistent scroll view, even while the optional
-            // entry has no content. An empty Group has no task lifecycle.
-            if !isCatDetail && !showsHighlightArchive && !showsReflectionArchive {
-                await memoryNotes.reload()
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active && !isCatDetail && !showsHighlightArchive && !showsReflectionArchive {
-                Task { await memoryNotes.reload() }
-            }
-        }
         .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月の写真・ムービー" : navigationTitleOverride ?? "アルバム")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
@@ -1119,7 +1100,6 @@ struct LikedPhotosView: View {
         .onChange(of: recommendationDay) { _, _ in freezeRecommendations() }
         .toolbar {
             if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive {
-                ToolbarItem(placement: .topBarTrailing) { favoritesLink }
                 if let showSettings {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: showSettings) { Image(systemName: "gearshape") }
@@ -1132,15 +1112,6 @@ struct LikedPhotosView: View {
         }
     }
 
-    private var favoritesLink: some View {
-        NavigationLink(value: MemoriesRoute.favorites) {
-            Image(systemName: "bookmark")
-                .imageScale(.small)
-        }
-        .accessibilityIdentifier("albums-favorites")
-        .accessibilityLabel("お気に入り、\(photos.count.formatted())枚")
-        .accessibilityHint("自分で選んだ写真を開きます")
-    }
     private var catNavigation: some View {
         CatProfileNavigationStrip {
             ForEach(albumProfiles) { profile in catLink(profile) }
@@ -1541,6 +1512,7 @@ struct SavedMemoriesGalleryView: View {
 
     let photos: [PhotoPresentation]
     let isDedicatedPhotoBookFlow: Bool
+    let isEmbedded: Bool
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var creationOutput: CreationOutput?
@@ -1556,10 +1528,12 @@ struct SavedMemoriesGalleryView: View {
     init(
         photos: [PhotoPresentation],
         startsInExportMode: Bool,
+        isEmbedded: Bool = false,
         exportPhotoBook: @escaping ([String]) async throws -> URL
     ) {
         self.photos = photos
         self.isDedicatedPhotoBookFlow = startsInExportMode
+        self.isEmbedded = isEmbedded
         self.exportPhotoBook = exportPhotoBook
         _creationOutput = State(initialValue: startsInExportMode ? .pdf : nil)
         _selectedExportIdentifiers = State(initialValue: Set<String>())
@@ -1570,7 +1544,7 @@ struct SavedMemoriesGalleryView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if photos.isEmpty {
                 ContentUnavailableView(
                     "まだありません",
@@ -1588,9 +1562,12 @@ struct SavedMemoriesGalleryView: View {
                 }
             }
         }
-        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "お気に入り")
+        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("saved-memories-gallery")
+        .accessibilityValue("お気に入り、\(photos.count.formatted())枚")
         .toolbar {
             if !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {

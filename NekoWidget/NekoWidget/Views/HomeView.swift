@@ -21,6 +21,8 @@ struct HomeView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
+    let isEmbedded: Bool
+    let supplementaryPhotos: AnyView?
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -43,7 +45,9 @@ struct HomeView: View {
         selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
         refreshPhotoSourceAlbums: @escaping () async -> Void = {},
         catProfilesPresentation: CatProfilesPresentation = .init(),
-        catProfilesActions: CatProfilesViewActions = .noOp
+        catProfilesActions: CatProfilesViewActions = .noOp,
+        isEmbedded: Bool = false,
+        supplementaryPhotos: AnyView? = nil
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -63,11 +67,13 @@ struct HomeView: View {
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
+        self.isEmbedded = isEmbedded
+        self.supplementaryPhotos = supplementaryPhotos
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 18) {
+            VStack(spacing: 18) {
                 if hasPhotoAccess {
                     if isLimitedAccess {
                         LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
@@ -91,6 +97,7 @@ struct HomeView: View {
                 } else {
                     photoAccessCard
                 }
+                supplementaryPhotos
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -99,12 +106,14 @@ struct HomeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
+            if !isEmbedded {
             ToolbarItem(placement: .topBarLeading) {
                 Button(action: showSettings) {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
+            }
             }
         }
         .navigationDestination(item: $openedCatProfileIdentifier) { identifier in

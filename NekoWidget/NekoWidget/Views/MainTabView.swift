@@ -3,6 +3,46 @@ import UIKit
 import ImageIO
 import Photos
 
+enum PhotoLibrarySection: String, CaseIterable {
+    case all, favorites, notes
+
+    var title: String {
+        switch self {
+        case .all: "すべて"
+        case .favorites: "お気に入り"
+        case .notes: "メモあり"
+        }
+    }
+}
+
+struct PhotoLibrarySectionPicker: View {
+    @Binding var selection: PhotoLibrarySection
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
+        layout {
+            ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                Button { selection = section } label: {
+                    Text(section.title)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(selection == section ? Color.accentColor : .clear,
+                                    in: RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(selection == section ? .white : .primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("photos-section-\(section.rawValue)")
+                .accessibilityAddTraits(selection == section ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+}
+
 enum PhotosRoute: Hashable {
     case photo(String)
     case collectionPhoto(String)
@@ -110,6 +150,8 @@ struct MainTabView: View {
     var personalArchiveStore: PersonalArchiveStore? = nil
 
     @State private var selectedTab: AppTab = .memories
+    @State private var photoLibrarySection: PhotoLibrarySection = .all
+    @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
@@ -154,27 +196,9 @@ struct MainTabView: View {
             .tag(AppTab.memories)
 
             NavigationStack(path: $photosPath) {
-                HomeView(
-                    scan: scan,
-                    hasPhotoAccess: hasPhotoAccess,
-                    isLimitedAccess: isLimitedAccess,
-                    shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
-                    requestPhotoAccess: requestPhotoAccess,
-                    chooseMorePhotos: chooseMorePhotos,
-                    showWidgetPlacementGuide: showWidgetPlacementGuide,
-                    showSettings: { showsSettings = true },
-                    rescan: { Task { await rescan() } },
-                    catPhotos: catPhotos,
-                    excludedCatPhotos: excludedCatPhotos,
-                    photoSourceAlbums: photoSourceAlbums,
-                    photoSourceStatus: photoSourceStatus,
-                    restoreCatCandidates: restoreCatCandidates,
-                    selectPhotoSourceAlbum: selectPhotoSourceAlbum,
-                    refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
-                    catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions
-                )
+                photoLibrary
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
+                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination)
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: .everyone)
                 }
@@ -208,7 +232,10 @@ struct MainTabView: View {
                 .tag(AppTab.windows)
             }
         }
-        .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
+        .sheet(isPresented: $showsSettings, onDismiss: {
+            photoLibraryRevision &+= 1
+            presentDeferredWidgetGuide()
+        }) {
             settingsSheet
         }
         .sheet(item: $relatedPhotoRoute) { route in
@@ -297,6 +324,54 @@ struct MainTabView: View {
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
             await seasonalMovieArchive.load()
         }
+    }
+
+    private var photoLibrary: some View {
+        VStack(spacing: 0) {
+            PhotoLibrarySectionPicker(selection: $photoLibrarySection)
+            photoLibraryContent.id(photoLibraryRevision)
+        }
+        .navigationTitle("写真")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { showsSettings = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("設定")
+                    .accessibilityIdentifier("window-settings-button")
+            }
+        }
+    }
+
+    @ViewBuilder private var photoLibraryContent: some View {
+        switch photoLibrarySection {
+        case .all:
+            allPhotosView
+        case .favorites:
+            SavedMemoriesGalleryView(photos: likedPhotos, startsInExportMode: false,
+                                    isEmbedded: true, exportPhotoBook: exportPhotoBook)
+        case .notes:
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, archiveStore: personalArchiveStore,
+                                     isEmbedded: true) { photoLibrarySection = .all }
+        }
+    }
+
+    private var allPhotosView: some View {
+        HomeView(
+            scan: scan, hasPhotoAccess: hasPhotoAccess, isLimitedAccess: isLimitedAccess,
+            shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
+            requestPhotoAccess: requestPhotoAccess, chooseMorePhotos: chooseMorePhotos,
+            showWidgetPlacementGuide: showWidgetPlacementGuide,
+            showSettings: { showsSettings = true }, rescan: { Task { await rescan() } },
+            catPhotos: catPhotos, excludedCatPhotos: excludedCatPhotos,
+            photoSourceAlbums: photoSourceAlbums, photoSourceStatus: photoSourceStatus,
+            restoreCatCandidates: restoreCatCandidates, selectPhotoSourceAlbum: selectPhotoSourceAlbum,
+            refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
+            catProfilesPresentation: catProfilesPresentation, catProfilesActions: catProfilesActions,
+            isEmbedded: true,
+            supplementaryPhotos: AnyView(PersonalArchivePhotosSection(
+                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore))
+        )
     }
 
     private var settingsSheet: some View {
@@ -617,6 +692,7 @@ struct MainTabView: View {
             seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
             openPhotos: {
+                photoLibrarySection = .all
                 photosPath = NavigationPath()
                 selectedTab = .photos
             },
@@ -672,6 +748,7 @@ struct MainTabView: View {
         switch route {
         case .memoryNotes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, archiveStore: personalArchiveStore) {
+                photoLibrarySection = .all
                 photosPath = NavigationPath()
                 selectedTab = .photos
             }

@@ -1,33 +1,49 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-memory-read-ui-v1",
-  "purpose": "One photo-and-words reading place for local notes and explicitly preserved personal records; exact read-only associations, search, dates, account-scoped presentation. Independent read-projection and lifecycle review completed; no storage schema or write transport changes.",
+  "scope": "reviewed-memory-read-ui-v2",
+  "purpose": "Independently reviewed Photos All/Favorites/With Notes navigation, preserved-photo reading, and the existing Settings archive route. Storage writes, encryption, cloud transport, Photos authorization, and Widget behavior are unchanged.",
   "visualReview": "user-device",
   "dataReview": "read-only-projection",
   "files": {
-    "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift": {
-      "before": "2f7f7593af6ebe6dfb834660a60e2ea9878d7f35ed2d5e8074250afd0ab597e8",
-      "after": "0604da63f3f731de12bbceecafc64ee649870dac0e0f7c3678ca316764f6851c"
+    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": {
+      "before": "f47a806f73c29e6272ec727356246bc03357414783d576bbd903e4c885b036b4",
+      "after": "46e2030b98399b0902619a34f8bfa9e554e96ba45f39a74f768c06a09ee8d053"
     },
-    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
-      "before": "733027fc67f69e0900ef7555775c5acc7f7841281c7257516a6ff17d9fe95173",
-      "after": "901017e89858dfdd06a43c89aba0b34ee142da01df40024ff1c720f16c1bc5a1"
+    "NekoWidget/NekoWidget/Views/HomeView.swift": {
+      "before": "4c3d474ab4664fbf1a70806b2b365def95109bae96d6c24fb49f391fc19e8b42",
+      "after": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0"
     },
-    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
-      "before": "ad7369a294edda664b027866ea51cd62e76a0e18d233fa024e54ded9b0348ee9",
-      "after": "6569c6b31c997d63a9749aa2dd224e356328347772ca2e10a1d533f159313787"
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "62f9be3b235d02d487993fd340820645c48fe0c91426c8f20f580b283b5601b4",
+      "after": "ebb4ed49b852723220740db3017915ef1e9eca4fe9e3e9330670a28a1ef67bf4"
     },
     "NekoWidget/NekoWidget/Views/MainTabView.swift": {
-      "before": "abcb3e2861382b0a8173fbb4862debac0b3fd92b23f4fcc229ee90624a2851b1",
-      "after": "3da86bbda7f16a612bce5c7a5a3055315e67812a01a0dc9457a7085331af33d7"
+      "before": "3da86bbda7f16a612bce5c7a5a3055315e67812a01a0dc9457a7085331af33d7",
+      "after": "c49c1e61e8e86be6d23d2ef08b2943c02e73475ea14abdfcb979de316eb0ddd0"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
+      "before": "901017e89858dfdd06a43c89aba0b34ee142da01df40024ff1c720f16c1bc5a1",
+      "after": "bd60573e1728629d71c82a5c7d7194e403f96337337e17a1f8a7cbaacbe9b22a"
+    },
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
+      "before": "94ef6896c1ff417411eaafe016796075895b84ee357992b26a803ba123feed22",
+      "after": "8403a9683369a427ea5c7a993736a53ba9cac021549169d382069a5a5a480350"
+    },
+    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift": {
+      "before": "a8f57114b4c059feddc398977edab06997b4a784d6209bf08d554becf87cb989",
+      "after": "d8be4456ce829f1855d9ab85f43fc3f0f2b3064fe635b928b04115ff19a4576f"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "2ee39f02f58b39dae7039a796e96202e0c40e72ae6a3f5ed97e2063d45cc51f8",
-      "after": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706"
+      "before": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706",
+      "after": "29709112742b1f148dbdcef262bdab9494028e6ac9feca590b84b5ec5cafe0d1"
     },
-    "NekoWidget/ci/verify-personal-archive.swift": {
-      "before": "0fe88c785274ed78642c61823ff9eff0ace0c5a52781f8bfb1f29028f6995f8d",
-      "after": "3d3324ab1d6e897c63e9d01fd59d41c395d933ead2f36b5900aef1ee547849d6"
+    "NekoWidget/ci/test-app-store-screenshot-workflow.py": {
+      "before": "cfbbcf86804c1de1c1a6250b4dba4589436b2c25b24a1956b1dae2249125c2d7",
+      "after": "638b093bd0c9f2f7fd3f182f76fe3e24bcae055a8db67e0013a05e63995a2d65"
+    },
+    "NekoWidget/ci/test-family-window-widget-boundaries.py": {
+      "before": "6493c0ce078095229ca0e656e69eff33b49531c33138b2c2a1b6a34af7863c58",
+      "after": "607ee23ee2d5ee78fde0ff1ef683fe7f46f840c6e010c61e7d4a6bee6379ed7f"
     }
   }
 }

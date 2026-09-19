@@ -334,7 +334,8 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.fixture,
         )
         self.assertIn("requirements: [(1, 1), (2, 1), (3, 1)]", self.ui_test)
-        self.assertIn('app.descendants(matching: .any)["albums-favorites"]', self.ui_test)
+        self.assertIn('app.buttons["photos-section-favorites"]', self.ui_test)
+        self.assertIn('app.descendants(matching: .any)["saved-memories-gallery"]', self.ui_test)
         self.assertIn('app.buttons["saved-memories-selection-toggle"]', self.ui_test)
         self.assertIn('app.buttons["photo-book-export"]', self.ui_test)
         self.assertIn('"album-primary-all-cat-photos"', self.album_view)

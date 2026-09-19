@@ -318,6 +318,9 @@ enum AppStoreScreenshotFixture {
 
 @MainActor
 struct AppStoreScreenshotFixtureRootView: View {
+    private static let archiveStore = PersonalArchiveStore(directory:
+        FileManager.default.temporaryDirectory.appendingPathComponent("AppStoreArchiveFixture/\(UUID().uuidString)"),
+        transport: PersonalArchiveFixtureTransport())
     var widgetPhotoIdentifier: String? = nil
     var widgetPhotoShownAt: Date? = nil
     @State private var selectedPhotoIdentifier: String?
@@ -475,7 +478,8 @@ struct AppStoreScreenshotFixtureRootView: View {
             restoreCatCandidates: { _ in },
             selectPhotoSourceAlbum: { _ in },
             refreshPhotoSourceAlbums: {},
-            exportJSON: { nil }
+            exportJSON: { nil },
+            personalArchiveStore: Self.archiveStore
         )
     }
 
@@ -654,6 +658,8 @@ private struct MainlineAcceptanceFixtureRootView: View {
 private final class SoloMemoriesFixturePersistence: ObservableObject {
     let defaults: UserDefaults
     let recommendations: AlbumHighlightRecommendationStore
+    let memoryNotes: PhotoMemoryNoteStore
+    let archive: PersonalArchiveStore
 
     init(scenario: String) {
         let suiteName = "neko.fixture.albums.\(scenario)"
@@ -663,6 +669,11 @@ private final class SoloMemoriesFixturePersistence: ObservableObject {
         recommendations = AlbumHighlightRecommendationStore(
             defaults: defaults, timeZone: TimeZone(secondsFromGMT: 0)!
         )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SoloMemoriesFixture/\(UUID().uuidString)")
+        memoryNotes = PhotoMemoryNoteStore(fileURL: directory.appendingPathComponent("notes.json"))
+        archive = PersonalArchiveStore(directory: directory.appendingPathComponent("archive"),
+                                       transport: PersonalArchiveFixtureTransport())
     }
 }
 
@@ -675,6 +686,9 @@ private struct SoloMemoriesFixtureView: View {
     @State private var showsOtherScreen = false
     @State private var otherScreenTitle = "別の画面"
     @State private var detailPath = NavigationPath()
+    @State private var photosPath = NavigationPath()
+    @State private var selectedFixtureTab = "albums"
+    @State private var photoSection: PhotoLibrarySection = .all
     @State private var highlightMemoryRequest = "none"
     @State private var savedFixturePhotoIdentifiers: Set<String> = ["app-store-screenshot-fixture-9"]
     @State private var excludedFixturePhotoIdentifiers = Set<String>()
@@ -693,8 +707,30 @@ private struct SoloMemoriesFixtureView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $detailPath) {
-            albumsView()
+        TabView(selection: $selectedFixtureTab) {
+            fixtureNavigation(isAlbums: true)
+                .tabItem {
+                    Label("アルバム", systemImage: "rectangle.stack")
+                        .accessibilityIdentifier("main-tab-albums")
+                }
+                .tag("albums")
+            fixtureNavigation(isAlbums: false)
+                .tabItem {
+                    Label("写真", systemImage: "photo.on.rectangle")
+                        .accessibilityIdentifier("main-tab-photos")
+                }
+                .tag("photos")
+        }
+        .dynamicTypeSize(scenario.hasSuffix("-large") ? .accessibility5 : .large)
+        .overlay(alignment: .topLeading) { fixtureEvidence }
+    }
+
+    private func fixtureNavigation(isAlbums: Bool) -> some View {
+        NavigationStack(path: isAlbums ? $detailPath : $photosPath) {
+            Group {
+                if isAlbums { albumsView() }
+                else { photoLibrary }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -776,7 +812,7 @@ private struct SoloMemoriesFixtureView: View {
                             .accessibilityIdentifier("solo-memories-detail-destination")
                             .accessibilityValue(detailRouteKey(route))
                         Button("アルバムに戻る") {
-                            if !detailPath.isEmpty { detailPath.removeLast() }
+                            popFixtureDetail(isAlbums: isAlbums)
                         }
                         .accessibilityIdentifier("solo-memories-detail-return")
                     }
@@ -793,15 +829,22 @@ private struct SoloMemoriesFixtureView: View {
                             .accessibilityIdentifier("solo-memories-detail-destination")
                             .accessibilityValue(albumRouteKey(route))
                         Button("アルバムに戻る") {
-                            if !detailPath.isEmpty { detailPath.removeLast() }
+                            popFixtureDetail(isAlbums: isAlbums)
                         }
                         .accessibilityIdentifier("solo-memories-detail-return")
                     }
                 }
             }
         }
-        .dynamicTypeSize(scenario.hasSuffix("-large") ? .accessibility5 : .large)
-        .overlay(alignment: .topLeading) {
+    }
+
+    private func popFixtureDetail(isAlbums: Bool) {
+        if isAlbums {
+            if !detailPath.isEmpty { detailPath.removeLast() }
+        } else if !photosPath.isEmpty { photosPath.removeLast() }
+    }
+
+    private var fixtureEvidence: some View {
             VStack {
                 Text("loaded")
                     .accessibilityIdentifier("solo-memories-loaded-\(loadedCount)")
@@ -815,7 +858,27 @@ private struct SoloMemoriesFixtureView: View {
             }
             .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
             .allowsHitTesting(false)
+    }
+
+    private var photoLibrary: some View {
+        VStack(spacing: 0) {
+            PhotoLibrarySectionPicker(selection: $photoSection)
+            switch photoSection {
+            case .all:
+                HomeView(scan: albumScan, hasPhotoAccess: hasPhotoAccess, isLimitedAccess: false,
+                    shouldOfferWidgetPlacementGuide: false, requestPhotoAccess: {}, chooseMorePhotos: {},
+                    showWidgetPlacementGuide: {}, showSettings: {}, rescan: {},
+                    catPhotos: fixturePhotos, isEmbedded: true)
+            case .favorites:
+                SavedMemoriesGalleryView(photos: savedPhotos, startsInExportMode: false,
+                    isEmbedded: true, exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
+            case .notes:
+                PhotoMemoryNotesListView(photos: fixturePhotos, store: persistence.memoryNotes,
+                    archiveStore: persistence.archive, isEmbedded: true) { photoSection = .all }
+            }
         }
+        .navigationTitle("写真")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func albumsView(
@@ -834,8 +897,8 @@ private struct SoloMemoriesFixtureView: View {
             seasonalMovies: scope == .everyone ? seasonalMovies : [],
             exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
             openPhotos: {
-                otherScreenTitle = "写真"
-                showsOtherScreen = true
+                photoSection = .all
+                selectedFixtureTab = "photos"
             },
             albumSections: albumSections(for: scope),
             albumScan: scenario == "solo-memories-seasonal-large" || usesHighlightPhotos ? albumScan : nil,

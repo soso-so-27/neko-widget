@@ -59,7 +59,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launch()
 
         guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
-              app.descendants(matching: .any)["albums-favorites"].waitForExistence(timeout: 10) else {
+              app.descendants(matching: .any)["albums-root"].waitForExistence(timeout: 10) else {
             fail("The Albums root did not appear first.", application: app)
             return
         }
@@ -86,14 +86,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
 
-        let favorites = app.descendants(matching: .any)["albums-favorites"].firstMatch
-        for _ in 0..<8 where !(favorites.exists && favorites.isHittable) { app.swipeDown() }
-        guard favorites.isHittable else {
-            fail("The favorites entry was not reachable from Albums.", application: app)
+        guard tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") else {
+            fail("The Photos tab was not reachable from Albums.", application: app)
+            return
+        }
+        let favorites = app.buttons["photos-section-favorites"]
+        guard favorites.waitForExistence(timeout: 10), favorites.isHittable else {
+            fail("The Favorites section was not reachable in Photos.", application: app)
             return
         }
         favorites.tap()
-        guard app.navigationBars["お気に入り"].waitForExistence(timeout: 10),
+        guard app.descendants(matching: .any)["saved-memories-gallery"].waitForExistence(timeout: 10),
               waitForFixturePhotos(in: app, requirements: [(9, 1), (10, 1), (11, 1)]) else {
             fail("The complete favorites gallery did not render.", application: app)
             return
@@ -113,8 +116,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "review-favorites-creation-options")
         createPDF.tap()
-        guard app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 10),
-              app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
+        guard app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
             fail("PDF creation was not available after photo selection opened.", application: app)
             return
         }
@@ -122,16 +124,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
         captureScreenshot(named: "review-favorites-selection")
         selectSavedPhotos.tap()
-        guard app.navigationBars["お気に入り"].waitForExistence(timeout: 10) else {
+        guard app.navigationBars["写真"].waitForExistence(timeout: 10) else {
             fail("Canceling selection did not restore favorites browsing.", application: app)
             return
         }
-        app.navigationBars["お気に入り"].buttons.element(boundBy: 0).tap()
-        guard app.navigationBars["アルバム"].waitForExistence(timeout: 10),
-              tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") else {
-            fail("Favorites could not return to Albums and open Photos.", application: app)
-            return
-        }
+        app.buttons["photos-section-all"].tap()
         guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 15),
               app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"].isHittable,
               waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]) else {
