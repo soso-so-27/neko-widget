@@ -1,6 +1,25 @@
 # 185：記録の作成画面を開く際のクラッシュ
 
-## 利用者報告と現在の状態
+## 現在の状態（2026-09-19、186アップロード完了）
+
+185の実報告2件は iOS 27.0 (24A437)。配布185とUUIDが一致するdSYMで、終了時に全写真の並べ替えが主スレッドを占有していたことを確認した。通常アルバムの集計を描画から切り離す修正を含む **186を内部TestFlight向けにAppleへアップロード済み**。実iOS 27端末でのクラッシュ解消、Apple側の処理完了・配布画面の表示は未確認。
+
+製品修正 `0b3189c`、テストの型補正 `feebe7b`、既存検証の参照先調整 `822c942` をまとめた候補 **`822c942bd7c675ba1061de644c67175e347e8ba2`**（commit日時 2026-09-19 11:13:09 JST）を検証し、その同じSHAを `origin/main` へfast-forwardして配布した。検証待ち・配布前に別の製品差分は加えていない。
+
+| 証拠 | 結果・時刻（JST） |
+| --- | --- |
+| 候補CI [35415010889](https://github.com/soso-so-27/neko-widget/actions/runs/35415010889) | full-v1全8job成功。11:13:16–12:12:46、59分30秒 |
+| アルバム集計の既存Swift検証 | 最新候補の6,002写真で除外・成長写真上書き・取消境界PASS、Mac上の集計0.4055秒。実機の画面応答時間を示す値ではない |
+| app-ui job `105822048052` | 51件、失敗0。`testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText` は12:05:03にPASS（27.940秒）。実Settings経路を通るが、保管transportはfixtureであり実CloudKit通信の証明ではない |
+| main CI [35417942551](https://github.com/soso-so-27/neko-widget/actions/runs/35417942551) | 12:13:33–12:13:53、成功。上記同SHA候補の全必須成功をplanが再利用 |
+| 配布 [35418036611](https://github.com/soso-so-27/neko-widget/actions/runs/35418036611) / job `105830349833` | build 186、media-staging。既存CLI dry-runで直前予約185・186未使用を確認後、同一引数でdispatch。対象SHA/buildを照合して既存testflight環境を承認。12:15:31–12:22:00、成功 |
+| Apple upload | **12:21:55 `UPLOAD SUCCEEDED with no errors`**。Delivery UUID `377d41a8-d4fb-4a73-8a34-ec331db65924`。archive/export/validateも成功 |
+
+配布ログではbuild 186、PersonalArchive有効、archiveのiCloud `Production` / `iCloud.jp.nekowidget.app.personal` を確認。署名設定の確認と、実端末のCloudKit動作確認は区別する。証拠は `C:/dev/neko-evidence/crash185-20260919/` の `candidate-822c942/`、`main-822c942/`、`testflight186/` とCLI dry-run/dispatch記録に保存。旧候補 `35414441311` / `35414698132` のキャンセル結果は成功証拠に使用していない。
+
+以下は調査時点の経緯を残したもの。「OS未確認」「未配布」「検証未実施」等の過去記述より、この現在状態を優先する。
+
+## 利用者報告と調査開始時の状態（履歴）
 
 2026-09-19、設定→記録の保管は開くが、「写真と言葉を選ぶ」を押した直後にアプリが落ちるとの報告。写真選択後や保管実行時ではない。最新main c4a2318から独立worktree `C:/dev/neko-archive-crash-20260919` / `codex/archive-crash-20260919` を作成した。原因確定・修正版配布・実機解決はまだできていない。
 
