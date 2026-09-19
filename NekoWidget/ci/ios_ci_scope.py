@@ -20,9 +20,10 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
+ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          REVIEWED_APP_SCOPE)
+          REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -66,6 +67,7 @@ CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
     "NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py",
     "NekoWidget/ci/reviewed-app-ui.json",
+    "NekoWidget/ci/archive-picker-ui.json",
 })
 CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
     "NekoWidget/ci/" + name for name in (
@@ -80,7 +82,36 @@ REVIEWABLE_APP_PATHS = PHOTO_VIEWS | frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
 })
-MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS
+ARCHIVE_PICKER_MANIFEST = "NekoWidget/ci/archive-picker-ui.json"
+# One reviewed integration batch, not general permission to change these files.
+# Require all three: the real picker regression and its seed must accompany the
+# presentation fix. Storage, configuration, AppRoot and workflow stay outside.
+ARCHIVE_PICKER_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/ci/run-sharing-runtime-matrix.sh",
+})
+MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+                | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS)
+
+
+def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    if set(changes) != ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST}:
+        return False
+    try:
+        review = json.loads(changes[ARCHIVE_PICKER_MANIFEST][1])
+        if (set(review) != {"schemaVersion", "scope", "purpose", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != ARCHIVE_PICKER_SCOPE
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != ARCHIVE_PICKER_PATHS):
+            return False
+        return all(review["files"][path] == {
+            "before": source_digest(changes[path][0]),
+            "after": source_digest(changes[path][1]),
+        } for path in ARCHIVE_PICKER_PATHS)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -189,6 +220,7 @@ def accepts_paths(scope: str, paths) -> bool:
         WIDGET_STYLE_SCOPE: WIDGET_LAYOUT_PATHS,
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
+        ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
     }
     sources = source_paths(paths)
     return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
@@ -204,6 +236,10 @@ REVIEWED_APP_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
     "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
     "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
     "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
+))
+ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
+    "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
 GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
@@ -234,6 +270,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == ARCHIVE_PICKER_SCOPE:
+        return ARCHIVE_PICKER_TESTS
     if scope == REVIEWED_APP_SCOPE:
         return REVIEWED_APP_TESTS
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
@@ -382,6 +420,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None) -> str:
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if archive_picker_changes(changes):
+        return ARCHIVE_PICKER_SCOPE
     if reviewed_app_changes(changes):
         return REVIEWED_APP_SCOPE
     if set(changes) <= CI_SELECTION_PATHS:

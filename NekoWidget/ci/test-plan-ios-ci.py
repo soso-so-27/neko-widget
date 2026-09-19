@@ -22,6 +22,91 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def archive_picker_batch(self):
+        changes = {path: ("before " + path, "after " + path)
+                   for path in scope.ARCHIVE_PICKER_PATHS}
+        manifest = {"schemaVersion": 1, "scope": scope.ARCHIVE_PICKER_SCOPE,
+                    "purpose": "Reviewed screen-owned picker and seeded real-picker regression",
+                    "files": {path: {"before": scope.source_digest(pair[0]),
+                                     "after": scope.source_digest(pair[1])}
+                              for path, pair in changes.items()}}
+        changes[scope.ARCHIVE_PICKER_MANIFEST] = ("{}", json.dumps(manifest))
+        return changes
+
+    def test_archive_picker_requires_exact_review_of_complete_batch(self):
+        changes = self.archive_picker_batch()
+        self.assertEqual(scope.select_scope(changes), scope.ARCHIVE_PICKER_SCOPE)
+        for path in changes:
+            self.assertEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}),
+                             scope.FULL_SCOPE)
+        for path in scope.ARCHIVE_PICKER_PATHS:
+            for pair in ((changes[path][0] + "stale", changes[path][1]),
+                         (changes[path][0], changes[path][1] + "extra")):
+                self.assertEqual(scope.select_scope(dict(changes, **{path: pair})), scope.FULL_SCOPE)
+        for path in (scope.REVIEW_MANIFEST, "NekoWidget/ci/ios_ci_scope.py",
+                     "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
+                     "NekoWidget/NekoWidget/App/AppRootView.swift", "../unsafe.swift"):
+            self.assertEqual(scope.select_scope(dict(changes, **{path: ("a", "b")})), scope.FULL_SCOPE)
+        for malformed in ("[]", "null", "{", "{}", changes[scope.ARCHIVE_PICKER_MANIFEST][1]
+                          .replace(scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_APP_SCOPE)):
+            self.assertEqual(scope.select_scope(dict(changes, **{
+                scope.ARCHIVE_PICKER_MANIFEST: ("{}", malformed)})), scope.FULL_SCOPE)
+
+    def test_archive_picker_keeps_build_photo_scan_and_two_os_runtime(self):
+        selected = scope.ARCHIVE_PICKER_SCOPE
+        required = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected)
+        self.assertEqual(planner.required_jobs(list(self.archive_picker_batch()), selected), required)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), (
+            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
+            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText"))
+        self.assertEqual(scope.smoke_tests(selected),
+            ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        # Existing metadata test iterates every scope and requires both runtime OSes.
+        jobs = [dict(name=name, head_sha=self.sha, status="completed", conclusion="success")
+                for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.required_jobs_from_scope(scope.REVIEWED_APP_SCOPE), self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            for conclusion in ("skipped", "failure", "cancelled"):
+                altered = copy.deepcopy(jobs)
+                altered[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(altered, required, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs + [jobs[-1]], required, self.sha))
+
+    def test_archive_picker_raw_modes_and_manual_dispatch_fail_closed(self):
+        changes = self.archive_picker_batch()
+        paths = sorted(changes)
+        base = "b" * 40
+        def select(header=":100644 100644", status="M", event_name="push"):
+            def git(*args):
+                if args[0] == "diff":
+                    return "".join(f"{header if i == 0 else ':100644 100644'} {base} {self.sha} "
+                                   f"{status if i == 0 else 'M'}\0{p}\0" for i, p in enumerate(paths))
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return self.sha
+            env = dict(self.env, GITHUB_EVENT_NAME=event_name)
+            with patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {"before": base}, env)
+        self.assertEqual(select(), scope.ARCHIVE_PICKER_SCOPE)
+        for header, status in ((":000000 100644", "A"), (":100644 000000", "D"),
+                               (":100644 100755", "M"), (":100644 120000", "T")):
+            self.assertEqual(select(header, status), scope.FULL_SCOPE)
+        self.assertEqual(select(event_name="workflow_dispatch"), scope.FULL_SCOPE)
+
+    def test_empty_archive_manifest_allows_ci_candidate_but_not_product_exemption(self):
+        manifest = json.dumps({"schemaVersion": 1, "scope": scope.ARCHIVE_PICKER_SCOPE,
+                               "purpose": "Inactive CI candidate", "files": {}})
+        self.assertEqual(scope.select_scope({scope.ARCHIVE_PICKER_MANIFEST: ("", manifest),
+            "NekoWidget/ci/ios_ci_scope.py": ("old selection", "new selection")}), scope.CI_SELECTION_SCOPE)
+        self.assertEqual(scope.select_scope(dict(self.archive_picker_batch(), **{
+            scope.ARCHIVE_PICKER_MANIFEST: ("{}", manifest)})), scope.FULL_SCOPE)
+
     def test_reviewed_app_batch_requires_exact_contents_and_entire_change_set(self):
         path = "NekoWidget/NekoWidget/Views/MainTabView.swift"
         pair = ("old app body\n", "new app body\n")

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "scope": "archive-picker-ui-v1",
+  "purpose": "Inactive until the complete picker presentation, real-picker regression and seed diff is reviewed.",
+  "files": {}
+}

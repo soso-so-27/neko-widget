@@ -149,7 +149,7 @@ class LaneTests(unittest.TestCase):
                         "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
                 self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
-                self.assertEqual(maximum_running, 4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE) else 5)
+                self.assertEqual(maximum_running, 4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE) else 5)
                 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
