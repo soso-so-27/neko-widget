@@ -230,7 +230,7 @@ struct PhotoMemoryNotesListView: View {
         }.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
     }
 
-    var body: some View {
+    @ViewBuilder private var readingList: some View {
         let visible = items
         let displayedAccount = library.archive?.account.context
         List {
@@ -266,82 +266,65 @@ struct PhotoMemoryNotesListView: View {
                 }
                 .accessibilityIdentifier("memory-notes-empty")
             } else {
-                let years = Dictionary(grouping: visible) { Calendar.current.component(.year, from: $0.date) }
-                ForEach(years.keys.sorted(by: >), id: \.self) { year in
-                    Section(String(year) + "年") {
-                        ForEach(years[year] ?? []) { item in
-                            if let local = item.local {
-                                Group {
-                                    if access.photo(for: local.photoIdentifier) == nil, let copy = item.preserved {
-                                        Button {
-                                            guard let displayedAccount else { return }
-                                            selectedArchiveAccount = displayedAccount
-                                            selectedSourceNote = local.id
-                                            selectedArchive = copy
-                                        } label: { row(item) }
-                                            .buttonStyle(.plain)
-                                    } else {
-                                        NavigationLink(value: MemoriesRoute.memoryNote(local.id)) { row(item) }
-                                    }
-                                }
-                                .accessibilityIdentifier("memory-note-row-\(local.id.uuidString)")
-                                .accessibilityValue(item.preserved != nil ? "iCloudに保管済み" : "このiPhoneのメモ")
-                            } else if let copy = item.preserved {
-                                Button {
-                                    guard let displayedAccount else { return }
-                                    selectedArchiveAccount = displayedAccount
-                                    selectedSourceNote = nil
-                                    selectedArchive = copy
-                                } label: { row(item) }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("memory-archive-row-\(copy.id.uuidString)")
-                            }
-                        }
-                    }
+                yearSections(visible, account: displayedAccount)
+            }
+        }
+
+    }
+
+    @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem], account: String?) -> some View {
+        let years = Dictionary(grouping: visible) { Calendar.current.component(.year, from: $0.date) }
+        ForEach(years.keys.sorted(by: >), id: \.self) { year in
+            Section(String(year) + "年") {
+                ForEach(years[year] ?? []) { item in
+                    readingLink(item, account: account)
                 }
             }
         }
+    }
+
+    @ViewBuilder private func readingLink(_ item: MemoryReadingItem, account: String?) -> some View {
+        if let local = item.local {
+            Group {
+                if access.photo(for: local.photoIdentifier) == nil, let copy = item.preserved {
+                    Button {
+                        guard let account else { return }
+                        selectedArchiveAccount = account
+                        selectedSourceNote = local.id
+                        selectedArchive = copy
+                    } label: { row(item) }
+                        .buttonStyle(.plain)
+                } else {
+                    NavigationLink(value: MemoriesRoute.memoryNote(local.id)) { row(item) }
+                }
+            }
+            .accessibilityIdentifier("memory-note-row-\(local.id.uuidString)")
+            .accessibilityValue(item.preserved != nil ? "iCloudに保管済み" : "このiPhoneのメモ")
+        } else if let copy = item.preserved {
+            Button {
+                guard let account else { return }
+                selectedArchiveAccount = account
+                selectedSourceNote = nil
+                selectedArchive = copy
+            } label: { row(item) }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("memory-archive-row-\(copy.id.uuidString)")
+        }
+    }
+
+    var body: some View {
+        readingList
         .listStyle(.insetGrouped)
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "言葉・猫の名前で探す")
         .refreshable { await library.reload() }
         .navigationTitle("写真と言葉")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button(action: openPhotos) { Image(systemName: "plus") }
-                    .accessibilityLabel("写真に思い出を添える")
-                if archiveEnabled {
-                    Menu {
-                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
-                            Task { await library.refreshFromCloud() }
-                        }.disabled(library.isRefreshingCloud)
-                        NavigationLink { PersonalArchiveView(store: archiveStore) } label: {
-                            Label("iCloudの保管を管理", systemImage: "icloud")
-                        }.accessibilityIdentifier("memory-notes-archive")
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("保管の操作")
-                    .accessibilityIdentifier("memory-notes-menu")
-                }
-            }
-        }
+        .toolbar { readingToolbar }
         .navigationDestination(isPresented: Binding(
             get: { selectedArchive != nil }, set: { if !$0 { selectedArchive = nil } }
         )) {
-            if let selectedArchive, let selectedArchiveAccount {
-                PersonalArchiveRecordView(record: selectedArchive, store: archiveStore,
-                                          expectedAccount: selectedArchiveAccount)
-                    .toolbar {
-                        if let selectedSourceNote {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                NavigationLink(value: MemoriesRoute.memoryNote(selectedSourceNote)) {
-                                    Image(systemName: "note.text")
-                                }
-                                .accessibilityLabel("このiPhoneの元のメモを開く")
-                            }
-                        }
-                    }
-            }
+            archiveDestination
         }
         .accessibilityIdentifier("memory-notes-list")
         .task {
@@ -369,6 +352,42 @@ struct PhotoMemoryNotesListView: View {
                 if scenePhase == .active { Task { await library.reload() } }
             }
         .onDisappear { access.stop() }
+    }
+
+    @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(action: openPhotos) { Image(systemName: "plus") }
+                    .accessibilityLabel("写真に思い出を添える")
+                if archiveEnabled {
+                    Menu {
+                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
+                            Task { await library.refreshFromCloud() }
+                        }.disabled(library.isRefreshingCloud)
+                        NavigationLink { PersonalArchiveView(store: archiveStore) } label: {
+                            Label("iCloudの保管を管理", systemImage: "icloud")
+                        }.accessibilityIdentifier("memory-notes-archive")
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("保管の操作")
+                    .accessibilityIdentifier("memory-notes-menu")
+                }
+            }
+        }
+
+    @ViewBuilder private var archiveDestination: some View {
+            if let selectedArchive, let selectedArchiveAccount {
+                PersonalArchiveRecordView(record: selectedArchive, store: archiveStore,
+                                          expectedAccount: selectedArchiveAccount)
+                    .toolbar {
+                        if let selectedSourceNote {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                NavigationLink(value: MemoriesRoute.memoryNote(selectedSourceNote)) {
+                                    Image(systemName: "note.text")
+                                }
+                                .accessibilityLabel("このiPhoneの元のメモを開く")
+                            }
+                        }
+                    }
+            }
     }
 
     private func row(_ item: MemoryReadingItem) -> some View {
