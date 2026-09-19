@@ -170,6 +170,16 @@ private struct MemoryReadingItem: Identifiable {
         if local?.note.writtenAt != nil || preserved?.context?.writtenAt != nil { return "記入" }
         return local != nil ? "更新" : "保管"
     }
+    var archiveLabel: String {
+        guard let preserved else { return "" }
+        if preserved.isDeletionPending { return "削除待ち" }
+        switch preserved.state {
+        case .stored: return "保管した記録"
+        case .pending: return "iCloudへの保管待ち"
+        case .partial: return "写真を取り戻せていません"
+        case .conflict: return "内容の確認が必要です"
+        }
+    }
 }
 
 struct PhotoMemoryNotesListView: View {
@@ -387,7 +397,7 @@ struct PhotoMemoryNotesListView: View {
                 Text("\(item.dateLabel) \(item.date.formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
                 if item.local == nil {
-                    Label(item.preserved?.isDeletionPending == true ? "削除待ち" : "保管した記録", systemImage: "icloud")
+                    Label(item.archiveLabel, systemImage: "icloud")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
