@@ -27,3 +27,5 @@
 最初の製品候補a485ecfのBuildは、workflowに直書きされた旧albums-favoritesの存在チェックで停止した。移設に伴うPython検証とUI操作は追従したが、.github側の旧期待を見落とした。製品に不要な旧IDを戻す回避はせず、実際のお気に入り一覧を示すsaved-memories-galleryへ期待を更新した。
 
 workflowの変更を含むため、次候補は既存のfail-closed規則によるfull検証になる。今回の途中で更なるCI基盤試作を重ねない。最初の限定候補の成功とは扱わず、手戻り時間も記録する。
+
+78c81a3でも同じstepの古いaccessibilityLabel期待が停止原因になった。現在の一覧は同じ枚数をaccessibilityValueで提供しているため期待を修正。workflowの当該静的shellブロック全体を抽出してGit Bashで実行し、後続の全grep/awk/件数条件までexit 0を確認した（`C:/dev/neko-evidence/photo-library-sections-20260920/photo-boundary-static-current.log`）。先頭の一件だけで再pushした確認不足を記録する。
