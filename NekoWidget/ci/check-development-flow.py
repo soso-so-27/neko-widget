@@ -16,6 +16,8 @@ CHECKS = (
     "test-app-store-screenshot-workflow.py",
     "test-release-testflight.py",
     "test-testflight-release-evidence-workflow.py",
+    "test-app-icon-ci.py",
+    "test-watch-ci-run.py",
 )
 
 

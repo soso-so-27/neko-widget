@@ -30,6 +30,7 @@ jobs:
       actions: read
     outputs:
       build: ${{ steps.scope.outputs.build }}
+      build_name: ${{ steps.scope.outputs.build_name }}
       smoke: ${{ steps.scope.outputs.smoke }}
       smoke_name: ${{ steps.scope.outputs.smoke_name }}
       sharing: ${{ steps.scope.outputs.sharing }}
@@ -53,7 +54,7 @@ jobs:
         run: python3 NekoWidget/ci/plan-ios-ci.py
 
   build-without-signing:
-    name: Build disabled app and extensions without signing
+    name: ${{ needs.plan.outputs.build_name }}
     needs: plan
     if: needs.plan.outputs.build == 'true'
     runs-on: macos-15
@@ -992,6 +993,19 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
             build
+
+      - name: Verify packaged icons and capture first launch
+        if: needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1'
+        run: python3 NekoWidget/ci/verify-app-icon.py --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" --artifacts "$RUNNER_TEMP/app-icon-check"
+
+      - name: Upload icon display evidence
+        if: always() && (needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: app-icon-check-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/app-icon-check
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload build result bundle
         if: always()

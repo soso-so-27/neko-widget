@@ -199,6 +199,9 @@ class WidgetScopeTests(unittest.TestCase):
         sha = "a" * 40
         for selected in scope.SCOPES:
             required = planner.required_jobs_from_scope(selected)
+            if selected == scope.ICON_SCOPE:
+                self.assertEqual(required, (planner.ICON_BUILD,))
+                continue
             self.assertIn(planner.smoke_job(selected), required)
             if selected != scope.FULL_SCOPE:
                 self.assertEqual(scope.smoke_tests(selected), bootstrap)

@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 
+from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, ICON_WORKFLOW_STEPS, icon_workflow_wired
+
 
 FULL_SCOPE = "full-v1"
 PHOTO_SCOPE = "photo-ui-v1"
@@ -22,7 +24,7 @@ CI_SELECTION_SCOPE = "ci-selection-v1"
 REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          REVIEWED_APP_SCOPE)
+          REVIEWED_APP_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -66,6 +68,9 @@ CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
     "NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py",
     "NekoWidget/ci/reviewed-app-ui.json",
+    "NekoWidget/ci/app_icon_ci.py", "NekoWidget/ci/verify-app-icon.py",
+    "NekoWidget/ci/test-app-icon-ci.py", "NekoWidget/ci/watch-ci-run.py",
+    "NekoWidget/ci/test-watch-ci-run.py",
 })
 CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
     "NekoWidget/ci/" + name for name in (
@@ -80,7 +85,7 @@ REVIEWABLE_APP_PATHS = PHOTO_VIEWS | frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
 })
-MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS
+MAPPED_PATHS = MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ICON_PATHS | ICON_DOC_PATHS
 
 
 def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -118,7 +123,12 @@ def source_digest(source: str) -> str:
 
 def workflow_execution(source: str) -> tuple[str, ...]:
     """Ignore only reviewed selection wiring; keep builds/security/commands."""
+    if icon_workflow_wired(source):
+        source = source.replace(ICON_WORKFLOW_STEPS, "")
     selection_lines = {
+        "      build_name: ${{ steps.scope.outputs.build_name }}",
+        "    name: Build disabled app and extensions without signing",
+        "    name: ${{ needs.plan.outputs.build_name }}",
         "      smoke_name: ${{ steps.scope.outputs.smoke_name }}",
         "      app_ui: ${{ steps.scope.outputs.app_ui }}",
         "      matrix_parallelism: ${{ steps.scope.outputs.matrix_parallelism }}",
@@ -160,6 +170,8 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     if CI_WORKFLOW in changes:
         before, after = changes[CI_WORKFLOW]
+        if ("verify-app-icon.py" in before or "verify-app-icon.py" in after) and not icon_workflow_wired(after):
+            return False
         if workflow_execution(before) != workflow_execution(after):
             return False
     if CI_SMOKE_SCRIPT in changes:
@@ -189,6 +201,7 @@ def accepts_paths(scope: str, paths) -> bool:
         WIDGET_STYLE_SCOPE: WIDGET_LAYOUT_PATHS,
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
+        ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
     sources = source_paths(paths)
     return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
@@ -234,6 +247,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == ICON_SCOPE:
+        return ()  # The build job installs/captures the real app once.
     if scope == REVIEWED_APP_SCOPE:
         return REVIEWED_APP_TESTS
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
@@ -253,6 +268,8 @@ def native_tests(scope: str) -> tuple[str, ...]:
 
 def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
+    if scope == ICON_SCOPE:
+        return ()
     if scope == WIDGET_STYLE_SCOPE:
         return tuple(lane for lane in LANES if lane != "app-ui")
     if scope in (WIDGET_BEHAVIOR_SCOPE, CI_SELECTION_SCOPE):
