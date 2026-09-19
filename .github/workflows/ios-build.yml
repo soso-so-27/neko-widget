@@ -636,7 +636,7 @@ jobs:
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'accessibilityIdentifier("albums-favorites")' \
+          grep -Fq 'accessibilityIdentifier("saved-memories-gallery")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier(isLatest ? "albums-seasonal-movie"' \
             NekoWidget/Views/LikedPhotosView.swift
