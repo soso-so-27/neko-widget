@@ -1640,7 +1640,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let hittable = photo.isHittable
             if !loggedPickerPhoto {
                 NSLog("ARCHIVE_PICKER_PHOTO:exists=1 hittable=%@ frame=%@",
-                      String(hittable), NSStringFromCGRect(photo.frame))
+                      String(hittable), String(describing: photo.frame))
                 loggedPickerPhoto = true
             }
             return hittable ? photo : nil
