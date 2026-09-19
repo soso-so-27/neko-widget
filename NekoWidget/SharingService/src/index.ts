@@ -78,6 +78,7 @@ import {
   uploadMedia,
 } from "./sharing";
 import { getWindowName, putWindowName } from "./window-name";
+import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 
 export async function route(
   request: Request,
@@ -92,6 +93,16 @@ export async function route(
     runtimeGatePromise ??= loadRuntimeGate(env);
     return runtimeGatePromise;
   };
+
+  if (pathname === "/v2/family-records" || pathname.startsWith("/v2/family-records/")) {
+    if (env.FAMILY_RECORD_RUNTIME_ENABLED !== "YES" || !momentRuntimeEnabled(env)
+        || !mediaGateOpen(await runtimeGate())) {
+      throw new ApiError(503, "family_record_runtime_disabled", "Family records are unavailable.");
+    }
+    const match = pathname.match(/^\/v2\/family-records(?:\/([^/]+)(\/photo)?)?$/u);
+    if (!match) throw new ApiError(404, "not_found", "Record not found.");
+    return familyRecords(request, env, match[1], match[2] !== undefined);
+  }
 
   if (request.method === "GET" && pathname === "/health") {
     const snapshot = await runtimeGate();
@@ -378,6 +389,8 @@ export default {
   async scheduled(controller, env, ctx): Promise<void> {
     if (controller.cron === MOMENT_CLEANUP_CRON) {
       ctx.waitUntil(runMomentCleanup(env));
+      // Withdrawals remain cleanup-eligible even when the pilot gate is off.
+      ctx.waitUntil(runFamilyRecordCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       ctx.waitUntil(drainNotificationOutbox(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {

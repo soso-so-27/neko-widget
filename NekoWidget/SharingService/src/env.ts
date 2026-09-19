@@ -18,6 +18,8 @@ export interface Env {
   REACTION_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for encrypted private-window names.
   WINDOW_NAME_RUNTIME_ENABLED?: string;
+  /// Independent internal-pilot gate; never enabled by pairing/media alone.
+  FAMILY_RECORD_RUNTIME_ENABLED?: string;
   /// Exact, independent switch for APNs registration and dispatch. Secrets
   /// alone never enable push traffic.
   APNS_RUNTIME_ENABLED?: string;
