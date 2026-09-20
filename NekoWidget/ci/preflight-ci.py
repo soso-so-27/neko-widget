@@ -65,14 +65,33 @@ def read_task_runs():
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
                     cases = sorted(set(re.findall(
                         r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)))
-                    methods = [method for cls, method in cases if cls == "NekoWidgetUITests.MomentDeliveryComposerUITests"]
+                    supported = {"NekoWidgetUITests." + cls for cls in scope.DIAGNOSTIC_CLASSES}
+                    methods = [f"{cls.removeprefix('NekoWidgetUITests.')}/{method}" for cls, method in cases if cls in supported]
                     run["unsupported_failed_tests"].extend(f"{cls}/{method}" for cls, method in cases
-                                                          if cls != "NekoWidgetUITests.MomentDeliveryComposerUITests")
+                                                          if cls not in supported)
                     # A preparation/build/runner failure has no failed XCTest;
                     # do not require an unrelated UI test to diagnose it.
-                    run["failed_ui"] = bool(cases)
+                    run["failed_ui"] = run["failed_ui"] or bool(cases)
                     run["failed_tests"].extend(methods)
     return list(runs.values())
+
+
+def diagnostic_title_tests(title):
+    prefix = "UI diagnosis: "
+    if not title.startswith(prefix):
+        return set()
+    value = title[len(prefix):]
+    if "/" in value:
+        test_class, methods = value.split("/", 1)
+    else:
+        # Historical one-method runs always used MomentDeliveryComposerUITests.
+        test_class, methods = "MomentDeliveryComposerUITests", value
+        if "," in methods:
+            return set()
+    try:
+        return {test.removeprefix("NekoWidgetUITests/") for test in scope.diagnostic_tests(test_class, methods)}
+    except ValueError:
+        return set()
 
 
 def apply_task_gate(result, runs, now=None, measure_baseline=False):
@@ -85,14 +104,16 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     active = [run["id"] for run in runs if run["status"] != "completed"]
     diagnostics = [run for run in runs if run["path"] == DIAGNOSTIC_WORKFLOW and
                    run["event"] == "workflow_dispatch" and run["head_sha"] == result["head"] and
+                    run.get("head_branch", "").startswith("diagnostic/") and
                    run["status"] == "completed" and run["conclusion"] == "success"]
     cost = result["cost"]
-    projected = round(elapsed + cost["with_upload_minutes"][1], 1) if cost["status"] == "observed" else None
+    projected = round(elapsed + cost["with_upload_minutes"][1], 1) if cost["status"] in {"observed", "reference"} else None
     blockers = []
     if active:
         blockers.append("ci_already_running")
-    failed_tests = sorted({test for run in failed for test in run.get("failed_tests", [])})
-    passed_tests = {run.get("display_title", "").removeprefix("UI diagnosis: ") for run in diagnostics}
+    failed_tests = sorted({test if "/" in test else "MomentDeliveryComposerUITests/" + test
+                           for run in failed for test in run.get("failed_tests", [])})
+    passed_tests = {test for run in diagnostics for test in diagnostic_title_tests(run.get("display_title", ""))}
     missing = sorted(set(failed_tests) - passed_tests)
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
     if unsupported:
@@ -116,11 +137,32 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     return result
 
 
-def observe_cost(selected, history, include_upload):
+def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
+    if use_full_baseline and selected != scope.REVIEWED_MEMORY_FAMILY_SCOPE:
+        raise ValueError("Full baseline reference is limited to the unmeasured reviewed-memory-read-ui-v3 profile")
     samples = [row for row in history["observations"] if row["scope"] == selected]
     if not samples:
+        if use_full_baseline:
+            # v3 reuses full's build/runtime jobs and a subset of existing tests.
+            # A new job or test class would need a new measurement/review.
+            full_tests = scope.native_tests(scope.FULL_SCOPE)
+            if (not set(scope.lanes(selected)) <= set(scope.lanes(scope.FULL_SCOPE))
+                    or not set(scope.smoke_tests(selected)) <= set(scope.smoke_tests(scope.FULL_SCOPE))
+                    or any(not any(test == full or test.startswith(full + "/") for full in full_tests)
+                           for test in scope.native_tests(selected))):
+                raise ValueError("The requested profile is not covered by the observed full route")
+            reference = observe_cost(scope.FULL_SCOPE, history, include_upload)
+            if reference["status"] != "observed":
+                raise ValueError("An actual full-v1 timing observation is required")
+            maximum = reference["ci_minutes"][1]
+            with_upload = reference["with_upload_minutes"][1]
+            return {"status": "reference", "scope_unmeasured": True, "reference_scope": scope.FULL_SCOPE,
+                    "ci_minutes": [maximum, maximum], "with_upload_minutes": [with_upload, with_upload],
+                    "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
+                    "includes_future_rework": False,
+                    "note": "Full-route historical maximum used for planning; v3 is unmeasured and this is not a runtime guarantee."}
         return {"status": "unmeasured", "samples": []}
     values = [float(row["candidate_minutes"]) for row in samples]
     upload = float(history["upload_minutes"]) if include_upload else 0
@@ -131,7 +173,7 @@ def observe_cost(selected, history, include_upload):
             "samples": samples, "includes_future_rework": False}
 
 
-def candidate_plan(base, target_minutes, include_upload, history, decision=None):
+def candidate_plan(base, target_minutes, include_upload, history, decision=None, use_full_baseline=False):
     # A dirty tree must not be described as the next tested candidate.
     if planner.git("status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Commit the complete candidate before preflight; working tree is dirty")
@@ -157,7 +199,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None)
               "Unmapped inputs require full checks" if selected == scope.FULL_SCOPE and unmatched else
               "No reviewed limited profile matches this complete change; full checks required"
               if selected == scope.FULL_SCOPE else "Existing selector matched the complete change")
-    cost = observe_cost(selected, history, include_upload)
+    cost = observe_cost(selected, history, include_upload, use_full_baseline)
     decision_needed = cost["status"] == "unmeasured" or cost["with_upload_minutes"][1] > target_minutes
     return {"head": head, "base": comparison, "changed_files": paths, "scope": selected,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
@@ -176,6 +218,8 @@ def main(argv=None):
     parser.add_argument("--decision", help="Planning note only; cannot override cost or failed-run gates")
     parser.add_argument("--measure-baseline", action="store_true",
                         help="One first measurement for an unmeasured scope; no delivery-time promise or retries")
+    parser.add_argument("--use-full-baseline", action="store_true",
+                        help="For unmeasured v3 only, plan against the observed full-route maximum; keep cumulative and diagnostic gates")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:
@@ -188,7 +232,7 @@ def main(argv=None):
     os.chdir(CI.parents[1])
     try:
         history = json.loads(args.history.read_text(encoding="utf-8"))
-        result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision)
+        result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
         if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE}:
             result = apply_task_gate(result, read_task_runs(), measure_baseline=args.measure_baseline)
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"

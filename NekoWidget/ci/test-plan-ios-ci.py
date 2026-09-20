@@ -40,6 +40,77 @@ class PlanTests(unittest.TestCase):
         changes[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
         return changes
 
+    def test_diagnostic_extension_hashes_preserve_normal_execution_and_reject_unreviewed_commands(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / scope.CI_DIAGNOSTIC_WORKFLOW).read_text(encoding="utf-8")
+        matrix = (root / scope.CI_DIAGNOSTIC_MATRIX).read_text(encoding="utf-8")
+        self.assertEqual(scope.source_digest(workflow), scope.DIAGNOSTIC_WORKFLOW_DIGEST)
+        changes = {scope.CI_DIAGNOSTIC_WORKFLOW: (workflow, workflow),
+                   scope.CI_DIAGNOSTIC_MATRIX: (matrix, matrix)}
+        self.assertTrue(scope.ci_selection_only(changes))
+        for path, token in ((scope.CI_DIAGNOSTIC_WORKFLOW, "timeout-minutes: 30"),
+                            (scope.CI_DIAGNOSTIC_MATRIX, "DIAGNOSTIC_REQUESTED=false"),
+                            (scope.CI_DIAGNOSTIC_MATRIX, 'COMPOSER_TEST_ARGUMENTS=()')):
+            changed = dict(changes)
+            source = changes[path][1]
+            changed[path] = (source, source.replace(token, token + " # unreviewed", 1))
+            self.assertFalse(scope.ci_selection_only(changed))
+
+    def test_family_companion_is_exact_reviewed_presentation_and_keeps_every_memory_operation(self):
+        changes = self.memory_changes()
+        # Synthetic full sources exercise the hash boundary; production hashes
+        # remain fixed to the independently reviewed FamilyRecordView pair.
+        family_pair = ("existing family view", "reviewed family presentation")
+        changes[scope.FAMILY_PRESENTATION_PATH] = family_pair
+        changes[scope.PAIRING_EXPLANATION_PATH] = (
+            "existing\n" + scope.PAIRING_EXPLANATION_BEFORE + "\nunchanged revocation",
+            "existing\n" + scope.PAIRING_EXPLANATION_AFTER + "\nunchanged revocation")
+        classes = {}
+        for identifier in scope.REVIEWED_MEMORY_FAMILY_TESTS:
+            _, owner, method = identifier.split("/")
+            classes.setdefault(owner, []).append(f"    func {method}() {{}}")
+        source = "\n".join(f"final class {owner}: XCTestCase {{\n" + "\n".join(methods) + "\n}"
+                           for owner, methods in classes.items())
+        changes[scope.MEMORY_TEST_PATH] = ("before", source)
+        def reviewed(values, **overrides):
+            review = {"schemaVersion": 1, "scope": scope.REVIEWED_MEMORY_FAMILY_SCOPE,
+                      "purpose": "Reviewed presentation", "visualReview": "user-device",
+                      "dataReview": "read-only-projection",
+                      "files": {path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}
+                                for path, pair in values.items() if path != scope.REVIEW_MANIFEST}}
+            return dict(values, **{scope.REVIEW_MANIFEST: ("{}", json.dumps(dict(review, **overrides)))})
+        with patch.object(scope, "FAMILY_PRESENTATION_DIGESTS", tuple(map(scope.source_digest, family_pair))):
+            valid = reviewed(changes)
+            self.assertEqual(scope.select_scope(valid), scope.REVIEWED_MEMORY_FAMILY_SCOPE)
+            self.assertEqual(scope.native_tests(scope.REVIEWED_MEMORY_FAMILY_SCOPE)[:len(scope.REVIEWED_MEMORY_TESTS)],
+                             scope.REVIEWED_MEMORY_TESTS)
+            self.assertEqual(len(scope.native_tests(scope.REVIEWED_MEMORY_FAMILY_SCOPE)), 10)
+            self.assertEqual(scope.lanes(scope.REVIEWED_MEMORY_FAMILY_SCOPE), scope.lanes(scope.REVIEWED_MEMORY_SCOPE))
+            self.assertEqual(planner.required_jobs(list(valid), scope.REVIEWED_MEMORY_FAMILY_SCOPE),
+                             planner.required_jobs_from_scope(scope.REVIEWED_MEMORY_FAMILY_SCOPE))
+            # Removing a test, mutating a protected body, or falsifying dataReview
+            # stays full even with a freshly recalculated manifest.
+            for path in scope.FAMILY_COMPANION_PATHS:
+                for side in (0, 1):
+                    pair = list(changes[path]); pair[side] += "\nchanged write or permission"
+                    self.assertEqual(scope.select_scope(reviewed(dict(changes, **{path: tuple(pair)}))), scope.FULL_SCOPE)
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(reviewed(missing)), scope.FULL_SCOPE)
+            self.assertEqual(scope.select_scope(reviewed(changes, dataReview="unchecked")), scope.FULL_SCOPE)
+            self.assertEqual(scope.select_scope(reviewed(changes, scope=scope.REVIEWED_MEMORY_SCOPE)), scope.FULL_SCOPE)
+            for identifier in scope.REVIEWED_MEMORY_FAMILY_TESTS:
+                altered = dict(changes)
+                altered[scope.MEMORY_TEST_PATH] = ("before", source.replace(identifier.split("/")[-1], "absent"))
+                self.assertEqual(scope.select_scope(reviewed(altered)), scope.FULL_SCOPE)
+            for extra in ("NekoWidget/NekoWidget/Services/FamilyRecordClient.swift",
+                          "NekoWidget/Shared/Sharing/FamilyRecordCore.swift"):
+                self.assertEqual(scope.select_scope(reviewed(dict(changes, **{extra: ("old", "new")}))), scope.FULL_SCOPE)
+            no_test_change = dict(changes); del no_test_change[scope.MEMORY_TEST_PATH]
+            self.assertEqual(scope.select_scope(reviewed(no_test_change), memory_test_source=source), scope.REVIEWED_MEMORY_FAMILY_SCOPE)
+            self.assertEqual(scope.select_scope(reviewed(no_test_change)), scope.FULL_SCOPE)
+        self.assertNotIn(scope.FAMILY_PRESENTATION_PATH, scope.REVIEWABLE_MEMORY_PATHS)
+        self.assertNotIn(scope.PAIRING_EXPLANATION_PATH, scope.REVIEWABLE_APP_PATHS)
+
     def test_memory_review_requires_exact_complete_batch_and_known_profile(self):
         changes = self.memory_changes()
         self.assertEqual(scope.select_scope(changes), scope.REVIEWED_MEMORY_SCOPE)

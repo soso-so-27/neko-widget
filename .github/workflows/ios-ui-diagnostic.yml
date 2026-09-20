@@ -1,5 +1,5 @@
-name: iOS single-test diagnostic
-run-name: 'UI diagnosis: ${{ inputs.test_method }}'
+name: iOS focused UI diagnostic
+run-name: "UI diagnosis: ${{ inputs.test_class || 'MomentDeliveryComposerUITests' }}/${{ inputs.test_method }}"
 
 on:
   workflow_dispatch:
@@ -8,8 +8,16 @@ on:
         description: Full commit SHA of this diagnostic branch (must equal the workflow SHA)
         required: true
         type: string
+      test_class:
+        description: Existing XCTest class (all requested methods must belong to it)
+        required: false
+        type: choice
+        default: MomentDeliveryComposerUITests
+        options:
+          - MomentDeliveryComposerUITests
+          - SoloMemoriesUITests
       test_method:
-        description: One existing method in MomentDeliveryComposerUITests (method name only)
+        description: One to three existing method names, comma-separated without spaces
         required: true
         type: string
         default: testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto
@@ -23,12 +31,13 @@ concurrency:
 
 jobs:
   diagnostic:
-    name: Diagnostic only - one native UI test (not release evidence)
+    name: Diagnostic only - up to three native UI tests (not release evidence)
     runs-on: macos-15
     timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       NEKO_IOS_DIAGNOSTIC_SOURCE_SHA: ${{ inputs.source_ref }}
+      NEKO_IOS_DIAGNOSTIC_TEST_CLASS: ${{ inputs.test_class || 'MomentDeliveryComposerUITests' }}
       NEKO_IOS_DIAGNOSTIC_TEST_METHOD: ${{ inputs.test_method }}
       NEKO_IOS_RUNTIME_LANE: app-ui
     steps:
@@ -44,15 +53,19 @@ jobs:
                   or source != os.environ["GITHUB_SHA"]
                   or not os.environ["GITHUB_REF"].startswith("refs/heads/diagnostic/")):
               raise SystemExit("Use the exact workflow SHA on a diagnostic/** branch.")
-          if re.fullmatch(r"test[A-Za-z0-9_]+", method) is None:
-              raise SystemExit("Specify exactly one XCTest method name, without arguments or a class path.")
+          test_class = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_CLASS", "MomentDeliveryComposerUITests")
+          names = method.split(",")
+          if (test_class not in ("MomentDeliveryComposerUITests", "SoloMemoriesUITests")
+                  or not 1 <= len(names) <= 3 or len(set(names)) != len(names)
+                  or any(re.fullmatch(r"test[A-Za-z0-9_]+", name) is None for name in names)):
+              raise SystemExit("Specify one supported class and one to three distinct method names.")
           PY
       - name: Check out the exact diagnostic commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Run one diagnostic test with the existing fixture preparation
+      - name: Run requested diagnostic tests with the existing fixture preparation
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -66,15 +79,20 @@ jobs:
           import re
           root = Path(os.environ["RUNNER_TEMP"]) / "neko-ui-diagnostic"
           method = os.environ["NEKO_IOS_DIAGNOSTIC_TEST_METHOD"]
-          expected = f"NekoWidgetUITests.MomentDeliveryComposerUITests {method}"
+          import sys
+          sys.path.insert(0, "ci")
+          from ios_ci_scope import diagnostic_tests
+          tests = diagnostic_tests(os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_CLASS", "MomentDeliveryComposerUITests"), method)
+          expected = {test.replace("/", ".", 1).replace("/", " ") for test in tests}
           cases = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",
                              (root / "diagnostic.log").read_text(encoding="utf-8", errors="replace"))
-          if cases != [(expected, "started"), (expected, "passed")]:
-              raise SystemExit("Diagnostic must execute and pass exactly the requested XCTest once; empty, skipped or other tests are not success.")
+          if (len(cases) != 2 * len(expected) or {case for case, _ in cases} != expected
+                  or any([status for case, status in cases if case == test] != ["started", "passed"] for test in expected)):
+              raise SystemExit("Diagnostic must execute and pass every requested XCTest exactly once; empty, skipped or other tests are not success.")
           (root / "diagnostic-result.json").write_text(json.dumps({
               "diagnosticOnly": True, "releaseEvidence": False,
-              "sourceSHA": os.environ["GITHUB_SHA"], "method": method,
-              "passedTests": 1, "failedTests": 0, "skippedTests": 0,
+              "sourceSHA": os.environ["GITHUB_SHA"], "method": method, "nativeTests": list(tests),
+              "passedTests": len(tests), "failedTests": 0, "skippedTests": 0,
           }, indent=2) + "\n", encoding="utf-8")
           PY
       - name: Upload diagnostic evidence only

@@ -234,7 +234,7 @@ bash "$1"
     def test_workflow_is_manual_same_commit_single_mac_job_with_separate_artifacts(self):
         workflow = (CI.parents[1] / ".github/workflows/ios-ui-diagnostic.yml").read_text()
         self.assertIn("  workflow_dispatch:", workflow)
-        self.assertIn("run-name: 'UI diagnosis: ${{ inputs.test_method }}'", workflow)
+        self.assertIn("UI diagnosis: ${{ inputs.test_class", workflow)
         self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request|workflow_call):")
         self.assertEqual(workflow.count("runs-on: macos-15"), 1)
         self.assertIn("timeout-minutes: 30", workflow)
@@ -274,9 +274,62 @@ bash "$1"
                 result = subprocess.run([sys.executable, "-c", code], env={
                     **os.environ, "RUNNER_TEMP": directory, "GITHUB_SHA": self.sha,
                     "NEKO_IOS_DIAGNOSTIC_TEST_METHOD": self.METHOD,
-                }, capture_output=True, text=True)
+                }, cwd=CI.parent, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0 if succeeds else 1, result.stderr)
                 self.assertEqual((root / "diagnostic-result.json").exists(), succeeds)
+
+    def test_three_solo_methods_share_one_selection_and_reject_cross_class_or_duplicates(self):
+        names = ("testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
+                 "testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
+                 "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText")
+        overrides = {"NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "SoloMemoriesUITests",
+                     "NEKO_IOS_DIAGNOSTIC_TEST_METHOD": ",".join(names)}
+        result, metadata, selected = self.selection(overrides=overrides)
+        self.assertEqual(result.returncode, 73, result.stderr)
+        expected = [f"NekoWidgetUITests/SoloMemoriesUITests/{name}" for name in names]
+        self.assertEqual(metadata["diagnostic.json"]["nativeTests"], expected)
+        self.assertEqual(selected, "".join(f"-only-testing:{test}\n" for test in expected))
+        for change in ({"NEKO_IOS_DIAGNOSTIC_TEST_METHOD": names[0] + "," + self.METHOD},
+                       {"NEKO_IOS_DIAGNOSTIC_TEST_METHOD": ",".join(names + (names[0],))},
+                       {"NEKO_IOS_DIAGNOSTIC_TEST_METHOD": names[0] + "," + names[0]},
+                       {"NEKO_IOS_DIAGNOSTIC_TEST_METHOD": names[0] + ", " + names[1]},
+                       {"NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "OtherTests"},
+                       {"NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "SoloMemoriesUITests; exit 0"}):
+            result, metadata, _ = self.selection(overrides={**overrides, **change})
+            self.assertNotEqual(result.returncode, 73, result.stderr)
+            self.assertFalse(metadata)
+        result, metadata, _ = self.selection(diagnostic=False, overrides={
+            "NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "SoloMemoriesUITests"})
+        self.assertNotEqual(result.returncode, 73)
+        self.assertFalse(metadata)
+
+    def test_multi_result_requires_all_requested_cases_once_and_no_others(self):
+        workflow = (CI.parents[1] / ".github/workflows/ios-ui-diagnostic.yml").read_text()
+        body = re.findall(r"python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)[1]
+        code = "\n".join(line[10:] for line in body.splitlines())
+        names = ["testFirst", "testSecond", "testThird"]
+        def transcript(method, status="passed"):
+            case = f"NekoWidgetUITests.SoloMemoriesUITests {method}"
+            return f"Test Case '-[{case}]' started.\nTest Case '-[{case}]' {status} (1.0 seconds).\n"
+        valid = "".join(transcript(name) for name in reversed(names))
+        logs = [(valid, True), (transcript(names[0]), False),
+                (valid.replace("passed", "skipped", 1), False),
+                (valid.replace("passed", "failed", 1), False),
+                (valid + transcript("testOther"), False),
+                (valid + transcript(names[0]), False)]
+        for log, succeeds in logs:
+            with self.subTest(log=log), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "neko-ui-diagnostic"
+                root.mkdir()
+                (root / "diagnostic.log").write_text(log, encoding="utf-8")
+                result = subprocess.run([sys.executable, "-c", code], env={
+                    **os.environ, "RUNNER_TEMP": directory, "GITHUB_SHA": self.sha,
+                    "NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "SoloMemoriesUITests",
+                    "NEKO_IOS_DIAGNOSTIC_TEST_METHOD": ",".join(names),
+                }, cwd=CI.parent, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if succeeds else 1, result.stderr)
+                self.assertEqual((root / "diagnostic-result.json").exists(), succeeds)
+
 
 
 if __name__ == "__main__":
