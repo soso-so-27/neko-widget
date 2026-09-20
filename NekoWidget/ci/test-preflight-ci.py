@@ -24,6 +24,18 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    @staticmethod
+    def diagnostic_run_evidence(run):
+        if run.get("path") != preflight.DIAGNOSTIC_WORKFLOW:
+            return run
+        names = preflight.diagnostic_title_tests(run.get("display_title", ""))
+        status = "passed" if run.get("conclusion") == "success" else "failed"
+        log = "".join(f"Test Case '-[NekoWidgetUITests.{name.replace('/', ' ')}]' {event}.\n"
+                      for name in names for event in ("started", status))
+        return {**run, "run_attempt": 1, "diagnostic_evidence": {
+            "head": run["head_sha"], "source_sha": run["head_sha"], "run_attempt": 1, "job_id": 91,
+            "started_at": run["created_at"], "results": preflight.diagnostic_case_results(names, log)}}
+
     def report(self, selected="full-v1", decision=None):
         paths = ["NekoWidget/NekoWidget/Services/UnknownStore.swift"]
         with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
@@ -86,7 +98,7 @@ class PreflightTests(unittest.TestCase):
                       "path": preflight.DIAGNOSTIC_WORKFLOW, "display_title": "UI diagnosis: SoloMemoriesUITests/testNavigation"}
         def check(target, runs):
             return preflight.apply_task_gate({"ready": target >= 107, "head": "a" * 40,
-                   "target_minutes": target, "cost": cost}, runs, now)
+                   "target_minutes": target, "cost": cost}, [self.diagnostic_run_evidence(run) for run in runs], now)
         rejected = check(30, [failed, diagnostic])
         self.assertFalse(rejected["ready"])
         self.assertEqual(rejected["task"]["projected_total_minutes"], 167)
@@ -165,7 +177,7 @@ class PreflightTests(unittest.TestCase):
                       "path": preflight.DIAGNOSTIC_WORKFLOW, "head_branch": "diagnostic/task", "display_title": "UI diagnosis: testNavigation"}
         def check(runs):
             return preflight.apply_task_gate({"ready": True, "head": "a" * 40, "target_minutes": 30,
-                   "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, runs, now)
+                   "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, [self.diagnostic_run_evidence(run) for run in runs], now)
         self.assertFalse(check([failed])["ready"])
         self.assertTrue(check([failed, diagnostic])["ready"])
         for change in ({"head_sha": "b" * 40}, {"conclusion": "failure"}, {"event": "push"},
@@ -232,7 +244,7 @@ class PreflightTests(unittest.TestCase):
                           display_title="UI diagnosis: SoloMemoriesUITests/" + ",".join(names))
         def check(extra):
             return preflight.apply_task_gate({"ready": True, "head": "a" * 40, "target_minutes": 30,
-                "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, failed + extra,
+                "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, failed + [self.diagnostic_run_evidence(run) for run in extra],
                 now=dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc))
         self.assertTrue(check([diagnostic])["ready"])
         for change in ({"head_sha": "b" * 40}, {"head_branch": "codex/task"},
@@ -244,6 +256,131 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(check([{**diagnostic, "id": i + 10,
                                "display_title": "UI diagnosis: SoloMemoriesUITests/" + name}
                               for i, name in enumerate(names)])["ready"])
+
+    @staticmethod
+    def diagnostic_fixture():
+        run = {"id": 12, "path": preflight.DIAGNOSTIC_WORKFLOW, "head_sha": "a" * 40,
+               "event": "workflow_dispatch", "head_branch": "diagnostic/task", "run_attempt": 2,
+               "status": "completed", "conclusion": "failure", "created_at": "2026-09-20T11:55:00Z",
+               "display_title": "UI diagnosis: SoloMemoriesUITests/testArchive,testRelated,testRoot"}
+        job = {"id": 91, "run_id": 12, "run_attempt": 2, "head_sha": "a" * 40,
+               "name": "Diagnostic only - up to three native UI tests (not release evidence)",
+               "status": "completed", "conclusion": "failure",
+               "started_at": "2026-09-20T11:56:00Z", "completed_at": "2026-09-20T11:59:00Z"}
+        log = "".join(f"Test Case '-[NekoWidgetUITests.SoloMemoriesUITests {name}]' {event}.\n"
+                      for name in ("testArchive", "testRelated", "testRoot")
+                      for event in ("started", "failed" if name == "testRoot" else "passed"))
+        return run, job, log
+
+    def test_failed_diagnostic_reads_only_exact_completed_job_attempt_and_retains_two_passes(self):
+        run, job, log = self.diagnostic_fixture()
+        jobs = {"total_count": 1, "jobs": [job]}
+        with patch.object(preflight, "github", side_effect=[jobs, log]) as api:
+            evidence = preflight.read_diagnostic_evidence(run, run["head_sha"])
+        self.assertIn("/runs/12/attempts/2/jobs?", api.call_args_list[0].args[0])
+        self.assertEqual(api.call_args_list[1].args, (f"repos/{preflight.REPOSITORY}/actions/jobs/91/logs",))
+        self.assertTrue(api.call_args_list[1].kwargs["raw"])
+        self.assertEqual(evidence["results"], {"SoloMemoriesUITests/testArchive": "passed",
+            "SoloMemoriesUITests/testRelated": "passed", "SoloMemoriesUITests/testRoot": "failed"})
+        for change in ({"run_id": 13}, {"run_attempt": 1}, {"head_sha": "b" * 40},
+                       {"name": "Unrelated job"}, {"status": "in_progress"}, {"completed_at": None}):
+            with patch.object(preflight, "github", return_value={"total_count": 1, "jobs": [{**job, **change}]}) as api:
+                with self.assertRaises(ValueError):
+                    preflight.read_diagnostic_evidence(run, run["head_sha"])
+                self.assertEqual(api.call_count, 1)
+        with patch.object(preflight, "github", return_value={"total_count": 2, "jobs": [job, job]}):
+            with self.assertRaises(ValueError):
+                preflight.read_diagnostic_evidence(run, run["head_sha"])
+        with patch.object(preflight, "github", side_effect=[jobs, ValueError("logs unavailable")]):
+            with self.assertRaises(ValueError):
+                preflight.read_diagnostic_evidence(run, run["head_sha"])
+
+    def test_diagnostic_transcript_rejects_duplicates_extras_skips_and_incomplete_cases(self):
+        run, _, log = self.diagnostic_fixture()
+        declared = preflight.diagnostic_title_tests(run["display_title"])
+        good_line = "Test Case '-[NekoWidgetUITests.SoloMemoriesUITests testArchive]' passed.\n"
+        for bad in (log + good_line, log + good_line.replace("testArchive", "testOther"),
+                    log.replace("testArchive]' started", "testArchive]' passed")):
+            self.assertEqual(set(preflight.diagnostic_case_results(declared, bad).values()), {"invalid"})
+        skipped = preflight.diagnostic_case_results(declared, log.replace("testRoot]' failed", "testRoot]' skipped"))
+        self.assertEqual(skipped["SoloMemoriesUITests/testRoot"], "skipped")
+        self.assertEqual(skipped["SoloMemoriesUITests/testArchive"], "passed")
+        partial = preflight.diagnostic_case_results(declared, log.replace("Test Case '-[NekoWidgetUITests.SoloMemoriesUITests testRoot]' failed.\n", ""))
+        self.assertEqual(partial["SoloMemoriesUITests/testRoot"], "incomplete")
+        self.assertEqual(set(preflight.diagnostic_case_results(declared, "").values()), {"incomplete"})
+
+    def test_latest_per_case_results_join_without_hiding_newer_failure(self):
+        run, job, log = self.diagnostic_fixture()
+        with patch.object(preflight, "github", side_effect=[{"total_count": 1, "jobs": [job]}, log]):
+            run["diagnostic_evidence"] = preflight.read_diagnostic_evidence(run, run["head_sha"])
+        repaired = self.diagnostic_run_evidence({**run, "id": 13, "created_at": "2026-09-20T11:59:00Z",
+            "conclusion": "success", "display_title": "UI diagnosis: SoloMemoriesUITests/testRoot"})
+        def check(runs):
+            return preflight.apply_task_gate({"ready": True, "head": "a" * 40, "target_minutes": 30,
+                "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, runs,
+                now=dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc))
+        self.assertFalse(check([run])["ready"])
+        result = check([repaired, run])  # API order must not affect newest results.
+        self.assertTrue(result["ready"])
+        self.assertEqual(len(result["task"]["diagnostic_cases"]), 3)
+        self.assertEqual(result["task"]["diagnostic_cases"]["SoloMemoriesUITests/testArchive"]["run_id"], 12)
+        for outcome in ("failed", "skipped", "incomplete", "invalid"):
+            later = self.diagnostic_run_evidence({**repaired, "id": 14, "created_at": "2026-09-20T11:59:30Z"})
+            later["diagnostic_evidence"]["results"]["SoloMemoriesUITests/testRoot"] = outcome
+            self.assertFalse(check([later, run, repaired])["ready"], outcome)
+        # A rerun has the old run's created_at/id, but its new attempt started
+        # later. It must invalidate an intervening pass, not be sorted as old.
+        rerun = {**run, "run_attempt": 3, "diagnostic_evidence": {
+            **run["diagnostic_evidence"], "run_attempt": 3, "job_id": 92,
+            "started_at": "2026-09-20T11:59:40Z"}}
+        self.assertFalse(check([rerun, repaired])["ready"])
+        active = {**repaired, "id": 15, "status": "in_progress", "conclusion": None}
+        self.assertFalse(check([run, repaired, active])["ready"])
+        # A success title without downloaded/validated case evidence never counts.
+        no_log = {key: value for key, value in repaired.items() if key != "diagnostic_evidence"}
+        self.assertFalse(check([run, no_log])["ready"])
+
+    def test_history_loads_diagnostic_evidence_only_after_product_identity_proof(self):
+        run, job, log = self.diagnostic_fixture()
+        page = {"total_count": 1, "workflow_runs": [run]}
+        with patch.object(planner, "git", return_value="diagnostic/task"), \
+                patch.object(preflight, "diagnostic_source_matches", return_value=True) as proof, \
+                patch.object(preflight, "github", side_effect=[page, page, {"total_count": 1, "jobs": [job]}, log]):
+            runs = preflight.read_task_runs("b" * 40)
+        proof.assert_called_once_with("a" * 40, "b" * 40)
+        self.assertEqual(runs[0]["diagnostic_evidence"]["head"], "b" * 40)
+        clean = {key: value for key, value in run.items() if key != "diagnostic_evidence"}
+        with patch.object(planner, "git", return_value="diagnostic/task"), \
+                patch.object(preflight, "diagnostic_source_matches", return_value=False), \
+                patch.object(preflight, "github", return_value={"total_count": 1, "workflow_runs": [clean]}) as api:
+            runs = preflight.read_task_runs("c" * 40)
+        self.assertNotIn("diagnostic_evidence", runs[0])
+        self.assertEqual(api.call_count, 2)
+
+    def test_diagnostic_source_allows_only_ancestor_and_existing_normal_helper_modifications(self):
+        source, head = "a" * 40, "b" * 40
+        path = "NekoWidget/ci/preflight-ci.py"
+        good = f":100644 100644 {'c' * 40} {'d' * 40} M\0{path}\0"
+        with patch.object(planner, "git", side_effect=["", good]) as git:
+            self.assertTrue(preflight.diagnostic_source_matches(source, head))
+            self.assertEqual(git.call_args_list[0].args, ("merge-base", "--is-ancestor", source, head))
+            self.assertEqual(git.call_args_list[1].args, ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head))
+        for extra in ("NekoWidget/ci/watch-ci-run.py", "handoffs/note.md", "NekoWidget/ci/ios_ci_scope.py",
+                      ".github/workflows/ios-ui-diagnostic.yml", "NekoWidget/ci/run-sharing-runtime-matrix.sh",
+                      "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift", "App.swift"):
+            with patch.object(planner, "git", side_effect=["", good + good.replace(path, extra)]):
+                self.assertFalse(preflight.diagnostic_source_matches(source, head), extra)
+        for raw in (good.replace(":100644", ":000000"), good.replace("100644 ", "120000 ", 1),
+                    good.replace(" 100644 ", " 100755 "), good.replace(" M\0", " D\0"),
+                    good.replace(" M\0", " R100\0"), good + good, "incomplete"):
+            with patch.object(planner, "git", side_effect=["", raw]):
+                self.assertFalse(preflight.diagnostic_source_matches(source, head), raw)
+        with patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            self.assertFalse(preflight.diagnostic_source_matches(source, head))
+        with patch.object(planner, "git") as git:
+            self.assertTrue(preflight.diagnostic_source_matches(head, head))
+            self.assertFalse(preflight.diagnostic_source_matches("main", head))
+            git.assert_not_called()
 
     def test_raw_logs_are_captured_with_escape_sequences_but_not_printed(self):
         response = subprocess.CompletedProcess([], 0, stdout="\x1b[31mfailed\x1b[0m", stderr="")
