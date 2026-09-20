@@ -2,6 +2,7 @@ import Foundation
 
 // macOS: swiftc -parse-as-library NekoWidget/Services/PersonalArchiveStore.swift \
 //   NekoWidget/Services/PersonalArchiveCloudClient.swift ci/verify-personal-archive.swift -o /tmp/verify-personal-archive
+// Also include Services/PhotoMemoryNoteStore.swift and Services/PhotoMemoCoordinator.swift.
 // The injected transport never constructs CKContainer or contacts an Apple account.
 private actor ArchiveCloudFixture: PersonalArchiveTransport {
     enum Failure: Sendable { case none, beforeCommit, afterCommit, beforePreparation, duringPreparation, afterPreparation }
@@ -158,7 +159,184 @@ enum PersonalArchiveVerifier {
         try await mutations(root.appendingPathComponent("mutations"))
         try await staleResponses(root.appendingPathComponent("stale"))
         try await readingSnapshots(root.appendingPathComponent("reading"))
-        print("Personal archive verifier passed: 12 boundary groups; no CloudKit network or account access")
+        try await unifiedMemoOutbox(root.appendingPathComponent("memo-outbox"))
+        try await unifiedMemoBoundaries(root.appendingPathComponent("memo-boundaries"))
+        try await unifiedMemoConcurrency(root.appendingPathComponent("memo-concurrency"))
+        print("Personal archive verifier passed: 15 boundary groups; no CloudKit network or account access")
+    }
+
+    private static func unifiedMemoOutbox(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root.appendingPathComponent("archive"), transport: cloud)
+        let noteURL = root.appendingPathComponent("notes.json")
+        let notes = PhotoMemoryNoteStore(fileURL: noteURL)
+        let coordinator = PhotoMemoCoordinator(noteStore: notes, archiveStore: store)
+        let account = try await store.accountContext()
+        let first = try await coordinator.saveLocal(text: "はじめてのおふろ", photoIdentifier: "local-photo", expectedRevision: nil)
+        let initialCloudCount = await cloud.count()
+        try require(first.reflection == .localOnly && initialCloudCount == 0, "Writing a memo uploaded without consent")
+        guard let local = first.localRecord else { throw Failure(message: "Missing local note") }
+        let enrolled = try await coordinator.enableUpdates(for: local, jpegData: jpeg, expectedAccount: account)
+        guard let archive = enrolled.archiveRecord else { throw Failure(message: "Missing enrolled copy") }
+        await cloud.failNext(.afterCommit)
+        let pending = try await coordinator.saveLocal(text: "おふろのあと", recordID: local.id,
+            expectedRevision: local.note.revision, expectedAccount: account)
+        try require(pending.reflection == .pending && pending.localRecord?.note.text == "おふろのあと", "Response loss discarded local edit")
+        let snapshot = try await store.readingSnapshot(expectedAccount: account)
+        let coalesced = try await coordinator.coalescedRecordIDs(localRecords: try await notes.records(), snapshot: snapshot)
+        try require(coalesced[local.id] == archive.id, "Known pending memo produced a duplicate reading row")
+        let reopenedNotes = PhotoMemoryNoteStore(fileURL: noteURL)
+        let reopened = PhotoMemoCoordinator(noteStore: reopenedNotes, archiveStore: store)
+        try await reopened.retryUpdates(expectedAccount: account)
+        let restored = try await store.records()
+        try require(restored.count == 1 && restored[0].id == archive.id && restored[0].text == "おふろのあと",
+                    "Restarted reflection created another record or lost words")
+        try require(try await reopened.syncStatus(photoIdentifier: "local-photo", expectedAccount: account) == .stored, "Reflection did not acknowledge durable outbox")
+        guard let latest = try await notes.record(id: local.id) else { throw Failure(message: "Missing latest note") }
+        let deletedWords = try await reopened.saveLocal(text: "", recordID: latest.id, expectedRevision: latest.note.revision, expectedAccount: account)
+        try require(deletedWords.reflection == .stored && deletedWords.localRecord == nil,
+                    "Deleting memo words was not reflected")
+        let retained = try await store.records()
+        try require(retained.count == 1 && retained[0].text.isEmpty && retained[0].jpegData == jpeg,
+                    "Deleting words deleted the retained photograph")
+        let again = try await reopened.saveLocal(text: "また書く", photoIdentifier: "local-photo", expectedRevision: nil, expectedAccount: account)
+        try require(again.localRecord?.id == local.id && again.archiveRecord?.id == archive.id,
+                    "Rewriting words changed the logical memo identity")
+        let textOnly = try await coordinator.saveLocal(text: "写真のないメモ", photoIdentifier: "missing-photo", expectedRevision: nil)
+        guard let textLocal = textOnly.localRecord else { throw Failure(message: "Missing text-only note") }
+        _ = try await coordinator.enableUpdates(for: textLocal, jpegData: nil, expectedAccount: account)
+        let textDeleted = try await coordinator.saveLocal(text: "", recordID: textLocal.id,
+            expectedRevision: textLocal.note.revision, expectedAccount: account)
+        try require(textDeleted.reflection == .stored && textDeleted.localRecord == nil,
+                    "Text-only memo deletion remained pending forever")
+    }
+
+    private static func unifiedMemoBoundaries(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root.appendingPathComponent("archive"), transport: cloud)
+        let notes = PhotoMemoryNoteStore(fileURL: root.appendingPathComponent("notes.json"))
+        let coordinator = PhotoMemoCoordinator(noteStore: notes, archiveStore: store)
+        let account = try await store.accountContext()
+        guard let note = try await notes.save(text: "旧メモ", for: "legacy", expectedRevision: nil) else { throw Failure(message: "Missing legacy note") }
+        let source = PersonalArchiveSourceSnapshot(noteID: note.id, revision: note.revision, photoIdentifier: "legacy")
+        let old = try await store.preserve(source: source, jpegData: jpeg, text: note.text, capturedAt: nil, context: nil, expectedAccount: account)
+        let changed = try await coordinator.saveLocal(text: "端末だけ変更", recordID: note.id, expectedRevision: note.revision)
+        let legacyText = try await store.records().first?.text
+        try require(changed.reflection == .localOnly && legacyText == "旧メモ",
+                    "Legacy copy silently opted into reflection")
+        guard let changedLocal = changed.localRecord else { throw Failure(message: "Missing changed legacy note") }
+        try await expect(.conflict) { _ = try await coordinator.enableUpdates(for: changedLocal, jpegData: jpeg, expectedAccount: account) }
+        let independent = try await coordinator.saveArchive(record: old, text: "旧コピー側の変更", operationID: UUID(), expectedAccount: account)
+        let unchangedOriginal = try await notes.record(id: note.id)?.note.text
+        try require(independent.archiveRecord?.text == "旧コピー側の変更" && unchangedOriginal == "端末だけ変更",
+                    "Editing divergent legacy copy overwrote local original")
+        guard let boundNote = try await notes.save(text: "同意したメモ", for: "bound", expectedRevision: nil) else { throw Failure(message: "Missing bound note") }
+        let boundLocal = PhotoMemoryNoteRecord(photoIdentifier: "bound", note: boundNote)
+        let enabled = try await coordinator.enableUpdates(for: boundLocal, jpegData: jpeg, expectedAccount: account)
+        guard let bound = enabled.archiveRecord else { throw Failure(message: "Missing bound archive") }
+        let other = PersonalArchiveStore(directory: root.appendingPathComponent("other"), transport: cloud)
+        guard let remote = try await other.refresh().first(where: { $0.id == bound.id }) else { throw Failure(message: "Missing remote memo") }
+        _ = try await other.update(id: remote.id, operationID: UUID(), expectedRevision: remote.revision,
+            text: "別端末で編集", capturedAt: nil, context: nil, expectedAccount: account)
+        _ = try await store.refresh()
+        try await coordinator.reconcile(expectedAccount: account)
+        guard let accepted = try await notes.record(id: boundLocal.id) else { throw Failure(message: "Missing accepted memo") }
+        try require(accepted.note.text == "別端末で編集", "Fetched enrolled text stayed as a second stale memo")
+        await cloud.switchAccount("fixture-b")
+        let counts = await cloud.counts()
+        let wrong = try await coordinator.saveLocal(text: "端末には残す", recordID: accepted.id,
+            expectedRevision: accepted.note.revision, expectedAccount: account)
+        try require(wrong.reflection == .accountChanged && wrong.localRecord?.note.text == "端末には残す",
+                    "Account change either lost local edit or reported stored")
+        let otherAccountCounts = await cloud.counts(), otherAccountCount = await cloud.count()
+        try require(otherAccountCounts.uploads == counts.uploads && otherAccountCount == 0, "Outbox crossed account boundary")
+        await cloud.switchAccount("fixture-a")
+        let returnedAccount = try await store.accountContext()
+        try await coordinator.retryUpdates(expectedAccount: returnedAccount)
+        guard let current = try await store.records().first(where: { $0.id == bound.id }) else { throw Failure(message: "Missing preserved memo") }
+        _ = try await store.delete(id: current.id, operationID: UUID(), expectedRevision: current.revision, expectedAccount: returnedAccount)
+        guard let currentLocal = try await notes.record(id: accepted.id) else { throw Failure(message: "Cloud removal deleted original") }
+        let afterDelete = try await coordinator.saveLocal(text: "削除後も端末に残す", recordID: currentLocal.id,
+            expectedRevision: currentLocal.note.revision, expectedAccount: returnedAccount)
+        let withdrawn = await cloud.payload(bound.id)
+        try require(afterDelete.reflection == .conflict && withdrawn?.isDeleted == true,
+                    "A later local edit revived the withdrawn cloud record")
+    }
+
+    private static func unifiedMemoConcurrency(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root.appendingPathComponent("archive"), transport: cloud)
+        let notes = PhotoMemoryNoteStore(fileURL: root.appendingPathComponent("notes.json"))
+        let coordinator = PhotoMemoCoordinator(noteStore: notes, archiveStore: store)
+        let account = try await store.accountContext()
+        guard let note = try await notes.save(text: "最初", for: "photo", expectedRevision: nil) else { throw Failure(message: "Missing memo") }
+        let local = PhotoMemoryNoteRecord(photoIdentifier: "photo", note: note)
+        let enabled = try await coordinator.enableUpdates(for: local, jpegData: jpeg, expectedAccount: account)
+        await cloud.suspendNextCommit()
+        let first = Task { try await coordinator.saveLocal(text: "送信中", recordID: note.id,
+            expectedRevision: note.revision, expectedAccount: account) }
+        await cloud.waitForPausedCommit()
+        guard let inFlight = try await notes.record(id: note.id) else { throw Failure(message: "Missing in-flight local text") }
+        _ = try await notes.save(text: "送信中の次の編集", recordID: note.id, expectedRevision: inFlight.note.revision)
+        await cloud.resumeCommit()
+        _ = try await first.value
+        try await coordinator.retryUpdates(expectedAccount: account)
+        let records = try await store.records()
+        try require(records.count == 1 && records[0].text == "送信中の次の編集", "Old acknowledgement dropped the later queued edit")
+        guard let originalArchive = enabled.archiveRecord else { throw Failure(message: "Missing initial archive") }
+        do {
+            _ = try await coordinator.saveArchive(record: originalArchive, text: "古い編集画面", operationID: UUID(),
+                expectedAccount: account, expectedLocalRevision: note.revision)
+            throw Failure(message: "Stale bound editor silently overwrote a newer local edit")
+        } catch is PhotoMemoryNoteStoreError { }
+        catch PersonalArchiveError.conflict { }
+        let snapshot = try await store.readingSnapshot(expectedAccount: account)
+        let localRecords = try await notes.records()
+        try require(try await coordinator.coalescedRecordIDs(localRecords: localRecords, snapshot: snapshot)[note.id] == records[0].id,
+                    "Confirmed reflection lost its explicit source mapping")
+
+        let other = PersonalArchiveStore(directory: root.appendingPathComponent("other"), transport: cloud)
+        guard let otherCopy = try await other.refresh().first else { throw Failure(message: "Missing second-client copy") }
+        _ = try await other.update(id: otherCopy.id, operationID: UUID(), expectedRevision: otherCopy.revision,
+            text: "別端末で選んだ言葉", capturedAt: nil, context: nil, expectedAccount: account)
+        guard let beforeConflict = try await notes.record(id: note.id) else { throw Failure(message: "Missing original before conflict") }
+        let conflict = try await coordinator.saveLocal(text: "この端末で選んだ言葉", recordID: note.id,
+            expectedRevision: beforeConflict.note.revision, expectedAccount: account)
+        try require(conflict.reflection == .conflict, "Concurrent remote edit was overwritten")
+        guard let both = try await store.refresh().first else { throw Failure(message: "Missing conflicting versions") }
+        try require(both.text == "この端末で選んだ言葉" && both.conflictingText == "別端末で選んだ言葉",
+                    "Conflict did not retain both texts for explicit choice")
+        try await coordinator.reconcile(expectedAccount: account)
+        guard let pendingLocal = try await notes.record(id: note.id) else { throw Failure(message: "Reconcile discarded conflicting original") }
+        try require(pendingLocal.note.text == "この端末で選んだ言葉", "Fetched conflict silently chose remote words")
+        await cloud.failNext(.afterCommit)
+        let selected = try await coordinator.resolveConflict(record: both, chooseRemote: true, operationID: UUID(),
+            expectedAccount: account, expectedLocalNoteRevision: pendingLocal.note.revision)
+        try require(selected.reflection == .pending && selected.localRecord?.note.text == "別端末で選んだ言葉",
+                    "Explicit choice was not durable after response loss")
+        try await coordinator.retryUpdates(expectedAccount: account)
+        let resolved = try await store.records()
+        try require(resolved.count == 1 && resolved[0].state == .stored && resolved[0].text == "別端末で選んだ言葉",
+                    "Conflict choice retry forked or lost the selected memo")
+        guard let basePayload = await cloud.payload(resolved[0].id) else { throw Failure(message: "Missing chosen payload") }
+        let differentJPEG = Data([0xff, 0xd8, 0xff, 0xe0, 9, 8, 7, 0xff, 0xd9])
+        let differentPhoto = PersonalArchivePayload(id: basePayload.id, text: "別の写真の文章", createdAt: basePayload.createdAt,
+            capturedAt: nil, jpegSHA256: PersonalArchiveFiles.digest(differentJPEG), jpegByteCount: differentJPEG.count, changeID: UUID())
+        let active = await cloud.account()
+        let generation = try await cloud.prepareZone(for: active, allowCreation: false, expectedGeneration: nil)
+        try await cloud.commit(differentPhoto, jpegData: differentJPEG,
+            precondition: PersonalArchivePrecondition(expectedRevisions: [basePayload.fingerprint], allowsCreation: false),
+            account: active, generation: generation)
+        // Fetch before the local editor commits: the explicit baseline must
+        // still preserve the old photo and turn a stale CAS into two versions.
+        _ = try await store.refresh()
+        guard let beforePhotoConflict = try await notes.record(id: note.id) else { throw Failure(message: "Missing local words") }
+        _ = try await coordinator.saveLocal(text: "元の写真の文章", recordID: note.id,
+            expectedRevision: beforePhotoConflict.note.revision, expectedAccount: account)
+        guard let imageConflict = try await store.refresh().first,
+              let protectedLocal = try await notes.record(id: note.id) else { throw Failure(message: "Missing image conflict") }
+        try await expect(.conflict) {
+            _ = try await coordinator.resolveConflict(record: imageConflict, chooseRemote: true, operationID: UUID(),
+                expectedAccount: account, expectedLocalNoteRevision: protectedLocal.note.revision)
+        }
+        try require(try await notes.record(id: note.id) == protectedLocal, "Rejected different-photo choice changed the original words")
     }
 
     private static func readingSnapshots(_ root: URL) async throws {

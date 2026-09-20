@@ -254,8 +254,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
         tests = scope.lane_tests(selected, "app-ui")
-        self.assertEqual(len(tests), 9)
-        self.assertEqual(len(set(tests)), 9)
+        self.assertEqual(len(tests), 8)
+        self.assertEqual(len(set(tests)), 8)
         self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings", tests)
         self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess", tests)
         full = scope.native_tests(scope.FULL_SCOPE)
@@ -318,8 +318,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(planner.required_jobs(list(self.archive_picker_batch()), selected), required)
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), (
-            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
-            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText"))
+            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",))
         self.assertEqual(scope.smoke_tests(selected),
             ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
         # Existing metadata test iterates every scope and requires both runtime OSes.

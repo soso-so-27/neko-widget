@@ -38,6 +38,7 @@
 		DA7200010000000000000001 /* MainlineMovieAcceptance.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7200010000000000000002 /* MainlineMovieAcceptance.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
 		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
+		A19300000000000000000001 /* PhotoMemoCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19300000000000000000011 /* PhotoMemoCoordinator.swift */; };
 		A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000011 /* PhotoMemoryNoteStore.swift */; };
 		A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */; };
 		A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000201 /* PersonalArchiveStore.swift */; };
@@ -293,6 +294,7 @@
 		F00000000000000000000206 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000210 /* JSONExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONExporter.swift; sourceTree = "<group>"; };
 		F00000000000000000000211 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		A19300000000000000000011 /* PhotoMemoCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoCoordinator.swift; sourceTree = "<group>"; };
 		A18200000000000000000011 /* PhotoMemoryNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteStore.swift; sourceTree = "<group>"; };
 		A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteExporter.swift; sourceTree = "<group>"; };
 		A18500000000000000000201 /* PersonalArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveStore.swift; sourceTree = "<group>"; };
@@ -642,6 +644,7 @@
 			children = (
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
+				A19300000000000000000011 /* PhotoMemoCoordinator.swift */,
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				A18500000000000000000201 /* PersonalArchiveStore.swift */,
@@ -1011,6 +1014,7 @@
 				DA7200010000000000000001 /* MainlineMovieAcceptance.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
+				A19300000000000000000001 /* PhotoMemoCoordinator.swift in Sources */,
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */,

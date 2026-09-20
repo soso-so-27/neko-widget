@@ -437,16 +437,14 @@ REVIEWED_APP_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
 REVIEWED_MEMORY_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
     "MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
     "MomentDeliveryComposerUITests/testMemoryLibraryWithoutPhotoSupportsLargestTextEditingAndDeletion",
-    "MomentDeliveryComposerUITests/testExistingMemoryPreservesCopyEditsAndDeletesWithoutChangingOriginal",
+    "MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
     "MomentDeliveryComposerUITests/testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption",
     "SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
-    "SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
     "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
     "SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings",
     "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
 ))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
-    "testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto",
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
 GALLERY_TEST = (

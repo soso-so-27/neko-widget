@@ -65,70 +65,6 @@ case "$RUNTIME_LANE" in
         ;;
 esac
 
-seed_archive_picker_photo_if_selected() {
-    local simulator_udid="$1"
-    local runtime_artifacts="$2"
-    local test_argument=""
-    local selected=false
-    for test_argument in "${COMPOSER_TEST_ARGUMENTS[@]}"; do
-        case "$test_argument" in
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests|\
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto)
-                selected=true ;;
-        esac
-    done
-    if [[ "$selected" != true ]]; then return 0; fi
-
-    # The PhotosPicker regression uses one real CC0 photo in this disposable
-    # Simulator. Match the smoke harness's bounded, no-retry import policy:
-    # even a timeout/nonzero exit can have imported it, so fail without retry.
-    python3 - "$simulator_udid" \
-        "$PROJECT_DIRECTORY/ci/fixtures/cats/cat-orange-square.png" \
-        "$runtime_artifacts/archive-picker-seed.log" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-from pathlib import Path
-
-device, photo, log = sys.argv[1:]
-if not Path(photo).is_file():
-    raise SystemExit("Archive picker photo fixture is missing")
-with Path(log).open("wb") as output:
-    try:
-        process = subprocess.Popen(
-            ["xcrun", "simctl", "addmedia", device, photo],
-            stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
-        )
-    except OSError:
-        raise SystemExit("Archive picker photo import could not start; not retried")
-    try:
-        status = process.wait(timeout=120)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        # Also kill surviving children if the group leader already exited.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        raise SystemExit("Archive picker photo import timed out; not retried")
-    if status != 0:
-        raise SystemExit("Archive picker photo import failed; not retried")
-print("Archive picker: one CC0 photo imported; picker visibility remains required by XCTest")
-PY
-}
-
 resolve_group_container() {
     local simulator_udid="$1"
     local direct_path=""
@@ -474,7 +410,6 @@ PY
         # Keep the same fixture preparation/build for full and mapped UI.
         # Only test selection and the extra Gallery builds vary by scope.
         if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui || "$RUNTIME_LANE" == gallery-normal ]]; then
-        seed_archive_picker_photo_if_selected "$simulator_udid" "$runtime_artifacts" || return $?
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \

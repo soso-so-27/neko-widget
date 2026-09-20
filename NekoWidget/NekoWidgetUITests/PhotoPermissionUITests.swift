@@ -1496,7 +1496,7 @@ final class SoloMemoriesUITests: XCTestCase {
         archive.tap()
         let refresh = app.buttons["personal-archive-refresh"]
         XCTAssertTrue(refresh.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["保管した写真はありません"].waitForExistence(timeout: 10))
         refresh.tap()
         let restored = app.buttons["personal-archive-record-11111111-1111-4111-8111-111111111111"]
         for _ in 0..<4 { if restored.isHittable { break }; app.swipeUp() }
@@ -1504,50 +1504,53 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("personal-archive-restored-list")
         restored.tap()
         XCTAssertTrue(app.staticTexts["はじめて窓辺で眠った日"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.images["保管した写真"].exists)
+        XCTAssertTrue(app.buttons["memory-note-photo"].exists)
         capture("personal-archive-restored-record")
-        app.navigationBars["記録"].buttons.element(boundBy: 0).tap()
-        let compose = app.buttons["personal-archive-compose"]
-        for _ in 0..<4 { if compose.isHittable { break }; app.swipeDown() }
-        XCTAssertTrue(compose.isHittable)
-        compose.tap()
-        let text = app.textViews["personal-archive-text"]
+        XCTAssertFalse(app.buttons["personal-archive-compose"].exists)
+        let edit = app.buttons["memory-note-edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+        let text = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
-        capture("personal-archive-composer-from-settings-sheet")
-        let composerBar = app.navigationBars["保管する記録"]
-        composerBar.buttons["戻る"].tap()
-        let composerClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: composerBar)
-        XCTAssertEqual(XCTWaiter.wait(for: [composerClosed], timeout: 5), .completed)
-        XCTAssertTrue(compose.isHittable)
-        compose.tap()
+        capture("personal-archive-editor-from-settings-sheet")
+        let editorBar = app.navigationBars["メモ"]
+        app.buttons["photo-memory-note-close"].tap()
+        let editorClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+        XCTAssertEqual(XCTWaiter.wait(for: [editorClosed], timeout: 5), .completed)
+        XCTAssertTrue(edit.isHittable)
+        edit.tap()
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         // Exercise real AppRoot/MainTab scene transitions underneath the real
-        // settings/composer sheets, with another finite scan-progress burst.
+        // settings/editor sheets, with another finite scan-progress burst.
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(composerBar.waitForExistence(timeout: 10))
+        XCTAssertTrue(editorBar.waitForExistence(timeout: 10))
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("A quiet afternoon")
-        app.buttons["完了"].tap()
-        app.buttons["personal-archive-save"].tap()
-        let savedComposerClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: composerBar)
-        XCTAssertEqual(XCTWaiter.wait(for: [savedComposerClosed], timeout: 10), .completed)
-        XCTAssertTrue(app.navigationBars["記録の保管"].waitForExistence(timeout: 10))
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        let savedEditorClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+        XCTAssertEqual(XCTWaiter.wait(for: [savedEditorClosed], timeout: 10), .completed)
+        let body = app.staticTexts["memory-note-body"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "A quiet afternoon"), object: body)], timeout: 10), .completed)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["iCloudの保管と復元"].waitForExistence(timeout: 10))
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-"))
-        expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: rows)
+        expectation(for: NSPredicate(format: "count == 1"), evaluatedWith: rows)
         waitForExpectations(timeout: 10)
-        XCTAssertFalse(app.navigationBars["保管する記録"].exists)
+        XCTAssertFalse(app.buttons["personal-archive-compose"].exists)
 
-        app.navigationBars["記録の保管"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["iCloudの保管と復元"].buttons.element(boundBy: 0).tap()
         app.navigationBars["設定"].buttons["閉じる"].tap()
         waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
         XCTAssertEqual(catalogNumber("started"), initialStarted,
                        "Opening sheets and returning to the foreground must retain the same catalog")
         XCTAssertGreaterThan(Int(progress.value as? String ?? "") ?? -1, initialProgress)
         assertReadyRemainsVisible(for: 2)
-        capture("personal-archive-albums-after-composer")
+        capture("personal-archive-albums-after-editor")
 
         app.buttons["archive-root-fixture-content"].tap()
         assertReadyRemainsVisible(for: 3)
@@ -1568,128 +1571,6 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["archive-root-fixture-access"].tap()
         waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"])
         XCTAssertEqual(app.state, .runningForeground)
-    }
-
-    @MainActor
-    func testPersonalArchiveSystemPhotoPickerCancelsAndImportsPhoto() throws {
-        // The run seeds a real photo with simctl addmedia. The large library and
-        // archive transport remain fixtures; PhotosPicker and its import do not.
-        let app = XCUIApplication()
-        app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
-                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-        app.launch()
-
-        func diagnostic(_ stage: String) {
-            capture("archive-picker-\(stage)")
-            let description = app.debugDescription
-            NSLog("ARCHIVE_PICKER_AX:%@\n%@\nARCHIVE_PICKER_AX_END", stage, description)
-            let hierarchy = XCTAttachment(string: description)
-            hierarchy.name = "archive-picker-\(stage)-accessibility"
-            hierarchy.lifetime = .keepAlways
-            add(hierarchy)
-        }
-        func require(_ stage: String, timeout: TimeInterval = 10,
-                     _ condition: @escaping () -> Bool) throws {
-            let expectation = XCTNSPredicateExpectation(
-                predicate: NSPredicate { _, _ in condition() }, object: nil)
-            let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
-            if result != .completed { diagnostic("failed-\(stage)") }
-            _ = try XCTUnwrap(result == .completed ? true : nil,
-                              "PhotosPicker stage failed: \(stage)")
-        }
-        func tap(_ element: XCUIElement, stage: String) {
-            XCTContext.runActivity(named: "PhotosPicker: \(stage)") { _ in
-                // Keep this before tap: a frozen presentation may never return
-                // from XCTest's tap/idle wait, leaving this as the last stage.
-                if stage == "first-system-open" { capture("archive-picker-before-\(stage)") }
-                XCTAssertTrue(element.isHittable, stage)
-                NSLog("ARCHIVE_PICKER_STAGE:%@", stage)
-                element.tap()
-            }
-        }
-        let settings = app.buttons["albums-settings-button"]
-        try require("real-albums-settings", timeout: 20) { settings.exists && settings.isHittable }
-        tap(settings, stage: "settings")
-        let archive = app.buttons["settings-personal-archive"]
-        XCTAssertTrue(archive.waitForExistence(timeout: 10))
-        for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
-        tap(archive, stage: "archive")
-        let compose = app.buttons["personal-archive-compose"]
-        try require("archive-ready") { compose.exists && compose.isEnabled && compose.isHittable }
-        tap(compose, stage: "composer")
-
-        let choose = app.buttons["写真を選ぶ"]
-        let text = app.textViews["personal-archive-text"]
-        try require("composer-ready") { choose.exists && choose.isHittable && text.exists }
-        XCTAssertFalse(app.images["保管する写真"].exists)
-        // UIKit's picker can retain its system localization. Accept its two
-        // expected Cancel labels, never the composer's own 戻る/閉じる buttons.
-        let cancelButtons = app.buttons.matching(NSPredicate(
-            format: "label == %@ OR label == %@", "キャンセル", "Cancel"))
-        func pickerCancel() -> XCUIElement? {
-            cancelButtons.allElementsBoundByIndex.first { $0.isHittable }
-        }
-        var loggedPickerPhoto = false
-        func pickerPhoto() -> XCUIElement? {
-            // Resolve a fresh first match after the system library has loaded.
-            // Index-bound snapshots can go stale while Photos builds its grid.
-            let photo = app.scrollViews["photosView_content_scroll_view"].images
-                .matching(NSPredicate(format:
-                    "identifier == %@ AND (label BEGINSWITH %@ OR label BEGINSWITH %@)",
-                    "PXGGridLayout-Info", "写真,", "Photo,")).firstMatch
-            guard photo.exists else { return nil }
-            let hittable = photo.isHittable
-            if !loggedPickerPhoto {
-                NSLog("ARCHIVE_PICKER_PHOTO:exists=1 hittable=%@ frame=%@",
-                      String(hittable), String(describing: photo.frame))
-                loggedPickerPhoto = true
-            }
-            // PhotosUI can report a visible remote image as non-hittable.
-            // Require its real frame to be inside the visible grid; selection
-            // below must still produce the imported preview, never a test skip.
-            let frame = photo.frame
-            let grid = app.scrollViews["photosView_content_scroll_view"].frame
-            guard frame.width > 1, frame.height > 1, !frame.isInfinite,
-                  grid.contains(frame), app.frame.contains(frame) else { return nil }
-            return photo
-        }
-
-        tap(choose, stage: "first-system-open")
-        try require("first-system-picker", timeout: 15) {
-            pickerCancel() != nil
-        }
-        capture("archive-picker-first-system-picker")
-        try require("seeded-library-photo", timeout: 45) { pickerPhoto() != nil }
-        tap(try XCTUnwrap(pickerCancel()), stage: "system-cancel")
-        try require("cancel-returned-to-composer") {
-            pickerCancel() == nil && choose.isHittable && text.isHittable
-        }
-        XCTAssertFalse(app.images["保管する写真"].exists,
-                       "Cancel must not manufacture a selected photo")
-        capture("archive-picker-cancelled")
-
-        tap(choose, stage: "second-system-open")
-        try require("second-system-picker", timeout: 15) {
-            pickerCancel() != nil
-        }
-        capture("archive-picker-second-system-picker")
-        try require("seeded-library-photo-reopened", timeout: 30) { pickerPhoto() != nil }
-        let libraryPhoto = try XCTUnwrap(pickerPhoto())
-        NSLog("ARCHIVE_PICKER_STAGE:select-real-library-photo")
-        // Hit the center of the observed image, not a hard-coded screen point.
-        libraryPhoto.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let preview = app.images["保管する写真"]
-        try require("imported-preview", timeout: 20) {
-            pickerCancel() == nil && preview.exists && preview.isHittable
-        }
-        capture("archive-picker-imported-preview")
-        let remove = app.buttons["写真を外す"]
-        for _ in 0..<3 where !remove.isHittable { app.swipeUp() }
-        try require("remove-ready") { remove.exists && remove.isEnabled && remove.isHittable }
-        tap(remove, stage: "remove-photo")
-        try require("removed-photo") { !preview.exists && choose.isHittable }
-        XCTAssertEqual(app.state, .runningForeground)
-        capture("archive-picker-removed")
     }
 
     @MainActor
@@ -2868,8 +2749,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertFalse(row.exists)
         attach(app, name: "memory-library-search")
         archived.tap()
-        XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].exists)
+        XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["memory-note-body"].label, "はじめてのおふろ。タオルにくるまって、やっとひと安心。")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
@@ -2888,6 +2769,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(body.label.contains("小さな寝息"))
         let photo = app.buttons["memory-note-photo"]
         XCTAssertTrue(photo.isHittable)
+        attach(app, name: "memory-library-photo-detail")
         photo.tap()
         XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["photo-memory-note-excerpt"].exists)
@@ -2943,7 +2825,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["削除"].tap()
         // Group-level identifiers are forwarded to the empty state's children.
         // Verify its visible content and keep export out of the current UI.
-        XCTAssertTrue(app.staticTexts["写真を開き、メモのアイコンから書けます。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["写真を開き、鉛筆から書けます。"].waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         attach(app, name: "memory-library-empty-after-deletion")
@@ -2957,7 +2839,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
-    func testExistingMemoryPreservesCopyEditsAndDeletesWithoutChangingOriginal() {
+    func testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion() {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -2976,13 +2858,28 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"), object: save)], timeout: 15), .completed)
         XCTAssertEqual(app.staticTexts["memory-note-archive-preview"].label, original)
-        XCTAssertFalse(app.textViews["personal-archive-text"].exists, "Do not ask to retype an existing note.")
+        XCTAssertFalse(app.textViews["photo-memory-note-text"].exists, "Do not ask to retype an existing note.")
+        XCTAssertTrue(app.staticTexts["この写真とメモを自分のiCloudに保管します。これからのメモの変更も反映します。"].exists)
         attach(app, name: "memory-archive-prefilled-confirmation")
         save.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: save)], timeout: 10), .completed)
         XCTAssertTrue(body.waitForExistence(timeout: 10))
         XCTAssertEqual(body.label, original)
+        // The consent above enables reflection. Editing the same local memo
+        // must update its existing archive record, not create a second memo.
+        app.buttons["memory-note-edit"].tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("また一緒に。")
+        let updated = input.value as? String ?? ""
+        XCTAssertEqual(updated.replacingOccurrences(of: "また一緒に。", with: ""), original)
+        XCTAssertTrue(updated.contains("また一緒に。"))
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+        XCTAssertEqual(body.label, updated)
         app.navigationBars.buttons.firstMatch.tap()
         // One exact preserved copy must not become two identical reading rows.
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
@@ -2992,28 +2889,25 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let archiveSettings = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))
         archiveSettings.tap()
-        let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-")).firstMatch
-        XCTAssertTrue(archived.waitForExistence(timeout: 10)); archived.tap()
-        XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
-        app.buttons["personal-archive-record-menu"].tap()
-        app.buttons["personal-archive-edit"].tap()
-        let input = app.textViews["personal-archive-edit-text"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("また一緒に。")
-        app.buttons["personal-archive-edit-save"].tap()
+        let archivedRows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "personal-archive-record-"))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+            predicate: NSPredicate(format: "count == 1"), object: archivedRows)], timeout: 10), .completed)
+        archivedRows.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(body.label, updated)
         XCTAssertTrue(app.buttons["personal-archive-record-menu"].waitForExistence(timeout: 10))
-        attach(app, name: "memory-archive-edited-copy")
+        attach(app, name: "memory-archive-reflected-memo")
         app.buttons["personal-archive-record-menu"].tap()
         app.buttons["personal-archive-delete"].tap()
         app.buttons["コピーを削除"].tap()
-        XCTAssertTrue(app.staticTexts["まだ記録がありません"].waitForExistence(timeout: 10))
-        app.navigationBars["記録の保管"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["保管した写真はありません"].waitForExistence(timeout: 10))
+        app.navigationBars["iCloudの保管と復元"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))
         app.buttons["閉じる"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
         XCTAssertTrue(body.waitForExistence(timeout: 5))
-        XCTAssertEqual(body.label, original, "Cloud-copy edits and deletion must leave the source note intact.")
+        XCTAssertEqual(body.label, updated, "Deleting the archive copy must retain the latest local memo.")
     }
 
     @MainActor
@@ -3115,11 +3009,23 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         open.tap()
         let input = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(input.waitForExistence(timeout: 10))
+        func clearMemoText() {
+            let existing = input.value as? String ?? ""
+            // These short fixture notes fit in the editor. Tapping below the
+            // last line places the insertion point at the end before erasing.
+            input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+            XCTAssertEqual(input.value as? String ?? "", "")
+            app.buttons["photo-memory-note-keyboard-done"].tap()
+            app.buttons["photo-memory-note-save"].tap()
+            let confirm = app.buttons["削除"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+        }
         // The fixture has its own file, never the user's store. Clear a note
         // from an interrupted prior run before starting the lifecycle check.
-        if app.buttons["photo-memory-note-delete"].exists {
-            app.buttons["photo-memory-note-delete"].tap()
-            app.buttons["削除"].tap()
+        if !(input.value as? String ?? "").isEmpty {
+            clearMemoText()
             XCTAssertTrue(open.waitForExistence(timeout: 5))
             open.tap()
             XCTAssertTrue(input.waitForExistence(timeout: 5))
@@ -3172,10 +3078,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["family-window-cancel-delivery"].tap()
         XCTAssertTrue(open.waitForExistence(timeout: 5))
         open.tap()
-        let delete = app.buttons["photo-memory-note-delete"]
-        XCTAssertTrue(delete.waitForExistence(timeout: 5))
-        delete.tap()
-        app.buttons["削除"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        clearMemoText()
         XCTAssertTrue(open.waitForExistence(timeout: 5))
         XCTAssertFalse(excerpt.exists)
         XCTAssertTrue(app.buttons["お気に入りに追加"].exists)

@@ -773,6 +773,8 @@ jobs:
           xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
             NekoWidget/Services/PersonalArchiveStore.swift \
             NekoWidget/Services/PersonalArchiveCloudClient.swift \
+            NekoWidget/Services/PhotoMemoryNoteStore.swift \
+            NekoWidget/Services/PhotoMemoCoordinator.swift \
             ci/verify-personal-archive.swift \
             -o "$RUNNER_TEMP/verify-personal-archive"
           "$RUNNER_TEMP/verify-personal-archive"

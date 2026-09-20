@@ -34,9 +34,10 @@ struct SettingsSheetHost<Content: View>: View {
 
 struct PersonalArchiveSettingsLink: View {
     let store: PersonalArchiveStore
+    var noteStore: PhotoMemoryNoteStore = .shared
 
     var body: some View {
-        NavigationLink { PersonalArchiveView(store: store) } label: {
+        NavigationLink { PersonalArchiveView(store: store, noteStore: noteStore) } label: {
             Label("iCloudの保管と復元", systemImage: "icloud")
         }
         .accessibilityIdentifier("settings-personal-archive")
@@ -44,6 +45,7 @@ struct PersonalArchiveSettingsLink: View {
 }
 
 struct SettingsView: View {
+    @Environment(\.photoMemoStore) private var memoStore
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
     let highResolutionRecoverySample: DetectionAccuracySamplePresentation
@@ -182,7 +184,7 @@ struct SettingsView: View {
 
             if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
                 Section {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared)
+                PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }
             }
 

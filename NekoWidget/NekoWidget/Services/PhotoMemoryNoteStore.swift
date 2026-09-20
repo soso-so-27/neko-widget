@@ -45,6 +45,29 @@ struct PhotoMemoryNoteRecord: Identifiable, Equatable, Sendable {
     var id: UUID { note.id }
 }
 
+/// Explicit consent and an outbox are device-local. Neither identifiers nor
+/// consent are inferred from matching text or uploaded to CloudKit.
+struct PhotoMemoryNoteReflection: Codable, Equatable, Sendable {
+    let operationID: UUID
+    let text: String
+    let revision: String
+    let writtenAt: Date?
+    let updatedAt: Date
+    let context: PhotoMemoryNoteContext?
+    var conflictLocalRevision: String? = nil
+    var conflictRemoteRevision: String? = nil
+}
+
+struct PhotoMemoryNoteArchiveBinding: Codable, Equatable, Sendable {
+    let photoIdentifier: String
+    let noteID: UUID
+    let recordID: UUID
+    let accountKey: String
+    var archiveRevision: String
+    var pending: PhotoMemoryNoteReflection? = nil
+    var inFlight: PhotoMemoryNoteReflection? = nil
+}
+
 enum PhotoMemoryNoteStoreError: Error, LocalizedError, Equatable {
     case invalidIdentifier
     case tooLong
@@ -90,6 +113,7 @@ actor PhotoMemoryNoteStore {
     private struct State: Codable {
         var schemaVersion = 2
         var notes: [String: PhotoMemoryNote] = [:]
+        var archiveBindings: [String: PhotoMemoryNoteArchiveBinding]? = nil
     }
 
     private struct LegacyState: Decodable {
@@ -189,6 +213,128 @@ actor PhotoMemoryNoteStore {
         _ = try save(text: "", recordID: id, expectedRevision: expectedRevision)
     }
 
+    func archiveBinding(for identifier: String) throws -> PhotoMemoryNoteArchiveBinding? {
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        return try load(from: resolvedFileURL()).archiveBindings?[identifier]
+    }
+
+    func archiveBindings() throws -> [PhotoMemoryNoteArchiveBinding] {
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        return Array((try load(from: resolvedFileURL()).archiveBindings ?? [:]).values)
+    }
+
+    /// Consent is committed only against the exact note the user confirmed.
+    func bindArchive(record: PhotoMemoryNoteRecord, recordID: UUID, accountKey: String,
+                     archiveRevision: String, replacingDeletedRecordID: UUID? = nil) throws {
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        guard state.notes[record.photoIdentifier] == record.note,
+              Self.validDigest(accountKey), Self.validDigest(archiveRevision) else {
+            throw PhotoMemoryNoteStoreError.conflict
+        }
+        if let old = state.archiveBindings?[record.photoIdentifier],
+           old.recordID != recordID || old.accountKey != accountKey {
+            // Do not move an existing consent/outbox to another account.
+            guard old.accountKey == accountKey, old.recordID == replacingDeletedRecordID else { throw PhotoMemoryNoteStoreError.conflict }
+        }
+        var bindings = state.archiveBindings ?? [:]
+        if let old = bindings[record.photoIdentifier] {
+            guard old.recordID == replacingDeletedRecordID || (old.pending == nil && old.inFlight == nil) else { throw PhotoMemoryNoteStoreError.conflict }
+        }
+        bindings[record.photoIdentifier] = PhotoMemoryNoteArchiveBinding(
+            photoIdentifier: record.photoIdentifier, noteID: record.id, recordID: recordID,
+            accountKey: accountKey, archiveRevision: archiveRevision)
+        state.archiveBindings = bindings; state.schemaVersion = 3
+        try commit(state, to: url)
+    }
+
+    /// Once promoted, the payload/operation ID stays fixed across interruption.
+    /// Later edits replace only pending, never the request already in flight.
+    func beginReflection(for identifier: String, accountKey: String) throws -> PhotoMemoryNoteArchiveBinding? {
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        guard var binding = state.archiveBindings?[identifier], binding.accountKey == accountKey else { return nil }
+        if binding.inFlight == nil, let pending = binding.pending {
+            binding.inFlight = pending; binding.pending = nil
+            state.archiveBindings?[identifier] = binding
+            try commit(state, to: url)
+        }
+        return binding
+    }
+
+    func finishReflection(for identifier: String, accountKey: String, operationID: UUID,
+                          archiveRevision: String) throws {
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        guard var binding = state.archiveBindings?[identifier], binding.accountKey == accountKey,
+              Self.validDigest(archiveRevision) else {
+            throw PhotoMemoryNoteStoreError.conflict
+        }
+        if binding.inFlight == nil, binding.archiveRevision == archiveRevision { return }
+        guard binding.inFlight?.operationID == operationID else { throw PhotoMemoryNoteStoreError.conflict }
+        binding.archiveRevision = archiveRevision; binding.inFlight = nil
+        state.archiveBindings?[identifier] = binding
+        try commit(state, to: url)
+    }
+
+    /// Accept an already fetched version only while no local edit is queued.
+    /// This never makes a new PhotoKit relationship or calls the network.
+    func acceptArchiveText(binding expected: PhotoMemoryNoteArchiveBinding, text: String,
+                           writtenAt: Date?, updatedAt: Date, archiveRevision: String) throws -> PhotoMemoryNoteRecord? {
+        let text = try Self.normalizedText(text)
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        guard var binding = state.archiveBindings?[expected.photoIdentifier], binding == expected,
+              binding.pending == nil, binding.inFlight == nil,
+              Self.validDigest(archiveRevision), updatedAt.timeIntervalSinceReferenceDate.isFinite,
+              writtenAt?.timeIntervalSinceReferenceDate.isFinite ?? true else { throw PhotoMemoryNoteStoreError.conflict }
+        let old = state.notes[binding.photoIdentifier]
+        if binding.archiveRevision == archiveRevision, (old?.text ?? "") == text {
+            return old.map { PhotoMemoryNoteRecord(photoIdentifier: binding.photoIdentifier, note: $0) }
+        }
+        let note: PhotoMemoryNote?
+        if text.isEmpty { note = nil }
+        else if old?.text == text { note = old }
+        else {
+            note = PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: updatedAt,
+                revision: UUID().uuidString, writtenAt: old?.writtenAt ?? writtenAt, context: old?.context)
+        }
+        state.notes[binding.photoIdentifier] = note
+        binding.archiveRevision = archiveRevision
+        state.archiveBindings?[binding.photoIdentifier] = binding
+        try commit(state, to: url)
+        return note.map { PhotoMemoryNoteRecord(photoIdentifier: binding.photoIdentifier, note: $0) }
+    }
+
+    func stageConflictResolution(binding expected: PhotoMemoryNoteArchiveBinding, expectedNoteRevision: String?,
+                                 text: String, operationID: UUID, localRevision: String, remoteRevision: String) throws {
+        let text = try Self.normalizedText(text)
+        Self.commitLock.lock(); defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        guard var binding = state.archiveBindings?[expected.photoIdentifier], binding == expected,
+              state.notes[binding.photoIdentifier]?.revision == expectedNoteRevision,
+              Self.validDigest(localRevision), Self.validDigest(remoteRevision) else { throw PhotoMemoryNoteStoreError.conflict }
+        let old = state.notes[binding.photoIdentifier], now = Date(), revision = UUID().uuidString
+        let note = text.isEmpty ? nil : PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: now,
+            revision: revision, writtenAt: old?.writtenAt, context: old?.context)
+        state.notes[binding.photoIdentifier] = note
+        binding.inFlight = PhotoMemoryNoteReflection(operationID: operationID, text: text, revision: revision,
+            writtenAt: old?.writtenAt, updatedAt: now, context: old?.context,
+            conflictLocalRevision: localRevision, conflictRemoteRevision: remoteRevision)
+        binding.pending = nil
+        state.archiveBindings?[binding.photoIdentifier] = binding
+        try commit(state, to: url)
+    }
+
+    private static func validDigest(_ value: String) -> Bool {
+        value.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
     /// Called only inside the shared commit lock, after reading current state.
     private func save(
         normalized text: String,
@@ -205,7 +351,7 @@ actor PhotoMemoryNoteStore {
 
         let now = Date()
         let note = text.isEmpty ? nil : PhotoMemoryNote(
-            id: existing?.id ?? UUID(),
+            id: existing?.id ?? state.archiveBindings?[identifier]?.noteID ?? UUID(),
             text: text,
             updatedAt: now,
             revision: UUID().uuidString,
@@ -213,6 +359,12 @@ actor PhotoMemoryNoteStore {
             context: preservedContext
         )
         state.notes[identifier] = note
+        if var binding = state.archiveBindings?[identifier] {
+            binding.pending = PhotoMemoryNoteReflection(operationID: UUID(), text: text,
+                revision: note?.revision ?? UUID().uuidString,
+                writtenAt: note?.writtenAt ?? existing?.writtenAt, updatedAt: now, context: preservedContext)
+            state.archiveBindings?[identifier] = binding
+        }
         try commit(state, to: url)
         // Do not expose a new revision until the atomic write succeeds.
         return note
@@ -301,7 +453,7 @@ actor PhotoMemoryNoteStore {
         } catch {
             throw PhotoMemoryNoteStoreError.corruptedState
         }
-        guard header.schemaVersion == 1 || header.schemaVersion == 2 else {
+        guard (1...3).contains(header.schemaVersion) else {
             throw PhotoMemoryNoteStoreError.unsupportedSchema(header.schemaVersion)
         }
         let state: State
@@ -329,6 +481,34 @@ actor PhotoMemoryNoteStore {
                       note.writtenAt?.timeIntervalSinceReferenceDate.isFinite ?? true,
                       try Self.normalizedContext(note.context) == note.context else {
                     throw PhotoMemoryNoteStoreError.corruptedState
+                }
+            }
+            guard state.archiveBindings == nil || state.schemaVersion == 3 else {
+                throw PhotoMemoryNoteStoreError.corruptedState
+            }
+            let bindings = Array((state.archiveBindings ?? [:]).values)
+            guard Set(bindings.map(\.noteID)).count == bindings.count,
+                  Set(bindings.map { $0.accountKey + ":" + $0.recordID.uuidString }).count == bindings.count else {
+                throw PhotoMemoryNoteStoreError.corruptedState
+            }
+            for (identifier, binding) in state.archiveBindings ?? [:] {
+                try Self.validate(identifier: identifier)
+                guard binding.photoIdentifier == identifier, Self.validDigest(binding.accountKey),
+                      Self.validDigest(binding.archiveRevision),
+                      state.notes[identifier].map({ $0.id == binding.noteID }) ?? true else {
+                    throw PhotoMemoryNoteStoreError.corruptedState
+                }
+                for operation in [binding.pending, binding.inFlight].compactMap({ $0 }) {
+                    guard try Self.normalizedText(operation.text) == operation.text,
+                          UUID(uuidString: operation.revision) != nil,
+                          operation.updatedAt.timeIntervalSinceReferenceDate.isFinite,
+                          operation.writtenAt?.timeIntervalSinceReferenceDate.isFinite ?? true,
+                          operation.conflictLocalRevision.map(Self.validDigest) ?? true,
+                          operation.conflictRemoteRevision.map(Self.validDigest) ?? true,
+                          (operation.conflictLocalRevision == nil) == (operation.conflictRemoteRevision == nil),
+                          try Self.normalizedContext(operation.context) == operation.context else {
+                        throw PhotoMemoryNoteStoreError.corruptedState
+                    }
                 }
             }
         } catch {

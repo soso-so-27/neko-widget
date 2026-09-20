@@ -41,16 +41,18 @@ struct PersonalArchiveRecord: Identifiable, Equatable, Sendable {
     let context: PersonalArchiveContext?
     let revision: String
     let conflictingText: String?
+    let conflictingRevision: String?
     let isDeletionPending: Bool
 
     init(id: UUID, text: String, createdAt: Date, capturedAt: Date?, jpegData: Data?,
          state: PersonalArchiveRecordState, issue: PersonalArchiveError?,
          context: PersonalArchiveContext? = nil, revision: String = "", conflictingText: String? = nil,
-         isDeletionPending: Bool = false) {
+         isDeletionPending: Bool = false, conflictingRevision: String? = nil) {
         self.id = id; self.text = text; self.createdAt = createdAt; self.capturedAt = capturedAt
         self.jpegData = jpegData; self.state = state; self.issue = issue
         self.context = context; self.revision = revision; self.conflictingText = conflictingText
         self.isDeletionPending = isDeletionPending
+        self.conflictingRevision = conflictingRevision
     }
 }
 
@@ -245,6 +247,9 @@ actor PersonalArchiveStore {
         let source: PersonalArchiveSourceSnapshot
         let recordID: UUID
         let fingerprint: String
+        // Local baseline for enrolled edits when a newer remote version has
+        // already been fetched. Never encoded into a CloudKit payload.
+        var payload: PersonalArchivePayload? = nil
     }
     private struct State: Codable {
         var schema = 1
@@ -264,6 +269,88 @@ actor PersonalArchiveStore {
     }
 
     func accountContext() async throws -> String { try await currentAccount().context }
+
+    func verifiedAccount(expectedAccount: String) async throws -> PersonalArchiveAccount {
+        let account = try await checkedAccount(expectedAccount)
+        try await assertCurrent(account)
+        return account
+    }
+
+    /// Explicit local correspondence only, including divergent legacy copies.
+    /// Returning a link does not grant permission to overwrite either side.
+    func linkedRecord(noteID: UUID, expectedAccount: String) async throws -> PersonalArchiveRecord? {
+        let account = try await checkedAccount(expectedAccount)
+        let state = try readState(account)
+        let result = try state.sources?[noteID.uuidString].flatMap { link in
+            try readRecords(account, state: state).first { $0.id == link.recordID }
+        }
+        try await assertCurrent(account)
+        return result
+    }
+
+    func sourceSnapshot(recordID: UUID, expectedAccount: String, matchingPayload: Bool = false) async throws -> PersonalArchiveSourceSnapshot? {
+        let account = try await checkedAccount(expectedAccount)
+        let state = try readState(account)
+        let link = (state.sources ?? [:]).values.first { $0.recordID == recordID }
+        let entry = state.entries[recordID.uuidString]
+        let matches = entry.map { !$0.payload.isDeleted && $0.state != .conflict && link?.fingerprint == $0.payload.fingerprint } ?? false
+        let source = matchingPayload && !matches ? nil : link?.source
+        try await assertCurrent(account)
+        return source
+    }
+
+    func retryRecord(id: UUID, expectedAccount: String) async throws -> PersonalArchiveRecord? {
+        let account = try await checkedAccount(expectedAccount)
+        try await attempt(id, account: account)
+        try await assertCurrent(account)
+        return try readRecords(account).first { $0.id == id }
+    }
+
+    /// Includes the private tombstone for the enrolled memo's status only.
+    func memoRecord(id: UUID, expectedAccount: String) async throws -> PersonalArchiveRecord? {
+        let account = try await checkedAccount(expectedAccount)
+        let state = try readState(account)
+        guard let entry = state.entries[id.uuidString] else { return nil }
+        let record: PersonalArchiveRecord?
+        if entry.payload.isDeleted {
+            let p = entry.payload
+            record = PersonalArchiveRecord(id: id, text: "", createdAt: p.createdAt, capturedAt: nil,
+                jpegData: nil, state: entry.state, issue: entry.issue, revision: p.fingerprint, isDeletionPending: true)
+        } else { record = try readRecords(account, state: state).first { $0.id == id } }
+        try await assertCurrent(account)
+        return record
+    }
+
+    /// Changes only the device-local alias after an enrolled memo accepts a
+    /// fetched version. The payload and transport are not modified.
+    func acknowledgeMemoSource(_ source: PersonalArchiveSourceSnapshot, recordID: UUID,
+                               expectedRevision: String, expectedAccount: String) async throws {
+        let account = try await checkedAccount(expectedAccount)
+        try update(account) { state, _ in
+            guard let entry = state.entries[recordID.uuidString], !entry.payload.isDeleted,
+                  entry.state == .stored, entry.payload.fingerprint == expectedRevision,
+                  state.sources?[source.noteID.uuidString]?.recordID == recordID else { throw PersonalArchiveError.conflict }
+            state.sources?[source.noteID.uuidString] = SourceLink(source: source, recordID: recordID,
+                fingerprint: expectedRevision, payload: entry.payload)
+        }
+        try await assertCurrent(account)
+    }
+
+    /// Actual payload metadata, not local JPEG availability, determines whether
+    /// deleting words leaves a photo or removes a genuinely text-only record.
+    func deleteWords(id: UUID, operationID: UUID, expectedRevision: String,
+                     expectedAccount: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil) async throws -> PersonalArchiveRecord {
+        let account = try await checkedAccount(expectedAccount)
+        guard let entry = try readState(account).entries[id.uuidString] else { throw PersonalArchiveError.conflict }
+        if entry.payload.jpegSHA256 != nil {
+            return try await update(id: id, operationID: operationID, expectedRevision: expectedRevision,
+                text: "", capturedAt: entry.payload.capturedAt, context: entry.payload.context,
+                expectedAccount: expectedAccount, sourceSnapshot: sourceSnapshot)
+        }
+        _ = try await delete(id: id, operationID: operationID, expectedRevision: expectedRevision, expectedAccount: expectedAccount)
+        guard let record = try await memoRecord(id: id, expectedAccount: expectedAccount) else { throw PersonalArchiveError.corruptedState }
+        return record
+    }
 
     func records() async throws -> [PersonalArchiveRecord] {
         let account = try await currentAccount()
@@ -352,7 +439,7 @@ actor PersonalArchiveStore {
                 state.zoneCreationAttempted = true
             }
             var links = state.sources ?? [:]
-            links[source.noteID.uuidString] = SourceLink(source: source, recordID: id, fingerprint: payload.fingerprint)
+            links[source.noteID.uuidString] = SourceLink(source: source, recordID: id, fingerprint: payload.fingerprint, payload: payload)
             state.sources = links
             return id
         }
@@ -362,26 +449,45 @@ actor PersonalArchiveStore {
 
     @discardableResult
     func update(id: UUID, operationID: UUID, expectedRevision: String, text: String, capturedAt: Date?,
-                context: PersonalArchiveContext?, expectedAccount: String) async throws -> PersonalArchiveRecord {
+                context: PersonalArchiveContext?, expectedAccount: String,
+                sourceSnapshot: PersonalArchiveSourceSnapshot? = nil) async throws -> PersonalArchiveRecord {
         let account = try await checkedAccount(expectedAccount)
         try update(account) { state, _ in
             guard let existing = state.entries[id.uuidString], !existing.payload.isDeleted else { throw PersonalArchiveError.conflict }
+            let sourceLink = sourceSnapshot.flatMap { state.sources?[$0.noteID.uuidString] }
+            if let sourceSnapshot {
+                guard sourceLink?.recordID == id, sourceLink?.source.photoIdentifier == sourceSnapshot.photoIdentifier else {
+                    throw PersonalArchiveError.conflict
+                }
+            }
+            let base = sourceLink?.payload.flatMap { $0.fingerprint == expectedRevision ? $0 : nil } ?? existing.payload
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
-            guard !normalized.isEmpty || existing.payload.jpegSHA256 != nil else { throw PersonalArchiveError.emptyRecord }
-            let payload = PersonalArchivePayload(id: id, text: normalized, createdAt: existing.payload.createdAt,
-                capturedAt: capturedAt.map(Self.wholeSecond), jpegSHA256: existing.payload.jpegSHA256,
-                jpegByteCount: existing.payload.jpegByteCount, context: context, changeID: operationID)
+            guard !normalized.isEmpty || base.jpegSHA256 != nil else { throw PersonalArchiveError.emptyRecord }
+            let payload = PersonalArchivePayload(id: id, text: normalized, createdAt: base.createdAt,
+                capturedAt: capturedAt.map(Self.wholeSecond), jpegSHA256: base.jpegSHA256,
+                jpegByteCount: base.jpegByteCount, context: context, changeID: operationID)
             try payload.validate()
             if existing.payload.changeID == operationID {
                 guard existing.payload == payload, existing.state != .conflict else { throw PersonalArchiveError.conflict }
                 return
             }
-            guard existing.payload.fingerprint == expectedRevision,
-                  existing.state != .pending && existing.state != .conflict else { throw PersonalArchiveError.conflict }
-            state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
-                precondition: PersonalArchivePrecondition(expectedRevisions: [expectedRevision], allowsCreation: false),
-                previousPayload: existing.payload)
+            guard existing.state != .pending && existing.state != .conflict else { throw PersonalArchiveError.conflict }
+            if existing.payload.fingerprint != expectedRevision {
+                guard sourceSnapshot != nil, base.fingerprint == expectedRevision else { throw PersonalArchiveError.conflict }
+                state.entries[id.uuidString] = Entry(payload: payload, state: .conflict, issue: .conflict,
+                    conflictingPayload: existing.payload, previousPayload: base)
+            } else {
+                state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
+                    precondition: PersonalArchivePrecondition(expectedRevisions: [expectedRevision], allowsCreation: false),
+                    previousPayload: existing.payload)
+            }
+            if let sourceSnapshot {
+                guard let link = state.sources?[sourceSnapshot.noteID.uuidString], link.recordID == id,
+                      link.source.photoIdentifier == sourceSnapshot.photoIdentifier else { throw PersonalArchiveError.conflict }
+                state.sources?[sourceSnapshot.noteID.uuidString] = SourceLink(
+                    source: sourceSnapshot, recordID: id, fingerprint: payload.fingerprint, payload: payload)
+            }
         }
         try await attempt(id, account: account)
         return try requiredRecord(id, account: account)
@@ -407,10 +513,60 @@ actor PersonalArchiveStore {
             state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
                 precondition: PersonalArchivePrecondition(expectedRevisions: expected, allowsCreation: true),
                 previousPayload: existing.payload)
+            for key in Array((state.sources ?? [:]).keys) where state.sources?[key]?.recordID == id {
+                state.sources?[key]?.payload = nil
+            }
         }
         try await attempt(id, account: account)
         guard let entry = try readState(account).entries[id.uuidString] else { throw PersonalArchiveError.corruptedState }
         return entry.state
+    }
+
+    /// Explicit choice between two observed versions. The server CAS still
+    /// rejects another device changing it after the confirmation was shown.
+    func validateMemoConflict(id: UUID, localRevision: String, remoteRevision: String,
+                              text: String, expectedAccount: String) async throws {
+        let account = try await checkedAccount(expectedAccount)
+        guard let entry = try readState(account).entries[id.uuidString], entry.state == .conflict,
+              entry.payload.fingerprint == localRevision, let remote = entry.conflictingPayload,
+              remote.fingerprint == remoteRevision, !entry.payload.isDeleted, !remote.isDeleted,
+              entry.payload.jpegSHA256 == remote.jpegSHA256 else { throw PersonalArchiveError.conflict }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
+        guard !normalized.isEmpty || entry.payload.jpegSHA256 != nil else { throw PersonalArchiveError.conflict }
+        try await assertCurrent(account)
+    }
+
+    func resolveMemoConflict(id: UUID, operationID: UUID, localRevision: String, remoteRevision: String,
+                             text: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil,
+                             expectedAccount: String) async throws -> PersonalArchiveRecord {
+        let account = try await checkedAccount(expectedAccount)
+        try update(account) { state, _ in
+            guard let entry = state.entries[id.uuidString] else { throw PersonalArchiveError.conflict }
+            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if entry.payload.changeID == operationID {
+                guard entry.payload.text == normalized, entry.state != .conflict else { throw PersonalArchiveError.conflict }
+                return
+            }
+            guard entry.state == .conflict, entry.payload.fingerprint == localRevision,
+                  let remote = entry.conflictingPayload, remote.fingerprint == remoteRevision,
+                  !entry.payload.isDeleted, !remote.isDeleted,
+                  entry.payload.jpegSHA256 == remote.jpegSHA256 else { throw PersonalArchiveError.conflict }
+            let payload = PersonalArchivePayload(id: id, text: normalized, createdAt: entry.payload.createdAt,
+                capturedAt: entry.payload.capturedAt, jpegSHA256: entry.payload.jpegSHA256,
+                jpegByteCount: entry.payload.jpegByteCount, context: entry.payload.context, changeID: operationID)
+            try payload.validate()
+            state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
+                precondition: PersonalArchivePrecondition(expectedRevisions: [remoteRevision], allowsCreation: false),
+                conflictingPayload: remote, previousPayload: entry.payload)
+            if let sourceSnapshot {
+                guard state.sources?[sourceSnapshot.noteID.uuidString]?.recordID == id else { throw PersonalArchiveError.conflict }
+                state.sources?[sourceSnapshot.noteID.uuidString] = SourceLink(source: sourceSnapshot, recordID: id,
+                    fingerprint: payload.fingerprint, payload: payload)
+            }
+        }
+        try await attempt(id, account: account)
+        return try requiredRecord(id, account: account)
     }
 
     private func checkedAccount(_ expected: String) async throws -> PersonalArchiveAccount {
@@ -540,6 +696,9 @@ actor PersonalArchiveStore {
                 // A result started before a local edit/delete is not its acknowledgement.
                 if existing?.payload.fingerprint != before.entries[key]?.payload.fingerprint { continue }
                 if remote.payload.isDeleted {
+                    for sourceKey in Array((state.sources ?? [:]).keys) where state.sources?[sourceKey]?.recordID == remote.payload.id {
+                        state.sources?[sourceKey]?.payload = nil
+                    }
                     if let existing, !existing.payload.isDeleted, existing.state == .pending || existing.state == .conflict {
                         state.entries[key] = Entry(payload: remote.payload, state: .conflict, issue: .conflict,
                             previousPayload: existing.payload)
@@ -688,7 +847,7 @@ actor PersonalArchiveStore {
                 state: missing && entry.state == .stored ? .partial : entry.state,
                 issue: missing ? .corruptedState : entry.issue, context: payload.context,
                 revision: payload.fingerprint, conflictingText: entry.conflictingPayload?.text,
-                isDeletionPending: entry.payload.isDeleted)
+                isDeletionPending: entry.payload.isDeleted, conflictingRevision: entry.conflictingPayload?.fingerprint)
         }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }
 
@@ -739,6 +898,10 @@ actor PersonalArchiveStore {
             for (key, link) in state.sources ?? [:] {
                 guard key == link.source.noteID.uuidString, state.entries[link.recordID.uuidString] != nil,
                       PersonalArchiveFiles.isDigest(link.fingerprint) else { throw PersonalArchiveError.corruptedState }
+                if let payload = link.payload {
+                    try payload.validate()
+                    guard payload.id == link.recordID, payload.fingerprint == link.fingerprint else { throw PersonalArchiveError.corruptedState }
+                }
             }
             return state
         } catch { throw PersonalArchiveError.corruptedState }

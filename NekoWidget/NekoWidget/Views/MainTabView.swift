@@ -102,6 +102,7 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
 
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.photoMemoStore) private var memoStore
 
     let currentPhoto: PhotoPresentation?
     let likedPhotos: [PhotoPresentation]
@@ -323,6 +324,15 @@ struct MainTabView: View {
             guard scenePhase == .active else { return }
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
             await seasonalMovieArchive.load()
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active,
+                  personalArchiveStore != nil || PersonalArchiveStore.isConfigured else { return }
+            let archiveStore = personalArchiveStore ?? .shared
+            // Only explicitly enrolled records can have pending reflections.
+            guard let account = try? await archiveStore.accountContext() else { return }
+            try? await PhotoMemoCoordinator(noteStore: memoStore, archiveStore: archiveStore)
+                .retryUpdates(expectedAccount: account)
         }
     }
 

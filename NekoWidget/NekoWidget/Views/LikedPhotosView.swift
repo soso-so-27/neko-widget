@@ -2232,6 +2232,7 @@ struct PhotoBrowserView: View {
     @State private var showsRediscoveryHistory = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
+    @State private var preservingNote: PhotoMemoryNoteRecord?
 
     init(
         photos: [PhotoPresentation],
@@ -2454,18 +2455,6 @@ struct PhotoBrowserView: View {
 
     @ViewBuilder
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
-        Button {
-            personalNotePhoto = selectedPhoto
-        } label: {
-            Image(systemName: "square.and.pencil")
-                .font(.title3)
-                .frame(width: 44, height: 44)
-        }
-        .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "思い出を添える" : "思い出のメモを開く")
-        .accessibilityHint("自分だけのメモです。相手には送られません")
-        .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto)
-
         if selectedPhoto.isLiked {
             Menu {
                 Button("お気に入りから外す", role: .destructive) {
@@ -2520,9 +2509,28 @@ struct PhotoBrowserView: View {
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let selectedPhoto {
+                    Button { personalNotePhoto = selectedPhoto } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
+                    .accessibilityHint("自分だけのメモです。相手には送られません")
+                    .accessibilityIdentifier("photo-memory-note-open")
+                    .disabled(isExportingMemoryPhoto)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) { relatedAlbumsMenu }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if PersonalArchiveStore.isConfigured,
+                       let note = personalNote.note(for: selectedPhotoIdentifier) {
+                        Button {
+                            preservingNote = PhotoMemoryNoteRecord(photoIdentifier: selectedPhotoIdentifier, note: note)
+                        } label: { Label("iCloudに保管", systemImage: "icloud.and.arrow.up") }
+                        .accessibilityIdentifier("photo-browser-preserve-note")
+                        Divider()
+                    }
                     Button { showsRediscoveryHistory = true } label: {
                         Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
                     }
@@ -2578,7 +2586,7 @@ struct PhotoBrowserView: View {
                         }
                     }
                 } label: {
-                    Label("写真メニュー", systemImage: "ellipsis.circle")
+                    Label("写真メニュー", systemImage: "ellipsis")
                 }
             }
         }
@@ -2632,6 +2640,10 @@ struct PhotoBrowserView: View {
                 Task { await personalNote.load(for: selectedPhotoIdentifier) }
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
+        }
+        .sheet(item: $preservingNote) { record in
+            PhotoMemoryNoteArchiveView(record: record, photos: libraryPhotos,
+                                       noteStore: personalNote.store, archiveStore: .shared)
         }
         .sheet(isPresented: $showsRediscoveryHistory) {
             NavigationStack {
