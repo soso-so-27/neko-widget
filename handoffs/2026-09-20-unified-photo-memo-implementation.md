@@ -1,6 +1,6 @@
 # 写真のメモ：共通の作成・編集と明示保管
 
-2026-09-20。基点 `78149b9`。状態：実装候補、native CI・内部配布前。
+2026-09-20。基点 `78149b9`。状態：製品 `2693498`、Build 193のAppleアップロード成功。端末表示・Apple側処理完了とは区別する。
 
 ## 利用者に見える変更
 
@@ -47,4 +47,20 @@
 - 製品の詳細画面・共通editor・旧保管記録・反映後本文のnative画像を確認。大きな写真＋本文＋鉛筆の共通構成を確認済み。
 - 証拠: `C:/dev/neko-evidence/unified-photo-memo-20260920/`。CI時間の限定監査も同フォルダの `release-timing-notes.md` へ集約。未実装の高速化を今回の短縮実績とは扱わない。
 
-CI・配布の最終結果、最終SHA、実測時間は完了時に追記する。
+## 最終結果
+
+- 最終製品SHA: `269349890a2288e498dc8d3171c8b8fbffcdb927`。初回候補から製品コードは変えず、テスト操作2件のみ修正した。
+- [候補CI 35489148667](https://github.com/soso-so-27/neko-widget/actions/runs/35489148667): full-v1の全必須成功。アプリ画面53件0失敗。メモ削除のライフサイクル75.883秒、ピックアップ再表示252.949秒で成功。保存verifier・権限/実写真scan・runtimeも成功。
+- 同候補のgallery-normal初回はSpringBoardが「ねこのまど」を検索結果に出さず失敗。画像・ログ・同製品の前回成功・同SHAの他Gallery成功からテスト端末の索引状態と分類し、対象jobだけ1回再実行して成功。アプリ53操作や他の成功jobは再実行していない。
+- [main CI 35493314460](https://github.com/soso-so-27/neko-widget/actions/runs/35493314460): 19秒。同一SHA・成功済み候補の実行証拠を再利用。
+- 配布CLIのdry-runで全必須証拠、未使用のBuild 193、既存media-staging構成を照合し、同じ引数で1回dispatch。既存testflight環境の当該runだけ承認。保護ルール変更・Apple画面の再ログイン・外部配布・課金は行っていない。
+- [TestFlight 35493368458](https://github.com/soso-so-27/neko-widget/actions/runs/35493368458): **1.0 (193)を2026-09-20 15:15:33 JSTにAppleへアップロード成功**。署名・検証・upload jobも成功。Apple側処理完了や内部グループ画面の表示確認は行っていない。
+- 利用者の既存データを作り直す必要はない。確認は「写真→メモあり」で既存の保管メモ/端末メモが同じ配置と鉛筆から開けることにまとめる。実iPhone 2台での同時編集・別端末復元は未確認であり、mock transport/Simulator成功と混同しない。
+
+## 所要時間と次の改善
+
+初回候補確定12:11:14→upload15:15:33: **3時間04分19秒**。テスト操作の最終修正13:26:28→upload: **1時間49分05秒**。20〜30分目標は未達。最後の配布job自体は約9分で、mainの証拠再利用も機能したが、全画面操作1jobの待機・テスト操作修正・Gallery索引不調を含む全体を速度改善済みとは扱わない。
+
+初回の最初の失敗03:30 UTCから53操作終了04:14 UTCまで約44分かかり、修正着手も遅れた。今回の保存変更はread-only専用の既存短縮枠では扱えない。次バッチでは、メモ保存変更の厳密な対象選択、必須の保存/権限/移行/通信境界、変更した入口の代表操作を組み合わせる。fullが必要な場合も別Simulator・別checkoutの固定2群へ分け、両群成功を要求する案を検証する。現製品の合格条件を途中で弱めていない。
+
+一次証拠は `C:/dev/neko-evidence/unified-photo-memo-20260920/` の `candidate-ci.json`、`candidate-ci-2.json`、`candidate-ci-final.json`、`main-ci.json`、`release-dry-run.json`、`release-dispatch.json`、`testflight-upload.json`、`upload-step-evidence.json`。限定CI監査は `release-timing-notes.md` に集約。子担当だけの履歴に依存しない。
