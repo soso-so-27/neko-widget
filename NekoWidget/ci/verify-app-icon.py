@@ -21,6 +21,22 @@ def command(*args, timeout=60):
     return result.stdout.strip()
 
 
+def prepare_with_preferences(device):
+    # Prepare the fresh Simulator with one system-app launch before Neko's
+    # first launch. A failed preparation must not fall through to the app test.
+    bundle = "com.apple.Preferences"
+    launch = command("xcrun", "simctl", "launch", device, bundle, timeout=30)
+    match = re.fullmatch(r"com\.apple\.Preferences: ([1-9][0-9]*)", launch)
+    if match is None:
+        raise ValueError("Preferences preparation did not return its PID")
+    pid = match.group(1)
+    processes = command("xcrun", "simctl", "spawn", device, "launchctl", "list", timeout=10)
+    if not any(len(fields := line.split()) >= 3 and fields[0] == pid
+               and fields[2].startswith(f"UIKitApplication:{bundle}[") for line in processes.splitlines()):
+        raise ValueError("Preferences preparation did not remain alive")
+    command("xcrun", "simctl", "terminate", device, bundle, timeout=10)
+
+
 def source_assets():
     records = {}
     for relative in sorted(ICON_PATHS):
@@ -68,6 +84,8 @@ def inspect_app(app, artifacts, report):
         command("xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
         command("xcrun", "simctl", "status_bar", device, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         command("xcrun", "simctl", "install", device, str(app))
+        prepare_with_preferences(device)
+        report["preferencesPreparationAlive"] = True
         bundle = info["CFBundleIdentifier"]
         launch = command("xcrun", "simctl", "launch", device, bundle)
         pid = int(launch.rsplit(":", 1)[1].strip())
