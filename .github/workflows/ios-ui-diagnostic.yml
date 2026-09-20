@@ -16,7 +16,9 @@ jobs:
   diagnostic:
     name: Diagnostic only - Release icon first launch (not release evidence)
     runs-on: macos-15
-    timeout-minutes: 15
+    # Observed unsigned build 10m27s + signing/boot/launch failure 3m42s,
+    # plus bounded failure probes, exact-device cleanup and artifact upload.
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       ICON_DIAGNOSTIC_SOURCE_SHA: ${{ inputs.source_ref }}
