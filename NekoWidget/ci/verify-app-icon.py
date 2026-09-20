@@ -6,66 +6,20 @@ import datetime as dt
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import plistlib
 import re
 import subprocess
 import time
+import zipfile
 
 from app_icon_ci import ICON_PATHS, validate_png
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def sample_pending_launch(process, artifacts, deadline):
-    def probe(stage, *args):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or process.poll() is not None:
-            return ""
-        try:
-            return command(*args, timeout=min(3, remaining), artifacts=artifacts, stage=stage)
-        except Exception:
-            return ""
-    probe("pending-simctl-sample", "sample", str(process.pid), "1", "1", "-file",
-          str(artifacts / "pending-simctl-sample.txt"))
-    processes = probe("pending-host-processes", "ps", "-U", str(os.getuid()), "-o", "pid=,comm=")
-    for line in processes.splitlines():
-        fields = line.strip().split(None, 1)
-        if (len(fields) == 2 and fields[0].isdigit()
-                and Path(fields[1]).name in {"CoreSimulatorService", "com.apple.CoreSimulator.CoreSimulatorService"}):
-            probe("pending-core-simulator-sample", "sample", fields[0], "1", "1", "-file",
-                  str(artifacts / "pending-core-simulator-sample.txt"))
-            break
-
-
-def wait_for_launch(args, stdout, stderr, timeout, artifacts, started, check):
-    # Observe the existing launch while it is alive, then use only the time
-    # remaining on its original deadline. Sampling never grants extra time.
-    deadline = started + timeout
-    with subprocess.Popen(args, stdout=stdout, stderr=stderr, text=True) as process:
-        try:
-            try:
-                process.wait(timeout=max(0, min(45, deadline - time.monotonic())))
-            except subprocess.TimeoutExpired:
-                try:
-                    sample_pending_launch(process, artifacts, deadline)
-                except Exception:
-                    pass
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(args, timeout)
-                process.wait(timeout=remaining)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-            raise subprocess.TimeoutExpired(args, timeout) from None
-        except BaseException:
-            process.kill()
-            process.wait()
-            raise
-        if check and process.returncode != 0:
-            raise subprocess.CalledProcessError(process.returncode, args)
-        return process
+REUSE_SOURCE = "94eacc38f5f50376af3d9a1a540d341777439f21"
+REUSE_SHA256 = "f10616197ce24e995656da4a142f866619cb82b9f004f39b406e1c97fc13026e"
+REUSE_BYTES = 30475789
+REUSE_PATHS = {".github/workflows/ios-ui-diagnostic.yml", "NekoWidget/ci/verify-app-icon.py"}
 
 
 def command(*args, timeout=60, artifacts=None, stage=None, check=True):
@@ -84,10 +38,7 @@ def command(*args, timeout=60, artifacts=None, stage=None, check=True):
     try:
         # Write directly to files so timeout cannot discard partial output.
         with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
-            if stage == "launch":
-                result = wait_for_launch(args, stdout, stderr, timeout, artifacts, started, check)
-            else:
-                result = subprocess.run(args, check=check, stdout=stdout, stderr=stderr, text=True, timeout=timeout)
+            result = subprocess.run(args, check=check, stdout=stdout, stderr=stderr, text=True, timeout=timeout)
     except Exception as error:
         event("failed", errorType=type(error).__name__, elapsedSeconds=round(time.monotonic() - started, 3))
         raise
@@ -162,16 +113,99 @@ def source_assets():
     return records
 
 
-def inspect_app(app, artifacts, report):
+def reusable_diagnostic_app(directory, artifacts, run):
+    # This is a single fixed diagnostic artifact, never a general build cache
+    # or normal CI/release evidence source.
+    if (os.environ.get("GITHUB_REPOSITORY") != "soso-so-27/neko-widget"
+            or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+            or os.environ.get("GITHUB_REF") != "refs/heads/diagnostic/icon-first-launch-20260921"):
+        raise ValueError("App reuse is restricted to the fixed diagnostic workflow")
+    head = run("reuse-checkout-sha", "git", "rev-parse", "HEAD", timeout=5)
+    if head != os.environ.get("GITHUB_SHA") or head != os.environ.get("ICON_DIAGNOSTIC_SOURCE_SHA"):
+        raise ValueError("Diagnostic checkout SHA mismatch")
+    run("reuse-source-ancestor", "git", "merge-base", "--is-ancestor", REUSE_SOURCE, head, timeout=5)
+    raw = run("reuse-source-diff", "git", "diff", "--raw", "--no-abbrev", "--no-renames", "-z", REUSE_SOURCE, head, timeout=5)
+    records = raw.rstrip("\0").split("\0") if raw else []
+    if len(records) % 2:
+        raise ValueError("Invalid source tree comparison")
+    seen = set()
+    for index in range(0, len(records), 2):
+        fields, path = records[index].split(), records[index + 1]
+        if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                or path not in REUSE_PATHS or path in seen):
+            raise ValueError("Only existing diagnostic verifier/workflow changes may reuse this app")
+        seen.add(path)
+    provenance = json.loads((directory / "signed-app-provenance.json").read_text(encoding="utf-8"))
+    archive = directory / "signed-simulator-app.zip"
+    if (archive.is_symlink() or archive.stat().st_size != REUSE_BYTES
+            or provenance.get("sourceSHA") != REUSE_SOURCE
+            or provenance.get("sourceTree") != run("reuse-source-tree", "git", "rev-parse", f"{REUSE_SOURCE}^{{tree}}", timeout=5)
+            or provenance.get("sha256") != REUSE_SHA256 or provenance.get("bytes") != REUSE_BYTES
+            or provenance.get("diagnosticOnly") is not True or provenance.get("releaseEvidence") is not False
+            or provenance.get("configuration") != "Release" or provenance.get("bundleIdentifier") != "jp.nekowidget.app"):
+        raise ValueError("Fixed app provenance mismatch")
+    with archive.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != REUSE_SHA256:
+            raise ValueError("Fixed signed app ZIP hash mismatch")
+    with zipfile.ZipFile(archive) as bundle:
+        for entry in bundle.infolist():
+            path = PurePosixPath(entry.filename)
+            if (path.is_absolute() or ".." in path.parts or "\\" in entry.filename
+                    or not path.parts or path.parts[0] not in {"NekoWidget.app", "__MACOSX"}):
+                raise ValueError("Unsafe app ZIP entry")
+    destination = artifacts.parent / "icon-diagnostic-reused-products"
+    destination.mkdir(exist_ok=False)
+    run("reuse-extract", "ditto", "-x", "-k", str(archive), str(destination))
+    app = destination / "NekoWidget.app"
+    plist = (app / "Info.plist").read_bytes()
+    if (hashlib.sha256(plist).hexdigest() != provenance.get("infoPlistSHA256")
+            or plist != (directory / "effective-Info.plist").read_bytes()):
+        raise ValueError("Extracted app Info.plist mismatch")
+    info = plistlib.loads(plist)
+    if info.get("CFBundleIdentifier") != "jp.nekowidget.app" or info.get("CFBundleExecutable") != "NekoWidget":
+        raise ValueError("Extracted app identity mismatch")
+    checks = {
+        "xcode": ("xcodebuild", "-version"),
+        "sdkBuild": ("xcrun", "--sdk", "iphonesimulator", "--show-sdk-build-version"),
+        "macOS": ("sw_vers",), "hostArchitecture": ("uname", "-m"),
+        "binaryArchitectures": ("lipo", "-archs", str(app / "NekoWidget")),
+    }
+    for key, args in checks.items():
+        if run(f"reuse-environment-{key}", *args, timeout=10) != provenance.get(key):
+            raise ValueError(f"Reused app environment mismatch: {key}")
+    (artifacts / "effective-Info.plist").write_bytes(plist)
+    (artifacts / "reused-app-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    return app, provenance
+
+
+def prepare_with_preferences(device, run):
+    bundle = "com.apple.Preferences"
+    launch = run("ready-preferences-launch", "xcrun", "simctl", "launch", device, bundle, timeout=30)
+    match = re.fullmatch(r"com\.apple\.Preferences: ([1-9][0-9]*)", launch)
+    if match is None:
+        raise ValueError("Preferences preparation did not return its PID")
+    pid = match.group(1)
+    processes = run("ready-preferences-processes", "xcrun", "simctl", "spawn", device, "launchctl", "list", timeout=10)
+    if not any(len(fields := line.split()) >= 3 and fields[0] == pid
+               and fields[2].startswith(f"UIKitApplication:{bundle}[") for line in processes.splitlines()):
+        raise ValueError("Preferences preparation did not remain alive")
+    run("ready-preferences-terminate", "xcrun", "simctl", "terminate", device, bundle, timeout=10)
+
+
+def inspect_app(app, artifacts, report, reuse_directory=None):
     def run(stage, *args, timeout=60, check=True):
         return command(*args, timeout=timeout, artifacts=artifacts, stage=stage, check=check)
     # Reuse the existing Release products; incrementally add Simulator ad-hoc
     # signing with Xcode's real entitlements, not a hand-crafted codesign mask.
-    derived = app.parents[3]
-    run("simulator-signing", "xcodebuild", "-project", str(ROOT / "NekoWidget/NekoWidget.xcodeproj"),
-        "-scheme", "NekoWidget", "-configuration", "Release", "-sdk", "iphonesimulator",
-        "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", str(derived),
-        "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "AD_HOC_CODE_SIGNING_ALLOWED=YES", "build", timeout=300)
+    if reuse_directory is not None:
+        app, provenance = reusable_diagnostic_app(reuse_directory, artifacts, run)
+        report.update({"diagnosticOnly": True, "releaseEvidence": False, "reusedSourceSHA": REUSE_SOURCE, "reusedAppSHA256": REUSE_SHA256})
+    else:
+        derived = app.parents[3]
+        run("simulator-signing", "xcodebuild", "-project", str(ROOT / "NekoWidget/NekoWidget.xcodeproj"),
+            "-scheme", "NekoWidget", "-configuration", "Release", "-sdk", "iphonesimulator",
+            "-destination", "generic/platform=iOS Simulator", "-derivedDataPath", str(derived),
+            "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "AD_HOC_CODE_SIGNING_ALLOWED=YES", "build", timeout=300)
     run("verify-signing", "codesign", "--verify", "--deep", "--strict", str(app))
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconName"] != "AppIcon":
@@ -186,7 +220,11 @@ def inspect_app(app, artifacts, report):
     if runtime_info is None:
         raise ValueError("Expected iOS 26.2 Simulator runtime is unavailable")
     runtime = runtime_info["identifier"]
-    preserve_built_app(app, artifacts, info, runtime_info, run)
+    if reuse_directory is not None:
+        if {key: runtime_info.get(key) for key in ("identifier", "version", "buildversion")} != provenance.get("runtime"):
+            raise ValueError("Reused app runtime build mismatch")
+    else:
+        preserve_built_app(app, artifacts, info, runtime_info, run)
     device = run("create-simulator", "xcrun", "simctl", "create", "NekoIconCheck", "com.apple.CoreSimulator.SimDeviceType.iPhone-16", runtime)
     if not re.fullmatch(r"[0-9A-Fa-f-]{36}", device):
         raise ValueError("Invalid created Simulator identity")
@@ -199,6 +237,9 @@ def inspect_app(app, artifacts, report):
         run("bootstatus", "xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
         run("status-bar", "xcrun", "simctl", "status_bar", device, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         run("install", "xcrun", "simctl", "install", device, str(app))
+        if reuse_directory is not None:
+            prepare_with_preferences(device, run)
+            report["preferencesPreparationAlive"] = True
         launch_attempted = True
         launch = run("launch", "xcrun", "simctl", "launch", device, bundle)
         pid = int(launch.rsplit(":", 1)[1].strip())
@@ -216,7 +257,7 @@ def inspect_app(app, artifacts, report):
         failure = error
         report["failureType"] = type(error).__name__
         try:
-            collect_launch_failure(device, bundle, artifacts, run, include_control=launch_attempted)
+            collect_launch_failure(device, bundle, artifacts, run, include_control=launch_attempted and reuse_directory is None)
         except Exception:
             pass  # Diagnostics must preserve the original failure.
         raise
@@ -236,14 +277,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path)
     parser.add_argument("--artifacts", type=Path)
+    parser.add_argument("--reuse-diagnostic-directory", type=Path)
     args = parser.parse_args()
     report = {"schemaVersion": 1, "commit": os.environ.get("GITHUB_SHA"), "assets": source_assets()}
-    if args.app:
+    if args.app or args.reuse_diagnostic_directory:
         if not args.artifacts:
             parser.error("--app requires --artifacts")
+        if args.app and args.reuse_diagnostic_directory:
+            parser.error("Reused diagnostics must not supply a different app")
         args.artifacts.mkdir(parents=True, exist_ok=True)
         try:
-            inspect_app(args.app, args.artifacts, report)
+            inspect_app(args.app, args.artifacts, report, reuse_directory=args.reuse_diagnostic_directory)
         finally:
             (args.artifacts / "icon-check.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report))

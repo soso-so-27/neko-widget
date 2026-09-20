@@ -11,13 +11,13 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   diagnostic:
     name: Diagnostic only - Release icon first launch (not release evidence)
     runs-on: macos-15
-    # Observed unsigned build 10m27s + signing/boot/launch failure 3m42s,
-    # plus bounded failure probes, exact-device cleanup and artifact upload.
+    # No build: the fixed signed bundle is reused only in this diagnostic.
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -32,6 +32,7 @@ jobs:
           source = os.environ["ICON_DIAGNOSTIC_SOURCE_SHA"]
           if (re.fullmatch(r"[0-9a-f]{40}", source) is None
                   or source != os.environ["GITHUB_SHA"]
+                  or os.environ["GITHUB_REPOSITORY"] != "soso-so-27/neko-widget"
                   or os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch"
                   or os.environ["GITHUB_REF"] != "refs/heads/diagnostic/icon-first-launch-20260921"):
               raise SystemExit("Use the exact workflow SHA on the fixed icon diagnostic branch.")
@@ -40,8 +41,34 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Reproduce unsigned Release then incremental signing and first launch
+      - name: Verify the one authorized source artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          artifact = json.loads(subprocess.check_output([
+              "gh", "api", "repos/soso-so-27/neko-widget/actions/artifacts/10612606380"
+          ], text=True))
+          if (artifact.get("id") != 10612606380 or artifact.get("expired") is not False
+                  or artifact.get("name") != "icon-first-launch-diagnostic-94eacc38f5f50376af3d9a1a540d341777439f21-35534630507-1"
+                  or artifact.get("workflow_run", {}).get("id") != 35534630507
+                  or artifact.get("workflow_run", {}).get("head_sha") != "94eacc38f5f50376af3d9a1a540d341777439f21"):
+              raise SystemExit("The fixed diagnostic artifact identity does not match.")
+          PY
+      - name: Download only the fixed diagnostic source artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: icon-first-launch-diagnostic-94eacc38f5f50376af3d9a1a540d341777439f21-35534630507-1
+          run-id: 35534630507
+          repository: soso-so-27/neko-widget
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/icon-source-artifact
+      - name: Verify the reused app and prepare with a real Preferences launch
         shell: bash
         run: |
           set -euo pipefail
@@ -59,22 +86,16 @@ jobs:
               "diagnosticOnly": True, "releaseEvidence": False,
               "sourceSHA": head, "sourceRef": os.environ["GITHUB_REF"],
               "runtime": "iOS 26.2", "xcode": "26.3",
+              "reusedSourceSHA": "94eacc38f5f50376af3d9a1a540d341777439f21",
+              "reusedRunID": 35534630507, "reusedArtifactID": 10612606380,
+              "preparation": "one Preferences launch and PID liveness check, then terminate",
           }, indent=2) + "\n", encoding="utf-8")
           PY
           xcodebuild -version | tee "$RUNNER_TEMP/icon-first-launch-diagnostic/xcode-version.txt"
-          # Match the normal Build job's unsigned Release first, then the
-          # verifier signs incrementally in this exact same DerivedData.
-          date -u '+unsigned Release started: %Y-%m-%dT%H:%M:%SZ'
-          xcodebuild -project NekoWidget/NekoWidget.xcodeproj -scheme NekoWidget \
-            -configuration Release -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
-            build 2>&1 | tee "$RUNNER_TEMP/icon-first-launch-diagnostic/unsigned-build.log"
-          date -u '+unsigned Release completed: %Y-%m-%dT%H:%M:%SZ'
-          # Keep every icon/signing/alive check and the original launch timeout.
+          # No build or re-signing. Check the fixed ZIP/provenance, unchanged
+          # product tree, exact environment and original signature first.
           python3 NekoWidget/ci/verify-app-icon.py \
-            --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" \
+            --reuse-diagnostic-directory "$RUNNER_TEMP/icon-source-artifact" \
             --artifacts "$RUNNER_TEMP/icon-first-launch-diagnostic" \
             2>&1 | tee "$RUNNER_TEMP/icon-first-launch-diagnostic/diagnostic.log"
       - name: Upload diagnostic evidence only
