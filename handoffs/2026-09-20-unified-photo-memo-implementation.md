@@ -39,4 +39,12 @@
 保存層：`PhotoMemoryNoteStore.swift`、`PersonalArchiveStore.swift`、`PhotoMemoCoordinator.swift`。
 画面：`PhotoMemoryNoteView.swift`、`PhotoMemoryNoteLibraryView.swift`、`PersonalArchiveView.swift`、`LikedPhotosView.swift`、`SettingsView.swift`。
 
-CI・配布の最終結果、製品SHA、実測時間は完了時に追記する。
+## 最初の候補の結果
+
+- `1dea5a9` / CI `35485948913`: Build（保存verifier含む）・権限/実scan・runtime・Gallery全系統成功。画面操作53件中51成功、2失敗。全体64分26秒、app-ui約64分。内部upload未実施。
+- メモ削除は日本語キーボードへの連続削除の後に文字が残るテスト操作。フォーカスとキーボード表示を待ち、一文字ずつ結果を観測して削除するよう修正。空になったこと・削除確認・元写真維持のassertionは維持。
+- ピックアップ再表示は最大文字表示で対象カードが画面上方に隠れているのにisHittableがtrueとなり、戻り先のカードを押せないテスト操作。画面録画でもテーマ一覧に留まっていることを確認。カード中心がnavigation barを越えるまで縦スクロールし、表示を確認して押す。遷移/同じ写真/一覧位置のassertionは維持。
+- 製品の詳細画面・共通editor・旧保管記録・反映後本文のnative画像を確認。大きな写真＋本文＋鉛筆の共通構成を確認済み。
+- 証拠: `C:/dev/neko-evidence/unified-photo-memo-20260920/`。CI時間の限定監査も同フォルダの `release-timing-notes.md` へ集約。未実装の高速化を今回の短縮実績とは扱わない。
+
+CI・配布の最終結果、最終SHA、実測時間は完了時に追記する。

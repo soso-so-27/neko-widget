@@ -2407,8 +2407,16 @@ final class SoloMemoriesUITests: XCTestCase {
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
 
             // Reopen the same card; navigating into a theme must retain it.
-            for _ in 0..<8 where !returned.isHittable { app.scrollViews.firstMatch.swipeDown() }
+            // A large-text card can be partly hittable while its center is
+            // covered by the navigation bar. Tap only after its center clears
+            // that bar; otherwise XCTest taps the overlay instead of the card.
+            let visibleTop = app.navigationBars.firstMatch.frame.maxY + 24
+            for _ in 0..<8 where !returned.isHittable || returned.frame.midY <= visibleTop {
+                app.scrollViews.firstMatch.swipeDown()
+            }
             XCTAssertTrue(returned.isHittable)
+            XCTAssertGreaterThan(returned.frame.midY, visibleTop)
+            capture("albums-\(scenario)-reopen-target")
             returned.tap()
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertEqual(destination.label, highlightID)
@@ -3011,10 +3019,19 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(input.waitForExistence(timeout: 10))
         func clearMemoText() {
             let existing = input.value as? String ?? ""
-            // These short fixture notes fit in the editor. Tapping below the
-            // last line places the insertion point at the end before erasing.
+            // Focus first so the keyboard has finished resizing the form,
+            // then locate the end in the editor's new frame. Send individual
+            // keys so each change is observable before sending the next one.
+            input.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
             input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
-            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+            for _ in 0..<(existing.utf16.count + 1) where !(input.value as? String ?? "").isEmpty {
+                let previousValue = input.value as? String ?? ""
+                input.typeText(XCUIKeyboardKey.delete.rawValue)
+                let changed = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value != %@", previousValue), object: input)
+                XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 3), .completed)
+            }
             XCTAssertEqual(input.value as? String ?? "", "")
             app.buttons["photo-memory-note-keyboard-done"].tap()
             app.buttons["photo-memory-note-save"].tap()
