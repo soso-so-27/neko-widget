@@ -27,11 +27,11 @@
     },
     "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
       "before": "6835eed9b435041640b9e3dd1ad3629a30c0daa65c899854991a52bf4c22ae0d",
-      "after": "e3ab0c64550ea1b6096b7a5369c154cd9f536c35fb4da4f7e4d9a289ceb0c9b4"
+      "after": "304bb24157a0b7a55cd7601854cab5625820e976af391f1e03f3a553119df6c0"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "762435d1c6430588b5da03eb676ecd2f856a1ef80f8cb10a96e17d172e22098b",
-      "after": "b25626c6b9cbfdcf6fddb5751de75537f3bcd245adba5c7afe96ff489bbb234b"
+      "after": "f8e619a29eff94faa869b0fd4fc31a2e22dee6fc1035dd36235e8ad2f87e4056"
     }
   }
 }

@@ -743,7 +743,6 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
     @Published private(set) var progressUpdates = 0
     @Published private(set) var hasPhotoAccess = true
     private var snapshot: LibrarySnapshot
-    private var contentTask: Task<Void, Never>?
 
     init() {
         let seed = Self.makeSnapshot()
@@ -784,20 +783,15 @@ private final class PersonalArchiveRootFixtureDriver: ObservableObject {
     }
 
     func changePhotoContent() {
-        guard contentTask == nil else { return }
-        contentTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.contentTask = nil }
-            // Several real edits arrive during one delayed catalog build. The
-            // latest version must complete without replacing ready UI by a spinner.
-            for _ in 0..<6 {
-                guard !Task.isCancelled, self.snapshot.assets.count > 1 else { return }
-                self.snapshot.assets[1].creationDate = self.snapshot.assets[1].creationDate?
-                    .addingTimeInterval(60)
-                self.publish()
-                do { try await Task.sleep(for: .milliseconds(150)) }
-                catch { return }
-            }
+        guard snapshot.assets.count > 1 else { return }
+        // One non-suspending MainActor burst: runner load cannot spread these
+        // inputs across several completed workers. The deterministic barrier in
+        // verify-album-catalog-coordinator.swift separately checks latest-pending
+        // coalescing during an active build and maximumConcurrent == 1.
+        for _ in 0..<6 {
+            snapshot.assets[1].creationDate = snapshot.assets[1].creationDate?
+                .addingTimeInterval(60)
+            publish()
         }
     }
 

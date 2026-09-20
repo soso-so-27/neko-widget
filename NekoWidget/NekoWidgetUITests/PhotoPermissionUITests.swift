@@ -1572,7 +1572,7 @@ final class SoloMemoriesUITests: XCTestCase {
         waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
         XCTAssertGreaterThan(catalogNumber("started"), initialStarted)
         XCTAssertLessThanOrEqual(catalogNumber("started") - initialStarted, 2,
-                                 "A burst of real edits should use one worker and its latest pending input")
+                                 "A single MainActor publication burst must not restart catalog work unnecessarily")
 
         app.buttons["archive-root-fixture-remove"].tap()
         waitForCatalog(["visibleContainsProbe:0"], timeout: 2)
