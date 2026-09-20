@@ -1,8 +1,12 @@
 {
-  "as_of": "2026-09-20",
+  "as_of": "2026-09-21",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 9.22,
   "upload_run": 35493368458,
+  "upload_observations": [
+    {"run_id": 35493368458, "minutes": 9.22},
+    {"run_id": 35540621875, "minutes": 6.583}
+  ],
   "observations": [
     {
       "scope": "development-tools-v1",
@@ -75,6 +79,42 @@
       "candidate_minutes": 28.08,
       "run_id": 35511726600,
       "outcome": "success-after-retry"
+    },
+    {
+      "scope": "full-v1",
+      "candidate_minutes": 66.433,
+      "run_id": 35517941348,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v3",
+      "candidate_minutes": 32.78,
+      "run_id": 35527498389,
+      "outcome": "failure"
+    },
+    {
+      "scope": "ci-selection-v1",
+      "candidate_minutes": 25.333,
+      "run_id": 35531816066,
+      "outcome": "failure"
+    },
+    {
+      "scope": "ci-selection-v1",
+      "candidate_minutes": 23.417,
+      "run_id": 35536459857,
+      "outcome": "failure"
+    },
+    {
+      "scope": "ci-selection-v1",
+      "candidate_minutes": 22.167,
+      "run_id": 35537826183,
+      "outcome": "success-after-diagnosis"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v3",
+      "candidate_minutes": 29.517,
+      "run_id": 35539105210,
+      "outcome": "success-after-diagnosis"
     }
   ]
 }

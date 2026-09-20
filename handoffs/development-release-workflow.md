@@ -17,6 +17,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
 - 他classの実XCTest失敗は、準備・環境失敗として無視しない。現在の診断経路の対象外として明示的に止め、対応する切り分け経路を用意する。通常CIの繰り返しや理由文で代用しない。
 - 診断後は同じSHAを `codex/<task>` にpushし、既存の必須CIを一度実行して配布へ進む。診断workflowは署名・配布を行わず、通常CI・main再利用・TestFlightの合格証拠には使えない。診断にも同じwatcherを1本だけ使う。branch変更で作業の累計をリセットしない。
+- 診断のcaseごとの成功は、祖先関係と全tracked raw差分で、既存通常ファイルの `preflight-ci.py`・`test-preflight-ci.py`・`verify-app-icon.py` の3本だけの変更と確認できた場合に限り継承できる。最後の1本は別Release job専用でnative診断が読み込まないため。診断が依存する変更を加える場合は例外を再レビューして撤去する。診断workflow・準備helper・選択器・製品・UIテストの変更は対象外で、通常CI/main/配布の成功証拠を継承する条件とは別。
 
 - 利用者が見た目を実機確認すると指定した写真/アルバムUIのバッチは、[内容を固定した確認範囲](2026-09-17-reviewed-ui-checks.md)を利用できる。reviewed-app-ui.jsonの全変更before/afterハッシュ一致が必要。代表4操作とBuild/権限/runtimeを残し、未知の変更は一式へ戻す。実機の見た目を自動確認済みとは扱わない。
 - `reviewed-memory-read-ui-v3` はv2の全8操作に共同記録・アルバム関連遷移の2操作を加える。FamilyRecordViewは独立レビュー済み全文before/after、PairingViewは共有終了説明の完全一致置換に限定し、全差分manifest・既存build/権限/runtimeを維持する。v3未計測時だけ `preflight-ci.py --use-full-baseline` で全件経路の観測最大を計画参照にできる。v3の実績ではなく、累計時間・実行中・失敗診断の判定を通過させる例外でもない。
