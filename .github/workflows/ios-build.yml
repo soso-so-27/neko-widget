@@ -2,6 +2,9 @@ name: iOS build check
 
 on:
   push:
+    # Manual diagnostic runs use a separate workflow and are not release evidence.
+    branches-ignore:
+      - "diagnostic/**"
     paths:
       - "NekoWidget/**"
       - "docs/**"

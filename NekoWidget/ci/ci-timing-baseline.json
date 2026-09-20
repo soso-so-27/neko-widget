@@ -4,11 +4,77 @@
   "upload_minutes": 9.22,
   "upload_run": 35493368458,
   "observations": [
-    {"scope": "development-tools-v1", "candidate_minutes": 0.2, "run_id": 35496202405, "outcome": "success"},
-    {"scope": "ci-selection-v1", "candidate_minutes": 22.35, "run_id": 35495098428, "outcome": "success"},
-    {"scope": "full-v1", "candidate_minutes": 64.43, "run_id": 35485948913, "outcome": "failure"},
-    {"scope": "full-v1", "candidate_minutes": 97.92, "run_id": 35489148667, "outcome": "success-after-retry"},
-    {"scope": "ci-selection-v1", "candidate_minutes": 25.13, "run_id": 34848681863, "outcome": "success"},
-    {"scope": "reviewed-memory-read-ui-v1", "candidate_minutes": 23.07, "run_id": 35453754654, "outcome": "success"}
+    {
+      "scope": "development-tools-v1",
+      "candidate_minutes": 0.2,
+      "run_id": 35496202405,
+      "outcome": "success"
+    },
+    {
+      "scope": "ci-selection-v1",
+      "candidate_minutes": 22.35,
+      "run_id": 35495098428,
+      "outcome": "success"
+    },
+    {
+      "scope": "full-v1",
+      "candidate_minutes": 64.43,
+      "run_id": 35485948913,
+      "outcome": "failure"
+    },
+    {
+      "scope": "full-v1",
+      "candidate_minutes": 97.92,
+      "run_id": 35489148667,
+      "outcome": "success-after-retry"
+    },
+    {
+      "scope": "ci-selection-v1",
+      "candidate_minutes": 25.13,
+      "run_id": 34848681863,
+      "outcome": "success"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v1",
+      "candidate_minutes": 23.07,
+      "run_id": 35453754654,
+      "outcome": "success"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 21.18,
+      "run_id": 35503293281,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 29.38,
+      "run_id": 35504508345,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 33.17,
+      "run_id": 35506178086,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 28.77,
+      "run_id": 35508354438,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 32.03,
+      "run_id": 35510040008,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-memory-read-ui-v2",
+      "candidate_minutes": 28.08,
+      "run_id": 35511726600,
+      "outcome": "success-after-retry"
+    }
   ]
 }

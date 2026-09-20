@@ -4,6 +4,7 @@
 import importlib.util
 import contextlib
 import io
+import datetime as dt
 import os
 from pathlib import Path
 import subprocess
@@ -38,11 +39,11 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(result["includes_future_rework"])
         self.assertEqual(preflight.observe_cost("unmeasured-v1", self.history, False)["status"], "unmeasured")
 
-    def test_over_target_requires_decision_but_cannot_waive_checks(self):
+    def test_prose_decision_cannot_override_over_target_or_waive_checks(self):
         blocked = self.report()
         decided = self.report(decision="CI redesign validation requires one full baseline")
         self.assertFalse(blocked["ready"])
-        self.assertTrue(decided["ready"])
+        self.assertFalse(decided["ready"])
         self.assertEqual(blocked["required_jobs"], list(planner.FULL))
         self.assertEqual(blocked["required_jobs"], decided["required_jobs"])
         self.assertEqual(len(blocked["unmapped_files"]), 1)
@@ -95,13 +96,65 @@ class PreflightTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as directory:
                 os.chdir(directory)
-                with patch.object(preflight, "candidate_plan", return_value={"ready": True}) as plan, \
+                with patch.object(preflight, "candidate_plan", return_value={"ready": True, "scope": "no-change"}) as plan, \
                         contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(preflight.main([]), 0)
                     self.assertEqual(Path.cwd(), preflight.CI.parents[1])
                     plan.assert_called_once()
         finally:
             os.chdir(previous)
+
+    def test_task_gate_counts_elapsed_time_and_rejects_active_work(self):
+        now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
+        plan = {"ready": True, "head": "a" * 40, "target_minutes": 30,
+                "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}
+        run = {"id": 1, "created_at": "2026-09-20T11:45:00Z", "status": "in_progress",
+               "conclusion": None, "path": ".github/workflows/ios-build.yml"}
+        result = preflight.apply_task_gate(plan, [run], now)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["task"]["projected_total_minutes"], 35)
+        self.assertEqual(result["task"]["blockers"], ["ci_already_running", "cumulative_cost_requires_replanning"])
+
+    def test_ui_failure_requires_diagnostic_success_for_current_sha_only(self):
+        now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
+        failed = {"id": 1, "created_at": "2026-09-20T11:55:00Z", "status": "completed",
+                  "conclusion": "failure", "failed_tests": ["testNavigation"], "path": ".github/workflows/ios-build.yml"}
+        diagnostic = {"id": 2, "created_at": "2026-09-20T11:58:00Z", "status": "completed",
+                      "conclusion": "success", "event": "workflow_dispatch", "head_sha": "a" * 40,
+                      "path": preflight.DIAGNOSTIC_WORKFLOW, "display_title": "UI diagnosis: testNavigation"}
+        def check(runs):
+            return preflight.apply_task_gate({"ready": True, "head": "a" * 40, "target_minutes": 30,
+                   "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, runs, now)
+        self.assertFalse(check([failed])["ready"])
+        self.assertTrue(check([failed, diagnostic])["ready"])
+        for change in ({"head_sha": "b" * 40}, {"conclusion": "failure"}, {"event": "push"},
+                       {"path": ".github/workflows/unrelated.yml"}, {"display_title": "UI diagnosis: testOther"}):
+            self.assertFalse(check([failed, {**diagnostic, **change}])["ready"])
+        # A Python/build failure does not force an unrelated UI test.
+        self.assertTrue(check([{**failed, "failed_tests": []}])["ready"])
+
+    def test_unmeasured_baseline_is_explicit_and_first_attempt_only(self):
+        plan = {"ready": False, "head": "a" * 40, "target_minutes": 30, "cost": {"status": "unmeasured"}}
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [])["ready"])
+        first = preflight.apply_task_gate(dict(plan), [], measure_baseline=True)
+        self.assertTrue(first["ready"])
+        self.assertIsNone(first["task"]["projected_total_minutes"])
+        run = {"id": 1, "created_at": "2026-09-20T11:00:00Z", "status": "completed",
+               "conclusion": "failure", "path": ".github/workflows/ios-build.yml"}
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [run], measure_baseline=True)["ready"])
+
+    def test_history_queries_both_branch_routes_and_extracts_only_failed_methods(self):
+        run = {"id": 1, "path": ".github/workflows/ios-build.yml", "conclusion": "failure"}
+        page = {"total_count": 1, "workflow_runs": [run]}
+        jobs = {"total_count": 1, "jobs": [{"id": 9, "name": "Native checks [app-ui; scope test]", "conclusion": "failure"}]}
+        log = "Test Case '-[NekoWidgetUITests.MomentDeliveryComposerUITests testNavigation]' failed (2 seconds)."
+        with patch.object(planner, "git", return_value="diagnostic/task"), \
+                patch.object(preflight, "github", side_effect=[page, page, jobs, log]) as api:
+            result = preflight.read_task_runs()
+        self.assertEqual(result[0]["failed_tests"], ["testNavigation"])
+        queries = [call.args[0] for call in api.call_args_list[:2]]
+        self.assertTrue(any("branch=codex%2Ftask" in query for query in queries))
+        self.assertTrue(any("branch=diagnostic%2Ftask" in query for query in queries))
 
     def test_real_git_helper_only_rejects_stale_main_and_mixed_product(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -28,7 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checks-only", action="store_true", help="Local unit checks; does not approve a candidate push")
     parser.add_argument("--base", default="origin/main")
-    parser.add_argument("--decision", help="Concrete operator decision for an over-target/unmeasured plan")
+    parser.add_argument("--decision", help="Planning note only; does not override preflight gates")
     parser.add_argument("--include-upload", action="store_true")
     parser.add_argument("--output", help="Preflight JSON outside the checkout")
     args = parser.parse_args()

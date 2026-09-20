@@ -69,8 +69,15 @@ WIDGET_LAYOUT_PATHS = frozenset(
     )
 )
 CI_WORKFLOW = ".github/workflows/ios-build.yml"
+CI_DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
+CI_DIAGNOSTIC_MATRIX = "NekoWidget/ci/run-sharing-runtime-matrix.sh"
+# Exact reviewed diagnostic additions. A later change to their execution must
+# be reviewed again, never hidden by a broad marker or workflow exemption.
+DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3dab940ad288e4a56ed97b2d"
+DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
+    CI_DIAGNOSTIC_WORKFLOW,
     "NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py",
     "NekoWidget/ci/reviewed-app-ui.json",
     "NekoWidget/ci/archive-picker-ui.json",
@@ -80,7 +87,7 @@ CI_NEW_TEST_PATHS = frozenset({
     "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
     "NekoWidget/ci/ci-timing-baseline.json",
 })
-CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
+CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT, CI_DIAGNOSTIC_MATRIX} | frozenset(
     "NekoWidget/ci/" + name for name in (
         "ios_ci_scope.py", "plan-ios-ci.py", "check-development-flow.py",
         "test-plan-ios-ci.py", "test-ci-lanes.py", "test-runtime-preparation.py",
@@ -328,6 +335,8 @@ def workflow_execution(source: str) -> tuple[str, ...]:
     """Ignore only reviewed selection wiring; keep builds/security/commands."""
     if icon_workflow_wired(source):
         source = source.replace(ICON_WORKFLOW_STEPS, "")
+    source = source.replace('  push:\n    # Manual diagnostic runs use a separate workflow and are not release evidence.\n'
+                            '    branches-ignore:\n      - "diagnostic/**"\n', '  push:\n', 1)
     selection_lines = {
         "      build_name: ${{ steps.scope.outputs.build_name }}",
         "    name: Build disabled app and extensions without signing",
@@ -396,6 +405,20 @@ def normalize_photo_source_check_upgrade(before: str, after: str) -> str:
 def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
     if not changes or not set(changes) <= CI_SELECTION_PATHS:
         return False
+    if CI_DIAGNOSTIC_WORKFLOW in changes:
+        before, after = changes[CI_DIAGNOSTIC_WORKFLOW]
+        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) != DIAGNOSTIC_WORKFLOW_DIGEST):
+            return False
+    if CI_DIAGNOSTIC_MATRIX in changes:
+        normalized = []
+        for source in changes[CI_DIAGNOSTIC_MATRIX]:
+            pattern = r"(?m)^# BEGIN DIAGNOSTIC-ONLY [^\n]+\n[\s\S]*?^# END DIAGNOSTIC-ONLY [^\n]+\n"
+            blocks = re.findall(pattern, source)
+            if blocks and (len(blocks) != 3 or source_digest("".join(blocks)) != DIAGNOSTIC_BLOCKS_DIGEST):
+                return False
+            normalized.append(re.sub(pattern, "", source))
+        if normalized[0] != normalized[1]:
+            return False
     if CI_WORKFLOW in changes:
         before, after = changes[CI_WORKFLOW]
         if ("verify-app-icon.py" in before or "verify-app-icon.py" in after) and not icon_workflow_wired(after):

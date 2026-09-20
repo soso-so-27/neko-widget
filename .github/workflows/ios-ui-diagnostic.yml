@@ -1,0 +1,87 @@
+name: iOS single-test diagnostic
+run-name: 'UI diagnosis: ${{ inputs.test_method }}'
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Full commit SHA of this diagnostic branch (must equal the workflow SHA)
+        required: true
+        type: string
+      test_method:
+        description: One existing method in MomentDeliveryComposerUITests (method name only)
+        required: true
+        type: string
+        default: testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ui-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostic:
+    name: Diagnostic only - one native UI test (not release evidence)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      NEKO_IOS_DIAGNOSTIC_SOURCE_SHA: ${{ inputs.source_ref }}
+      NEKO_IOS_DIAGNOSTIC_TEST_METHOD: ${{ inputs.test_method }}
+      NEKO_IOS_RUNTIME_LANE: app-ui
+    steps:
+      - name: Validate diagnostic inputs before checkout
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          source = os.environ["NEKO_IOS_DIAGNOSTIC_SOURCE_SHA"]
+          method = os.environ["NEKO_IOS_DIAGNOSTIC_TEST_METHOD"]
+          if (re.fullmatch(r"[0-9a-f]{40}", source) is None
+                  or source != os.environ["GITHUB_SHA"]
+                  or not os.environ["GITHUB_REF"].startswith("refs/heads/diagnostic/")):
+              raise SystemExit("Use the exact workflow SHA on a diagnostic/** branch.")
+          if re.fullmatch(r"test[A-Za-z0-9_]+", method) is None:
+              raise SystemExit("Specify exactly one XCTest method name, without arguments or a class path.")
+          PY
+      - name: Check out the exact diagnostic commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run one diagnostic test with the existing fixture preparation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/neko-ui-diagnostic"
+          bash ci/run-sharing-runtime-matrix.sh 2>&1 | tee "$RUNNER_TEMP/neko-ui-diagnostic/diagnostic.log"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          root = Path(os.environ["RUNNER_TEMP"]) / "neko-ui-diagnostic"
+          method = os.environ["NEKO_IOS_DIAGNOSTIC_TEST_METHOD"]
+          expected = f"NekoWidgetUITests.MomentDeliveryComposerUITests {method}"
+          cases = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",
+                             (root / "diagnostic.log").read_text(encoding="utf-8", errors="replace"))
+          if cases != [(expected, "started"), (expected, "passed")]:
+              raise SystemExit("Diagnostic must execute and pass exactly the requested XCTest once; empty, skipped or other tests are not success.")
+          (root / "diagnostic-result.json").write_text(json.dumps({
+              "diagnosticOnly": True, "releaseEvidence": False,
+              "sourceSHA": os.environ["GITHUB_SHA"], "method": method,
+              "passedTests": 1, "failedTests": 0, "skippedTests": 0,
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Upload diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios-ui-diagnostic-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-ui-diagnostic
+          if-no-files-found: warn
+          retention-days: 7

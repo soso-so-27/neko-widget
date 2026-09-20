@@ -20,6 +20,37 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class DiagnosticRouteBoundaryTests(unittest.TestCase):
+    def test_exact_diagnostic_addition_preserves_regular_commands(self):
+        path = scope.CI_DIAGNOSTIC_MATRIX
+        current = (ROOT / path).read_text(encoding="utf-8")
+        pattern = r"(?m)^# BEGIN DIAGNOSTIC-ONLY [^\n]+\n[\s\S]*?^# END DIAGNOSTIC-ONLY [^\n]+\n"
+        previous = re.sub(pattern, "", current)
+        self.assertNotEqual(previous, current)
+        self.assertTrue(scope.ci_selection_only({path: (previous, current)}))
+        for changed in (current.replace('!= "workflow_dispatch"', '== "workflow_dispatch"'),
+                        current.replace('CODE_SIGN_IDENTITY=-', 'CODE_SIGN_IDENTITY=modified')):
+            self.assertNotEqual(current, changed)
+            self.assertFalse(scope.ci_selection_only({path: (previous, changed)}))
+
+    def test_diagnostic_workflow_is_exact_and_never_release_evidence(self):
+        path = scope.CI_DIAGNOSTIC_WORKFLOW
+        current = (ROOT / path).read_text(encoding="utf-8")
+        self.assertTrue(scope.ci_selection_only({path: ("", current)}))
+        self.assertFalse(scope.ci_selection_only({path: ("", current.replace('contents: read', 'contents: write'))}))
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope("diagnostic")
+
+    def test_only_diagnostic_push_exclusion_is_normalized(self):
+        current = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        previous = current.replace('    # Manual diagnostic runs use a separate workflow and are not release evidence.\n'
+                                   '    branches-ignore:\n      - "diagnostic/**"\n', '')
+        self.assertNotEqual(current, previous)
+        self.assertEqual(scope.workflow_execution(previous), scope.workflow_execution(current))
+        self.assertNotEqual(scope.workflow_execution(previous), scope.workflow_execution(current.replace('"diagnostic/**"', '"**"')))
+
 WIDGET = "NekoWidget/NekoWidgetWidget/"
 BEHAVIOR_PATHS = frozenset(WIDGET + name for name in (
     "NekoWidgetEntry.swift", "NekoWidgetTimelineProvider.swift", "WidgetManifestReader.swift",

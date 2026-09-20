@@ -7,10 +7,15 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - push、main更新、TestFlight配布はユーザーの依頼範囲に含まれる場合だけ行う。
 - 開始時に現在のmain、対象差分、完了条件を一度決め、機能変更とCI試作を別の候補にする。検証待ちの間に同じ候補へ追加変更を積まない。
 - 候補をcommitした後、push前に `python NekoWidget/ci/check-development-flow.py` を実行する。既存の安価な検証に加え、実CIと同じ選択器でbranch全差分・必要job・全件になる理由・過去の所要時間を表示する。配布予定なら `--include-upload`。作業中の単体確認だけなら `--checks-only` とし、push前確認の代用にはしない。
-- 所要時間が未計測、または既定30分の目標を過去実績が超える場合はexit 3で一度主担当へ戻る。必要な実行か、先に実行方法を変えるか判断し、`--decision '具体的な判断と理由'` を付けて **preflight-ci.pyだけ** 再実行する。成功済みの単体検証は繰り返さない。この判断はユーザーへの再承認要求ではなく、検証省略の許可でもない。履歴は予測保証ではなく、初回候補からの修正・再試行を含む時間も最終報告に残す。
+- `--decision` は記録用であり、時間超過・失敗を通過させない。preflightは同じ作業名の `codex/<task>` と `diagnostic/<task>` のCI履歴を取得し、初回CIからの累計経過時間＋次のCI（配布予定ならuploadも）の実測上限を表示する。稼働中CIがあれば重複起動を止める。既定30分を超える場合は方法を変えるか、実測に基づく計画へ明示的に組み直す。`--target-minutes` を変えた場合は当初目標内に収まったと報告しない。成功済みの単体検証は繰り返さず **preflight-ci.pyだけ** 再実行する。
+- 未計測scopeの初回計測だけは `preflight-ci.py --measure-baseline`。同じ作業にCI履歴があれば再利用できない。計測後は失敗分も含めtiming baselineへ反映する。未計測を短時間の約束にしない。この計画変更は主担当の責任で行い、ユーザーへの確認を毎回増やさない。
 - 必要なprivacy、署名、migration、fail-closed確認は省略しない。
 
 ## CIの対象選択・監視・失敗対応
+
+- 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHAと、既存 `MomentDeliveryComposerUITests` の失敗したメソッド名1個。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_method=<METHOD>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
+- 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
+- 診断後は同じSHAを `codex/<task>` にpushし、既存の必須CIを一度実行して配布へ進む。診断workflowは署名・配布を行わず、通常CI・main再利用・TestFlightの合格証拠には使えない。診断にも同じwatcherを1本だけ使う。branch変更で作業の累計をリセットしない。
 
 - 利用者が見た目を実機確認すると指定した写真/アルバムUIのバッチは、[内容を固定した確認範囲](2026-09-17-reviewed-ui-checks.md)を利用できる。reviewed-app-ui.jsonの全変更before/afterハッシュ一致が必要。代表4操作とBuild/権限/runtimeを残し、未知の変更は一式へ戻す。実機の見た目を自動確認済みとは扱わない。
 - [変更別の画面確認](2026-09-14-targeted-ui-checks.md)に従い、Widget専用処理は関連7件、既知の文字・余白だけならアプリ画面操作を省く。限定scopeのsmokeは実Photos権限1件と後段の実写真スキャンを残し、別OSでの無関係な20件を繰り返さない。製品と既存build/安全確認が不変のCI選択設定だけは、専用scopeで実行経路を確認する。必要な描画・runtime・保存/送信境界は省かない。
