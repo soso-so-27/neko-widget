@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scope": "reviewed-memory-read-ui-v3",
-  "purpose": "Personal memo rediscovery within the existing authorized album scope; preservation status reads account-scoped pending memo edits without changing write operations; exact reviewed family authorship, edit/withdraw controls and sharing-end explanation. DEBUG fixture corrections preserve access and source-link guards. Production storage, network, permission, encryption and revocation implementations are unchanged. Account-change notifications invalidate cloud-scoped editors only; plain local text remains editable. Storage and cloud account validation are unchanged. Full CI is required for this editor guard change; this manifest does not opt it into the read-projection scope.",
+  "purpose": "Personal memo rediscovery within the existing authorized album scope; preservation status reads account-scoped pending memo edits without changing write operations; exact reviewed family authorship, edit/withdraw controls and sharing-end explanation. DEBUG fixture corrections preserve access and source-link guards. Production storage, network, permission, encryption and revocation implementations are unchanged. Account-change notifications invalidate cloud-scoped editors only; plain local text remains editable. Storage and cloud account validation are unchanged. The independently reviewed exact editor guard is validated by the existing local memo regression and unchanged cloud-account boundary checks; unknown editor changes require full CI.",
   "visualReview": "user-device",
   "dataReview": "local-editor-account-boundary",
   "files": {
