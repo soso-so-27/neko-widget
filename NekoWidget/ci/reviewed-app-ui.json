@@ -1,49 +1,19 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-memory-read-ui-v2",
-  "purpose": "Independently reviewed Photos All/Favorites/With Notes navigation, preserved-photo reading, and the existing Settings archive route. Storage writes, encryption, cloud transport, Photos authorization, and Widget behavior are unchanged.",
+  "purpose": "Cat photo list presentation and management navigation; existing registration, membership, storage and sharing actions remain unchanged. The memo library companion changes only the search placeholder. Existing representative UI coverage exercises the list, add cancellation and both management destinations.",
   "visualReview": "user-device",
-  "dataReview": "read-only-projection",
   "files": {
-    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": {
-      "before": "f47a806f73c29e6272ec727356246bc03357414783d576bbd903e4c885b036b4",
-      "after": "46e2030b98399b0902619a34f8bfa9e554e96ba45f39a74f768c06a09ee8d053"
-    },
-    "NekoWidget/NekoWidget/Views/HomeView.swift": {
-      "before": "4c3d474ab4664fbf1a70806b2b365def95109bae96d6c24fb49f391fc19e8b42",
-      "after": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0"
-    },
-    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "62f9be3b235d02d487993fd340820645c48fe0c91426c8f20f580b283b5601b4",
-      "after": "ebb4ed49b852723220740db3017915ef1e9eca4fe9e3e9330670a28a1ef67bf4"
-    },
-    "NekoWidget/NekoWidget/Views/MainTabView.swift": {
-      "before": "3da86bbda7f16a612bce5c7a5a3055315e67812a01a0dc9457a7085331af33d7",
-      "after": "c49c1e61e8e86be6d23d2ef08b2943c02e73475ea14abdfcb979de316eb0ddd0"
+    "NekoWidget/NekoWidget/Views/CatProfilesView.swift": {
+      "before": "6991614e17f66aff0a038959bf0e528713daf02a78306602e4384b0c4f2cdd96",
+      "after": "b1c05937cce3e7751ece48331e2ffe881929f64749c8733ed4ce97f53de6bb33"
     },
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
-      "before": "901017e89858dfdd06a43c89aba0b34ee142da01df40024ff1c720f16c1bc5a1",
-      "after": "c716b83a3f3992e56982d0e03d73727f514d8939588d8dcff30b951b5b5db221"
-    },
-    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "94ef6896c1ff417411eaafe016796075895b84ee357992b26a803ba123feed22",
-      "after": "8403a9683369a427ea5c7a993736a53ba9cac021549169d382069a5a5a480350"
-    },
-    "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift": {
-      "before": "a8f57114b4c059feddc398977edab06997b4a784d6209bf08d554becf87cb989",
-      "after": "d8be4456ce829f1855d9ab85f43fc3f0f2b3064fe635b928b04115ff19a4576f"
+      "before": "71b9c3d5408c75be8c55a7e7147e1cfb20c43b13090599b0e7720ce60dcc7225",
+      "after": "b071051f42ca0d3c094aa8098107a5e19fabe0f77be020f25e582c661aad34c7"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706",
-      "after": "990f2141ab677fe9db3de0ed634ad639fffac865971f796607a6017e39044982"
-    },
-    "NekoWidget/ci/test-app-store-screenshot-workflow.py": {
-      "before": "cfbbcf86804c1de1c1a6250b4dba4589436b2c25b24a1956b1dae2249125c2d7",
-      "after": "638b093bd0c9f2f7fd3f182f76fe3e24bcae055a8db67e0013a05e63995a2d65"
-    },
-    "NekoWidget/ci/test-family-window-widget-boundaries.py": {
-      "before": "6493c0ce078095229ca0e656e69eff33b49531c33138b2c2a1b6a34af7863c58",
-      "after": "607ee23ee2d5ee78fde0ff1ef683fe7f46f840c6e010c61e7d4a6bee6379ed7f"
+      "before": "755138ff790838c2ff9602298efe1a4febdb901a41e3cab67243e9a91e9dbb3a",
+      "after": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264"
     }
   }
 }

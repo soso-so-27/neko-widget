@@ -412,7 +412,7 @@ private struct MemoryNotesSearchBar: UIViewRepresentable {
     func makeUIView(context: Context) -> UISearchBar {
         let bar = UISearchBar()
         bar.searchBarStyle = .minimal
-        bar.placeholder = "言葉・猫の名前で探す"
+        bar.placeholder = "メモを検索"
         bar.autocapitalizationType = .none
         bar.autocorrectionType = .no
         bar.searchTextField.accessibilityIdentifier = "memory-notes-search"

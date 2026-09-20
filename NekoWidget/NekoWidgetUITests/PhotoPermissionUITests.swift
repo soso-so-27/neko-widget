@@ -1707,6 +1707,38 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["除外した写真"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["写真の対象"].exists)
         app.terminate()
+
+        // The cat-list entrance keeps browsing prominent; secondary actions
+        // still reach their original destinations without changing membership.
+        app.launchArguments = ["--cat-profile-photo-flow-fixture", "--cat-profile-list-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 2)
+        XCTAssertFalse(app.staticTexts["単頭設定からの引き継ぎ"].exists)
+        XCTAssertFalse(app.buttons["cat-profiles-unassigned"].exists)
+        capture("cat-list-browsing")
+        app.buttons["cat-profile-add"].tap()
+        XCTAssertTrue(app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 5))
+        app.buttons["キャンセル"].tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
+        app.buttons["cat-profiles-more"].tap()
+        XCTAssertTrue(app.buttons["cat-profiles-unassigned"].waitForExistence(timeout: 5))
+        capture("cat-list-menu")
+        app.buttons["cat-profiles-unassigned"].tap()
+        XCTAssertTrue(app.navigationBars["猫を選んでいない写真"].waitForExistence(timeout: 5))
+        app.navigationBars["猫を選んでいない写真"].buttons.element(boundBy: 0).tap()
+        app.buttons["cat-profiles-more"].tap()
+        app.buttons["cat-profiles-excluded"].tap()
+        XCTAssertTrue(app.navigationBars["以前除外した写真"].waitForExistence(timeout: 5))
+        app.navigationBars["以前除外した写真"].buttons.element(boundBy: 0).tap()
+        app.buttons["cat-profiles-more"].tap()
+        app.buttons["cat-profiles-about"].tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真について"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 2)
+        app.terminate()
     }
 
     @MainActor

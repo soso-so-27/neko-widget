@@ -83,23 +83,79 @@ struct CatProfilesView: View {
         let photoIdentifier: String?
     }
 
+    private enum OrganizationDestination: String, Identifiable {
+        case unassigned, excluded
+        var id: String { rawValue }
+    }
+
     @State private var creationRequest: CreationRequest?
     @State private var showsCreationPhotoPicker = false
     @State private var creationPhotoIdentifier: String?
     @State private var continuesProfileCreation = false
     @State private var createdProfileIdentifier: String?
     @State private var openedProfileIdentifier: String?
+    @State private var organizationDestination: OrganizationDestination?
+    @State private var showsAbout = false
 
     var body: some View {
         Form {
             if presentation.profiles.isEmpty {
                 optionalSetupSection
             }
-            profilesSection
-            unassignedSection
-            legacyExclusionSection
+            if !presentation.profiles.isEmpty {
+                profilesSection
+            }
         }
         .navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(action: startAddingCat) {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("猫を追加")
+                .accessibilityIdentifier("cat-profile-add")
+
+                organizationMenu
+            }
+        }
+        .navigationDestination(item: $organizationDestination) { destination in
+            switch destination {
+            case .unassigned:
+                UnassignedCatPhotosView(
+                    photos: presentation.unassignedPhotos,
+                    profiles: presentation.profiles,
+                    actions: actions
+                )
+            case .excluded:
+                LegacyCatExclusionReviewView(
+                    photos: presentation.legacyExcludedPhotos,
+                    restore: actions.restoreLegacyExclusions
+                )
+            }
+        }
+        .sheet(isPresented: $showsAbout) {
+            NavigationStack {
+                Form {
+                    Section {
+                        Text("写真を選んで、写っている猫にまとめられます。すべての写真を分ける必要はありません。")
+                    } footer: {
+                        Text(CatIndividualRecognitionCopy.unavailable)
+                    }
+                    Section {
+                        Text("猫の登録は任意です。名前や写真の振り分けは、このiPhone内で管理します。")
+                    }
+                }
+                .navigationTitle("猫ごとの写真について")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("閉じる", systemImage: "xmark") { showsAbout = false }
+                            .labelStyle(.iconOnly)
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
             if continuesProfileCreation {
                 continuesProfileCreation = false
@@ -191,80 +247,48 @@ struct CatProfilesView: View {
                     : "この子の写真を開きます")
             }
 
+        }
+    }
+
+    private func startAddingCat() {
+        creationPhotoIdentifier = nil
+        continuesProfileCreation = false
+        if presentation.profileCreationPhotos.isEmpty {
+            creationRequest = CreationRequest(photoIdentifier: nil)
+        } else {
+            showsCreationPhotoPicker = true
+        }
+    }
+
+    private var organizationMenu: some View {
+        Menu {
+            if !presentation.profiles.isEmpty && !presentation.unassignedPhotos.isEmpty {
+                Button {
+                    organizationDestination = .unassigned
+                } label: {
+                    Label("猫を選んでいない写真", systemImage: "photo.on.rectangle")
+                }
+                .accessibilityIdentifier("cat-profiles-unassigned")
+            }
+            if !presentation.legacyExcludedPhotos.isEmpty {
+                Button {
+                    organizationDestination = .excluded
+                } label: {
+                    Label("以前除外した写真", systemImage: "arrow.uturn.backward")
+                }
+                .accessibilityIdentifier("cat-profiles-excluded")
+            }
             Button {
-                creationPhotoIdentifier = nil
-                continuesProfileCreation = false
-                if presentation.profileCreationPhotos.isEmpty {
-                    creationRequest = CreationRequest(photoIdentifier: nil)
-                } else {
-                    showsCreationPhotoPicker = true
-                }
+                showsAbout = true
             } label: {
-                Label("猫を追加", systemImage: "plus.circle")
+                Label("猫ごとの写真について", systemImage: "info.circle")
             }
-            .accessibilityIdentifier("cat-profile-add")
-        } header: {
-            Text("猫たち")
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(CatIndividualRecognitionCopy.unavailable)
-                Text("猫の登録や写真の振り分けは任意です。設定はこのiPhone内で管理します。")
-            }
+            .accessibilityIdentifier("cat-profiles-about")
+        } label: {
+            Image(systemName: "ellipsis")
         }
-    }
-
-    @ViewBuilder
-    private var unassignedSection: some View {
-        if !presentation.profiles.isEmpty && !presentation.unassignedPhotos.isEmpty {
-            Section {
-                NavigationLink {
-                    UnassignedCatPhotosView(
-                        photos: presentation.unassignedPhotos,
-                        profiles: presentation.profiles,
-                        actions: actions
-                    )
-                } label: {
-                    Label {
-                        LabeledContent(
-                            "猫を選んでいない写真",
-                            value: "\(presentation.unassignedPhotos.count.formatted())枚"
-                        )
-                    } icon: {
-                        Image(systemName: "questionmark.circle")
-                    }
-                }
-            } footer: {
-                Text("選んでいない写真も「みんな」に表示されます。すべてを分ける必要はありません。")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var legacyExclusionSection: some View {
-        if !presentation.legacyExcludedPhotos.isEmpty {
-            Section {
-                NavigationLink {
-                    LegacyCatExclusionReviewView(
-                        photos: presentation.legacyExcludedPhotos,
-                        restore: actions.restoreLegacyExclusions
-                    )
-                } label: {
-                    Label {
-                        LabeledContent(
-                            "以前除外した写真を確認",
-                            value: "\(presentation.legacyExcludedPhotos.count.formatted())枚"
-                        )
-                    } icon: {
-                        Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                            .foregroundStyle(.orange)
-                    }
-                }
-            } header: {
-                Text("単頭設定からの引き継ぎ")
-            } footer: {
-                Text("以前の「この子じゃない」は単頭向けでした。別の猫の写真まで除外していないか確認できます。")
-            }
-        }
+        .accessibilityLabel("猫ごとの写真のメニュー")
+        .accessibilityIdentifier("cat-profiles-more")
     }
 
     @ViewBuilder
@@ -298,6 +322,20 @@ struct CatProfilePhotoFlowFixture: View {
     @State private var memberships: [String: Set<String>] = [:]
     @State private var rejectsNextAdd = true
 
+    private let showsListFixture = CommandLine.arguments.contains("--cat-profile-list-fixture")
+
+    init() {
+        if CommandLine.arguments.contains("--cat-profile-list-fixture") {
+            let sampleNames = ["ミケ", "ソラ"]
+            _names = State(initialValue: sampleNames)
+            _memberships = State(initialValue: Dictionary(uniqueKeysWithValues:
+                zip(AppStoreScreenshotFixture.photos.prefix(2), sampleNames).map {
+                    ($0.0.localIdentifier, Set([$0.1]))
+                }
+            ))
+        }
+    }
+
     private var photos: [CatProfilePhotoPresentation] {
         AppStoreScreenshotFixture.photos.prefix(3).map {
             CatProfilePhotoPresentation(
@@ -320,7 +358,10 @@ struct CatProfilePhotoFlowFixture: View {
                     manualCandidatePhotos: photos.filter { !$0.assignedProfileIdentifiers.contains(name) }
                 )
             },
-            unassignedPhotos: photos.filter { $0.assignedProfileIdentifiers.isEmpty }
+            unassignedPhotos: photos.filter { $0.assignedProfileIdentifiers.isEmpty },
+            legacyExcludedPhotos: showsListFixture ? [
+                LegacyExcludedCatPhotoPresentation(localIdentifier: AppStoreScreenshotFixture.photos[3].localIdentifier)
+            ] : []
         )
     }
 
@@ -374,7 +415,7 @@ private struct CatProfileRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(profile.displayName)
                     .font(.headline)
-                Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
+                Text("\(profile.confirmedPhotoCount.formatted())枚")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
