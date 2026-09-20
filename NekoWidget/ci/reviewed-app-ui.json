@@ -35,7 +35,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "6680f298ab07cb502c41a0414d685157256d2e0eb2af8f9ad74a540ed5cf8706",
-      "after": "478b61b1624c0351011ff47018549cbb3c293ca020b4f22e70aaf98082346802"
+      "after": "990f2141ab677fe9db3de0ed634ad639fffac865971f796607a6017e39044982"
     },
     "NekoWidget/ci/test-app-store-screenshot-workflow.py": {
       "before": "cfbbcf86804c1de1c1a6250b4dba4589436b2c25b24a1956b1dae2249125c2d7",

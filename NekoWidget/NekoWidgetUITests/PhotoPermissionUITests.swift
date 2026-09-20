@@ -2876,9 +2876,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "memory-library-return-from-search")
         XCTAssertEqual(search.value as? String, "おふろ", "Returning must preserve the search query.")
         search.tap()
-        let cancelSearch = app.buttons["キャンセル"]
-        XCTAssertTrue(cancelSearch.waitForExistence(timeout: 5))
-        cancelSearch.tap()
+        let closeSearch = app.buttons["閉じる"]
+        XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
+        closeSearch.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
