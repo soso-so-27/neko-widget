@@ -108,8 +108,54 @@ class PlanTests(unittest.TestCase):
             no_test_change = dict(changes); del no_test_change[scope.MEMORY_TEST_PATH]
             self.assertEqual(scope.select_scope(reviewed(no_test_change), memory_test_source=source), scope.REVIEWED_MEMORY_FAMILY_SCOPE)
             self.assertEqual(scope.select_scope(reviewed(no_test_change)), scope.FULL_SCOPE)
+            editor_pair = ("existing editor", "reviewed local account guard and DEBUG regression hook")
+            with patch.object(scope, "LOCAL_EDITOR_DIGESTS", tuple(map(scope.source_digest, editor_pair))):
+                editor = dict(changes, **{scope.LOCAL_EDITOR_PATH: editor_pair})
+                valid_editor = reviewed(editor, dataReview=scope.LOCAL_EDITOR_DATA_REVIEW)
+                self.assertEqual(scope.select_scope(valid_editor), scope.REVIEWED_MEMORY_FAMILY_SCOPE)
+                self.assertEqual(planner.required_jobs(list(valid_editor), scope.REVIEWED_MEMORY_FAMILY_SCOPE),
+                                 planner.required_jobs_from_scope(scope.REVIEWED_MEMORY_FAMILY_SCOPE))
+                self.assertEqual(len(scope.native_tests(scope.REVIEWED_MEMORY_FAMILY_SCOPE)), 10)
+                # Both the whole-source hashes and specific data review are
+                # mandatory. Rehashing an unknown editor cannot approve it.
+                self.assertEqual(scope.select_scope(reviewed(editor)), scope.FULL_SCOPE)
+                self.assertEqual(scope.select_scope(reviewed(editor, dataReview=scope.LOCAL_EDITOR_DATA_REVIEW,
+                                                             scope=scope.REVIEWED_MEMORY_SCOPE)), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    altered = list(editor_pair); altered[side] += " changed account or storage action"
+                    unknown = dict(editor, **{scope.LOCAL_EDITOR_PATH: tuple(altered)})
+                    self.assertEqual(scope.select_scope(reviewed(unknown, dataReview=scope.LOCAL_EDITOR_DATA_REVIEW)), scope.FULL_SCOPE)
+                stale = copy.deepcopy(valid_editor)
+                manifest = json.loads(stale[scope.REVIEW_MANIFEST][1])
+                manifest["files"][scope.LOCAL_EDITOR_PATH]["after"] = "0" * 64
+                stale[scope.REVIEW_MANIFEST] = ("{}", json.dumps(manifest))
+                self.assertEqual(scope.select_scope(stale), scope.FULL_SCOPE)
+                self.assertEqual(scope.select_scope(reviewed({scope.LOCAL_EDITOR_PATH: editor_pair},
+                    dataReview=scope.LOCAL_EDITOR_DATA_REVIEW)), scope.FULL_SCOPE)
+                # The planner still rejects added/symlink/executable editor
+                # files before the exact reviewed source pair is considered.
+                paths = sorted(valid_editor)
+                base = "b" * 40
+                for old_mode, new_mode, status, allowed in (
+                        ("100644", "100644", "M", True), ("000000", "100644", "A", False),
+                        ("100644", "120000", "T", False), ("100644", "100755", "M", False)):
+                    raw = "".join(f":{old_mode if path == scope.LOCAL_EDITOR_PATH else '100644'} "
+                        f"{new_mode if path == scope.LOCAL_EDITOR_PATH else '100644'} {'c' * 40} {'d' * 40} "
+                        f"{status if path == scope.LOCAL_EDITOR_PATH else 'M'}\0{path}\0" for path in paths)
+                    def git(*args):
+                        if args[0] == "diff":
+                            return raw
+                        if args[0] == "show":
+                            revision, path = args[1].split(":", 1)
+                            return valid_editor[path][0 if revision == base else 1]
+                        return self.sha
+                    with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                        self.assertEqual(planner.runtime_scope(paths, {}, self.env),
+                                         scope.REVIEWED_MEMORY_FAMILY_SCOPE if allowed else scope.FULL_SCOPE)
         self.assertNotIn(scope.FAMILY_PRESENTATION_PATH, scope.REVIEWABLE_MEMORY_PATHS)
         self.assertNotIn(scope.PAIRING_EXPLANATION_PATH, scope.REVIEWABLE_APP_PATHS)
+        self.assertNotIn(scope.LOCAL_EDITOR_PATH, scope.REVIEWABLE_MEMORY_PATHS)
+        self.assertNotIn(scope.LOCAL_EDITOR_PATH, scope.REVIEWABLE_APP_PATHS)
 
     def test_memory_review_requires_exact_complete_batch_and_known_profile(self):
         changes = self.memory_changes()
