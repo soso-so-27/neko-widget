@@ -15,6 +15,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHAと、既存 `MomentDeliveryComposerUITests` の失敗したメソッド名1個。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_method=<METHOD>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
 - 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
+- 他classの実XCTest失敗は、準備・環境失敗として無視しない。現在の診断経路の対象外として明示的に止め、対応する切り分け経路を用意する。通常CIの繰り返しや理由文で代用しない。
 - 診断後は同じSHAを `codex/<task>` にpushし、既存の必須CIを一度実行して配布へ進む。診断workflowは署名・配布を行わず、通常CI・main再利用・TestFlightの合格証拠には使えない。診断にも同じwatcherを1本だけ使う。branch変更で作業の累計をリセットしない。
 
 - 利用者が見た目を実機確認すると指定した写真/アルバムUIのバッチは、[内容を固定した確認範囲](2026-09-17-reviewed-ui-checks.md)を利用できる。reviewed-app-ui.jsonの全変更before/afterハッシュ一致が必要。代表4操作とBuild/権限/runtimeを残し、未知の変更は一式へ戻す。実機の見た目を自動確認済みとは扱わない。
