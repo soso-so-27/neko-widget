@@ -27,6 +27,7 @@ APP_GROUP_ID=""
 # BEGIN DIAGNOSTIC-ONLY artifact
 DIAGNOSTIC_REQUESTED=false
 if [[ -n "${NEKO_IOS_DIAGNOSTIC_TEST_METHOD+x}" \
+    || -n "${NEKO_IOS_DIAGNOSTIC_TEST_CLASS+x}" \
     || -n "${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA+x}" \
     || "${GITHUB_WORKFLOW_REF:-}" == */.github/workflows/ios-ui-diagnostic.yml@* ]]; then
     DIAGNOSTIC_REQUESTED=true
@@ -47,36 +48,32 @@ import sys
 project, metadata_path, selection_path = map(Path, sys.argv[1:])
 source = os.environ.get("NEKO_IOS_DIAGNOSTIC_SOURCE_SHA", "")
 method = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_METHOD", "")
+test_class = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_CLASS", "MomentDeliveryComposerUITests")
 repository = os.environ.get("GITHUB_REPOSITORY", "")
 ref = os.environ.get("GITHUB_REF", "")
 if (not repository or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
         or not ref.startswith("refs/heads/diagnostic/")
         or os.environ.get("GITHUB_WORKFLOW_REF") != f"{repository}/.github/workflows/ios-ui-diagnostic.yml@{ref}"
         or os.environ.get("NEKO_IOS_RUNTIME_LANE") != "app-ui"):
-    raise SystemExit("A single-test override is allowed only in the dedicated diagnostic workflow.")
+    raise SystemExit("A focused-test override is allowed only in the dedicated diagnostic workflow.")
 if (re.fullmatch(r"[0-9a-f]{40}", source) is None
         or source != os.environ.get("GITHUB_SHA")
         or source != subprocess.check_output(["git", "-C", str(project), "rev-parse", "HEAD"], text=True).strip()):
     raise SystemExit("Diagnostic source must equal both the workflow SHA and checkout HEAD.")
-if re.fullmatch(r"test[A-Za-z0-9_]+", method) is None:
-    raise SystemExit("Specify exactly one XCTest method name, without arguments or a class path.")
-test_source = (project / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8")
-# Existing tests use a top-level class and four-space method declarations.
-# Do not match other classes, commented-out methods, or multiline string data.
-test_source = re.sub(r'(?s)/\*.*?\*/|""".*?"""', "", test_source)
-test_source = re.sub(r"(?m)//[^\n]*", "", test_source)
-classes = re.findall(r"(?ms)^final class MomentDeliveryComposerUITests: XCTestCase \{\n(.*?)^\}", test_source)
-declaration = rf"(?m)^    func {re.escape(method)}\(\)(?: async)?(?: throws)? \{{"
-if len(classes) != 1 or len(re.findall(declaration, classes[0])) != 1:
-    raise SystemExit("The requested method is not an existing MomentDeliveryComposerUITests test.")
-test = f"NekoWidgetUITests/MomentDeliveryComposerUITests/{method}"
+sys.path.insert(0, str(project / "ci"))
+from ios_ci_scope import diagnostic_tests
+try:
+    tests = diagnostic_tests(test_class, method,
+        (project / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8"))
+except ValueError as error:
+    raise SystemExit(str(error))
 metadata_path.write_text(json.dumps({
     "schemaVersion": 1, "diagnosticOnly": True, "releaseEvidence": False,
     "sourceSHA": source, "workflowSHA": os.environ["GITHUB_SHA"],
-    "repository": repository, "nativeTests": [test], "runtime": "ios-26-2",
+    "repository": repository, "nativeTests": list(tests), "runtime": "ios-26-2",
     "fixturePreparation": "run-sharing-runtime-matrix",
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-selection_path.write_text(f"-only-testing:{test}\n", encoding="utf-8")
+selection_path.write_text("".join(f"-only-testing:{test}\n" for test in tests), encoding="utf-8")
 PY
 else
 # END DIAGNOSTIC-ONLY selection

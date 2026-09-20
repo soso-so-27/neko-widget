@@ -196,7 +196,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         changes = {path: ("" if path in added_tests else git("show", f"{base}:{path}"),
                           git("show", f"{head}:{path}")) for path in sources}
         memory_tests = None
-        if reviewed_memory_changes(changes) and MEMORY_TEST_PATH not in changes:
+        if (reviewed_memory_changes(changes) or reviewed_memory_changes(changes, family=True)) and MEMORY_TEST_PATH not in changes:
             memory_tests = git("show", f"{head}:{MEMORY_TEST_PATH}")
         return select_scope(changes, memory_test_source=memory_tests)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):

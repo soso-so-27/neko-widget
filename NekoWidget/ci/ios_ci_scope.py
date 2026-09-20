@@ -26,9 +26,10 @@ ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
 # v2 also covers the reviewed Photos sections and their existing fixture.
 # The version separates its nine required operations from v1's seven-test proof.
 REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v2"
+REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, ICON_SCOPE)
+          REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -73,8 +74,10 @@ CI_DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
 CI_DIAGNOSTIC_MATRIX = "NekoWidget/ci/run-sharing-runtime-matrix.sh"
 # Exact reviewed diagnostic additions. A later change to their execution must
 # be reviewed again, never hidden by a broad marker or workflow exemption.
-DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3dab940ad288e4a56ed97b2d"
-DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
+PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3dab940ad288e4a56ed97b2d"
+PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
+DIAGNOSTIC_WORKFLOW_DIGEST = "27e3a21f42709a87b6f8d6e99866f138827be6a1052ead5918a72a9124d135fe"
+DIAGNOSTIC_BLOCKS_DIGEST = "f1319d5060a5a0d44efd76c21faf9693b5092b0c5cf4623b26f14747aa3b314c"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
     CI_DIAGNOSTIC_WORKFLOW,
@@ -124,6 +127,26 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
     "NekoWidget/ci/test-app-store-screenshot-workflow.py",
     MEMORY_TEST_PATH,
 }) | MEMORY_PROJECTION_PATHS
+# v3 is an exact reviewed presentation pair, not permission to change shared
+# authorisation, persistence, transport or revocation implementations.
+FAMILY_PRESENTATION_PATH = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
+PAIRING_EXPLANATION_PATH = "NekoWidget/NekoWidget/Views/PairingView.swift"
+FAMILY_PRESENTATION_DIGESTS = ("49573947eff46d9d3708e3530d9cf04c7611cc39523c8cf00f03307ea8e4f59c", "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035")
+FAMILY_COMPANION_PATHS = frozenset({FAMILY_PRESENTATION_PATH, PAIRING_EXPLANATION_PATH})
+
+PAIRING_EXPLANATION_BEFORE = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
+PAIRING_EXPLANATION_AFTER = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。共同記録も開けなくなるため、取り下げたい自分の写真や言葉があれば、先に共同記録で操作してください。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
+
+def family_presentation_changes(changes):
+    if not FAMILY_COMPANION_PATHS <= changes.keys():
+        return False
+    if tuple(source_digest(text) for text in changes[FAMILY_PRESENTATION_PATH]) != FAMILY_PRESENTATION_DIGESTS:
+        return False
+    before, after = changes[PAIRING_EXPLANATION_PATH]
+    return (before.count(PAIRING_EXPLANATION_BEFORE) == 1
+            and after == before.replace(PAIRING_EXPLANATION_BEFORE, PAIRING_EXPLANATION_AFTER, 1))
+
+
 ARCHIVE_PICKER_MANIFEST = "NekoWidget/ci/archive-picker-ui.json"
 # One reviewed integration batch, not general permission to change these files.
 # Require all three: the real picker regression and its seed must accompany the
@@ -135,7 +158,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -196,7 +219,7 @@ def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
         return False
 
 
-def reviewed_memory_changes(changes: dict[str, tuple[str, str]]) -> bool:
+def reviewed_memory_changes(changes: dict[str, tuple[str, str]], *, family: bool = False) -> bool:
     """Reviewed UI and read-only projection, never arbitrary storage changes.
 
     The exact Store diff and verifier must be reviewed together: no write,
@@ -204,7 +227,10 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]]) -> bool:
     Hashes bind that review; they cannot themselves establish semantic safety.
     """
     app = set(changes) - {REVIEW_MANIFEST}
-    if REVIEW_MANIFEST not in changes or not app or not app <= REVIEWABLE_MEMORY_PATHS:
+    allowed = REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS if family else REVIEWABLE_MEMORY_PATHS
+    if REVIEW_MANIFEST not in changes or not app or not app <= allowed:
+        return False
+    if family and not family_presentation_changes(changes):
         return False
     projection = app & MEMORY_PROJECTION_PATHS
     if projection and projection != MEMORY_PROJECTION_PATHS:
@@ -223,7 +249,7 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]]) -> bool:
         if set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}:
             return False
         if (type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
-                or review["scope"] != REVIEWED_MEMORY_SCOPE
+                or review["scope"] != (REVIEWED_MEMORY_FAMILY_SCOPE if family else REVIEWED_MEMORY_SCOPE)
                 or review["visualReview"] != "user-device"
                 or review["dataReview"] != "read-only-projection"
                 or not isinstance(review["purpose"], str) or not review["purpose"].strip()
@@ -309,7 +335,28 @@ def swift_declaration_source(source: str) -> str | None:
     return result
 
 
-def memory_tests_available(source: str | None) -> bool:
+DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests")
+
+
+def diagnostic_tests(test_class: str, methods: str, source: str | None = None) -> tuple[str, ...]:
+    """Bounded input, one class; optionally prove each real declaration exists."""
+    names = methods.split(",")
+    if (test_class not in DIAGNOSTIC_CLASSES or not 1 <= len(names) <= 3
+            or len(set(names)) != len(names)
+            or any(re.fullmatch(r"test[A-Za-z0-9_]+", name) is None for name in names)):
+        raise ValueError("Specify one supported class and one to three distinct comma-separated method names.")
+    if source is not None:
+        masked = swift_declaration_source(source)
+        if masked is None:
+            raise ValueError("Cannot prove XCTest declarations.")
+        classes = re.findall(rf"(?ms)^final class {re.escape(test_class)}: XCTestCase \{{\n(.*?)^\}}", masked)
+        if len(classes) != 1 or any(len(re.findall(
+                rf"(?m)^    func {re.escape(name)}\(\)(?: async)?(?: throws)? \{{", classes[0])) != 1 for name in names):
+            raise ValueError("Every requested method must exist once in the selected XCTest class.")
+    return tuple(f"NekoWidgetUITests/{test_class}/{name}" for name in names)
+
+
+def memory_tests_available(source: str | None, required=None) -> bool:
     # Read current head even when tests are unchanged; never select missing
     # or commented-out methods as evidence that this profile can execute.
     if not source:
@@ -323,7 +370,7 @@ def memory_tests_available(source: str | None) -> bool:
         end = classes[index + 1].start() if index + 1 < len(classes) else len(source)
         methods.extend(f"NekoWidgetUITests/{match.group(1)}/{method}" for method in
                        re.findall(r"\bfunc\s+(test\w+)\s*\(", source[match.end():end]))
-    return all(methods.count(test) == 1 for test in REVIEWED_MEMORY_TESTS)
+    return all(methods.count(test) == 1 for test in (required or REVIEWED_MEMORY_TESTS))
 
 
 def source_digest(source: str) -> str:
@@ -407,14 +454,15 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     if CI_DIAGNOSTIC_WORKFLOW in changes:
         before, after = changes[CI_DIAGNOSTIC_WORKFLOW]
-        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) != DIAGNOSTIC_WORKFLOW_DIGEST):
+        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
             return False
     if CI_DIAGNOSTIC_MATRIX in changes:
         normalized = []
-        for source in changes[CI_DIAGNOSTIC_MATRIX]:
+        for index, source in enumerate(changes[CI_DIAGNOSTIC_MATRIX]):
             pattern = r"(?m)^# BEGIN DIAGNOSTIC-ONLY [^\n]+\n[\s\S]*?^# END DIAGNOSTIC-ONLY [^\n]+\n"
             blocks = re.findall(pattern, source)
-            if blocks and (len(blocks) != 3 or source_digest("".join(blocks)) != DIAGNOSTIC_BLOCKS_DIGEST):
+            accepted = {DIAGNOSTIC_BLOCKS_DIGEST, PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST} if index == 0 else {DIAGNOSTIC_BLOCKS_DIGEST}
+            if (blocks or index == 1) and (len(blocks) != 3 or source_digest("".join(blocks)) not in accepted):
                 return False
             normalized.append(re.sub(pattern, "", source))
         if normalized[0] != normalized[1]:
@@ -460,6 +508,7 @@ def accepts_paths(scope: str, paths) -> bool:
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_SCOPE: REVIEWABLE_MEMORY_PATHS | {REVIEW_MANIFEST},
+        REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST},
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -486,6 +535,10 @@ REVIEWED_MEMORY_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier i
     "SoloMemoriesUITests/testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
     "SoloMemoriesUITests/testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings",
     "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
+))
+REVIEWED_MEMORY_FAMILY_TESTS = REVIEWED_MEMORY_TESTS + tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+    "SoloMemoriesUITests/testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
 ))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
@@ -519,6 +572,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_MEMORY_FAMILY_SCOPE:
+        return REVIEWED_MEMORY_FAMILY_TESTS
     if scope == REVIEWED_MEMORY_SCOPE:
         return REVIEWED_MEMORY_TESTS
     if scope == ARCHIVE_PICKER_SCOPE:
@@ -678,6 +733,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_memory_changes(changes, family=True):
+        source = changes.get(MEMORY_TEST_PATH, (None, memory_test_source))[1]
+        return REVIEWED_MEMORY_FAMILY_SCOPE if memory_tests_available(source, REVIEWED_MEMORY_FAMILY_TESTS) else FULL_SCOPE
     if reviewed_memory_changes(changes):
         source = changes.get(MEMORY_TEST_PATH, (None, memory_test_source))[1]
         return REVIEWED_MEMORY_SCOPE if memory_tests_available(source) else FULL_SCOPE

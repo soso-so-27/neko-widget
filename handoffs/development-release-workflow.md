@@ -13,12 +13,13 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
-- 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHAと、既存 `MomentDeliveryComposerUITests` の失敗したメソッド名1個。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_method=<METHOD>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
+- 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHA、既存 `MomentDeliveryComposerUITests` または `SoloMemoriesUITests` のclass、同じclass内の失敗したメソッド名1〜3個（カンマ区切り）。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_class=SoloMemoriesUITests -f test_method=<METHOD1,METHOD2>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
 - 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
 - 他classの実XCTest失敗は、準備・環境失敗として無視しない。現在の診断経路の対象外として明示的に止め、対応する切り分け経路を用意する。通常CIの繰り返しや理由文で代用しない。
 - 診断後は同じSHAを `codex/<task>` にpushし、既存の必須CIを一度実行して配布へ進む。診断workflowは署名・配布を行わず、通常CI・main再利用・TestFlightの合格証拠には使えない。診断にも同じwatcherを1本だけ使う。branch変更で作業の累計をリセットしない。
 
 - 利用者が見た目を実機確認すると指定した写真/アルバムUIのバッチは、[内容を固定した確認範囲](2026-09-17-reviewed-ui-checks.md)を利用できる。reviewed-app-ui.jsonの全変更before/afterハッシュ一致が必要。代表4操作とBuild/権限/runtimeを残し、未知の変更は一式へ戻す。実機の見た目を自動確認済みとは扱わない。
+- `reviewed-memory-read-ui-v3` はv2の全8操作に共同記録・アルバム関連遷移の2操作を加える。FamilyRecordViewは独立レビュー済み全文before/after、PairingViewは共有終了説明の完全一致置換に限定し、全差分manifest・既存build/権限/runtimeを維持する。v3未計測時だけ `preflight-ci.py --use-full-baseline` で全件経路の観測最大を計画参照にできる。v3の実績ではなく、累計時間・実行中・失敗診断の判定を通過させる例外でもない。
 - [変更別の画面確認](2026-09-14-targeted-ui-checks.md)に従い、Widget専用処理は関連7件、既知の文字・余白だけならアプリ画面操作を省く。限定scopeのsmokeは実Photos権限1件と後段の実写真スキャンを残し、別OSでの無関係な20件を繰り返さない。製品と既存build/安全確認が不変のCI選択設定だけは、専用scopeで実行経路を確認する。必要な描画・runtime・保存/送信境界は省かない。
 - 季節ムービー画面だけ（必要ならADR-023も）の変更は、ビルドと既存境界チェックを残し、無関係な写真スキャン・共有通信の実行チェックを省く。対象外のファイル、CI/署名/権限/永続化などの変更、判定不能時は従来一式。手動workflow_dispatchは常に一式実行し、再利用しない。
 - 1つのCI runは1人だけが監視し、意味のある変化かterminal結果だけ共有する。
