@@ -2862,7 +2862,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
         XCTAssertTrue(archived.waitForExistence(timeout: 10), "Cloud-only records belong in the same reading list.")
         attach(app, name: "memory-library-list")
-        let search = app.searchFields["言葉・猫の名前で探す"]
+        let search = app.searchFields["memory-notes-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("おふろ")
         XCTAssertTrue(archived.waitForExistence(timeout: 5))
         XCTAssertFalse(row.exists)
@@ -2871,17 +2871,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].exists)
         app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
         attach(app, name: "memory-library-return-from-search")
         XCTAssertEqual(search.value as? String, "おふろ", "Returning must preserve the search query.")
         search.tap()
-        let clearSearch = search.buttons.firstMatch
-        XCTAssertTrue(clearSearch.waitForExistence(timeout: 5))
-        clearSearch.tap()
-        // iOS 26 presents Close here; Cancel is not present after clearing.
-        let closeSearch = app.buttons["閉じる"]
-        XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
-        closeSearch.tap()
+        let cancelSearch = app.buttons["キャンセル"]
+        XCTAssertTrue(cancelSearch.waitForExistence(timeout: 5))
+        cancelSearch.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)

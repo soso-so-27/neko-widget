@@ -167,8 +167,7 @@ struct PhotoMemoryNotesListView: View {
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var search = ""
-    @State private var isSearchPresented = false
-    @State private var resumesSearchOnReturn = false
+    @State private var isSearchFocused = false
     @State private var selectedArchive: PersonalArchiveRecord?
     @State private var selectedArchiveAccount: String?
     @State private var selectedSourceNote: UUID?
@@ -270,7 +269,7 @@ struct PhotoMemoryNotesListView: View {
                 if access.photo(for: local.photoIdentifier) == nil, let copy = item.preserved {
                     Button {
                         guard let account else { return }
-                        endSearchForNavigation()
+                        isSearchFocused = false
                         selectedArchiveAccount = account
                         selectedSourceNote = local.id
                         selectedArchive = copy
@@ -285,7 +284,7 @@ struct PhotoMemoryNotesListView: View {
         } else if let copy = item.preserved {
             Button {
                 guard let account else { return }
-                endSearchForNavigation()
+                isSearchFocused = false
                 selectedArchiveAccount = account
                 selectedSourceNote = nil
                 selectedArchive = copy
@@ -298,9 +297,12 @@ struct PhotoMemoryNotesListView: View {
     var body: some View {
         readingList
         .listStyle(.insetGrouped)
-        .searchable(text: $search, isPresented: $isSearchPresented,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "言葉・猫の名前で探す")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            MemoryNotesSearchBar(text: $search, isFocused: $isSearchFocused)
+                .frame(height: 56)
+                .padding(.horizontal, 8)
+                .background(Color(.systemGroupedBackground))
+        }
         .refreshable { await library.reload() }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
         .navigationBarTitleDisplayMode(.inline)
@@ -335,23 +337,10 @@ struct PhotoMemoryNotesListView: View {
                 library.clearArchive()
                 if scenePhase == .active { Task { await library.reload() } }
             }
-        .onAppear {
-            if resumesSearchOnReturn {
-                resumesSearchOnReturn = false
-                isSearchPresented = true
-            }
-        }
         .onDisappear {
-            endSearchForNavigation()
+            isSearchFocused = false
             access.stop()
         }
-    }
-
-    private func endSearchForNavigation() {
-        // End the active native search before pushing a record, then restore
-        // that search context on return so the retained query can be cleared.
-        resumesSearchOnReturn = resumesSearchOnReturn || isSearchPresented
-        isSearchPresented = false
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
@@ -421,6 +410,71 @@ struct PhotoMemoryNotesListView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }.padding(.vertical, 6)
+    }
+}
+
+/// Keep search in the reading list, independent of navigation-bar presentation.
+private struct MemoryNotesSearchBar: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, isFocused: $isFocused) }
+
+    func makeUIView(context: Context) -> UISearchBar {
+        let bar = UISearchBar()
+        bar.searchBarStyle = .minimal
+        bar.placeholder = "言葉・猫の名前で探す"
+        bar.autocapitalizationType = .none
+        bar.autocorrectionType = .no
+        bar.searchTextField.accessibilityIdentifier = "memory-notes-search"
+        bar.delegate = context.coordinator
+        return bar
+    }
+
+    func updateUIView(_ bar: UISearchBar, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.isFocused = $isFocused
+        if bar.text != text { bar.text = text }
+        if !isFocused && bar.searchTextField.isFirstResponder { bar.resignFirstResponder() }
+    }
+
+    static func dismantleUIView(_ bar: UISearchBar, coordinator: Coordinator) {
+        bar.delegate = nil
+        bar.resignFirstResponder()
+    }
+
+    final class Coordinator: NSObject, UISearchBarDelegate {
+        var text: Binding<String>
+        var isFocused: Binding<Bool>
+
+        init(text: Binding<String>, isFocused: Binding<Bool>) {
+            self.text = text
+            self.isFocused = isFocused
+        }
+
+        func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+            text.wrappedValue = searchText
+        }
+
+        func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
+            isFocused.wrappedValue = true
+            searchBar.setShowsCancelButton(true, animated: true)
+        }
+
+        func searchBarTextDidEndEditing(_ searchBar: UISearchBar) {
+            if isFocused.wrappedValue { isFocused.wrappedValue = false }
+            searchBar.setShowsCancelButton(false, animated: true)
+        }
+
+        func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+            searchBar.resignFirstResponder()
+        }
+
+        func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
+            text.wrappedValue = ""
+            searchBar.text = ""
+            searchBar.resignFirstResponder()
+        }
     }
 }
 
