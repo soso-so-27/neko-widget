@@ -1327,7 +1327,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "struct SavedMemoriesGalleryView:",
             "private struct LikedPhotoBookExportFile:",
         )
-        self.assertIn("ForEach(photos)", gallery)
+        self.assertIn("ForEach(PhotoLibraryGridRow.rows(photos))", gallery)
         self.assertIn('_selectedExportIdentifiers = State(initialValue: Set<String>())', gallery)
         self.assertIn('isSelectingForExport ? "写真を選ぶ"', gallery)
         self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)

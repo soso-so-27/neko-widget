@@ -95,7 +95,6 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     let isSearching: Bool
     let normalize: (String) -> String
     @State private var position: String?
-    @State private var pendingPosition: String?
     @State private var userScrolled = false
     @State private var isVisible = false
 
@@ -103,32 +102,25 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
         self.section = section
         self.isSearching = isSearching
         self.normalize = normalize
-        let saved = section.flatMap(PhotoLibraryReadingPosition.identifier).map(normalize)
-        _position = State(initialValue: saved)
-        _pendingPosition = State(initialValue: saved)
+        // A saved preference becomes a scroll command when this view appears.
+        // Let the native binding observe state directly instead of intercepting
+        // its setter or treating an initial getter value as an applied command.
+        _position = State(initialValue: nil)
     }
 
     @ViewBuilder func body(content: Content) -> some View {
         if let section {
             content
-                .scrollPosition(id: Binding<String?>(get: { position }, set: { value in
-                    if value != position {
-                        PhotoLibraryReadingPosition.diagnose("set \(section): \(value ?? "nil") pending=\(pendingPosition ?? "nil") drag=\(userScrolled) visible=\(isVisible) active=\(PhotoLibraryReadingPosition.activeSection ?? "nil")")
-                    }
-                    // An initially empty/async catalog must not erase the requested row.
-                    if let pendingPosition, !userScrolled {
-                        guard value == pendingPosition else { return }
-                        self.pendingPosition = nil
-                    }
-                    position = value
+                .scrollPosition(id: $position, anchor: .top)
+                .onChange(of: position) { previous, value in
+                    PhotoLibraryReadingPosition.diagnose("position \(section): \(previous ?? "nil") -> \(value ?? "nil") drag=\(userScrolled) visible=\(isVisible) active=\(PhotoLibraryReadingPosition.activeSection ?? "nil")")
                     if isVisible, userScrolled, !isSearching,
                        PhotoLibraryReadingPosition.activeSection == section, let value {
                         PhotoLibraryReadingPosition.save(value, section: section)
                     }
-                }), anchor: .top)
+                }
                 .onAppear {
                     let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
-                    pendingPosition = saved
                     userScrolled = false
                     position = saved
                     isVisible = true
@@ -137,12 +129,10 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                 .onDisappear { isVisible = false }
                 .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
                     userScrolled = true
-                    pendingPosition = nil
                 })
                 .onChange(of: isSearching) { _, searching in
                     if !searching {
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
-                        pendingPosition = saved
                         userScrolled = false
                         position = saved
                     }

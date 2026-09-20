@@ -7,7 +7,7 @@
   "files": {
     "NekoWidget/NekoWidget/Views/HomeView.swift": {
       "before": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0",
-      "after": "924ff3ea0b14745524551e51072868305911f75841c0dc96eb4050ea104e71a5"
+      "after": "f87e33fc30c70fcdc7395710279832f585f7d2574a426b50c28fcfd174cce5c7"
     },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
       "before": "bc49e8c9b14cb46282893cc3233759a915b5084dd37e192b3caf0da3812c179d",
@@ -24,6 +24,10 @@
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264",
       "after": "762435d1c6430588b5da03eb676ecd2f856a1ef80f8cb10a96e17d172e22098b"
+    },
+    "NekoWidget/ci/test-family-window-widget-boundaries.py": {
+      "before": "607ee23ee2d5ee78fde0ff1ef683fe7f46f840c6e010c61e7d4a6bee6379ed7f",
+      "after": "39276e8d6c3c6351d1ede91ef32e044a01f56d9bf44d828c862d7768d7fa32cf"
     }
   }
 }
