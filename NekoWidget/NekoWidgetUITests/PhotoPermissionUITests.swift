@@ -1497,10 +1497,25 @@ final class SoloMemoriesUITests: XCTestCase {
         let refresh = app.buttons["personal-archive-refresh"]
         XCTAssertTrue(refresh.waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["保管した写真はありません"].waitForExistence(timeout: 10))
+        let storedCount = app.descendants(matching: .any).matching(identifier: "personal-archive-stored-count").firstMatch
+        XCTAssertEqual(storedCount.value as? String, "0件")
+        app.buttons["personal-archive-guide"].tap()
+        XCTAssertTrue(app.navigationBars["保管と引き継ぎ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["保管するもの"].exists)
+        capture("personal-archive-preservation-guide")
+        let editingScope = app.staticTexts["編集と削除"]
+        for _ in 0..<5 where !editingScope.isHittable { app.swipeUp() }
+        XCTAssertTrue(editingScope.isHittable)
+        capture("personal-archive-preservation-scope")
+        app.navigationBars["保管と引き継ぎ"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["保管した写真はありません"].exists,
+                      "Reading the preservation guide must not fetch or enroll records.")
         refresh.tap()
         let restored = app.buttons["personal-archive-record-11111111-1111-4111-8111-111111111111"]
         for _ in 0..<4 { if restored.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(restored.waitForExistence(timeout: 10))
+        XCTAssertEqual(storedCount.value as? String, "1件")
         capture("personal-archive-restored-list")
         restored.tap()
         XCTAssertTrue(app.staticTexts["はじめて窓辺で眠った日"].waitForExistence(timeout: 5))
@@ -1571,6 +1586,30 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["archive-root-fixture-access"].tap()
         waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"])
         XCTAssertEqual(app.state, .runningForeground)
+
+        let queueMemo = app.buttons["archive-root-fixture-queue-memo"]
+        queueMemo.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "ready"), object: queueMemo)], timeout: 5), .completed)
+        settings.tap()
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
+        archive.tap()
+        let retry = app.buttons["personal-archive-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10),
+                      "The memo outbox must remain retryable even while its older archive copy is stored.")
+        XCTAssertEqual(storedCount.value as? String, "0件")
+        let attentionCount = app.descendants(matching: .any).matching(identifier: "personal-archive-attention-count").firstMatch
+        XCTAssertEqual(attentionCount.value as? String, "1件", "Pending and in-flight edits belong to one record.")
+        capture("personal-archive-pending-memo-management")
+        retry.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1件"), object: storedCount)], timeout: 10), .completed)
+        XCTAssertFalse(retry.exists)
+        XCTAssertFalse(attentionCount.exists)
+        for _ in 0..<4 where !restored.isHittable { app.swipeUp() }
+        restored.tap()
+        XCTAssertEqual(app.staticTexts["memory-note-body"].label, "このiPhoneに残る最新のメモ")
     }
 
     @MainActor
@@ -2251,6 +2290,27 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations() {
+        let memoApp = launch("memo")
+        assertAlbumsRoot(in: memoApp)
+        let memoCard = memoApp.buttons["albums-memo-featured"]
+        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
+        let memoLabel = memoCard.label
+        XCTAssertTrue(memoLabel.contains("はじめてのおふろ"))
+        capture("albums-daily-memo-reunion")
+        memoCard.tap()
+        XCTAssertTrue(memoApp.buttons["memory-note-photo"].waitForExistence(timeout: 10))
+        XCTAssertTrue(memoApp.staticTexts["はじめてのおふろ"].exists)
+        XCTAssertTrue(memoApp.buttons["memory-note-edit"].exists)
+        memoApp.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
+        XCTAssertEqual(memoCard.label, memoLabel, "Returning must keep today's same memo.")
+        fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスなし")
+        XCTAssertFalse(memoCard.exists, "A memo must not bypass photo access.")
+        fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスあり")
+        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
+        XCTAssertEqual(memoCard.label, memoLabel)
+        memoApp.terminate()
+
         let app = launch("saved")
         assertAlbumsRoot(in: app)
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
@@ -3076,6 +3136,12 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"), object: add)], timeout: 10), .completed)
+        app.buttons["family-record-information"].tap()
+        let ending = app.staticTexts["family-record-ending-explanation"]
+        for _ in 0..<3 where !ending.isHittable { app.swipeUp() }
+        XCTAssertTrue(ending.waitForExistence(timeout: 5))
+        XCTAssertTrue(ending.label.contains("開けなくなります"))
+        app.buttons["family-record-information-close"].tap()
         add.tap()
         let pick = app.buttons["family-record-pick-photo"]
         XCTAssertTrue(pick.waitForExistence(timeout: 5)); pick.tap()
@@ -3096,8 +3162,38 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let peerWords = app.staticTexts["相手が添えた言葉"]
         for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["相手の言葉"].exists)
+        let ownWordsMenu = app.buttons["family-record-words-menu"]
+        for _ in 0..<3 where !ownWordsMenu.isHittable { app.swipeDown() }
+        XCTAssertTrue(ownWordsMenu.isHittable)
+        XCTAssertEqual(app.buttons.matching(identifier: "family-record-words-menu").count, 1,
+                       "Only the author's own words offer editing or withdrawal.")
+        ownWordsMenu.tap()
+        app.buttons["family-record-edit-words"].tap()
+        XCTAssertTrue(app.navigationBars["自分の言葉を編集"].waitForExistence(timeout: 5))
+        XCTAssertEqual(input.value as? String, "初めて一緒に過ごした日")
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
+        input.typeText("。また一緒に遊ぼう")
+        app.buttons["完了"].tap()
+        for _ in 0..<3 where !save.isHittable { app.swipeUp() }
+        XCTAssertEqual(save.label, "言葉の変更を共有")
+        save.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+        let editedWords = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "また一緒に遊ぼう")).firstMatch
+        for _ in 0..<3 where !editedWords.isHittable { app.swipeUp() }
+        XCTAssertTrue(editedWords.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !peerWords.isHittable { app.swipeUp() }
+        XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Editing my words must leave the other author's words unchanged.")
+        attach(app, name: "family-record-authors-and-edited-words")
+        let photoMenu = app.buttons["family-record-photo-menu"]
+        for _ in 0..<3 where !photoMenu.isHittable { app.swipeDown() }
+        XCTAssertTrue(photoMenu.isHittable)
+        photoMenu.tap()
         let withdraw = app.buttons.matching(identifier: "family-record-withdraw-photo").firstMatch
-        for _ in 0..<3 where !withdraw.isHittable { app.swipeUp() }
+        XCTAssertTrue(withdraw.waitForExistence(timeout: 5))
         withdraw.tap(); app.buttons["取り下げる"].tap()
         XCTAssertTrue(peerWords.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["写真は取り下げられました"].exists)

@@ -13,7 +13,11 @@ struct FamilyRecordEntryButton: View {
         VStack(spacing: 0) {
             if available {
                 Button { presented = true } label: {
-                    Label("共同記録", systemImage: "book.closed")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("共同記録", systemImage: "book.closed")
+                        Text("同じ写真に、それぞれの言葉を")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
                 }
                 .accessibilityIdentifier("family-record-entry")
@@ -55,6 +59,7 @@ private final class FamilyRecordViewModel: ObservableObject {
 struct FamilyRecordView: View {
     @StateObject private var model: FamilyRecordViewModel
     @State private var adding = false
+    @State private var showingInformation = false
     @State private var editing: FamilyRecordEditTarget?
     @State private var withdrawing: FamilyRecordRow?
     @State private var mutation: FamilyRecordMutation?
@@ -77,10 +82,12 @@ struct FamilyRecordView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("このまどに参加している二人の記録です。選んだ写真と言葉だけを追加します。個人メモは自動共有しません。")
-                        .font(.footnote)
-                    Text("鑑賞用の写真コピーを保管します。原本や全端末紛失後の復元・無期限保存は保証しません。退出しても追加済みの記録は残ります。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("同じ写真に、それぞれの言葉を")
+                            .font(.headline)
+                        Text("写真を持ち寄って、見ていたことや覚えておきたいことを。このまどの二人で読み返せます。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
                 recordSection
                 if let error = model.error {
@@ -95,9 +102,13 @@ struct FamilyRecordView: View {
                     Button("閉じる", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("写真と言葉を追加", systemImage: "plus") { adding = true }
+                    Button("写真を追加", systemImage: "plus") { adding = true }
                         .disabled(model.snapshot == nil || saving)
                         .accessibilityIdentifier("family-record-add")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("共同記録について", systemImage: "info.circle") { showingInformation = true }
+                        .accessibilityIdentifier("family-record-information")
                 }
             }
             .refreshable { await model.reload() }
@@ -118,6 +129,7 @@ struct FamilyRecordView: View {
         .sheet(item: $editing) { target in
             FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil) { Task { await model.reload() } }
         }
+        .sheet(isPresented: $showingInformation) { information }
         .confirmationDialog("この記録から取り下げますか？", isPresented: Binding(
             get: { withdrawing != nil }, set: { if !$0 { withdrawing = nil } })) {
                 if let row = withdrawing {
@@ -133,47 +145,124 @@ struct FamilyRecordView: View {
     @ViewBuilder private var recordSection: some View {
         if let snapshot = model.snapshot {
             let photos = snapshot.catalog.records.filter { $0.kind == .photo }
-            if photos.isEmpty { Text("最初の写真と言葉を追加しましょう。") }
+            if photos.isEmpty {
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("まずは、写真を一枚", systemImage: "photo.on.rectangle")
+                            .font(.headline)
+                        Text("言葉はあとからでも。相手も同じ写真に言葉を添えられます。")
+                            .foregroundStyle(.secondary)
+                        Button("写真を追加") { adding = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(saving)
+                            .accessibilityIdentifier("family-record-empty-add")
+                    }.padding(.vertical, 8)
+                }
+            }
             ForEach(photos) { photo in
                 Section {
                     if photo.state == .active {
                         FamilyRecordPhoto(client: model.client, row: photo)
                     } else { Label("写真は取り下げられました", systemImage: "photo") }
-                    authorAndDate(photo, current: snapshot.catalog.participantID)
+                    photoHeader(photo, current: snapshot.catalog.participantID)
                     ForEach(snapshot.catalog.records.filter {
                         $0.kind == .words && $0.entryID == photo.id && $0.state == .active
                     }) { words in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(snapshot.words[words.id] ?? "この言葉を読み込めません")
-                                .textSelection(.enabled)
-                            authorAndDate(words, current: snapshot.catalog.participantID)
-                            if words.authorID == snapshot.catalog.participantID {
-                                HStack {
-                                    Button("編集") { editing = .init(entryID: photo.id, row: words, text: snapshot.words[words.id] ?? "") }
-                                        .accessibilityIdentifier("family-record-edit-words")
-                                    Button("言葉を取り下げる", role: .destructive) { withdrawing = words }
-                                }.font(.caption).buttonStyle(.borderless)
-                            }
-                        }
+                        wordView(words, snapshot: snapshot)
                     }
                     Button("言葉を添える") { editing = .init(entryID: photo.id, row: nil, text: "") }
                         .accessibilityIdentifier("family-record-add-words")
-                    if photo.authorID == snapshot.catalog.participantID && photo.state == .active {
-                        Button("写真を取り下げる", role: .destructive) { withdrawing = photo }
-                            .accessibilityIdentifier("family-record-withdraw-photo")
-                    }
+                        .accessibilityHint("自分の言葉を追加します。相手の言葉は変わりません")
                 }.disabled(saving)
             }
-            Text("内部テストでは一つのまどに写真100件まで。上限に達しても古い記録を自動で削除しません。")
-                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private func photoHeader(_ photo: FamilyRecordRow, current: String) -> some View {
+        HStack(alignment: .top) {
+            authorAndDate(photo, current: current)
+            Spacer()
+            if photo.authorID == current && photo.state == .active {
+                Menu {
+                    Button("写真を取り下げる", role: .destructive) { withdrawing = photo }
+                        .accessibilityIdentifier("family-record-withdraw-photo")
+                } label: {
+                    Label("自分が追加した写真の操作", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityIdentifier("family-record-photo-menu")
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+    private func wordView(_ words: FamilyRecordRow, snapshot: FamilyRecordSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                authorAndDate(words, current: snapshot.catalog.participantID)
+                Spacer()
+                if words.authorID == snapshot.catalog.participantID {
+                    Menu {
+                        Button("言葉を編集", systemImage: "pencil") {
+                            editing = .init(entryID: words.entryID, row: words, text: snapshot.words[words.id] ?? "")
+                        }
+                        .accessibilityIdentifier("family-record-edit-words")
+                        Button("言葉を取り下げる", role: .destructive) { withdrawing = words }
+                    } label: {
+                        Label("自分の言葉の操作", systemImage: "ellipsis")
+                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityIdentifier("family-record-words-menu")
+                    .buttonStyle(.borderless)
+                }
+            }
+            Text(snapshot.words[words.id] ?? "この言葉を読み込めません")
+                .textSelection(.enabled)
         }
     }
     private func authorAndDate(_ row: FamilyRecordRow, current: String) -> some View {
-        HStack {
-            Text(row.authorID == current ? "自分" : "相手")
-            Text(Date(timeIntervalSince1970: row.createdAt), style: .date)
-            Text(row.kind == .photo ? "追加" : "記入")
-        }.font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(row.kind == .photo
+                 ? (row.authorID == current ? "自分が追加した写真" : "相手が追加した写真")
+                 : (row.authorID == current ? "自分の言葉" : "相手の言葉"))
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 4) {
+                Text(Date(timeIntervalSince1970: row.createdAt), style: .date)
+                if row.kind == .words && row.updatedAt > row.createdAt { Text("編集済み") }
+            }.font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private var information: some View {
+        NavigationStack {
+            List {
+                Section("二人で持ち寄る") {
+                    Text("このまどに参加している二人が、写真や言葉を追加できます。写真だけの追加もできます。")
+                    Text("選んだ写真と、ここに書いた言葉だけを共有します。個人メモやお気に入りが自動で共有されることはありません。")
+                }
+                Section("変更できるのは自分の分だけ") {
+                    Text("自分が書いた言葉は編集・取り下げできます。相手の言葉は変更できません。")
+                    Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いた言葉は残ります。")
+                }
+                Section("共有を終了すると") {
+                    Text("共有を解除・ブロックすると、この共同記録は開けなくなります。退出だけで追加済みの記録が自動削除されるわけではありません。")
+                        .accessibilityIdentifier("family-record-ending-explanation")
+                    Text("取り下げたい自分の写真や言葉は、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
+                }
+                Section("写真の保管と引き継ぎ") {
+                    Text("ここに残るのは鑑賞用の写真コピーです。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
+                    Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
+                }
+                Section("内部テストで使える範囲") {
+                    Text("一つのまどに写真100件・言葉1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
+                }
+            }
+            .navigationTitle("共同記録について")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { showingInformation = false }
+                        .accessibilityIdentifier("family-record-information-close")
+                }
+            }
+        }
     }
     private func withdraw(_ row: FamilyRecordRow) async {
         saving = true
@@ -259,11 +348,11 @@ private struct FamilyRecordEditor: View {
                         }.disabled(busy || prepared).accessibilityIdentifier("family-record-pick-photo")
                     }
                 }
-                Section("このまどに添える言葉") {
+                Section(target == nil ? "言葉（あとからでも）" : "自分の言葉") {
                     TextEditor(text: $text).frame(minHeight: 140).focused($focused).disabled(busy || prepared)
                         .accessibilityIdentifier("family-record-words-input")
                     Text("\(text.count) / 500文字").font(.caption)
-                    Text("このまどの相手に共有します。個人メモからの自動コピーはありません。")
+                    Text("ここに書いた言葉を、このまどの相手と共有します。個人メモは自動で共有されません。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if photoAdded { Text("写真は追加済みです。言葉の追加を確認しています。") }
@@ -271,12 +360,12 @@ private struct FamilyRecordEditor: View {
                 if prepared && message != nil {
                     Button("入力した言葉をコピー") { UIPasteboard.general.string = text }
                 }
-                Button(prepared ? "同じ追加を再確認" : "このまどの共同記録に追加") { Task { await save() } }
+                Button(prepared ? "同じ操作を再確認" : (target?.row == nil ? "このまどの共同記録に追加" : "言葉の変更を共有")) { Task { await save() } }
                     .disabled(busy || text.count > 500 || (target == nil ? photo == nil : text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .accessibilityIdentifier("family-record-save")
                 if busy { ProgressView() }
             }
-            .navigationTitle(target == nil ? "写真と言葉を追加" : "言葉を添える")
+            .navigationTitle(target == nil ? "写真を追加" : (target?.row == nil ? "言葉を添える" : "自分の言葉を編集"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() }.disabled(busy) }

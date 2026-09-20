@@ -695,6 +695,7 @@ private struct SoloMemoriesFixtureView: View {
     @State private var clearedFirstCatAssignments = false
     @State private var preparedDeliveryIdentifier = "none"
     @State private var fixtureSendCount = 0
+    @State private var didSeedMemo = false
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
@@ -728,7 +729,10 @@ private struct SoloMemoriesFixtureView: View {
     private func fixtureNavigation(isAlbums: Bool) -> some View {
         NavigationStack(path: isAlbums ? $detailPath : $photosPath) {
             Group {
-                if isAlbums { albumsView() }
+                if isAlbums {
+                    if scenario == "solo-memories-memo", !didSeedMemo { ProgressView() }
+                    else { albumsView() }
+                }
                 else { photoLibrary }
             }
             .toolbar {
@@ -757,6 +761,12 @@ private struct SoloMemoriesFixtureView: View {
                             + "写真アクセス\(hasPhotoAccess ? "あり" : "なし")"
                     )
                 }
+            }
+            .task {
+                guard scenario == "solo-memories-memo", !didSeedMemo else { return }
+                _ = try? await persistence.memoryNotes.save(text: "はじめてのおふろ",
+                    for: "app-store-screenshot-fixture-9", expectedRevision: nil)
+                didSeedMemo = true
             }
             .navigationDestination(isPresented: $showsOtherScreen) {
                 VStack(spacing: 20) {
@@ -806,7 +816,10 @@ private struct SoloMemoriesFixtureView: View {
                     highlightBrowser(highlight)
                 case let .monthlyWindow(snapshot):
                     monthlyBrowser(snapshot)
-                case .photo, .seasonalMovie, .memoryNotes, .memoryNote, .memoryNotePhoto:
+                case let .memoryNote(identifier):
+                    PhotoMemoryNoteDetailView(recordID: identifier, photos: fixturePhotos,
+                        store: persistence.memoryNotes, archiveStore: persistence.archive)
+                case .photo, .seasonalMovie, .memoryNotes, .memoryNotePhoto:
                     VStack(spacing: 20) {
                         Text("アルバムの詳細")
                             .accessibilityIdentifier("solo-memories-detail-destination")
@@ -911,7 +924,8 @@ private struct SoloMemoriesFixtureView: View {
             navigationTitleOverride: fixtureProfiles.first { $0.identifier == profileIdentifier(for: scope) }
                 .map { "\($0.displayName)のアルバム" },
             recommendationStore: persistence.recommendations,
-            featuredSnapshotDefaults: persistence.defaults
+            featuredSnapshotDefaults: persistence.defaults,
+            memoryNoteStore: persistence.memoryNotes
         )
     }
 
@@ -1113,7 +1127,7 @@ private struct SoloMemoriesFixtureView: View {
     }
 
     private func albumSections(for scope: CatProfileScopePresentation) -> [CuratedAlbumSectionPresentation] {
-        if usesHighlightPhotos {
+        if usesHighlightPhotos || scenario == "solo-memories-memo" {
             return CuratedAlbumBuilder(timeZone: TimeZone(secondsFromGMT: 0)!)
                 .sections(from: scopedFixturePhotos(for: scope), lifeReference: nil, includesGrowth: false)
         }

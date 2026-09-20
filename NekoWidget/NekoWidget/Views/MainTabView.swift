@@ -809,7 +809,8 @@ struct MainTabView: View {
             showsHighlightArchive: showsHighlightArchive,
             referenceDate: albumHighlightsReferenceDate,
             isCatDetail: scope != .everyone,
-            navigationTitleOverride: profile.map { "\($0.displayName)のアルバム" }
+            navigationTitleOverride: profile.map { "\($0.displayName)のアルバム" },
+            memoryNoteStore: memoStore
         )
     }
 

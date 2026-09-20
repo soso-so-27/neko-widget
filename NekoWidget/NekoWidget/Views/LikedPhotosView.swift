@@ -888,6 +888,9 @@ struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("album.featuredSnapshot.v1") private var featuredSnapshotJSON = ""
     @State private var visibleRecommendationID: String?
+    @State private var memoRecords: [PhotoMemoryNoteRecord] = []
+    @State private var didLoadMemos = false
+    private let memoryNoteStore: PhotoMemoryNoteStore
 
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
@@ -933,7 +936,8 @@ struct LikedPhotosView: View {
         referenceDate: Date = Date(),
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
         recommendationStore: AlbumHighlightRecommendationStore = .shared,
-        featuredSnapshotDefaults: UserDefaults = .standard
+        featuredSnapshotDefaults: UserDefaults = .standard,
+        memoryNoteStore: PhotoMemoryNoteStore = .shared
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
@@ -956,6 +960,7 @@ struct LikedPhotosView: View {
         self.referenceDate = referenceDate
         self.isCatDetail = isCatDetail
         self.navigationTitleOverride = navigationTitleOverride
+        self.memoryNoteStore = memoryNoteStore
         _featuredSnapshotJSON = AppStorage(wrappedValue: "", "album.featuredSnapshot.v1", store: featuredSnapshotDefaults)
         let builder = AlbumHighlightBuilder(now: referenceDate)
         let current = hasPhotoAccess
@@ -983,7 +988,8 @@ struct LikedPhotosView: View {
         return nil
     }
     private var availableRecommendations: [AlbumRecommendationItem] {
-        highlights.map(AlbumRecommendationItem.highlight)
+        eligibleMemos.map { .memo($0.record, $0.photo) }
+        + highlights.map(AlbumRecommendationItem.highlight)
         + (hasPeriodCollections ? months.map(AlbumRecommendationItem.month) + seasonalMovies.map(AlbumRecommendationItem.movie) : [])
     }
     private var recommendationDay: String {
@@ -992,6 +998,7 @@ struct LikedPhotosView: View {
     }
     private var proposedRecommendations: [AlbumRecommendationItem] {
         var items: [AlbumRecommendationItem] = []
+        if let memo = dailyMemo { items.append(.memo(memo.record, memo.photo)) }
         if let first = recommendedHighlights.first { items.append(.highlight(first)) }
         if hasPeriodCollections, latestMonthlyWindowIsUnread, let month = months.first { items.append(.month(month)) }
         if hasPeriodCollections, latestSeasonalMovieIsNew, let movie = seasonalMovies.first { items.append(.movie(movie)) }
@@ -1000,11 +1007,31 @@ struct LikedPhotosView: View {
         if hasPeriodCollections, let movie = seasonalMovies.first { items.append(.movie(movie)) }
         return distinctRecommendations(items)
     }
+    // Resolve only against the same authorized, scoped input as the albums.
+    // A local memo is never a reason to restore an excluded or unavailable photo.
+    private var eligibleMemos: [(record: PhotoMemoryNoteRecord, photo: PhotoPresentation)] {
+        guard hasPhotoAccess, !isCatDetail else { return [] }
+        let current = Dictionary(albumSections.flatMap(\.albums).flatMap(\.photos)
+            .map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
+        return memoRecords.compactMap { record in
+            guard let photo = current[record.photoIdentifier] else { return nil }
+            return (record, photo)
+        }.sorted { $0.record.id.uuidString < $1.record.id.uuidString }
+    }
+    private var dailyMemo: (record: PhotoMemoryNoteRecord, photo: PhotoPresentation)? {
+        let candidates = eligibleMemos
+        guard !candidates.isEmpty else { return nil }
+        let day = Calendar.current.ordinality(of: .day, in: .era, for: referenceDate) ?? 0
+        return candidates[day % candidates.count]
+    }
     private func distinctRecommendations(_ items: [AlbumRecommendationItem]) -> [AlbumRecommendationItem] {
         var result: [AlbumRecommendationItem] = []
         var photoIDs = Set<String>()
         var dates: [Date] = []
         for item in items {
+            if case .memo = item, result.contains(where: {
+                if case .memo = $0 { return true }; return false
+            }) { continue }
             guard !result.contains(where: { $0.id == item.id }),
                   photoIDs.isDisjoint(with: item.photoIdentifiers),
                   !item.creationDates.contains(where: { candidate in
@@ -1027,7 +1054,7 @@ struct LikedPhotosView: View {
         return distinctRecommendations(snapshot.identifiers.prefix(3).compactMap { current[$0] })
     }
     private func freezeRecommendations(allowAppend: Bool = false) {
-        guard !isPreparingAlbums, !isCatDetail, !showsReflectionArchive, !showsHighlightArchive,
+        guard didLoadMemos, !isPreparingAlbums, !isCatDetail, !showsReflectionArchive, !showsHighlightArchive,
               !proposedRecommendations.isEmpty else { return }
         var items = proposedRecommendations
         if let data = featuredSnapshotJSON.data(using: .utf8),
@@ -1093,6 +1120,14 @@ struct LikedPhotosView: View {
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
+        .task {
+            guard !isCatDetail, !showsReflectionArchive, !showsHighlightArchive else { return }
+            let records = (try? await memoryNoteStore.records()) ?? []
+            guard !Task.isCancelled else { return }
+            memoRecords = records
+            didLoadMemos = true
+            freezeRecommendations(allowAppend: true)
+        }
         .onChange(of: isPreparingAlbums) { _, isPreparing in
             if !isPreparing { freezeRecommendations(allowAppend: true) }
         }
@@ -1222,7 +1257,20 @@ struct LikedPhotosView: View {
         case .highlight(let highlight): highlightLink(highlight, featured: true)
         case .month(let month): monthLink(month, isLatest: month.id == months.first?.id)
         case .movie(let movie): movieLink(movie, isLatest: movie.id == seasonalMovies.first?.id)
+        case let .memo(record, photo): memoLink(record, photo: photo)
         }
+    }
+    private func memoLink(_ record: PhotoMemoryNoteRecord, photo: PhotoPresentation) -> some View {
+        let date = photo.creationDate.map { $0.formatted(.dateTime.year().month().day()) }
+        return NavigationLink(value: MemoriesRoute.memoryNote(record.id)) {
+            AlbumOverviewCard(identifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                title: record.note.text, subtitle: ["メモ", date].compactMap { $0 }.joined(separator: " · "),
+                isMovie: false, isNew: false, networkAccessAllowed: true, isCompact: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("メモ、\(record.note.text)")
+        .accessibilityHint("写真とメモを開きます")
+        .accessibilityIdentifier("albums-memo-featured")
     }
     private var highlightArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
@@ -1326,12 +1374,14 @@ private enum PhotoRediscoveryContext {
 }
 
 private enum AlbumRecommendationItem: Identifiable {
+    case memo(PhotoMemoryNoteRecord, PhotoPresentation)
     case highlight(AlbumHighlightPresentation)
     case month(MonthlyWindowPresentation)
     case movie(SeasonalMovieArchiveRecord)
 
     var id: String {
         switch self {
+        case let .memo(record, _): "memo:\(record.id.uuidString)"
         case .highlight(let value): "highlight:\(value.id)"
         case .month(let value): "month:\(value.id)"
         case .movie(let value): "movie:\(value.id)"
@@ -1339,6 +1389,7 @@ private enum AlbumRecommendationItem: Identifiable {
     }
     var photoIdentifiers: Set<String> {
         switch self {
+        case let .memo(_, photo): [photo.localIdentifier]
         case .highlight(let value): Set(value.photos.map(\.localIdentifier))
         case .month(let value): Set(value.photos.map(\.localIdentifier))
         case .movie(let value): Set(value.effectivePresentation.scenes.map(\.localIdentifier))
@@ -1346,6 +1397,7 @@ private enum AlbumRecommendationItem: Identifiable {
     }
     var creationDates: [Date] {
         switch self {
+        case let .memo(_, photo): photo.creationDate.map { [$0] } ?? []
         case .highlight(let value): value.photos.compactMap(\.creationDate)
         case .month(let value): value.photos.compactMap(\.creationDate)
         case .movie(let value): value.effectivePresentation.scenes.map(\.creationDate)

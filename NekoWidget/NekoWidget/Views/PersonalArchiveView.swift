@@ -20,20 +20,44 @@ struct PersonalArchiveView: View {
     @State private var errorMessage: String?
     @State private var selectedRecord: PersonalArchiveRecord?
     @State private var viewGeneration = UUID()
-    @State private var pendingCount = 0
+    @State private var pendingMemoRecordIDs: Set<UUID> = []
+    @State private var archivePendingCount = 0
 
     init(store: PersonalArchiveStore = .shared, noteStore: PhotoMemoryNoteStore = .shared) {
         self.store = store; self.noteStore = noteStore
     }
 
+    private var storedCount: Int {
+        records.filter { $0.state == .stored && !$0.isDeletionPending && !pendingMemoRecordIDs.contains($0.id) }.count
+    }
+
+    private var attentionCount: Int {
+        records.count - storedCount + pendingMemoRecordIDs.subtracting(Set(records.map(\.id))).count
+    }
+
+    private var hasPendingOperations: Bool {
+        archivePendingCount > 0 || !pendingMemoRecordIDs.isEmpty
+    }
+
     var body: some View {
         List {
-            Section {
-                Text("選んだ写真とメモの保管状況を確認できます。")
-                Text("同じApple AccountのiPhoneから取り戻せます。iCloudの空き容量を使います。")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            } footer: {
-                Text("写真の「…」から保管を始められます。写真は閲覧用のコピーです。")
+            if !isLoading && errorMessage == nil {
+                Section {
+                    LabeledContent("iCloudに保管済み", value: "\(storedCount)件")
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("iCloudに保管済み")
+                        .accessibilityValue("\(storedCount)件")
+                        .accessibilityIdentifier("personal-archive-stored-count")
+                    if attentionCount > 0 {
+                        LabeledContent("確認が必要", value: "\(attentionCount)件")
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("確認が必要")
+                            .accessibilityValue("\(attentionCount)件")
+                            .accessibilityIdentifier("personal-archive-attention-count")
+                    }
+                } footer: {
+                    Text("このiPhoneで確認できた状況です。")
+                }
             }
 
             Section {
@@ -42,11 +66,19 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-refresh")
                 .disabled(isLoading || isWorking)
-                if pendingCount > 0 {
+                if hasPendingOperations {
                     Button("未完了の操作を再試行") { Task { await retryPending() } }
                         .accessibilityIdentifier("personal-archive-retry")
                         .disabled(isLoading || isWorking)
                 }
+                NavigationLink {
+                    PersonalArchiveGuideView()
+                } label: {
+                    Label("保管と引き継ぎについて", systemImage: "info.circle")
+                }
+                .accessibilityIdentifier("personal-archive-guide")
+            } footer: {
+                Text("写真の「…」から、選んだ写真とメモを保管できます。自分のiCloud容量を使います。")
             }
 
             if isLoading || isWorking {
@@ -91,6 +123,8 @@ struct PersonalArchiveView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 records = []; selectedRecord = nil; viewGeneration = UUID()
+                pendingMemoRecordIDs = []
+                archivePendingCount = 0
                 isLoading = false; isWorking = false
             }
             else { Task { await loadLocalRecords() } }
@@ -98,6 +132,8 @@ struct PersonalArchiveView: View {
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
             .receive(on: DispatchQueue.main)) { _ in
             records = []
+            pendingMemoRecordIDs = []
+            archivePendingCount = 0
             selectedRecord = nil
             viewGeneration = UUID()
             isLoading = false; isWorking = false
@@ -121,8 +157,10 @@ struct PersonalArchiveView: View {
                 Text(record.text.isEmpty ? "写真" : record.text).lineLimit(2)
                 Text(record.createdAt.formatted(date: .abbreviated, time: .omitted))
                     .font(.caption).foregroundStyle(.secondary)
-                if record.isDeletionPending || record.state != .stored {
-                    Text(record.isDeletionPending ? "削除待ち" : record.state.archiveLabel)
+                if record.isDeletionPending || record.state != .stored || pendingMemoRecordIDs.contains(record.id) {
+                    Text(record.isDeletionPending ? "削除待ち" :
+                        pendingMemoRecordIDs.contains(record.id) && record.state == .stored
+                            ? "メモの反映待ち" : record.state.archiveLabel)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -140,18 +178,35 @@ struct PersonalArchiveView: View {
         return UIImage(cgImage: image)
     }
 
+    /// Combine the archive catalog with the separate, explicitly opted-in memo
+    /// outbox. A stored older copy is not proof that the latest memo is stored.
+    private func localStatus(expectedAccount: String? = nil) async throws
+        -> (records: [PersonalArchiveRecord], pendingMemoIDs: Set<UUID>, archivePendingCount: Int) {
+        let snapshot = try await store.readingSnapshot(expectedAccount: expectedAccount)
+        let bindings = try await noteStore.archiveBindings()
+        let pendingIDs = Set(bindings.filter {
+            $0.accountKey == snapshot.account.key && ($0.pending != nil || $0.inFlight != nil)
+        }.map(\.recordID))
+        // A pending tombstone can be absent from the visible record catalog.
+        // Preserve the archive outbox's retry signal independently of rows.
+        let archivePending = try await store.pendingOperationCount()
+        _ = try await store.verifiedAccount(expectedAccount: snapshot.account.context)
+        return (snapshot.records, pendingIDs, archivePending)
+    }
+
     @MainActor private func loadLocalRecords() async {
         let generation = viewGeneration
         isLoading = true
         defer { if generation == viewGeneration { isLoading = false } }
         do {
-            let loaded = try await store.records()
-            let pending = try await store.pendingOperationCount()
+            let loaded = try await localStatus()
             guard generation == viewGeneration else { return }
-            records = loaded; pendingCount = pending; errorMessage = nil
+            records = loaded.records; pendingMemoRecordIDs = loaded.pendingMemoIDs; errorMessage = nil
+            archivePendingCount = loaded.archivePendingCount
         } catch {
             guard generation == viewGeneration else { return }
-            records = []; errorMessage = personalArchiveMessage(for: error)
+            records = []; pendingMemoRecordIDs = []; errorMessage = personalArchiveMessage(for: error)
+            archivePendingCount = 0
         }
     }
 
@@ -160,17 +215,20 @@ struct PersonalArchiveView: View {
         isWorking = true
         defer { if generation == viewGeneration { isWorking = false } }
         do {
-            let loaded = try await store.refresh()
+            _ = try await store.refresh()
             let account = try await store.accountContext()
             try await PhotoMemoCoordinator(noteStore: noteStore, archiveStore: store)
                 .reconcile(expectedAccount: account)
-            let pending = try await store.pendingOperationCount()
+            let loaded = try await localStatus(expectedAccount: account)
             guard generation == viewGeneration else { return }
-            records = loaded; pendingCount = pending; errorMessage = nil
+            records = loaded.records; pendingMemoRecordIDs = loaded.pendingMemoIDs; errorMessage = nil
+            archivePendingCount = loaded.archivePendingCount
         } catch {
-            let local = try? await store.records()
+            let local = try? await localStatus()
             guard generation == viewGeneration else { return }
-            records = local ?? []; errorMessage = personalArchiveMessage(for: error)
+            records = local?.records ?? []; pendingMemoRecordIDs = local?.pendingMemoIDs ?? []
+            archivePendingCount = local?.archivePendingCount ?? 0
+            errorMessage = personalArchiveMessage(for: error)
         }
     }
 
@@ -183,17 +241,48 @@ struct PersonalArchiveView: View {
             let account = try await store.accountContext()
             try await PhotoMemoCoordinator(noteStore: noteStore, archiveStore: store)
                 .retryUpdates(expectedAccount: account)
-            let loaded = try await store.records()
-            let pending = try await store.pendingOperationCount()
+            let loaded = try await localStatus(expectedAccount: account)
             guard generation == viewGeneration else { return }
-            records = loaded
-            pendingCount = pending
+            records = loaded.records
+            pendingMemoRecordIDs = loaded.pendingMemoIDs
+            archivePendingCount = loaded.archivePendingCount
             errorMessage = nil
         } catch {
-            let local = try? await store.records()
+            let local = try? await localStatus()
             guard generation == viewGeneration else { return }
-            records = local ?? []; errorMessage = personalArchiveMessage(for: error)
+            records = local?.records ?? []; pendingMemoRecordIDs = local?.pendingMemoIDs ?? []
+            archivePendingCount = local?.archivePendingCount ?? 0
+            errorMessage = personalArchiveMessage(for: error)
         }
+    }
+}
+
+/// Current preservation scope that helps people decide what to keep here.
+/// Opening this read-only guide never enrolls or uploads a record.
+private struct PersonalArchiveGuideView: View {
+    var body: some View {
+        List {
+            Section {
+                guideRow("保管するもの", "自分で選んだ写真の閲覧用コピーとメモ。記録にある撮影日・書いた日・猫名も含みます。")
+                guideRow("容量と画質", "自分のiCloud容量を使います。容量不足や通信エラーの間は未完了です。写真の原本・動画・Live Photosの動きは保管しません。")
+                DisclosureGroup("写真のサイズ") {
+                    Text("写真は長辺最大4,096px・1枚20MB以下のJPEGに変換します。原本は写真アプリなどに残してください。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                guideRow("機種変更", "同じApple Accountで、保管画面の「iCloudから読み込む」を使います。対象は保管済みの写真とメモです。このiPhoneだけのメモや保管待ちの内容は、iCloudからは取り戻せません。")
+                guideRow("編集と削除", "反映を有効にしたメモは、変更も保管先へ反映します。「保管したコピーを削除」しても、写真アプリの原本と元のメモは残ります。")
+            }
+        }
+        .navigationTitle("保管と引き継ぎ")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func guideRow(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Text(detail).font(.subheadline).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
     }
 }
 
@@ -576,6 +665,7 @@ struct PersonalArchiveUIFixture: View {
         .appendingPathComponent("PersonalArchiveUIFixture/\(UUID().uuidString)/notes.json"))
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var driver = PersonalArchiveRootFixtureDriver()
+    @State private var queuedMemoState = "idle"
 
     var body: some View {
         AppRootView(viewModel: driver.viewModel, personalArchiveStore: driver.archiveStore)
@@ -594,6 +684,10 @@ struct PersonalArchiveUIFixture: View {
                     }
                     .accessibilityIdentifier("archive-root-fixture-access")
                     .accessibilityValue(driver.hasPhotoAccess ? "allowed" : "denied")
+                    Button("反映待ち") { Task { await queueMemoUpdate() } }
+                        .accessibilityIdentifier("archive-root-fixture-queue-memo")
+                        .accessibilityValue(queuedMemoState)
+                        .disabled(queuedMemoState != "idle")
                 }
                 .font(.caption)
                 .buttonStyle(.bordered)
@@ -604,6 +698,30 @@ struct PersonalArchiveUIFixture: View {
                 guard scenePhase == .active else { return }
                 await driver.publishProgress()
             }
+    }
+
+    private func queueMemoUpdate() async {
+        do {
+            let snapshot = try await driver.archiveStore.readingSnapshot()
+            guard let copy = snapshot.records.first, copy.state == .stored,
+                  try await driver.archiveStore.pendingOperationCount() == 0 else {
+                queuedMemoState = "failed"; return
+            }
+            let identifier = "app-store-screenshot-fixture-page-2"
+            guard let note = try await Self.noteStore.save(text: copy.text, for: identifier, expectedRevision: nil) else {
+                queuedMemoState = "failed"; return
+            }
+            try await Self.noteStore.bindArchive(record: .init(photoIdentifier: identifier, note: note),
+                recordID: copy.id, accountKey: snapshot.account.key, archiveRevision: copy.revision)
+            guard let first = try await Self.noteStore.save(text: "反映途中のメモ", for: identifier, expectedRevision: note.revision) else {
+                queuedMemoState = "failed"; return
+            }
+            _ = try await Self.noteStore.beginReflection(for: identifier, accountKey: snapshot.account.key)
+            _ = try await Self.noteStore.save(text: "このiPhoneに残る最新のメモ", for: identifier, expectedRevision: first.revision)
+            // Only the temporary note outbox changes; the archive stays stored.
+            // Both pending and in-flight refer to one record, counted once.
+            queuedMemoState = "ready"
+        } catch { queuedMemoState = "failed" }
     }
 }
 
