@@ -168,6 +168,7 @@ struct PhotoMemoryNotesListView: View {
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var search = ""
     @State private var isSearchPresented = false
+    @State private var resumesSearchOnReturn = false
     @State private var selectedArchive: PersonalArchiveRecord?
     @State private var selectedArchiveAccount: String?
     @State private var selectedSourceNote: UUID?
@@ -269,7 +270,7 @@ struct PhotoMemoryNotesListView: View {
                 if access.photo(for: local.photoIdentifier) == nil, let copy = item.preserved {
                     Button {
                         guard let account else { return }
-                        isSearchPresented = false
+                        endSearchForNavigation()
                         selectedArchiveAccount = account
                         selectedSourceNote = local.id
                         selectedArchive = copy
@@ -284,7 +285,7 @@ struct PhotoMemoryNotesListView: View {
         } else if let copy = item.preserved {
             Button {
                 guard let account else { return }
-                isSearchPresented = false
+                endSearchForNavigation()
                 selectedArchiveAccount = account
                 selectedSourceNote = nil
                 selectedArchive = copy
@@ -334,12 +335,23 @@ struct PhotoMemoryNotesListView: View {
                 library.clearArchive()
                 if scenePhase == .active { Task { await library.reload() } }
             }
+        .onAppear {
+            if resumesSearchOnReturn {
+                resumesSearchOnReturn = false
+                isSearchPresented = true
+            }
+        }
         .onDisappear {
-            // Search presentation belongs to this list, not to a pushed photo.
-            // Keep the query but restore the native bars when returning.
-            isSearchPresented = false
+            endSearchForNavigation()
             access.stop()
         }
+    }
+
+    private func endSearchForNavigation() {
+        // End the active native search before pushing a record, then restore
+        // that search context on return so the retained query can be cleared.
+        resumesSearchOnReturn = resumesSearchOnReturn || isSearchPresented
+        isSearchPresented = false
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {

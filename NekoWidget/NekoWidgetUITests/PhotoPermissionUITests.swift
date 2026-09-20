@@ -2871,17 +2871,18 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.images["保管した写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].exists)
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
         attach(app, name: "memory-library-return-from-search")
-        if (search.value as? String) == "おふろ" {
-            search.tap()
-            let clearSearch = search.buttons.firstMatch
-            XCTAssertTrue(clearSearch.waitForExistence(timeout: 5))
-            clearSearch.tap()
-            // iOS 26 presents Close here; Cancel is not present after clearing.
-            if app.buttons["閉じる"].exists { app.buttons["閉じる"].tap() }
-        }
+        XCTAssertEqual(search.value as? String, "おふろ", "Returning must preserve the search query.")
+        search.tap()
+        let clearSearch = search.buttons.firstMatch
+        XCTAssertTrue(clearSearch.waitForExistence(timeout: 5))
+        clearSearch.tap()
+        // iOS 26 presents Close here; Cancel is not present after clearing.
+        let closeSearch = app.buttons["閉じる"]
+        XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
+        closeSearch.tap()
+        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["memory-notes-export"].exists)
         row.tap()
