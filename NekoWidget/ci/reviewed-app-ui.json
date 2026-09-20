@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "scope": "reviewed-memory-read-ui-v3",
-  "purpose": "Personal memo rediscovery within the existing authorized album scope; preservation status reads account-scoped pending memo edits without changing write operations; exact reviewed family authorship, edit/withdraw controls and sharing-end explanation. DEBUG fixture corrections preserve access and source-link guards. Production storage, network, permission, encryption and revocation implementations are unchanged.",
+  "purpose": "Personal memo rediscovery within the existing authorized album scope; preservation status reads account-scoped pending memo edits without changing write operations; exact reviewed family authorship, edit/withdraw controls and sharing-end explanation. DEBUG fixture corrections preserve access and source-link guards. Production storage, network, permission, encryption and revocation implementations are unchanged. Account-change notifications invalidate cloud-scoped editors only; plain local text remains editable. Storage and cloud account validation are unchanged. Full CI is required for this editor guard change; this manifest does not opt it into the read-projection scope.",
   "visualReview": "user-device",
-  "dataReview": "read-only-projection",
+  "dataReview": "local-editor-account-boundary",
   "files": {
     "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": {
       "before": "46e2030b98399b0902619a34f8bfa9e554e96ba45f39a74f768c06a09ee8d053",
@@ -31,7 +31,11 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "762435d1c6430588b5da03eb676ecd2f856a1ef80f8cb10a96e17d172e22098b",
-      "after": "f8e619a29eff94faa869b0fd4fc31a2e22dee6fc1035dd36235e8ad2f87e4056"
+      "after": "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": {
+      "before": "35a03ba505d53dd6ecaa2d614ab6f34d4bb1a3ed17ff257a592f110b466748ac",
+      "after": "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56"
     }
   }
 }
