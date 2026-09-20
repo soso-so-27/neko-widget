@@ -765,7 +765,7 @@ private struct SoloMemoriesFixtureView: View {
             .task {
                 guard scenario == "solo-memories-memo", !didSeedMemo else { return }
                 _ = try? await persistence.memoryNotes.save(text: "はじめてのおふろ",
-                    for: "app-store-screenshot-fixture-9", expectedRevision: nil)
+                    for: "app-store-screenshot-fixture-1", expectedRevision: nil)
                 didSeedMemo = true
             }
             .navigationDestination(isPresented: $showsOtherScreen) {

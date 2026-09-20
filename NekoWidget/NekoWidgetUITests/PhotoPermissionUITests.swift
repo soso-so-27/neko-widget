@@ -1598,17 +1598,21 @@ final class SoloMemoriesUITests: XCTestCase {
         let retry = app.buttons["personal-archive-retry"]
         XCTAssertTrue(retry.waitForExistence(timeout: 10),
                       "The memo outbox must remain retryable even while its older archive copy is stored.")
-        XCTAssertEqual(storedCount.value as? String, "0件")
+        XCTAssertEqual(storedCount.value as? String, "1件", "The unrelated restored copy remains stored.")
         let attentionCount = app.descendants(matching: .any).matching(identifier: "personal-archive-attention-count").firstMatch
         XCTAssertEqual(attentionCount.value as? String, "1件", "Pending and in-flight edits belong to one record.")
         capture("personal-archive-pending-memo-management")
         retry.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "1件"), object: storedCount)], timeout: 10), .completed)
+            predicate: NSPredicate(format: "value == %@", "2件"), object: storedCount)], timeout: 10), .completed,
+            "Both copies must be stored after retry. Actual count: \(String(describing: storedCount.value))")
         XCTAssertFalse(retry.exists)
         XCTAssertFalse(attentionCount.exists)
-        for _ in 0..<4 where !restored.isHittable { app.swipeUp() }
-        restored.tap()
+        let latestMemo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "personal-archive-record-", "このiPhoneに残る最新のメモ")).firstMatch
+        XCTAssertTrue(latestMemo.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !latestMemo.isHittable { app.swipeUp() }
+        latestMemo.tap()
         XCTAssertEqual(app.staticTexts["memory-note-body"].label, "このiPhoneに残る最新のメモ")
     }
 
@@ -2142,6 +2146,9 @@ final class SoloMemoriesUITests: XCTestCase {
             try foreground(back).tap()
             _ = try foreground(sameDay)
             try foreground(back).tap()
+            // Photos restores its last section. Select the scope that owns
+            // the cat shortcuts instead of assuming a fresh "all" section.
+            try foreground(app.buttons.matching(identifier: "photos-section-all")).tap()
             let catShortcut = app.buttons.matching(identifier: "photo-hub-cat-fixture-cat-0")
             try foreground(catShortcut).tap()
             let catPhotos = app.buttons.matching(identifier: "cat-profile-photo")

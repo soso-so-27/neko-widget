@@ -711,14 +711,25 @@ struct PersonalArchiveUIFixture: View {
             guard let note = try await Self.noteStore.save(text: copy.text, for: identifier, expectedRevision: nil) else {
                 queuedMemoState = "failed"; return
             }
-            try await Self.noteStore.bindArchive(record: .init(photoIdentifier: identifier, note: note),
-                recordID: copy.id, accountKey: snapshot.account.key, archiveRevision: copy.revision)
+            // Use real enrollment so both the archive source link and memo
+            // consent exist. Binding a restored, unrelated copy directly would
+            // correctly fail the store's source-link check on every retry.
+            let enrolled = try await PhotoMemoCoordinator(noteStore: Self.noteStore, archiveStore: driver.archiveStore)
+                .enableUpdates(for: .init(photoIdentifier: identifier, note: note),
+                    jpegData: copy.jpegData, expectedAccount: snapshot.account.context)
+            guard enrolled.reflection == .stored, let archived = enrolled.archiveRecord,
+                  try await driver.archiveStore.sourceSnapshot(recordID: archived.id,
+                    expectedAccount: snapshot.account.context)?.noteID == note.id,
+                  try await driver.archiveStore.pendingOperationCount() == 0 else {
+                queuedMemoState = "failed"; return
+            }
             guard let first = try await Self.noteStore.save(text: "反映途中のメモ", for: identifier, expectedRevision: note.revision) else {
                 queuedMemoState = "failed"; return
             }
             _ = try await Self.noteStore.beginReflection(for: identifier, accountKey: snapshot.account.key)
             _ = try await Self.noteStore.save(text: "このiPhoneに残る最新のメモ", for: identifier, expectedRevision: first.revision)
-            // Only the temporary note outbox changes; the archive stays stored.
+            // After enrollment only the temporary note outbox changes; its
+            // archive stays stored alongside the original restored copy.
             // Both pending and in-flight refer to one record, counted once.
             queuedMemoState = "ready"
         } catch { queuedMemoState = "failed" }
