@@ -23,136 +23,61 @@ enum PhotoLibraryReadingPosition {
     }
 }
 
-private struct PhotoLibraryItemFrames: PreferenceKey {
-    static var defaultValue: [String: CGRect] { [:] }
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-private struct PhotoLibraryItemCatalog: PreferenceKey {
-    static var defaultValue: [String] { [] }
-    static func reduce(value: inout [String], nextValue: () -> [String]) {
-        value.append(contentsOf: nextValue())
-    }
-}
-
-private struct PhotoLibraryViewportHeight: PreferenceKey {
-    static var defaultValue: CGFloat { 0 }
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 extension View {
-    func photoLibraryReadingItem(_ identifier: String, section: String?) -> some View {
-        self.id(identifier).background {
-            if let section {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: PhotoLibraryItemFrames.self,
-                        value: [identifier: geometry.frame(in: .named("photoLibrary.\(section)"))])
-                }
-            }
-        }
-    }
-
-    func photoLibraryReadingItems(_ identifiers: [String]) -> some View {
-        preference(key: PhotoLibraryItemCatalog.self, value: identifiers)
-    }
-
     func restoringPhotoLibraryPosition(section: String?, isSearching: Bool = false) -> some View {
         modifier(PhotoLibraryPositionRestoration(section: section, isSearching: isSearching))
     }
 }
 
+/// Let SwiftUI track and restore scroll targets through lazy layout/data changes.
+/// Persist only reading positions, never a search result or a disappearing view's reset.
 private struct PhotoLibraryPositionRestoration: ViewModifier {
     let section: String?
     let isSearching: Bool
-    @State private var catalog: [String] = []
-    @State private var restored = false
+    @State private var position: String?
+    @State private var pendingPosition: String?
+    @State private var userScrolled = false
     @State private var isVisible = false
-    @State private var pendingIdentifier: String?
-    @State private var viewportHeight: CGFloat = 0
-    @State private var requestedRestoration = false
-    @State private var itemLayoutRevision = 0
-
-    private struct RestorationRequest: Equatable {
-        let identifier: String
-        let layoutRevision: Int
-    }
 
     init(section: String?, isSearching: Bool) {
         self.section = section
         self.isSearching = isSearching
-        _pendingIdentifier = State(initialValue: section.flatMap(PhotoLibraryReadingPosition.identifier))
+        let saved = section.flatMap(PhotoLibraryReadingPosition.identifier)
+        _position = State(initialValue: saved)
+        _pendingPosition = State(initialValue: saved)
     }
 
-    func body(content: Content) -> some View {
-        ScrollViewReader { proxy in
+    @ViewBuilder func body(content: Content) -> some View {
+        if let section {
             content
-                .coordinateSpace(name: "photoLibrary.\(section ?? "standalone")")
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.preference(key: PhotoLibraryViewportHeight.self, value: geometry.size.height)
+                .scrollPosition(id: Binding<String?>(get: { position }, set: { value in
+                    // An initially empty/async catalog must not erase the requested row.
+                    if let pendingPosition, !userScrolled {
+                        guard value == pendingPosition else { return }
+                        self.pendingPosition = nil
                     }
-                }
-                .onPreferenceChange(PhotoLibraryViewportHeight.self) { viewportHeight = $0 }
-                .onAppear {
-                    pendingIdentifier = section.flatMap(PhotoLibraryReadingPosition.identifier)
-                    requestedRestoration = false
-                    restored = false
-                    isVisible = true
-                }
+                    position = value
+                    if isVisible, userScrolled, !isSearching, let value {
+                        PhotoLibraryReadingPosition.save(value, section: section)
+                    }
+                }), anchor: .top)
+                .onAppear { isVisible = true }
                 .onDisappear { isVisible = false }
-                .onPreferenceChange(PhotoLibraryItemCatalog.self) { catalog = $0 }
-                .task(id: restorationRequest) {
-                    guard let request = restorationRequest else { return }
-                    guard !Task.isCancelled, !restored else { return }
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { proxy.scrollTo(request.identifier, anchor: .top) }
-                    requestedRestoration = true
-                }
-                .onPreferenceChange(PhotoLibraryItemFrames.self) { frames in
-                    // A catalog is not proof that List has installed its rows. Wait for
-                    // actual cell layout and reevaluate on subsequent layout changes
-                    // until the saved row is visible. This also handles async reloads.
-                    if !restored, !frames.isEmpty { itemLayoutRevision &+= 1 }
-                    guard let section, isVisible, !isSearching, !catalog.isEmpty else { return }
-                    let visible = frames.filter {
-                        $0.value.maxY > 1 && $0.value.minY < viewportHeight && $0.value.height > 0
-                    }
-                    if !restored {
-                        if let pendingIdentifier {
-                            guard requestedRestoration, visible[pendingIdentifier] != nil else { return }
-                        }
-                        restored = true
-                    }
-                    // Inspect visible cells only, not the entire photo library on every scroll.
-                    guard let first = visible.min(by: {
-                        $0.value.minY == $1.value.minY
-                            ? $0.value.minX < $1.value.minX : $0.value.minY < $1.value.minY
-                    }) else { return }
-                    let atStart = first.key == catalog.first && first.value.minY >= 0
-                    PhotoLibraryReadingPosition.save(atStart ? nil : first.key, section: section)
-                }
                 .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
-                    // Missing/deleted rows never trap the user in a pending restoration.
-                    if !isSearching { restored = true }
+                    userScrolled = true
+                    pendingPosition = nil
                 })
                 .onChange(of: isSearching) { _, searching in
                     if !searching {
-                        pendingIdentifier = section.flatMap(PhotoLibraryReadingPosition.identifier)
-                        requestedRestoration = false
-                        restored = false
+                        let saved = PhotoLibraryReadingPosition.identifier(for: section)
+                        pendingPosition = saved
+                        userScrolled = false
+                        position = saved
                     }
                 }
+        } else {
+            content
         }
-    }
-
-    private var restorationRequest: RestorationRequest? {
-        guard section != nil, isVisible, !restored, !isSearching,
-              viewportHeight > 0, itemLayoutRevision > 0,
-              let pendingIdentifier, catalog.contains(pendingIdentifier) else { return nil }
-        return RestorationRequest(identifier: pendingIdentifier, layoutRevision: itemLayoutRevision)
     }
 }
 
@@ -378,13 +303,13 @@ struct HomeView: View {
                     .accessibilityIdentifier("photo-hub-photo-\(photo.localIdentifier)")
                     .accessibilityLabel(detectedPhotoAccessibilityLabel(photo))
                     .accessibilityHint("写真を大きく表示します")
-                    .photoLibraryReadingItem(photo.localIdentifier, section: isEmbedded ? "all" : nil)
+                    .id(photo.localIdentifier)
                     .onAppear {
                         revealNextDetectedPhotos(after: photo.localIdentifier)
                     }
                 }
             }
-            .photoLibraryReadingItems(catPhotos.map(\.localIdentifier))
+            .scrollTargetLayout(isEnabled: isEmbedded)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .padding(.top, 2)

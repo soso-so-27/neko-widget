@@ -223,56 +223,77 @@ struct PhotoMemoryNotesListView: View {
     @ViewBuilder private var readingList: some View {
         let visible = items
         let displayedAccount = library.archive?.account.context
-        List {
-            if library.failed {
-                Section {
-                    Label("このiPhoneのメモを読み込めませんでした", systemImage: "exclamationmark.circle")
-                    Button("もう一度読み込む") { Task { await library.reload() } }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if library.failed {
+                    Section {
+                        Label("このiPhoneのメモを読み込めませんでした", systemImage: "exclamationmark.circle")
+                        Button("もう一度読み込む") { Task { await library.reload() } }
+                    }
                 }
-            }
-            if let error = library.archiveError {
-                Section {
-                    Text(error).font(.subheadline).foregroundStyle(.secondary)
-                    Button("iCloudから読み込む") { Task { await library.refreshFromCloud() } }
-                        .disabled(library.isRefreshingCloud)
-                }
-            }
-            if library.isRefreshingCloud { ProgressView("iCloudから読み込んでいます…") }
-            if !library.isLoaded {
-                ProgressView()
-            } else if visible.isEmpty && !search.isEmpty {
-                ContentUnavailableView.search(text: search)
-            } else if visible.isEmpty && !library.failed {
-                ContentUnavailableView {
-                    Label("メモを付けた写真が並びます", systemImage: "note.text")
-                } description: {
-                    Text("写真を開き、鉛筆から書けます。")
-                } actions: {
-                    Button("写真を選ぶ", action: openPhotos)
-                    if archiveEnabled {
+                if let error = library.archiveError {
+                    Section {
+                        Text(error).font(.subheadline).foregroundStyle(.secondary)
                         Button("iCloudから読み込む") { Task { await library.refreshFromCloud() } }
                             .disabled(library.isRefreshingCloud)
                     }
                 }
-                .accessibilityIdentifier("memory-notes-empty")
-            } else {
-                yearSections(visible, account: displayedAccount)
+                if library.isRefreshingCloud { ProgressView("iCloudから読み込んでいます…") }
+                if !library.isLoaded {
+                    ProgressView()
+                } else if visible.isEmpty && !search.isEmpty {
+                    ContentUnavailableView.search(text: search)
+                } else if visible.isEmpty && !library.failed {
+                    ContentUnavailableView {
+                        Label("メモを付けた写真が並びます", systemImage: "note.text")
+                    } description: {
+                        Text("写真を開き、鉛筆から書けます。")
+                    } actions: {
+                        Button("写真を選ぶ", action: openPhotos)
+                        if archiveEnabled {
+                            Button("iCloudから読み込む") { Task { await library.refreshFromCloud() } }
+                                .disabled(library.isRefreshingCloud)
+                        }
+                    }
+                    .accessibilityIdentifier("memory-notes-empty")
+                } else {
+                    yearSections(visible, account: displayedAccount)
+                }
             }
+            .scrollTargetLayout(isEnabled: isEmbedded)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
         }
-        .photoLibraryReadingItems(visible.map(\.id))
         .restoringPhotoLibraryPosition(section: isEmbedded ? "notes" : nil,
                                        isSearching: !search.isEmpty)
     }
 
     @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem], account: String?) -> some View {
-        let years = Dictionary(grouping: visible) { Calendar.current.component(.year, from: $0.date) }
-        ForEach(years.keys.sorted(by: >), id: \.self) { year in
-            Section(String(year) + "年") {
-                ForEach(years[year] ?? []) { item in
-                    readingLink(item, account: account)
-                        .photoLibraryReadingItem(item.id, section: isEmbedded ? "notes" : nil)
+        ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+            let year = Calendar.current.component(.year, from: item.date)
+            let startsYear = index == 0 || Calendar.current.component(.year, from: visible[index - 1].date) != year
+            let endsYear = index == visible.count - 1 || Calendar.current.component(.year, from: visible[index + 1].date) != year
+            VStack(alignment: .leading, spacing: 0) {
+                if startsYear {
+                    Text(String(year) + "年")
+                        .font(.headline).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.horizontal, 16).padding(.top, index == 0 ? 0 : 24).padding(.bottom, 10)
                 }
+                readingLink(item, account: account)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground), in: UnevenRoundedRectangle(
+                        topLeadingRadius: startsYear ? 20 : 0,
+                        bottomLeadingRadius: endsYear ? 20 : 0,
+                        bottomTrailingRadius: endsYear ? 20 : 0,
+                        topTrailingRadius: startsYear ? 20 : 0))
+                    .overlay(alignment: .bottom) {
+                        if !endsYear { Divider().padding(.leading, 16) }
+                    }
             }
+            .id(item.id)
         }
     }
 
@@ -298,7 +319,7 @@ struct PhotoMemoryNotesListView: View {
 
     var body: some View {
         readingList
-        .listStyle(.insetGrouped)
+        .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
             MemoryNotesSearchBar(text: $search, isFocused: $isSearchFocused)
                 .frame(height: 56)
@@ -397,10 +418,8 @@ struct PhotoMemoryNotesListView: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            if item.local == nil {
-                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }.padding(.vertical, 6)
     }
 }
@@ -518,7 +537,6 @@ struct PersonalArchivePhotosSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("photos-preserved-copies")
-        .photoLibraryReadingItems(copies.map { "archive-\($0.id)" })
         .navigationDestination(isPresented: Binding(
             get: { selected != nil }, set: { if !$0 { selected = nil } }
         )) {
@@ -569,9 +587,10 @@ struct PersonalArchivePhotosSection: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(copy.text.isEmpty ? "保管した写真" : copy.text)
                 .accessibilityIdentifier("preserved-photo-\(copy.id.uuidString)")
-                .photoLibraryReadingItem("archive-\(copy.id)", section: "all")
+                .id("archive-\(copy.id)")
             }
         }
+        .scrollTargetLayout()
     }
 }
 
@@ -899,6 +918,9 @@ struct PhotoMemoryNoteLibraryFixture: View {
                         PhotoLibrarySectionPicker(selection: selection.binding)
                         fixtureSection.id(readingRevision)
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("memory-library-fixture")
+                    .accessibilityValue("all=\(PhotoLibraryReadingPosition.identifier(for: "all") ?? "none"); favorites=\(PhotoLibraryReadingPosition.identifier(for: "favorites") ?? "none"); notes=\(PhotoLibraryReadingPosition.identifier(for: "notes") ?? "none")")
                     .navigationTitle("写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
