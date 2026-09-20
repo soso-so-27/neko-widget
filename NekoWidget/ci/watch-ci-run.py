@@ -3,8 +3,12 @@
 
 Print start, newly completed jobs, and a final JSON summary. Step changes and
 unchanged polls stay silent. The local result contains only selected metadata,
-never logs, step bodies, credentials, or raw gh errors. Exit: 0 success, 1 unsuccessful
-run, 2 unverified/error, 3 approval/action required, 130 interrupted.
+never logs, step bodies, credentials, or raw gh errors. A completed failed job
+ends this watcher immediately by default; sibling jobs are never cancelled.
+Use --wait-for-completion to keep watching a run with known failed jobs.
+This does not detect individual XCTest failures inside a still-running job.
+Exit: 0 success, 1 failed job/unsuccessful run, 2 unverified/error,
+3 approval/action required, 130 interrupted.
 
 runner_minutes sums each job's first valid step start to last valid step end,
 not queue time, billed minutes, or an OS-weighted estimate. A cancelled job
@@ -28,6 +32,7 @@ import time
 REPOSITORY = "soso-so-27/neko-widget"
 STATES = {"queued", "requested", "pending", "waiting", "in_progress", "completed", "action_required"}
 CONCLUSIONS = {"success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale", "startup_failure"}
+FAILED_JOB_CONCLUSIONS = {"failure", "cancelled", "timed_out", "stale", "startup_failure"}
 FIELDS = "databaseId,headSha,attempt,status,conclusion,createdAt,startedAt,updatedAt,jobs"
 # gh applies this projection before emitting stdout: no step names/body/status
 # or logs leave the CLI, only boundary timestamps and evidence counts.
@@ -180,6 +185,14 @@ def fingerprint(run):
     ))
 
 
+def failed_jobs(run):
+    # A missing/unfinished step is not a failed job. The normalized job must
+    # have GitHub's terminal status and an explicit unsuccessful conclusion.
+    return [{key: job[key] for key in ("id", "name", "conclusion")}
+            for job in run["jobs"]
+            if job["status"] == "completed" and job["conclusion"] in FAILED_JOB_CONCLUSIONS] if run else []
+
+
 def duration_metrics(run, observed_at):
     if run is None:
         return {"total_seconds": None, "runner_minutes": None, "runner_minutes_complete": False}
@@ -244,6 +257,7 @@ def watch(args) -> int:
             "conclusion": latest["conclusion"] if latest else None,
             "watch_seconds": round(time.monotonic() - started, 1),
             **duration_metrics(latest, now), "network_failures": failures,
+            "failed_jobs": failed_jobs(latest),
             "result_file": str(output),
         }
         if exit_code is not None:
@@ -296,6 +310,8 @@ def watch(args) -> int:
                 ]}
                 events.append(event)
                 emit({**event, "jobs": event["jobs"][:6], "count": len(changed_jobs)})
+            if failed_jobs(current) and not args.wait_for_completion:
+                return record("failed_job", 1, "completed_job_failed")
             attention = current["status"] in {"waiting", "action_required"} or current["conclusion"] == "action_required" or any(
                 job["status"] in {"waiting", "action_required"} or job["conclusion"] == "action_required"
                 for job in current["jobs"]
@@ -324,6 +340,8 @@ def parse_arguments(argv=None):
     parser.add_argument("--poll-seconds", type=float, default=60)
     parser.add_argument("--max-poll-seconds", type=float, default=180)
     parser.add_argument("--max-network-failures", type=int, default=3, help="Total failed requests allowed before stopping")
+    parser.add_argument("--wait-for-completion", action="store_true",
+                        help="Keep watching after completed job failures; never cancel sibling jobs")
     args = parser.parse_args(argv)
     if args.run_id <= 0:
         parser.error("run_id must be positive")

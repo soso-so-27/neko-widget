@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fast local/CI entry point: reject orchestration mistakes before Mac jobs."""
 
+import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,10 +20,18 @@ CHECKS = (
     "test-testflight-release-evidence-workflow.py",
     "test-app-icon-ci.py",
     "test-watch-ci-run.py",
+    "test-preflight-ci.py",
 )
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checks-only", action="store_true", help="Local unit checks; does not approve a candidate push")
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument("--decision", help="Concrete operator decision for an over-target/unmeasured plan")
+    parser.add_argument("--include-upload", action="store_true")
+    parser.add_argument("--output", help="Preflight JSON outside the checkout")
+    args = parser.parse_args()
     start = time.monotonic()
     for name in CHECKS:
         check_start = time.monotonic()
@@ -34,6 +44,15 @@ def main() -> int:
             return result.returncode
         print(f"PASS: {name} ({time.monotonic() - check_start:.1f}s)", flush=True)
     print(f"Development-flow checks passed in {time.monotonic() - start:.1f}s.", flush=True)
+    if not args.checks_only and os.environ.get("GITHUB_ACTIONS") != "true":
+        command = [sys.executable, str(CI / "preflight-ci.py"), "--base", args.base]
+        if args.decision:
+            command += ["--decision", args.decision]
+        if args.include_upload:
+            command.append("--include-upload")
+        if args.output:
+            command += ["--output", args.output]
+        return subprocess.run(command, cwd=CI.parents[1]).returncode
     return 0
 
 

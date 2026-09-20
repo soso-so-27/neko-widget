@@ -77,6 +77,8 @@ CI_NEW_TEST_PATHS = frozenset({
     "NekoWidget/ci/app_icon_ci.py", "NekoWidget/ci/verify-app-icon.py",
     "NekoWidget/ci/test-app-icon-ci.py", "NekoWidget/ci/watch-ci-run.py",
     "NekoWidget/ci/test-watch-ci-run.py",
+    "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
+    "NekoWidget/ci/ci-timing-baseline.json",
 })
 CI_SELECTION_PATHS = CI_NEW_TEST_PATHS | {CI_WORKFLOW, CI_SMOKE_SCRIPT} | frozenset(
     "NekoWidget/ci/" + name for name in (

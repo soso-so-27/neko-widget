@@ -1,0 +1,12 @@
+{
+  "as_of": "2026-09-20",
+  "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
+  "upload_minutes": 9.22,
+  "upload_run": 35493368458,
+  "observations": [
+    {"scope": "full-v1", "candidate_minutes": 64.43, "run_id": 35485948913, "outcome": "failure"},
+    {"scope": "full-v1", "candidate_minutes": 97.92, "run_id": 35489148667, "outcome": "success-after-retry"},
+    {"scope": "ci-selection-v1", "candidate_minutes": 25.13, "run_id": 34848681863, "outcome": "success"},
+    {"scope": "reviewed-memory-read-ui-v1", "candidate_minutes": 23.07, "run_id": 35453754654, "outcome": "success"}
+  ]
+}

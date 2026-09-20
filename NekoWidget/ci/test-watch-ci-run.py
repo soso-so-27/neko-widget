@@ -36,10 +36,10 @@ def fixture(status="in_progress", conclusion=None):
 
 
 class WatchTests(unittest.TestCase):
-    def run_watch(self, responses):
+    def run_watch(self, responses, *options):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.json"
-            args = watcher.parse_arguments(["42", "--expected-sha", "a" * 40, "--output", str(output)])
+            args = watcher.parse_arguments(["42", "--expected-sha", "a" * 40, "--output", str(output), *options])
             stream = io.StringIO()
             with patch.object(watcher, "read_run", side_effect=responses) as read, \
                     patch.object(watcher, "sleep_chunked") as sleep, contextlib.redirect_stdout(stream):
@@ -69,21 +69,73 @@ class WatchTests(unittest.TestCase):
         self.assertNotIn("not retained", json.dumps(result))
         self.assertEqual(calls, 5)
 
-    def test_job_failure_reported_once_then_wait_for_run(self):
+    def test_failed_job_returns_immediately_while_siblings_continue(self):
+        failing = fixture()
+        for conclusion in ("failure", "timed_out"):
+            job = copy.deepcopy(fixture("completed", conclusion)["jobs"][0])
+            job.update(databaseId=200 + len(failing["jobs"]), name=conclusion)
+            failing["jobs"].append(job)
+        code, result, messages, calls, sleeps = self.run_watch([failing])
+        self.assertEqual((code, calls, sleeps), (1, 1, []))
+        self.assertEqual(result["summary"]["outcome"], "failed_job")
+        self.assertEqual(result["run"]["status"], "in_progress")
+        self.assertIsNone(result["run"]["conclusion"])
+        self.assertEqual(result["run"]["jobs"][0]["status"], "in_progress")
+        self.assertFalse(result["summary"]["runner_minutes_complete"])
+        self.assertEqual(result["summary"]["failed_jobs"], [
+            {"id": 201, "name": "failure", "conclusion": "failure"},
+            {"id": 202, "name": "timed_out", "conclusion": "timed_out"},
+        ])
+        self.assertEqual(messages[-1], result["summary"])
+        # Approval for a sibling cannot hide an already failed job.
+        failing["jobs"][0]["status"] = "waiting"
+        code, result, _, calls, sleeps = self.run_watch([failing])
+        self.assertEqual((code, calls, sleeps), (1, 1, []))
+        self.assertEqual(result["summary"]["outcome"], "failed_job")
+
+    def test_wait_option_reports_failure_once_then_waits_for_run(self):
         initial = fixture()
         failing = fixture()
         failing["jobs"][0].update(status="completed", conclusion="failure", completedAt="2026-09-19T00:03:00Z")
         final = fixture("completed", "failure")
-        code, _, messages, calls, _ = self.run_watch([initial, failing, failing, final])
+        code, result, messages, calls, sleeps = self.run_watch([initial, failing, failing, final], "--wait-for-completion")
         self.assertEqual(code, 1)
         completions = [m for m in messages if m["event"] == "jobs_completed"]
         self.assertEqual(len(completions), 1)
         self.assertEqual(completions[0]["jobs"][0]["conclusion"], "failure")
         self.assertEqual(calls, 4)
+        self.assertEqual(sleeps, [60, 60, 90])
+        self.assertEqual(result["summary"]["outcome"], "completed")
+        self.assertEqual(len(result["summary"]["failed_jobs"]), 1)
         # A failure already present when attaching must also be visible once.
-        code, _, messages, _, _ = self.run_watch([failing, failing, final])
+        code, _, messages, _, _ = self.run_watch([failing, failing, final], "--wait-for-completion")
         self.assertEqual(code, 1)
         self.assertEqual(len([m for m in messages if m["event"] == "jobs_completed"]), 1)
+
+    def test_unfinished_or_missing_steps_never_imply_job_failure(self):
+        initial = fixture()
+        initial["jobs"][0]["steps"] = [{"status": "completed", "conclusion": "failure"}]
+        initial["jobs"][0].update(stepCount=None, startedStepCount=None, completedStepCount=None,
+                                   firstStepStartedAt=None, lastStepCompletedAt=None)
+        for index, conclusion in enumerate(("neutral", "skipped"), start=102):
+            job = copy.deepcopy(fixture("completed", conclusion)["jobs"][0])
+            job.update(databaseId=index, name=conclusion)
+            initial["jobs"].append(job)
+        code, result, _, calls, sleeps = self.run_watch([initial, fixture("completed", "success")])
+        self.assertEqual((code, calls, sleeps), (0, 2, [60]))
+        self.assertEqual(result["summary"]["outcome"], "completed")
+        self.assertEqual(result["summary"]["failed_jobs"], [])
+
+    def test_terminal_failure_categories_stop_but_action_required_keeps_approval_exit(self):
+        for conclusion in ("failure", "timed_out", "startup_failure", "cancelled", "stale"):
+            with self.subTest(conclusion=conclusion):
+                code, result, _, calls, sleeps = self.run_watch([fixture("completed", conclusion)])
+                self.assertEqual((code, calls, sleeps), (1, 1, []))
+                self.assertEqual(result["summary"]["outcome"], "failed_job")
+                self.assertEqual(result["summary"]["failed_jobs"][0]["conclusion"], conclusion)
+        code, result, _, calls, sleeps = self.run_watch([fixture("completed", "action_required")])
+        self.assertEqual((code, calls, sleeps), (3, 1, []))
+        self.assertEqual(result["summary"]["outcome"], "attention_required")
 
     def test_identity_and_unknown_state_stop_without_retry(self):
         for change, reason in [

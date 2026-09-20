@@ -35,10 +35,44 @@ SHA = re.compile(r"[0-9a-f]{40}")
 # exception before that dependency ships. Everything else must match exactly.
 INDEPENDENT_RESEARCH = "experiments/PetIdentityProbe/"
 
+# These helpers are not app, build, safety-check or release-evidence inputs.
+# Selection/check-runner/workflow changes are deliberately excluded. Their
+# existing orchestration tests always run in the plan job before selection.
+DEVELOPMENT_SCOPE = "development-tools-v1"
+PLAN_JOB = "Select iOS checks and verify reusable evidence"
+DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "watch-ci-run.py", "test-watch-ci-run.py", "preflight-ci.py",
+    "test-preflight-ci.py", "ci-timing-baseline.json",
+))
+
+
+def development_tools_only(paths, base, head):
+    if not paths or not source_paths(paths) or not source_paths(paths) <= DEVELOPMENT_PATHS:
+        return False
+    records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if records[-1:] == [""]:
+        records.pop()
+    if len(records) != 2 * len(paths):
+        return False
+    for index in range(0, len(records), 2):
+        fields, path = records[index].split(), records[index + 1]
+        if len(fields) != 5 or path not in paths:
+            return False
+        if is_handoff(path):
+            valid = (fields[0:2], fields[4]) in (([":100644", "100644"], "M"),
+                                               ([":000000", "100644"], "A"))
+        else:
+            valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
+        if not valid:
+            return False
+    return True
+
 
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
+    if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
+        return (PLAN_JOB,)
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
     sources = source_paths(paths)
@@ -95,6 +129,14 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources <= DEVELOPMENT_PATHS:
+        try:
+            base = comparison_base(event, env)
+            git("merge-base", "--is-ancestor", "refs/remotes/origin/main", env["GITHUB_SHA"])
+            if base and development_tools_only(paths, base, env["GITHUB_SHA"]):
+                return DEVELOPMENT_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            return FULL_SCOPE
     if not sources or not sources <= MAPPED_PATHS:
         return FULL_SCOPE
     try:
@@ -313,6 +355,24 @@ def main() -> None:
         paths = None
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
+
+    if selected_scope == DEVELOPMENT_SCOPE:
+        # No claim of iOS validation; this scope is intentionally absent from
+        # required_jobs_from_scope, so TestFlight cannot consume it as proof.
+        values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
+                  "sharing": "false", "app_ui": "false", "runtime_scope": selected_scope,
+                  "lanes": "[]", "matrix_lanes": "[]", "matrix_parallelism": "2"}
+        with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            for key, value in values.items():
+                output.write(f"{key}={value}\n")
+        print("IOS_CI_PLAN_JSON=" + json.dumps({"schema_version": 1,
+              "repository": env["GITHUB_REPOSITORY"], "head_sha": env["GITHUB_SHA"],
+              "scope": selected_scope, "required_jobs": required,
+              "evidence_run_id": None, "evidence_sha": None}))
+        with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
+            output.write("## Development tools only\n\nOrchestration tests executed. "
+                         "App/build/safety/release inputs unchanged. Not iOS release evidence.\n")
+        return
 
     def api(path: str) -> dict:
         request = urllib.request.Request(
