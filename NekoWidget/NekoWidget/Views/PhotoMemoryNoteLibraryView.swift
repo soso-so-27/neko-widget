@@ -259,7 +259,9 @@ struct PhotoMemoryNotesListView: View {
                 yearSections(visible, account: displayedAccount)
             }
         }
-
+        .photoLibraryReadingItems(visible.map(\.id))
+        .restoringPhotoLibraryPosition(section: isEmbedded ? "notes" : nil,
+                                       isSearching: !search.isEmpty)
     }
 
     @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem], account: String?) -> some View {
@@ -268,6 +270,7 @@ struct PhotoMemoryNotesListView: View {
             Section(String(year) + "年") {
                 ForEach(years[year] ?? []) { item in
                     readingLink(item, account: account)
+                        .photoLibraryReadingItem(item.id, section: isEmbedded ? "notes" : nil)
                 }
             }
         }
@@ -515,6 +518,7 @@ struct PersonalArchivePhotosSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("photos-preserved-copies")
+        .photoLibraryReadingItems(copies.map { "archive-\($0.id)" })
         .navigationDestination(isPresented: Binding(
             get: { selected != nil }, set: { if !$0 { selected = nil } }
         )) {
@@ -565,6 +569,7 @@ struct PersonalArchivePhotosSection: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(copy.text.isEmpty ? "保管した写真" : copy.text)
                 .accessibilityIdentifier("preserved-photo-\(copy.id.uuidString)")
+                .photoLibraryReadingItem("archive-\(copy.id)", section: "all")
             }
         }
     }
@@ -870,12 +875,18 @@ struct PhotoMemoryNoteLibraryFixture: View {
     @State private var ready = false
     @State private var failure = false
     @State private var path: [MemoriesRoute] = []
-    @State private var section: PhotoLibrarySection = .all
+    @StateObject private var selection = PhotoLibrarySelectionState(defaults: PhotoLibraryReadingPosition.defaults)
     @State private var showsSettings = false
     @State private var readingRevision = 0
 
     private var photos: [PhotoPresentation] {
         if CommandLine.arguments.contains("--memory-library-no-photo") { return [] }
+        if CommandLine.arguments.contains("--memory-library-scroll") {
+            return (1...36).map {
+                PhotoPresentation(localIdentifier: "app-store-screenshot-fixture-page-\($0)",
+                                  creationDate: Date(timeIntervalSince1970: 1_720_000_000 + Double($0) * 86_400))
+            }
+        }
         return [PhotoPresentation(localIdentifier: "app-store-screenshot-fixture-1",
                                   creationDate: Date(timeIntervalSince1970: 1_720_000_000))]
     }
@@ -885,7 +896,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
             Group {
                 if ready {
                     VStack(spacing: 0) {
-                        PhotoLibrarySectionPicker(selection: $section)
+                        PhotoLibrarySectionPicker(selection: selection.binding)
                         fixtureSection.id(readingRevision)
                     }
                     .navigationTitle("写真").navigationBarTitleDisplayMode(.inline)
@@ -932,12 +943,25 @@ struct PhotoMemoryNoteLibraryFixture: View {
         .task {
             guard !ready else { return }
             do {
-                if try await Self.store.records().isEmpty {
-                    _ = try await Self.store.save(text: "窓辺で初めて寝た日。\n小さな寝息を聞きながら、一緒に過ごした午後。",
-                        for: "app-store-screenshot-fixture-1", expectedRevision: nil,
-                        context: PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSince1970: 1_720_000_000), cats: []))
+                if !CommandLine.arguments.contains("--memory-library-empty"),
+                   !CommandLine.arguments.contains("--memory-library-cloud-only"),
+                   try await Self.store.records().isEmpty {
+                    if CommandLine.arguments.contains("--memory-library-scroll") {
+                        for number in 1...24 {
+                            _ = try await Self.store.save(text: "スクロール確認 \(number)",
+                                for: "app-store-screenshot-fixture-page-\(number)", expectedRevision: nil,
+                                context: PhotoMemoryNoteContext(capturedAt:
+                                    Date(timeIntervalSince1970: 1_720_000_000 + Double(number) * 86_400), cats: []))
+                        }
+                    } else {
+                        _ = try await Self.store.save(text: "窓辺で初めて寝た日。\n小さな寝息を聞きながら、一緒に過ごした午後。",
+                            for: "app-store-screenshot-fixture-1", expectedRevision: nil,
+                            context: PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSince1970: 1_720_000_000), cats: []))
+                    }
                 }
-                if CommandLine.arguments.contains("--memory-library-cloud"),
+                if (CommandLine.arguments.contains("--memory-library-cloud")
+                    || CommandLine.arguments.contains("--memory-library-cloud-only")),
+                   !CommandLine.arguments.contains("--memory-library-empty"),
                    try await Self.archiveStore.records().isEmpty {
                     let account = try await Self.archiveStore.accountContext()
                     let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")?
@@ -946,6 +970,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
                         text: "はじめてのおふろ。タオルにくるまって、やっとひと安心。",
                         capturedAt: Date(timeIntervalSince1970: 1_700_000_000), expectedAccount: account)
                 }
+                await selection.resolveInitialSelection(noteStore: Self.store, archiveStore: Self.archiveStore)
                 ready = true
             } catch { failure = true }
         }
@@ -954,18 +979,27 @@ struct PhotoMemoryNoteLibraryFixture: View {
     }
 
     @ViewBuilder private var fixtureSection: some View {
-        switch section {
+        switch selection.selection {
         case .all:
-            ScrollView {
-                PersonalArchivePhotosSection(photos: photos, archiveStore: Self.archiveStore,
-                                             store: Self.store).padding(16)
+            if CommandLine.arguments.contains("--memory-library-scroll") {
+                HomeView(scan: ScanPresentation(), hasPhotoAccess: true, isLimitedAccess: false,
+                    shouldOfferWidgetPlacementGuide: false, requestPhotoAccess: {}, chooseMorePhotos: {},
+                    showWidgetPlacementGuide: {}, showSettings: {}, rescan: {}, catPhotos: photos,
+                    isEmbedded: true)
+            } else {
+                ScrollView {
+                    PersonalArchivePhotosSection(photos: photos, archiveStore: Self.archiveStore,
+                                                 store: Self.store).padding(16)
+                }
+                .restoringPhotoLibraryPosition(section: "all")
             }
         case .favorites:
-            SavedMemoriesGalleryView(photos: [], startsInExportMode: false, isEmbedded: true,
+            SavedMemoriesGalleryView(photos: CommandLine.arguments.contains("--memory-library-scroll") ? photos : [],
+                                    startsInExportMode: false, isEmbedded: true,
                                     exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
         case .notes:
             PhotoMemoryNotesListView(photos: photos, store: Self.store,
-                archiveStore: Self.archiveStore, isEmbedded: true) { section = .all }
+                archiveStore: Self.archiveStore, isEmbedded: true) { selection.select(.all) }
         }
     }
 }

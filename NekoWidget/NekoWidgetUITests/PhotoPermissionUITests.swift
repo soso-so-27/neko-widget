@@ -2769,11 +2769,22 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     @MainActor
     func testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto() {
         let app = XCUIApplication()
+        let preferenceSuite = "PhotoLibrarySelectionUITest.\(UUID().uuidString)"
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite
         app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-cloud",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["photos-section-notes"]
         XCTAssertTrue(entry.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed,
+            "A first visit with an existing local memo must start in Memo.")
+        XCTAssertEqual(entry.label, "メモ")
+        let favorites = app.buttons["photos-section-favorites"]
+        let all = app.buttons["photos-section-all"]
+        XCTAssertLessThan(entry.frame.minX, favorites.frame.minX)
+        XCTAssertLessThan(favorites.frame.minX, all.frame.minX)
+        all.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "preserved-photo-")).firstMatch
             .waitForExistence(timeout: 10), "Preserved photos remain reachable in All.")
         attach(app, name: "photos-all-preserved-copies")
@@ -2826,18 +2837,97 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "またここで眠ろう。"), object: body)], timeout: 5), .completed)
         attach(app, name: "memory-library-detail")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        all.tap()
+        app.terminate()
+
+        // A cloud-only memo is also a memo; no local PhotoKit note is required.
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite + ".cloud-only"
+        app.launchArguments += ["--memory-library-cloud-only"]
+        app.launch()
+        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed)
+        XCTAssertTrue(archived.waitForExistence(timeout: 10))
+        XCTAssertFalse(row.exists, "This first-visit decision must use only the existing cloud copy.")
+        app.terminate()
+
+        // The three shipping lists keep distinct reading positions. Fixture
+        // note UUIDs are process-local; stable photo IDs also cover relaunch.
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite + ".scroll"
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-scroll",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed)
+        func assertVisible(_ target: XCUIElement) {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in target.exists && target.isHittable }, object: nil)],
+                timeout: 10), .completed)
+        }
+        func scrollTo(_ target: XCUIElement) {
+            for _ in 0..<8 {
+                if target.exists && target.isHittable { break }
+                app.swipeUp()
+            }
+            assertVisible(target)
+        }
+        all.tap()
+        let lowerPhoto = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-30"]
+        scrollTo(lowerPhoto)
+        let photoY = lowerPhoto.frame.minY
+        favorites.tap()
+        let lowerFavorite = app.buttons["saved-memory-photo-app-store-screenshot-fixture-page-18"]
+        scrollTo(lowerFavorite)
+        let favoriteY = lowerFavorite.frame.minY
+        entry.tap()
+        let lowerNote = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "memory-note-row-", "スクロール確認 8")).firstMatch
+        scrollTo(lowerNote)
+        let noteY = lowerNote.frame.minY
+        lowerNote.tap()
+        XCTAssertTrue(app.staticTexts["memory-note-body"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["memory-note-body"].label.contains("スクロール確認 8"))
+        app.navigationBars.buttons.firstMatch.tap()
+        assertVisible(lowerNote)
+        XCTAssertLessThan(abs(lowerNote.frame.minY - noteY), lowerNote.frame.height + 2)
+        all.tap()
+        assertVisible(lowerPhoto)
+        XCTAssertLessThan(abs(lowerPhoto.frame.minY - photoY), lowerPhoto.frame.height + 2)
+        favorites.tap()
+        assertVisible(lowerFavorite)
+        XCTAssertLessThan(abs(lowerFavorite.frame.minY - favoriteY), lowerFavorite.frame.height + 2)
+        attach(app, name: "photos-favorites-scroll-restored")
+        entry.tap()
+        assertVisible(lowerNote)
+        XCTAssertLessThan(abs(lowerNote.frame.minY - noteY), lowerNote.frame.height + 2)
+        all.tap()
+        app.terminate()
+
+        app.launch()
+        XCTAssertTrue(all.waitForExistence(timeout: 15))
+        XCTAssertTrue(all.isSelected, "Existing memos must not override the previous explicit section after relaunch.")
+        assertVisible(lowerPhoto)
+        XCTAssertLessThan(abs(lowerPhoto.frame.minY - photoY), lowerPhoto.frame.height + 2)
+        attach(app, name: "photos-all-scroll-restored-after-relaunch")
         app.terminate()
     }
 
     @MainActor
     func testMemoryLibraryWithoutPhotoSupportsLargestTextEditingAndDeletion() {
         let app = XCUIApplication()
+        let preferenceSuite = "PhotoLibraryWithoutPhotoUITest.\(UUID().uuidString)"
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite
         app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
                                "--memory-library-no-photo", "--photo-window-large",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["photos-section-notes"]
         XCTAssertTrue(entry.waitForExistence(timeout: 15), "Text must remain reachable without Photos access.\n\(app.debugDescription)")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed)
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -2875,6 +2965,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["memory-notes-menu"].tap()
         XCTAssertTrue(app.buttons["iCloudから読み込む"].waitForExistence(timeout: 5),
                       "An empty library must still offer explicit cloud restoration.")
+        app.terminate()
+
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite + ".empty"
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-empty",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let all = app.buttons["photos-section-all"]
+        XCTAssertTrue(all.waitForExistence(timeout: 15))
+        XCTAssertTrue(all.isSelected, "Without a memo, the first visit must start in All.")
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["写真を開き、鉛筆から書けます。"].waitForExistence(timeout: 10))
         app.terminate()
     }
 

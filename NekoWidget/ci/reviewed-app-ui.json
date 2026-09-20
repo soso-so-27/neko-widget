@@ -1,19 +1,29 @@
 {
   "schemaVersion": 1,
-  "purpose": "Cat photo list presentation and management navigation; existing registration, membership, storage and sharing actions remain unchanged. The memo library companion changes only the search placeholder. Existing representative UI coverage exercises the list, add cancellation and both management destinations.",
+  "scope": "reviewed-memory-read-ui-v2",
+  "purpose": "Photos navigation only: Memo/Favorites/All order, first-visit local-catalog choice, device-local selected section and visible-item restoration. No note/archive/Photos mutation, account identity, sharing or permission changes. DEBUG fixtures cover initial choice, section switch, detail return and process restart.",
   "visualReview": "user-device",
+  "dataReview": "read-only-projection",
   "files": {
-    "NekoWidget/NekoWidget/Views/CatProfilesView.swift": {
-      "before": "6991614e17f66aff0a038959bf0e528713daf02a78306602e4384b0c4f2cdd96",
-      "after": "b1c05937cce3e7751ece48331e2ffe881929f64749c8733ed4ce97f53de6bb33"
+    "NekoWidget/NekoWidget/Views/HomeView.swift": {
+      "before": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0",
+      "after": "4eac7485951023200e55c00ba9bb718707aaf5f99ac2c1f3a64440d07c517a65"
+    },
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "bc49e8c9b14cb46282893cc3233759a915b5084dd37e192b3caf0da3812c179d",
+      "after": "f51b3b25e5e6e5b7b902ec61e8afbda72ec2a5d40bf05212885dde186d8cba57"
+    },
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": {
+      "before": "c5fdea5c69f55fcb59eec36118f7480a921fcdd294bfd617f57f66d3f9babfcf",
+      "after": "53366fc113f8cd92d525d98f18ca4ff723820e8f36429964667a3c9c9a644567"
     },
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
-      "before": "71b9c3d5408c75be8c55a7e7147e1cfb20c43b13090599b0e7720ce60dcc7225",
-      "after": "b071051f42ca0d3c094aa8098107a5e19fabe0f77be020f25e582c661aad34c7"
+      "before": "b071051f42ca0d3c094aa8098107a5e19fabe0f77be020f25e582c661aad34c7",
+      "after": "05a1a3143db20173f279166fb60a092c934edda4148dc9deeaec086ae1275b87"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "755138ff790838c2ff9602298efe1a4febdb901a41e3cab67243e9a91e9dbb3a",
-      "after": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264"
+      "before": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264",
+      "after": "9fed2cd09a09d4a0d9a871c1abfdc4845f438fc4ab7fb9ebccadd5cc53f12a51"
     }
   }
 }

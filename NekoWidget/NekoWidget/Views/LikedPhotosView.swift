@@ -1556,10 +1556,15 @@ struct SavedMemoriesGalleryView: View {
                     LazyVGrid(columns: photoColumns, spacing: 3) {
                         ForEach(photos) { photo in
                             gridItem(photo)
+                                .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
+                                .photoLibraryReadingItem(photo.localIdentifier,
+                                    section: isEmbedded ? "favorites" : nil)
                         }
                     }
                     .padding(3)
+                    .photoLibraryReadingItems(photos.map(\.localIdentifier))
                 }
+                .restoringPhotoLibraryPosition(section: isEmbedded ? "favorites" : nil)
             }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")

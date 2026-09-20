@@ -4,14 +4,87 @@ import ImageIO
 import Photos
 
 enum PhotoLibrarySection: String, CaseIterable {
-    case all, favorites, notes
+    case notes, favorites, all
 
     var title: String {
         switch self {
         case .all: "すべて"
         case .favorites: "お気に入り"
-        case .notes: "メモあり"
+        case .notes: "メモ"
         }
+    }
+}
+
+/// Device-local navigation preference. Initial inference only reads existing
+/// catalogs; it never restores, uploads or reconciles a user's records.
+@MainActor
+final class PhotoLibrarySelectionState: ObservableObject {
+    @Published private(set) var selection: PhotoLibrarySection
+    private let defaults: UserDefaults
+    private let storageKey: String
+    private var hasResolvedSelection: Bool
+    private var resolutionID: UUID?
+
+    init(defaults: UserDefaults = .standard, storageKey: String = "photoLibrary.lastSection.v1") {
+        self.defaults = defaults
+        self.storageKey = storageKey
+        let saved = defaults.string(forKey: storageKey).flatMap(PhotoLibrarySection.init(rawValue:))
+        selection = saved ?? .all
+        hasResolvedSelection = saved != nil
+    }
+
+    var binding: Binding<PhotoLibrarySection> {
+        Binding(get: { self.selection }, set: { self.select($0) })
+    }
+
+    func select(_ section: PhotoLibrarySection) {
+        resolutionID = nil
+        hasResolvedSelection = true
+        selection = section
+        defaults.set(section.rawValue, forKey: storageKey)
+    }
+
+    func resolveInitialSelection(noteStore: PhotoMemoryNoteStore,
+                                 archiveStore: PersonalArchiveStore?) async {
+        guard !hasResolvedSelection, !Task.isCancelled else { return }
+        let requestID = UUID()
+        resolutionID = requestID
+        let hasLocalNotes: Bool?
+        do {
+            hasLocalNotes = try await noteStore.records().contains {
+                !$0.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        } catch {
+            hasLocalNotes = nil
+        }
+        guard canResolve(requestID) else { return }
+        if hasLocalNotes == true { select(.notes); return }
+
+        let hasArchivedNotes: Bool?
+        if let archiveStore {
+            do {
+                let snapshot = try await archiveStore.readingSnapshot()
+                hasArchivedNotes = snapshot.records.contains {
+                    !$0.isDeletionPending && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+            } catch {
+                hasArchivedNotes = nil
+            }
+        } else {
+            hasArchivedNotes = false
+        }
+        guard canResolve(requestID) else { return }
+        if hasArchivedNotes == true {
+            select(.notes)
+        } else if hasLocalNotes == false && hasArchivedNotes == false {
+            select(.all)
+        }
+        // Failed reads leave the temporary All presentation unresolved. A later
+        // appearance may retry; an explicit choice always wins and is retained.
+    }
+
+    private func canResolve(_ requestID: UUID) -> Bool {
+        !Task.isCancelled && !hasResolvedSelection && resolutionID == requestID
     }
 }
 
@@ -151,7 +224,7 @@ struct MainTabView: View {
     var personalArchiveStore: PersonalArchiveStore? = nil
 
     @State private var selectedTab: AppTab = .memories
-    @State private var photoLibrarySection: PhotoLibrarySection = .all
+    @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -338,7 +411,7 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
-            PhotoLibrarySectionPicker(selection: $photoLibrarySection)
+            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding)
             photoLibraryContent.id(photoLibraryRevision)
         }
         .navigationTitle("写真")
@@ -351,18 +424,28 @@ struct MainTabView: View {
                     .accessibilityIdentifier("window-settings-button")
             }
         }
+        .task(id: canResolveInitialPhotoSection) {
+            guard canResolveInitialPhotoSection else { return }
+            let archiveStore = personalArchiveStore
+                ?? (PersonalArchiveStore.isConfigured ? PersonalArchiveStore.shared : nil)
+            await photoLibrarySelection.resolveInitialSelection(noteStore: memoStore, archiveStore: archiveStore)
+        }
+    }
+
+    private var canResolveInitialPhotoSection: Bool {
+        selectedTab == .photos && photosPath.isEmpty && scenePhase == .active
     }
 
     @ViewBuilder private var photoLibraryContent: some View {
-        switch photoLibrarySection {
+        switch photoLibrarySelection.selection {
         case .all:
             allPhotosView
         case .favorites:
             SavedMemoriesGalleryView(photos: likedPhotos, startsInExportMode: false,
                                     isEmbedded: true, exportPhotoBook: exportPhotoBook)
         case .notes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos, archiveStore: personalArchiveStore,
-                                     isEmbedded: true) { photoLibrarySection = .all }
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
+                                     isEmbedded: true) { photoLibrarySelection.select(.all) }
         }
     }
 
@@ -702,7 +785,7 @@ struct MainTabView: View {
             seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
             openPhotos: {
-                photoLibrarySection = .all
+                photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos
             },
@@ -757,16 +840,16 @@ struct MainTabView: View {
     private func memoriesDestination(for route: MemoriesRoute) -> some View {
         switch route {
         case .memoryNotes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos, archiveStore: personalArchiveStore) {
-                photoLibrarySection = .all
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore) {
+                photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos
             }
         case let .memoryNote(identifier):
-            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos,
+            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos, store: memoStore,
                                       archiveStore: personalArchiveStore)
         case let .memoryNotePhoto(identifier):
-            PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos) { photo in
+            PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos, store: memoStore) { photo in
                 photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false)
             }
         case .favorites:
