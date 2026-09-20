@@ -156,6 +156,30 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(any("branch=codex%2Ftask" in query for query in queries))
         self.assertTrue(any("branch=diagnostic%2Ftask" in query for query in queries))
 
+    def test_cancelled_run_retains_other_classes_instead_of_claiming_environment_failure(self):
+        run = {"id": 1, "path": ".github/workflows/ios-build.yml", "conclusion": "cancelled",
+               "status": "completed", "created_at": "2026-09-20T11:55:00Z"}
+        page = {"total_count": 1, "workflow_runs": [run]}
+        jobs = {"total_count": 1, "jobs": [{"id": 9, "name": "Sharing [app-ui; scope full-v1]", "conclusion": "failure"}]}
+        log = "Test Case '-[NekoWidgetUITests.OtherTests testNavigation]' failed (2 seconds)."
+        with patch.object(planner, "git", return_value="diagnostic/task"), \
+                patch.object(preflight, "github", side_effect=[page, page, jobs, log]):
+            runs = preflight.read_task_runs()
+        self.assertEqual(runs[0]["unsupported_failed_tests"], ["NekoWidgetUITests.OtherTests/testNavigation"])
+        result = preflight.apply_task_gate({"ready": True, "head": "a" * 40, "target_minutes": 30,
+                 "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, runs,
+                 now=dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc))
+        self.assertFalse(result["ready"])
+        self.assertIn("failed_test_needs_a_supported_focused_diagnostic_route", result["task"]["blockers"])
+
+    def test_raw_logs_are_captured_with_escape_sequences_but_not_printed(self):
+        response = subprocess.CompletedProcess([], 0, stdout="\x1b[31mfailed\x1b[0m", stderr="")
+        with patch.object(preflight.subprocess, "run", return_value=response) as invoke, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(preflight.github("repos/test/actions/jobs/1/logs", raw=True), response.stdout)
+        self.assertIn("--allow-escape-sequences", invoke.call_args.args[0])
+        self.assertEqual(out.getvalue(), "")
+
     def test_real_git_helper_only_rejects_stale_main_and_mixed_product(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

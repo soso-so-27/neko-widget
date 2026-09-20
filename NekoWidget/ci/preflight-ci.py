@@ -24,7 +24,11 @@ DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
 
 
 def github(path, raw=False):
-    result = subprocess.run(["gh", "api", path], capture_output=True, text=True,
+    command = ["gh", "api", path]
+    if raw:
+        # Capture, never print, Xcode logs containing terminal escape sequences.
+        command.append("--allow-escape-sequences")
+    result = subprocess.run(command, capture_output=True, text=True,
                             encoding="utf-8", timeout=45,
                             env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_DEBUG": ""})
     if result.returncode:
@@ -51,18 +55,22 @@ def read_task_runs():
     for run in runs.values():
         run["failed_ui"] = False
         run["failed_tests"] = []
-        if run["path"] == ".github/workflows/ios-build.yml" and run["conclusion"] in {"failure", "timed_out"}:
+        run["unsupported_failed_tests"] = []
+        if run["path"] == ".github/workflows/ios-build.yml" and run["conclusion"] in {"failure", "timed_out", "cancelled"}:
             jobs = github(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?per_page=100")
             if jobs["total_count"] >= 100:
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
                 if "[app-ui;" in job["name"] and job["conclusion"] in {"failure", "timed_out"}:
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
-                    methods = sorted(set(re.findall(
-                        r"Test Case '-\[NekoWidgetUITests\.MomentDeliveryComposerUITests (test\w+)\]' failed", log)))
+                    cases = sorted(set(re.findall(
+                        r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)))
+                    methods = [method for cls, method in cases if cls == "NekoWidgetUITests.MomentDeliveryComposerUITests"]
+                    run["unsupported_failed_tests"].extend(f"{cls}/{method}" for cls, method in cases
+                                                          if cls != "NekoWidgetUITests.MomentDeliveryComposerUITests")
                     # A preparation/build/runner failure has no failed XCTest;
                     # do not require an unrelated UI test to diagnose it.
-                    run["failed_ui"] = bool(methods)
+                    run["failed_ui"] = bool(cases)
                     run["failed_tests"].extend(methods)
     return list(runs.values())
 
@@ -86,6 +94,9 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     failed_tests = sorted({test for run in failed for test in run.get("failed_tests", [])})
     passed_tests = {run.get("display_title", "").removeprefix("UI diagnosis: ") for run in diagnostics}
     missing = sorted(set(failed_tests) - passed_tests)
+    unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
+    if unsupported:
+        blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
     if missing:
         blockers.append("failed_task_requires_successful_diagnosis_at_candidate_sha")
     first_measurement = measure_baseline and not runs and cost["status"] == "unmeasured"
@@ -94,12 +105,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
                       "active_runs": active, "diagnostic_runs": [run["id"] for run in diagnostics],
                       "missing_diagnostic_tests": missing,
+                      "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
                       "projected_total_minutes": projected, "blockers": blockers}
     result["task"]["first_baseline_measurement"] = first_measurement
     result["ready"] = (result["ready"] or first_measurement) and not blockers
     result["next_action"] = ("Diagnose one failing operation; a prose decision cannot authorize another candidate CI"
-                             if missing else
+                             if missing or unsupported else
                              "Reuse active work or revise the measured execution plan" if blockers else "Run required checks")
     return result
 
