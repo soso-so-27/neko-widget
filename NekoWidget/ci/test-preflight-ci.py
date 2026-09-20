@@ -400,12 +400,17 @@ class PreflightTests(unittest.TestCase):
         source, head = "a" * 40, "b" * 40
         path = "NekoWidget/ci/preflight-ci.py"
         good = f":100644 100644 {'c' * 40} {'d' * 40} M\0{path}\0"
-        with patch.object(planner, "git", side_effect=["", good]) as git:
-            self.assertTrue(preflight.diagnostic_source_matches(source, head))
-            self.assertEqual(git.call_args_list[0].args, ("merge-base", "--is-ancestor", source, head))
-            self.assertEqual(git.call_args_list[1].args, ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head))
+        allowed = (path, "NekoWidget/ci/test-preflight-ci.py", "NekoWidget/ci/verify-app-icon.py")
+        self.assertEqual(preflight.DIAGNOSTIC_HELPER_PATHS, frozenset(allowed))
+        for helper in allowed:
+            with patch.object(planner, "git", side_effect=["", good.replace(path, helper)]) as git:
+                self.assertTrue(preflight.diagnostic_source_matches(source, head), helper)
+                self.assertEqual(git.call_args_list[0].args, ("merge-base", "--is-ancestor", source, head))
+                self.assertEqual(git.call_args_list[1].args, ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head))
         for extra in ("NekoWidget/ci/watch-ci-run.py", "handoffs/note.md", "NekoWidget/ci/ios_ci_scope.py",
                       ".github/workflows/ios-ui-diagnostic.yml", "NekoWidget/ci/run-sharing-runtime-matrix.sh",
+                      "NekoWidget/ci/prepare-simulator-and-build.sh", "NekoWidget/ci/app_icon_ci.py",
+                      "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
                       "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift", "App.swift"):
             with patch.object(planner, "git", side_effect=["", good + good.replace(path, extra)]):
                 self.assertFalse(preflight.diagnostic_source_matches(source, head), extra)

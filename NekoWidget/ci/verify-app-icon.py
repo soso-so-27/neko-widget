@@ -21,6 +21,44 @@ def command(*args, timeout=60):
     return result.stdout.strip()
 
 
+def timed_launch(stage, device, bundle, timeout, artifacts):
+    started = time.monotonic()
+    record = {"stage": stage, "timeoutSeconds": timeout, "startedAtUnix": time.time()}
+    print(json.dumps({**record, "state": "started"}), flush=True)
+    outcome = "failure"
+    try:
+        result = command("xcrun", "simctl", "launch", device, bundle, timeout=timeout)
+        outcome = "success"
+        return result
+    except subprocess.TimeoutExpired:
+        outcome = "timeout"
+        raise
+    finally:
+        record.update(state=outcome, elapsedSeconds=round(time.monotonic() - started, 3))
+        print(json.dumps(record), flush=True)
+        if artifacts is not None:
+            with (artifacts / "launch-stages.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record) + "\n")
+
+
+def prepare_with_preferences(device, artifacts=None):
+    # Prepare the fresh Simulator with one system-app launch before Neko's
+    # first launch. A failed preparation must not fall through to the app test.
+    bundle = "com.apple.Preferences"
+    # OS readiness has its own bounded budget, equal to bootstatus. This does
+    # not extend Neko's first-launch deadline or retry either app launch.
+    launch = timed_launch("simulator-readiness", device, bundle, 180, artifacts)
+    match = re.fullmatch(r"com\.apple\.Preferences: ([1-9][0-9]*)", launch)
+    if match is None:
+        raise ValueError("Preferences preparation did not return its PID")
+    pid = match.group(1)
+    processes = command("xcrun", "simctl", "spawn", device, "launchctl", "list", timeout=10)
+    if not any(len(fields := line.split()) >= 3 and fields[0] == pid
+               and fields[2].startswith(f"UIKitApplication:{bundle}[") for line in processes.splitlines()):
+        raise ValueError("Preferences preparation did not remain alive")
+    command("xcrun", "simctl", "terminate", device, bundle, timeout=10)
+
+
 def source_assets():
     records = {}
     for relative in sorted(ICON_PATHS):
@@ -68,8 +106,10 @@ def inspect_app(app, artifacts, report):
         command("xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
         command("xcrun", "simctl", "status_bar", device, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         command("xcrun", "simctl", "install", device, str(app))
+        prepare_with_preferences(device, artifacts)
+        report["preferencesPreparationAlive"] = True
         bundle = info["CFBundleIdentifier"]
-        launch = command("xcrun", "simctl", "launch", device, bundle)
+        launch = timed_launch("neko-first-launch", device, bundle, 60, artifacts)
         pid = int(launch.rsplit(":", 1)[1].strip())
         time.sleep(5)
         processes = command("xcrun", "simctl", "spawn", device, "launchctl", "list")

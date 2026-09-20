@@ -23,8 +23,13 @@ REPOSITORY = "soso-so-27/neko-widget"
 DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
 # Deliberately narrower than DEVELOPMENT_PATHS. No workflow, selector, test
 # runner, app/test fixture, watch, docs or timing changes inherit UI evidence.
+# The native diagnostic graph neither reads nor executes verify-app-icon.py;
+# its Simulator preparation runs in the separate Release Build job. If the
+# diagnostic graph begins reading it, re-review and remove this exception
+# before reusing evidence.
 DIAGNOSTIC_HELPER_PATHS = frozenset({
     "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
+    "NekoWidget/ci/verify-app-icon.py",
 })
 DIAGNOSTIC_JOB_NAMES = frozenset({
     "Diagnostic only - one native UI test (not release evidence)",
