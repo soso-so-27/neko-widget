@@ -133,6 +133,11 @@ FAMILY_PRESENTATION_PATH = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
 PAIRING_EXPLANATION_PATH = "NekoWidget/NekoWidget/Views/PairingView.swift"
 FAMILY_PRESENTATION_DIGESTS = ("49573947eff46d9d3708e3530d9cf04c7611cc39523c8cf00f03307ea8e4f59c", "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035")
 FAMILY_COMPANION_PATHS = frozenset({FAMILY_PRESENTATION_PATH, PAIRING_EXPLANATION_PATH})
+# Optional v3 companion: only the independently reviewed local-editor account
+# guard plus its DEBUG notification regression hook. Not a generic UI allowlist.
+LOCAL_EDITOR_PATH = "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift"
+LOCAL_EDITOR_DIGESTS = ("35a03ba505d53dd6ecaa2d614ab6f34d4bb1a3ed17ff257a592f110b466748ac", "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56")
+LOCAL_EDITOR_DATA_REVIEW = "local-editor-account-boundary"
 
 PAIRING_EXPLANATION_BEFORE = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 PAIRING_EXPLANATION_AFTER = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。共同記録も開けなくなるため、取り下げたい自分の写真や言葉があれば、先に共同記録で操作してください。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
@@ -158,7 +163,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -227,11 +232,15 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]], *, family: bool
     Hashes bind that review; they cannot themselves establish semantic safety.
     """
     app = set(changes) - {REVIEW_MANIFEST}
-    allowed = REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS if family else REVIEWABLE_MEMORY_PATHS
+    allowed = REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} if family else REVIEWABLE_MEMORY_PATHS
     if REVIEW_MANIFEST not in changes or not app or not app <= allowed:
         return False
     if family and not family_presentation_changes(changes):
         return False
+    has_editor = LOCAL_EDITOR_PATH in app
+    if has_editor and (not family or tuple(source_digest(text) for text in changes[LOCAL_EDITOR_PATH]) != LOCAL_EDITOR_DIGESTS):
+        return False
+    data_review = LOCAL_EDITOR_DATA_REVIEW if has_editor else "read-only-projection"
     projection = app & MEMORY_PROJECTION_PATHS
     if projection and projection != MEMORY_PROJECTION_PATHS:
         return False
@@ -251,7 +260,7 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]], *, family: bool
         if (type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
                 or review["scope"] != (REVIEWED_MEMORY_FAMILY_SCOPE if family else REVIEWED_MEMORY_SCOPE)
                 or review["visualReview"] != "user-device"
-                or review["dataReview"] != "read-only-projection"
+                or review["dataReview"] != data_review
                 or not isinstance(review["purpose"], str) or not review["purpose"].strip()
                 or set(review["files"]) != app):
             return False
@@ -508,7 +517,7 @@ def accepts_paths(scope: str, paths) -> bool:
         CI_SELECTION_SCOPE: CI_SELECTION_PATHS,
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_SCOPE: REVIEWABLE_MEMORY_PATHS | {REVIEW_MANIFEST},
-        REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST},
+        REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST, LOCAL_EDITOR_PATH},
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
