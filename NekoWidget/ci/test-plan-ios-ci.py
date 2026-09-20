@@ -397,6 +397,98 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(planner.covers_jobs(jobs, planner.FULL, "a" * 40))
         self.assertFalse(planner.covers_jobs(jobs[:-1], tuple(j["name"] for j in jobs), "a" * 40))
 
+    @staticmethod
+    def cat_entry_changes(companion=None):
+        before = ('func configure() {\n'
+                  '        bar.placeholder = "言葉・猫の名前で探す"\n'
+                  '        bar.delegate = context.coordinator\n}\n')
+        changes = {
+            scope.CAT_ENTRY_PATH: ("old cat list", "new cat list"),
+            scope.CAT_ENTRY_SEARCH_COMPANION: companion or (
+                before, before.replace('"言葉・猫の名前で探す"', '"メモを検索"')),
+        }
+        review = {"schemaVersion": 1, "purpose": "Cat list and exact search placeholder",
+                  "visualReview": "user-device",
+                  "files": {path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}
+                            for path, pair in changes.items()}}
+        changes[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
+        return changes
+
+    def test_cat_entry_exact_placeholder_keeps_existing_four_operations_and_safety_jobs(self):
+        changes = self.cat_entry_changes()
+        self.assertEqual(scope.select_scope(changes), scope.REVIEWED_APP_SCOPE)
+        self.assertNotIn(scope.CAT_ENTRY_SEARCH_COMPANION, scope.REVIEWABLE_APP_PATHS)
+        self.assertNotIn(scope.CAT_ENTRY_SEARCH_COMPANION, scope.PHOTO_VIEWS)
+        self.assertEqual(planner.required_jobs(list(changes), scope.REVIEWED_APP_SCOPE),
+                         (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.REVIEWED_APP_SCOPE))
+        self.assertEqual(len(scope.native_tests(scope.REVIEWED_APP_SCOPE)), 4)
+        self.assertEqual(scope.lanes(scope.REVIEWED_APP_SCOPE), ("runtime", "app-ui"))
+
+    def test_cat_entry_companion_rejects_other_changes_even_with_matching_hashes(self):
+        before, after = self.cat_entry_changes()[scope.CAT_ENTRY_SEARCH_COMPANION]
+        for pair in (
+            (before, after.replace('"メモを検索"', '"別の検索"')),
+            (before, after.replace("bar.delegate = context.coordinator", "bar.delegate = nil")),
+            (before, after + "// another changed line\n"),
+            (before + before, after + after),
+            (before.replace('        bar.placeholder = "言葉・猫の名前で探す"\n',
+                            '        bar.placeholder = "言葉・猫の名前で探す"\n' * 2),
+             after.replace('        bar.placeholder = "メモを検索"\n',
+                           '        bar.placeholder = "メモを検索"\n'
+                           '        bar.placeholder = "言葉・猫の名前で探す"\n')),
+            (after, before),
+            (before, before),
+        ):
+            with self.subTest(pair=pair):
+                self.assertEqual(scope.select_scope(self.cat_entry_changes(pair)), scope.FULL_SCOPE)
+        changes = self.cat_entry_changes()
+        for missing in (scope.CAT_ENTRY_PATH, scope.REVIEW_MANIFEST):
+            altered = dict(changes)
+            del altered[missing]
+            if missing != scope.REVIEW_MANIFEST:
+                review = json.loads(altered[scope.REVIEW_MANIFEST][1])
+                del review["files"][missing]
+                altered[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
+            self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+        self.assertFalse(scope.accepts_paths(scope.REVIEWED_APP_SCOPE,
+                                            {scope.CAT_ENTRY_SEARCH_COMPANION, scope.REVIEW_MANIFEST}))
+        for side in (0, 1):
+            altered = dict(changes)
+            pair = list(altered[scope.CAT_ENTRY_SEARCH_COMPANION])
+            pair[side] += "unreviewed"
+            altered[scope.CAT_ENTRY_SEARCH_COMPANION] = tuple(pair)
+            self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+        for side in ("before", "after"):
+            review = json.loads(changes[scope.REVIEW_MANIFEST][1])
+            review["files"][scope.CAT_ENTRY_SEARCH_COMPANION][side] = "f" * 64
+            altered = dict(changes, **{scope.REVIEW_MANIFEST: ("{}", json.dumps(review))})
+            self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+
+    def test_cat_entry_companion_still_requires_existing_regular_files(self):
+        changes = self.cat_entry_changes()
+        paths = sorted(changes)
+        base = "b" * 40
+        def selected(header=":100644 100644", status="M"):
+            raw = "".join(
+                f"{header if path == scope.CAT_ENTRY_SEARCH_COMPANION else ':100644 100644'} "
+                f"{'c' * 40} {'d' * 40} {status if path == scope.CAT_ENTRY_SEARCH_COMPANION else 'M'}\0{path}\0"
+                for path in paths)
+            def git(*args):
+                if args[0] == "diff":
+                    return raw
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        self.assertEqual(selected(), scope.REVIEWED_APP_SCOPE)
+        for header, status in ((":000000 100644", "A"), (":100644 000000", "D"),
+                               (":100644 100755", "M"), (":100644 120000", "T"),
+                               (":100644 100644", "R100")):
+            with self.subTest(header=header, status=status):
+                self.assertEqual(selected(header, status), scope.FULL_SCOPE)
+
     def setUp(self):
         self.sha = "a" * 40
         self.now = dt.datetime(2026, 9, 7, 12, tzinfo=dt.timezone.utc)

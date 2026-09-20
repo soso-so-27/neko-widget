@@ -93,6 +93,10 @@ REVIEWABLE_APP_PATHS = PHOTO_VIEWS | frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift",
 })
+# Not a general reviewed-app path: only the exact placeholder replacement below
+# may accompany the cat-list presentation batch, with both full-source hashes.
+CAT_ENTRY_PATH = "NekoWidget/NekoWidget/Views/CatProfilesView.swift"
+CAT_ENTRY_SEARCH_COMPANION = "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift"
 # Only exact independently reviewed UI/read-projection batches use this profile.
 # These are not added to the generic photo or reviewed-app allowlists.
 MEMORY_TEST_PATH = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
@@ -156,8 +160,17 @@ def reviewed_app_changes(changes: dict[str, tuple[str, str]]) -> bool:
     if REVIEW_MANIFEST not in changes:
         return False
     app = {path: value for path, value in changes.items() if path != REVIEW_MANIFEST}
-    if not app or not set(app) <= REVIEWABLE_APP_PATHS:
+    if not app:
         return False
+    extra = set(app) - REVIEWABLE_APP_PATHS
+    if extra:
+        if extra != {CAT_ENTRY_SEARCH_COMPANION} or CAT_ENTRY_PATH not in app:
+            return False
+        before, after = app[CAT_ENTRY_SEARCH_COMPANION]
+        old = '\n        bar.placeholder = "言葉・猫の名前で探す"\n'
+        new = '\n        bar.placeholder = "メモを検索"\n'
+        if before.splitlines().count(old.strip("\n")) != 1 or after != before.replace(old, new, 1):
+            return False
     try:
         review = json.loads(changes[REVIEW_MANIFEST][1])
         if "scope" in review:
@@ -409,6 +422,12 @@ def source_paths(paths):
 
 
 def accepts_paths(scope: str, paths) -> bool:
+    sources = source_paths(paths)
+    if scope == REVIEWED_APP_SCOPE and CAT_ENTRY_SEARCH_COMPANION in sources:
+        # Path prefilter only; reviewed_app_changes must first prove the exact
+        # one-line content change and complete manifest before selecting scope.
+        return CAT_ENTRY_PATH in sources and sources <= (
+            REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST, CAT_ENTRY_SEARCH_COMPANION})
     allowed = {
         PHOTO_SCOPE: PHOTO_VIEWS, OFFICIAL_SCOPE: {OFFICIAL_VIEW},
         COMBINED_SCOPE: MAPPED_VIEWS,
@@ -421,7 +440,6 @@ def accepts_paths(scope: str, paths) -> bool:
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
-    sources = source_paths(paths)
     return scope == FULL_SCOPE or bool(sources and sources <= allowed.get(scope, set()))
 
 PHOTO_TESTS = (
