@@ -7,7 +7,7 @@
   "files": {
     "NekoWidget/NekoWidget/Views/HomeView.swift": {
       "before": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0",
-      "after": "4eac7485951023200e55c00ba9bb718707aaf5f99ac2c1f3a64440d07c517a65"
+      "after": "6b9b182a9d972b084901714863a797be5abc03fb830cc33cfba6b9c68cae6951"
     },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
       "before": "bc49e8c9b14cb46282893cc3233759a915b5084dd37e192b3caf0da3812c179d",
@@ -23,7 +23,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264",
-      "after": "9fed2cd09a09d4a0d9a871c1abfdc4845f438fc4ab7fb9ebccadd5cc53f12a51"
+      "after": "ad132735c0a9cccc5eae2c9316b9aada142be14e8035626703bada76fa40b0df"
     }
   }
 }

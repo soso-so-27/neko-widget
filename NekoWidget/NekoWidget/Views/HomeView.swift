@@ -72,6 +72,12 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     @State private var pendingIdentifier: String?
     @State private var viewportHeight: CGFloat = 0
     @State private var requestedRestoration = false
+    @State private var itemLayoutRevision = 0
+
+    private struct RestorationRequest: Equatable {
+        let identifier: String
+        let layoutRevision: Int
+    }
 
     init(section: String?, isSearching: Bool) {
         self.section = section
@@ -97,17 +103,19 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                 }
                 .onDisappear { isVisible = false }
                 .onPreferenceChange(PhotoLibraryItemCatalog.self) { catalog = $0 }
-                .task(id: restoreTarget) {
-                    guard let target = restoreTarget else { return }
-                    // Wait until the loaded rows (including a paged grid) have entered layout.
-                    await Task.yield()
+                .task(id: restorationRequest) {
+                    guard let request = restorationRequest else { return }
                     guard !Task.isCancelled, !restored else { return }
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
-                    withTransaction(transaction) { proxy.scrollTo(target, anchor: .top) }
+                    withTransaction(transaction) { proxy.scrollTo(request.identifier, anchor: .top) }
                     requestedRestoration = true
                 }
                 .onPreferenceChange(PhotoLibraryItemFrames.self) { frames in
+                    // A catalog is not proof that List has installed its rows. Wait for
+                    // actual cell layout and reevaluate on subsequent layout changes
+                    // until the saved row is visible. This also handles async reloads.
+                    if !restored, !frames.isEmpty { itemLayoutRevision &+= 1 }
                     guard let section, isVisible, !isSearching, !catalog.isEmpty else { return }
                     let visible = frames.filter {
                         $0.value.maxY > 1 && $0.value.minY < viewportHeight && $0.value.height > 0
@@ -140,10 +148,11 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
         }
     }
 
-    private var restoreTarget: String? {
+    private var restorationRequest: RestorationRequest? {
         guard section != nil, isVisible, !restored, !isSearching,
+              viewportHeight > 0, itemLayoutRevision > 0,
               let pendingIdentifier, catalog.contains(pendingIdentifier) else { return nil }
-        return pendingIdentifier
+        return RestorationRequest(identifier: pendingIdentifier, layoutRevision: itemLayoutRevision)
     }
 }
 

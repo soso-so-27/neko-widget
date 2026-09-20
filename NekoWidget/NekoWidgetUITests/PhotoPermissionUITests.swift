@@ -2863,9 +2863,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed)
         func assertVisible(_ target: XCUIElement) {
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            let outcome = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate { _, _ in target.exists && target.isHittable }, object: nil)],
-                timeout: 10), .completed)
+                timeout: 10)
+            if outcome != .completed { attach(app, name: "photos-position-restoration-failure") }
+            XCTAssertEqual(outcome, .completed, app.debugDescription)
         }
         func scrollTo(_ target: XCUIElement) {
             for _ in 0..<8 {
