@@ -24,5 +24,5 @@
 - 実Gitで、今回の差分はci-selection-v1、以前の保存変更を含めるとfull-v1・目標超過・ready=falseになることを確認。後者の検証は判定のみで、製品テストを実行していない。
 - [候補CI 35495098428](https://github.com/soso-so-27/neko-widget/actions/runs/35495098428) は必要5jobとplanが成功。**22分21秒、runner合計88.6分**（課金額ではない）。再試行なし。候補確定15:45:23 JSTからCI終了約16:08:43まで約23分20秒。
 - [main CI 35496125531](https://github.com/soso-so-27/neko-widget/actions/runs/35496125531) は18秒。同一SHAの成功証拠を再利用。アプリ・workflow・署名・公開・課金は変更せず、TestFlightは追加していない。
-- この結果をci-timing-baseline.jsonへ追記する変更で、development-tools-v1の実行経路も確認する。導入自体の22分21秒は全機能変更の短縮実績ではない。
+- 実測値とhandoffだけの更新 `19cd7fe` は、[CI 35496202405](https://github.com/soso-so-27/neko-widget/actions/runs/35496202405) で **development-tools-v1・12秒**。plan内のPython検証だけが実行成功し、Mac jobは起動していない。新しい軽量経路を実際のpushで確認。この12秒も計測資料へ反映し、次回に未計測判断を繰り返さない。導入自体の22分21秒は全機能変更の短縮実績ではない。
 - 証拠：`C:/dev/neko-evidence/development-base-rules-20260920/`。global AGENTS.mdの更新はユーザー環境のルールで、リポジトリcommitには含まれない。
