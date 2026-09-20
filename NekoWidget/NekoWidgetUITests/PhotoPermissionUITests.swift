@@ -2297,7 +2297,7 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations() {
-        let memoApp = launch("memo")
+        let memoApp = launch("memo", arguments: ["--photo-window-ui-fixture"])
         assertAlbumsRoot(in: memoApp)
         let memoCard = memoApp.buttons["albums-memo-featured"]
         XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
