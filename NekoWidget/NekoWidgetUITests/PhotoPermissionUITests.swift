@@ -2867,7 +2867,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 predicate: NSPredicate { _, _ in target.exists && target.isHittable }, object: nil)],
                 timeout: 10)
             if outcome != .completed { attach(app, name: "photos-position-restoration-failure") }
-            XCTAssertEqual(outcome, .completed, app.debugDescription)
+            let trace = app.otherElements["memory-library-fixture"].value as? String ?? "No position trace"
+            XCTAssertEqual(outcome, .completed, app.debugDescription + "\nPOSITION TRACE:\n" + trace)
         }
         func scrollTo(_ target: XCUIElement) {
             for _ in 0..<8 {
@@ -2876,14 +2877,25 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             }
             assertVisible(target)
         }
+        func attachPositionTrace(_ name: String) {
+            let trace = app.otherElements["memory-library-fixture"].value as? String ?? "No position trace"
+            let attachment = XCTAttachment(string: trace)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         all.tap()
         let lowerPhoto = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-30"]
         scrollTo(lowerPhoto)
         let photoY = lowerPhoto.frame.minY
+        attach(app, name: "photos-all-scrolled-before-leaving")
+        attachPositionTrace("photos-all-position-before-leaving")
         favorites.tap()
         let lowerFavorite = app.buttons["saved-memory-photo-app-store-screenshot-fixture-page-18"]
         scrollTo(lowerFavorite)
         let favoriteY = lowerFavorite.frame.minY
+        attach(app, name: "photos-favorites-scrolled-before-leaving")
+        attachPositionTrace("photos-favorites-position-before-leaving")
         entry.tap()
         let lowerNote = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "memory-note-row-", "スクロール確認 8")).firstMatch
@@ -2895,6 +2907,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         assertVisible(lowerNote)
         XCTAssertLessThan(abs(lowerNote.frame.minY - noteY), lowerNote.frame.height + 2)
+        attachPositionTrace("photos-notes-position-before-switching-back")
         all.tap()
         assertVisible(lowerPhoto)
         XCTAssertLessThan(abs(lowerPhoto.frame.minY - photoY), lowerPhoto.frame.height + 2)

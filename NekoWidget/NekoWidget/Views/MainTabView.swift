@@ -31,6 +31,7 @@ final class PhotoLibrarySelectionState: ObservableObject {
         let saved = defaults.string(forKey: storageKey).flatMap(PhotoLibrarySection.init(rawValue:))
         selection = saved ?? .all
         hasResolvedSelection = saved != nil
+        PhotoLibraryReadingPosition.activeSection = selection.rawValue
     }
 
     var binding: Binding<PhotoLibrarySection> {
@@ -38,6 +39,9 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 
     func select(_ section: PhotoLibrarySection) {
+        // Freeze the outgoing list before its disappearance/layout callbacks.
+        PhotoLibraryReadingPosition.activeSection = section.rawValue
+        PhotoLibraryReadingPosition.diagnose("section \(selection.rawValue) -> \(section.rawValue)")
         resolutionID = nil
         hasResolvedSelection = true
         selection = section

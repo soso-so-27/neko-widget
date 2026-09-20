@@ -897,6 +897,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
     @StateObject private var selection = PhotoLibrarySelectionState(defaults: PhotoLibraryReadingPosition.defaults)
     @State private var showsSettings = false
     @State private var readingRevision = 0
+    @State private var positionDiagnostics = ""
 
     private var photos: [PhotoPresentation] {
         if CommandLine.arguments.contains("--memory-library-no-photo") { return [] }
@@ -920,7 +921,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("memory-library-fixture")
-                    .accessibilityValue("all=\(PhotoLibraryReadingPosition.identifier(for: "all") ?? "none"); favorites=\(PhotoLibraryReadingPosition.identifier(for: "favorites") ?? "none"); notes=\(PhotoLibraryReadingPosition.identifier(for: "notes") ?? "none")")
+                    .accessibilityValue(positionDiagnostics)
                     .navigationTitle("写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
@@ -998,6 +999,9 @@ struct PhotoMemoryNoteLibraryFixture: View {
         }
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--photo-window-large") ? .accessibility5 : .large)
         .preferredColorScheme(.dark)
+        .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
+            positionDiagnostics = PhotoLibraryReadingPosition.diagnosticEvents.joined(separator: "\n")
+        }
     }
 
     @ViewBuilder private var fixtureSection: some View {

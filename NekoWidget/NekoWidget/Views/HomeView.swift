@@ -2,13 +2,32 @@ import SwiftUI
 import UIKit
 
 /// Only reading position is persisted here. No photo, note or cloud state is changed.
+@MainActor
 enum PhotoLibraryReadingPosition {
-    static var defaults: UserDefaults {
+    static let defaults: UserDefaults = {
 #if DEBUG
         if let suite = ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"],
            let defaults = UserDefaults(suiteName: suite) { return defaults }
 #endif
         return .standard
+    }()
+    static var activeSection: String?
+
+#if DEBUG
+    static var diagnosticEvents: [String] = []
+    static let diagnosticNotification = Notification.Name("PhotoLibraryReadingPositionDiagnostic")
+#endif
+    static func diagnose(_ event: String) {
+#if DEBUG
+        guard ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
+        diagnosticEvents.append(event.replacingOccurrences(of: "app-store-screenshot-fixture-page-", with: "p"))
+        diagnosticEvents = Array(diagnosticEvents.suffix(80))
+        // The native scroll binding can run inside a layout transaction.
+        // Publish test diagnostics after that transaction, never mutate its ancestor.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: diagnosticNotification, object: nil)
+        }
+#endif
     }
 
     static func identifier(for section: String) -> String? {
@@ -18,6 +37,7 @@ enum PhotoLibraryReadingPosition {
     static func save(_ identifier: String?, section: String) {
         let key = "photoLibrary.position.\(section).v1"
         guard defaults.string(forKey: key) != identifier else { return }
+        diagnose("save \(section): \(defaults.string(forKey: key) ?? "nil") -> \(identifier ?? "nil")")
         if let identifier { defaults.set(identifier, forKey: key) }
         else { defaults.removeObject(forKey: key) }
     }
@@ -51,17 +71,28 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
         if let section {
             content
                 .scrollPosition(id: Binding<String?>(get: { position }, set: { value in
+                    if value != position {
+                        PhotoLibraryReadingPosition.diagnose("set \(section): \(value ?? "nil") pending=\(pendingPosition ?? "nil") drag=\(userScrolled) visible=\(isVisible) active=\(PhotoLibraryReadingPosition.activeSection ?? "nil")")
+                    }
                     // An initially empty/async catalog must not erase the requested row.
                     if let pendingPosition, !userScrolled {
                         guard value == pendingPosition else { return }
                         self.pendingPosition = nil
                     }
                     position = value
-                    if isVisible, userScrolled, !isSearching, let value {
+                    if isVisible, userScrolled, !isSearching,
+                       PhotoLibraryReadingPosition.activeSection == section, let value {
                         PhotoLibraryReadingPosition.save(value, section: section)
                     }
                 }), anchor: .top)
-                .onAppear { isVisible = true }
+                .onAppear {
+                    let saved = PhotoLibraryReadingPosition.identifier(for: section)
+                    pendingPosition = saved
+                    userScrolled = false
+                    position = saved
+                    isVisible = true
+                    PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
+                }
                 .onDisappear { isVisible = false }
                 .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
                     userScrolled = true
