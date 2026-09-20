@@ -173,10 +173,17 @@ def read_diagnostic_evidence(run, head):
             or job.get("status") != "completed" or not job.get("conclusion")
             or not job.get("started_at") or not job.get("completed_at")):
         raise ValueError("Diagnostic job identity, attempt or completion does not match")
-    # Completed job logs only: never merge an earlier attempt or parse a live tail.
-    log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
+    if job.get("conclusion") == "cancelled" and job.get("steps") == []:
+        # GitHub may have no log when cancellation precedes every step. This
+        # proves no passes; keep each declaration incomplete until a later run.
+        results = {test: "incomplete" for test in declared}
+    else:
+        # Missing steps or any step still requires the exact completed job log.
+        # Never merge an earlier attempt or parse a live tail.
+        log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
+        results = diagnostic_case_results(declared, log)
     return {"head": head, "source_sha": run["head_sha"], "run_attempt": attempt, "job_id": job["id"],
-            "started_at": job["started_at"], "results": diagnostic_case_results(declared, log)}
+            "started_at": job["started_at"], "results": results}
 
 
 def apply_task_gate(result, runs, now=None, measure_baseline=False):
