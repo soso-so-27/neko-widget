@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "scope": "reviewed-memory-read-ui-v2",
-  "purpose": "Photos navigation only: Memo/Favorites/All order, first-visit local-catalog choice, device-local selected section and native SwiftUI scroll-position restoration. Memo list uses lazy scroll targets with the same year groups and read/edit/search actions. No note/archive/Photos mutation, account identity, sharing or permission changes. DEBUG fixtures cover initial choice, section switch, detail return and process restart.",
+  "purpose": "Photos navigation only: Memo/Favorites/All order, initial local-catalog selection and persisted section/reading target. One lazy vertical target layout uses fixed three-photo rows to restore grids; memo year groups and read/edit/search actions retained. No record/account/sharing/permission mutation. DEBUG fixtures cover first choice, scrolling each section, detail return and process restart.",
   "visualReview": "user-device",
   "dataReview": "read-only-projection",
   "files": {
     "NekoWidget/NekoWidget/Views/HomeView.swift": {
       "before": "e70367392a5b991c99bcabe1bef9fae9cb609fc45ef0458037e2ef7acff5e1e0",
-      "after": "99f6a1188c729743664552c9c9cd32efaf51a02a66d919e1ec6bcaf784b2790d"
+      "after": "924ff3ea0b14745524551e51072868305911f75841c0dc96eb4050ea104e71a5"
     },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
       "before": "bc49e8c9b14cb46282893cc3233759a915b5084dd37e192b3caf0da3812c179d",
-      "after": "6c53d1aa9a71b3b97bdf7150b47f9358e3d61e21ae70e82ae4b11095368b3758"
+      "after": "d1f2eef1470ba325f465f11ba5bb12ca99fa3733f1de6e92c6135952a572e636"
     },
     "NekoWidget/NekoWidget/Views/MainTabView.swift": {
       "before": "c5fdea5c69f55fcb59eec36118f7480a921fcdd294bfd617f57f66d3f9babfcf",
@@ -23,7 +23,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "0b7f49d0391ae44906dc3071552c2e20bee4b809572cd1b4924871bcd9b5f264",
-      "after": "cfe9d7326bc447e35c74b9b3ec75c7530937f95f1c25288131ed769b056493d9"
+      "after": "762435d1c6430588b5da03eb676ecd2f856a1ef80f8cb10a96e17d172e22098b"
     }
   }
 }

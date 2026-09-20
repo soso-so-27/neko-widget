@@ -1553,17 +1553,20 @@ struct SavedMemoriesGalleryView: View {
                 )
             } else {
                 ScrollView {
-                    LazyVGrid(columns: photoColumns, spacing: 3) {
-                        ForEach(photos) { photo in
-                            gridItem(photo)
-                                .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
-                                .id(photo.localIdentifier)
+                    LazyVStack(spacing: 3) {
+                        ForEach(PhotoLibraryGridRow.rows(photos)) { row in
+                            PhotoLibraryGridRowView(row: row, spacing: 3) { photo in
+                                gridItem(photo)
+                                    .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
+                            }
+                            .id(row.id)
                         }
                     }
                     .scrollTargetLayout(isEnabled: isEmbedded)
                     .padding(3)
                 }
-                .restoringPhotoLibraryPosition(section: isEmbedded ? "favorites" : nil)
+                .restoringPhotoLibraryPosition(section: isEmbedded ? "favorites" : nil,
+                    normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: photos) })
             }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
@@ -1625,10 +1628,6 @@ struct SavedMemoriesGalleryView: View {
             photoBookExportTask?.cancel()
             photoBookExportTask = nil
         }
-    }
-
-    private var photoColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
     }
 
     private var creationOptions: some View {

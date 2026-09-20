@@ -44,8 +44,47 @@ enum PhotoLibraryReadingPosition {
 }
 
 extension View {
-    func restoringPhotoLibraryPosition(section: String?, isSearching: Bool = false) -> some View {
-        modifier(PhotoLibraryPositionRestoration(section: section, isSearching: isSearching))
+    func restoringPhotoLibraryPosition(section: String?, isSearching: Bool = false,
+                                       normalize: @escaping (String) -> String = { $0 }) -> some View {
+        modifier(PhotoLibraryPositionRestoration(section: section, isSearching: isSearching,
+                                                normalize: normalize))
+    }
+}
+
+/// A vertical scrolling target is one complete row, with a stable photo ID.
+/// Keeping cells inside an ordinary HStack avoids resolving a nested grid's
+/// container rectangle as the target of an individual cell.
+struct PhotoLibraryGridRow: Identifiable {
+    let photos: [PhotoPresentation]
+    var id: String { photos[0].localIdentifier }
+
+    static func rows(_ photos: [PhotoPresentation]) -> [Self] {
+        stride(from: 0, to: photos.count, by: 3).map { start in
+            Self(photos: Array(photos[start..<min(start + 3, photos.count)]))
+        }
+    }
+
+    static func identifier(containing identifier: String, in photos: [PhotoPresentation]) -> String {
+        guard let index = photos.firstIndex(where: { $0.localIdentifier == identifier }) else { return identifier }
+        return photos[(index / 3) * 3].localIdentifier
+    }
+}
+
+struct PhotoLibraryGridRowView<Cell: View>: View {
+    let row: PhotoLibraryGridRow
+    let spacing: CGFloat
+    @ViewBuilder let cell: (PhotoPresentation) -> Cell
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            ForEach(row.photos) { photo in
+                Color.clear.aspectRatio(1, contentMode: .fit)
+                    .overlay { cell(photo) }
+            }
+            ForEach(row.photos.count..<3, id: \.self) { _ in
+                Color.clear.aspectRatio(1, contentMode: .fit)
+            }
+        }
     }
 }
 
@@ -54,15 +93,17 @@ extension View {
 private struct PhotoLibraryPositionRestoration: ViewModifier {
     let section: String?
     let isSearching: Bool
+    let normalize: (String) -> String
     @State private var position: String?
     @State private var pendingPosition: String?
     @State private var userScrolled = false
     @State private var isVisible = false
 
-    init(section: String?, isSearching: Bool) {
+    init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
         self.isSearching = isSearching
-        let saved = section.flatMap(PhotoLibraryReadingPosition.identifier)
+        self.normalize = normalize
+        let saved = section.flatMap(PhotoLibraryReadingPosition.identifier).map(normalize)
         _position = State(initialValue: saved)
         _pendingPosition = State(initialValue: saved)
     }
@@ -86,7 +127,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     }
                 }), anchor: .top)
                 .onAppear {
-                    let saved = PhotoLibraryReadingPosition.identifier(for: section)
+                    let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
                     pendingPosition = saved
                     userScrolled = false
                     position = saved
@@ -100,7 +141,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                 })
                 .onChange(of: isSearching) { _, searching in
                     if !searching {
-                        let saved = PhotoLibraryReadingPosition.identifier(for: section)
+                        let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
                         pendingPosition = saved
                         userScrolled = false
                         position = saved
@@ -187,21 +228,25 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            LazyVStack(spacing: 2) {
                 if hasPhotoAccess {
-                    if isLimitedAccess {
-                        LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
-                    }
+                    VStack(spacing: 18) {
+                        if isLimitedAccess {
+                            LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                        }
 
-                    catProfilesSection
+                        catProfilesSection
 
-                    if case .unavailable = photoSourceStatus {
-                        photoSourceRecoveryLink
-                    }
+                        if case .unavailable = photoSourceStatus {
+                            photoSourceRecoveryLink
+                        }
 
-                    if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
-                        widgetPlacementCard
+                        if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
+                            widgetPlacementCard
+                        }
                     }
+                    .padding(.bottom, 16)
+                    .id("photo-library-all-header")
 
                     if !catPhotos.isEmpty {
                         detectedPhotosSection
@@ -211,12 +256,15 @@ struct HomeView: View {
                 } else {
                     photoAccessCard
                 }
-                supplementaryPhotos
+                supplementaryPhotos.padding(.top, 16)
+                    .id("photo-library-all-archive")
             }
+            .scrollTargetLayout(isEnabled: isEmbedded)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .restoringPhotoLibraryPosition(section: isEmbedded ? "all" : nil)
+        .restoringPhotoLibraryPosition(section: isEmbedded ? "all" : nil,
+            normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
@@ -303,8 +351,7 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    private var detectedPhotosSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    @ViewBuilder private var detectedPhotosSection: some View {
             HStack(alignment: .firstTextBaseline) {
                 Text("すべての猫写真")
                     .font(.title3.bold())
@@ -315,12 +362,12 @@ struct HomeView: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            .padding(.top, 2)
+            .padding(.bottom, 8)
+            .id("photo-library-all-heading")
 
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3),
-                spacing: 2
-            ) {
-                ForEach(catPhotos.prefix(restoredDetectedPhotoCount)) { photo in
+            ForEach(PhotoLibraryGridRow.rows(Array(catPhotos.prefix(restoredDetectedPhotoCount)))) { row in
+                PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                     NavigationLink(value: PhotosRoute.collectionPhoto(photo.localIdentifier)) {
                         PhotoAssetImageView(
                             localIdentifier: photo.localIdentifier,
@@ -334,16 +381,12 @@ struct HomeView: View {
                     .accessibilityIdentifier("photo-hub-photo-\(photo.localIdentifier)")
                     .accessibilityLabel(detectedPhotoAccessibilityLabel(photo))
                     .accessibilityHint("写真を大きく表示します")
-                    .id(photo.localIdentifier)
-                    .onAppear {
-                        revealNextDetectedPhotos(after: photo.localIdentifier)
-                    }
+                }
+                .id(row.id)
+                .onAppear {
+                    if let last = row.photos.last { revealNextDetectedPhotos(after: last.localIdentifier) }
                 }
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-        }
-        .padding(.top, 2)
     }
 
     private func revealNextDetectedPhotos(after localIdentifier: String) {

@@ -2891,7 +2891,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "photos-all-scrolled-before-leaving")
         attachPositionTrace("photos-all-position-before-leaving")
         favorites.tap()
-        let lowerFavorite = app.buttons["saved-memory-photo-app-store-screenshot-fixture-page-18"]
+        let lowerFavorite = app.buttons["saved-memory-photo-app-store-screenshot-fixture-page-30"]
         scrollTo(lowerFavorite)
         let favoriteY = lowerFavorite.frame.minY
         attach(app, name: "photos-favorites-scrolled-before-leaving")
