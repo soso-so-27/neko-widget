@@ -3027,7 +3027,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         input.tap()
         input.typeText("文章は残っている。")
         app.buttons["photo-memory-note-keyboard-done"].tap()
-        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let save = app.buttons["photo-memory-note-save"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true AND isHittable == true"), object: save)], timeout: 5), .completed)
+        save.tap()
+        // The reading view remains in the hierarchy behind the editor sheet.
+        // Confirm dismissal before inspecting its updated, visible body.
+        XCTAssertTrue(input.waitForNonExistence(timeout: 5))
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "文章は残っている。"), object: body)], timeout: 5), .completed)
@@ -3261,13 +3268,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     @MainActor
     func testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption() {
         let app = XCUIApplication()
-        app.launchArguments = ["--photo-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = ["--photo-window-ui-fixture", "--memo-local-account-change-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let open = app.buttons["photo-memory-note-open"]
         XCTAssertTrue(open.waitForExistence(timeout: 15))
         open.tap()
         let input = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(input.isEnabled, "An account notification must leave a local-only memo editable.")
+        XCTAssertFalse(app.alerts["メモを保存できませんでした"].exists,
+                       "An account notification must not report a local-only memo save failure.")
         func clearMemoText() {
             let existing = input.value as? String ?? ""
             // Focus first so the keyboard has finished resizing the form,

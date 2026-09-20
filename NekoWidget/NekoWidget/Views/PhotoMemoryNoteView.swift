@@ -326,6 +326,11 @@ struct PhotoMemoryNoteEditor: View {
             .task {
                 photoAccess.start(photos: photo.map { [$0] } ?? [])
                 await load()
+#if DEBUG
+                if CommandLine.arguments.contains("--memo-local-account-change-fixture") {
+                    NotificationCenter.default.post(name: .CKAccountChanged, object: nil)
+                }
+#endif
             }
             .onChange(of: photo) { _, value in photoAccess.start(photos: value.map { [$0] } ?? []) }
             .onChange(of: scenePhase) { _, phase in
@@ -334,6 +339,9 @@ struct PhotoMemoryNoteEditor: View {
             .onDisappear { photoAccess.stop() }
             .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
                 .receive(on: DispatchQueue.main)) { _ in
+                // A local memo can be edited independently of iCloud. Editors
+                // tied to an archive account keep the existing invalidation.
+                guard archiveAccount != nil || enrollmentAccount != nil else { return }
                 accountChanged = true
                 saveError = "Apple Accountが変わりました。入力内容を控えてから開き直してください。"
             }
