@@ -295,6 +295,45 @@ class PreflightTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 preflight.read_diagnostic_evidence(run, run["head_sha"])
 
+    def test_cancelled_before_steps_is_incomplete_without_logs_and_later_pass_supersedes_it(self):
+        run, job, _ = self.diagnostic_fixture()
+        run = {**run, "conclusion": "cancelled"}
+        job = {**job, "conclusion": "cancelled", "steps": []}
+        with patch.object(preflight, "github", return_value={"total_count": 1, "jobs": [job]}) as api:
+            run["diagnostic_evidence"] = preflight.read_diagnostic_evidence(run, run["head_sha"])
+        self.assertEqual(api.call_count, 1)  # No nonexistent job log requested.
+        self.assertEqual(set(run["diagnostic_evidence"]["results"].values()), {"incomplete"})
+        self.assertEqual(len(run["diagnostic_evidence"]["results"]), 3)
+        for change in ({"run_attempt": 1}, {"head_sha": "b" * 40}, {"status": "in_progress"}):
+            with patch.object(preflight, "github", return_value={"total_count": 1, "jobs": [{**job, **change}]}):
+                with self.assertRaises(ValueError):
+                    preflight.read_diagnostic_evidence(run, run["head_sha"])
+        def check(runs):
+            return preflight.apply_task_gate({"ready": True, "head": run["head_sha"], "target_minutes": 30,
+                "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}, runs,
+                now=dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc))
+        self.assertFalse(check([run])["ready"])
+        repaired = self.diagnostic_run_evidence({**run, "id": 13, "conclusion": "success",
+                                               "created_at": "2026-09-20T11:59:00Z"})
+        self.assertTrue(check([repaired, run])["ready"])
+        later_cancelled = {**run, "id": 14, "diagnostic_evidence": {
+            **run["diagnostic_evidence"], "started_at": "2026-09-20T11:59:30Z"}}
+        self.assertFalse(check([repaired, run, later_cancelled])["ready"])
+
+    def test_missing_or_nonempty_steps_and_non_cancelled_job_still_require_logs(self):
+        run, job, _ = self.diagnostic_fixture()
+        for change in ({"conclusion": "cancelled"},
+                       {"conclusion": "cancelled", "steps": None},
+                       {"conclusion": "cancelled", "steps": [{"name": "Set up job", "status": "completed"}]},
+                       {"conclusion": "failure", "steps": []},
+                       {"conclusion": "success", "steps": []}):
+            with self.subTest(change=change), patch.object(preflight, "github", side_effect=[
+                    {"total_count": 1, "jobs": [{**job, **change}]}, ValueError("logs unavailable")]) as api:
+                with self.assertRaisesRegex(ValueError, "logs unavailable"):
+                    preflight.read_diagnostic_evidence(run, run["head_sha"])
+                self.assertEqual(api.call_count, 2)
+                self.assertTrue(api.call_args.kwargs["raw"])
+
     def test_diagnostic_transcript_rejects_duplicates_extras_skips_and_incomplete_cases(self):
         run, _, log = self.diagnostic_fixture()
         declared = preflight.diagnostic_title_tests(run["display_title"])
