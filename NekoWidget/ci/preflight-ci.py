@@ -21,6 +21,15 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 REPOSITORY = "soso-so-27/neko-widget"
 DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
+# Deliberately narrower than DEVELOPMENT_PATHS. No workflow, selector, test
+# runner, app/test fixture, watch, docs or timing changes inherit UI evidence.
+DIAGNOSTIC_HELPER_PATHS = frozenset({
+    "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
+})
+DIAGNOSTIC_JOB_NAMES = frozenset({
+    "Diagnostic only - one native UI test (not release evidence)",
+    "Diagnostic only - up to three native UI tests (not release evidence)",
+})
 
 
 def github(path, raw=False):
@@ -36,7 +45,7 @@ def github(path, raw=False):
     return result.stdout if raw else json.loads(result.stdout)
 
 
-def read_task_runs():
+def read_task_runs(head=None):
     # A task uses matching codex/<task> and diagnostic/<task> branches. Look at
     # both, so a diagnostic push cannot reset the time/failure accounting.
     branch = planner.git("branch", "--show-current")
@@ -73,6 +82,13 @@ def read_task_runs():
                     # do not require an unrelated UI test to diagnose it.
                     run["failed_ui"] = run["failed_ui"] or bool(cases)
                     run["failed_tests"].extend(methods)
+        if (run["path"] == DIAGNOSTIC_WORKFLOW and run.get("status") == "completed"
+                and run.get("event") == "workflow_dispatch"
+                and run.get("head_branch", "").startswith("diagnostic/")):
+            if head is None:
+                head = planner.git("rev-parse", "HEAD")
+            if diagnostic_source_matches(run.get("head_sha", ""), head):
+                run["diagnostic_evidence"] = read_diagnostic_evidence(run, head)
     return list(runs.values())
 
 
@@ -94,6 +110,75 @@ def diagnostic_title_tests(title):
         return set()
 
 
+def diagnostic_source_matches(source, head):
+    """A diagnosis only; never release evidence reuse or a selector exception."""
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) for value in (source, head)):
+        return False
+    if source == head:
+        return True
+    try:
+        planner.git("merge-base", "--is-ancestor", source, head)
+        raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head)
+    except subprocess.CalledProcessError:
+        return False
+    records = raw.split("\0")
+    if records[-1:] == [""]:
+        records.pop()
+    if len(records) % 2:
+        return False
+    seen = set()
+    for index in range(0, len(records), 2):
+        fields, path = records[index].split(), records[index + 1]
+        if (path not in DIAGNOSTIC_HELPER_PATHS or path in seen or len(fields) != 5
+                or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
+            return False
+        seen.add(path)
+    # Examining the entire raw diff also proves equality of every other tracked
+    # path, including its mode/type. Added/deleted/renamed/symlink helpers fail.
+    return True
+
+
+def diagnostic_case_results(declared, log):
+    events = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", log)
+    expected = {"NekoWidgetUITests." + test.replace("/", " "): test for test in declared}
+    if any(case not in expected for case, _ in events):
+        return {test: "invalid" for test in declared}
+    results = {}
+    for case, test in expected.items():
+        statuses = [status for name, status in events if name == case]
+        if statuses == ["started", "passed"]:
+            results[test] = "passed"
+        elif statuses in (["started", "failed"], ["started", "skipped"]):
+            results[test] = statuses[-1]
+        elif statuses in ([], ["started"]):
+            results[test] = "incomplete"
+        else:
+            # Duplicate/reordered outcomes make the whole transcript ambiguous.
+            return {method: "invalid" for method in declared}
+    return results
+
+
+def read_diagnostic_evidence(run, head):
+    declared = diagnostic_title_tests(run.get("display_title", ""))
+    attempt = run.get("run_attempt")
+    if not declared or type(attempt) is not int or attempt < 1:
+        raise ValueError("Diagnostic declaration or attempt is missing")
+    jobs = github(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+    if jobs.get("total_count") != 1 or len(jobs.get("jobs", [])) != 1:
+        raise ValueError("Diagnostic must have exactly one supported job in the requested attempt")
+    job = jobs["jobs"][0]
+    if (job.get("name") not in DIAGNOSTIC_JOB_NAMES or job.get("run_id") != run["id"]
+            or job.get("run_attempt") != attempt or job.get("head_sha") != run["head_sha"]
+            or job.get("status") != "completed" or not job.get("conclusion")
+            or not job.get("started_at") or not job.get("completed_at")):
+        raise ValueError("Diagnostic job identity, attempt or completion does not match")
+    # Completed job logs only: never merge an earlier attempt or parse a live tail.
+    log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
+    return {"head": head, "source_sha": run["head_sha"], "run_attempt": attempt, "job_id": job["id"],
+            "started_at": job["started_at"], "results": diagnostic_case_results(declared, log)}
+
+
 def apply_task_gate(result, runs, now=None, measure_baseline=False):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -103,9 +188,12 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
               run["conclusion"] in {"failure", "timed_out", "cancelled", "startup_failure"}]
     active = [run["id"] for run in runs if run["status"] != "completed"]
     diagnostics = [run for run in runs if run["path"] == DIAGNOSTIC_WORKFLOW and
-                   run["event"] == "workflow_dispatch" and run["head_sha"] == result["head"] and
-                    run.get("head_branch", "").startswith("diagnostic/") and
-                   run["status"] == "completed" and run["conclusion"] == "success"]
+                   run.get("event") == "workflow_dispatch" and
+                   run.get("head_branch", "").startswith("diagnostic/") and run["status"] == "completed" and
+                   run.get("diagnostic_evidence", {}).get("head") == result["head"] and
+                   run["diagnostic_evidence"].get("source_sha") == run.get("head_sha") and
+                   run["diagnostic_evidence"].get("run_attempt") == run.get("run_attempt") and
+                   set(run["diagnostic_evidence"].get("results", {})) == diagnostic_title_tests(run.get("display_title", ""))]
     cost = result["cost"]
     projected = round(elapsed + cost["with_upload_minutes"][1], 1) if cost["status"] in {"observed", "reference"} else None
     blockers = []
@@ -113,7 +201,17 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
         blockers.append("ci_already_running")
     failed_tests = sorted({test if "/" in test else "MomentDeliveryComposerUITests/" + test
                            for run in failed for test in run.get("failed_tests", [])})
-    passed_tests = {test for run in diagnostics for test in diagnostic_title_tests(run.get("display_title", ""))}
+    latest = {}
+    for run in sorted(diagnostics, key=lambda item: (
+            parse(item["diagnostic_evidence"]["started_at"]), item["id"], item["diagnostic_evidence"]["run_attempt"])):
+        evidence = run["diagnostic_evidence"]
+        for test, outcome in evidence["results"].items():
+            latest[test] = {"outcome": outcome, "run_id": run["id"], "run_attempt": evidence["run_attempt"],
+                            "job_id": evidence["job_id"], "source_sha": evidence["source_sha"]}
+    # Later failure/skip/incomplete evidence invalidates older passes for that
+    # case. A later run selecting only another case leaves its peers untouched.
+    failed_tests = sorted(set(failed_tests) | {test for test, value in latest.items() if value["outcome"] != "passed"})
+    passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
     if unsupported:
@@ -125,6 +223,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
         blockers.append("cumulative_cost_requires_replanning")
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
                       "active_runs": active, "diagnostic_runs": [run["id"] for run in diagnostics],
+                      "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
                       "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
@@ -234,7 +333,7 @@ def main(argv=None):
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
         if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE}:
-            result = apply_task_gate(result, read_task_runs(), measure_baseline=args.measure_baseline)
+            result = apply_task_gate(result, read_task_runs(result["head"]), measure_baseline=args.measure_baseline)
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
