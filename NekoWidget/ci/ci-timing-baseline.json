@@ -4,6 +4,7 @@
   "upload_minutes": 9.22,
   "upload_run": 35493368458,
   "observations": [
+    {"scope": "ci-selection-v1", "candidate_minutes": 22.35, "run_id": 35495098428, "outcome": "success"},
     {"scope": "full-v1", "candidate_minutes": 64.43, "run_id": 35485948913, "outcome": "failure"},
     {"scope": "full-v1", "candidate_minutes": 97.92, "run_id": 35489148667, "outcome": "success-after-retry"},
     {"scope": "ci-selection-v1", "candidate_minutes": 25.13, "run_id": 34848681863, "outcome": "success"},

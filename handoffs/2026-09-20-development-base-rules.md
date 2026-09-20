@@ -19,4 +19,10 @@
 
 ## 検証結果
 
-実行後に追記する。必要な境界の保持、全差分からの判定、時間超過時にも必須jobが変わらないこと、失敗jobで待機終了することを確認対象とする。
+- 導入commit `005872f85885b0541b729dad1400f790dfb6da99`。ローカル開発検証11群は38.3秒で成功。preflight9件（実Gitの古いmain・製品混在・別cwd・不正時間値を含む）、watcher11件を含む。
+- 独立レビューの3指摘（古いmain、別cwd、非有限の時間値）を修正済み。時間超過の判断を付けても必要jobが減らないこと、軽量成功をTestFlight証拠にできないことを検証。
+- 実Gitで、今回の差分はci-selection-v1、以前の保存変更を含めるとfull-v1・目標超過・ready=falseになることを確認。後者の検証は判定のみで、製品テストを実行していない。
+- [候補CI 35495098428](https://github.com/soso-so-27/neko-widget/actions/runs/35495098428) は必要5jobとplanが成功。**22分21秒、runner合計88.6分**（課金額ではない）。再試行なし。候補確定15:45:23 JSTからCI終了約16:08:43まで約23分20秒。
+- [main CI 35496125531](https://github.com/soso-so-27/neko-widget/actions/runs/35496125531) は18秒。同一SHAの成功証拠を再利用。アプリ・workflow・署名・公開・課金は変更せず、TestFlightは追加していない。
+- この結果をci-timing-baseline.jsonへ追記する変更で、development-tools-v1の実行経路も確認する。導入自体の22分21秒は全機能変更の短縮実績ではない。
+- 証拠：`C:/dev/neko-evidence/development-base-rules-20260920/`。global AGENTS.mdの更新はユーザー環境のルールで、リポジトリcommitには含まれない。
