@@ -23,6 +23,10 @@
     {
       "run_id": 35627835417,
       "minutes": 7.55
+    },
+    {
+      "run_id": 35640296637,
+      "minutes": 9.233
     }
   ],
   "observations": [
@@ -200,6 +204,44 @@
       "server_candidate_minutes": 1.0,
       "upload_run_id": 35627835417,
       "note": "First attempt passed: build/privacy, Photos bootstrap+scan, both-OS runtime and 3 affected UI methods. Widget Gallery inputs were unchanged and excluded by frozen full-diff manifest. Separate server CI passed. Main reused same-SHA evidence in 19 seconds. Candidate commit to Apple upload exceeded 30 minutes by 85 seconds; no retry, no real-device or sales activation claim."
+    },
+    {
+      "scope": "reviewed-window-support-resume-v1",
+      "candidate_minutes": 4.4,
+      "run_id": 35633368205,
+      "outcome": "failure",
+      "note": "Early project load failure from duplicate PBX identities; not successful full-scope timing. Added existing foundation duplicate check."
+    },
+    {
+      "scope": "reviewed-window-support-resume-v1",
+      "candidate_minutes": 5.767,
+      "run_id": 35634224036,
+      "outcome": "failure",
+      "note": "Compile failure from UUID? return type compared with String; corrected existing validator use."
+    },
+    {
+      "scope": "reviewed-window-support-resume-v1",
+      "candidate_minutes": 23.983,
+      "run_id": 35634930204,
+      "outcome": "failure",
+      "note": "Build, Photos and runtime succeeded; requester UI passed. Owner confirmation failed only because a native parent/child AX wrapper matched twice. Narrow diagnostic required before next ordinary candidate."
+    },
+    {
+      "scope": "reviewed-window-support-resume-v1",
+      "candidate_minutes": 15.05,
+      "run_id": 35638292996,
+      "outcome": "success",
+      "note": "All four required jobs and both UI operations succeeded after focused diagnostic. No change to beta limits, no real service deployment or StoreKit claim. Original 30-minute and intermediate 45-minute objectives missed; total includes two implementation mistakes and one test-selector correction, not just final candidate duration.",
+      "diagnostic_run_id": 35636967522,
+      "diagnostic_minutes": 11.567,
+      "main_run_id": 35640041698,
+      "main_elapsed_minutes": 0.317,
+      "main_reused": true,
+      "runner_minutes_all_candidates_and_diagnostic": 160.35,
+      "first_ci_to_apple_upload_minutes": 74.047,
+      "candidate_commit_to_apple_upload_minutes": 74.38,
+      "server_run_id": 35640041733,
+      "upload_run_id": 35640296637
     }
   ]
 }
