@@ -14,7 +14,7 @@ extension EnvironmentValues {
 }
 
 /// The selected photo may change while the actor is reading. Only the latest
-/// request may publish a note into the browser; notes never become captions.
+/// request may publish a note into the browser. Sharing is always explicit.
 @MainActor
 final class PhotoMemoryNotePresentation: ObservableObject {
     let store: PhotoMemoryNoteStore
@@ -130,7 +130,7 @@ struct MemoArchivePhoto: View {
 }
 
 /// `photo` is frozen when the editor opens, including when its parent pages.
-/// This local text is intentionally not fed into the photo delivery composer.
+/// The local original stays independent of any explicitly attached send copy.
 struct PhotoMemoryNoteEditor: View {
     let photo: PhotoPresentation?
     let store: PhotoMemoryNoteStore
@@ -243,18 +243,10 @@ struct PhotoMemoryNoteEditor: View {
 
                 if isLoaded {
                     Section {
-                        TextEditor(text: $text)
-                            .frame(minHeight: 160)
-                            .focused($isWriting)
-                            .accessibilityLabel("メモ")
-                            .accessibilityIdentifier("photo-memory-note-text")
+                        PhotoNoteInput(text: $text, focus: $isWriting,
+                            maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
+                            audience: "自分だけ", identifier: "photo-memory-note-text", minimumHeight: 160)
                             .disabled(isSaving || savedNotice != nil || accountChanged)
-                    } footer: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("\(text.count) / \(PhotoMemoryNoteStore.maximumCharacters)文字")
-                                .foregroundStyle(text.count > PhotoMemoryNoteStore.maximumCharacters ? Color.red : Color.secondary)
-                            Text("自分だけのメモです。")
-                        }
                     }
                     if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
                 } else if loadFailed {

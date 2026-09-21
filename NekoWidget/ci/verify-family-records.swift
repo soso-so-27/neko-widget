@@ -14,6 +14,18 @@ struct VerifyFamilyRecords {
     static func main() throws {
         let key = Data(repeating: 7, count: 32)
         let space = "fixture_record_space", author = "fixture_record_author"
+        let moment = "fixture_delivered_moment"
+        let deliveredID = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: moment)
+        let receivedID = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: moment)
+        require(deliveredID == receivedID, "Sender and receiver must use the same photo entry without a new upload")
+        require(deliveredID.range(of: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            options: .regularExpression) != nil, "Stable source identity must retain the existing relay UUID spelling")
+        let otherSpaceID = try FamilyRecordSourceIdentity.recordID(spaceID: "another_record_space", momentID: moment)
+        let otherMomentID = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: "another_delivered_moment")
+        require(deliveredID != otherSpaceID && deliveredID != otherMomentID, "Different windows or photos must never share an entry")
+        rejects("Empty source identity must fail closed") {
+            _ = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: "")
+        }
         let id = UUID().uuidString.lowercased(), entryID = UUID().uuidString.lowercased()
         let text = String(repeating: "🐈‍⬛", count: 500)
         let payload = try FamilyRecordPayload.words(text)
@@ -48,6 +60,15 @@ struct VerifyFamilyRecords {
             revision: 2, state: .withdrawn, keyEpoch: 1, ciphertext: nil, createdAt: 100, updatedAt: 101)
         let catalog = FamilyRecordCatalog(schemaVersion: 1, spaceID: space, participantID: author,
             maximumPhotos: 100, records: [photo, row()])
+        let legacyMatch = try FamilyRecordSourceIdentity.existingPhoto(in: catalog, momentID: moment)
+        require(legacyMatch == nil, "Legacy random records must not be associated by text or photographic likeness")
+        let withdrawnSource = FamilyRecordRow(id: deliveredID, entryID: deliveredID, kind: .photo,
+            authorID: "another_record_author", revision: 2, state: .withdrawn, keyEpoch: 1,
+            ciphertext: nil, createdAt: 100, updatedAt: 101)
+        let withdrawnCatalog = FamilyRecordCatalog(schemaVersion: 1, spaceID: space, participantID: author,
+            maximumPhotos: 100, records: [withdrawnSource])
+        let existingSource = try FamilyRecordSourceIdentity.existingPhoto(in: withdrawnCatalog, momentID: moment)
+        require(existingSource == withdrawnSource, "A peer-owned or withdrawn source remains existing; never recreate or take ownership")
         _ = try catalog.validated(spaceID: space, participantID: author)
         require(catalog.records.count == 2, "Photo withdrawal does not remove another author's words")
         rejects("Duplicate record IDs must fail closed") {

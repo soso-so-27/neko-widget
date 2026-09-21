@@ -3,32 +3,152 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// A delivery remains separate from a shared memo. Resolve its current local
+/// photo only after an explicit tap, and validate the same source before save.
+struct FamilyRecordPhotoSource {
+    let momentID: String
+    let load: @MainActor () async throws -> FamilyRecordPreparedPhoto
+}
+
+struct FamilyRecordPreparedPhoto {
+    let photo: MomentShareIngressPhoto
+    let momentID: String
+    let caption: String?
+    let canReuseCaption: Bool
+    let validate: @MainActor () throws -> Void
+}
+
 /// Capability-checked entry in the already authenticated private window.
 struct FamilyRecordEntryButton: View {
     let spaceID: String
+    var source: FamilyRecordPhotoSource? = nil
+    var windowName: String = "このまど"
     @State private var available = false
     @State private var presented = false
+    @State private var addingCurrentPhoto = false
     @Environment(\.scenePhase) private var scenePhase
+#if DEBUG
+    var fixtureClient: (any FamilyRecordServing)? = nil
+#endif
     var body: some View {
         VStack(spacing: 0) {
             if available {
-                Button { presented = true } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label("共同記録", systemImage: "book.closed")
-                        Text("同じ写真に、それぞれの言葉を")
-                            .font(.caption).foregroundStyle(.secondary)
+                if source != nil {
+                    Menu {
+                        Button("この写真にメモを追加", systemImage: "square.and.pencil") {
+                            addingCurrentPhoto = true; presented = true
+                        }.accessibilityIdentifier("family-record-add-current-photo")
+                        Button("このまどの共有メモを見る", systemImage: "note.text") {
+                            addingCurrentPhoto = false; presented = true
+                        }.accessibilityIdentifier("family-record-open-list")
+                    } label: {
+                        Label("共有メモ", systemImage: "note.text")
+                            .frame(minHeight: 44)
                     }
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                    .accessibilityIdentifier("family-record-entry")
+                } else {
+                    Button { addingCurrentPhoto = false; presented = true } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("共有メモ", systemImage: "note.text")
+                            Text("写真に添えた、二人のメモ")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                    }
+                    .accessibilityIdentifier("family-record-entry")
                 }
-                .accessibilityIdentifier("family-record-entry")
             }
         }
-        .task(id: spaceID) { available = await FamilyRecordClient(expectedSpaceID: spaceID).isAvailable() }
+        .task(id: spaceID) { await checkAvailability() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { available = false }
-            else if phase == .active { Task { available = await FamilyRecordClient(expectedSpaceID: spaceID).isAvailable() } }
+            else if phase == .active { Task { await checkAvailability() } }
         }
-        .sheet(isPresented: $presented) { FamilyRecordView(expectedSpaceID: spaceID) }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in
+                available = false
+                if scenePhase == .active { Task { await checkAvailability() } }
+            }
+        .sheet(isPresented: $presented) {
+            if addingCurrentPhoto, let source {
+                FamilyRecordSourceEditor(client: client, source: source, windowName: windowName)
+            } else {
+#if DEBUG
+                if let fixtureClient {
+                    FamilyRecordView(fixtureClient: fixtureClient, fixturePhoto: nil)
+                } else { FamilyRecordView(expectedSpaceID: spaceID, windowName: windowName) }
+#else
+                FamilyRecordView(expectedSpaceID: spaceID, windowName: windowName)
+#endif
+            }
+        }
+    }
+
+    private var client: any FamilyRecordServing {
+#if DEBUG
+        if let fixtureClient { return fixtureClient }
+#endif
+        return FamilyRecordClient(expectedSpaceID: spaceID)
+    }
+
+    private func checkAvailability() async {
+        let result: Bool
+#if DEBUG
+        if let fixtureClient { result = (try? await fixtureClient.load()) != nil }
+        else { result = await FamilyRecordClient(expectedSpaceID: spaceID).isAvailable() }
+#else
+        result = await FamilyRecordClient(expectedSpaceID: spaceID).isAvailable()
+#endif
+        guard !Task.isCancelled, scenePhase == .active else { return }
+        available = result
+    }
+}
+
+private struct FamilyRecordSourceEditor: View {
+    let client: any FamilyRecordServing
+    let source: FamilyRecordPhotoSource
+    let windowName: String
+    @State private var prepared: FamilyRecordPreparedPhoto?
+    @State private var existingEntryID: String?
+    @State private var failed = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            if let existingEntryID {
+                FamilyRecordView(client: client, focusedEntryID: existingEntryID, windowName: windowName)
+            } else if let prepared {
+                FamilyRecordEditor(client: client,
+                    target: nil, fixturePhoto: nil, sourcePhoto: prepared, windowName: windowName, saved: {})
+            } else {
+                NavigationStack {
+                    Group {
+                        if failed {
+                            ContentUnavailableView("この写真を追加できません", systemImage: "photo",
+                                description: Text("まどの状態と写真を確認して、開き直してください。"))
+                        } else { ProgressView("写真を確認中") }
+                    }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { dismiss() }
+                    } }
+                }
+            }
+        }
+        .task {
+            do {
+                let snapshot = try await client.load()
+                guard !Task.isCancelled else { return }
+                if let existing = try FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog,
+                    momentID: source.momentID) {
+                    existingEntryID = existing.id
+                    return
+                }
+                let value = try await source.load()
+                guard !Task.isCancelled, value.momentID == source.momentID else { return }
+                try value.validate()
+                prepared = value
+            } catch { if !Task.isCancelled { failed = true } }
+        }
     }
 }
 
@@ -51,7 +171,7 @@ private final class FamilyRecordViewModel: ObservableObject {
             snapshot = result
         } catch {
             guard generation == request else { return }
-            self.error = "共同記録を確認できませんでした。接続を確認して、もう一度読み込んでください。"
+            self.error = "共有メモを確認できませんでした。接続を確認して、もう一度読み込んでください。"
         }
     }
 }
@@ -67,14 +187,26 @@ struct FamilyRecordView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     private let fixturePhoto: MomentShareIngressPhoto?
-    init(expectedSpaceID: String) {
+    private let focusedEntryID: String?
+    private let windowName: String
+    init(expectedSpaceID: String, windowName: String = "このまど") {
         _model = StateObject(wrappedValue: FamilyRecordViewModel(client: FamilyRecordClient(expectedSpaceID: expectedSpaceID)))
         fixturePhoto = nil
+        focusedEntryID = nil
+        self.windowName = windowName
+    }
+    init(client: any FamilyRecordServing, focusedEntryID: String, windowName: String) {
+        _model = StateObject(wrappedValue: FamilyRecordViewModel(client: client))
+        fixturePhoto = nil
+        self.focusedEntryID = focusedEntryID
+        self.windowName = windowName
     }
 #if DEBUG
-    init(fixtureClient: any FamilyRecordServing, fixturePhoto: MomentShareIngressPhoto) {
+    init(fixtureClient: any FamilyRecordServing, fixturePhoto: MomentShareIngressPhoto?) {
         _model = StateObject(wrappedValue: FamilyRecordViewModel(client: fixtureClient))
         self.fixturePhoto = fixturePhoto
+        focusedEntryID = nil
+        windowName = "このまど"
     }
 #endif
 
@@ -83,9 +215,9 @@ struct FamilyRecordView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("同じ写真に、それぞれの言葉を")
+                        Text("同じ写真に、それぞれのメモを")
                             .font(.headline)
-                        Text("写真を持ち寄って、見ていたことや覚えておきたいことを。このまどの二人で読み返せます。")
+                        Text("写真に覚えておきたいことを添えて、\(windowName)の二人で読み返せます。")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -93,21 +225,23 @@ struct FamilyRecordView: View {
                 if let error = model.error {
                     Section { Text(error); Button("もう一度読み込む") { Task { await model.reload() } } }
                 }
-                if model.loading { ProgressView("共同記録を確認中") }
+                if model.loading { ProgressView("共有メモを確認中") }
             }
-            .navigationTitle("共同記録")
+            .navigationTitle("共有メモ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("写真を追加", systemImage: "plus") { adding = true }
-                        .disabled(model.snapshot == nil || saving)
-                        .accessibilityIdentifier("family-record-add")
+                    if focusedEntryID == nil {
+                        Button("写真を追加", systemImage: "plus") { adding = true }
+                            .disabled(model.snapshot == nil || saving)
+                            .accessibilityIdentifier("family-record-add")
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("共同記録について", systemImage: "info.circle") { showingInformation = true }
+                    Button("共有メモについて", systemImage: "info.circle") { showingInformation = true }
                         .accessibilityIdentifier("family-record-information")
                 }
             }
@@ -124,10 +258,10 @@ struct FamilyRecordView: View {
                 Task { await model.reload() }
             }
         .sheet(isPresented: $adding) {
-            FamilyRecordEditor(client: model.client, target: nil, fixturePhoto: fixturePhoto) { Task { await model.reload() } }
+            FamilyRecordEditor(client: model.client, target: nil, fixturePhoto: fixturePhoto, windowName: windowName) { Task { await model.reload() } }
         }
         .sheet(item: $editing) { target in
-            FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil) { Task { await model.reload() } }
+            FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil, windowName: windowName) { Task { await model.reload() } }
         }
         .sheet(isPresented: $showingInformation) { information }
         .confirmationDialog("この記録から取り下げますか？", isPresented: Binding(
@@ -137,20 +271,24 @@ struct FamilyRecordView: View {
                 }
             } message: {
                 Text(withdrawing?.kind == .words
-                     ? "自分が書いたこの言葉だけを取り下げます。写真や相手の言葉は残ります。すでに個人保存されたコピーは回収できません。"
-                     : "写真を取り下げても、書かれた言葉は残ります。相手がすでに個人保存したコピーは回収できません。")
+                     ? "自分が書いたこのメモだけを取り下げます。写真や相手のメモは残ります。すでに個人保存されたコピーは回収できません。"
+                     : "写真を取り下げても、書かれたメモは残ります。相手がすでに個人保存したコピーは回収できません。")
             }
     }
 
     @ViewBuilder private var recordSection: some View {
         if let snapshot = model.snapshot {
-            let photos = snapshot.catalog.records.filter { $0.kind == .photo }
-            if photos.isEmpty {
+            let photos = snapshot.catalog.records.filter {
+                $0.kind == .photo && (focusedEntryID == nil || $0.id == focusedEntryID)
+            }
+            if photos.isEmpty && focusedEntryID != nil {
+                Section { Text("この写真の共有メモは開けません。写真の詳細に戻って、もう一度お試しください。") }
+            } else if photos.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("まずは、写真を一枚", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("言葉はあとからでも。相手も同じ写真に言葉を添えられます。")
+                        Text("メモはあとからでも。相手も同じ写真にメモを添えられます。")
                             .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
@@ -170,9 +308,9 @@ struct FamilyRecordView: View {
                     }) { words in
                         wordView(words, snapshot: snapshot)
                     }
-                    Button("言葉を添える") { editing = .init(entryID: photo.id, row: nil, text: "") }
+                    Button("メモを追加") { editing = .init(entryID: photo.id, row: nil, text: "") }
                         .accessibilityIdentifier("family-record-add-words")
-                        .accessibilityHint("自分の言葉を追加します。相手の言葉は変わりません")
+                        .accessibilityHint("自分のメモを追加します。相手のメモは変わりません")
                 }.disabled(saving)
             }
         }
@@ -201,20 +339,20 @@ struct FamilyRecordView: View {
                 Spacer()
                 if words.authorID == snapshot.catalog.participantID {
                     Menu {
-                        Button("言葉を編集", systemImage: "pencil") {
+                        Button("メモを編集", systemImage: "pencil") {
                             editing = .init(entryID: words.entryID, row: words, text: snapshot.words[words.id] ?? "")
                         }
                         .accessibilityIdentifier("family-record-edit-words")
-                        Button("言葉を取り下げる", role: .destructive) { withdrawing = words }
+                        Button("メモを取り下げる", role: .destructive) { withdrawing = words }
                     } label: {
-                        Label("自分の言葉の操作", systemImage: "ellipsis")
+                        Label("自分のメモの操作", systemImage: "ellipsis")
                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     }
                     .accessibilityIdentifier("family-record-words-menu")
                     .buttonStyle(.borderless)
                 }
             }
-            Text(snapshot.words[words.id] ?? "この言葉を読み込めません")
+            Text(snapshot.words[words.id] ?? "このメモを読み込めません")
                 .textSelection(.enabled)
         }
     }
@@ -222,7 +360,7 @@ struct FamilyRecordView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(row.kind == .photo
                  ? (row.authorID == current ? "自分が追加した写真" : "相手が追加した写真")
-                 : (row.authorID == current ? "自分の言葉" : "相手の言葉"))
+                 : (row.authorID == current ? "自分のメモ" : "相手のメモ"))
                 .font(.subheadline.weight(.semibold))
             HStack(spacing: 4) {
                 Text(Date(timeIntervalSince1970: row.createdAt), style: .date)
@@ -234,27 +372,27 @@ struct FamilyRecordView: View {
         NavigationStack {
             List {
                 Section("二人で持ち寄る") {
-                    Text("このまどに参加している二人が、写真や言葉を追加できます。写真だけの追加もできます。")
-                    Text("選んだ写真と、ここに書いた言葉だけを共有します。個人メモやお気に入りが自動で共有されることはありません。")
+                    Text("このまどに参加している二人が、写真やメモを追加できます。写真だけの追加もできます。")
+                    Text("選んだ写真と、ここに書いたメモだけを共有します。自分だけのメモやお気に入りが自動で共有されることはありません。")
                 }
                 Section("変更できるのは自分の分だけ") {
-                    Text("自分が書いた言葉は編集・取り下げできます。相手の言葉は変更できません。")
-                    Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いた言葉は残ります。")
+                    Text("自分が書いたメモは編集・取り下げできます。相手のメモは変更できません。")
+                    Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いたメモは残ります。")
                 }
                 Section("共有を終了すると") {
-                    Text("共有を解除・ブロックすると、この共同記録は開けなくなります。退出だけで追加済みの記録が自動削除されるわけではありません。")
+                    Text("共有を解除・ブロックすると、この共有メモは開けなくなります。退出だけで追加済みの記録が自動削除されるわけではありません。")
                         .accessibilityIdentifier("family-record-ending-explanation")
-                    Text("取り下げたい自分の写真や言葉は、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
+                    Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
                 }
                 Section("写真の保管と引き継ぎ") {
                     Text("ここに残るのは鑑賞用の写真コピーです。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
                     Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
                 }
                 Section("内部テストで使える範囲") {
-                    Text("一つのまどに写真100件・言葉1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
+                    Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
                 }
             }
-            .navigationTitle("共同記録について")
+            .navigationTitle("共有メモについて")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -284,7 +422,7 @@ private struct FamilyRecordPhoto: View {
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else if failed { Label("写真を読み込めません。言葉は下に残っています。", systemImage: "photo") }
+            else if failed { Label("写真を読み込めません。メモは下に残っています。", systemImage: "photo") }
             else { ProgressView() }
         }
         .task(id: row) {
@@ -316,6 +454,8 @@ private struct FamilyRecordEditor: View {
     let client: any FamilyRecordServing
     let target: FamilyRecordEditTarget?
     let fixturePhoto: MomentShareIngressPhoto?
+    let sourcePhoto: FamilyRecordPreparedPhoto?
+    let windowName: String
     let saved: () -> Void
     @State private var text: String
     @State private var photo: MomentShareIngressPhoto?
@@ -327,48 +467,81 @@ private struct FamilyRecordEditor: View {
     @State private var prepared = false
     @State private var photoAdded = false
     @State private var message: String?
+    @State private var showsDiscardConfirmation = false
+    @State private var sourceUnavailable = false
     @State private var selectionGeneration = UUID()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var focused: Bool
-    init(client: any FamilyRecordServing, target: FamilyRecordEditTarget?, fixturePhoto: MomentShareIngressPhoto?, saved: @escaping () -> Void) {
-        self.client = client; self.target = target; self.fixturePhoto = fixturePhoto; self.saved = saved
+    init(client: any FamilyRecordServing, target: FamilyRecordEditTarget?, fixturePhoto: MomentShareIngressPhoto?, sourcePhoto: FamilyRecordPreparedPhoto? = nil, windowName: String = "このまど", saved: @escaping () -> Void) {
+        self.client = client; self.target = target; self.fixturePhoto = fixturePhoto; self.sourcePhoto = sourcePhoto; self.windowName = windowName; self.saved = saved
         _text = State(initialValue: target?.text ?? "")
+        _photo = State(initialValue: sourcePhoto?.photo)
     }
     var body: some View {
         NavigationStack {
             Form {
                 if target == nil {
                     Section("写真") {
-                        if let photo, let image = UIImage(data: photo.canonicalJPEG) {
+                        if scenePhase == .active, !sourceUnavailable, let photo, let image = UIImage(data: photo.canonicalJPEG) {
                             Image(uiImage: image).resizable().scaledToFit()
                         }
-                        Button("写真を選ぶ") {
-                            focused = false
-                            if fixturePhoto != nil { choosingFixture = true } else { picking = true }
-                        }.disabled(busy || prepared).accessibilityIdentifier("family-record-pick-photo")
+                        if sourcePhoto == nil {
+                            Button("写真を選ぶ") {
+                                focused = false
+                                if fixturePhoto != nil { choosingFixture = true } else { picking = true }
+                            }.disabled(busy || prepared).accessibilityIdentifier("family-record-pick-photo")
+                        }
                     }
                 }
-                Section(target == nil ? "言葉（あとからでも）" : "自分の言葉") {
-                    TextEditor(text: $text).frame(minHeight: 140).focused($focused).disabled(busy || prepared)
-                        .accessibilityIdentifier("family-record-words-input")
-                    Text("\(text.count) / 500文字").font(.caption)
-                    Text("ここに書いた言葉を、このまどの相手と共有します。個人メモは自動で共有されません。")
+                if scenePhase == .active, !sourceUnavailable, let sourcePhoto, let caption = sourcePhoto.caption, !caption.isEmpty {
+                    Section(sourcePhoto.canReuseCaption ? "送った写真のメモ" : "相手が添えたメモ") {
+                        Text(verbatim: caption).textSelection(.enabled)
+                        if sourcePhoto.canReuseCaption {
+                            Button("このメモを添える") { text = caption }
+                                .disabled(busy || prepared || !text.isEmpty)
+                                .accessibilityIdentifier("family-record-reuse-caption")
+                        } else {
+                            Text("相手のメモは参照のみです。ここから自分のメモとして追加されることはありません。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Section(target == nil ? "メモ（任意）" : "自分のメモ") {
+                    PhotoNoteInput(text: $text, focus: $focused, maximumCharacters: 500,
+                        audience: "\(windowName)の相手と共有", identifier: "family-record-words-input")
+                        .disabled(busy || prepared)
+                    Text("この写真と、ここに書いたメモだけを共有します。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if photoAdded { Text("写真は追加済みです。言葉の追加を確認しています。") }
-                if let message { Text(message).foregroundStyle(.red) }
-                if prepared && message != nil {
-                    Button("入力した言葉をコピー") { UIPasteboard.general.string = text }
+                if sourcePhoto != nil {
+                    Text("追加すると、配信履歴とは別に写真の鑑賞用コピーとメモが残り、このまどの二人で読み返せます。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-                Button(prepared ? "同じ操作を再確認" : (target?.row == nil ? "このまどの共同記録に追加" : "言葉の変更を共有")) { Task { await save() } }
-                    .disabled(busy || text.count > 500 || (target == nil ? photo == nil : text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                if photoAdded { Text("写真は追加済みです。メモの追加を確認しています。") }
+                if sourceUnavailable {
+                    Text("写真またはまどの状態が変わりました。入力したメモはここに残っています。閉じて現在の状態を確認してください。")
+                }
+                if let message { Text(message).foregroundStyle(.red) }
+                if (prepared && message != nil) || sourceUnavailable {
+                    Button("入力したメモをコピー") { UIPasteboard.general.string = text }
+                }
+                Button(prepared ? "同じ操作を再確認" : (target?.row == nil ? "このまどに追加" : "メモの変更を共有")) { Task { await save() } }
+                    .disabled(busy || sourceUnavailable || text.count > 500 || (target == nil ? photo == nil : text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .accessibilityIdentifier("family-record-save")
                 if busy { ProgressView() }
             }
-            .navigationTitle(target == nil ? "写真を追加" : (target?.row == nil ? "言葉を添える" : "自分の言葉を編集"))
+            .navigationTitle(target == nil ? "写真にメモを追加" : (target?.row == nil ? "メモを追加" : "自分のメモを編集"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() }.disabled(busy) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") {
+                        focused = false
+                        if text != (target?.text ?? "") || !pending.isEmpty { showsDiscardConfirmation = true }
+                        else { dismiss() }
+                    }.disabled(busy)
+                        .accessibilityIdentifier("family-record-editor-close")
+                }
                 ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("完了") { focused = false } }
             }
         }
@@ -403,18 +576,34 @@ private struct FamilyRecordEditor: View {
             }
         }
         .onDisappear { selectionGeneration = UUID() }
-        .interactiveDismissDisabled(busy)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { validateSource() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in validateSource() }
+        .interactiveDismissDisabled(busy || text != (target?.text ?? "") || !pending.isEmpty)
+        .confirmationDialog("入力を閉じますか？", isPresented: $showsDiscardConfirmation) {
+            Button("入力を破棄して閉じる", role: .destructive) { dismiss() }
+            Button("入力を続ける", role: .cancel) {}
+        } message: {
+            Text(prepared ? "確認できていない操作があります。追加済みの写真やメモは取り消されません。" : "まだ追加していないメモは保存されません。")
+        }
+    }
+    private func validateSource() {
+        do { try sourcePhoto?.validate() }
+        catch { sourceUnavailable = true }
     }
     private func save() async {
         busy = true; message = nil; focused = false
         defer { busy = false }
         do {
             if !prepared {
+                try sourcePhoto?.validate()
                 var operations: [FamilyRecordMutation] = []
                 let entryID: String
                 if let target { entryID = target.entryID }
                 else if let photo {
-                    let operation = try await client.preparePhoto(photo)
+                    let operation = try await client.preparePhoto(photo, sourceMomentID: sourcePhoto?.momentID)
                     operations.append(operation); entryID = operation.id
                 } else { throw FamilyRecordError.invalid }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -423,6 +612,7 @@ private struct FamilyRecordEditor: View {
                 pending = operations; prepared = true
             }
             while let first = pending.first {
+                if !photoAdded { try sourcePhoto?.validate() }
                 try await client.save(first)
                 if first.body.kind == .photo { photoAdded = true }
                 pending.removeFirst()
@@ -467,7 +657,7 @@ struct FamilyRecordUIFixture: View {
     }
 }
 
-private actor FamilyRecordFixtureClient: FamilyRecordServing {
+actor FamilyRecordFixtureClient: FamilyRecordServing {
     private let space = "fixture_family_space"
     private let author = "fixture_family_author"
     private let peer = "fixture_family_peer"
@@ -488,9 +678,12 @@ private actor FamilyRecordFixtureClient: FamilyRecordServing {
         guard rows.contains(where: { $0.id == row.id && $0.state == .active }) else { throw FamilyRecordError.changed }
         return jpeg
     }
-    func preparePhoto(_ photo: MomentShareIngressPhoto) throws -> FamilyRecordMutation {
+    func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) throws -> FamilyRecordMutation {
         try requireActive()
-        let id = UUID().uuidString.lowercased()
+        let id: String
+        if let sourceMomentID {
+            id = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: sourceMomentID)
+        } else { id = UUID().uuidString.lowercased() }
         return operation(id: id, entryID: id, kind: .photo, revision: 0, text: "fixture-photo")
     }
     func prepareWords(_ text: String, entryID: String, replacing row: FamilyRecordRow?) throws -> FamilyRecordMutation {

@@ -3176,7 +3176,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let peerWords = app.staticTexts["相手が添えた言葉"]
         for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["相手の言葉"].exists)
+        XCTAssertTrue(app.staticTexts["相手のメモ"].exists)
         let ownWordsMenu = app.buttons["family-record-words-menu"]
         for _ in 0..<3 where !ownWordsMenu.isHittable { app.swipeDown() }
         XCTAssertTrue(ownWordsMenu.isHittable)
@@ -3184,7 +3184,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                        "Only the author's own words offer editing or withdrawal.")
         ownWordsMenu.tap()
         app.buttons["family-record-edit-words"].tap()
-        XCTAssertTrue(app.navigationBars["自分の言葉を編集"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["自分のメモを編集"].waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "初めて一緒に過ごした日")
         input.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
@@ -3192,7 +3192,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         input.typeText("。また一緒に遊ぼう")
         app.buttons["完了"].tap()
         for _ in 0..<3 where !save.isHittable { app.swipeUp() }
-        XCTAssertEqual(save.label, "言葉の変更を共有")
+        XCTAssertEqual(save.label, "メモの変更を共有")
         save.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
@@ -3215,7 +3215,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["family-record-fixture-leave"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: peerWords)], timeout: 10), .completed)
-        XCTAssertTrue(app.staticTexts["共同記録を確認できませんでした。接続を確認して、もう一度読み込んでください。"].exists)
+        XCTAssertTrue(app.staticTexts["共有メモを確認できませんでした。接続を確認して、もう一度読み込んでください。"].exists)
     }
 
     @MainActor
@@ -3354,8 +3354,21 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(caption.waitForExistence(timeout: 5))
         XCTAssertFalse((caption.value as? String ?? "").contains(note), "Private memories must not be sent automatically")
         app.buttons["family-window-caption-done-top"].tap()
-        app.buttons["family-window-cancel-delivery"].tap()
+        let attachNote = app.buttons["family-window-attach-personal-note"]
+        XCTAssertTrue(attachNote.waitForExistence(timeout: 5))
+        attachNote.tap()
+        XCTAssertTrue(caption.waitForExistence(timeout: 5))
+        XCTAssertEqual(caption.value as? String, note, "Only explicit attachment may copy the private text.")
+        caption.tap()
+        caption.typeText("共有")
+        let sendCopy = caption.value as? String ?? ""
+        XCTAssertTrue(sendCopy.contains(note))
+        XCTAssertTrue(sendCopy.contains("共有"))
+        app.buttons["family-window-caption-done-top"].tap()
+        app.buttons["family-window-confirm-delivery"].tap()
         XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertEqual(excerpt.value as? String, note, "Editing the send copy must not rewrite the original memo.")
+        XCTAssertEqual(app.staticTexts["photo-window-fixture-result"].label, "1|1|family|\(sendCopy)")
         open.tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         clearMemoText()
@@ -3448,6 +3461,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertTrue(app.buttons["family-window-caption-edit"].label.contains("ねむい"))
             attach(app, name: "photo-window-confirmation-\(variant)")
             app.buttons["family-window-cancel-delivery"].tap()
+            app.alerts.buttons["破棄してやめる"].tap()
             let result = app.staticTexts["photo-window-fixture-result"]
             XCTAssertTrue(result.waitForExistence(timeout: 5))
             XCTAssertTrue(result.label.hasPrefix("0|"), "Choosing and cancelling must not send.")
@@ -3676,6 +3690,36 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
         XCTAssertEqual(heart.label, "ハートを送信済みです")
         XCTAssertFalse(heart.isEnabled)
+
+        // The shipping shared-memo entry uses this exact photo. Merely opening
+        // or cancelling must not create a record or copy the sender's words.
+        tapReceivedDetailControl(app, identifier: "family-record-entry")
+        app.buttons["family-record-add-current-photo"].tap()
+        let sharedInput = app.textViews["family-record-words-input"]
+        XCTAssertTrue(sharedInput.waitForExistence(timeout: 10))
+        XCTAssertEqual(sharedInput.value as? String, "")
+        XCTAssertFalse(app.buttons["family-record-pick-photo"].exists)
+        XCTAssertFalse(app.buttons["family-record-reuse-caption"].exists)
+        app.buttons["family-record-editor-close"].tap()
+        tapReceivedDetailControl(app, identifier: "family-record-entry")
+        app.buttons["family-record-add-current-photo"].tap()
+        XCTAssertTrue(sharedInput.waitForExistence(timeout: 10), "Cancel must leave the photo unregistered.")
+        let sharedSave = app.buttons["family-record-save"]
+        for _ in 0..<5 where !sharedSave.isHittable { app.swipeUp() }
+        XCTAssertTrue(sharedSave.isHittable)
+        attach(app, name: "shared-photo-explicit-memo-entry")
+        sharedSave.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: sharedInput)], timeout: 10), .completed)
+        tapReceivedDetailControl(app, identifier: "family-record-entry")
+        app.buttons["family-record-add-current-photo"].tap()
+        XCTAssertTrue(app.navigationBars["共有メモ"].waitForExistence(timeout: 10))
+        let sharedAddWords = app.buttons["family-record-add-words"]
+        for _ in 0..<5 where !sharedAddWords.isHittable { app.swipeUp() }
+        XCTAssertTrue(sharedAddWords.waitForExistence(timeout: 5))
+        XCTAssertFalse(sharedInput.exists, "Reopening must use the existing photo record, not another upload.")
+        XCTAssertFalse(app.buttons["family-record-add"].exists)
+        app.navigationBars["共有メモ"].buttons["閉じる"].tap()
         closePhotoDetail(app)
 
         let second = app.buttons["received-fixture-tile-1"]
@@ -3954,7 +3998,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let caption = app.staticTexts[identifier]
         XCTAssertTrue(caption.waitForExistence(timeout: 5))
         XCTAssertEqual(caption.label, expected)
-        app.navigationBars["ひとこと"].buttons["閉じる"].tap()
+        app.navigationBars["メモ"].buttons["閉じる"].tap()
         expectation(for: NSPredicate { _, _ in !caption.exists }, evaluatedWith: app)
         waitForExpectations(timeout: 5)
         XCTAssertTrue(read.isHittable)
@@ -3977,6 +4021,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             app.launchArguments = ["--moment-composer-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
             if variant == "large" { app.launchArguments.append("--composer-large-text") }
             if variant == "panorama" { app.launchArguments.append("--composer-panorama") }
+            if variant == "standard" { app.launchArguments.append("--composer-long-memo") }
             app.launch()
             let open = app.buttons["composer-fixture-open"]
             XCTAssertTrue(open.waitForExistence(timeout: 15))
@@ -4034,14 +4079,33 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertTrue(input.waitForExistence(timeout: 5))
             input.typeText("とりけし")
             app.buttons["family-window-cancel-delivery"].tap()
+            let discard = app.alerts["送るメモを破棄しますか？"]
+            XCTAssertTrue(discard.waitForExistence(timeout: 5))
+            discard.buttons["戻る"].tap()
+            XCTAssertTrue(edit.label.contains("とりけし"), "Returning must preserve the unsent draft.")
+            app.buttons["family-window-cancel-delivery"].tap()
+            discard.buttons["破棄してやめる"].tap()
             XCTAssertTrue(open.waitForExistence(timeout: 5))
             XCTAssertFalse(app.navigationBars["写真を確認"].exists)
             open.tap()
             XCTAssertTrue(edit.waitForExistence(timeout: 5))
-            XCTAssertEqual(edit.label, "ひとことを添える")
+            XCTAssertEqual(edit.label, "メモを添える")
             app.buttons["family-window-confirm-delivery"].tap()
             XCTAssertTrue(sent.waitForExistence(timeout: 5))
             XCTAssertEqual(sent.label, "送信内容：")
+
+            open.tap()
+            let attachNote = app.buttons["family-window-attach-personal-note"]
+            XCTAssertTrue(attachNote.waitForExistence(timeout: 5))
+            attachNote.tap()
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            XCTAssertEqual(input.value as? String, String(repeating: "ねこ", count: 61),
+                "An attached long memo must remain complete for explicit editing, never silently truncated.")
+            app.buttons["family-window-caption-done-top"].tap()
+            XCTAssertFalse(app.buttons["family-window-confirm-delivery"].isEnabled,
+                "A draft exceeding the existing delivery contract must not be sent.")
+            app.buttons["family-window-cancel-delivery"].tap()
+            app.alerts.buttons["破棄してやめる"].tap()
             app.terminate()
         }
     }

@@ -1,41 +1,49 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-memory-read-ui-v3",
-  "purpose": "Personal memo rediscovery within the existing authorized album scope; preservation status reads account-scoped pending memo edits without changing write operations; exact reviewed family authorship, edit/withdraw controls and sharing-end explanation. DEBUG fixture corrections preserve access and source-link guards. Production storage, network, permission, encryption and revocation implementations are unchanged. Account-change notifications invalidate cloud-scoped editors only; plain local text remains editable. Storage and cloud account validation are unchanged. The independently reviewed exact editor guard is validated by the existing local memo regression and unchanged cloud-account boundary checks; unknown editor changes require full CI.",
+  "scope": "reviewed-cat-note-ui-v1",
+  "purpose": "Independently reviewed unified memo input and explicit sharing of a separate send copy. Private originals remain unchanged; delivery limits and frozen photo/recipient/text remain intact. Shared-memo additions derive a stable entry ID from the authorized space and delivered moment, reuse existing entries, preserve withdrawals, and retain existing author, lifecycle, revision/conflict, encryption and server/schema boundaries. This exact client/core change is reviewed with its identity verifier and eleven existing native UI operations; it is not a general UI or read-only exemption.",
   "visualReview": "user-device",
-  "dataReview": "local-editor-account-boundary",
+  "dataReview": "explicit-memo-sharing-boundary",
   "files": {
-    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": {
-      "before": "46e2030b98399b0902619a34f8bfa9e554e96ba45f39a74f768c06a09ee8d053",
-      "after": "b6f6234b4e130e21a86570fa38752eb97c2139b41577c5366626ac2ebb8b3f17"
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift": {
+      "before": "3eda268890ee9cc38ed82fda78c3a749009d980f054b9740601987d6b49ad679",
+      "after": "9e0866bd19e30e6ccd04c9d2f146f84532f15791fdc713098162dffab6d97936"
     },
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
-      "before": "49573947eff46d9d3708e3530d9cf04c7611cc39523c8cf00f03307ea8e4f59c",
-      "after": "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035"
+      "before": "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035",
+      "after": "4da32739ee30ac887e3728410b5bfbd0601c1d5566aa3f2b26c6ce0c82f5702e"
+    },
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": {
+      "before": "a9d36e4514c5bf48c519aad97d1f17c551b9b480839f8bbc5ad56fe397f7c77b",
+      "after": "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0"
     },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "d1f2eef1470ba325f465f11ba5bb12ca99fa3733f1de6e92c6135952a572e636",
-      "after": "0291261ae80425173101ba2523c925e8dd8ee4397cd8ac8d7e1bc30db620b337"
+      "before": "0291261ae80425173101ba2523c925e8dd8ee4397cd8ac8d7e1bc30db620b337",
+      "after": "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed"
     },
-    "NekoWidget/NekoWidget/Views/MainTabView.swift": {
-      "before": "1dd4874b77589365f8bebf8c7e93a2f7dbb8c422963d9136859d1a7021929ccc",
-      "after": "06d3a463747689da0bbd54010d2676f248764e0a549a0c839196cb97f0fb5fea"
-    },
-    "NekoWidget/NekoWidget/Views/PairingView.swift": {
-      "before": "303ad2549dca9211c907fcaa1a6a56de9e37f54fbf559b960173b2a3ad27cfe1",
-      "after": "726f6e5d66f1f431a242f1301f268cfbf69020b2685e9969d07153fb619d852e"
-    },
-    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
-      "before": "6835eed9b435041640b9e3dd1ad3629a30c0daa65c899854991a52bf4c22ae0d",
-      "after": "304bb24157a0b7a55cd7601854cab5625820e976af391f1e03f3a553119df6c0"
-    },
-    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "762435d1c6430588b5da03eb676ecd2f856a1ef80f8cb10a96e17d172e22098b",
-      "after": "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f"
+    "NekoWidget/NekoWidget/Views/MomentDeliveryComposer.swift": {
+      "before": "fbb58952b91f7830e5e07b72a0fb3bc6311e6cdec3e68dd4670594abe16df1ef",
+      "after": "03d5fd4132e91f0c42f5a5fbaa9f09ab4a4c6b016859b2eeef0b5899fb9c90ca"
     },
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": {
-      "before": "35a03ba505d53dd6ecaa2d614ab6f34d4bb1a3ed17ff257a592f110b466748ac",
-      "after": "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56"
+      "before": "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56",
+      "after": "e18221d6e90ccd631bea05144e996a09e3343916e659642cc5ef665f2440c7e2"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoWindowDeliveryView.swift": {
+      "before": "b4520eeaea3b5a4ffd9f2fc5072decfcf07b963d042b2f104cd82c37fcb96d8a",
+      "after": "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818"
+    },
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
+      "before": "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f",
+      "after": "cc98d79f81ab9138c26d87869ca2c912ee3ee5013227b4d32ece1fbbc5379797"
+    },
+    "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": {
+      "before": "82eb5c2238aaada407722a1a291cbacac6abda53247847f15e94e44751870395",
+      "after": "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574"
+    },
+    "NekoWidget/ci/verify-family-records.swift": {
+      "before": "62a8c5c5475114c0f4b43026fdeae3132d675d9d92f9ac4e4e36dee7f4305e1f",
+      "after": "ca811d79911034bbf3fed32a034712ba348ded0ab8e636001b7aa20dcc2df0c6"
     }
   }
 }

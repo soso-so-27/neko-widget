@@ -146,6 +146,8 @@ struct FamilyWindowView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var preparedDelivery: PreparedMomentDelivery?
     @State private var deliveryCaption = ""
+    @State private var deliveryPersonalMemo: String?
+    @State private var deliverySelectionGeneration = UUID()
     @State private var selectedSharedPhoto: MomentSharedPhoto?
     @State private var pendingDetailMemoryConfirmationID: String?
     @State private var isPreparingSelectedPhoto = false
@@ -773,6 +775,7 @@ struct FamilyWindowView: View {
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
+            deliveryPersonalMemo = nil
         }) { delivery in
             deliveryConfirmation(delivery)
                 .id(delivery.id)
@@ -827,6 +830,11 @@ struct FamilyWindowView: View {
                         VStack(spacing: 0) {
                             if !model.isReportOnly {
                                 receivedPhotoActionControls(item)
+                                if let spaceID = model.pairingState?.spaceID {
+                                    FamilyRecordEntryButton(spaceID: spaceID,
+                                        source: receivedFamilyRecordSource(item, spaceID: spaceID), windowName: model.windowDisplayName)
+                                        .id("\(spaceID)-\(item.id)")
+                                }
                                 if memoryResultMomentID == item.id,
                                    let message = memoryResultMessage {
                                     Text(message).font(.footnote).foregroundStyle(.secondary)
@@ -935,7 +943,7 @@ struct FamilyWindowView: View {
                 if !model.isReportOnly {
                     manualRefreshResult
                     if let spaceID = model.pairingState?.spaceID {
-                        FamilyRecordEntryButton(spaceID: spaceID).id(spaceID)
+                        FamilyRecordEntryButton(spaceID: spaceID, windowName: model.windowDisplayName).id(spaceID)
                     }
                 }
             }
@@ -1250,35 +1258,48 @@ struct FamilyWindowView: View {
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
+        let generation = UUID()
+        deliverySelectionGeneration = generation
         photoSelectionMessage = nil
         selectedDeliveryMessage = nil
         preparedDelivery = nil
         deliveryCaption = ""
+        deliveryPersonalMemo = nil
         isPreparingSelectedPhoto = true
         Task {
             defer {
-                isPreparingSelectedPhoto = false
-                selectedPhotoItem = nil
+                if deliverySelectionGeneration == generation {
+                    isPreparingSelectedPhoto = false
+                    selectedPhotoItem = nil
+                }
             }
             do {
                 guard let picked = try await item.loadTransferable(
                     type: PickedMomentIngressPhoto.self
                 ) else { throw MomentSharingError.invalidPayload }
                 let preview = try picked.photo.previewImage()
+                let personalMemo: String?
+                if let identifier = item.itemIdentifier {
+                    personalMemo = try? await PhotoMemoryNoteStore.shared.note(for: identifier)?.text
+                } else { personalMemo = nil }
                 let destination: MomentDeliveryDestination
                 do {
                     destination = try await model.deliveryDestinationSnapshot()
                 } catch {
+                    guard deliverySelectionGeneration == generation else { return }
                     photoSelectionMessage =
                         "共有先を確認できませんでした。まどの状態を確認して、もう一度お試しください。"
                     return
                 }
+                guard deliverySelectionGeneration == generation, !Task.isCancelled else { return }
+                deliveryPersonalMemo = personalMemo
                 preparedDelivery = PreparedMomentDelivery(
                     photo: picked.photo,
                     preview: preview,
                     destination: destination
                 )
             } catch {
+                guard deliverySelectionGeneration == generation else { return }
                 photoSelectionMessage =
                     "写真を読み込めませんでした。iCloudの通信状態を確認するか、別の写真をお試しください。"
             }
@@ -1313,8 +1334,33 @@ struct FamilyWindowView: View {
                             ?? "写真を準備できませんでした。もう一度お試しください。"
                     }
                 }
-            }
+            },
+            personalMemo: deliveryPersonalMemo
         )
+    }
+
+    private func receivedFamilyRecordSource(_ item: MomentInboxItem, spaceID: String) -> FamilyRecordPhotoSource {
+        FamilyRecordPhotoSource(momentID: item.id) {
+            let token = try SharingLifecycleGate.issueToken()
+            let validate: @MainActor () throws -> Void = {
+                try SharingLifecycleGate.validate(token)
+                guard !model.isShowingLastKnownState, !model.isReportOnly, model.isPaired,
+                      model.pairingState?.spaceID == spaceID,
+                      let current = model.receivedMoments.first(where: { $0.id == item.id }),
+                      current == item, current.accessExpiresAt > .now,
+                      model.imageURL(for: current) != nil else { throw FamilyRecordError.changed }
+            }
+            try validate()
+            guard let url = model.imageURL(for: item) else { throw FamilyRecordError.changed }
+            let converted = try await Task.detached(priority: .userInitiated) {
+                try MomentShareIngressService().prepare(fromFileURL: url)
+            }.value
+            try validate()
+            let photo = MomentShareIngressPhoto(canonicalJPEG: converted.canonicalJPEG,
+                capturedAt: item.capturedAt, pixelWidth: converted.pixelWidth, pixelHeight: converted.pixelHeight)
+            return FamilyRecordPreparedPhoto(photo: photo, momentID: item.id, caption: model.caption(for: item),
+                canReuseCaption: false, validate: validate)
+        }
     }
 
     private func compactMomentCard(_ item: MomentInboxItem) -> some View {
@@ -1343,7 +1389,7 @@ struct FamilyWindowView: View {
             "届いた日 \(item.receivedAt.formatted(.dateTime.month().day()))"
         ]
         if let caption = model.caption(for: item) {
-            parts.append("ひとこと。\(caption)")
+            parts.append("メモ。\(caption)")
         }
         if model.isSavedMemory(item) {
             parts.append("お気に入りに追加しました")
@@ -1942,7 +1988,7 @@ struct FamilyWindowView: View {
             parts.append("ハートが届いています")
         }
         if let caption = record.localCaption {
-            parts.append("ひとこと。\(caption)")
+            parts.append("メモ。\(caption)")
         }
         if sentRecordThumbnail(record) == nil {
             parts.append("写真のプレビューはこのiPhoneに残っていません")
@@ -2095,7 +2141,7 @@ struct FamilyWindowView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("写真を大きく開きます。ひとことは詳細から全文を読めます")
+                .accessibilityHint("写真を大きく開きます。メモは詳細から全文を読めます")
             } else {
                 receivedPhotoHeader(
                     item,
@@ -2876,6 +2922,8 @@ struct MomentReceivedLayoutFixture: View {
     private struct Selection: Identifiable { let id: Int }
     @State private var selection: Selection?
     @StateObject private var actionFixture = ReceivedPhotoActionFixture()
+    @State private var familyRecordClient = FamilyRecordFixtureClient(
+        jpeg: MomentExperiencePhotoFixture.image(index: 0).jpegData(compressionQuality: 0.9) ?? Data())
     private let urls = Self.makePhotos()
     private let caption = String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3)
     private var largeText: Bool { CommandLine.arguments.contains("--received-large-text") }
@@ -2926,7 +2974,17 @@ struct MomentReceivedLayoutFixture: View {
                         caption: selected.id == 2 ? nil : caption,
                         captionIdentifier: "received-fixture-full-caption"
                     ) {
-                        actionControls(photoID: selected.id)
+                        VStack(spacing: 0) {
+                            actionControls(photoID: selected.id)
+                            FamilyRecordEntryButton(spaceID: "received-photo-fixture",
+                                source: FamilyRecordPhotoSource(momentID: "received_fixture_\(selected.id)") {
+                                    let photo = try MomentShareIngressService().prepare(fromFileURL: urls[selected.id])
+                                    return FamilyRecordPreparedPhoto(photo: photo, momentID: "received_fixture_\(selected.id)",
+                                        caption: selected.id == 2 ? nil : caption,
+                                        canReuseCaption: false, validate: {})
+                                }, fixtureClient: familyRecordClient)
+                                .id(selected.id)
+                        }
                     }
                     .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
                     .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
@@ -3052,7 +3110,7 @@ struct MomentPhotoDetailBody<Actions: View>: View {
                         .frame(maxWidth: .infinity, alignment: .leading).padding(20)
                         .accessibilityIdentifier(captionIdentifier)
                 }
-                .navigationTitle("ひとこと").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .topBarTrailing) {
                     Button("閉じる", systemImage: "xmark") { showsFullCaption = false }
                         .labelStyle(.iconOnly)
@@ -3077,7 +3135,7 @@ struct MomentPhotoDetailBody<Actions: View>: View {
                     .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("ひとこと。\(caption)")
+                .accessibilityLabel("メモ。\(caption)")
                 .accessibilityHint("全文を開きます")
                 .accessibilityIdentifier("photo-detail-read-caption")
             }
@@ -3152,7 +3210,16 @@ private struct MomentSentPhotoDetail: View {
                     MomentPhotoDetailBody(imageURL: displayedDetailURL,
                         legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },
                         isLoading: isLoading && !hasResolvedCurrentPhoto, caption: record.localCaption,
-                        captionIdentifier: "family-window-sent-caption") { recoveryControls }
+                        captionIdentifier: "family-window-sent-caption") {
+                            VStack(spacing: 0) {
+                                recoveryControls
+                                if let spaceID = model.pairingState?.spaceID {
+                                    FamilyRecordEntryButton(spaceID: spaceID,
+                                        source: record.momentID == nil ? nil : sharedMemoSource(record, spaceID: spaceID), windowName: model.windowDisplayName)
+                                        .id("\(spaceID)-\(record.id)")
+                                }
+                            }
+                        }
                 } else {
                     ContentUnavailableView("この写真は表示できません", systemImage: "photo")
                 }
@@ -3215,6 +3282,35 @@ private struct MomentSentPhotoDetail: View {
                 }
             }
         }.preferredColorScheme(.dark)
+    }
+
+    private func sharedMemoSource(_ record: MomentSentRecordPresentation, spaceID: String) -> FamilyRecordPhotoSource {
+        FamilyRecordPhotoSource(momentID: record.momentID ?? "") {
+            let token = try SharingLifecycleGate.issueToken()
+            guard let reference = model.sentDetailReference(recordID: record.id) else {
+                throw FamilyRecordError.changed
+            }
+            let validate: @MainActor () throws -> Void = {
+                try SharingLifecycleGate.validate(token)
+                guard !model.isShowingLastKnownState, !model.isReportOnly, model.isPaired,
+                      model.pairingState?.spaceID == spaceID,
+                      model.sentDetailReference(recordID: record.id) == reference,
+                      model.outgoingPresentation.sentRecords.contains(where: {
+                          $0.id == record.id && $0.localCaption == record.localCaption
+                      }) else { throw FamilyRecordError.changed }
+            }
+            try validate()
+            guard let url = await model.sentDetailURL(recordID: record.id) else {
+                throw FamilyRecordError.changed
+            }
+            let photo = try await Task.detached(priority: .userInitiated) {
+                try MomentShareIngressService().prepare(fromFileURL: url)
+            }.value
+            try validate()
+            guard let momentID = record.momentID else { throw FamilyRecordError.changed }
+            return FamilyRecordPreparedPhoto(photo: photo, momentID: momentID, caption: record.localCaption,
+                canReuseCaption: true, validate: validate)
+        }
     }
 
     @ViewBuilder

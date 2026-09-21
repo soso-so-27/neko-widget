@@ -37,10 +37,16 @@ struct FamilyRecordMutation: Sendable {
 protocol FamilyRecordServing: Sendable {
     func load() async throws -> FamilyRecordSnapshot
     func photo(_ row: FamilyRecordRow) async throws -> Data
-    func preparePhoto(_ photo: MomentShareIngressPhoto) async throws -> FamilyRecordMutation
+    func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) async throws -> FamilyRecordMutation
     func prepareWords(_ text: String, entryID: String, replacing row: FamilyRecordRow?) async throws -> FamilyRecordMutation
     func prepareWithdrawal(_ row: FamilyRecordRow) async throws -> FamilyRecordMutation
     func save(_ mutation: FamilyRecordMutation) async throws -> FamilyRecordRow
+}
+
+extension FamilyRecordServing {
+    func preparePhoto(_ photo: MomentShareIngressPhoto) async throws -> FamilyRecordMutation {
+        try await preparePhoto(photo, sourceMomentID: nil)
+    }
 }
 
 actor FamilyRecordClient: FamilyRecordServing {
@@ -118,11 +124,14 @@ actor FamilyRecordClient: FamilyRecordServing {
         try validate(auth)
         return jpeg
     }
-    func preparePhoto(_ photo: MomentShareIngressPhoto) async throws -> FamilyRecordMutation {
+    func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) async throws -> FamilyRecordMutation {
         let auth = try authorization()
         try await requireSafe(photo.canonicalJPEG)
         try validate(auth)
-        let id = UUID().uuidString.lowercased()
+        let id: String
+        if let sourceMomentID {
+            id = try FamilyRecordSourceIdentity.recordID(spaceID: expectedSpaceID, momentID: sourceMomentID)
+        } else { id = UUID().uuidString.lowercased() }
         let payload = FamilyRecordPayload(schemaVersion: 1, text: nil, jpeg: photo.canonicalJPEG, capturedAt: photo.capturedAt)
         return try prepare(id: id, entryID: id, kind: .photo, revision: 0, payload: payload, auth: auth)
     }

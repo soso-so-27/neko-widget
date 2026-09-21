@@ -2755,6 +2755,7 @@ struct PhotoBrowserView: View {
         }
         .sheet(item: $deliveryPhoto) { photo in
             PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
+                noteStore: personalNote.store,
                 onCancel: { deliveryPhoto = nil },
                 onStaged: { _ in
                     stagedDeliveryID = photoDeliveryModel.lastStagedPhotoID

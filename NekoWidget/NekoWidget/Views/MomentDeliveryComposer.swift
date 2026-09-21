@@ -1,6 +1,37 @@
 import SwiftUI
 import UIKit
 
+/// One writing surface for private and shared notes. The caller owns persistence
+/// and the audience; this view never saves, uploads, or rewrites the draft.
+struct PhotoNoteInput: View {
+    @Binding var text: String
+    let focus: FocusState<Bool>.Binding
+    let maximumCharacters: Int
+    let audience: String
+    let identifier: String
+    var minimumHeight: CGFloat = 140
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(audience)
+                .font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $text)
+                .frame(minHeight: minimumHeight)
+                .focused(focus)
+                .accessibilityLabel("メモ")
+                .accessibilityIdentifier(identifier)
+            if text.isEmpty {
+                Text("このあと、どうなった？")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("photo-note-writing-hint")
+            }
+            Text("\(text.count) / \(maximumCharacters)文字")
+                .font(.caption)
+                .foregroundStyle(text.count > maximumCharacters ? Color.red : Color.secondary)
+        }
+    }
+}
+
 /// The shipping confirmation screen, also exercised by the offline UI fixture.
 struct MomentDeliveryComposer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -13,9 +44,11 @@ struct MomentDeliveryComposer: View {
     let onCancel: () -> Void
     let onSend: (String) -> Void
     var onChangeDestination: (() -> Void)? = nil
+    var personalMemo: String? = nil
     @FocusState private var isCaptionFocused: Bool
     @State private var isEditingCaption = false
     @State private var showsSharingInformation = false
+    @State private var showsDiscardConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -26,17 +59,31 @@ struct MomentDeliveryComposer: View {
                         photo(height: photoHeight(in: geometry.size))
                             .id("composer-photo-top")
                         if isEditingCaption {
-                            HStack {
-                                Text("残り\(max(0, MomentCaption.maximumCharacters - caption.count))文字")
-                                Spacer()
-                                Text("改行2個まで・入力は任意")
+                            PhotoNoteInput(text: $caption, focus: $isCaptionFocused,
+                                maximumCharacters: MomentCaption.maximumCharacters,
+                                audience: "\(destinationName)に送るメモ", identifier: "family-window-caption-input")
+                                .padding(12)
+                                .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                            in: RoundedRectangle(cornerRadius: 16))
+                                .id("composer-note-input")
+                                .disabled(isSending)
+                            Text("送るメモは100文字・改行2個まで。自分の元のメモは変わりません。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if caption.isEmpty,
+                                  let personalMemo, !personalMemo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button {
+                                caption = personalMemo
+                                isEditingCaption = true
+                                isCaptionFocused = true
+                            } label: {
+                                Label("自分のメモを添える", systemImage: "note.text.badge.plus")
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("family-window-attach-personal-note")
+                            .disabled(isSending)
                         }
 
                         if let message = MomentCaption.validationMessage(for: caption) {
-                            Text(message)
+                            Text(message.replacingOccurrences(of: "ひとこと", with: "送るメモ"))
                                 .font(.footnote)
                                 .foregroundStyle(.orange)
                                 .accessibilityIdentifier("family-window-caption-validation")
@@ -51,10 +98,12 @@ struct MomentDeliveryComposer: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: isEditingCaption) { _, editing in
-                    if !editing { scroll.scrollTo("composer-photo-top", anchor: .top) }
+                    scroll.scrollTo(editing ? "composer-note-input" : "composer-photo-top",
+                                    anchor: editing ? .bottom : .top)
                 }
                 .onChange(of: geometry.size.height) { _, _ in
-                    if !isEditingCaption { scroll.scrollTo("composer-photo-top", anchor: .top) }
+                    scroll.scrollTo(isEditingCaption ? "composer-note-input" : "composer-photo-top",
+                                    anchor: isEditingCaption ? .bottom : .top)
                 }
               }
             }
@@ -117,12 +166,13 @@ struct MomentDeliveryComposer: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("写真を確認")
             .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(isSending)
+            .interactiveDismissDisabled(isSending || !caption.isEmpty)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("やめる") {
                         finishCaptionEditing()
-                        onCancel()
+                        if caption.isEmpty { onCancel() }
+                        else { showsDiscardConfirmation = true }
                     }
                     .disabled(isSending)
                     .accessibilityIdentifier("family-window-cancel-delivery")
@@ -144,7 +194,13 @@ struct MomentDeliveryComposer: View {
             .alert("写真の共有について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除いて共有します。ひとことの入力は任意です。")
+                Text("写真の位置情報を除いて共有します。この画面で添えたメモだけを相手に送ります。メモなしでも送れます。")
+            }
+            .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
+                Button("破棄してやめる", role: .destructive, action: onCancel)
+                Button("戻る", role: .cancel) {}
+            } message: {
+                Text("この画面の入力を破棄します。元の自分のメモは残ります。")
             }
             .onChange(of: isCaptionFocused) { _, focused in
                 // Interactive keyboard dismissal also finishes editing.
@@ -164,6 +220,7 @@ struct MomentDeliveryComposer: View {
         // Panoramas still need room for an editable caption. The footer stays
         // outside the scroll view if a large font needs more vertical space.
         let available = max(1, size.height - 32)
+        if isEditingCaption { return min(160, available) }
         return min(available, max(min(150, available), min(width * aspect, 420)))
     }
 
@@ -181,28 +238,13 @@ struct MomentDeliveryComposer: View {
                 .onTapGesture { finishCaptionEditing() }
                 .accessibilityLabel("追加する写真")
             ZStack(alignment: .bottom) {
-              if isEditingCaption {
-                TextField("ひとこと（任意）", text: $caption, axis: .vertical)
-                    .lineLimit(1...3)
-                    .textFieldStyle(.plain)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .tint(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 16))
-                    .padding(12)
-                    .focused($isCaptionFocused)
-                    .onAppear { isCaptionFocused = true }
-                    .accessibilityLabel("ひとこと（任意）")
-                    .accessibilityHint("100文字まで。上の完了で写真の確認へ戻れます")
-                    .accessibilityIdentifier("family-window-caption-input")
-                    .disabled(isSending)
-              } else {
-                    Button { isEditingCaption = true } label: {
+              if !isEditingCaption {
+                    Button {
+                        isEditingCaption = true
+                        isCaptionFocused = true
+                    } label: {
                         if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text("ひとことを添える")
+                            Text("メモを添える")
                                 .font(.subheadline)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 14)
@@ -215,7 +257,7 @@ struct MomentDeliveryComposer: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isSending)
-                    .accessibilityLabel(caption.isEmpty ? "ひとことを添える" : "ひとことを編集。\(caption)")
+                    .accessibilityLabel(caption.isEmpty ? "メモを添える" : "送るメモを編集。\(caption)")
                     .accessibilityIdentifier("family-window-caption-edit")
                 }
             }
@@ -675,7 +717,9 @@ struct MomentDeliveryComposerFixture: View {
                 onSend: {
                     sentCaption = $0
                     isPresented = false
-                }
+                },
+                personalMemo: CommandLine.arguments.contains("--composer-long-memo")
+                    ? String(repeating: "ねこ", count: 61) : nil
             )
             .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--composer-large-text") ? .accessibility5 : .large)
         }

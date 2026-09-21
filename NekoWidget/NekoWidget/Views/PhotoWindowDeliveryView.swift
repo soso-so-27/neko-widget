@@ -121,12 +121,15 @@ struct PhotoWindowDeliveryView: View {
     let photo: PhotoPresentation
     let onCancel: () -> Void
     let onStaged: (String) -> Void
+    private let noteStore: PhotoMemoryNoteStore
     @State private var actions: PhotoWindowDeliveryActions
     @State private var destinations: [MomentDeliveryDestination] = []
     @State private var destination: MomentDeliveryDestination?
     @State private var preparedPhoto: MomentShareIngressPhoto?
     @State private var preview: UIImage?
     @State private var caption = ""
+    @State private var personalMemo: String?
+    @State private var showsDiscardConfirmation = false
     @State private var isLoading = true
     @State private var isPreparing = false
     @State private var isSending = false
@@ -136,11 +139,13 @@ struct PhotoWindowDeliveryView: View {
 
     init(photo: PhotoPresentation,
          actions: PhotoWindowDeliveryActions? = nil,
+         noteStore: PhotoMemoryNoteStore = .shared,
          onCancel: @escaping () -> Void,
          onStaged: @escaping (String) -> Void) {
         self.photo = photo
         self.onCancel = onCancel
         self.onStaged = onStaged
+        self.noteStore = noteStore
         _actions = State(initialValue: actions ?? .live)
     }
 
@@ -174,14 +179,26 @@ struct PhotoWindowDeliveryView: View {
                         // Keep the same photo and caption while refreshing only
                         // the available recipients. No automatic selection.
                         preparationTask = Task { await loadDestinations() }
-                    }
+                    },
+                    personalMemo: personalMemo
                 )
             } else {
                 destinationPicker
             }
         }
-        .interactiveDismissDisabled(isSending)
-        .task { await loadDestinations() }
+        .interactiveDismissDisabled(isSending || !caption.isEmpty)
+        .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
+            Button("破棄してやめる", role: .destructive, action: cancel)
+            Button("戻る", role: .cancel) {}
+        } message: {
+            Text("この画面の入力を破棄します。元の自分のメモは残ります。")
+        }
+        .task {
+            // Read the frozen source only. Nothing is added to the send draft
+            // until the user chooses to attach it in the confirmation screen.
+            personalMemo = try? await noteStore.note(for: photo.localIdentifier)?.text
+            await loadDestinations()
+        }
         .onDisappear { preparationTask?.cancel() }
     }
 
@@ -238,7 +255,10 @@ struct PhotoWindowDeliveryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("やめる", systemImage: "xmark", action: cancel)
+                    Button("やめる", systemImage: "xmark") {
+                        if caption.isEmpty { cancel() }
+                        else { showsDiscardConfirmation = true }
+                    }
                         .labelStyle(.iconOnly)
                         .accessibilityLabel("やめる")
                         .accessibilityIdentifier("photo-window-cancel")
