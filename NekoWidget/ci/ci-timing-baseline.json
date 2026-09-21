@@ -4,8 +4,18 @@
   "upload_minutes": 9.22,
   "upload_run": 35493368458,
   "upload_observations": [
-    {"run_id": 35493368458, "minutes": 9.22},
-    {"run_id": 35540621875, "minutes": 6.583}
+    {
+      "run_id": 35493368458,
+      "minutes": 9.22
+    },
+    {
+      "run_id": 35540621875,
+      "minutes": 6.583
+    },
+    {
+      "run_id": 35593942726,
+      "minutes": 8.733
+    }
   ],
   "observations": [
     {
@@ -121,6 +131,18 @@
       "candidate_minutes": 38.467,
       "run_id": 35565136713,
       "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-photo-actions-ui-v1",
+      "candidate_minutes": 27.217,
+      "run_id": 35579621879,
+      "outcome": "failure"
+    },
+    {
+      "scope": "reviewed-photo-actions-ui-v1",
+      "candidate_minutes": 31.683,
+      "run_id": 35590825541,
+      "outcome": "success"
     }
   ]
 }
