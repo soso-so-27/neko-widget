@@ -449,7 +449,7 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/BillingVerificationService/test/apple-noti
  'NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
                                                                'b5ceda2c460903867debe0fb1a2380240bea77b3b28127b5711e5866ce0a2938'),
  'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f',
-                                                               '9928e9e277459e5220d62664b4188ae593a08c1a923a03ee5d0169a4e372eb37'),
+                                                               'b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64'),
  'NekoWidget/SharingService/migrations/0028_window_support_requests.sql': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
                                                                            '15a76aa5b5047d0668597f8c8b48fda68759cb0fd24c123c4251e515f08b4ef0'),
  'NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs': ('d3a0e8a9b718645f5b7b9c4b872e025b4e8e9cda8015d01fd563ea6c5063353e',
@@ -473,7 +473,7 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/BillingVerificationService/test/apple-noti
 WINDOW_SUPPORT_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "bcf220c84d48e1fffbc8fc4d4d87f7d5d48df80c770b7c79218d3ba6cba16f8d",
-        "99a1a7f7ffb43523e0773fd93ed262b37ee7e059ce1f838fc34c81e0573fe0a9"
+        "f8172bba10ac4a99f145df7759acd2ffdf0c846e9c3a8f080027afb293e3ed7d"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "688ac5aa91cd4324fc226d30929d725fc8977f166ed1ff3f346fbfde5e33085c",
@@ -481,7 +481,7 @@ WINDOW_SUPPORT_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "54c04816bb45109a12a83882ef8bf0483c159a5b1f1071950e88cd4e00a6abbd",
-        "dd61be5bb3e6ebf9d89799fff3dd29a6efded072893861df8cc5d0f0071b2ff1"
+        "bc06065df4577922b925f60d2f3459396d87b960a88e3aea0636696a332445b9"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "3dcc544887c7fc47c2718f9d6d021b9f53ed68112e9dda21417ca28bef819eeb",

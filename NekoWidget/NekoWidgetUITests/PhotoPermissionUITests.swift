@@ -3366,7 +3366,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["window-support-preview-notice"].exists)
         XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
         app.buttons["window-support-approve"].tap()
-        let approve = app.buttons["window-support-confirm-approval"]
+        let approve = app.buttons["window-support-confirm-approval"].firstMatch
         XCTAssertTrue(approve.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["あなたへの請求はありません。相手が最後に確認すると、送信を再開できます。"].exists)
         attach(app, name: "window-support-owner-approval-confirmation")
