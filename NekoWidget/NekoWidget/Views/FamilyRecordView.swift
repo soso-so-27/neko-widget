@@ -169,9 +169,9 @@ private struct FamilyRecordSourceEditor: View {
 
 /// One reading surface for the delivery caption and later words. Reading is
 /// strictly read-only: retaining the delivered photo still requires Save.
-struct FamilyPhotoMemoView: View {
+struct FamilyPhotoMemoView<PhotoContent: View>: View {
     private enum Destination: Identifiable {
-        case source, edit(FamilyRecordEditTarget), read(String)
+        case source(FamilyRecordPhotoSource), edit(FamilyRecordEditTarget), read(String)
         var id: String {
             switch self {
             case .source: "source"
@@ -181,32 +181,70 @@ struct FamilyPhotoMemoView: View {
         }
     }
 
-    let source: FamilyRecordPhotoSource
+    let source: FamilyRecordPhotoSource?
     let caption: String?
     let captionIsOwn: Bool
     let captionIdentifier: String
     let windowName: String
+    let content: (AnyView) -> PhotoContent
     @StateObject private var model: FamilyRecordViewModel
     @State private var destination: Destination?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(spaceID: String, source: FamilyRecordPhotoSource, caption: String?, captionIsOwn: Bool,
+    init(spaceID: String, source: FamilyRecordPhotoSource?, caption: String?, captionIsOwn: Bool,
          captionIdentifier: String, windowName: String = "このまど",
-         client: (any FamilyRecordServing)? = nil) {
+         client: (any FamilyRecordServing)? = nil, @ViewBuilder content: @escaping (AnyView) -> PhotoContent) {
         self.source = source; self.caption = caption; self.captionIsOwn = captionIsOwn
         self.captionIdentifier = captionIdentifier; self.windowName = windowName
+        self.content = content
         _model = StateObject(wrappedValue: FamilyRecordViewModel(
             client: client ?? FamilyRecordClient(expectedSpaceID: spaceID)))
     }
 
     var body: some View {
+        // The model, destination and sheet belong to the whole photo screen.
+        // Footer layout changes (including keyboard insets) must not recreate
+        // an editor or its draft inside a ViewThatFits candidate.
+        content(AnyView(memoContent))
+        .task(id: source?.momentID) { await reload() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { clearPresentation() }
+            else if phase == .active { Task { await reload() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in
+                clearPresentation()
+                if scenePhase == .active { Task { await reload() } }
+            }
+        .sheet(item: $destination) { destination in
+            switch destination {
+            case let .source(source):
+                FamilyRecordSourceEditor(client: model.client, source: source, windowName: windowName,
+                    saved: { Task { await reload() } })
+            case let .edit(target):
+                FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil,
+                    windowName: windowName, saved: { Task { await reload() } })
+            case let .read(text):
+                NavigationStack {
+                    ScrollView { Text(verbatim: text).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding().textSelection(.enabled).accessibilityIdentifier(captionIdentifier) }
+                    .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { self.destination = nil }
+                    } }
+                }
+            }
+        }
+    }
+
+    private var memoContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 if let caption, !caption.isEmpty {
                     memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
                 } else { Spacer(minLength: 0) }
                 if model.snapshot != nil {
-                        Button { destination = .source } label: {
+                        Button { if let source { destination = .source(source) } } label: {
                             Image(systemName: "square.and.pencil").font(.title3)
                                 .frame(width: 44, height: 44)
                         }
@@ -216,13 +254,13 @@ struct FamilyPhotoMemoView: View {
                 } else if model.loading {
                     ProgressView().frame(width: 44, height: 44)
                 } else if model.error != nil {
-                    Button { Task { await model.reload() } } label: {
+                    Button { Task { await reload() } } label: {
                         Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
                     }
                     .accessibilityLabel("メモを読み込み直す")
                 }
             }
-            if let snapshot = model.snapshot,
+            if let source, let snapshot = model.snapshot,
                let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID) {
                 ForEach(snapshot.catalog.records.filter {
                     $0.kind == .words && $0.entryID == photo.id && $0.state == .active
@@ -246,35 +284,11 @@ struct FamilyPhotoMemoView: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 4)
-        .task(id: source.momentID) { await model.reload() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background { clearPresentation() }
-            else if phase == .active { Task { await model.reload() } }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
-            .receive(on: DispatchQueue.main)) { _ in
-                clearPresentation()
-                if scenePhase == .active { Task { await model.reload() } }
-            }
-        .sheet(item: $destination) { destination in
-            switch destination {
-            case .source:
-                FamilyRecordSourceEditor(client: model.client, source: source, windowName: windowName,
-                    saved: { Task { await model.reload() } })
-            case let .edit(target):
-                FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil,
-                    windowName: windowName, saved: { Task { await model.reload() } })
-            case let .read(text):
-                NavigationStack {
-                    ScrollView { Text(verbatim: text).frame(maxWidth: .infinity, alignment: .leading)
-                        .padding().textSelection(.enabled).accessibilityIdentifier(captionIdentifier) }
-                    .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { self.destination = nil }
-                    } }
-                }
-            }
-        }
+    }
+
+    private func reload() async {
+        guard source != nil else { model.clear(); return }
+        await model.reload()
     }
 
     private func clearPresentation() {

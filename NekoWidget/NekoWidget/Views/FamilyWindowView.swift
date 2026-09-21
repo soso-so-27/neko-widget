@@ -821,21 +821,19 @@ struct FamilyWindowView: View {
             Group {
                 if let item = model.receivedMoments.first(where: { $0.id == momentID }),
                    !model.isShowingLastKnownState {
+                    FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
+                        source: !model.isReportOnly ? model.pairingState.map { receivedFamilyRecordSource(item, spaceID: $0.spaceID) } : nil,
+                        caption: model.caption(for: item), captionIsOwn: false,
+                        captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(
                         imageURL: widgetPhotoRequest == nil
                             ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
-                        caption: model.isReportOnly || model.pairingState == nil ? model.caption(for: item) : nil,
+                        caption: nil,
                         captionIdentifier: "family-window-received-caption-full"
                     ) {
                         VStack(spacing: 0) {
+                            memo
                             if !model.isReportOnly {
-                                if let spaceID = model.pairingState?.spaceID {
-                                    FamilyPhotoMemoView(spaceID: spaceID,
-                                        source: receivedFamilyRecordSource(item, spaceID: spaceID),
-                                        caption: model.caption(for: item), captionIsOwn: false,
-                                        captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName)
-                                        .id("\(spaceID)-\(item.id)")
-                                }
                                 receivedPhotoActionControls(item)
                                 if memoryResultMomentID == item.id,
                                    let message = memoryResultMessage {
@@ -861,6 +859,8 @@ struct FamilyWindowView: View {
                             }
                         }
                     }
+                    }
+                    .id("\(model.pairingState?.spaceID ?? "")-\(item.id)")
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
                             Menu {
@@ -2971,24 +2971,21 @@ struct MomentReceivedLayoutFixture: View {
             .navigationBarTitleDisplayMode(.inline)
             .fullScreenCover(item: $selection) { selected in
                 NavigationStack {
-                    MomentPhotoDetailBody(
-                        imageURL: urls[selected.id],
-                        caption: nil,
-                        captionIdentifier: "received-fixture-full-caption"
-                    ) {
-                        VStack(spacing: 0) {
-                            FamilyPhotoMemoView(spaceID: "received-photo-fixture",
-                                source: FamilyRecordPhotoSource(momentID: "received_fixture_\(selected.id)") {
-                                    let photo = try MomentShareIngressService().prepare(fromFileURL: urls[selected.id])
-                                    return FamilyRecordPreparedPhoto(photo: photo, momentID: "received_fixture_\(selected.id)",
-                                        caption: selected.id == 2 ? nil : caption,
-                                        canReuseCaption: false, validate: {})
-                                }, caption: selected.id == 2 ? nil : caption, captionIsOwn: false,
-                                captionIdentifier: "received-fixture-full-caption", client: familyRecordClient)
-                                .id(selected.id)
-                            actionControls(photoID: selected.id)
+                    FamilyPhotoMemoView(spaceID: "received-photo-fixture",
+                        source: FamilyRecordPhotoSource(momentID: "received_fixture_\(selected.id)") {
+                            let photo = try MomentShareIngressService().prepare(fromFileURL: urls[selected.id])
+                            return FamilyRecordPreparedPhoto(photo: photo, momentID: "received_fixture_\(selected.id)",
+                                caption: selected.id == 2 ? nil : caption, canReuseCaption: false, validate: {})
+                        }, caption: selected.id == 2 ? nil : caption, captionIsOwn: false,
+                        captionIdentifier: "received-fixture-full-caption", client: familyRecordClient) { memo in
+                        MomentPhotoDetailBody(imageURL: urls[selected.id], caption: nil) {
+                            VStack(spacing: 0) {
+                                memo
+                                actionControls(photoID: selected.id)
+                            }
                         }
                     }
+                    .id(selected.id)
                     .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
                     .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -3210,22 +3207,22 @@ private struct MomentSentPhotoDetail: View {
         NavigationStack {
             Group {
                 if let record {
+                    FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
+                        source: record.momentID != nil ? model.pairingState.map { sharedMemoSource(record, spaceID: $0.spaceID) } : nil,
+                        caption: record.localCaption, captionIsOwn: true,
+                        captionIdentifier: "family-window-sent-caption", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(imageURL: displayedDetailURL,
                         legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },
                         isLoading: isLoading && !hasResolvedCurrentPhoto,
-                        caption: record.momentID == nil || model.pairingState == nil ? record.localCaption : nil,
+                        caption: nil,
                         captionIdentifier: "family-window-sent-caption") {
                             VStack(spacing: 0) {
-                                if record.momentID != nil, let spaceID = model.pairingState?.spaceID {
-                                    FamilyPhotoMemoView(spaceID: spaceID,
-                                        source: sharedMemoSource(record, spaceID: spaceID),
-                                        caption: record.localCaption, captionIsOwn: true,
-                                        captionIdentifier: "family-window-sent-caption", windowName: model.windowDisplayName)
-                                        .id("\(spaceID)-\(record.id)")
-                                }
+                                memo
                                 recoveryControls
                             }
                         }
+                    }
+                    .id("\(model.pairingState?.spaceID ?? "")-\(record.id)")
                 } else {
                     ContentUnavailableView("この写真は表示できません", systemImage: "photo")
                 }

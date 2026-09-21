@@ -3285,21 +3285,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertFalse(app.alerts["メモを保存できませんでした"].exists,
                        "An account notification must not report a local-only memo save failure.")
         func clearMemoText() {
-            let existing = input.value as? String ?? ""
-            // This fixture note occupies the first line. Tap after that line;
-            // tapping the empty bottom of TextEditor can leave the caret at
-            // the beginning on iOS 26. Observe each deletion before continuing.
+            // Use the system selection command instead of guessing the caret
+            // position or observing each intermediate Japanese IME deletion.
             input.tap()
             XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
             input.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0))
-                .withOffset(CGVector(dx: -12, dy: 16)).tap()
-            for _ in 0..<(existing.utf16.count + 1) where !(input.value as? String ?? "").isEmpty {
-                let previousValue = input.value as? String ?? ""
-                input.typeText(XCUIKeyboardKey.delete.rawValue)
-                let changed = XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "value != %@", previousValue), object: input)
-                XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 3), .completed)
-            }
+                .withOffset(CGVector(dx: -12, dy: 16)).press(forDuration: 1.2)
+            let selectAll = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@ OR label == %@", "すべてを選択", "Select All")).firstMatch
+            XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+            selectAll.tap()
+            input.typeText(XCUIKeyboardKey.delete.rawValue)
             XCTAssertEqual(input.value as? String ?? "", "")
             app.buttons["photo-memory-note-keyboard-done"].tap()
             app.buttons["photo-memory-note-save"].tap()
@@ -3726,7 +3722,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(sharedInput.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["family-record-pick-photo"].exists,
                        "An existing photo must open its words editor without another upload.")
+        XCTAssertTrue(sharedInput.isEnabled)
         sharedInput.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         sharedInput.typeText("一緒に遊んだ日")
         app.buttons["完了"].tap()
         for _ in 0..<5 where !sharedSave.isHittable { app.swipeUp() }

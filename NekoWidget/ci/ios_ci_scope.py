@@ -235,26 +235,26 @@ PHOTO_ACTIONS_DATA_REVIEW = "photo-actions-read-projection"
 PHOTO_ACTIONS_DIGESTS = {
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
         "ae4dc75def94da77f63f6393420f3a67151cd366c25cd1f6582b4941477a3031",
-        "4aa444df885c61a8cfa84ff5c0f0323180f25bd9ca57904e7abc9dad84f3db25"),
+        "77a50a0fef14942798734607ee7fc63de36cc3e37ff85323627a0063dfc3b3a9"),
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": (
         "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0",
-        "92dd230f598f123329526cd7741fdb4b1089ec506f71134e41cea1067bb9b657"),
+        "34c1a3137097d978d29f649b2494103658c27ed00b4e6e1cd7f0d0a2d2521af9"),
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
         "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
         "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb",
-        "3c284a8b706de469ec798c2023d92bd32e27b8abe424dcf8aee8e12abb09e9aa"),
+        "4ab7405409223cddbb143020cbc8d867cf3cf93a4c9f3c19809b692f29b493b7"),
 }
 # Canonicalize only this exact literal to avoid a recursive selector digest.
 PHOTO_ACTIONS_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "e50bd273db41ffc1e48b0fcf1636d341eac810eab5f7f21d3b04cb92d2cf5521",
-        "3577dba46d468f639f9e6afbb91dcaef6e398caa76978b7a38b352f90d59562d"
+        "890664f8295a2a98ff075e282d716ac5c25f1ab72fce551cf75c41c08966291e"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "3377758f9962871f437a6001de54a1e836fa4ad3d9d4206e2e06f86fea1db0e4",
-        "ba4dc952e2a0cc1a689cadc2357e50795de211f93cdd890f7a57edbb7ccbfdec"
+        "51bc10643ec4da9488ae900479296233239a093553bfb5449e4ba0abce1d0aeb"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "90f7fc5fd41376aaa000131b156a9ee7c149f646035a1097451f905e424efa6f",
