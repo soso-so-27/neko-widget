@@ -19,6 +19,10 @@
     {
       "run_id": 35607517485,
       "minutes": 11.1
+    },
+    {
+      "run_id": 35627835417,
+      "minutes": 7.55
     }
   ],
   "observations": [
@@ -180,6 +184,22 @@
       "runner_minutes_all_attempts": 136.9,
       "first_ci_to_main_minutes": 80.183,
       "note": "Includes failed Gallery app.launch background-assertion timeout and only that job retry; successful sibling jobs were reused. Main skipped Mac jobs using same-SHA evidence. No TestFlight in this batch; total did not meet 30-minute goal."
+    },
+    {
+      "scope": "reviewed-delivery-membership-v1",
+      "candidate_minutes": 20.15,
+      "run_id": 35625391468,
+      "outcome": "success",
+      "main_run_id": 35627624774,
+      "main_elapsed_minutes": 0.317,
+      "main_reused": true,
+      "runner_minutes_all_attempts": 61.8,
+      "first_ci_to_apple_upload_minutes": 30.35,
+      "candidate_commit_to_apple_upload_minutes": 31.417,
+      "server_run_id": 35625391446,
+      "server_candidate_minutes": 1.0,
+      "upload_run_id": 35627835417,
+      "note": "First attempt passed: build/privacy, Photos bootstrap+scan, both-OS runtime and 3 affected UI methods. Widget Gallery inputs were unchanged and excluded by frozen full-diff manifest. Separate server CI passed. Main reused same-SHA evidence in 19 seconds. Candidate commit to Apple upload exceeded 30 minutes by 85 seconds; no retry, no real-device or sales activation claim."
     }
   ]
 }

@@ -17,7 +17,14 @@
 
 - サーバー担当の対象4 integration suiteは合計77ケース。テスト前提の修正後、失敗箇所と支援の鮮度期限境界を限定再実行して成功。TypeScript本体／テストtypecheck成功。
 - 主担当の独立レビューで、認可後の受付判定、mutation内の支援確認、既受付のhash一致、本人更新権限の維持を確認した。
-- アプリのSwift検証、native描画、候補CI、本線反映、TestFlightは結果が揃い次第追記する。現時点では未完了。
+- クライアントの独立レビューでも、厳密な403/503の分類、preparedだけの自動停止、受付済み継続、既存認可とlifecycleの維持を確認した。
+- 製品SHA `5025bdf0ca142025eef3c376dc80100da4bf2e25`。開発チェック11組は79.6秒で成功。候補iOS CI `35625391468` は初回成功、20分09秒・runner 61.8分。既存サーバーCI `35625391446` の3jobも成功。
+- 本線iOS CI `35627624774` は同SHAの候補成功を再利用して19秒、Mac再実行なし。本線サーバーCI `35627624742` も成功。
+- 両OS runtimeと対象3操作成功。native fixtureの停止／確認不能表示2枚を主担当が目視し、写真との結び付き、全文の収まり、停止アイコンを確認した。FamilyWindowの実接続・支援再開ボタンの実通信確認とは区別する。
+- UI artifact内の2件のissue添付はUIKitの `_UIReparentingView` 配置警告で、3操作の失敗ではなかった。新たな実機障害や表示崩れを確認したものではない。
+- **TestFlight 1.0 (200)** は `35627835417` で2026年9月22日01:54:45 JSTまでにAppleアップロード成功。altoolの `UPLOAD SUCCEEDED with no errors` を確認した。内部配布用の既存設定を使用し、Appleの処理完了・端末への表示・200実機確認は未確認。
+- 候補commit（01:23:20 JST）からApple upload完了まで31分25秒。初回CI開始（01:24:24）からは30分21秒。どちらも30分目標を超えた。候補CI20分09秒、本線19秒、配布run7分33秒。やり直し／重複Macなし。計測範囲は候補確定後であり、設計・実装時間を含む全作業時間ではない。
+- 画面確認の証拠は `C:/dev/neko-evidence/window-delivery-ui-20260922/`、CI監視JSONは同ディレクトリ直下の `window-delivery-candidate-*`、配布ログは `window-delivery-release-200/`。全artifact一式を取らず、UIは必要なmanifest・画像・警告だけ取得した。
 - 画面操作は送信状態、同一写真の再試行、共有文章の取り下げと閲覧失効の3件へ限定する。Widgetの描画・写真選定は変更しておらずGalleryを繰り返さない。既存build／privacy／写真権限／両OS runtime、サーバー独立CIは維持する。
 
 ## 販売前の残件
