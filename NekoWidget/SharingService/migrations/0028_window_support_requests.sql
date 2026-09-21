@@ -76,24 +76,24 @@ WHERE gate.window_sponsorship_enabled=1 AND gate.effective_entitlement_enabled=1
  ));
 
 CREATE TRIGGER billing_window_support_request_validate AFTER INSERT ON billing_window_support_requests BEGIN
- SELECT CASE WHEN NEW.created_at<>unixepoch() OR NOT EXISTS(SELECT 1 FROM billing_window_support_live_requests WHERE id=NEW.id)
-   THEN RAISE(ABORT,'invalid support request context') END;
+ SELECT (CASE WHEN NEW.created_at<>unixepoch() OR NOT EXISTS(SELECT 1 FROM billing_window_support_live_requests WHERE id=NEW.id)
+   THEN RAISE(ABORT,'invalid support request context') END);
 END;
 CREATE TRIGGER billing_window_support_approval_validate BEFORE INSERT ON billing_window_support_approvals BEGIN
- SELECT CASE WHEN NEW.recorded_at<>unixepoch() OR NOT EXISTS(
+ SELECT (CASE WHEN NEW.recorded_at<>unixepoch() OR NOT EXISTS(
    SELECT 1 FROM billing_window_support_live_requests r
     JOIN moment_participants p ON p.space_id=r.space_id AND p.id=NEW.owner_participant_id AND p.role='owner' AND p.state='active'
     JOIN moment_devices d ON d.participant_id=p.id AND d.id=NEW.owner_device_id AND d.state='active'
    WHERE r.id=NEW.request_id)
-   THEN RAISE(ABORT,'invalid support approval context') END;
+   THEN RAISE(ABORT,'invalid support approval context') END);
 END;
 CREATE TRIGGER billing_window_support_commit_validate BEFORE INSERT ON billing_window_support_commits BEGIN
- SELECT CASE WHEN NEW.recorded_at<>unixepoch() OR NOT EXISTS(
+ SELECT (CASE WHEN NEW.recorded_at<>unixepoch() OR NOT EXISTS(
    SELECT 1 FROM billing_window_support_live_requests r JOIN billing_window_support_approvals a ON a.request_id=r.id
     JOIN moment_participants p ON p.space_id=r.space_id AND p.id=a.owner_participant_id AND p.role='owner' AND p.state='active'
     JOIN moment_devices d ON d.participant_id=p.id AND d.id=a.owner_device_id AND d.state='active'
    WHERE r.id=NEW.request_id AND a.recorded_at>unixepoch()-300)
-   THEN RAISE(ABORT,'invalid support commit context') END;
+   THEN RAISE(ABORT,'invalid support commit context') END);
 END;
 CREATE TRIGGER billing_window_support_commit_apply AFTER INSERT ON billing_window_support_commits BEGIN
  INSERT INTO billing_window_sponsorship_requests(
@@ -112,8 +112,8 @@ CREATE TRIGGER billing_window_support_commit_apply AFTER INSERT ON billing_windo
    AND c.is_upgraded=0 AND c.access_until_ms>CAST(unixepoch('subsec')*1000 AS INTEGER)
    AND c.authority_stale_at_ms>CAST(unixepoch('subsec')*1000 AS INTEGER)
  ORDER BY MIN(c.access_until_ms,c.authority_stale_at_ms) DESC,c.original_transaction_id ASC LIMIT 1;
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM billing_window_sponsorship_requests WHERE client_request_id=NEW.client_request_id)
-   THEN RAISE(ABORT,'support commit was not applied') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM billing_window_sponsorship_requests WHERE client_request_id=NEW.client_request_id)
+   THEN RAISE(ABORT,'support commit was not applied') END);
 END;
 
 CREATE TRIGGER billing_window_support_requests_immutable BEFORE UPDATE ON billing_window_support_requests BEGIN SELECT RAISE(ABORT,'support request immutable'); END;

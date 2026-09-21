@@ -1,5 +1,6 @@
 from pathlib import Path
 import plistlib
+import re
 import unittest
 
 
@@ -77,6 +78,8 @@ class BillingClientFoundationTests(unittest.TestCase):
             "BillingFreshAccountAuthorization.swift",
         ]
         project = source("NekoWidget.xcodeproj/project.pbxproj")
+        object_ids = re.findall(r"(?m)^\s*([A-F0-9]{24}) /\*[^\n]*\*/ = ", project)
+        self.assertEqual(len(object_ids), len(set(object_ids)), "Duplicate Xcode object identifiers")
         app_start = project.index("A00000000000000000000021 /* Sources */ = {")
         extension_start = project.index(
             "A00000000000000000000025 /* Sources */ = {",

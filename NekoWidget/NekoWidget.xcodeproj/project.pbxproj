@@ -12,10 +12,10 @@
 		E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
-		E02609220000000000000005 /* WindowSupportResumeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000006 /* WindowSupportResumeView.swift */; };
+		33E6ECF92D02440DB45F7A97 /* WindowSupportResumeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
-		E02609220000000000000001 /* WindowSupportResumeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000002 /* WindowSupportResumeClient.swift */; };
-		E02609220000000000000003 /* WindowSupportResumeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* WindowSupportResumeModel.swift */; };
+		C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */; };
+		05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */; };
 		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
 		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
 		E02609080000000000000001 /* MomentDeliveryComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* MomentDeliveryComposer.swift */; };
@@ -262,10 +262,10 @@
 		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
-		E02609220000000000000006 /* WindowSupportResumeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeView.swift; sourceTree = "<group>"; };
+		5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeView.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
-		E02609220000000000000002 /* WindowSupportResumeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeClient.swift; sourceTree = "<group>"; };
-		E02609220000000000000004 /* WindowSupportResumeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeModel.swift; sourceTree = "<group>"; };
+		D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeClient.swift; sourceTree = "<group>"; };
+		94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeModel.swift; sourceTree = "<group>"; };
 		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
 		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* MomentDeliveryComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentDeliveryComposer.swift; sourceTree = "<group>"; };
@@ -711,8 +711,8 @@
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
-				E02609220000000000000002 /* WindowSupportResumeClient.swift */,
-				E02609220000000000000004 /* WindowSupportResumeModel.swift */,
+				D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */,
+				94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */,
 				E02609210000000000000002 /* MembershipOfferModel.swift */,
 				F00000000000000000000263 /* BillingClientCore.swift */,
 				F00000000000000000000264 /* BillingKeychainStore.swift */,
@@ -737,7 +737,7 @@
 			children = (
 				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
-				E02609220000000000000006 /* WindowSupportResumeView.swift */,
+				5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */,
 				E02609210000000000000004 /* MembershipOfferView.swift */,
 				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
@@ -1077,7 +1077,7 @@
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
-				E02609220000000000000005 /* WindowSupportResumeView.swift in Sources */,
+				33E6ECF92D02440DB45F7A97 /* WindowSupportResumeView.swift in Sources */,
 				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
@@ -1088,8 +1088,8 @@
 				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
-				E02609220000000000000001 /* WindowSupportResumeClient.swift in Sources */,
-				E02609220000000000000003 /* WindowSupportResumeModel.swift in Sources */,
+				C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */,
+				05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */,
 				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,
 				100000000000000000000181 /* BillingClientCore.swift in Sources */,
 				100000000000000000000182 /* BillingKeychainStore.swift in Sources */,

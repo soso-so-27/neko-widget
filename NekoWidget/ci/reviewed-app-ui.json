@@ -5,9 +5,13 @@
   "visualReview": "native-ui-required",
   "dataReview": "explicit-owner-approved-support-resume",
   "files": {
+    "NekoWidget/BillingVerificationService/test/apple-notification-history.test.ts": {
+      "before": "4ff2c4a20548ea152d00f1a745f5db69405e4e9eef73ce3d7c7d56fd850b9fd5",
+      "after": "c043a6446efef3e61eaca80d3f84df499436d133ee3f7993b619f8ac7f8a9cdc"
+    },
     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
       "before": "c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e",
-      "after": "ce89dee737f1a0c04bd95baccce3d22cdbfef0a69f30113ddaa598d97db2c2e8"
+      "after": "77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997"
     },
     "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
       "before": "3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3",
@@ -55,7 +59,15 @@
     },
     "NekoWidget/SharingService/migrations/0028_window_support_requests.sql": {
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "f51be8a923046e635d03180da23c2da22fd4d38fa96db420e8317d1550deb689"
+      "after": "15a76aa5b5047d0668597f8c8b48fda68759cb0fd24c123c4251e515f08b4ef0"
+    },
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": {
+      "before": "d3a0e8a9b718645f5b7b9c4b872e025b4e8e9cda8015d01fd563ea6c5063353e",
+      "after": "183db4b15059560d3fb10f22ee9a1c4877d5780a0b29c83b294de8271039bf8a"
+    },
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": {
+      "before": "30208a41114e19084f7ba8fb1b8b4440b05e3704ace5bc922089c1613b090da9",
+      "after": "222d320872b235bf1d8f88aede93bfef9607e2ec73ad8f6b2436b34fbb1b1cf0"
     },
     "NekoWidget/SharingService/src/index.ts": {
       "before": "64502f8608834664fdc4be74767c60bb409ffab524408bc0863deee63b972da5",
@@ -65,9 +77,17 @@
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "after": "f3774f5e1a9ebbac3a25bc9d687f4f856d1746e4ef28aaec6e73a0cd6a932a2b"
     },
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs": {
+      "before": "4a5b629f3954ceffafa714f2655e5d7f8a1af81a84a90b02aa57efee54b9c1bc",
+      "after": "0a6e14fc56d51468feb351bad9ca1d32e1a4c2c0d5d6194a365fe0674c1cd96a"
+    },
     "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts": {
       "before": "a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a",
       "after": "03efe2b69908f93a85f610467fb06459eb8ea948e4bf192f0f9b1f69bf875f5c"
+    },
+    "NekoWidget/ci/test-billing-client-foundation.py": {
+      "before": "07d7bdf72b63e3eedbe8ed4b493453d48158b1d13395f8814a034b0121a3a071",
+      "after": "284afc6de420f1070320cf970a68586c7169007c73dd11067a829b7482c840b0"
     },
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
       "before": "5d600aaf207008e42e143663143cdb30868977b54a4f59367e79edc0c1bf3d59",

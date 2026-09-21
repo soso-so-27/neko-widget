@@ -128,6 +128,11 @@ test("binds each pagination cursor to its original period and app identity", asy
   assert.equal(calls, 1);
   assert.notEqual(first.nextPaginationToken, null);
 
+  // Change a full signature byte. Replacing the last character with "A" can
+  // leave an already-A token unchanged and make this rejection test random.
+  const alteredCursor = first.nextPaginationToken!.split(".");
+  alteredCursor[2] = (alteredCursor[2]!.startsWith("A") ? "B" : "A") + alteredCursor[2]!.slice(1);
+
   for (const input of [
     {
       startDateMs: nowMs - 60_001,
@@ -142,7 +147,7 @@ test("binds each pagination cursor to its original period and app identity", asy
     {
       startDateMs: nowMs - 60_000,
       endDateMs: nowMs,
-      paginationToken: `${first.nextPaginationToken?.slice(0, -1)}A`,
+      paginationToken: alteredCursor.join("."),
     },
   ]) {
     await assert.rejects(

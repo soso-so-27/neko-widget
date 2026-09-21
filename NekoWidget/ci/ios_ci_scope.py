@@ -416,11 +416,18 @@ WINDOW_SUPPORT_PATHS = WINDOW_SUPPORT_NEW_PATHS | {
     "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts",
     "NekoWidget/ci/validate-sharing-runtime-self-test.py",
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py",
+    "NekoWidget/ci/test-billing-client-foundation.py",
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs",
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs",
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs",
+    "NekoWidget/BillingVerificationService/test/apple-notification-history.test.ts",
 }
 WINDOW_SUPPORT_COMPANION_PATHS = DELIVERY_MEMBERSHIP_COMPANION_PATHS
 WINDOW_SUPPORT_DATA_REVIEW = "explicit-owner-approved-support-resume"
-WINDOW_SUPPORT_DIGESTS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e',
-                                                     'ce89dee737f1a0c04bd95baccce3d22cdbfef0a69f30113ddaa598d97db2c2e8'),
+WINDOW_SUPPORT_DIGESTS = {'NekoWidget/BillingVerificationService/test/apple-notification-history.test.ts': ('4ff2c4a20548ea152d00f1a745f5db69405e4e9eef73ce3d7c7d56fd850b9fd5',
+                                                                                   'c043a6446efef3e61eaca80d3f84df499436d133ee3f7993b619f8ac7f8a9cdc'),
+ 'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e',
+                                                     '77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997'),
  'NekoWidget/NekoWidget/App/NekoWidgetApp.swift': ('3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3',
                                                    '0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831'),
  'NekoWidget/NekoWidget/Services/BillingAPIClient.swift': ('ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3',
@@ -444,13 +451,21 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('c
  'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f',
                                                                '9928e9e277459e5220d62664b4188ae593a08c1a923a03ee5d0169a4e372eb37'),
  'NekoWidget/SharingService/migrations/0028_window_support_requests.sql': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-                                                                           'f51be8a923046e635d03180da23c2da22fd4d38fa96db420e8317d1550deb689'),
+                                                                           '15a76aa5b5047d0668597f8c8b48fda68759cb0fd24c123c4251e515f08b4ef0'),
+ 'NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs': ('d3a0e8a9b718645f5b7b9c4b872e025b4e8e9cda8015d01fd563ea6c5063353e',
+                                                                           '183db4b15059560d3fb10f22ee9a1c4877d5780a0b29c83b294de8271039bf8a'),
+ 'NekoWidget/SharingService/scripts/staging-config.node-tests.mjs': ('30208a41114e19084f7ba8fb1b8b4440b05e3704ace5bc922089c1613b090da9',
+                                                                     '222d320872b235bf1d8f88aede93bfef9607e2ec73ad8f6b2436b34fbb1b1cf0'),
  'NekoWidget/SharingService/src/index.ts': ('64502f8608834664fdc4be74767c60bb409ffab524408bc0863deee63b972da5',
                                             'a8556dc0f328f344e9fefba3b1c4031f903fb07dc4087b2b86339eef4901b1c3'),
  'NekoWidget/SharingService/src/window-support-requests.ts': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
                                                               'f3774f5e1a9ebbac3a25bc9d687f4f856d1746e4ef28aaec6e73a0cd6a932a2b'),
+ 'NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs': ('4a5b629f3954ceffafa714f2655e5d7f8a1af81a84a90b02aa57efee54b9c1bc',
+                                                                                   '0a6e14fc56d51468feb351bad9ca1d32e1a4c2c0d5d6194a365fe0674c1cd96a'),
  'NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts': ('a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a',
                                                                                    '03efe2b69908f93a85f610467fb06459eb8ea948e4bf192f0f9b1f69bf875f5c'),
+ 'NekoWidget/ci/test-billing-client-foundation.py': ('07d7bdf72b63e3eedbe8ed4b493453d48158b1d13395f8814a034b0121a3a071',
+                                                     '284afc6de420f1070320cf970a68586c7169007c73dd11067a829b7482c840b0'),
  'NekoWidget/ci/test-validate-sharing-runtime-self-test.py': ('5d600aaf207008e42e143663143cdb30868977b54a4f59367e79edc0c1bf3d59',
                                                               '49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6'),
  'NekoWidget/ci/validate-sharing-runtime-self-test.py': ('702850e95e7528c1321192eeeaacee6ea964e4033c19f5ceabc0931960393a61',
@@ -458,7 +473,7 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('c
 WINDOW_SUPPORT_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "bcf220c84d48e1fffbc8fc4d4d87f7d5d48df80c770b7c79218d3ba6cba16f8d",
-        "6cf79a3f56b23d4c3644ec8218c8009cfb993b623f2ad906ab4ac2830fa29bc2"
+        "5067322a3290aef6a2453329f74a0c9b8c826b6c1ea729cdffeeffb47bf64d46"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "688ac5aa91cd4324fc226d30929d725fc8977f166ed1ff3f346fbfde5e33085c",
@@ -466,7 +481,7 @@ WINDOW_SUPPORT_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "54c04816bb45109a12a83882ef8bf0483c159a5b1f1071950e88cd4e00a6abbd",
-        "0fd68dd1fb4aa6ff3d932bb818b7256e350489219679883fe949231c84e6c9d5"
+        "a2445b3e1cceca845a66c0a533bffef46416790bec09e5633246d56b7ee1b6c9"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "3dcc544887c7fc47c2718f9d6d021b9f53ed68112e9dda21417ca28bef819eeb",

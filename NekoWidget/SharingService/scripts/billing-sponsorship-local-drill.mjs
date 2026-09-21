@@ -47,6 +47,7 @@ const expectedMigrationNames = [
   "0025_billing_apple_notification_history_recovery.sql",
   "0026_moment_block_withdrawals.sql",
   "0027_family_records.sql",
+  "0028_window_support_requests.sql",
 ];
 
 const databaseGateColumns = [
