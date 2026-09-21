@@ -27,7 +27,10 @@ class PreparationTests(unittest.TestCase):
         spec.loader.exec_module(verifier)
         device = "00000000-0000-4000-8000-000000000001"
         preferences, neko = "com.apple.Preferences", "fixture.neko"
-        expected = [("preferences-launch", 180), ("preferences-list", 60),
+        # OS readiness immediately follows bootstatus; cosmetic status_bar
+        # overrides must not delay or gate the real app/icon checks.
+        expected = [("boot", 60), ("bootstatus", 180),
+                    ("preferences-launch", 180), ("preferences-list", 60),
                     ("preferences-terminate", 30), ("install", 180), ("neko-launch", 60),
                     ("neko-list", 60), ("onboarding", 60), ("neko-terminate", 60), ("home-screen", 60)]
         for fail in (None, "preferences-list", "preferences-terminate", "install", "neko-launch"):
@@ -64,8 +67,6 @@ class PreparationTests(unittest.TestCase):
                         result = f"{4343 if is_neko else 4242} 0 UIKitApplication:{neko if is_neko else preferences}[fixture]"
                     elif operation == "io":
                         stage = Path(args[-1]).stem
-                    elif operation in ("boot", "bootstatus", "status_bar"):
-                        return ""
                     events.append((stage, timeout))
                     if stage == fail:
                         raise subprocess.TimeoutExpired(args, timeout)

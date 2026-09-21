@@ -104,7 +104,6 @@ def inspect_app(app, artifacts, report):
     try:
         command("xcrun", "simctl", "boot", device)
         command("xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
-        command("xcrun", "simctl", "status_bar", device, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         prepare_with_preferences(device, artifacts)
         report["preferencesPreparationAlive"] = True
         # A new Simulator can finish bootstatus while its installation service
