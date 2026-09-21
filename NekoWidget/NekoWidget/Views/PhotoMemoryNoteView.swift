@@ -132,6 +132,7 @@ struct MemoArchivePhoto: View {
 /// `photo` is frozen when the editor opens, including when its parent pages.
 /// The local original stays independent of any explicitly attached send copy.
 struct PhotoMemoryNoteEditor: View {
+    @Environment(\.membershipAccess) private var membershipAccess
     let photo: PhotoPresentation?
     let store: PhotoMemoryNoteStore
     let onSaved: () -> Void
@@ -207,6 +208,10 @@ struct PhotoMemoryNoteEditor: View {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var createsNewMemo: Bool {
+        original == nil && recordID == nil && archiveRecord == nil && linkedLocalRecord == nil
+    }
+
     private var hasChanges: Bool {
         isLoaded && savedNotice == nil && normalizedText != (original?.text ?? archiveRecord?.text ?? "")
     }
@@ -241,7 +246,16 @@ struct PhotoMemoryNoteEditor: View {
                     }
                 }
 
-                if isLoaded {
+                if isLoaded && createsNewMemo && membershipAccess.enforcementEnabled
+                    && photo.flatMap({ photoAccess.photo(for: $0.localIdentifier) }) == nil {
+                    Section {
+                        Text("元の写真を確認できません。写真へのアクセスを確認して、写真を選び直してください。")
+                    }
+                } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
+                    Section {
+                        MembershipAccessNotice(decision: membershipAccess.decision(for: .createPersonalMemo))
+                    }
+                } else if isLoaded {
                     Section {
                         PhotoNoteInput(text: $text, focus: $isWriting,
                             maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
@@ -405,6 +419,11 @@ struct PhotoMemoryNoteEditor: View {
 
     private func save(_ value: String) async {
         guard isLoaded, !isSaving else { return }
+        guard !createsNewMemo || value.isEmpty
+                || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
+            saveError = "会員情報を確認してください。入力した文章はそのままです。"
+            return
+        }
         isSaving = true
         defer { isSaving = false }
         do {

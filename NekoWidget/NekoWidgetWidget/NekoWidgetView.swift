@@ -312,7 +312,16 @@ struct NekoWidgetView: View {
 
     @ViewBuilder
     private var dailyPersonalPhotoControl: some View {
-        switch entry.personalRediscoveryAction {
+        if entry.personalSelectionPaused {
+            Image(systemName: "pause.circle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Color.black.opacity(0.64), in: Circle())
+                .frame(width: 44, height: 44)
+                .accessibilityLabel("写真の更新はお休み中です")
+                .accessibilityIdentifier("personal-widget-selection-paused")
+        } else { switch entry.personalRediscoveryAction {
         case let .available(token):
             Button(intent: DailyPersonalPhotoIntent(token: token)) {
                 dailyPersonalPhotoMark(isUsed: false)
@@ -331,7 +340,7 @@ struct NekoWidgetView: View {
             .accessibilityIdentifier("personal-widget-turned")
         case .unavailable:
             EmptyView()
-        }
+        } }
     }
 
     private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
@@ -687,6 +696,12 @@ enum AppStoreWidgetPreviewFixture {
         )
 #if PERSONAL_REDISCOVERY_WIDGET_USED_FIXTURE
         entry.personalRediscoveryAction = .used(grantID: "personal-widget-review-grant")
+        // The existing three-size capture includes one paused example without
+        // opening another Gallery session. Small/Medium keep the used control.
+        if variant == .large {
+            entry.personalSelectionPaused = true
+            entry.personalRediscoveryAction = .unavailable
+        }
 #else
         entry.personalRediscoveryAction = .available(token: PersonalRediscoveryEntryToken(
             id: "personal-widget-review-token", createdAt: date, eligibilityDay: "fixture-day",

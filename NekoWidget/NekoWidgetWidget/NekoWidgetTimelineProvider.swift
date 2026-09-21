@@ -273,9 +273,22 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     /// photo, and the store secures its lease before returning these entries.
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         do {
-            guard let plan = try PersonalRediscoveryStore.shared.issueTimeline(now: now, variant: variant) else {
+            let enforced = PersonalWidgetMembershipStore.isEnforced
+            let membership = PersonalWidgetMembershipStore.read()
+            let allowsSelection = !enforced || membership?.allowsSelection(at: now) == true
+            let cutoff = enforced ? membership?.validUntil : nil
+            guard let plan = try PersonalRediscoveryStore.shared.issueTimeline(
+                now: now, variant: variant, allowsSelection: allowsSelection,
+                selectionValidUntil: cutoff
+            ) else {
                 // Only a device that has not adopted the shared plan uses the
                 // legacy manifest. Corrupt or invalidated plans fail closed.
+                // With enforcement, a missing journal cannot prove which legacy
+                // photo was shown. Never restart legacy rotation to fill the gap.
+                if enforced {
+                    return Timeline(entries: [.empty(at: now, imageVariant: variant,
+                        emptyStateReason: .needsApp)], policy: .after(now.addingTimeInterval(20 * 60)))
+                }
                 return nil
             }
             let likes = readLikeState()
@@ -296,6 +309,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     familyHeartStatus: .hidden, familyActionsRequireApp: false,
                     emptyStateReason: .none)
                 entry.personalRediscoveryAction = planned.action
+                entry.personalSelectionPaused = enforced && (!allowsSelection
+                    || cutoff.map { planned.date >= $0 } == true)
                 return entry
             }
             return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant)] : entries,

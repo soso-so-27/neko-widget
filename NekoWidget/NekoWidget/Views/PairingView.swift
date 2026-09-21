@@ -9,6 +9,7 @@ enum PairingSetupPath {
 }
 
 struct PairingView: View {
+    @Environment(\.membershipAccess) private var membershipAccess
     @StateObject private var model = PairingViewModel()
     @State private var dailyUpdateTime = Self.defaultUpdateTime()
     @State private var hasAcceptedPairingTerms = false
@@ -666,9 +667,14 @@ struct PairingView: View {
 
     private var createSection: some View {
         Section {
+            if membershipAccess.decision(for: .createWindow) != .allowed {
+                MembershipAccessNotice(decision: membershipAccess.decision(for: .createWindow))
+            } else {
             Button {
                 Task {
+                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
                     guard await saveWindowNameIfPossible() else { return }
+                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
                         hasAcceptedPairingTerms = false
@@ -682,6 +688,7 @@ struct PairingView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(model.isWorking || !hasAcceptedPairingTerms)
+            }
         } header: {
             Text("新しいまどを作る")
         } footer: {

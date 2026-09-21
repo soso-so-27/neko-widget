@@ -38,6 +38,7 @@ struct NekoWidgetEntry: TimelineEntry {
     var familyCaption: String? = nil
     var officialPhoto: OfficialCatPhoto? = nil
     var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
+    var personalSelectionPaused: Bool = false
 
     static func empty(
         at date: Date,

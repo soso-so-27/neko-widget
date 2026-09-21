@@ -1115,6 +1115,8 @@ struct LikedPhotosView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
         }
+        .membershipFeature(.automaticAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
+            && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月の写真・ムービー" : navigationTitleOverride ?? "アルバム")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))

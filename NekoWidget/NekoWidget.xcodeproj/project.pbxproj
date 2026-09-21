@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
+		E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
+		E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
+		E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
+		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
 		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
 		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
@@ -251,6 +256,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
+		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
+		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
 		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
 		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
@@ -525,6 +533,8 @@
 		B00000000000000000000001 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				E02609220000000000000001 /* MembershipAccessPolicy.swift */,
+				E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */,
 				B00000000000000000000002 /* AppGroup */,
 				B00000000000000000000003 /* Models */,
 				B00000000000000000000004 /* Routing */,
@@ -646,6 +656,7 @@
 		C00000000000000000000003 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				E02609220000000000000007 /* MembershipAccessContext.swift */,
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A19300000000000000000011 /* PhotoMemoCoordinator.swift */,
@@ -1004,6 +1015,9 @@
 				10000000000000000000000D /* SharedLog.swift in Sources */,
 				100000000000000000000175 /* DiagnosticLogPrivacy.swift in Sources */,
 				10000000000000000000000E /* SharedLikeStore.swift in Sources */,
+				E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */,
+				E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */,
+				E02609220000000000000008 /* MembershipAccessContext.swift in Sources */,
 				A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
@@ -1146,6 +1160,8 @@
 				20000000000000000000001F /* MomentSharingStore.swift in Sources */,
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
+				E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */,
+				E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */,
 				A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,

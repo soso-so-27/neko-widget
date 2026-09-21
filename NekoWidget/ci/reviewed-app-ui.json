@@ -1,45 +1,97 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-membership-offer-ui-v1",
-  "purpose": "One independently reviewed internal membership-offer preview batch against main 4bfd23c. The preview uses isolated dependencies without purchases, Keychain or network access; Settings exposes it only in DEBUG or with a sandbox receipt. Monthly-only StoreKit configuration retains validation and optional annual support. Existing verified entitlement completes without repurchase; pending confirmation cannot be repurchased. Purchase preparation remains explicit, and completion requires the existing server-verified entitlement. Billing flags, product IDs, beta access, sharing permissions and existing data are unchanged. The project adds the two Swift sources to the app target only. Two native UI operations and every mandatory Build, Photos permission/scan and runtime job remain required. Native rendering has not yet been executed or visually confirmed; the first native run must provide the existing XCTest screenshot attachment. Preview outcomes are not real purchase or restore evidence.",
+  "scope": "reviewed-membership-access-v1",
+  "purpose": "One reviewed membership-access batch with both app and Widget enforcement flags false. Existing beta access remains unchanged. The pure operation policy and private Widget snapshot have mandatory Swift verifiers. Expired access keeps existing memo editing and photo/history access; unknown access offers restore without granting access. Personal Widget expiry freezes selection rather than deleting photos; explicit manual selection and snapshot write failures retain their reviewed boundaries. This profile preserves all Build/privacy/disabled-billing checks, the existing Photos permission and scan path, runtime on both OS versions, and all three Widget Gallery lanes. Native app UI selects the new access-state operation and the existing personal rediscovery/history/visible-photo action operation. The workflow change is exactly the two-verifier addition; no other existing step changes. Native rendering and the changed Widget captures are not yet verified and must be reviewed from the run attachments. This is not purchase, main-promotion or TestFlight evidence by itself.",
   "visualReview": "native-ui-required",
-  "dataReview": "disabled-membership-offer",
+  "dataReview": "beta-disabled-membership-access",
   "files": {
+    ".github/workflows/ios-build.yml": {
+      "before": "4dc939b36d7b9b5c4564671364acd764977aeb7007421b4a87aaf71cf6d89f2f",
+      "after": "090c248bd85a2929804e40d86748496d3493f0add340f6e3a364e6ca3afb905c"
+    },
     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
-      "before": "aa087996972ec11b7f4bb6026df7cb853721b87624bb14de8c5335650de8b3ab",
-      "after": "b753df528a35a9d4c2a4f3afd80923b5e9be06cf847a1fe48a274bec9073155a"
+      "before": "b753df528a35a9d4c2a4f3afd80923b5e9be06cf847a1fe48a274bec9073155a",
+      "after": "c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e"
     },
     "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
-      "before": "6e8e034963f28383462ee082c924260d8d5d775a1150a35d4f16975af331fbad",
-      "after": "0529d509155c6e971a5d03c9b8cacc19f695a9e23fec71f444f904f9a364de31"
+      "before": "0529d509155c6e971a5d03c9b8cacc19f695a9e23fec71f444f904f9a364de31",
+      "after": "3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3"
     },
-    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift": {
-      "before": "721ce6f8362b090174a8938fd3461c9d64f66d70bc644db37b185c25ee7b3157",
-      "after": "ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3"
+    "NekoWidget/NekoWidget/Info.plist": {
+      "before": "26887a735c6525eb0294a3aee9a7f02c0d06cbc917ad0da69aef64b810a4b822",
+      "after": "f6a99d273d4456d1a692e6aa11268aabe9731acda464f191c50f7da4525a4bb7"
     },
-    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift": {
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift": {
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "6e7a3230b4b90895ff13ada6e94281fb93c12980c6e18836617ac7a46c09f19e"
+      "after": "c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5"
     },
-    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": {
-      "before": "42beaa2e57babc0bc95a1a2fa310ad52c7d009074811e10033d3b11160adb3fc",
-      "after": "cd65fc08544973df139a3fc9a35e0ddb6827624001abbcc71b25cf0ec0e5f0a0"
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595",
+      "after": "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3"
     },
-    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "4c9f016cb91a70508550cdd7b9e372c739bb182d6dc67b15b7dc64964cde4f7c"
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": {
+      "before": "06d3a463747689da0bbd54010d2676f248764e0a549a0c839196cb97f0fb5fea",
+      "after": "da95b47e229a4879d75ecf2ddcb94ca9be337962405ccf12a044bb2edf48b792"
     },
-    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "1cbce0c9db5eb1dc879c3ec48ce5b63e41829ac0609506a6e9ca163061f1b28d",
-      "after": "99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910"
+    "NekoWidget/NekoWidget/Views/PairingView.swift": {
+      "before": "726f6e5d66f1f431a242f1301f268cfbf69020b2685e9969d07153fb619d852e",
+      "after": "c1d3e05fe2bee6ba79c9462a7ab6d17f8ae8b605b976b580cdf764317172d25f"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": {
+      "before": "e18221d6e90ccd631bea05144e996a09e3343916e659642cc5ef665f2440c7e2",
+      "after": "964d0a8efba1ff227ec4bb1dc2b0c621abd227aaca591d0d53c63a55fea07509"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b",
-      "after": "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a"
+      "before": "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a",
+      "after": "2cbc9801d7d5de425a6d417575746fce4bb810626f5d8044025f980f17c2c1a2"
     },
-    "NekoWidget/ci/test-plus-purchase-foundation.py": {
-      "before": "9830f3bc4051a9fa6a03cd6824da584269d9e7564979f91c73c4b42cff3ffdae",
-      "after": "80caa5bfefcef3e642281704bfd01338462527ea0f590cc20f926998bab8d08e"
+    "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift": {
+      "before": "70db4808ff0a9e8f07569b484b4acd432989b41c1b4359da95400fc5f4bd8e77",
+      "after": "c3c081a87c02d1407e576d059ab16b2e07fb79502d73dbae76bb12f89ac3fc34"
+    },
+    "NekoWidget/NekoWidgetWidget/DailyPersonalPhotoIntent.swift": {
+      "before": "01608c4581dfea53093f464a8657559e5f81ebdbfe250991c5b2fed61e9963f8",
+      "after": "8dedc3eedf885e060aadd51683cebe7c3d9454862c7699859803e5b71021752f"
+    },
+    "NekoWidget/NekoWidgetWidget/Info.plist": {
+      "before": "98a6c9eca88e12c293b2af6e3a03324127b6121a4e42b030b9859b88085c304a",
+      "after": "f20d79c59d3dc48e777d990a07d3e7b4858e8550c109baa61e84be758f23d109"
+    },
+    "NekoWidget/NekoWidgetWidget/NekoWidgetEntry.swift": {
+      "before": "ab0b2783745d37fc02336b046471c473a6e6b50eed9a516867ecebb326b9a5d4",
+      "after": "a9f856f4c472d6d7c9cebe66c2925bd9758a3a9c2a10931d8718e2485301a267"
+    },
+    "NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift": {
+      "before": "d013a90bf03125a562d94d0054daf5f8d00a618435fc067dc05537c627b0d532",
+      "after": "97c64e07d95cb1be67470c0e5079a80562949975fe47f6f9c899204d8a25004e"
+    },
+    "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift": {
+      "before": "e407227ba9de3ba7557896e2146df7e96da7a24a47896d70b4c5fd4725fabee7",
+      "after": "a8c7fdfd67e6150c4e7d41711cec7549aee4b7472fc7cf5b784e80583f335d2d"
+    },
+    "NekoWidget/Shared/MembershipAccessPolicy.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "df932aa88492e21407386dda36153991c7b5f4b63c769dbf203fc8847dd30a33"
+    },
+    "NekoWidget/Shared/PersonalWidgetMembershipStore.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "7280f5aec7a3d73d36fa6ed54f870a517c070517d0bb836292ff00a3ede998e6"
+    },
+    "NekoWidget/Shared/Storage/PersonalRediscoveryStore.swift": {
+      "before": "78806d2f02bea421994714697109de9c557a059806c6297691778cf9159761c7",
+      "after": "35863bb0a2bbbbd94b0a68cfdf4facadca32e04e6ee1639059c9e41db5ca18f2"
+    },
+    "NekoWidget/ci/verify-membership-access.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "c4d249ce17932482f218d3eb124de9b0439ab27521270f90711cee67f67472e4"
+    },
+    "NekoWidget/ci/verify-personal-rediscovery.swift": {
+      "before": "24136ae98b721c1cff64b007bba81a027e66436baa8d121b6195fbce841d2fdf",
+      "after": "891dcbcbb344637ad8478c4f11f41b794e303bfc6031bbf77d59d64301eff462"
+    },
+    "NekoWidget/ci/verify-personal-widget-membership.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "b103a5260b17d1dc37a70b709569d5702a18a20e1ccfa1a2e0ead55cef8cc329"
     }
   }
 }

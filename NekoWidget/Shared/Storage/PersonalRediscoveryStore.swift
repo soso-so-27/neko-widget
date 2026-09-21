@@ -437,19 +437,55 @@ struct PersonalRediscoveryStore: Sendable {
         now: Date = .now,
         variant: WidgetImageVariant,
         sourceID: String = Self.personalSourceID,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        allowsSelection: Bool = true,
+        selectionValidUntil: Date? = nil
     ) throws -> PersonalRediscoveryTimeline? {
         guard sourceID == Self.personalSourceID else { return nil }
         return try locked {
             guard var state = try read() else { return nil }
-            prune(&state, now: now)
-            guard state.isAuthorized, let first = resolve(&state, date: now, now: now, timeZone: timeZone) else {
+            let canSelect = allowsSelection && (selectionValidUntil.map {
+                $0.timeIntervalSinceReferenceDate.isFinite && now < $0
+            } ?? true)
+            guard state.isAuthorized else {
                 return PersonalRediscoveryTimeline(entries: [], reloadDate: now.addingTimeInterval(20 * 60))
+            }
+            // Never resolve the current calendar slot while paused: doing so
+            // would select an unseen photo each day despite the membership gate.
+            let selected = canSelect
+                ? resolve(&state, date: now, now: now, timeZone: timeZone)
+                : lastIssuedEntry(state, now: now, before: selectionValidUntil.flatMap {
+                    $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil
+                })
+            guard var first = selected else {
+                return PersonalRediscoveryTimeline(entries: [], reloadDate: now.addingTimeInterval(20 * 60))
+            }
+            let firstScheduledAt = first.date
+            first.date = now
+            if !canSelect {
+                first.action = .unavailable
+                if let cutoff = selectionValidUntil, cutoff.timeIntervalSinceReferenceDate.isFinite {
+                    for index in state.issues.indices where state.issues[index].scheduledAt >= cutoff {
+                        // Cancel selection usage, retaining the old file lease
+                        // until WidgetKit has replaced that issued timeline.
+                        state.issues[index].invalidated = true
+                    }
+                }
             }
             var entries = [first]
             let boundary = min(nextBoundary(state, now: now), Self.nextMidnight(now, timeZone: timeZone))
-            if let next = resolve(&state, date: boundary, now: now, timeZone: timeZone) {
-                entries.append(next)
+            if canSelect {
+                if let cutoff = selectionValidUntil {
+                    // Keep the render budget at two entries. Under enforcement
+                    // the second is a terminal *same-photo* entry, not another
+                    // selection; the normal day boundary requests a new plan.
+                    var frozen = first
+                    frozen.date = cutoff
+                    frozen.action = .unavailable
+                    entries.append(frozen)
+                } else if let next = resolve(&state, date: boundary, now: now, timeZone: timeZone) {
+                    entries.append(next)
+                }
             }
             for index in entries.indices {
                 guard let item = entries[index].item else { continue }
@@ -461,13 +497,15 @@ struct PersonalRediscoveryStore: Sendable {
                     continue
                 }
                 if let existing = state.issues.firstIndex(where: { $0.slotID == entries[index].slotID && $0.photoID == item.localIdentifier }) {
+                    if canSelect { state.issues[existing].invalidated = false }
                     state.issues[existing].leaseUntil = max(state.issues[existing].leaseUntil,
                         Self.nextMidnight(entries[index].date, timeZone: timeZone).addingTimeInterval(Self.leaseDuration))
                     state.issues[existing].cacheFilenames = Array(Set(state.issues[existing].cacheFilenames).union(item.allCacheFilenames)).sorted()
                 } else {
                     state.issues.append(PersonalRediscoveryIssue(
                         slotID: entries[index].slotID, photoID: item.localIdentifier,
-                        scheduledAt: entries[index].date, issuedAt: now,
+                        scheduledAt: entries[index].slotID == first.slotID ? firstScheduledAt : entries[index].date,
+                        issuedAt: now,
                         leaseUntil: Self.nextMidnight(entries[index].date, timeZone: timeZone).addingTimeInterval(Self.leaseDuration),
                         cacheFilenames: item.allCacheFilenames
                     ))
@@ -475,7 +513,12 @@ struct PersonalRediscoveryStore: Sendable {
             }
             prune(&state, now: now)
             try write(state) // A failed lease/journal commit must not issue the entries.
-            let reload = min(nextBoundary(state, now: boundary), Self.nextMidnight(boundary, timeZone: timeZone))
+            var reload = canSelect
+                ? min(nextBoundary(state, now: boundary), Self.nextMidnight(boundary, timeZone: timeZone))
+                : now.addingTimeInterval(20 * 60)
+            if let cutoff = selectionValidUntil, now < cutoff {
+                reload = min(reload, min(cutoff, boundary))
+            }
             return PersonalRediscoveryTimeline(entries: entries, reloadDate: reload)
         }
     }
@@ -488,7 +531,8 @@ struct PersonalRediscoveryStore: Sendable {
         operationID: String,
         operationCreatedAt: Date,
         now: Date = .now,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        allowsSelection: () -> Bool = { true }
     ) throws -> PersonalRediscoveryTurnOutcome {
         guard token.sourceID == Self.personalSourceID,
               UUID(uuidString: operationID) != nil,
@@ -503,7 +547,7 @@ struct PersonalRediscoveryStore: Sendable {
         // commit below reloads authority/quota and requires the exact prepared
         // manifest item to remain current after this preparation boundary.
         let shortlist: [PersonalRediscoveryCandidate] = try locked {
-            guard let state = try read(), state.isAuthorized,
+            guard allowsSelection(), let state = try read(), state.isAuthorized,
                   state.eligibilityRevision == token.scopeRevision,
                   token.eligibilityDay == Self.dayKey(now, timeZone: timeZone),
                   state.operations.allSatisfy({ $0.id != operationID }),
@@ -522,6 +566,9 @@ struct PersonalRediscoveryStore: Sendable {
                 }
                 return .existing(availableGrant(grant, in: state, now: now))
             }
+            // Read live authority again after image preparation and before any
+            // new grant/quota mutation; an old rendered control is not a grant.
+            guard allowsSelection() else { return .unavailable }
             guard token.eligibilityDay == Self.dayKey(now, timeZone: timeZone) else {
                 return .refreshRequired
             }
@@ -818,10 +865,52 @@ struct PersonalRediscoveryStore: Sendable {
         return true
     }
 
+    private func lastIssuedEntry(
+        _ state: PersonalRediscoveryFile, now: Date, before cutoff: Date?
+    ) -> PersonalRediscoveryEntry? {
+        func wasAllowed(_ date: Date) -> Bool {
+            date <= now && (cutoff.map { $0.timeIntervalSinceReferenceDate.isFinite && date < $0 } ?? true)
+        }
+        let issue = state.issues.filter { wasAllowed($0.scheduledAt) }
+            .max { $0.scheduledAt < $1.scheduledAt }
+        let grant = state.grants.filter { wasAllowed($0.committedAt) }
+            .max { $0.committedAt < $1.committedAt }
+        let item: WidgetManifestItem
+        let slotID: String
+        let selectedAt: Date
+        if let grant, issue.map({ grant.committedAt > $0.scheduledAt }) ?? true {
+            guard !grant.resultInvalidated else { return nil }
+            item = grant.resultItem
+            slotID = "manual-\(grant.id)"
+            selectedAt = grant.committedAt
+        } else if let issue {
+            guard !issue.invalidated,
+                  let candidate = state.candidates.first(where: {
+                      $0.item.localIdentifier == issue.photoID
+                          && Set($0.item.allCacheFilenames).isSubset(of: Set(issue.cacheFilenames))
+                  }) else { return nil }
+            item = candidate.item
+            slotID = issue.slotID
+            selectedAt = issue.scheduledAt
+        } else { return nil }
+        guard eligible(item, in: state) else { return nil }
+        // issueTimeline uses now for display, while this original selection
+        // date remains eligible for the same cutoff after the grant is pruned.
+        return PersonalRediscoveryEntry(date: selectedAt, item: item, slotID: slotID,
+            scopeRevision: state.eligibilityRevision, action: .unavailable)
+    }
+
     private func pinnedFiles(_ state: PersonalRediscoveryFile, now: Date) -> Set<String> {
         var result = Set(state.issues.filter {
             now < $0.leaseUntil && state.eligiblePhotoIDs.contains($0.photoID)
         }.flatMap(\.cacheFilenames))
+        // The last issued photo remains the known display even after a long
+        // pause. Retain its files, but never override current photo authority.
+        if let issue = state.issues.filter({ !$0.invalidated && $0.scheduledAt <= now })
+            .max(by: { $0.scheduledAt < $1.scheduledAt }),
+           state.eligiblePhotoIDs.contains(issue.photoID) {
+            result.formUnion(issue.cacheFilenames)
+        }
         for grant in state.grants where now < grant.resultExpiresAt {
             if !grant.resultInvalidated && retainedByAuthority(grant.resultItem, in: state) {
                 result.formUnion(grant.resultItem.allCacheFilenames)
@@ -839,7 +928,14 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private func prune(_ state: inout PersonalRediscoveryFile, now: Date) {
-        state.issues.removeAll { now.timeIntervalSince($0.scheduledAt) > 30 * 24 * 60 * 60 }
+        let lastIssuedSlot = state.issues.filter { $0.scheduledAt <= now }
+            .max { $0.scheduledAt < $1.scheduledAt }?.slotID
+        let lastValidSlot = state.issues.filter { !$0.invalidated && $0.scheduledAt <= now }
+            .max { $0.scheduledAt < $1.scheduledAt }?.slotID
+        state.issues.removeAll {
+            $0.slotID != lastIssuedSlot && $0.slotID != lastValidSlot && now >= $0.leaseUntil
+                && now.timeIntervalSince($0.scheduledAt) > 30 * 24 * 60 * 60
+        }
         if state.issues.count > 3_000 { state.issues.removeFirst(state.issues.count - 3_000) }
         state.operations.removeAll { now.timeIntervalSince($0.createdAt) > Self.operationDuration }
         if state.operations.count > 10_000 { state.operations.removeFirst(state.operations.count - 10_000) }

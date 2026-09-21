@@ -1441,6 +1441,45 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-access-ui-fixture", "--photo-window-ui-fixture"]
+        app.launch()
+        let existing = app.buttons["membership-existing"]
+        XCTAssertTrue(existing.waitForExistence(timeout: 10))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: existing)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        existing.tap()
+        let editor = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "An expired membership must not lock an existing memo")
+        editor.tap()
+        editor.typeText("。")
+        app.navigationBars["メモ"].buttons["保存"].tap()
+        XCTAssertTrue(existing.waitForExistence(timeout: 5))
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "。"),
+            object: app.staticTexts["membership-existing-text"])
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
+
+        app.buttons["membership-new"].tap()
+        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
+        XCTAssertFalse(editor.exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "membership-new-memo-boundary"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.buttons["photo-memory-note-close"].tap()
+        app.buttons["membership-unknown"].tap()
+        app.buttons["membership-new"].tap()
+        XCTAssertTrue(app.buttons["購入を確認する"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        app.buttons["photo-memory-note-close"].tap()
+        app.buttons["membership-beta"].tap()
+        app.buttons["membership-new"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "The current beta stays unrestricted")
+        app.terminate()
+    }
+
+    @MainActor
     func testMembershipOfferPreviewReturnsToPurpose() {
         for cancelled in [false, true] {
             let app = XCUIApplication()

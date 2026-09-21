@@ -7,6 +7,7 @@ import difflib
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import re
 
@@ -52,10 +53,11 @@ REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
+REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -293,6 +295,141 @@ PHOTO_ACTIONS_COMPANION_DIGESTS = {
     ]
 }
 
+# One reviewed beta-disabled access-policy and personal Widget batch. Names
+# and full sources are pinned; this is not a generic shared/storage allowance.
+MEMBERSHIP_ACCESS_NEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift",
+    "NekoWidget/Shared/MembershipAccessPolicy.swift",
+    "NekoWidget/Shared/PersonalWidgetMembershipStore.swift",
+    "NekoWidget/ci/verify-membership-access.swift",
+    "NekoWidget/ci/verify-personal-widget-membership.swift",
+})
+MEMBERSHIP_ACCESS_PATHS = MEMBERSHIP_ACCESS_NEW_PATHS | {
+    CI_WORKFLOW,
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift",
+    "NekoWidget/NekoWidget/Info.plist",
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift",
+    "NekoWidget/NekoWidget/Views/MainTabView.swift",
+    "NekoWidget/NekoWidget/Views/PairingView.swift",
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift",
+    MEMORY_TEST_PATH,
+    "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift",
+    "NekoWidget/NekoWidgetWidget/DailyPersonalPhotoIntent.swift",
+    "NekoWidget/NekoWidgetWidget/Info.plist",
+    "NekoWidget/NekoWidgetWidget/NekoWidgetEntry.swift",
+    "NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift",
+    "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+    "NekoWidget/Shared/Storage/PersonalRediscoveryStore.swift",
+    "NekoWidget/ci/verify-personal-rediscovery.swift",
+}
+MEMBERSHIP_ACCESS_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py",
+))
+MEMBERSHIP_ACCESS_DATA_REVIEW = "beta-disabled-membership-access"
+# Frozen after product review against the verified maintenance baseline 00a6c5a.
+MEMBERSHIP_ACCESS_DIGESTS = {
+    ".github/workflows/ios-build.yml": (
+        "4dc939b36d7b9b5c4564671364acd764977aeb7007421b4a87aaf71cf6d89f2f",
+        "090c248bd85a2929804e40d86748496d3493f0add340f6e3a364e6ca3afb905c"),
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": (
+        "b753df528a35a9d4c2a4f3afd80923b5e9be06cf847a1fe48a274bec9073155a",
+        "c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e"),
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": (
+        "0529d509155c6e971a5d03c9b8cacc19f695a9e23fec71f444f904f9a364de31",
+        "3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3"),
+    "NekoWidget/NekoWidget/Info.plist": (
+        "26887a735c6525eb0294a3aee9a7f02c0d06cbc917ad0da69aef64b810a4b822",
+        "f6a99d273d4456d1a692e6aa11268aabe9731acda464f191c50f7da4525a4bb7"),
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5"),
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
+        "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595",
+        "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3"),
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": (
+        "06d3a463747689da0bbd54010d2676f248764e0a549a0c839196cb97f0fb5fea",
+        "da95b47e229a4879d75ecf2ddcb94ca9be337962405ccf12a044bb2edf48b792"),
+    "NekoWidget/NekoWidget/Views/PairingView.swift": (
+        "726f6e5d66f1f431a242f1301f268cfbf69020b2685e9969d07153fb619d852e",
+        "c1d3e05fe2bee6ba79c9462a7ab6d17f8ae8b605b976b580cdf764317172d25f"),
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": (
+        "e18221d6e90ccd631bea05144e996a09e3343916e659642cc5ef665f2440c7e2",
+        "964d0a8efba1ff227ec4bb1dc2b0c621abd227aaca591d0d53c63a55fea07509"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a",
+        "2cbc9801d7d5de425a6d417575746fce4bb810626f5d8044025f980f17c2c1a2"),
+    "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift": (
+        "70db4808ff0a9e8f07569b484b4acd432989b41c1b4359da95400fc5f4bd8e77",
+        "c3c081a87c02d1407e576d059ab16b2e07fb79502d73dbae76bb12f89ac3fc34"),
+    "NekoWidget/NekoWidgetWidget/DailyPersonalPhotoIntent.swift": (
+        "01608c4581dfea53093f464a8657559e5f81ebdbfe250991c5b2fed61e9963f8",
+        "8dedc3eedf885e060aadd51683cebe7c3d9454862c7699859803e5b71021752f"),
+    "NekoWidget/NekoWidgetWidget/Info.plist": (
+        "98a6c9eca88e12c293b2af6e3a03324127b6121a4e42b030b9859b88085c304a",
+        "f20d79c59d3dc48e777d990a07d3e7b4858e8550c109baa61e84be758f23d109"),
+    "NekoWidget/NekoWidgetWidget/NekoWidgetEntry.swift": (
+        "ab0b2783745d37fc02336b046471c473a6e6b50eed9a516867ecebb326b9a5d4",
+        "a9f856f4c472d6d7c9cebe66c2925bd9758a3a9c2a10931d8718e2485301a267"),
+    "NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift": (
+        "d013a90bf03125a562d94d0054daf5f8d00a618435fc067dc05537c627b0d532",
+        "97c64e07d95cb1be67470c0e5079a80562949975fe47f6f9c899204d8a25004e"),
+    "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift": (
+        "e407227ba9de3ba7557896e2146df7e96da7a24a47896d70b4c5fd4725fabee7",
+        "a8c7fdfd67e6150c4e7d41711cec7549aee4b7472fc7cf5b784e80583f335d2d"),
+    "NekoWidget/Shared/MembershipAccessPolicy.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "df932aa88492e21407386dda36153991c7b5f4b63c769dbf203fc8847dd30a33"),
+    "NekoWidget/Shared/PersonalWidgetMembershipStore.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "7280f5aec7a3d73d36fa6ed54f870a517c070517d0bb836292ff00a3ede998e6"),
+    "NekoWidget/Shared/Storage/PersonalRediscoveryStore.swift": (
+        "78806d2f02bea421994714697109de9c557a059806c6297691778cf9159761c7",
+        "35863bb0a2bbbbd94b0a68cfdf4facadca32e04e6ee1639059c9e41db5ca18f2"),
+    "NekoWidget/ci/verify-membership-access.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "c4d249ce17932482f218d3eb124de9b0439ab27521270f90711cee67f67472e4"),
+    "NekoWidget/ci/verify-personal-rediscovery.swift": (
+        "24136ae98b721c1cff64b007bba81a027e66436baa8d121b6195fbce841d2fdf",
+        "891dcbcbb344637ad8478c4f11f41b794e303bfc6031bbf77d59d64301eff462"),
+    "NekoWidget/ci/verify-personal-widget-membership.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "b103a5260b17d1dc37a70b709569d5702a18a20e1ccfa1a2e0ead55cef8cc329"),
+}
+# Canonicalize only this exact literal for the selector's recursive binding.
+MEMBERSHIP_ACCESS_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "a80329eff4f7e370926bcd2192a59b511349ec386399b80d26664a074b7b0f72",
+        "f850f32747aa644a1a27dcaa9a6a32f59bbefce2624c3baac586e5d7ae6af778"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "6c5b35975a2dcbf9d798ad9a864395caa3d96d8e7d9a8c53c488786eb640c273",
+        "60ab4df06ed3ec717e9b30b727f9f571c1171d0e1832ed8437dd2046e37a4552"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "f74bc554cf4f7e1e7df977d21aac0b64884fdd98edc579c0e38fabe1ba2001ad",
+        "fb20f8044bef55fd55effb89f7520e1e378ad3e6faa5a9472d74274be38c1543"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "37fc742e9f05db41979af912cc9ec62f0e53e68a23a4d8da5eec7d2e6b6dd6da",
+        "3f96d1e290d79095e5fadf09c655a6a1737c09e8006e7ac93b2145a41f6a411f"
+    ]
+}
+MEMBERSHIP_ACCESS_WORKFLOW_ADDITION = r'''      - name: Verify membership operation boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
+            ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
+          "$RUNNER_TEMP/verify-membership-access"
+          xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
+            Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
+            -o "$RUNNER_TEMP/verify-personal-widget-membership"
+          "$RUNNER_TEMP/verify-personal-widget-membership"
+
+'''
+
 # One disabled membership-offer batch against main 4bfd23c. The added-file
 # exception is limited to these two names and still requires full-source hashes.
 MEMBERSHIP_OFFER_NEW_PATHS = frozenset({
@@ -390,7 +527,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -595,6 +732,62 @@ def reviewed_photo_actions_changes(changes: dict[str, tuple[str, str]]) -> bool:
         return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
                    for path, pair in PHOTO_ACTIONS_DIGESTS.items())
     except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def reviewed_membership_access_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Only the frozen beta-disabled product batch can use its selected operations."""
+    product_paths = MEMBERSHIP_ACCESS_PATHS | {REVIEW_MANIFEST}
+    if (set(MEMBERSHIP_ACCESS_DIGESTS) != MEMBERSHIP_ACCESS_PATHS
+            or set(changes) != product_paths | MEMBERSHIP_ACCESS_COMPANION_PATHS
+            or set(MEMBERSHIP_ACCESS_COMPANION_DIGESTS) != MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST}):
+        return False
+    for path, pair in MEMBERSHIP_ACCESS_COMPANION_DIGESTS.items():
+        before, after = changes[path]
+        if path == "NekoWidget/ci/ios_ci_scope.py":
+            binding = "MEMBERSHIP_ACCESS_COMPANION_DIGESTS = " + json.dumps(
+                MEMBERSHIP_ACCESS_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+            after = after.replace("\r\n", "\n")
+            if after.count(binding) != 1:
+                return False
+            after = after.replace(binding, "MEMBERSHIP_ACCESS_COMPANION_DIGESTS = {}\n", 1)
+        if not before or not after or list(map(source_digest, (before, after))) != pair:
+            return False
+    for path in MEMBERSHIP_ACCESS_PATHS:
+        before, after = changes[path]
+        if (not after or (not before) != (path in MEMBERSHIP_ACCESS_NEW_PATHS)
+                or tuple(map(source_digest, (before, after))) != MEMBERSHIP_ACCESS_DIGESTS[path]):
+            return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        before, after = (source.replace("\r\n", "\n") for source in changes[CI_WORKFLOW])
+        anchor = "      - name: Verify personal Widget photo rotation\n"
+        if (before.count(anchor) != 1 or MEMBERSHIP_ACCESS_WORKFLOW_ADDITION in before
+                or after != before.replace(anchor, MEMBERSHIP_ACCESS_WORKFLOW_ADDITION + anchor, 1)):
+            return False
+        for path in ("NekoWidget/NekoWidget/Info.plist", "NekoWidget/NekoWidgetWidget/Info.plist"):
+            if plistlib.loads(changes[path][1].encode("utf-8")).get("MembershipAccessEnforced") is not False:
+                return False
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_MEMBERSHIP_ACCESS_SCOPE
+                or review["visualReview"] != "native-ui-required"
+                or review["dataReview"] != MEMBERSHIP_ACCESS_DATA_REVIEW
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != MEMBERSHIP_ACCESS_PATHS):
+            return False
+        return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
+                   for path, pair in MEMBERSHIP_ACCESS_DIGESTS.items())
+    except (ValueError, KeyError, TypeError, AttributeError, plistlib.InvalidFileException):
         return False
 
 
@@ -909,6 +1102,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST} | CAT_NOTE_REPAIR_PATHS,
         REVIEWED_PHOTO_ACTIONS_SCOPE: PHOTO_ACTIONS_PATHS | {REVIEW_MANIFEST} | PHOTO_ACTIONS_COMPANION_PATHS,
         REVIEWED_MEMBERSHIP_OFFER_SCOPE: MEMBERSHIP_OFFER_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_OFFER_COMPANION_PATHS,
+        REVIEWED_MEMBERSHIP_ACCESS_SCOPE: MEMBERSHIP_ACCESS_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_ACCESS_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -967,6 +1161,10 @@ REVIEWED_MEMBERSHIP_OFFER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/"
     "testMembershipOfferPreviewReturnsToPurpose",
     "testMembershipOfferPreviewWaitingAndRestore",
 ))
+REVIEWED_MEMBERSHIP_ACCESS_TESTS = (
+    "NekoWidgetUITests/SoloMemoriesUITests/testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
+    "NekoWidgetUITests/PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
+)
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -999,6 +1197,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_MEMBERSHIP_ACCESS_SCOPE:
+        return REVIEWED_MEMBERSHIP_ACCESS_TESTS + (GALLERY_TEST,)
     if scope == REVIEWED_MEMBERSHIP_OFFER_SCOPE:
         return REVIEWED_MEMBERSHIP_OFFER_TESTS
     if scope == REVIEWED_PHOTO_ACTIONS_SCOPE:
@@ -1038,7 +1238,7 @@ def lanes(scope: str) -> tuple[str, ...]:
         return tuple(lane for lane in LANES if lane != "app-ui")
     if scope in (WIDGET_BEHAVIOR_SCOPE, CI_SELECTION_SCOPE):
         return LANES[:3]
-    if scope == WIDGET_LAYOUT_SCOPE:
+    if scope in (WIDGET_LAYOUT_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
         return LANES
     return LANES if scope == FULL_SCOPE else LANES[:2]
 
@@ -1166,6 +1366,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_membership_access_changes(changes):
+        return (REVIEWED_MEMBERSHIP_ACCESS_SCOPE
+                if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MEMBERSHIP_ACCESS_TESTS) else FULL_SCOPE)
     if reviewed_membership_offer_changes(changes):
         return (REVIEWED_MEMBERSHIP_OFFER_SCOPE
                 if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MEMBERSHIP_OFFER_TESTS) else FULL_SCOPE)

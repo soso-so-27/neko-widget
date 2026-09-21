@@ -310,8 +310,10 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     return
                 }
                 if officialWindow { assertNoOfficialPhotoActions(in: gallery) }
+                let sizeCapturePrefix = personalRediscoveryState == "used" && size == "large"
+                    ? "widget-personal-paused" : capturePrefix
                 captureScreenshot(
-                    named: "\(capturePrefix)-\(size)",
+                    named: "\(sizeCapturePrefix)-\(size)",
                     screenshot: screenshot
                 )
             }

@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 
 @main
 @MainActor
@@ -59,6 +60,8 @@ struct NekoWidgetApp: App {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
                 MembershipOfferFixture()
+            } else if CommandLine.arguments.contains("--membership-access-ui-fixture") {
+                MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
                 PersonalArchiveUIFixture()
             } else if CommandLine.arguments.contains("--family-record-ui-fixture") {
@@ -104,9 +107,31 @@ private struct ProductionAppRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = AppViewModel()
     @StateObject private var plusPurchases = PlusPurchaseStore()
+    @State private var membershipNow = Date()
 
     var body: some View {
         AppRootView(viewModel: viewModel)
+            .environment(\.membershipAccess,
+                MembershipAccessContext(entitlement: plusPurchases.entitlementState, now: membershipNow))
+            .task(id: plusPurchases.entitlementState) {
+                membershipNow = .now
+                let access = MembershipAccessContext(entitlement: plusPurchases.entitlementState)
+                try? PersonalWidgetMembershipStore.publish(access.personal)
+                if let expiration = plusPurchases.entitlementState.lastServerConfirmed?.expirationDate,
+                   expiration > .now {
+                    do { try await Task.sleep(for: .seconds(expiration.timeIntervalSinceNow)) }
+                    catch { return }
+                    guard !Task.isCancelled else { return }
+                    membershipNow = .now
+                    WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested)) { _ in
+                Task {
+                    await plusPurchases.refreshAfterForegroundEntry()
+                    membershipNow = .now
+                }
+            }
             .task {
                 await plusPurchases.start()
             }
@@ -114,6 +139,11 @@ private struct ProductionAppRootView: View {
                 guard newPhase == .active else { return }
                 Task {
                     await plusPurchases.refreshAfterForegroundEntry()
+                    // Retry the bounded Widget snapshot even when the server
+                    // returns the same entitlement after a prior disk error.
+                    try? PersonalWidgetMembershipStore.publish(
+                        MembershipAccessContext(entitlement: plusPurchases.entitlementState).personal)
+                    membershipNow = .now
                 }
             }
     }

@@ -112,8 +112,121 @@ private enum PersonalRediscoveryVerifier {
         try authorityAndPublication()
         try upgradeBootstrap()
         try bootstrapRejections()
+        try membershipSelectionBoundary()
         try concurrentProcesses()
         print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, cross-process race.")
+    }
+
+    private static func membershipSelectionBoundary() throws {
+        let fixture = try Fixture(5)
+        defer { fixture.cleanup() }
+        let cutoff = baseline.addingTimeInterval(3_600)
+        let timeline = try fixture.store.issueTimeline(now: baseline, variant: .small,
+            timeZone: utc, selectionValidUntil: cutoff)!
+        let original = timeline.entries[0].item!
+        try require(timeline.entries.count == 2
+            && timeline.entries[1].date == cutoff
+            && timeline.entries[1].item == original
+            && timeline.entries[1].action == .unavailable
+            && timeline.reloadDate <= cutoff,
+            "expiry must keep the known photo and stop the already issued control")
+        guard case let .available(token) = timeline.entries[0].action else {
+            throw CheckFailure.failed("missing pre-expiry control")
+        }
+        let denied = try fixture.store.perform(token: token, operationID: UUID().uuidString,
+            operationCreatedAt: baseline, now: baseline, timeZone: utc, allowsSelection: { false })
+        try require(denied == .unavailable, "old Widget control bypassed expired authority")
+        var authorityReads = 0
+        let raced = try fixture.store.perform(token: token, operationID: UUID().uuidString,
+            operationCreatedAt: baseline, now: baseline, timeZone: utc, allowsSelection: {
+                authorityReads += 1
+                return authorityReads == 1
+            })
+        let afterDenied = try fixture.store.snapshot(now: baseline)!
+        try require(raced == .unavailable && authorityReads == 2
+            && afterDenied.history.isEmpty && afterDenied.nextAvailableAt == nil,
+            "authority change during preparation committed or consumed a turn")
+
+        let restarted = PersonalRediscoveryStore(containerURL: fixture.directory)
+        for time in [cutoff, baseline.addingTimeInterval(35 * 86_400)] {
+            let frozen = try restarted.issueTimeline(now: time, variant: .small, timeZone: utc,
+                allowsSelection: false, selectionValidUntil: cutoff)!
+            try require(frozen.entries.count == 1 && frozen.entries[0].item == original
+                && frozen.entries[0].action == .unavailable,
+                "expired/restarted timeline advanced or lost its known photo")
+        }
+        let unknown = try restarted.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false)!
+        try require(unknown.entries.first?.item == original,
+            "missing membership information must retain the issued photo")
+
+        let missingFile = fixture.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(original.cacheFilename(for: .small))
+        try FileManager.default.removeItem(at: missingFile)
+        let missing = try restarted.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)!
+        try require(missing.entries.first?.item == nil,
+            "missing held cache selected a different photo")
+        try Fixture.writeImages(fixture.candidates, directory: fixture.directory)
+        _ = try restarted.updateEligibility(
+            photoIDs: Set(fixture.candidates.map { $0.item.localIdentifier }).subtracting([original.localIdentifier]),
+            scopeIdentifier: "excluded-held-photo", isAuthorized: true, now: cutoff, timeZone: utc)
+        try require(try restarted.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)?.entries.isEmpty == true,
+            "paused membership bypassed exclusion or selected a replacement")
+        try restarted.invalidate(now: cutoff)
+        try require(try restarted.issueTimeline(now: cutoff, variant: .small,
+            allowsSelection: false)?.entries.isEmpty == true, "paused membership bypassed photo revocation")
+
+        let future = try Fixture(5)
+        defer { future.cleanup() }
+        let tomorrow = midnightAfter(baseline)
+        let laterCutoff = tomorrow.addingTimeInterval(3_600)
+        let issued = try future.store.issueTimeline(now: baseline, variant: .small,
+            timeZone: utc, selectionValidUntil: laterCutoff)!
+        try require(issued.entries.count == 2 && issued.entries[1].date == laterCutoff
+            && issued.entries[1].item == issued.entries[0].item
+            && issued.entries[1].action == .unavailable && issued.reloadDate == tomorrow,
+            "future expiry must retain the same photo; only a timely reload may select tomorrow's photo")
+        let heldFuture = try future.store.issueTimeline(now: laterCutoff, variant: .small,
+            timeZone: utc, allowsSelection: false, selectionValidUntil: laterCutoff)!
+        try require(heldFuture.entries.first?.item == issued.entries.last?.item,
+            "freeze ignored the latest photo already issued before expiry")
+
+        let previouslyQueued = try Fixture(5)
+        defer { previouslyQueued.cleanup() }
+        let oldPlan = try previouslyQueued.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!
+        for time in [tomorrow, tomorrow.addingTimeInterval(35 * 86_400)] {
+            let bounded = try previouslyQueued.store.issueTimeline(now: time, variant: .small,
+                timeZone: utc, allowsSelection: false, selectionValidUntil: tomorrow)!
+            try require(bounded.entries.first?.item == oldPlan.entries.first?.item,
+                "old future entry at expiry displaced the last authorized photo")
+        }
+
+        let manual = try Fixture(5)
+        defer { manual.cleanup() }
+        let manualToken = try manual.token()
+        guard case let .committed(grant) = try manual.store.perform(token: manualToken,
+            operationID: UUID().uuidString, operationCreatedAt: baseline,
+            now: baseline, timeZone: utc) else { throw CheckFailure.failed("manual setup failed") }
+        // No timeline was issued for this grant before the deadline. Its first
+        // paused display must journal the original commit date, not the reload.
+        for time in [cutoff, cutoff.addingTimeInterval(8 * 86_400), cutoff.addingTimeInterval(35 * 86_400)] {
+            let paused = try PersonalRediscoveryStore(containerURL: manual.directory)
+                .issueTimeline(now: time, variant: .small, timeZone: utc,
+                    allowsSelection: false, selectionValidUntil: cutoff)!
+            try require(paused.entries.first?.item?.localIdentifier == grant.photoID,
+                "first paused reload lost an unissued manual grant after its history expired")
+        }
+
+        let unseen = try Fixture(3)
+        defer { unseen.cleanup() }
+        try require(try unseen.store.issueTimeline(now: baseline, variant: .small,
+            allowsSelection: false)?.entries.isEmpty == true,
+            "unknown membership selected a photo without an issued journal")
+        try require(try unseen.store.issueTimeline(now: baseline, variant: .small,
+            sourceID: "official-default", allowsSelection: false) == nil,
+            "personal membership gate intercepted an official source")
     }
 
     private static func upgradeBootstrap() throws {

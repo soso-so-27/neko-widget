@@ -412,6 +412,19 @@ jobs:
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj
 
+      - name: Verify membership operation boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
+            ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
+          "$RUNNER_TEMP/verify-membership-access"
+          xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
+            Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
+            -o "$RUNNER_TEMP/verify-personal-widget-membership"
+          "$RUNNER_TEMP/verify-personal-widget-membership"
+
       - name: Verify personal Widget photo rotation
         working-directory: NekoWidget
         shell: bash

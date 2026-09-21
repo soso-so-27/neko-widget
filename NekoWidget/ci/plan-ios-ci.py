@@ -22,7 +22,8 @@ from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes,
                           reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST,
-                          MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS)
+                          MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS,
+                          MEMBERSHIP_ACCESS_PATHS, MEMBERSHIP_ACCESS_NEW_PATHS, MEMBERSHIP_ACCESS_COMPANION_PATHS)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -153,6 +154,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         ci_only = sources <= CI_SELECTION_PATHS
         icon_only = icon_paths_only(sources)
         membership_offer_only = sources == (MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST})
+        membership_access_only = sources == (MEMBERSHIP_ACCESS_PATHS | MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST})
         if ci_only:
             # A stale branch is not proof that the product is unchanged from
             # current main. Every branch input still has to be accounted for.
@@ -192,6 +194,10 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 if membership_offer_only and path in MEMBERSHIP_OFFER_NEW_PATHS:
                     # Only the two independently reviewed new Swift files may
                     # be added; semantic selection still pins every source.
+                    valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
+                    if valid:
+                        added_sources.add(path)
+                if membership_access_only and path in MEMBERSHIP_ACCESS_NEW_PATHS:
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)

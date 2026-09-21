@@ -819,10 +819,13 @@ struct MainTabView: View {
         switch route {
         case .months:
             albumsView().periodArchive(showsMovies: false)
+                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
         case .movies:
             albumsView().periodArchive(showsMovies: true)
+                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
         case .cats:
             albumsView().catArchive
+                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
         case let .years(profileIdentifier):
             AlbumScopedContent(
                 profiles: catProfilesPresentation.profiles,
@@ -838,6 +841,7 @@ struct MainTabView: View {
                     showsAllPhotos: false, isEmbedded: true, showsProfilePicker: false
                 ).yearArchive
             }
+            .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
         }
     }
 
@@ -901,6 +905,7 @@ struct MainTabView: View {
                     markMonthlyWindowReadIfLatest(snapshot)
                 }
             }
+            .membershipFeature(.automaticAlbums, hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
         }
     }
 
@@ -981,6 +986,7 @@ struct MainTabView: View {
                 }
             )
             .id(seasonalMovieArchiveAccessKey)
+            .membershipFeature(.automaticAlbums, hasContent: !presentation.scenes.isEmpty)
         } else {
             ContentUnavailableView(
                 "この季節のムービーを開けません",
@@ -988,6 +994,12 @@ struct MainTabView: View {
                 description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
             )
         }
+    }
+
+    private var hasAutomaticAlbumContent: Bool {
+        hasPhotoAccess && (currentHouseholdAlbumCatalog?.sections.contains(where: { $0.id != .all }) == true
+            || currentMonthlyWindowCollection?.letters.isEmpty == false
+            || !currentSeasonalMovieRecords.isEmpty)
     }
 
     private var automaticAlbumsView: some View {
@@ -1001,6 +1013,7 @@ struct MainTabView: View {
             showsProfilePicker: false
         )
         .navigationTitle("アルバム")
+        .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
     }
 
     @ViewBuilder
@@ -1029,6 +1042,8 @@ struct MainTabView: View {
                 for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope
             )
             .environment(\.photoRediscoveryScope, selectedScope)
+            .membershipFeature(.automaticAlbums,
+                hasContent: curatedAlbum(for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope)?.photos.isEmpty == false)
         }
     }
 
