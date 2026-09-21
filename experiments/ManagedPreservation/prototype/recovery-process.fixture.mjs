@@ -41,13 +41,14 @@ try {
       consentVersion: input.mode === 'seed' ? 'offline-explicit-v1' : null }) });
   if (input.mode === 'seed') {
     await archive.preserve(session, { recordId: 'synthetic-photo', photoBytes: Buffer.from('synthetic-photo-byte-fixture'),
-      note: '合成記録：ひざで寝た日', metadata: { capturedAt: '2023-03-02T14:00:00+09:00', recordedAt: null, catName: '合成の猫' } });
+      note: '合成記録：ひざで寝た日', metadata: { capturedAt: '2023-03-02T14:00:00+09:00', writtenAt: null,
+        updatedAt: null, catNames: ['合成の猫', '合成の猫2'] } });
   }
   // Also try an explicit record read: an outsider must not present an empty export as recovered.
   await archive.read(session, 'synthetic-photo');
   const summaries = [];
   for await (const record of archive.exportRecords(session)) summaries.push({
-    photoHash: digest(record.photoBytes), noteHash: digest(record.noteText), metadata: record.manifest,
+    photoHash: digest(record.photoBytes), noteHash: digest(record.noteText), metadata: record.manifest, document: record.document,
   });
   archive.close(); archive = undefined;
   process.stdout.write(JSON.stringify({ ok: true, pid: process.pid, records: summaries }));

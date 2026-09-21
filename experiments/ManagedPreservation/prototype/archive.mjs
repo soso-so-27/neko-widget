@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { CompactEncrypt, compactDecrypt, decodeProtectedHeader } from 'jose';
+import { validateNote, normalizeNote, validateMetadata, copyPhotoBytes, nativeArchiveDocument, nullableDate } from './record-contract.mjs';
 
 export class ArchiveError extends Error {
   constructor(code) { super(code); this.name = 'ArchiveError'; this.code = code; }
@@ -15,34 +16,19 @@ const requireID = (id) => { if (!validID(id)) fail('INVALID_RECORD_ID'); };
 const requireRevision = (n) => {
   if (!Number.isSafeInteger(n) || n < 1) fail('INVALID_REVISION');
 };
-const validateNote = (note) => {
-  if (typeof note !== 'string' || Buffer.byteLength(note, 'utf8') > 16_384) fail('INVALID_NOTE');
-  return note;
-};
-const validateMetadata = (metadata) => {
-  const date = (value) => value === null || (typeof value === 'string'
-    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(value)
-    && Number.isFinite(Date.parse(value)));
-  if (!metadata || !date(metadata.capturedAt) || !date(metadata.recordedAt)
-    || !(metadata.catName === null || (typeof metadata.catName === 'string' && metadata.catName.length <= 100))) {
-    fail('INVALID_METADATA');
-  }
-  // No location, PhotoKit ID, recipient, or payment identity is copied.
-  return { capturedAt: metadata.capturedAt, recordedAt: metadata.recordedAt, catName: metadata.catName };
-};
-
 export class OfflineArchive {
-  #db; #identity; #keys; #activeKeyId; #newSaveAccess;
+  #db; #identity; #keys; #activeKeyId; #newSaveAccess; #now;
 
-  constructor({ databasePath, initialize = false, identity, keys, activeKeyId, newSaveAccess }) {
+  constructor({ databasePath, initialize = false, identity, keys, activeKeyId, newSaveAccess, now = () => new Date().toISOString() }) {
     if (typeof identity?.requireOwner !== 'function' || !(keys instanceof Map)
-      || typeof newSaveAccess !== 'function') fail('INVALID_SERVER_CONFIGURATION');
+      || typeof newSaveAccess !== 'function' || typeof now !== 'function') fail('INVALID_SERVER_CONFIGURATION');
     // Recovery must not turn a missing database into an apparently empty archive.
     if (!initialize && !existsSync(databasePath)) fail('ARCHIVE_DATABASE_UNAVAILABLE');
     this.#identity = identity;
     this.#keys = keys;
     this.#activeKeyId = activeKeyId;
     this.#newSaveAccess = newSaveAccess;
+    this.#now = now;
     this.#db = new DatabaseSync(databasePath);
     this.#db.exec('PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL;');
     if (initialize) this.#db.exec(`CREATE TABLE IF NOT EXISTS archive_records (
@@ -80,8 +66,8 @@ export class OfflineArchive {
   #checkNewSave(owner) {
     // Trusted server callback, never a client-provided subscription flag.
     const access = this.#newSaveAccess(owner);
-    if (!access || !['active', 'expired'].includes(access.entitlement)) fail('ACCESS_UNCONFIRMED');
-    if (access.entitlement !== 'active') fail('NEW_SAVE_REQUIRES_MEMBERSHIP');
+    if (!access || !['active', 'grace', 'expired'].includes(access.entitlement)) fail('ACCESS_UNCONFIRMED');
+    if (!['active', 'grace'].includes(access.entitlement)) fail('NEW_SAVE_REQUIRES_MEMBERSHIP');
     if (access.consentVersion !== 'offline-explicit-v1') fail('PRESERVATION_CONSENT_REQUIRED');
   }
 
@@ -109,14 +95,23 @@ export class OfflineArchive {
         keyManagementAlgorithms: ['dir'], contentEncryptionAlgorithms: ['A256GCM'],
       });
       const record = JSON.parse(Buffer.from(plaintext).toString('utf8'));
-      if (record.version !== 1 || record.owner !== row.owner || record.recordId !== row.record_id
-        || record.revision !== row.revision || record.photo.mediaType !== 'image/jpeg') throw new Error();
-      const bytes = Buffer.from(record.photo.base64, 'base64');
-      if (bytes.length !== record.photo.byteLength || hash(bytes) !== record.photo.sha256) throw new Error();
+      if (record.owner !== row.owner || record.recordId !== row.record_id
+        || record.revision !== row.revision) throw new Error();
+      // Older synthetic fixtures are not silently migrated or overwritten.
+      if (record.version !== 2) fail('UNSUPPORTED_ARCHIVE_VERSION');
+      if (record.photo !== null) {
+        if (record.photo.mediaType !== 'image/jpeg') throw new Error();
+        const bytes = copyPhotoBytes(Buffer.from(record.photo.base64, 'base64'));
+        if (bytes.length !== record.photo.byteLength || hash(bytes) !== record.photo.sha256) throw new Error();
+      }
       validateNote(record.note);
       validateMetadata(record.metadata);
+      if (record.photo === null && !normalizeNote(record.note)) throw new Error();
       return record;
-    } catch { fail('ARCHIVE_INTEGRITY_FAILED'); }
+    } catch (error) {
+      if (error.code === 'UNSUPPORTED_ARCHIVE_VERSION') throw error;
+      fail('ARCHIVE_INTEGRITY_FAILED');
+    }
   }
 
   #transaction(operation) {
@@ -143,14 +138,12 @@ export class OfflineArchive {
   async preserve(session, { recordId, photoBytes, note = '', metadata }) {
     const owner = this.#identity.requireOwner(session);
     requireID(recordId);
-    // Fixture ceiling only; not the product quota or an image-decoder validation.
-    if (!(photoBytes instanceof Uint8Array) || photoBytes.byteLength < 1 || photoBytes.byteLength > 2_097_152) {
-      fail('INVALID_PHOTO_BYTES');
-    }
-    const bytes = Buffer.from(photoBytes);
+    note = normalizeNote(note);
+    const bytes = copyPhotoBytes(photoBytes);
+    if (bytes === null && !note) fail('EMPTY_RECORD');
     const record = {
-      version: 1, owner, recordId, revision: 1,
-      photo: { mediaType: 'image/jpeg', base64: bytes.toString('base64'), byteLength: bytes.length, sha256: hash(bytes) },
+      version: 2, owner, recordId, revision: 1,
+      photo: bytes === null ? null : { mediaType: 'image/jpeg', base64: bytes.toString('base64'), byteLength: bytes.length, sha256: hash(bytes) },
       note: validateNote(note), metadata: validateMetadata(metadata), consentVersion: 'offline-explicit-v1',
     };
     record.initialContentSHA256 = hash(Buffer.from(JSON.stringify([record.photo, record.note, record.metadata])));
@@ -189,8 +182,8 @@ export class OfflineArchive {
     // A delete or edit that won while decrypting must not produce a stale successful read.
     if (this.#row(owner, recordId).revision !== record.revision) fail('REVISION_CONFLICT');
     return {
-      recordId, revision: record.revision, photoBytes: Buffer.from(record.photo.base64, 'base64'),
-      photoSHA256: record.photo.sha256, mediaType: record.photo.mediaType,
+      recordId, revision: record.revision, photoBytes: record.photo === null ? null : Buffer.from(record.photo.base64, 'base64'),
+      photoSHA256: record.photo?.sha256 ?? null, mediaType: record.photo?.mediaType ?? null,
       note: record.note, metadata: record.metadata,
     };
   }
@@ -198,11 +191,19 @@ export class OfflineArchive {
   async editNote(session, { recordId, expectedRevision, note }) {
     const owner = this.#identity.requireOwner(session);
     requireRevision(expectedRevision);
-    validateNote(note);
+    note = normalizeNote(note);
     const row = this.#row(owner, recordId);
     if (row.revision !== expectedRevision) fail('REVISION_CONFLICT');
     const record = await this.#decrypt(row);
+    // Existing preserved records remain editable after expiry, including their
+    // first memo. This matches the native archive editor, not a new-photo gate.
+    if (record.photo === null && !note) fail('EMPTY_RECORD');
     record.note = note;
+    const updatedAt = nullableDate(this.#now());
+    if (updatedAt === null) fail('INVALID_SERVER_CONFIGURATION');
+    record.metadata.updatedAt = updatedAt;
+    // Unknown original written/captured dates stay unknown; never infer them
+    // from this edit time or the archive's creation time.
     record.revision += 1;
     const ciphertext = await this.#encrypt(record);
     if (this.#identity.requireOwner(session) !== owner) fail('OWNER_CHANGED');
@@ -250,7 +251,8 @@ export class OfflineArchive {
         if (record.revision !== item.revision) fail('REVISION_CONFLICT');
         yield {
           manifest: { recordId: record.recordId, revision: record.revision, mediaType: record.mediaType,
-            photoSHA256: record.photoSHA256, photoBytes: record.photoBytes.length, ...record.metadata },
+            photoSHA256: record.photoSHA256, photoBytes: record.photoBytes?.length ?? 0, ...record.metadata },
+          document: nativeArchiveDocument(record),
           photoBytes: record.photoBytes, noteText: Buffer.from(record.note, 'utf8'),
         };
         unchanged();

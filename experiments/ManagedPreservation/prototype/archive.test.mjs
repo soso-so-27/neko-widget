@@ -8,12 +8,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { OfflineArchive } from './archive.mjs';
 import { OfflineIdentityVerifier } from './identity.mjs';
 import { createSyntheticIdentity } from './synthetic-identity.mjs';
+import { CompactEncrypt } from 'jose';
 
 const synthetic = await createSyntheticIdentity();
 const photoBytes = Buffer.from('synthetic-JPEG-byte-fixture-NOT-a-quality-test');
 const initial = {
   recordId: 'cat-photo-1', photoBytes, note: '合成データ：初めてひざで眠った日',
-  metadata: { capturedAt: '2023-03-02T14:00:00+09:00', recordedAt: '2026-09-22T00:00:00+09:00', catName: 'テスト猫' },
+  metadata: { capturedAt: '2023-03-02T05:00:00.000Z', writtenAt: '2026-09-21T15:00:00.000Z',
+    updatedAt: '2026-09-21T15:00:00.000Z', catNames: ['テスト猫', 'もう一匹'] },
 };
 const code = (expected) => (error) => error.code === expected;
 const collect = async (items) => { const result = []; for await (const item of items) result.push(item); return result; };
@@ -24,7 +26,8 @@ async function fixture(t) {
   let identity = new OfflineIdentityVerifier(synthetic);
   const keys = new Map([['synthetic-key-1', randomBytes(32)]]);
   let access = { entitlement: 'active', consentVersion: 'offline-explicit-v1' };
-  const options = () => ({ databasePath, identity, keys, activeKeyId: 'synthetic-key-1', newSaveAccess: () => access });
+  const options = () => ({ databasePath, identity, keys, activeKeyId: 'synthetic-key-1', newSaveAccess: () => access,
+    now: () => '2026-09-22T01:00:00.000Z' });
   let archive = new OfflineArchive({ ...options(), initialize: true });
   t.after(() => {
     archive.close();
@@ -206,4 +209,64 @@ test('export checks generation again after acquiring the final empty page', asyn
   const exporting = f.archive.exportRecords(f.session);
   await exporting.next();
   await assert.rejects(exporting.next(), code('EXPORT_CHANGED'));
+});
+
+test('text-only record restores and exports native JSON without an invented photo', async (t) => {
+  const f = await fixture(t);
+  await f.archive.preserve(f.session, { ...initial, photoBytes: null });
+  f.setAccess({ entitlement: 'expired' });
+  f.reopen();
+  const session = await f.newDeviceSession();
+  const record = await f.archive.read(session, initial.recordId);
+  assert.equal(record.photoBytes, null);
+  const [exported] = await collect(f.archive.exportRecords(session));
+  assert.deepEqual(exported.document, { formatVersion: 1, text: initial.note, ...initial.metadata, photoFile: null });
+  assert.equal(exported.manifest.photoBytes, 0);
+  assert.equal(exported.manifest.photoSHA256, null);
+  await assert.rejects(f.archive.editNote(session, { recordId: initial.recordId, expectedRevision: 1, note: ' ' }), code('EMPTY_RECORD'));
+  assert.equal((await f.archive.read(session, initial.recordId)).note, initial.note);
+});
+
+test('existing photo-only record stays editable after expiry; new records remain gated', async (t) => {
+  const f = await fixture(t);
+  const metadata = { capturedAt: initial.metadata.capturedAt, writtenAt: null, updatedAt: null, catNames: [] };
+  await f.archive.preserve(f.session, { ...initial, note: '', metadata });
+  f.setAccess({ entitlement: 'expired', consentVersion: null });
+  await f.archive.editNote(f.session, { recordId: initial.recordId, expectedRevision: 1, note: ' 初めての追記 \n' });
+  const record = await f.archive.read(f.session, initial.recordId);
+  assert.equal(record.note, '初めての追記');
+  assert.deepEqual(record.metadata, { ...metadata, updatedAt: '2026-09-22T01:00:00.000Z' });
+  await f.archive.editNote(f.session, { recordId: initial.recordId, expectedRevision: 2, note: '' });
+  assert.deepEqual((await f.archive.read(f.session, initial.recordId)).photoBytes, photoBytes);
+  await assert.rejects(f.archive.preserve(f.session, { ...initial, recordId: 'new-photo' }), code('NEW_SAVE_REQUIRES_MEMBERSHIP'));
+});
+
+test('trusted billing grace permits new preservation; unknown access permits only existing record operations', async (t) => {
+  const f = await fixture(t);
+  f.setAccess({ entitlement: 'grace', consentVersion: 'offline-explicit-v1' });
+  await f.archive.preserve(f.session, initial);
+  f.setAccess({ entitlement: 'unknown' });
+  await assert.rejects(f.archive.preserve(f.session, { ...initial, recordId: 'new-photo' }), code('ACCESS_UNCONFIRMED'));
+  await f.archive.editNote(f.session, { recordId: initial.recordId, expectedRevision: 1, note: '既存記録は修正できる' });
+  assert.equal((await collect(f.archive.exportRecords(f.session))).length, 1);
+});
+
+test('null photo and empty memo never create a record', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(f.archive.preserve(f.session, { ...initial, photoBytes: null, note: ' \n' }), code('EMPTY_RECORD'));
+  await assert.rejects(f.archive.preserve(f.session, { ...initial, photoBytes: null, note: '\u0085' }), code('EMPTY_RECORD'));
+  assert.deepEqual(f.archive.list(f.session), []);
+});
+
+test('unsupported older synthetic record version fails explicitly without rewriting the ciphertext', async (t) => {
+  const f = await fixture(t);
+  await f.archive.preserve(f.session, initial);
+  const row = f.raw((db) => db.prepare('SELECT owner, record_id, revision FROM archive_records').get());
+  const ciphertext = await new CompactEncrypt(Buffer.from(JSON.stringify({ version: 1, owner: row.owner,
+    recordId: row.record_id, revision: row.revision })))
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM', kid: 'synthetic-key-1', typ: 'neko-offline-archive+jwe' })
+    .encrypt(f.keys.get('synthetic-key-1'));
+  f.raw((db) => db.prepare('UPDATE archive_records SET ciphertext = ?').run(ciphertext));
+  await assert.rejects(f.archive.read(f.session, initial.recordId), code('UNSUPPORTED_ARCHIVE_VERSION'));
+  assert.equal(f.raw((db) => db.prepare('SELECT ciphertext FROM archive_records').get().ciphertext), ciphertext);
 });

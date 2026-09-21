@@ -6,6 +6,7 @@
 
 - [商品と接続境界の仕様案](../../handoffs/2026-09-22-managed-personal-preservation-design.md)
 - [実本人確認・鍵管理への接続判断と別プロセス復元](../../handoffs/2026-09-22-preservation-identity-and-key-custody.md)
+- [並行の持ち出し実装との形式・会員境界の整合](../../handoffs/2026-09-22-preservation-portability-integration.md)
 - Node.js 22.17.0以上。原価計算はリポジトリルートから実行します。
 
 ## 復元試作（D1のローカル検証部分）
@@ -22,6 +23,8 @@ npm run test:prototype
 
 ### 今回成立させる流れ
 
+2026-09-22の整合バッチで内部レコードはversion 2になりました。複数猫名・独立した撮影/記入/更新日・写真なしの記録を保持し、native単件JSON相当の`document`を出します。旧version 1の合成DBは明示エラーで停止し、書き換えません。実データ移行はしていません。JPEG上限は本線と同じ20MiBですが、画像デコードは未実装です。
+
 1. 合成の本人確認で、端末・メールアドレス・契約状態と独立した保管所有者を決める。
 2. サーバー側の合成権利と明示同意がそろった場合だけ、写真のバイト列・メモ・日付・猫名を暗号化してSQLiteへ確定する。
 3. SQLiteを閉じ、旧セッションを捨て、契約切れの状態にする。
@@ -32,6 +35,7 @@ npm run test:prototype
 | `prototype/identity.mjs` | 信頼済みローカルJWKSによるRS256署名、issuer/audience/期限/nonce/subject検証。一回限りのchallengeと短期session |
 | `prototype/synthetic-identity.mjs` | テストだけの架空issuer・RSA鍵・トークン発行。Appleの鍵やアカウントではない |
 | `prototype/archive.mjs` | 本人ごとのSQLite保管、JWE暗号化、同一内容の保存再確認、版を指定したメモ編集、削除tombstone、変更世代を監視する逐次export |
+| `prototype/record-contract.mjs` | 本線の単件JSON項目・nullable日付・複数猫名・本文/写真サイズの契約。ZIP生成やJPEGデコードではない |
 | `prototype/*.test.mjs` | 契約切れ＋旧セッションなしの読出し、他人拒否、署名・鍵・改ざん・競合・同意撤回・書込失敗の境界 |
 
 追加の `key-bundle.mjs` と `recovery-process.fixture.mjs` は、標準JWEで保護した鍵束とSQLiteのコピーを別OSプロセスで読み出す**合成データ専用**実験です。写真用の平文鍵を最初のプロセス内だけで生成し、終了後は暗号化した鍵束から復元します。上位鍵は親ハーネスから注入するため、KMSの復旧や運営アカウント喪失への救済はまだ証明していません。新規分だけ実行する場合：
