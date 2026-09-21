@@ -23,6 +23,123 @@ spec.loader.exec_module(planner)
 
 class PlanTests(unittest.TestCase):
     @staticmethod
+    def cat_note_changes(values=None, **overrides):
+        if values is None:
+            classes = {}
+            for identifier in scope.REVIEWED_CAT_NOTE_TESTS:
+                _, owner, method = identifier.split("/")
+                classes.setdefault(owner, []).append(f"    func {method}() {{}}")
+            source = "\n".join(f"final class {owner}: XCTestCase {{\n" + "\n".join(methods) + "\n}"
+                               for owner, methods in classes.items())
+            values = {path: ("before " + path, source if path == scope.MEMORY_TEST_PATH else "after " + path)
+                      for path in scope.CAT_NOTE_PATHS}
+        values = {path: pair for path, pair in values.items() if path != scope.REVIEW_MANIFEST}
+        review = {"schemaVersion": 1, "scope": scope.REVIEWED_CAT_NOTE_SCOPE,
+                  "purpose": "Independently reviewed explicit memo sharing", "visualReview": "user-device",
+                  "dataReview": scope.CAT_NOTE_DATA_REVIEW,
+                  "files": {path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}
+                            for path, pair in values.items()}}
+        review.update(overrides)
+        return dict(values, **{scope.REVIEW_MANIFEST: ("{}", json.dumps(review))})
+
+    def test_cat_note_scope_requires_frozen_complete_review_not_just_rehashed_manifest(self):
+        changes = self.cat_note_changes()
+        digests = {path: tuple(map(scope.source_digest, changes[path])) for path in scope.CAT_NOTE_PATHS}
+        with patch.object(scope, "CAT_NOTE_DIGESTS", {}):
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        with patch.object(scope, "CAT_NOTE_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_CAT_NOTE_SCOPE)
+            self.assertEqual(scope.select_scope(dict(changes, **{"handoffs/review.md": ("", "reviewed")})),
+                             scope.REVIEWED_CAT_NOTE_SCOPE)
+            for path in changes:
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(missing), scope.FULL_SCOPE)
+            for path in scope.CAT_NOTE_PATHS:
+                for side in (0, 1):
+                    altered = list(changes[path]); altered[side] += " unreviewed change"
+                    # An updated manifest cannot approve changed source independently.
+                    self.assertEqual(scope.select_scope(self.cat_note_changes(
+                        dict(changes, **{path: tuple(altered)}))), scope.FULL_SCOPE)
+            for extra in ("NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
+                          "NekoWidget/Shared/Sharing/PairingCore.swift",
+                          "NekoWidget/Shared/Sharing/MomentSharingCore.swift",
+                          "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                          "NekoWidget/ci/ios_ci_scope.py", scope.CI_WORKFLOW):
+                self.assertEqual(scope.select_scope(self.cat_note_changes(
+                    dict(changes, **{extra: ("old", "new")}))), scope.FULL_SCOPE)
+            for fields in ({"schemaVersion": True}, {"scope": scope.REVIEWED_MEMORY_FAMILY_SCOPE},
+                           {"visualReview": "unchecked"}, {"dataReview": "read-only-projection"},
+                           {"purpose": " "}, {"files": {}}, {"unexpected": True}):
+                self.assertEqual(scope.select_scope(self.cat_note_changes(changes, **fields)), scope.FULL_SCOPE)
+            for manifest in ("[]", "null", "{invalid", changes[scope.REVIEW_MANIFEST][1].replace(
+                    '"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1')):
+                self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ("{}", manifest)})),
+                                 scope.FULL_SCOPE)
+            for identifier in scope.REVIEWED_CAT_NOTE_TESTS:
+                source = changes[scope.MEMORY_TEST_PATH][1]
+                method = identifier.split("/")[-1]
+                altered = dict(changes, **{scope.MEMORY_TEST_PATH: ("before", source.replace(method, "absent"))})
+                # Even a separately reviewed hash table cannot select missing tests.
+                revised = dict(digests, **{scope.MEMORY_TEST_PATH: tuple(map(scope.source_digest, altered[scope.MEMORY_TEST_PATH]))})
+                with patch.object(scope, "CAT_NOTE_DIGESTS", revised):
+                    self.assertEqual(scope.select_scope(self.cat_note_changes(altered)), scope.FULL_SCOPE)
+
+    def test_cat_note_planner_preserves_raw_diff_modes_status_and_complete_paths(self):
+        changes = self.cat_note_changes()
+        digests = {path: tuple(map(scope.source_digest, changes[path])) for path in scope.CAT_NOTE_PATHS}
+        base = "b" * 40
+        paths = sorted(changes)
+        def selected(path=None, modes=":100644 100644", status="M", extra=False):
+            raw = "".join(f"{modes if item == path else ':100644 100644'} {'c' * 40} {'d' * 40} "
+                          f"{status if item == path else 'M'}\0{item}\0" for item in paths)
+            if extra:
+                raw += f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0"
+            def git(*args):
+                if args[0] == "diff":
+                    return raw
+                if args[0] == "show":
+                    revision, item = args[1].split(":", 1)
+                    return changes[item][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        with patch.object(scope, "CAT_NOTE_DIGESTS", digests):
+            self.assertEqual(selected(), scope.REVIEWED_CAT_NOTE_SCOPE)
+            self.assertEqual(selected(extra=True), scope.FULL_SCOPE)
+            for path in paths:
+                for modes, status in ((":000000 100644", "A"), (":100644 000000", "D"),
+                                      (":100644 100755", "M"), (":100644 120000", "T"),
+                                      (":100644 100644", "R100"), (":100644 100644", "C100")):
+                    self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
+
+    def test_cat_note_eleven_existing_operations_keep_safety_jobs_and_distinct_evidence(self):
+        selected = scope.REVIEWED_CAT_NOTE_SCOPE
+        tests = scope.native_tests(selected)
+        self.assertEqual(len(tests), 11)
+        self.assertEqual(len(set(tests)), 11)
+        self.assertFalse(any("testAlbum" in test or "testPhotosOpenEachCats" in test for test in tests))
+        root = Path(__file__).resolve().parents[2]
+        self.assertTrue(scope.memory_tests_available((root / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8"), tests))
+        required = planner.required_jobs(list(self.cat_note_changes()), selected)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.smoke_tests(selected),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"}
+                for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        self.assertTrue(planner.covers_jobs(self.jobs, required, self.sha))
+        for other in (scope.FULL_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE):
+            self.assertFalse(planner.covers_jobs(jobs, planner.required_jobs_from_scope(other), self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            self.assertFalse(planner.covers_jobs(jobs + [jobs[index]], required, self.sha))
+            for conclusion in ("failure", "skipped", "cancelled"):
+                altered = copy.deepcopy(jobs); altered[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(altered, required, self.sha))
+
+    @staticmethod
     def memory_changes():
         classes = {}
         for identifier in scope.REVIEWED_MEMORY_TESTS:

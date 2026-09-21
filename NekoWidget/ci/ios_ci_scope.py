@@ -27,9 +27,11 @@ ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
 # The version separates its nine required operations from v1's seven-test proof.
 REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v2"
 REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
+REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE, ICON_SCOPE)
+          REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
+          REVIEWED_CAT_NOTE_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -139,6 +141,57 @@ LOCAL_EDITOR_PATH = "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift"
 LOCAL_EDITOR_DIGESTS = ("35a03ba505d53dd6ecaa2d614ab6f34d4bb1a3ed17ff257a592f110b466748ac", "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56")
 LOCAL_EDITOR_DATA_REVIEW = "local-editor-account-boundary"
 
+# One independently reviewed memo input/explicit-sharing and delivered-moment
+# identity batch, not a general UI or storage allowance. All changed sources,
+# including the client, identity core and its verifier, must match both this
+# frozen table and the complete review manifest. Existing author, lifecycle,
+# revision/conflict, encryption and server/schema contracts remain mandatory.
+CAT_NOTE_PATHS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
+    "MomentDeliveryComposer.swift", "PhotoMemoryNoteView.swift",
+    "PhotoWindowDeliveryView.swift", "FamilyRecordView.swift",
+    "FamilyWindowView.swift", "LikedPhotosView.swift",
+)) | {
+    MEMORY_TEST_PATH,
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift",
+    "NekoWidget/Shared/Sharing/FamilyRecordCore.swift",
+    "NekoWidget/ci/verify-family-records.swift",
+}
+CAT_NOTE_DATA_REVIEW = "explicit-memo-sharing-boundary"
+# Frozen after independent review of the 2026-09-21 product batch against
+# main 379e84f. Changed source requires a new review, not a manifest-only rehash.
+CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift": (
+        "3eda268890ee9cc38ed82fda78c3a749009d980f054b9740601987d6b49ad679",
+        "9e0866bd19e30e6ccd04c9d2f146f84532f15791fdc713098162dffab6d97936"),
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
+        "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035",
+        "4da32739ee30ac887e3728410b5bfbd0601c1d5566aa3f2b26c6ce0c82f5702e"),
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": (
+        "a9d36e4514c5bf48c519aad97d1f17c551b9b480839f8bbc5ad56fe397f7c77b",
+        "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0"),
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
+        "0291261ae80425173101ba2523c925e8dd8ee4397cd8ac8d7e1bc30db620b337",
+        "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed"),
+    "NekoWidget/NekoWidget/Views/MomentDeliveryComposer.swift": (
+        "fbb58952b91f7830e5e07b72a0fb3bc6311e6cdec3e68dd4670594abe16df1ef",
+        "03d5fd4132e91f0c42f5a5fbaa9f09ab4a4c6b016859b2eeef0b5899fb9c90ca"),
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": (
+        "31728c285f32eab590803ebe60cb72bed2de9beafbeb3fd2c451238480156e56",
+        "e18221d6e90ccd631bea05144e996a09e3343916e659642cc5ef665f2440c7e2"),
+    "NekoWidget/NekoWidget/Views/PhotoWindowDeliveryView.swift": (
+        "b4520eeaea3b5a4ffd9f2fc5072decfcf07b963d042b2f104cd82c37fcb96d8a",
+        "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f",
+        "cc98d79f81ab9138c26d87869ca2c912ee3ee5013227b4d32ece1fbbc5379797"),
+    "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": (
+        "82eb5c2238aaada407722a1a291cbacac6abda53247847f15e94e44751870395",
+        "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574"),
+    "NekoWidget/ci/verify-family-records.swift": (
+        "62a8c5c5475114c0f4b43026fdeae3132d675d9d92f9ac4e4e36dee7f4305e1f",
+        "ca811d79911034bbf3fed32a034712ba348ded0ab8e636001b7aa20dcc2df0c6"),
+}
+
 PAIRING_EXPLANATION_BEFORE = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 PAIRING_EXPLANATION_AFTER = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。共同記録も開けなくなるため、取り下げたい自分の写真や言葉があれば、先に共同記録で操作してください。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 
@@ -163,7 +216,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -271,6 +324,40 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]], *, family: bool
             }:
                 return False
         return True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def reviewed_cat_note_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Only the complete frozen product batch can use its eleven UI operations."""
+    if (set(CAT_NOTE_DIGESTS) != CAT_NOTE_PATHS
+            or set(changes) != CAT_NOTE_PATHS | {REVIEW_MANIFEST}):
+        return False
+    for path in CAT_NOTE_PATHS:
+        before, after = changes[path]
+        if not before or not after or tuple(map(source_digest, (before, after))) != CAT_NOTE_DIGESTS[path]:
+            return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_CAT_NOTE_SCOPE
+                or review["visualReview"] != "user-device"
+                or review["dataReview"] != CAT_NOTE_DATA_REVIEW
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != CAT_NOTE_PATHS):
+            return False
+        return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
+                   for path, pair in CAT_NOTE_DIGESTS.items())
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
@@ -518,6 +605,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_SCOPE: REVIEWABLE_MEMORY_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST, LOCAL_EDITOR_PATH},
+        REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST},
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -548,6 +636,19 @@ REVIEWED_MEMORY_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier i
 REVIEWED_MEMORY_FAMILY_TESTS = REVIEWED_MEMORY_TESTS + tuple("NekoWidgetUITests/" + identifier for identifier in (
     "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
     "SoloMemoriesUITests/testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
+))
+REVIEWED_CAT_NOTE_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
+    "MomentDeliveryComposerUITests/testMemoryLibraryWithoutPhotoSupportsLargestTextEditingAndDeletion",
+    "MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
+    "MomentDeliveryComposerUITests/testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption",
+    "SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
+    "MomentDeliveryComposerUITests/testCaptionOnPhotoAndReturnFromKeyboard",
+    "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
+    "MomentDeliveryComposerUITests/testPhotoWindowRetryPreservesConfirmedPhotoAndCaption",
+    "MomentDeliveryComposerUITests/testPhotoWindowCancellationAndUnavailableSourcesDoNotSend",
+    "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
 ))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
@@ -581,6 +682,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_CAT_NOTE_SCOPE:
+        return REVIEWED_CAT_NOTE_TESTS
     if scope == REVIEWED_MEMORY_FAMILY_SCOPE:
         return REVIEWED_MEMORY_FAMILY_TESTS
     if scope == REVIEWED_MEMORY_SCOPE:
@@ -742,6 +845,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_cat_note_changes(changes):
+        return (REVIEWED_CAT_NOTE_SCOPE
+                if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_CAT_NOTE_TESTS) else FULL_SCOPE)
     if reviewed_memory_changes(changes, family=True):
         source = changes.get(MEMORY_TEST_PATH, (None, memory_test_source))[1]
         return REVIEWED_MEMORY_FAMILY_SCOPE if memory_tests_available(source, REVIEWED_MEMORY_FAMILY_TESTS) else FULL_SCOPE
