@@ -21,6 +21,28 @@ WIDGET_BEHAVIOR_SCOPE = "widget-behavior-v1"
 WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
+# This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
+# Deliberately absent from SCOPES and native/release scope lookup.
+CI_EVIDENCE_SCOPE = "ci-evidence-maintenance-v1"
+CI_EVIDENCE_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "plan-ios-ci.py", "test-plan-ios-ci.py", "ios_ci_scope.py",
+))
+# Full before/after sources against main 41e64ce. Only this exact literal is
+# canonicalized for the selector's self digest; no workflow/product exception.
+CI_EVIDENCE_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "11b0580d2b94e26001d0df54cad45ad52b89b6c93e44f4811c7bd784916c68f5",
+        "70b5a26cc7fdafc087032e00db4486e45effa121bb0cbce5fc06dee76cfdc016"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "367bd2ee2e01b6cf9a21aa17834c1ba91efcfa23e0f21df16a936b99f62c21e9",
+        "6c5b35975a2dcbf9d798ad9a864395caa3d96d8e7d9a8c53c488786eb640c273"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "b1f912925dad23023c60d5e42a8ca217bd9ae58edd8336fee9074dded8cba225",
+        "37fc742e9f05db41979af912cc9ec62f0e53e68a23a4d8da5eec7d2e6b6dd6da"
+    ]
+}
 REVIEWED_APP_SCOPE = "reviewed-app-ui-v1"
 ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
 # v2 also covers the reviewed Photos sections and their existing fixture.
@@ -736,6 +758,22 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
+def evidence_maintenance_changes(changes) -> bool:
+    if set(changes) != CI_EVIDENCE_PATHS or set(CI_EVIDENCE_DIGESTS) != CI_EVIDENCE_PATHS:
+        return False
+    for path, pair in CI_EVIDENCE_DIGESTS.items():
+        before, after = changes[path]
+        if path == "NekoWidget/ci/ios_ci_scope.py":
+            binding = "CI_EVIDENCE_DIGESTS = " + json.dumps(CI_EVIDENCE_DIGESTS, indent=4, sort_keys=True) + "\n"
+            after = after.replace("\r\n", "\n")
+            if after.count(binding) != 1:
+                return False
+            after = after.replace(binding, "CI_EVIDENCE_DIGESTS = {}\n", 1)
+        if not before or not after or list(map(source_digest, (before, after))) != pair:
+            return False
+    return True
+
+
 def workflow_execution(source: str) -> tuple[str, ...]:
     """Ignore only reviewed selection wiring; keep builds/security/commands."""
     for steps in (ICON_WORKFLOW_STEPS, LEGACY_ICON_WORKFLOW_STEPS):
@@ -1145,6 +1183,11 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return REVIEWED_MEMORY_SCOPE if memory_tests_available(source) else FULL_SCOPE
     if reviewed_app_changes(changes):
         return REVIEWED_APP_SCOPE
+    if any(path in changes and source_digest(changes[path][0]) == pair[0]
+           for path, pair in CI_EVIDENCE_DIGESTS.items()):
+        # The reviewed base must match the whole batch. A partial, enlarged or
+        # edited version cannot silently become a generic selection-only run.
+        return CI_EVIDENCE_SCOPE if evidence_maintenance_changes(changes) else FULL_SCOPE
     if set(changes) <= CI_SELECTION_PATHS:
         return CI_SELECTION_SCOPE if ci_selection_only(changes) else FULL_SCOPE
     if set(changes) <= WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS:

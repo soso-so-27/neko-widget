@@ -4,6 +4,7 @@
 import copy
 import datetime as dt
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import ios_ci_scope as scope
@@ -22,6 +24,74 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    @staticmethod
+    def evidence_maintenance_changes():
+        changes = {path: ("before " + path, "after " + path) for path in scope.CI_EVIDENCE_PATHS}
+        selector = "NekoWidget/ci/ios_ci_scope.py"
+        empty = "CI_EVIDENCE_DIGESTS = {}\n"
+        changes[selector] = (changes[selector][0], empty + "# reviewed selector\n")
+        digests = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        binding = "CI_EVIDENCE_DIGESTS = " + json.dumps(digests, indent=4, sort_keys=True) + "\n"
+        changes[selector] = (changes[selector][0], changes[selector][1].replace(empty, binding))
+        return changes, digests
+
+    def test_evidence_maintenance_is_complete_frozen_and_not_release_evidence(self):
+        changes, digests = self.evidence_maintenance_changes()
+        with patch.object(scope, "CI_EVIDENCE_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), scope.CI_EVIDENCE_SCOPE)
+            for path in changes:
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(missing), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    pair = list(changes[path]); pair[side] += " unreviewed"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(pair)})), scope.FULL_SCOPE)
+            for path in (scope.CI_WORKFLOW, scope.CI_DIAGNOSTIC_WORKFLOW, scope.CI_DIAGNOSTIC_MATRIX,
+                         "NekoWidget/NekoWidget/Views/MainTabView.swift", "NekoWidget/ci/preflight-ci.py",
+                         "NekoWidget/Config.xcconfig", "unknown.swift"):
+                self.assertEqual(scope.select_scope(dict(changes, **{path: ("old", "new")})), scope.FULL_SCOPE)
+        self.assertEqual(planner.required_jobs(sorted(changes), scope.CI_EVIDENCE_SCOPE), (planner.PLAN_JOB,))
+        self.assertEqual(planner.required_jobs(sorted(changes) + [scope.CI_WORKFLOW], scope.CI_EVIDENCE_SCOPE), planner.FULL)
+        self.assertNotIn(scope.CI_EVIDENCE_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(scope.CI_EVIDENCE_SCOPE)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event.json").write_text("{}")
+            env = dict(self.env, GITHUB_EVENT_PATH=str(root / "event.json"),
+                       GITHUB_OUTPUT=str(root / "output"), GITHUB_STEP_SUMMARY=str(root / "summary"))
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=sorted(changes)), \
+                    patch.object(planner, "runtime_scope", return_value=scope.CI_EVIDENCE_SCOPE), \
+                    patch.object(planner, "find_evidence") as lookup:
+                planner.main()
+            lookup.assert_not_called()
+            output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertTrue(all(output[name] == "false" for name in ("build", "smoke", "sharing", "app_ui")))
+            self.assertEqual(output["matrix_lanes"], "[]")
+
+    def test_evidence_maintenance_requires_raw_modifications_and_main_ancestry(self):
+        changes, digests = self.evidence_maintenance_changes()
+        base, paths = "b" * 40, sorted(changes)
+        def selected(path=None, mode=":100644 100644", status="M", ancestor=True):
+            def git(*args):
+                if args[0] == "merge-base" and not ancestor:
+                    raise subprocess.CalledProcessError(1, "git")
+                if args[0] == "diff":
+                    return "".join(f"{mode if item == path else ':100644 100644'} {'c' * 40} {'d' * 40} "
+                                   f"{status if item == path else 'M'}\0{item}\0" for item in paths)
+                if args[0] == "show":
+                    revision, item = args[1].split(":", 1)
+                    return changes[item][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        with patch.object(scope, "CI_EVIDENCE_DIGESTS", digests):
+            self.assertEqual(selected(), scope.CI_EVIDENCE_SCOPE)
+            self.assertEqual(selected(ancestor=False), scope.FULL_SCOPE)
+            for path in paths:
+                for mode, status in ((":000000 100644", "A"), (":100644 000000", "D"),
+                                     (":100644 100755", "M"), (":100644 120000", "T"),
+                                     (":100644 100644", "R100"), (":100644 100644", "C100")):
+                    self.assertEqual(selected(path, mode, status), scope.FULL_SCOPE)
+
     @staticmethod
     def membership_offer_changes():
         classes = {}
@@ -1067,7 +1137,8 @@ class PlanTests(unittest.TestCase):
 
     def test_checkout_mismatch_prevents_even_exact_sha_reuse(self):
         with patch.object(planner, "git", return_value="b" * 40):
-            self.assertIsNone(planner.find_evidence(self.env, planner.FULL, self.api, self.now))
+            with self.assertRaises(ValueError):
+                planner.find_evidence(self.env, planner.FULL, self.api, self.now)
 
     def test_manual_candidate_and_pr_never_reuse(self):
         for event, ref in (("workflow_dispatch", "refs/heads/main"),
@@ -1081,9 +1152,10 @@ class PlanTests(unittest.TestCase):
             if "jobs" in result:
                 result["total_count"] = 101
             return result
-        self.assertIsNone(planner.find_evidence(self.env, planner.FULL, api, self.now))
+        with self.assertRaises(ValueError):
+            planner.find_evidence(self.env, planner.FULL, api, self.now)
 
-    def test_api_or_diff_failure_falls_back_to_execution(self):
+    def test_evidence_lookup_failure_stops_before_authorizing_mac_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "event.json").write_text("{}")
@@ -1095,13 +1167,86 @@ class PlanTests(unittest.TestCase):
                         patch.object(planner, "changed_paths", side_effect=ValueError), \
                         patch.object(planner, "find_evidence", side_effect=error):
                     (root / "output").write_text("")
-                    planner.main()
-                    outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
-                    self.assertEqual(outputs, {"build": "true", "build_name": planner.BUILD, "smoke": "true", "sharing": "true",
-                        "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
-                        "runtime_scope": scope.FULL_SCOPE,
-                        "lanes": json.dumps(scope.LANES, separators=(",", ":")),
-                        "matrix_lanes": '["runtime","gallery-normal","gallery-white","gallery-no-caption"]'})
+                    with self.assertRaises(SystemExit):
+                        planner.main()
+                    self.assertEqual((root / "output").read_text(), "")
+            # A complete lookup that finds no eligible evidence still runs
+            # every required job; lookup failure must not impersonate this.
+            with patch.dict(os.environ, env), \
+                    patch.object(planner, "changed_paths", side_effect=ValueError), \
+                    patch.object(planner, "find_evidence", return_value=None):
+                planner.main()
+                outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual(outputs, {"build": "true", "build_name": planner.BUILD, "smoke": "true", "sharing": "true",
+                    "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
+                    "runtime_scope": scope.FULL_SCOPE,
+                    "lanes": json.dumps(scope.LANES, separators=(",", ":")),
+                    "matrix_lanes": '["runtime","gallery-normal","gallery-white","gallery-no-caption"]'})
+
+    def test_same_sha_lookup_does_not_depend_on_unrelated_old_candidate_api(self):
+        calls = []
+        def api(path):
+            calls.append(path)
+            if "/workflows/" in path:
+                self.assertIn("head_sha=" + self.sha, path)
+                return {"workflow_runs": [dict(self.run, id=9, head_sha="b" * 40), self.run]}
+            return self.api(path)
+        self.assertEqual(planner.find_evidence(self.env, planner.FULL, api, self.now), (10, self.sha))
+        self.assertFalse(any("/runs/9/" in path for path in calls))
+
+    def test_unavailable_candidate_does_not_hide_another_verified_candidate(self):
+        def api(path):
+            if "/workflows/" in path:
+                return {"workflow_runs": [dict(self.run, id=11), self.run]}
+            if "/runs/11/jobs" in path:
+                raise OSError("private error body")
+            return self.api(path)
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            self.assertEqual(planner.find_evidence(self.env, planner.FULL, api, self.now), (10, self.sha))
+        self.assertIn('"stage":"candidate_unavailable"', output.getvalue())
+        self.assertIn('"stage":"evidence_selected"', output.getvalue())
+        self.assertNotIn("private error body", output.getvalue())
+
+    def test_evidence_api_logs_status_without_credentials_or_response_bodies(self):
+        path = "/repos/owner/repo/actions/runs/20"
+        env = dict(self.env, GH_TOKEN="private-token")
+        for error in (urllib.error.HTTPError("https://private.invalid/private-token", 403,
+                                            "private response body", {}, None),
+                      TimeoutError("private-token"), ValueError("private response body")):
+            output = io.StringIO()
+            with self.subTest(error=type(error).__name__), patch("sys.stdout", output), \
+                    patch.object(planner.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(ValueError):
+                    planner.github_api(env, path)
+            self.assertIn('"stage":"api_error"', output.getvalue())
+            self.assertNotIn("private-token", output.getvalue())
+            self.assertNotIn("private response body", output.getvalue())
+            if isinstance(error, urllib.error.HTTPError):
+                self.assertIn('"status":403', output.getvalue())
+        response = io.BytesIO(b'{"id":20}'); response.status = 200
+        with patch("sys.stdout", io.StringIO()) as output, \
+                patch.object(planner.urllib.request, "urlopen", return_value=response):
+            self.assertEqual(planner.github_api(env, path), {"id": 20})
+        self.assertIn('"stage":"api_complete"', output.getvalue())
+
+    def test_diagnosis_never_writes_release_plan_or_job_outputs(self):
+        current = dict(self.current, event="push", head_branch="main",
+                       repository={"full_name": "owner/repo"}, path=".github/workflows/ios-build.yml")
+        output = io.StringIO()
+        with patch.dict(os.environ, self.env), patch("sys.stdout", output), \
+                patch.object(planner, "github_api", return_value=current), \
+                patch.object(planner, "find_evidence", return_value=(10, self.sha)) as find:
+            planner.diagnose_reuse(20, scope.FULL_SCOPE)
+        self.assertEqual(find.call_args.args[0]["GITHUB_SHA"], self.sha)
+        self.assertIn('"release_evidence":false', output.getvalue())
+        self.assertNotIn("IOS_CI_PLAN_JSON", output.getvalue())
+        with patch.dict(os.environ, self.env), \
+                patch.object(planner, "github_api", return_value=dict(current, head_branch="codex/other")), \
+                patch.object(planner, "find_evidence") as find:
+            with self.assertRaises(ValueError):
+                planner.diagnose_reuse(20, scope.FULL_SCOPE)
+            find.assert_not_called()
 
     def test_mapped_photo_and_official_ui_keep_build_smoke_and_core_runtime(self):
         change = ('Text("before")\n', 'Text("after")\n')
@@ -1353,8 +1498,8 @@ class PlanTests(unittest.TestCase):
                 for job in self.jobs:
                     job["head_sha"] = base
                 def api(path):
-                    if "/workflows/" in path:
-                        self.assertNotIn("head_sha=", path)
+                    if "/workflows/" in path and "head_sha=" in path:
+                        return {"workflow_runs": []}
                     return self.api(path)
                 self.assertEqual(planner.find_evidence(self.env, planner.FULL, api, self.now), (10, base))
                 self.assertFalse(planner.equivalent_inputs(head, base))  # Checkout mismatch.

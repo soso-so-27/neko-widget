@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import argparse
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 
@@ -16,6 +18,7 @@ from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only,
 
 from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
+                          CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes,
                           reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST,
@@ -73,6 +76,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
+        return (PLAN_JOB,)
+    if runtime_scope == CI_EVIDENCE_SCOPE and source_paths(paths) == CI_EVIDENCE_PATHS:
         return (PLAN_JOB,)
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
@@ -228,31 +233,71 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
         return False
 
 
-def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime) -> bool:
+def evidence_log(stage: str, **fields) -> None:
+    # Fixed reason codes and request paths only. Never log tokens, headers,
+    # response bodies or exception messages (which can contain credentials).
+    print("IOS_CI_EVIDENCE_JSON=" + json.dumps({"stage": stage, **fields}, separators=(",", ":")), flush=True)
+
+
+def github_api(env: dict, path: str) -> dict:
+    start = time.monotonic()
+    evidence_log("api_start", path=path)
+    try:
+        request = urllib.request.Request(
+            env.get("GITHUB_API_URL", "https://api.github.com") + path,
+            headers={"Accept": "application/vnd.github+json",
+                     "Authorization": f"Bearer {env['GH_TOKEN']}",
+                     "X-GitHub-Api-Version": "2022-11-28"},
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.load(response)
+            status = response.status
+        if not isinstance(result, dict):
+            raise ValueError("Expected API object")
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        evidence_log("api_error", path=path, error=type(error).__name__,
+                     status=getattr(error, "code", None), elapsed_seconds=round(time.monotonic() - start, 3))
+        raise ValueError("Evidence API request failed; Mac checks were not authorized") from None
+    evidence_log("api_complete", path=path, status=status, elapsed_seconds=round(time.monotonic() - start, 3))
+    return result
+
+
+def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *, audit: bool = False) -> bool:
+    def reject(reason):
+        if audit:
+            run_id = run.get("id") if isinstance(run, dict) else None
+            evidence_log("candidate_rejected", run_id=run_id if type(run_id) is int else None, reason=reason)
+        return False
     try:
         finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
         age = now - finished
-        return (
-            run["id"] != current["id"]
-            and run["workflow_id"] == current["workflow_id"]
-            and SHA.fullmatch(run["head_sha"]) is not None
-            and SHA.fullmatch(current["head_sha"]) is not None
-            and run["event"] == "push"
-            and run["head_branch"].startswith("codex/")
-            and run["head_repository"]["full_name"] == repository
-            and run["repository"]["full_name"] == repository
-            and run["status"] == "completed"
-            and run["conclusion"] == "success"
-            and dt.timedelta(0) <= age <= dt.timedelta(hours=24)
-            and (run["head_sha"] == current["head_sha"]
-                 or equivalent_inputs(run["head_sha"], current["head_sha"]))
-        )
+        if run["id"] == current["id"]:
+            return reject("current_run")
+        if run["workflow_id"] != current["workflow_id"]:
+            return reject("different_workflow")
+        if not SHA.fullmatch(run["head_sha"]) or not SHA.fullmatch(current["head_sha"]):
+            return reject("invalid_sha")
+        if run["event"] != "push" or not run["head_branch"].startswith("codex/"):
+            return reject("not_candidate_push")
+        if run["head_repository"]["full_name"] != repository or run["repository"]["full_name"] != repository:
+            return reject("different_repository")
+        if run["status"] != "completed" or run["conclusion"] != "success":
+            return reject("not_successful")
+        if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
+            return reject("outside_24_hours")
+        if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
+            return reject("different_inputs")
+        return True
     except (AttributeError, KeyError, TypeError, ValueError):
-        return False
+        return reject("invalid_run_metadata")
 
 
 def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
-                now: dt.datetime | None = None) -> bool:
+                now: dt.datetime | None = None, *, audit: bool = False) -> bool:
+    def reject(reason, name):
+        if audit:
+            evidence_log("jobs_rejected", reason=reason, required_job=name)
+        return False
     # Missing, skipped, failed or duplicate jobs are not evidence of execution.
     for name in required:
         acceptable = {name}
@@ -267,19 +312,19 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
                     acceptable.add(lane_job(FULL_SCOPE, lane))
         matching = [job for job in jobs if job.get("name") in acceptable]
         if len(matching) != 1:
-            return False
+            return reject("missing_or_duplicate_job", name)
         job = matching[0]
         if (job.get("status"), job.get("conclusion"), job.get("head_sha")) != (
             "completed", "success", sha
         ):
-            return False
+            return reject("job_not_successful_on_candidate_sha", name)
         if now is not None:
             try:
                 completed = dt.datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
                 if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24):
-                    return False
+                    return reject("job_outside_24_hours", name)
             except (AttributeError, KeyError, TypeError, ValueError):
-                return False
+                return reject("invalid_job_timestamp", name)
     return True
 
 
@@ -287,7 +332,7 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     """Latest execution of each job, including unchanged siblings after a rerun.
 
     Never select an older success over a newer failure/skip. Ambiguous or
-    incomplete responses cause ordinary execution, not evidence reuse.
+    incomplete responses cannot authorize evidence reuse.
     """
     attempt = run.get("run_attempt", 1)
     if type(attempt) is not int or not 1 <= attempt <= 50:
@@ -331,28 +376,73 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
 
 def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -> tuple[int, str] | None:
     if env["GITHUB_EVENT_NAME"] != "push" or env["GITHUB_REF"] != "refs/heads/main":
+        evidence_log("not_applicable", reason="not_main_push")
         return None
     repo = env["GITHUB_REPOSITORY"]
     prefix = f"/repos/{repo}/actions"
     current = api(f"{prefix}/runs/{int(env['GITHUB_RUN_ID'])}")
     if current["head_sha"] != env["GITHUB_SHA"] or git("rev-parse", "HEAD") != env["GITHUB_SHA"]:
-        return None
-    query = urllib.parse.urlencode({
-        "event": "push", "status": "success", "per_page": 100,
-    })
-    runs = api(f"{prefix}/workflows/ios-build.yml/runs?{query}")["workflow_runs"]
-    for run in runs:
-        if not reusable_run(run, current, repo, now):
-            continue
-        # Fixed same-repository endpoint; never follow URLs supplied by a run.
-        run_id = int(run["id"])
-        try:
-            jobs = executed_jobs(run, repo, api)
-        except (KeyError, TypeError, ValueError):
-            continue
-        if covers_jobs(jobs, required, run["head_sha"], now):
-            return run_id, run["head_sha"]
+        evidence_log("lookup_blocked", reason="current_checkout_mismatch")
+        raise ValueError("Current run and checkout do not match")
+    seen, blocked = set(), False
+    # Search the exact commit first. An unrelated older run/API failure must
+    # not prevent checking an available same-SHA candidate.
+    for same_sha in (True, False):
+        parameters = {"event": "push", "status": "success", "per_page": 100}
+        if same_sha:
+            parameters["head_sha"] = env["GITHUB_SHA"]
+        query = urllib.parse.urlencode(parameters)
+        runs = api(f"{prefix}/workflows/ios-build.yml/runs?{query}")["workflow_runs"]
+        if not isinstance(runs, list):
+            raise ValueError("Invalid workflow run list")
+        evidence_log("candidates_received", search="same_sha" if same_sha else "compatible_ancestor", count=len(runs))
+        for run in runs:
+            if same_sha and isinstance(run, dict) and run.get("head_sha") != env["GITHUB_SHA"]:
+                continue
+            if not reusable_run(run, current, repo, now, audit=True):
+                continue
+            run_id = int(run["id"])
+            if run_id in seen:
+                continue
+            seen.add(run_id)
+            # Fixed same-repository endpoint; never follow URLs supplied by a run.
+            try:
+                jobs = executed_jobs(run, repo, api)
+                covered = covers_jobs(jobs, required, run["head_sha"], now, audit=True)
+            except (OSError, AttributeError, KeyError, TypeError, ValueError) as error:
+                evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
+                blocked = True
+                continue
+            if covered:
+                evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])
+                return run_id, run["head_sha"]
+    if blocked:
+        raise ValueError("Candidate evidence was unavailable")
+    evidence_log("no_evidence", reason="no_acceptable_candidate")
     return None
+
+
+def diagnose_reuse(run_id: int, selected_scope: str) -> None:
+    """Read-only Linux diagnosis; never writes job outputs or release evidence."""
+    env = dict(os.environ)
+    api = lambda path: github_api(env, path)
+    current = api(f"/repos/{env['GITHUB_REPOSITORY']}/actions/runs/{run_id}")
+    if (current["event"] != "push" or current["head_branch"] != "main"
+            or current["repository"]["full_name"] != env["GITHUB_REPOSITORY"]
+            or current["path"] != ".github/workflows/ios-build.yml"):
+        raise ValueError("Diagnosis requires this repository's main iOS push run")
+    # The caller must check out this original SHA. Copy the diagnostic script
+    # and its import dependencies to RUNNER_TEMP before that checkout.
+    env.update(GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/main",
+               GITHUB_RUN_ID=str(run_id), GITHUB_SHA=current["head_sha"])
+    evidence = find_evidence(env, required_jobs_from_scope(selected_scope), api, dt.datetime.now(dt.timezone.utc))
+    print("IOS_CI_REUSE_DIAGNOSTIC_JSON=" + json.dumps({
+        "diagnosed_run_id": run_id, "scope": selected_scope,
+        "evidence_run_id": evidence[0] if evidence else None,
+        "evidence_sha": evidence[1] if evidence else None, "release_evidence": False,
+    }, separators=(",", ":")), flush=True)
+    if evidence is None:
+        raise SystemExit("No reusable evidence found by the read-only diagnosis")
 
 
 def main() -> None:
@@ -365,7 +455,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope == DEVELOPMENT_SCOPE:
+    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -379,26 +469,17 @@ def main() -> None:
               "scope": selected_scope, "required_jobs": required,
               "evidence_run_id": None, "evidence_sha": None}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
-            output.write("## Development tools only\n\nOrchestration tests executed. "
-                         "App/build/safety/release inputs unchanged. Not iOS release evidence.\n")
+            output.write("## CI maintenance only\n\nOrchestration tests executed. "
+                         "Mac jobs are not requested for this verified maintenance scope. Not iOS release evidence.\n")
         return
 
-    def api(path: str) -> dict:
-        request = urllib.request.Request(
-            env.get("GITHUB_API_URL", "https://api.github.com") + path,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {env['GH_TOKEN']}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return json.load(response)
-
     try:
-        evidence = find_evidence(env, required, api, dt.datetime.now(dt.timezone.utc))
-    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
-        evidence = None  # API/permission/response failures never bypass checks.
+        evidence = find_evidence(env, required, lambda path: github_api(env, path), dt.datetime.now(dt.timezone.utc))
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
+        evidence_log("lookup_blocked", reason="evidence_lookup_failed", error=type(error).__name__)
+        # A failed plan cannot authorize expensive dependent Mac jobs. The
+        # normal no-evidence case still executes all required checks below.
+        raise SystemExit("Evidence lookup failed; no Mac checks were authorized. Inspect IOS_CI_EVIDENCE_JSON.") from None
     values = {
         "build": str(evidence is None).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
@@ -438,4 +519,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--diagnose-reuse-run", type=int)
+    parser.add_argument("--diagnose-scope", choices=SCOPES + ("movie-screen-only",))
+    args = parser.parse_args()
+    if args.diagnose_reuse_run is not None:
+        if args.diagnose_reuse_run <= 0 or args.diagnose_scope is None:
+            parser.error("Diagnosis requires a positive run ID and --diagnose-scope")
+        try:
+            diagnose_reuse(args.diagnose_reuse_run, args.diagnose_scope)
+        except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
+            evidence_log("diagnostic_blocked", error=type(error).__name__)
+            raise SystemExit("Read-only evidence diagnosis failed; inspect IOS_CI_EVIDENCE_JSON.") from None
+    elif args.diagnose_scope is not None:
+        parser.error("--diagnose-scope requires --diagnose-reuse-run")
+    else:
+        main()
