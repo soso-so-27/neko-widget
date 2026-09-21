@@ -157,6 +157,35 @@ CAT_NOTE_PATHS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
     "NekoWidget/ci/verify-family-records.swift",
 }
 CAT_NOTE_DATA_REVIEW = "explicit-memo-sharing-boundary"
+# One reviewed repair of the received-sheet route and test caret operation.
+# These exact companion sources may travel with that product candidate; this
+# does not approve future selector/workflow edits or change evidence reuse.
+CAT_NOTE_REPAIR_PATHS = frozenset({
+    "NekoWidget/ci/ios_ci_scope.py",
+    "NekoWidget/ci/test-plan-ios-ci.py",
+    "NekoWidget/ci/ci-timing-baseline.json",
+})
+# Only this exact literal is canonicalized to avoid a recursive self digest.
+# Every other byte of the selector, including product bindings, stays pinned.
+CAT_NOTE_REPAIR_DIGESTS = {
+    "NekoWidget/ci/ci-timing-baseline.json": [
+        "8eb88d93c6d2b8b94183d4451bc31b2e293bc4f97f21259603ea11bf6b937ea0",
+        "0f58223adf0885dce7a5ec4ab9373d751cc8f43259e501c402c66c66793ec391"
+    ],
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "4a3f8ea0ec65021b9781ee924d4e906e6ecd4751ac1053918ee22aa99a8a59f9",
+        "500abd9881262e6fc9102bbb85afc4231fdeaee9c6f4403e3e590ae86aa5b154"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "5cc32682c46ed125def5c2c9d598b6d460b7fe2a64a35102d8ad03774304753d",
+        "3377758f9962871f437a6001de54a1e836fa4ad3d9d4206e2e06f86fea1db0e4"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "3a2f953a8c6322f53b03ca3dfb13ddcaf75d4c01459e5b120246b158f1de4bc0",
+        "eea27c475f48aaa523ee5f27868d7f9b4c74f78184d18178326ed3f22275ad58"
+    ]
+}
+
 # Frozen after independent review of the 2026-09-21 product batch against
 # main 379e84f. Changed source requires a new review, not a manifest-only rehash.
 CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
@@ -165,7 +194,7 @@ CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
         "9e0866bd19e30e6ccd04c9d2f146f84532f15791fdc713098162dffab6d97936"),
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
         "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035",
-        "4da32739ee30ac887e3728410b5bfbd0601c1d5566aa3f2b26c6ce0c82f5702e"),
+        "ae4dc75def94da77f63f6393420f3a67151cd366c25cd1f6582b4941477a3031"),
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": (
         "a9d36e4514c5bf48c519aad97d1f17c551b9b480839f8bbc5ad56fe397f7c77b",
         "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0"),
@@ -183,7 +212,7 @@ CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
         "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818"),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f",
-        "cc98d79f81ab9138c26d87869ca2c912ee3ee5013227b4d32ece1fbbc5379797"),
+        "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb"),
     "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": (
         "82eb5c2238aaada407722a1a291cbacac6abda53247847f15e94e44751870395",
         "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574"),
@@ -330,9 +359,24 @@ def reviewed_memory_changes(changes: dict[str, tuple[str, str]], *, family: bool
 
 def reviewed_cat_note_changes(changes: dict[str, tuple[str, str]]) -> bool:
     """Only the complete frozen product batch can use its eleven UI operations."""
-    if (set(CAT_NOTE_DIGESTS) != CAT_NOTE_PATHS
-            or set(changes) != CAT_NOTE_PATHS | {REVIEW_MANIFEST}):
+    product_paths = CAT_NOTE_PATHS | {REVIEW_MANIFEST}
+    if set(CAT_NOTE_DIGESTS) != CAT_NOTE_PATHS:
         return False
+    if set(changes) != product_paths:
+        if (set(changes) != product_paths | CAT_NOTE_REPAIR_PATHS
+                or set(CAT_NOTE_REPAIR_DIGESTS) != CAT_NOTE_REPAIR_PATHS | {REVIEW_MANIFEST}):
+            return False
+        for path, pair in CAT_NOTE_REPAIR_DIGESTS.items():
+            before, after = changes[path]
+            if path == "NekoWidget/ci/ios_ci_scope.py":
+                binding = "CAT_NOTE_REPAIR_DIGESTS = " + json.dumps(
+                    CAT_NOTE_REPAIR_DIGESTS, indent=4, sort_keys=True) + "\n"
+                after = after.replace("\r\n", "\n")
+                if after.count(binding) != 1:
+                    return False
+                after = after.replace(binding, "CAT_NOTE_REPAIR_DIGESTS = {}\n", 1)
+            if not before or not after or list(map(source_digest, (before, after))) != pair:
+                return False
     for path in CAT_NOTE_PATHS:
         before, after = changes[path]
         if not before or not after or tuple(map(source_digest, (before, after))) != CAT_NOTE_DIGESTS[path]:
@@ -606,7 +650,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_APP_SCOPE: REVIEWABLE_APP_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_SCOPE: REVIEWABLE_MEMORY_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST, LOCAL_EDITOR_PATH},
-        REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST},
+        REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST} | CAT_NOTE_REPAIR_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }

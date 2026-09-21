@@ -84,6 +84,35 @@ class PlanTests(unittest.TestCase):
                 with patch.object(scope, "CAT_NOTE_DIGESTS", revised):
                     self.assertEqual(scope.select_scope(self.cat_note_changes(altered)), scope.FULL_SCOPE)
 
+    def test_cat_note_repair_accepts_only_the_frozen_complete_companion_sources(self):
+        changes = self.cat_note_changes()
+        product = {path: tuple(map(scope.source_digest, changes[path])) for path in scope.CAT_NOTE_PATHS}
+        companions = {path: ("old " + path, "new " + path) for path in scope.CAT_NOTE_REPAIR_PATHS}
+        selector = "NekoWidget/ci/ios_ci_scope.py"
+        companions[selector] = ("old selector", "CAT_NOTE_REPAIR_DIGESTS = {}\n# frozen executable source\n")
+        changes.update(companions)
+        bindings = {path: list(map(scope.source_digest, changes[path]))
+                    for path in scope.CAT_NOTE_REPAIR_PATHS | {scope.REVIEW_MANIFEST}}
+        literal = "CAT_NOTE_REPAIR_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        changes[selector] = (companions[selector][0], companions[selector][1].replace(
+            "CAT_NOTE_REPAIR_DIGESTS = {}\n", literal))
+        with patch.object(scope, "CAT_NOTE_DIGESTS", product), patch.object(scope, "CAT_NOTE_REPAIR_DIGESTS", bindings):
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_CAT_NOTE_SCOPE)
+            self.assertTrue(scope.accepts_paths(scope.REVIEWED_CAT_NOTE_SCOPE, list(changes)))
+            self.assertEqual(planner.required_jobs(list(changes), scope.REVIEWED_CAT_NOTE_SCOPE),
+                             (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.REVIEWED_CAT_NOTE_SCOPE))
+            for path in scope.CAT_NOTE_REPAIR_PATHS | {scope.REVIEW_MANIFEST}:
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(missing), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    altered = list(changes[path]); altered[side] += " unreviewed"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(altered)})), scope.FULL_SCOPE)
+            for source in (changes[selector][1] + literal,
+                           changes[selector][1].replace(literal, literal.replace(" = ", "=", 1))):
+                self.assertEqual(scope.select_scope(dict(changes, **{selector: (companions[selector][0], source)})),
+                                 scope.FULL_SCOPE)
+            self.assertEqual(scope.select_scope(dict(changes, **{scope.CI_WORKFLOW: ("old", "new")})), scope.FULL_SCOPE)
+
     def test_cat_note_planner_preserves_raw_diff_modes_status_and_complete_paths(self):
         changes = self.cat_note_changes()
         digests = {path: tuple(map(scope.source_digest, changes[path])) for path in scope.CAT_NOTE_PATHS}
@@ -110,6 +139,16 @@ class PlanTests(unittest.TestCase):
                 for modes, status in ((":000000 100644", "A"), (":100644 000000", "D"),
                                       (":100644 100755", "M"), (":100644 120000", "T"),
                                       (":100644 100644", "R100"), (":100644 100644", "C100")):
+                    self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
+        # The same raw-diff gate covers every repair companion before content
+        # approval; a source matcher cannot approve additions, links or renames.
+        changes.update({path: ("before", "after") for path in scope.CAT_NOTE_REPAIR_PATHS})
+        paths = sorted(changes)
+        with patch.object(scope, "reviewed_cat_note_changes", return_value=True):
+            self.assertEqual(selected(), scope.REVIEWED_CAT_NOTE_SCOPE)
+            for path in scope.CAT_NOTE_REPAIR_PATHS:
+                for modes, status in ((":000000 100644", "A"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":100644 100644", "R100")):
                     self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
 
     def test_cat_note_eleven_existing_operations_keep_safety_jobs_and_distinct_evidence(self):

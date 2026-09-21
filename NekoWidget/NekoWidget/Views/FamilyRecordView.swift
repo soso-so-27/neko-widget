@@ -20,12 +20,23 @@ struct FamilyRecordPreparedPhoto {
 
 /// Capability-checked entry in the already authenticated private window.
 struct FamilyRecordEntryButton: View {
+    private enum Destination: Identifiable {
+        case photo(FamilyRecordPhotoSource)
+        case list
+
+        var id: String {
+            switch self {
+            case let .photo(source): "photo-\(source.momentID)"
+            case .list: "list"
+            }
+        }
+    }
+
     let spaceID: String
     var source: FamilyRecordPhotoSource? = nil
     var windowName: String = "このまど"
     @State private var available = false
-    @State private var presented = false
-    @State private var addingCurrentPhoto = false
+    @State private var destination: Destination?
     @Environment(\.scenePhase) private var scenePhase
 #if DEBUG
     var fixtureClient: (any FamilyRecordServing)? = nil
@@ -33,13 +44,13 @@ struct FamilyRecordEntryButton: View {
     var body: some View {
         VStack(spacing: 0) {
             if available {
-                if source != nil {
+                if let source {
                     Menu {
                         Button("この写真にメモを追加", systemImage: "square.and.pencil") {
-                            addingCurrentPhoto = true; presented = true
+                            destination = .photo(source)
                         }.accessibilityIdentifier("family-record-add-current-photo")
                         Button("このまどの共有メモを見る", systemImage: "note.text") {
-                            addingCurrentPhoto = false; presented = true
+                            destination = .list
                         }.accessibilityIdentifier("family-record-open-list")
                     } label: {
                         Label("共有メモ", systemImage: "note.text")
@@ -47,7 +58,7 @@ struct FamilyRecordEntryButton: View {
                     }
                     .accessibilityIdentifier("family-record-entry")
                 } else {
-                    Button { addingCurrentPhoto = false; presented = true } label: {
+                    Button { destination = .list } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Label("共有メモ", systemImage: "note.text")
                             Text("写真に添えた、二人のメモ")
@@ -69,10 +80,11 @@ struct FamilyRecordEntryButton: View {
                 available = false
                 if scenePhase == .active { Task { await checkAvailability() } }
             }
-        .sheet(isPresented: $presented) {
-            if addingCurrentPhoto, let source {
+        .sheet(item: $destination) { destination in
+            switch destination {
+            case let .photo(source):
                 FamilyRecordSourceEditor(client: client, source: source, windowName: windowName)
-            } else {
+            case .list:
 #if DEBUG
                 if let fixtureClient {
                     FamilyRecordView(fixtureClient: fixtureClient, fixturePhoto: nil)

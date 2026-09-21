@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scope": "reviewed-cat-note-ui-v1",
-  "purpose": "Independently reviewed unified memo input and explicit sharing of a separate send copy. Private originals remain unchanged; delivery limits and frozen photo/recipient/text remain intact. Shared-memo additions derive a stable entry ID from the authorized space and delivered moment, reuse existing entries, preserve withdrawals, and retain existing author, lifecycle, revision/conflict, encryption and server/schema boundaries. This exact client/core change is reviewed with its identity verifier and eleven existing native UI operations; it is not a general UI or read-only exemption.",
+  "purpose": "Independently reviewed unified memo input and explicit sharing of a separate send copy. Private originals remain unchanged; delivery limits and frozen photo/recipient/text remain intact. Shared-memo additions derive a stable entry ID from the authorized space and delivered moment, reuse existing entries, preserve withdrawals, and retain existing author, lifecycle, revision/conflict, encryption and server/schema boundaries. This exact client/core change is reviewed with its identity verifier and eleven existing native UI operations; it is not a general UI or read-only exemption. The reviewed repair binds the received-photo add/list destination to one sheet route and makes the existing editing test place its caret explicitly; all eleven native operations remain required.",
   "visualReview": "user-device",
   "dataReview": "explicit-memo-sharing-boundary",
   "files": {
@@ -11,7 +11,7 @@
     },
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
       "before": "b97025afd981fbd052a6c4057d3dcf18ca20324bb3983086daf14d111a003035",
-      "after": "4da32739ee30ac887e3728410b5bfbd0601c1d5566aa3f2b26c6ce0c82f5702e"
+      "after": "ae4dc75def94da77f63f6393420f3a67151cd366c25cd1f6582b4941477a3031"
     },
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": {
       "before": "a9d36e4514c5bf48c519aad97d1f17c551b9b480839f8bbc5ad56fe397f7c77b",
@@ -35,7 +35,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "f183d40f30bb36797abdf585f79b5f12eaef06cb4a8dc488ee38ca684294058f",
-      "after": "cc98d79f81ab9138c26d87869ca2c912ee3ee5013227b4d32ece1fbbc5379797"
+      "after": "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb"
     },
     "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": {
       "before": "82eb5c2238aaada407722a1a291cbacac6abda53247847f15e94e44751870395",

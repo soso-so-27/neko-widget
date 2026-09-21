@@ -3281,12 +3281,13 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                        "An account notification must not report a local-only memo save failure.")
         func clearMemoText() {
             let existing = input.value as? String ?? ""
-            // Focus first so the keyboard has finished resizing the form,
-            // then locate the end in the editor's new frame. Send individual
-            // keys so each change is observable before sending the next one.
+            // This fixture note occupies the first line. Tap after that line;
+            // tapping the empty bottom of TextEditor can leave the caret at
+            // the beginning on iOS 26. Observe each deletion before continuing.
             input.tap()
             XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-            input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.9)).tap()
+            input.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0))
+                .withOffset(CGVector(dx: -12, dy: 16)).tap()
             for _ in 0..<(existing.utf16.count + 1) where !(input.value as? String ?? "").isEmpty {
                 let previousValue = input.value as? String ?? ""
                 input.typeText(XCUIKeyboardKey.delete.rawValue)
@@ -3696,14 +3697,20 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         tapReceivedDetailControl(app, identifier: "family-record-entry")
         app.buttons["family-record-add-current-photo"].tap()
         let sharedInput = app.textViews["family-record-words-input"]
-        XCTAssertTrue(sharedInput.waitForExistence(timeout: 10))
+        func reachSharedInput() {
+            XCTAssertTrue(app.navigationBars["写真にメモを追加"].waitForExistence(timeout: 10),
+                          "Adding this photo must open its editor, not the shared-memo list.")
+            for _ in 0..<5 where !sharedInput.isHittable { app.swipeUp() }
+            XCTAssertTrue(sharedInput.isHittable)
+        }
+        reachSharedInput()
         XCTAssertEqual(sharedInput.value as? String, "")
         XCTAssertFalse(app.buttons["family-record-pick-photo"].exists)
         XCTAssertFalse(app.buttons["family-record-reuse-caption"].exists)
         app.buttons["family-record-editor-close"].tap()
         tapReceivedDetailControl(app, identifier: "family-record-entry")
         app.buttons["family-record-add-current-photo"].tap()
-        XCTAssertTrue(sharedInput.waitForExistence(timeout: 10), "Cancel must leave the photo unregistered.")
+        reachSharedInput() // Cancel must leave the photo unregistered.
         let sharedSave = app.buttons["family-record-save"]
         for _ in 0..<5 where !sharedSave.isHittable { app.swipeUp() }
         XCTAssertTrue(sharedSave.isHittable)

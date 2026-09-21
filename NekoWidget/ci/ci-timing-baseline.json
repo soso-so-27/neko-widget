@@ -115,6 +115,12 @@
       "candidate_minutes": 29.517,
       "run_id": 35539105210,
       "outcome": "success-after-diagnosis"
+    },
+    {
+      "scope": "reviewed-cat-note-ui-v1",
+      "candidate_minutes": 38.467,
+      "run_id": 35565136713,
+      "outcome": "failure"
     }
   ]
 }
