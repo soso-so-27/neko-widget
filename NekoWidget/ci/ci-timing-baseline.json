@@ -1,8 +1,8 @@
 {
   "as_of": "2026-09-21",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
-  "upload_minutes": 9.22,
-  "upload_run": 35493368458,
+  "upload_minutes": 11.1,
+  "upload_run": 35607517485,
   "upload_observations": [
     {
       "run_id": 35493368458,
@@ -15,6 +15,10 @@
     {
       "run_id": 35593942726,
       "minutes": 8.733
+    },
+    {
+      "run_id": 35607517485,
+      "minutes": 11.1
     }
   ],
   "observations": [
@@ -143,6 +147,18 @@
       "candidate_minutes": 31.683,
       "run_id": 35590825541,
       "outcome": "success"
+    },
+    {
+      "scope": "reviewed-membership-offer-ui-v1",
+      "candidate_minutes": 19.283,
+      "run_id": 35601807219,
+      "outcome": "success",
+      "main_run_id": 35603862043,
+      "main_elapsed_minutes": 30.85,
+      "main_reused": false,
+      "main_cancelled_attempt_runner_minutes": 25.983,
+      "first_ci_to_apple_upload_minutes": 65.4,
+      "note": "Candidate alone passed first attempt. Main evidence reuse failed twice without logged reason; duplicate first attempt stopped, second attempt all checks completed. Whole delivery did not meet 30-minute goal."
     }
   ]
 }
