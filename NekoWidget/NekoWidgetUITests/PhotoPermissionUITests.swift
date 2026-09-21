@@ -3275,6 +3275,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--memo-local-account-change-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_PHOTO_MEMORY_UI_SESSION"] = UUID().uuidString
         app.launch()
         let open = app.buttons["photo-memory-note-open"]
         XCTAssertTrue(open.waitForExistence(timeout: 15))
@@ -3284,33 +3285,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(input.isEnabled, "An account notification must leave a local-only memo editable.")
         XCTAssertFalse(app.alerts["メモを保存できませんでした"].exists,
                        "An account notification must not report a local-only memo save failure.")
-        func clearMemoText() {
-            // Use the system selection command instead of guessing the caret
-            // position or observing each intermediate Japanese IME deletion.
-            input.tap()
-            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-            input.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0))
-                .withOffset(CGVector(dx: -12, dy: 16)).press(forDuration: 1.2)
-            let selectAll = app.descendants(matching: .any).matching(
-                NSPredicate(format: "label == %@ OR label == %@", "すべてを選択", "Select All")).firstMatch
-            XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
-            selectAll.tap()
-            input.typeText(XCUIKeyboardKey.delete.rawValue)
-            XCTAssertEqual(input.value as? String ?? "", "")
-            app.buttons["photo-memory-note-keyboard-done"].tap()
-            app.buttons["photo-memory-note-save"].tap()
-            let confirm = app.buttons["削除"]
-            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-            confirm.tap()
-        }
-        // The fixture has its own file, never the user's store. Clear a note
-        // from an interrupted prior run before starting the lifecycle check.
-        if !(input.value as? String ?? "").isEmpty {
-            clearMemoText()
-            XCTAssertTrue(open.waitForExistence(timeout: 5))
-            open.tap()
-            XCTAssertTrue(input.waitForExistence(timeout: 5))
-        }
+        XCTAssertEqual(input.value as? String ?? "", "", "Each run starts with an isolated fixture store.")
         let note = "窓辺で初めて寝た日。"
         input.tap()
         input.typeText(note)
@@ -3371,11 +3346,6 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(open.waitForExistence(timeout: 5))
         XCTAssertEqual(excerpt.value as? String, note, "Editing the send copy must not rewrite the original memo.")
         XCTAssertEqual(app.staticTexts["photo-window-fixture-result"].label, "1|1|family|\(sendCopy)")
-        open.tap()
-        XCTAssertTrue(input.waitForExistence(timeout: 5))
-        clearMemoText()
-        XCTAssertTrue(open.waitForExistence(timeout: 5))
-        XCTAssertFalse(excerpt.exists)
         XCTAssertTrue(app.buttons["お気に入りに追加"].exists)
         app.terminate()
     }

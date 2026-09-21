@@ -226,6 +226,7 @@ CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
 # main 76043aa. No storage, author, identity, delivery or permission exception.
 PHOTO_ACTIONS_PATHS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
     "LikedPhotosView.swift", "FamilyRecordView.swift", "FamilyWindowView.swift",
+    "PhotoWindowDeliveryView.swift",  # Exact DEBUG fixture-store isolation only.
 )) | {MEMORY_TEST_PATH}
 PHOTO_ACTIONS_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "ios_ci_scope.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
@@ -242,19 +243,22 @@ PHOTO_ACTIONS_DIGESTS = {
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
         "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
         "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"),
+    "NekoWidget/NekoWidget/Views/PhotoWindowDeliveryView.swift": (
+        "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818",
+        "9241cd2a5306efe13eb3aa42740745d1ec7b098536572e1724f8a3934a9ae0b5"),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb",
-        "4ab7405409223cddbb143020cbc8d867cf3cf93a4c9f3c19809b692f29b493b7"),
+        "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b"),
 }
 # Canonicalize only this exact literal to avoid a recursive selector digest.
 PHOTO_ACTIONS_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "e50bd273db41ffc1e48b0fcf1636d341eac810eab5f7f21d3b04cb92d2cf5521",
-        "187811c71f5a27e70c38522b6242e602c4385210b64eb034d3ef19a7ed22f9d7"
+        "665f496f0af669fb033aa2f1ee12f0f99a3ec75f0d73ec77da3200973f6c2686"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "3377758f9962871f437a6001de54a1e836fa4ad3d9d4206e2e06f86fea1db0e4",
-        "8fa4e861e23bf07326c5ebd67bcbba030b50e2e87318048d03ac012e55fcab90"
+        "efb71d2aa14729fb81901d912680c490ac3edf92e8ca7ec9c018686da01e3779"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "90f7fc5fd41376aaa000131b156a9ee7c149f646035a1097451f905e424efa6f",

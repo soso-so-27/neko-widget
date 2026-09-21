@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scope": "reviewed-photo-actions-ui-v1",
-  "purpose": "Reviewed photo action layout and read-only shared memo projection. The same visible photo remains bound to favorite, private memo, send and related-photo actions. Delivery captions and existing same-space/same-moment active words share the photo footer; sent captions retain their original author. Reading performs no record creation. Existing photo entries, including withdrawn photos, retain active words and explicit additions without photo re-upload. Only the current author may edit their words; existing permission, lifecycle, revision, persistence, delivery and identity contracts remain unchanged. Eight existing native operations and all mandatory safety jobs remain required; this is not a general UI exemption. The reviewed repair owns memo state and sheets above the adaptive footer in received, sent and fixture photo screens, preserving the editor during keyboard layout changes. Caption-only sources perform no record load. The private-note test uses system Select All; the shared-note test verifies keyboard focus before typing. The editor destination also captures its source at opening so a later caption-only state cannot replace an unsaved editor with an empty sheet; existing save validation remains authoritative.",
+  "purpose": "Reviewed photo action layout and read-only shared memo projection. The same visible photo remains bound to favorite, private memo, send and related-photo actions. Delivery captions and existing same-space/same-moment active words share the photo footer; sent captions retain their original author. Reading performs no record creation. Existing photo entries, including withdrawn photos, retain active words and explicit additions without photo re-upload. Only the current author may edit their words; existing permission, lifecycle, revision, persistence, delivery and identity contracts remain unchanged. Eight existing native operations and all mandatory safety jobs remain required; this is not a general UI exemption. The reviewed repair owns memo state and sheets above the adaptive footer in received, sent and fixture photo screens, preserving the editor during keyboard layout changes. Caption-only sources perform no record load. The shared-note test verifies keyboard focus before typing. The editor destination also captures its source at opening so a later caption-only state cannot replace an unsaved editor with an empty sheet; existing save validation remains authoritative. The DEBUG-only private-note fixture uses a validated per-test UUID file name, preserved across relaunch; invalid or absent session values retain the existing state.json default. This removes system text-menu cleanup while preserving initial isolation, save/relaunch, exact-photo, explicit-send and original-text assertions. Production editor/store code and the mandatory exact-photo deletion verifier remain unchanged.",
   "visualReview": "user-device",
   "dataReview": "photo-actions-read-projection",
   "files": {
@@ -17,9 +17,13 @@
       "before": "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
       "after": "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"
     },
+    "NekoWidget/NekoWidget/Views/PhotoWindowDeliveryView.swift": {
+      "before": "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818",
+      "after": "9241cd2a5306efe13eb3aa42740745d1ec7b098536572e1724f8a3934a9ae0b5"
+    },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb",
-      "after": "4ab7405409223cddbb143020cbc8d867cf3cf93a4c9f3c19809b692f29b493b7"
+      "after": "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b"
     }
   }
 }

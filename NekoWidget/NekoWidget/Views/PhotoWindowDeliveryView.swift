@@ -36,8 +36,14 @@ struct PhotoWindowDeliveryActions {
 #if DEBUG
 /// No server, Keychain, PhotoKit writes, or persistent handoffs in this fixture.
 struct PhotoWindowDeliveryFixture: View {
-    private static let memoryNotes = PhotoMemoryNoteStore(fileURL:
-        FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteUIFixture/state.json"))
+    private static let memoryNotes: PhotoMemoryNoteStore = {
+        // A test run has its own store, retained across app relaunches. Test
+        // cleanup must not depend on manipulating the system text menu.
+        let session = ProcessInfo.processInfo.environment["NEKO_PHOTO_MEMORY_UI_SESSION"]
+            .flatMap { UUID(uuidString: $0)?.uuidString } ?? "state"
+        return PhotoMemoryNoteStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("PhotoMemoryNoteUIFixture/\(session).json"))
+    }()
     @State private var sendCount = 0
     @State private var sendAttempts = 0
     @State private var sentSource = ""
