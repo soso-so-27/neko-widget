@@ -18,7 +18,8 @@ from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes,
-                          reviewed_memory_changes, MEMORY_TEST_PATH)
+                          reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST,
+                          MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -146,19 +147,21 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         head = env["GITHUB_SHA"]
         ci_only = sources <= CI_SELECTION_PATHS
         icon_only = icon_paths_only(sources)
+        membership_offer_only = sources == (MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST})
         if ci_only:
             # A stale branch is not proof that the product is unchanged from
             # current main. Every branch input still has to be accounted for.
             git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head)
         # --no-renames exposes moves as delete/add. Exact raw modes exclude
-        # symlinks, executable/type changes, new files and removals.
+        # symlinks, executable/type changes and removals; additions require
+        # the exact named exceptions below and complete semantic review.
         records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
         if records and records[-1] == "":
             records.pop()
         if len(records) != 2 * len(paths):
             return FULL_SCOPE
         seen = set()
-        added_tests = set()
+        added_sources = set()
         for index in range(0, len(records), 2):
             header, path = records[index:index + 2]
             fields = header.split()
@@ -180,7 +183,13 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                     valid = valid or (fields[0:2] == [":000000", "100644"] and fields[4] == "A")
                 if ci_only and path in CI_NEW_TEST_PATHS and fields[0:2] == [":000000", "100644"] and fields[4] == "A":
                     valid = True
-                    added_tests.add(path)
+                    added_sources.add(path)
+                if membership_offer_only and path in MEMBERSHIP_OFFER_NEW_PATHS:
+                    # Only the two independently reviewed new Swift files may
+                    # be added; semantic selection still pins every source.
+                    valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
+                    if valid:
+                        added_sources.add(path)
             if not valid:
                 return FULL_SCOPE
             seen.add(path)
@@ -193,7 +202,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 data = subprocess.check_output(["git", "show", f"{head}:{path}"])
                 validate_png(data)
             return ICON_SCOPE
-        changes = {path: ("" if path in added_tests else git("show", f"{base}:{path}"),
+        changes = {path: ("" if path in added_sources else git("show", f"{base}:{path}"),
                           git("show", f"{head}:{path}")) for path in sources}
         memory_tests = None
         if (reviewed_memory_changes(changes) or reviewed_memory_changes(changes, family=True)) and MEMORY_TEST_PATH not in changes:

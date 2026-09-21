@@ -25,6 +25,7 @@ struct PlusPurchaseConfiguration: Equatable, Sendable {
     let isEnabled: Bool
     let monthlyProductID: String?
     let annualProductID: String?
+    private let hasInvalidAnnualProductID: Bool
 
     init(
         isEnabled: Bool,
@@ -34,22 +35,21 @@ struct PlusPurchaseConfiguration: Equatable, Sendable {
         self.isEnabled = isEnabled
         self.monthlyProductID = Self.validatedProductID(monthlyProductID)
         self.annualProductID = Self.validatedProductID(annualProductID)
+        hasInvalidAnnualProductID = annualProductID.map {
+            !$0.isEmpty && Self.validatedProductID($0) == nil
+        } ?? false
     }
 
     var isConfigured: Bool {
-        guard isEnabled,
-              let monthlyProductID,
-              let annualProductID
+        guard isEnabled, !hasInvalidAnnualProductID,
+              let monthlyProductID
         else { return false }
         return monthlyProductID != annualProductID
     }
 
     var productIDs: [String] {
-        guard isConfigured,
-              let monthlyProductID,
-              let annualProductID
-        else { return [] }
-        return [annualProductID, monthlyProductID]
+        guard isConfigured else { return [] }
+        return [annualProductID, monthlyProductID].compactMap { $0 }
     }
 
     func productID(for plan: PlusProductPlan) -> String? {
@@ -291,9 +291,8 @@ final class PlusPurchaseStore: ObservableObject {
         hasStarted = false
     }
 
-    /// This method is intentionally unreachable from the current UI. A future
-    /// paywall must first obtain a stable BillingAccountID from the independent
-    /// billing bootstrap and supply an idempotent server recorder.
+    /// The live offer must obtain a stable independent BillingAccountID first.
+    /// Internal previews never call this method; source-controlled gates stay off.
     func purchase(
         _ plan: PlusProductPlan,
         billingAccountID: BillingAccountID
@@ -302,6 +301,7 @@ final class PlusPurchaseStore: ObservableObject {
               recordVerifiedTransactionEvent != nil,
               fetchAuthoritativeEntitlement != nil,
               !isPurchasing,
+              !isRestoring,
               pendingProductID == nil,
               let productID = configuration.productID(for: plan),
               let product = products.first(where: { $0.id == productID })
@@ -375,6 +375,7 @@ final class PlusPurchaseStore: ObservableObject {
         guard configuration.isConfigured,
               recordVerifiedTransactionEvent != nil,
               fetchAuthoritativeEntitlement != nil,
+              !isPurchasing,
               !isRestoring
         else { return .unavailable }
 

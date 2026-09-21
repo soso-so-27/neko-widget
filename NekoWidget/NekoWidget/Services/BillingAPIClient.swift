@@ -863,6 +863,21 @@ actor PlusBillingSession {
         return try billingAccountID(for: credential)
     }
 
+    /// Only an explicit purchase action may create a fresh billing identity.
+    /// Matching current purchases (including unverifiable ones) must instead
+    /// use explicit recovery; opening the offer never bootstraps an account.
+    func prepareAccountForExplicitPurchase() async throws -> BillingAccountID {
+        do {
+            return try billingAccountID(for: await bootstrap.resumeExistingCredential())
+        } catch let error as BillingClientError {
+            guard error == .billingCredentialMissing || error == .installationChanged
+            else { throw error }
+            let authorization = try await BillingFreshAccountAuthorizer()
+                .authorizeAfterCurrentEntitlementScan()
+            return try await createFreshBillingAccount(authorizedBy: authorization)
+        }
+    }
+
     func recordVerifiedTransactionEvent(
         _ event: PlusVerifiedTransactionEvent,
         billingAccountID: BillingAccountID

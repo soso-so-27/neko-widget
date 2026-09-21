@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
+		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
 		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
 		E02609080000000000000001 /* MomentDeliveryComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* MomentDeliveryComposer.swift */; };
 		E02609090000000000000011 /* PhotoWindowDeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoWindowDeliveryView.swift */; };
@@ -249,6 +251,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
+		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
 		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* MomentDeliveryComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentDeliveryComposer.swift; sourceTree = "<group>"; };
 		E02609090000000000000012 /* PhotoWindowDeliveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoWindowDeliveryView.swift; sourceTree = "<group>"; };
@@ -690,6 +694,7 @@
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
+				E02609210000000000000002 /* MembershipOfferModel.swift */,
 				F00000000000000000000263 /* BillingClientCore.swift */,
 				F00000000000000000000264 /* BillingKeychainStore.swift */,
 				F00000000000000000000265 /* BillingAPIClient.swift */,
@@ -713,6 +718,7 @@
 			children = (
 				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
+				E02609210000000000000004 /* MembershipOfferView.swift */,
 				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
 				F0000000000000000000025C /* MonthlyWindowView.swift */,
@@ -1048,6 +1054,7 @@
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
+				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
 				10000000000000000000017A /* MonthlyWindowView.swift in Sources */,
@@ -1057,6 +1064,7 @@
 				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
+				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,
 				100000000000000000000181 /* BillingClientCore.swift in Sources */,
 				100000000000000000000182 /* BillingKeychainStore.swift in Sources */,
 				100000000000000000000183 /* BillingAPIClient.swift in Sources */,

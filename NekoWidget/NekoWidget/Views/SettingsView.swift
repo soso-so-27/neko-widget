@@ -88,6 +88,7 @@ struct SettingsView: View {
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
+    @State private var showsMembershipPreview = false
 
     init(
         settings: SettingsPresentation,
@@ -264,6 +265,17 @@ struct SettingsView: View {
                 Text("プライバシーとサポート")
             }
 
+            if MembershipOfferPreviewAvailability.isAvailable {
+                Section {
+                    Button {
+                        showsMembershipPreview = true
+                    } label: {
+                        Label("会員プランのプレビュー", systemImage: "sparkles")
+                    }
+                    .accessibilityIdentifier("settings-membership-preview")
+                }
+            }
+
             Section {
                 LabeledContent {
                     Text("iOS 17.1以上")
@@ -290,6 +302,11 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("設定")
+        .sheet(isPresented: $showsMembershipPreview) {
+            MembershipOfferSheet(model: .preview()) { _ in
+                showsMembershipPreview = false
+            }
+        }
         .onChange(of: settings) { oldSettings, newSettings in
             // Each settings section saves independently. Merge incoming values
             // field by field so one completed save cannot erase a still-pending

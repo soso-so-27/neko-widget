@@ -17,6 +17,22 @@ def section(value: str, start: str, end: str) -> str:
 
 
 class PlusPurchaseFoundationTests(unittest.TestCase):
+    def test_offer_keeps_preview_separate_and_uses_authoritative_products(self) -> None:
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        preview = section(model, "static func preview(", "private final class MembershipStoreKitClient")
+        self.assertNotIn("PlusPurchaseStore(", preview)
+        self.assertNotIn("PlusBillingSession", preview)
+        live = section(model, "private final class MembershipStoreKitClient", "struct MembershipOfferSheet")
+        self.assertIn("product.displayPrice", live)
+        self.assertIn("subscription.isEligibleForIntroOffer", live)
+        self.assertIn("introductory.paymentMode == .freeTrial", live)
+        self.assertIn("subscription.subscriptionPeriod.value == 1", live)
+        self.assertNotIn("980", live)
+        self.assertNotIn("7日", live)
+        self.assertIn("case .pending, .awaitingServerConfirmation: return .waiting", live)
+        self.assertIn("if result == .completed || result == .cancelled", model)
+        self.assertIn("!isWorking && !isWaiting", model)
+
     def setUp(self) -> None:
         self.store = source("NekoWidget/Services/PlusPurchaseStore.swift")
         self.billing_core = source("NekoWidget/Services/BillingClientCore.swift")

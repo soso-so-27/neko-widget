@@ -1440,6 +1440,60 @@ final class PhotoPermissionUITests: XCTestCase {
 /// Deterministic presentation tests: no library permission request, archive
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
+    @MainActor
+    func testMembershipOfferPreviewReturnsToPurpose() {
+        for cancelled in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--membership-offer-ui-fixture"]
+            if cancelled { app.launchArguments.append("--membership-purchase-cancelled") }
+            app.launch()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+            XCTAssertEqual(app.staticTexts["membership-fixture-configuration"].label, "構成確認OK")
+            app.buttons["membership-preview-open"].tap()
+            let purchase = app.buttons["membership-offer-purchase"]
+            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["membership-offer-preview-notice"].exists)
+            if !cancelled {
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-offer-preview"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            for _ in 0..<3 where !purchase.isHittable { app.swipeUp() }
+            purchase.tap()
+            let result = app.staticTexts["membership-preview-result"]
+            XCTAssertTrue(result.waitForExistence(timeout: 5))
+            XCTAssertTrue(result.label.contains(cancelled ? "取り消して" : "契約は変更していません"))
+            XCTAssertTrue(app.buttons["membership-preview-open"].isHittable)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testMembershipOfferPreviewWaitingAndRestore() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-offer-ui-fixture", "--membership-purchase-waiting"]
+        app.launch()
+        XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+        app.buttons["membership-preview-open"].tap()
+        let purchase = app.buttons["membership-offer-purchase"]
+        XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !purchase.isHittable { app.swipeUp() }
+        purchase.tap()
+        let message = app.staticTexts["membership-offer-message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.label.contains("確認を待っています"))
+        XCTAssertFalse(purchase.isEnabled)
+        XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
+        let restore = app.buttons["membership-offer-restore"]
+        for _ in 0..<3 where !restore.isHittable { app.swipeUp() }
+        XCTAssertTrue(restore.isEnabled)
+        restore.tap()
+        XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["membership-preview-open"].isHittable)
+        app.terminate()
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

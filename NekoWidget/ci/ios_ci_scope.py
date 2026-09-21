@@ -29,10 +29,11 @@ REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v2"
 REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
+REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -270,6 +271,79 @@ PHOTO_ACTIONS_COMPANION_DIGESTS = {
     ]
 }
 
+# One disabled membership-offer batch against main 4bfd23c. The added-file
+# exception is limited to these two names and still requires full-source hashes.
+MEMBERSHIP_OFFER_NEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift",
+    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift",
+})
+MEMBERSHIP_OFFER_PATHS = MEMBERSHIP_OFFER_NEW_PATHS | {
+    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift",
+    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift",
+    "NekoWidget/NekoWidget/Views/SettingsView.swift",
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift",
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+    "NekoWidget/ci/test-plus-purchase-foundation.py",
+    MEMORY_TEST_PATH,
+}
+MEMBERSHIP_OFFER_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
+))
+MEMBERSHIP_OFFER_DATA_REVIEW = "disabled-membership-offer"
+# Frozen after independent review against main 4bfd23c; native rendering is still required.
+MEMBERSHIP_OFFER_DIGESTS = {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": (
+        "aa087996972ec11b7f4bb6026df7cb853721b87624bb14de8c5335650de8b3ab",
+        "b753df528a35a9d4c2a4f3afd80923b5e9be06cf847a1fe48a274bec9073155a"),
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": (
+        "6e8e034963f28383462ee082c924260d8d5d775a1150a35d4f16975af331fbad",
+        "0529d509155c6e971a5d03c9b8cacc19f695a9e23fec71f444f904f9a364de31"),
+    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift": (
+        "721ce6f8362b090174a8938fd3461c9d64f66d70bc644db37b185c25ee7b3157",
+        "ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3"),
+    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "6e7a3230b4b90895ff13ada6e94281fb93c12980c6e18836617ac7a46c09f19e"),
+    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": (
+        "42beaa2e57babc0bc95a1a2fa310ad52c7d009074811e10033d3b11160adb3fc",
+        "cd65fc08544973df139a3fc9a35e0ddb6827624001abbcc71b25cf0ec0e5f0a0"),
+    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "4c9f016cb91a70508550cdd7b9e372c739bb182d6dc67b15b7dc64964cde4f7c"),
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": (
+        "1cbce0c9db5eb1dc879c3ec48ce5b63e41829ac0609506a6e9ca163061f1b28d",
+        "99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b",
+        "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a"),
+    "NekoWidget/ci/test-plus-purchase-foundation.py": (
+        "9830f3bc4051a9fa6a03cd6824da584269d9e7564979f91c73c4b42cff3ffdae",
+        "80caa5bfefcef3e642281704bfd01338462527ea0f590cc20f926998bab8d08e"),
+}
+# Canonicalize only this exact literal to avoid a recursive selector digest.
+MEMBERSHIP_OFFER_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "d8f9da63a05dcacf2cc0dade83bfdea5a9f019902dfa22de5143bd17ba30f0fe",
+        "0c3a151cb4a21ea54f07e4c1fbde65dc71b61041f6af2a723eb54cc7994cb069"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "d17140c3a735ee3bedca22098d988295776cde11dd2d03e4122feca86e9624e1",
+        "367bd2ee2e01b6cf9a21aa17834c1ba91efcfa23e0f21df16a936b99f62c21e9"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "efb71d2aa14729fb81901d912680c490ac3edf92e8ca7ec9c018686da01e3779",
+        "f74bc554cf4f7e1e7df977d21aac0b64884fdd98edc579c0e38fabe1ba2001ad"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "51fc43de7637decd5902a36d868d206e04e4c43d61fb89e43c1f689ccfafa121",
+        "55f13392f5fcf71da8c47a7578a6361f9fa7a537a6c650c5d63aead98061b51f"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "eba4ae1998d987bd1116fbf82508c2dd3c5ec514bc80bfb73e2b7affe6219665",
+        "b1f912925dad23023c60d5e42a8ca217bd9ae58edd8336fee9074dded8cba225"
+    ]
+}
+
 PAIRING_EXPLANATION_BEFORE = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 PAIRING_EXPLANATION_AFTER = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。共同記録も開けなくなるため、取り下げたい自分の写真や言葉があれば、先に共同記録で操作してください。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 
@@ -294,7 +368,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -498,6 +572,54 @@ def reviewed_photo_actions_changes(changes: dict[str, tuple[str, str]]) -> bool:
             return False
         return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
                    for path, pair in PHOTO_ACTIONS_DIGESTS.items())
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def reviewed_membership_offer_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Only the complete frozen product batch can use its two UI operations."""
+    product_paths = MEMBERSHIP_OFFER_PATHS | {REVIEW_MANIFEST}
+    if (set(MEMBERSHIP_OFFER_DIGESTS) != MEMBERSHIP_OFFER_PATHS
+            or set(changes) != product_paths | MEMBERSHIP_OFFER_COMPANION_PATHS
+            or set(MEMBERSHIP_OFFER_COMPANION_DIGESTS) != MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST}):
+        return False
+    for path, pair in MEMBERSHIP_OFFER_COMPANION_DIGESTS.items():
+        before, after = changes[path]
+        if path == "NekoWidget/ci/ios_ci_scope.py":
+            binding = "MEMBERSHIP_OFFER_COMPANION_DIGESTS = " + json.dumps(
+                MEMBERSHIP_OFFER_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+            after = after.replace("\r\n", "\n")
+            if after.count(binding) != 1:
+                return False
+            after = after.replace(binding, "MEMBERSHIP_OFFER_COMPANION_DIGESTS = {}\n", 1)
+        if not before or not after or list(map(source_digest, (before, after))) != pair:
+            return False
+    for path in MEMBERSHIP_OFFER_PATHS:
+        before, after = changes[path]
+        if (not after or (not before) != (path in MEMBERSHIP_OFFER_NEW_PATHS)
+                or tuple(map(source_digest, (before, after))) != MEMBERSHIP_OFFER_DIGESTS[path]):
+            return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_MEMBERSHIP_OFFER_SCOPE
+                or review["visualReview"] != "native-ui-required"
+                or review["dataReview"] != MEMBERSHIP_OFFER_DATA_REVIEW
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != MEMBERSHIP_OFFER_PATHS):
+            return False
+        return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
+                   for path, pair in MEMBERSHIP_OFFER_DIGESTS.items())
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
@@ -748,6 +870,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST, LOCAL_EDITOR_PATH},
         REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST} | CAT_NOTE_REPAIR_PATHS,
         REVIEWED_PHOTO_ACTIONS_SCOPE: PHOTO_ACTIONS_PATHS | {REVIEW_MANIFEST} | PHOTO_ACTIONS_COMPANION_PATHS,
+        REVIEWED_MEMBERSHIP_OFFER_SCOPE: MEMBERSHIP_OFFER_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_OFFER_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -802,6 +925,10 @@ REVIEWED_PHOTO_ACTIONS_TESTS = tuple("NekoWidgetUITests/" + identifier for ident
     "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
     "MomentDeliveryComposerUITests/testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes",
 ))
+REVIEWED_MEMBERSHIP_OFFER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method for method in (
+    "testMembershipOfferPreviewReturnsToPurpose",
+    "testMembershipOfferPreviewWaitingAndRestore",
+))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -834,6 +961,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_MEMBERSHIP_OFFER_SCOPE:
+        return REVIEWED_MEMBERSHIP_OFFER_TESTS
     if scope == REVIEWED_PHOTO_ACTIONS_SCOPE:
         return REVIEWED_PHOTO_ACTIONS_TESTS
     if scope == REVIEWED_CAT_NOTE_SCOPE:
@@ -999,6 +1128,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_membership_offer_changes(changes):
+        return (REVIEWED_MEMBERSHIP_OFFER_SCOPE
+                if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MEMBERSHIP_OFFER_TESTS) else FULL_SCOPE)
     if reviewed_photo_actions_changes(changes):
         return (REVIEWED_PHOTO_ACTIONS_SCOPE
                 if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_PHOTO_ACTIONS_TESTS) else FULL_SCOPE)

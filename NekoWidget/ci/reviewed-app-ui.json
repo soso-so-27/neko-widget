@@ -1,29 +1,45 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-photo-actions-ui-v1",
-  "purpose": "Reviewed photo action layout and read-only shared memo projection. The same visible photo remains bound to favorite, private memo, send and related-photo actions. Delivery captions and existing same-space/same-moment active words share the photo footer; sent captions retain their original author. Reading performs no record creation. Existing photo entries, including withdrawn photos, retain active words and explicit additions without photo re-upload. Only the current author may edit their words; existing permission, lifecycle, revision, persistence, delivery and identity contracts remain unchanged. Eight existing native operations and all mandatory safety jobs remain required; this is not a general UI exemption. The reviewed repair owns memo state and sheets above the adaptive footer in received, sent and fixture photo screens, preserving the editor during keyboard layout changes. Caption-only sources perform no record load. The shared-note test verifies keyboard focus before typing. The editor destination also captures its source at opening so a later caption-only state cannot replace an unsaved editor with an empty sheet; existing save validation remains authoritative. The DEBUG-only private-note fixture uses a validated per-test UUID file name, preserved across relaunch; invalid or absent session values retain the existing state.json default. This removes system text-menu cleanup while preserving initial isolation, save/relaunch, exact-photo, explicit-send and original-text assertions. Production editor/store code and the mandatory exact-photo deletion verifier remain unchanged.",
-  "visualReview": "user-device",
-  "dataReview": "photo-actions-read-projection",
+  "scope": "reviewed-membership-offer-ui-v1",
+  "purpose": "One independently reviewed internal membership-offer preview batch against main 4bfd23c. The preview uses isolated dependencies without purchases, Keychain or network access; Settings exposes it only in DEBUG or with a sandbox receipt. Monthly-only StoreKit configuration retains validation and optional annual support. Existing verified entitlement completes without repurchase; pending confirmation cannot be repurchased. Purchase preparation remains explicit, and completion requires the existing server-verified entitlement. Billing flags, product IDs, beta access, sharing permissions and existing data are unchanged. The project adds the two Swift sources to the app target only. Two native UI operations and every mandatory Build, Photos permission/scan and runtime job remain required. Native rendering has not yet been executed or visually confirmed; the first native run must provide the existing XCTest screenshot attachment. Preview outcomes are not real purchase or restore evidence.",
+  "visualReview": "native-ui-required",
+  "dataReview": "disabled-membership-offer",
   "files": {
-    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
-      "before": "ae4dc75def94da77f63f6393420f3a67151cd366c25cd1f6582b4941477a3031",
-      "after": "77a50a0fef14942798734607ee7fc63de36cc3e37ff85323627a0063dfc3b3a9"
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
+      "before": "aa087996972ec11b7f4bb6026df7cb853721b87624bb14de8c5335650de8b3ab",
+      "after": "b753df528a35a9d4c2a4f3afd80923b5e9be06cf847a1fe48a274bec9073155a"
     },
-    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": {
-      "before": "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0",
-      "after": "aff858d1450736eded381c346f53ccc845a60a561e9f835607e6969ae1f948f1"
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
+      "before": "6e8e034963f28383462ee082c924260d8d5d775a1150a35d4f16975af331fbad",
+      "after": "0529d509155c6e971a5d03c9b8cacc19f695a9e23fec71f444f904f9a364de31"
     },
-    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
-      "after": "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"
+    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift": {
+      "before": "721ce6f8362b090174a8938fd3461c9d64f66d70bc644db37b185c25ee7b3157",
+      "after": "ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3"
     },
-    "NekoWidget/NekoWidget/Views/PhotoWindowDeliveryView.swift": {
-      "before": "0f7a3105703b514f6833193df70d9d333d733da13b1914e5552ff3ab81c58818",
-      "after": "9241cd2a5306efe13eb3aa42740745d1ec7b098536572e1724f8a3934a9ae0b5"
+    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "6e7a3230b4b90895ff13ada6e94281fb93c12980c6e18836617ac7a46c09f19e"
+    },
+    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": {
+      "before": "42beaa2e57babc0bc95a1a2fa310ad52c7d009074811e10033d3b11160adb3fc",
+      "after": "cd65fc08544973df139a3fc9a35e0ddb6827624001abbcc71b25cf0ec0e5f0a0"
+    },
+    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "4c9f016cb91a70508550cdd7b9e372c739bb182d6dc67b15b7dc64964cde4f7c"
+    },
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
+      "before": "1cbce0c9db5eb1dc879c3ec48ce5b63e41829ac0609506a6e9ca163061f1b28d",
+      "after": "99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb",
-      "after": "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b"
+      "before": "48ff3e40a551958cbaa8089a1d3e2f33901ba8a954959d2d80175e685efefa2b",
+      "after": "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a"
+    },
+    "NekoWidget/ci/test-plus-purchase-foundation.py": {
+      "before": "9830f3bc4051a9fa6a03cd6824da584269d9e7564979f91c73c4b42cff3ffdae",
+      "after": "80caa5bfefcef3e642281704bfd01338462527ea0f590cc20f926998bab8d08e"
     }
   }
 }
