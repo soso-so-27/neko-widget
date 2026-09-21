@@ -145,12 +145,13 @@ type BillingAccount = Awaited<ReturnType<typeof account>>;
 
 async function signedBillingRequest(input: {
   account: BillingAccount;
-  method: "PUT" | "DELETE";
+  method: "PUT" | "DELETE" | "POST";
   lineage: string;
+  pathname?: string;
   body: Record<string, unknown>;
   nonce?: string;
 }) {
-  const pathname = `/v1/billing/window-sponsorships/${input.lineage}`;
+  const pathname = input.pathname ?? `/v1/billing/window-sponsorships/${input.lineage}`;
   const body = JSON.stringify(input.body);
   const timestamp = Math.floor(Date.now() / 1000);
   const nonce = input.nonce ?? random(16);
@@ -475,6 +476,35 @@ async function enableSponsorshipGates() {
     BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
     BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
   } as Env;
+}
+
+interface SupportResponse { protocolVersion: number; request: {
+  id: string; requesterMemberId: string; state: string; expectedGeneration: number; membershipRevision: number;
+  createdAt: number; expiresAt: number; resultingGeneration: number | null;
+}; }
+const supportPath = "/v1/window-support-requests";
+async function supportRequest(environment: Env, member: SignedMember, path: string, body?: Record<string, unknown>, payer?: BillingAccount) {
+  const request = body ? await signedMemberMutationRequest({ member, method: "POST", pathname: path, body })
+    : await (async () => {
+      const timestamp = Math.floor(Date.now() / 1000), nonce = random(16);
+      const signed = await signature(member.keys, signedRequestTranscript({ memberId: member.id, timestamp, nonce,
+        method: "GET", pathname: path, bodySHA256: await sha256Base64url(new Uint8Array()) }));
+      return new Request(`https://sharing.invalid${path}`, { headers: { "Neko-Protocol-Version": "1", "Neko-Member-ID": member.id,
+        "Neko-Timestamp": String(timestamp), "Neko-Nonce": nonce, "Neko-Signature": signed, "CF-Connecting-IP": "192.0.2.90" } });
+    })();
+  if (payer && body) {
+    const billing = await signedBillingRequest({ account: payer, method: "POST", lineage: "unused", pathname: path, body });
+    billing.headers.forEach((value, key) => { if (key.startsWith("neko-billing-")) request.headers.set(key, value); });
+  }
+  return route(request, environment);
+}
+async function createSupport(environment: Env, space: Awaited<ReturnType<typeof signedSpace>>, payer: BillingAccount,
+  member = space.invitee, generation = 0) {
+  const body = { protocolVersion: 1, clientRequestId: crypto.randomUUID(), billingAccountId: payer.id,
+    requesterMemberId: member.id, expectedGeneration: generation };
+  const response = await supportRequest(environment, member, supportPath, body, payer);
+  expect(response.status).toBe(201);
+  return { body, value: (await response.json<SupportResponse>()).request };
 }
 
 describe("Plus window sponsorship foundation", () => {
@@ -1597,6 +1627,150 @@ describe("Plus window sponsorship foundation", () => {
       expect(await enabled.DB.prepare("SELECT COUNT(*) AS n FROM idempotency_records WHERE client_request_id=?").bind(requestID).first()).toEqual({ n: 0 });
     }
   });
+});
 
+describe("short-lived owner-approved window support exchange", () => {
+  it("supports an invitee payer and a same-device owner payer without disclosing billing identities", async () => {
+    const environment = await enableSponsorshipGates();
+    for (const ownerPays of [false, true]) {
+      const space = await signedSpace(), payer = await account();
+      await grantPlus(payer.id);
+      const requester = ownerPays ? space.owner : space.invitee;
+      const created = await createSupport(environment, space, payer, requester);
+      expect(created.value).toMatchObject({ requesterMemberId: requester.id, state: "pending", expectedGeneration: 0, resultingGeneration: null });
+      expect(created.value.expiresAt - created.value.createdAt).toBe(300);
+      const repeated = await supportRequest(environment, requester, supportPath, created.body, payer);
+      expect((await repeated.json<SupportResponse>()).request).toEqual(created.value);
+      const ownerList = await (await supportRequest(environment, space.owner, supportPath)).text();
+      expect(ownerList).toContain(created.value.id);
+      for (const privateValue of [payer.id, payer.key, "billingAccountId", "billing_key_id", "request_hash"]) expect(ownerList).not.toContain(privateValue);
+      const approve = { protocolVersion: 1, clientRequestId: crypto.randomUUID() };
+      if (!ownerPays) await expect(supportRequest(environment, requester, `${supportPath}/${created.value.id}/approve`, approve))
+        .rejects.toMatchObject({ code: "owner_required" });
+      for (let retry = 0; retry < 2; retry++) {
+        expect((await (await supportRequest(environment, space.owner, `${supportPath}/${created.value.id}/approve`, approve)).json<SupportResponse>()).request.state).toBe("approved");
+      }
+      const commit = { protocolVersion: 1, clientRequestId: crypto.randomUUID() };
+      for (let retry = 0; retry < 2; retry++) {
+        const result = await supportRequest(environment, requester, `${supportPath}/${created.value.id}/commit`, commit, payer);
+        expect(result.status).toBe(200);
+        expect((await result.json<SupportResponse>()).request).toMatchObject({ state: "completed", resultingGeneration: 1 });
+      }
+      const grant = await (await route(await signedGrantRequest(space.invitee), environment)).json<{ grantsPlus: boolean }>();
+      expect(grant.grantsPlus).toBe(true);
+      expect(await environment.DB.prepare("SELECT COUNT(*) AS n FROM billing_window_sponsorship_requests WHERE window_lineage_id=?")
+        .bind(space.window.lineage).first()).toEqual({ n: 1 });
+    }
+  });
 
+  it("rejects other payers, participants, spaces, modified retries and expired approval without modifying the request", async () => {
+    const environment = await enableSponsorshipGates(), space = await signedSpace(), outside = await signedSpace();
+    const payer = await account(), other = await account();
+    await grantPlus(payer.id); await grantPlus(other.id);
+    const created = await createSupport(environment, space, payer);
+    await expect(supportRequest(environment, space.invitee, supportPath, created.body, other)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    await expect(supportRequest(environment, outside.invitee, supportPath, created.body, payer)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    await expect(supportRequest(environment, space.invitee, supportPath, { ...created.body, expectedGeneration: 1 }, payer)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    await expect(supportRequest(environment, outside.owner, `${supportPath}/${created.value.id}`)).rejects.toMatchObject({ status: 404 });
+    const approve = { protocolVersion: 1, clientRequestId: crypto.randomUUID() };
+    await supportRequest(environment, space.owner, `${supportPath}/${created.value.id}/approve`, approve);
+    const commit = { protocolVersion: 1, clientRequestId: crypto.randomUUID() };
+    await expect(supportRequest(environment, space.owner, `${supportPath}/${created.value.id}/commit`, commit, payer)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    await expect(supportRequest(environment, space.invitee, `${supportPath}/${created.value.id}/commit`, commit, other)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(created.value.expiresAt * 1000);
+    try {
+      await expect(supportRequest(environment, space.invitee, `${supportPath}/${created.value.id}/commit`, commit, payer)).rejects.toMatchObject({ status: 410, code: "window_support_request_expired" });
+      expect((await (await supportRequest(environment, space.owner, `${supportPath}/${created.value.id}`)).json<SupportResponse>()).request.state).toBe("expired");
+    } finally { clock.mockRestore(); }
+    expect(await environment.DB.prepare("SELECT COUNT(*) AS n FROM billing_window_sponsorships WHERE window_lineage_id=?")
+      .bind(space.window.lineage).first()).toEqual({ n: 0 });
+    await expect(environment.DB.prepare("UPDATE billing_window_support_requests SET expires_at=expires_at+300 WHERE id=?").bind(created.value.id).run()).rejects.toThrow();
+  });
+
+  it("replaces only ended support atomically and serializes two confirmations into one generation", async () => {
+    const environment = await enableSponsorshipGates(), space = await signedSpace(), old = await account(), next = await account();
+    const oldEntitlement = await grantPlus(old.id); await grantPlus(next.id);
+    await operation({ account: old, window: space.window, operation: "sponsor", generation: 0, entitlement: oldEntitlement });
+    await expect(createSupport(environment, space, next, space.invitee, 1)).rejects.toMatchObject({ code: "window_support_already_active" });
+    const original = (await environment.DB.prepare("SELECT original_transaction_id FROM billing_effective_entitlement_current WHERE billing_account_id=?")
+      .bind(old.id).first<{ original_transaction_id: string }>())!.original_transaction_id;
+    await grantPlus(old.id, { original, expiresAtMs: Date.now() - 1000 });
+    const first = await createSupport(environment, space, next, space.invitee, 1);
+    const second = await createSupport(environment, space, next, space.invitee, 1);
+    for (const candidate of [first, second]) await supportRequest(environment, space.owner, `${supportPath}/${candidate.value.id}/approve`,
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID() });
+    expect(await environment.DB.prepare("SELECT billing_account_id,generation,state FROM billing_window_sponsorships WHERE window_lineage_id=?")
+      .bind(space.window.lineage).first()).toEqual({ billing_account_id: old.id, generation: 1, state: "active" });
+    const commit = { protocolVersion: 1, clientRequestId: crypto.randomUUID() };
+    const results = await Promise.all([0, 1].map(() => supportRequest(environment, space.invitee, `${supportPath}/${first.value.id}/commit`, commit, next)));
+    for (const result of results) expect((await result.json<SupportResponse>()).request.resultingGeneration).toBe(2);
+    await expect(supportRequest(environment, space.invitee, `${supportPath}/${second.value.id}/commit`,
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID() }, next)).rejects.toMatchObject({ code: "window_support_request_conflict" });
+    expect(await environment.DB.prepare("SELECT billing_account_id,generation,state FROM billing_window_sponsorships WHERE window_lineage_id=?")
+      .bind(space.window.lineage).first()).toEqual({ billing_account_id: next.id, generation: 2, state: "active" });
+    expect((await environment.DB.prepare("SELECT operation FROM billing_window_sponsorship_requests WHERE window_lineage_id=? ORDER BY resulting_generation")
+      .bind(space.window.lineage).all<{ operation: string }>()).results.map(row => row.operation)).toEqual(["sponsor", "sponsor"]);
+  });
+
+  it("fails closed at the accepting statement if requester membership changes after all preflight reads", async () => {
+    const environment = await enableSponsorshipGates(), space = await signedSpace(), payer = await account();
+    await grantPlus(payer.id);
+    const created = await createSupport(environment, space, payer);
+    await supportRequest(environment, space.owner, `${supportPath}/${created.value.id}/approve`, { protocolVersion: 1, clientRequestId: crypto.randomUUID() });
+    let changed = false;
+    const racedEnv = { ...environment, DB: new Proxy(environment.DB, { get(target, key) {
+      if (key === "prepare") return (sql: string) => {
+        const wrap = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, { get(statementTarget, property) {
+          if (property === "bind") return (...values: unknown[]) => wrap(statementTarget.bind(...values));
+          if (property === "run" && sql.startsWith("INSERT INTO billing_window_support_commits")) return async () => {
+            changed = true;
+            await target.prepare("UPDATE members SET state='revoked' WHERE id=?").bind(space.invitee.id).run();
+            return statementTarget.run();
+          };
+          const value = Reflect.get(statementTarget, property);
+          return typeof value === "function" ? value.bind(statementTarget) : value;
+        } });
+        return wrap(target.prepare(sql));
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) } as Env;
+    await expect(supportRequest(racedEnv, space.invitee, `${supportPath}/${created.value.id}/commit`,
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID() }, payer)).rejects.toBeDefined();
+    expect(changed).toBe(true);
+    for (const table of ["billing_window_sponsorship_requests", "billing_window_sponsorships"]) {
+      expect(await environment.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE window_lineage_id=?`).bind(space.window.lineage).first()).toEqual({ n: 0 });
+    }
+    expect(await environment.DB.prepare("SELECT COUNT(*) AS n FROM billing_window_support_commits WHERE request_id=?").bind(created.value.id).first()).toEqual({ n: 0 });
+  });
+
+  it("keeps billing disabled and distinguishes unknown authority from an expired payer", async () => {
+    await expect(route(new Request(`https://sharing.invalid${supportPath}`), testEnv)).rejects.toMatchObject({ code: "billing_runtime_disabled" });
+    const environment = await enableSponsorshipGates(), space = await signedSpace(), payer = await account();
+    await expect(createSupport(environment, space, payer)).rejects.toMatchObject({ status: 503, code: "window_support_unavailable" });
+    await grantPlus(payer.id, { expiresAtMs: Date.now() - 1000 });
+    await expect(createSupport(environment, space, payer)).rejects.toMatchObject({ status: 403, code: "plus_entitlement_required" });
+    await closeD1SponsorshipGate();
+    await expect(supportRequest(environment, space.owner, supportPath)).rejects.toMatchObject({ code: "window_support_unavailable" });
+  });
+
+  it("retains the old sponsorship when replacement would exceed the existing three-window limit", async () => {
+    const environment = await enableSponsorshipGates(), space = await signedSpace(), old = await account(), next = await account();
+    const oldEntitlement = await grantPlus(old.id), nextEntitlement = await grantPlus(next.id);
+    await operation({ account: old, window: space.window, operation: "sponsor", generation: 0, entitlement: oldEntitlement });
+    const original = (await environment.DB.prepare("SELECT original_transaction_id FROM billing_effective_entitlement_current WHERE billing_account_id=?")
+      .bind(old.id).first<{ original_transaction_id: string }>())!.original_transaction_id;
+    await grantPlus(old.id, { original, expiresAtMs: Date.now() - 1000 });
+    for (let count = 0; count < 3; count++) {
+      await operation({ account: next, window: await windowFixture(), operation: "sponsor", generation: 0, entitlement: nextEntitlement });
+    }
+    const created = await createSupport(environment, space, next, space.invitee, 1);
+    await supportRequest(environment, space.owner, `${supportPath}/${created.value.id}/approve`, { protocolVersion: 1, clientRequestId: crypto.randomUUID() });
+    await expect(supportRequest(environment, space.invitee, `${supportPath}/${created.value.id}/commit`,
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID() }, next)).rejects.toMatchObject({ code: "window_sponsorship_limit_reached" });
+    expect(await environment.DB.prepare("SELECT billing_account_id,generation,state FROM billing_window_sponsorships WHERE window_lineage_id=?")
+      .bind(space.window.lineage).first()).toEqual({ billing_account_id: old.id, generation: 1, state: "active" });
+    expect(await environment.DB.prepare("SELECT COUNT(*) AS n FROM billing_window_support_commits WHERE request_id=?")
+      .bind(created.value.id).first()).toEqual({ n: 0 });
+  });
 });

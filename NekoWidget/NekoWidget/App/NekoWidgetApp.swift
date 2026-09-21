@@ -60,6 +60,9 @@ struct NekoWidgetApp: App {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
                 MembershipOfferFixture()
+            } else if CommandLine.arguments.contains("--window-support-resume-ui-fixture") {
+                WindowSupportResumePreviewView(initialScenario:
+                    CommandLine.arguments.contains("--window-support-owner") ? .ownerApproval : .pending)
             } else if CommandLine.arguments.contains("--membership-access-ui-fixture") {
                 MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {

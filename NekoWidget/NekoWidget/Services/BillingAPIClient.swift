@@ -44,6 +44,9 @@ private enum BillingEndpoint {
     case authoritativeEntitlement
     case windowSponsorshipGrant
     case windowSponsorshipOwnerDetach
+    case supportRequests
+    case createSupportRequest
+    case supportAction(id: String, approve: Bool)
     case windowSponsorshipChange(
         operation: BillingWindowSponsorshipOperation,
         windowLineageID: String
@@ -51,8 +54,9 @@ private enum BillingEndpoint {
 
     var method: String {
         switch self {
-        case .accountCreation, .accountRecovery, .transaction: return "POST"
+        case .accountCreation, .accountRecovery, .transaction, .createSupportRequest, .supportAction: return "POST"
         case .authoritativeEntitlement, .windowSponsorshipGrant: return "GET"
+        case .supportRequests: return "GET"
         case .windowSponsorshipOwnerDetach: return "DELETE"
         case let .windowSponsorshipChange(operation, _):
             return operation.method
@@ -68,6 +72,9 @@ private enum BillingEndpoint {
             return BillingProtocolV1.entitlementPath
         case .windowSponsorshipGrant, .windowSponsorshipOwnerDetach:
             return BillingProtocolV1.windowSponsorshipGrantPath
+        case .supportRequests, .createSupportRequest: return BillingProtocolV1.windowSupportRequestsPath
+        case let .supportAction(id, approve):
+            return BillingProtocolV1.windowSupportRequestsPath + "/" + id + (approve ? "/approve" : "/commit")
         case let .windowSponsorshipChange(_, windowLineageID):
             return BillingProtocolV1.windowSponsorshipChangePathPrefix
                 + windowLineageID
@@ -76,12 +83,13 @@ private enum BillingEndpoint {
 
     var expectedStatus: Int {
         switch self {
-        case .accountCreation: return 201
+        case .accountCreation, .createSupportRequest: return 201
         case .accountRecovery: return 200
         case .transaction, .authoritativeEntitlement,
              .windowSponsorshipGrant, .windowSponsorshipChange:
             return 200
         case .windowSponsorshipOwnerDetach: return 200
+        case .supportRequests, .supportAction: return 200
         }
     }
 
@@ -93,6 +101,9 @@ private enum BillingEndpoint {
             return .billing
         case .windowSponsorshipGrant, .windowSponsorshipOwnerDetach:
             return .participant
+        case .supportRequests: return .participant
+        case .createSupportRequest: return .both
+        case let .supportAction(_, approve): return approve ? .participant : .both
         }
     }
 
@@ -100,10 +111,11 @@ private enum BillingEndpoint {
         switch self {
         case .accountCreation, .accountRecovery, .transaction:
             return !body.isEmpty
-        case .authoritativeEntitlement, .windowSponsorshipGrant:
+        case .authoritativeEntitlement, .windowSponsorshipGrant, .supportRequests:
             return body.isEmpty
         case .windowSponsorshipOwnerDetach: return !body.isEmpty
         case .windowSponsorshipChange: return !body.isEmpty
+        case .createSupportRequest, .supportAction: return !body.isEmpty
         }
     }
 }
@@ -112,17 +124,19 @@ private enum BillingAuthenticationKind {
     case none
     case billing
     case participant
+    case both
 }
 
 private enum BillingRequestAuthentication {
     case none
     case billing(BillingCredential)
     case participant(memberID: String, credential: PairingCredential)
+    case both(memberID: String, participant: PairingCredential, payer: BillingCredential)
 
     func matches(_ kind: BillingAuthenticationKind) -> Bool {
         switch (self, kind) {
         case (.none, .none), (.billing, .billing),
-             (.participant, .participant):
+             (.participant, .participant), (.both, .both):
             return true
         default:
             return false
@@ -1219,6 +1233,52 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         ).validated(for: attempt)
     }
 
+    func supportRequests(memberID: String, credential: PairingCredential) async throws -> [WindowSupportRequest] {
+        let response: WindowSupportListResponse = try await sendData(endpoint: .supportRequests, body: Data(),
+            authentication: .participant(memberID: memberID, credential: credential))
+        guard response.protocolVersion == 1, response.requests.count <= 32,
+              Set(response.requests.map(\.id)).count == response.requests.count
+        else { throw BillingClientError.invalidServerResponse }
+        return try response.requests.map { try $0.validated() }
+    }
+
+    func createSupportRequest(clientRequestID: String, expectedGeneration: Int, memberID: String,
+                              participant: PairingCredential, payer: BillingCredential) async throws -> WindowSupportRequest {
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) == clientRequestID,
+              (0...1_000_000_000).contains(expectedGeneration), let account = payer.billingAccountID
+        else { throw BillingClientError.malformedCredential }
+        let response: WindowSupportSingleResponse = try await send(endpoint: .createSupportRequest,
+            body: WindowSupportCreateBody(protocolVersion: 1, clientRequestId: clientRequestID,
+                                          billingAccountId: account, requesterMemberId: memberID,
+                                          expectedGeneration: expectedGeneration),
+            authentication: .both(memberID: memberID, participant: participant, payer: payer))
+        guard response.protocolVersion == 1, response.request.id == clientRequestID,
+              response.request.requesterMemberId == memberID,
+              response.request.expectedGeneration == expectedGeneration
+        else { throw BillingClientError.identityMismatch }
+        return try response.request.validated()
+    }
+
+    func changeSupportRequest(requestID: String, clientRequestID: String, approve: Bool, memberID: String,
+                              participant: PairingCredential, payer: BillingCredential? = nil) async throws -> WindowSupportRequest {
+        guard BillingValidation.canonicalUUIDv4(requestID) == requestID,
+              BillingValidation.canonicalUUIDv4(clientRequestID) == clientRequestID
+        else { throw BillingClientError.malformedCredential }
+        let authentication: BillingRequestAuthentication
+        if approve {
+            authentication = .participant(memberID: memberID, credential: participant)
+        } else if let payer {
+            authentication = .both(memberID: memberID, participant: participant, payer: payer)
+        } else { throw BillingClientError.billingCredentialMissing }
+        let response: WindowSupportSingleResponse = try await send(endpoint: .supportAction(id: requestID, approve: approve),
+            body: WindowSupportActionBody(protocolVersion: 1, clientRequestId: clientRequestID), authentication: authentication)
+        guard response.protocolVersion == 1, response.request.id == requestID,
+              approve || response.request.requesterMemberId == memberID,
+              approve ? [.approved, .completed].contains(response.request.state) : response.request.state == .completed
+        else { throw BillingClientError.identityMismatch }
+        return try response.request.validated()
+    }
+
     private func send<Request: Encodable, Response: Decodable>(
         endpoint: BillingEndpoint,
         body: Request,
@@ -1285,6 +1345,11 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
                 memberID: memberID,
                 credential: credential
             )
+        case let .both(memberID, participant, payer):
+            try authenticate(request: &request, method: endpoint.method, pathname: endpoint.path,
+                             body: body, credential: payer)
+            try authenticateParticipant(request: &request, method: endpoint.method, pathname: endpoint.path,
+                                        body: body, memberID: memberID, credential: participant)
         }
 
         let bytes: URLSession.AsyncBytes
@@ -1393,11 +1458,15 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         credential: PairingCredential
     ) throws {
         let credential = try credential.validated()
-        let supportedRequest = (method == "GET" && body.isEmpty)
-            || (method == "DELETE" && !body.isEmpty)
+        let sponsorshipRequest = pathname == BillingProtocolV1.windowSponsorshipGrantPath
+            && ((method == "GET" && body.isEmpty) || (method == "DELETE" && !body.isEmpty))
+        let supportRequest = (pathname == BillingProtocolV1.windowSupportRequestsPath
+            && ((method == "GET" && body.isEmpty) || (method == "POST" && !body.isEmpty)))
+            || (method == "POST" && !body.isEmpty
+                && (BillingProtocolV1.isWindowSupportAction(pathname, action: "approve")
+                    || BillingProtocolV1.isWindowSupportAction(pathname, action: "commit")))
         guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16),
-              supportedRequest,
-              pathname == BillingProtocolV1.windowSponsorshipGrantPath,
+              sponsorshipRequest || supportRequest,
               body.count <= BillingWindowSponsorshipAttempt.maximumBodyBytes
         else { throw BillingClientError.malformedCredential }
         let timestamp = Int(Date().timeIntervalSince1970)
@@ -1445,6 +1514,29 @@ private final class BillingNoRedirectSessionDelegate: NSObject,
     ) {
         completionHandler(nil)
     }
+}
+
+private struct WindowSupportListResponse: Decodable {
+    let protocolVersion: Int
+    let requests: [WindowSupportRequest]
+}
+
+private struct WindowSupportSingleResponse: Decodable {
+    let protocolVersion: Int
+    let request: WindowSupportRequest
+}
+
+private struct WindowSupportCreateBody: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let billingAccountId: String
+    let requesterMemberId: String
+    let expectedGeneration: Int
+}
+
+private struct WindowSupportActionBody: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
 }
 
 private struct BillingAccountCreationRequest: Encodable {

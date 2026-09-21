@@ -21,6 +21,7 @@ import {
   recordBillingTransaction,
 } from "./billing";
 import { recoverBillingAccount } from "./billing-recovery";
+import { windowSupportRequests } from "./window-support-requests";
 import {
   changeWindowSponsorship,
   detachWindowSponsorshipAsOwner,
@@ -235,6 +236,8 @@ export async function route(
   const sponsorshipMatch = pathname.match(
     /^\/v1\/billing\/window-sponsorships\/([^/]+)$/u,
   );
+  const supportRequestMatch = pathname.match(/^\/v1\/window-support-requests(?:\/([0-9a-f-]{36})(?:\/(approve|commit))?)?$/u);
+  if (supportRequestMatch) return windowSupportRequests(request, env, supportRequestMatch[1], supportRequestMatch[2]);
   if (
     (request.method === "PUT" || request.method === "DELETE") &&
     sponsorshipMatch?.[1] !== undefined

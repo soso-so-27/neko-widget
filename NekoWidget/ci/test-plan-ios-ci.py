@@ -224,29 +224,41 @@ class PlanTests(unittest.TestCase):
     )
 
     @staticmethod
-    def delivery_membership_changes():
+    def delivery_membership_changes(resuming=False):
+        prefix = "WINDOW_SUPPORT" if resuming else "DELIVERY_MEMBERSHIP"
+        paths, new_paths = (getattr(scope, prefix + suffix) for suffix in ("_PATHS", "_NEW_PATHS"))
+        companion_paths = getattr(scope, prefix + "_COMPANION_PATHS")
+        selected = scope.REVIEWED_WINDOW_SUPPORT_SCOPE if resuming else scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
+        native = scope.REVIEWED_WINDOW_SUPPORT_TESTS if resuming else scope.REVIEWED_DELIVERY_MEMBERSHIP_TESTS
         classes = {}
-        for identifier in scope.REVIEWED_DELIVERY_MEMBERSHIP_TESTS:
+        for identifier in native:
             _, owner, method = identifier.split("/")
             classes.setdefault(owner, []).append(f"    func {method}() {{}}")
         source = "\n".join(f"final class {owner}: XCTestCase {{\n" + "\n".join(methods) + "\n}"
                            for owner, methods in classes.items())
-        changes = {path: ("" if path in scope.DELIVERY_MEMBERSHIP_NEW_PATHS else "before " + path,
+        changes = {path: ("" if path in new_paths else "before " + path,
                           source if path == scope.MEMORY_TEST_PATH else "after " + path)
-                   for path in scope.DELIVERY_MEMBERSHIP_PATHS}
+                   for path in paths}
+        project = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
+        if project in changes:
+            frozen = "\t\tA00000000000000000000025 /* Sources */ = {\n\t\t\tfiles = (unchanged);\n\t\t};\n"
+            frozen += "".join("/* Begin " + name + " section */\nfrozen\n/* End " + name + " section */\n"
+                              for name in ("PBXNativeTarget", "XCBuildConfiguration", "XCConfigurationList",
+                                           "PBXResourcesBuildPhase", "PBXFrameworksBuildPhase"))
+            changes[project] = (frozen + "app before", frozen + "app after")
         product = {path: tuple(map(scope.source_digest, pair)) for path, pair in changes.items()}
-        review = {"schemaVersion": 1, "scope": scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE,
+        review = {"schemaVersion": 1, "scope": selected,
                   "purpose": "Reviewed explicit delivery support boundary", "visualReview": "native-ui-required",
-                  "dataReview": scope.DELIVERY_MEMBERSHIP_DATA_REVIEW,
+                  "dataReview": getattr(scope, prefix + "_DATA_REVIEW"),
                   "files": {path: {"before": pair[0], "after": pair[1]} for path, pair in product.items()}}
         changes[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
-        changes.update({path: ("before " + path, "after " + path) for path in scope.DELIVERY_MEMBERSHIP_COMPANION_PATHS})
+        changes.update({path: ("before " + path, "after " + path) for path in companion_paths})
         selector = "NekoWidget/ci/ios_ci_scope.py"
-        empty = "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = {}\n"
+        empty = prefix + "_COMPANION_DIGESTS = {}\n"
         changes[selector] = ("old selector", empty + "# reviewed selector source\n")
         companions = {path: list(map(scope.source_digest, changes[path]))
-                      for path in scope.DELIVERY_MEMBERSHIP_COMPANION_PATHS | {scope.REVIEW_MANIFEST}}
-        literal = "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = " + json.dumps(companions, indent=4, sort_keys=True) + "\n"
+                      for path in companion_paths | {scope.REVIEW_MANIFEST}}
+        literal = prefix + "_COMPANION_DIGESTS = " + json.dumps(companions, indent=4, sort_keys=True) + "\n"
         changes[selector] = (changes[selector][0], changes[selector][1].replace(empty, literal))
         return changes, product, companions
 
@@ -341,6 +353,84 @@ class PlanTests(unittest.TestCase):
             for conclusion in ("failure", "skipped", "cancelled"):
                 altered = copy.deepcopy(jobs); altered[index]["conclusion"] = conclusion
                 self.assertFalse(planner.covers_jobs(altered, required, self.sha))
+
+    def test_window_support_resume_requires_closed_sources_and_both_ui_operations(self):
+        changes, product, companions = self.delivery_membership_changes(resuming=True)
+        with patch.object(scope, "WINDOW_SUPPORT_DIGESTS", {}):
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        with patch.object(scope, "WINDOW_SUPPORT_DIGESTS", product), \
+                patch.object(scope, "WINDOW_SUPPORT_COMPANION_DIGESTS", companions):
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_WINDOW_SUPPORT_SCOPE)
+            for path in changes:
+                partial = dict(changes); del partial[path]
+                self.assertEqual(scope.select_scope(partial), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    pair = list(changes[path]); pair[side] += " unreviewed change"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(pair)})), scope.FULL_SCOPE)
+            for extra in (scope.CI_WORKFLOW, scope.CI_DIAGNOSTIC_MATRIX,
+                          "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/verify-app-icon.py",
+                          "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                          "NekoWidget/Shared/PersonalWidgetMembershipStore.swift",
+                          "NekoWidget/SharingService/src/unknown.ts",
+                          "NekoWidget/SharingService/migrations/0029_unknown.sql",
+                          ".github/workflows/sharing-service.yml"):
+                self.assertEqual(scope.select_scope(dict(changes, **{extra: ("old", "new")})), scope.FULL_SCOPE)
+            self.assertFalse(scope.reviewed_delivery_membership_changes(changes))
+            with patch.object(scope, "REVIEWED_WINDOW_SUPPORT_TESTS", ()):
+                self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            selector = "NekoWidget/ci/ios_ci_scope.py"
+            before, after = changes[selector]
+            self.assertEqual(scope.select_scope(dict(changes, **{selector: (before, after + after)})), scope.FULL_SCOPE)
+        tests = scope.native_tests(scope.REVIEWED_WINDOW_SUPPORT_SCOPE)
+        self.assertEqual(len(tests), 2)
+        self.assertEqual(len(set(tests)), 2)
+        self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
+        self.assertFalse(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1].replace(
+            tests[0].split("/")[-1], "absent"), tests))
+
+    def test_window_support_resume_raw_modes_and_four_safety_jobs(self):
+        changes, product, companions = self.delivery_membership_changes(resuming=True)
+        base, paths = "b" * 40, sorted(changes)
+        def selected(altered_path=None, modes=":100644 100644", status="M", extra=False):
+            records = []
+            for path in paths:
+                added = path in scope.WINDOW_SUPPORT_NEW_PATHS
+                raw_modes, raw_status = (":000000 100644", "A") if added else (":100644 100644", "M")
+                if path == altered_path: raw_modes, raw_status = modes, status
+                records.extend([f"{raw_modes} {'c' * 40} {'d' * 40} {raw_status}", path])
+            if extra: records.extend([f":100644 100644 {'c' * 40} {'d' * 40} M", "unreported.swift"])
+            def git(*args):
+                if args[0] == "diff": return "\0".join(records) + "\0"
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    if revision == base and path in scope.WINDOW_SUPPORT_NEW_PATHS:
+                        raise AssertionError("Named additions have no base blob")
+                    return changes[path][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        with patch.object(scope, "WINDOW_SUPPORT_DIGESTS", product), \
+                patch.object(scope, "WINDOW_SUPPORT_COMPANION_DIGESTS", companions):
+            self.assertEqual(selected(), scope.REVIEWED_WINDOW_SUPPORT_SCOPE)
+            self.assertEqual(selected(extra=True), scope.FULL_SCOPE)
+            for path in paths:
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":100644 100644", "R100"),
+                                      (":000000 100755", "A"), (":000000 120000", "A")):
+                    self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
+                wrong = (":100644 100644", "M") if path in scope.WINDOW_SUPPORT_NEW_PATHS else (":000000 100644", "A")
+                self.assertEqual(selected(path, *wrong), scope.FULL_SCOPE)
+        required = planner.required_jobs(paths, scope.REVIEWED_WINDOW_SUPPORT_SCOPE)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.REVIEWED_WINDOW_SUPPORT_SCOPE))
+        self.assertEqual(len(required), 4)
+        self.assertEqual(scope.lanes(scope.REVIEWED_WINDOW_SUPPORT_SCOPE), ("runtime", "app-ui"))
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            for state in ("skipped", "failure", "cancelled"):
+                incomplete = copy.deepcopy(jobs); incomplete[index]["conclusion"] = state
+                self.assertFalse(planner.covers_jobs(incomplete, required, self.sha))
 
     def test_delivery_gallery_exclusion_requires_unchanged_render_inputs_and_widget_project(self):
         for path in ("NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",

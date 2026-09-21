@@ -3317,6 +3317,71 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-support-resume-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["window-support-pending"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["window-support-preview-notice"].exists)
+        XCTAssertFalse(app.buttons["window-support-complete"].exists)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        attach(app, name: "window-support-request-pending")
+        app.buttons["window-support-preview-approve"].tap()
+        XCTAssertTrue(app.staticTexts["window-support-approved"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
+        attach(app, name: "window-support-request-approved")
+        let complete = app.buttons["window-support-complete"]
+        XCTAssertTrue(complete.isEnabled && complete.isHittable)
+        complete.tap()
+        XCTAssertTrue(app.staticTexts["window-support-active"].waitForExistence(timeout: 5))
+        attach(app, name: "window-support-resumed")
+        app.buttons["window-support-done"].tap()
+        XCTAssertTrue(app.staticTexts["window-support-preview-result"].waitForExistence(timeout: 5))
+
+        app.buttons["window-support-preview-scenarios"].tap()
+        let unknown = app.buttons["window-support-preview-unverified"]
+        XCTAssertTrue(unknown.waitForExistence(timeout: 5))
+        unknown.tap()
+        let unknownMessage = app.staticTexts["window-support-message"]
+        XCTAssertTrue(unknownMessage.waitForExistence(timeout: 5))
+        XCTAssertTrue(unknownMessage.label.contains("再購入せず"))
+        XCTAssertTrue(app.staticTexts["window-support-unverified"].exists)
+        XCTAssertFalse(app.buttons["window-support-request"].exists)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        app.buttons["window-support-refresh"].tap()
+        XCTAssertTrue(app.staticTexts["window-support-unverified"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
+        attach(app, name: "window-support-unknown-is-not-purchase")
+        app.terminate()
+    }
+
+    @MainActor
+    func testWindowSupportOwnerApprovalWaitsForOtherMembersConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-support-resume-ui-fixture", "--window-support-owner",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["window-support-approval-needed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["window-support-preview-notice"].exists)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        app.buttons["window-support-approve"].tap()
+        let approve = app.buttons["window-support-confirm-approval"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["あなたへの請求はありません。相手が最後に確認すると、送信を再開できます。"].exists)
+        attach(app, name: "window-support-owner-approval-confirmation")
+        approve.tap()
+        XCTAssertTrue(app.staticTexts["window-support-approved-other"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
+        XCTAssertFalse(app.buttons["window-support-complete"].exists)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        attach(app, name: "window-support-owner-awaits-requester")
+        app.buttons["window-support-later"].tap()
+        XCTAssertTrue(app.staticTexts["window-support-preview-result"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
     func testPhotoDeliveryProgressAllowsOtherActionsAndShowsTruthfulStates() {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-delivery-progress-ui-fixture", "--delivery-progress-display-only",

@@ -55,10 +55,11 @@ REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
 REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
+REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -392,6 +393,91 @@ DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = {
         "5e0088abb86835d01b0b00a383aa1a2481d2577ddd65031854dab97e5797a908"
     ]
 }
+# The support-resume batch is closed until the independently reviewed sources
+# and companion bindings are frozen. No workflow or rendering allowance.
+WINDOW_SUPPORT_NEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/WindowSupportResumeClient.swift",
+    "NekoWidget/NekoWidget/Services/WindowSupportResumeModel.swift",
+    "NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift",
+    "NekoWidget/SharingService/src/window-support-requests.ts",
+    "NekoWidget/SharingService/migrations/0028_window_support_requests.sql",
+})
+WINDOW_SUPPORT_PATHS = WINDOW_SUPPORT_NEW_PATHS | {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift",
+    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift",
+    "NekoWidget/NekoWidget/Services/BillingClientCore.swift",
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift",
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift",
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
+    "NekoWidget/NekoWidget/Views/SettingsView.swift",
+    MEMORY_TEST_PATH,
+    "NekoWidget/SharingService/src/index.ts",
+    "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts",
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py",
+    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py",
+}
+WINDOW_SUPPORT_COMPANION_PATHS = DELIVERY_MEMBERSHIP_COMPANION_PATHS
+WINDOW_SUPPORT_DATA_REVIEW = "explicit-owner-approved-support-resume"
+WINDOW_SUPPORT_DIGESTS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e',
+                                                     'ce89dee737f1a0c04bd95baccce3d22cdbfef0a69f30113ddaa598d97db2c2e8'),
+ 'NekoWidget/NekoWidget/App/NekoWidgetApp.swift': ('3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3',
+                                                   '0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831'),
+ 'NekoWidget/NekoWidget/Services/BillingAPIClient.swift': ('ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3',
+                                                           'bfd42ff7cc4b3f5007c9843e7e9f6a92ffb13a64acb567067955944ccfcb8b42'),
+ 'NekoWidget/NekoWidget/Services/BillingClientCore.swift': ('6ed845f5e94e933cebe6133933e07b92611dc0c4d97132c65cfbc3a3ec76449c',
+                                                            '0a47abddad31879d922396dc8753e3e295dc60476ce1c1d36096cd3a3d78684d'),
+ 'NekoWidget/NekoWidget/Services/MembershipAccessContext.swift': ('c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5',
+                                                                  '0690f24faaa43234946953d2775cbc576cdd848959f0b68948debe38a99bb2f3'),
+ 'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e',
+                                                                 'f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71'),
+ 'NekoWidget/NekoWidget/Services/WindowSupportResumeClient.swift': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                                    'f05c2ec8909d401c26d480fbf548204e2327c6fe015a6b6b71804b01022d057c'),
+ 'NekoWidget/NekoWidget/Services/WindowSupportResumeModel.swift': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                                   'db0859cba9bed95923273e193439f104e8506b37229d918a8e59577d6271b6b5'),
+ 'NekoWidget/NekoWidget/Views/FamilyWindowView.swift': ('2e0e8036c2cbcee892ddd7760123b00bf8fa5da0ab73a70965ccaa4eb806fbeb',
+                                                        'f2136c746788836b825aecc3c1bcea36c7def121be9d280c1d5246722a713711'),
+ 'NekoWidget/NekoWidget/Views/SettingsView.swift': ('99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910',
+                                                    'acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43'),
+ 'NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                               'b5ceda2c460903867debe0fb1a2380240bea77b3b28127b5711e5866ce0a2938'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f',
+                                                               '9928e9e277459e5220d62664b4188ae593a08c1a923a03ee5d0169a4e372eb37'),
+ 'NekoWidget/SharingService/migrations/0028_window_support_requests.sql': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                                           'f51be8a923046e635d03180da23c2da22fd4d38fa96db420e8317d1550deb689'),
+ 'NekoWidget/SharingService/src/index.ts': ('64502f8608834664fdc4be74767c60bb409ffab524408bc0863deee63b972da5',
+                                            'a8556dc0f328f344e9fefba3b1c4031f903fb07dc4087b2b86339eef4901b1c3'),
+ 'NekoWidget/SharingService/src/window-support-requests.ts': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                              'f3774f5e1a9ebbac3a25bc9d687f4f856d1746e4ef28aaec6e73a0cd6a932a2b'),
+ 'NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts': ('a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a',
+                                                                                   '03efe2b69908f93a85f610467fb06459eb8ea948e4bf192f0f9b1f69bf875f5c'),
+ 'NekoWidget/ci/test-validate-sharing-runtime-self-test.py': ('5d600aaf207008e42e143663143cdb30868977b54a4f59367e79edc0c1bf3d59',
+                                                              '49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6'),
+ 'NekoWidget/ci/validate-sharing-runtime-self-test.py': ('702850e95e7528c1321192eeeaacee6ea964e4033c19f5ceabc0931960393a61',
+                                                         '39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7')}
+WINDOW_SUPPORT_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "bcf220c84d48e1fffbc8fc4d4d87f7d5d48df80c770b7c79218d3ba6cba16f8d",
+        "6cf79a3f56b23d4c3644ec8218c8009cfb993b623f2ad906ab4ac2830fa29bc2"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "688ac5aa91cd4324fc226d30929d725fc8977f166ed1ff3f346fbfde5e33085c",
+        "c8a1d4ad2c8fc5d7dae06efc49c4215821ee56d0a53949b170935ca959976445"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "54c04816bb45109a12a83882ef8bf0483c159a5b1f1071950e88cd4e00a6abbd",
+        "0fd68dd1fb4aa6ff3d932bb818b7256e350489219679883fe949231c84e6c9d5"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "3dcc544887c7fc47c2718f9d6d021b9f53ed68112e9dda21417ca28bef819eeb",
+        "3d650c3d1cd363ac26abd5fc3824b6f0c2a5b6aa4babdfcc7742e8c5e7ea9df1"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "5e0088abb86835d01b0b00a383aa1a2481d2577ddd65031854dab97e5797a908",
+        "777e29363aa7e658be36b85f7b8b35b2cee1d89432a5c7a26c17a271467b74e6"
+    ]
+}
+
 # Gallery can be omitted only when render/selection inputs and Widget target
 # membership are unchanged. The reviewed shared core/log edits are still built
 # and exercised by the required runtime jobs; they are not rendering changes.
@@ -644,7 +730,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -929,30 +1015,40 @@ def delivery_gallery_inputs_unchanged(changes) -> bool:
     return True
 
 
-def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]]) -> bool:
-    """Only the frozen delivery batch can omit unchanged Gallery rendering."""
+def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]], *, resuming=False) -> bool:
+    """Two fixed support profiles share the exact same closed-source checks."""
+    if resuming:
+        paths, new_paths, digests = WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_DIGESTS
+        companions, bindings = WINDOW_SUPPORT_COMPANION_PATHS, WINDOW_SUPPORT_COMPANION_DIGESTS
+        binding_name = "WINDOW_SUPPORT_COMPANION_DIGESTS"
+        selected_scope, data_review = REVIEWED_WINDOW_SUPPORT_SCOPE, WINDOW_SUPPORT_DATA_REVIEW
+    else:
+        paths, new_paths, digests = DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_DIGESTS
+        companions, bindings = DELIVERY_MEMBERSHIP_COMPANION_PATHS, DELIVERY_MEMBERSHIP_COMPANION_DIGESTS
+        binding_name = "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS"
+        selected_scope, data_review = REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, DELIVERY_MEMBERSHIP_DATA_REVIEW
     if not delivery_gallery_inputs_unchanged(changes):
         return False
-    product_paths = DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST}
-    if (set(DELIVERY_MEMBERSHIP_DIGESTS) != DELIVERY_MEMBERSHIP_PATHS
-            or set(changes) != product_paths | DELIVERY_MEMBERSHIP_COMPANION_PATHS
-            or set(DELIVERY_MEMBERSHIP_COMPANION_DIGESTS) != DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST}):
+    product_paths = paths | {REVIEW_MANIFEST}
+    if (set(digests) != paths
+            or set(changes) != product_paths | companions
+            or set(bindings) != companions | {REVIEW_MANIFEST}):
         return False
-    for path, pair in DELIVERY_MEMBERSHIP_COMPANION_DIGESTS.items():
+    for path, pair in bindings.items():
         before, after = changes[path]
         if path == "NekoWidget/ci/ios_ci_scope.py":
-            binding = "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = " + json.dumps(
-                DELIVERY_MEMBERSHIP_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+            binding = binding_name + " = " + json.dumps(
+                bindings, indent=4, sort_keys=True) + "\n"
             after = after.replace("\r\n", "\n")
             if after.count(binding) != 1:
                 return False
-            after = after.replace(binding, "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = {}\n", 1)
+            after = after.replace(binding, binding_name + " = {}\n", 1)
         if not before or not after or list(map(source_digest, (before, after))) != pair:
             return False
-    for path in DELIVERY_MEMBERSHIP_PATHS:
+    for path in paths:
         before, after = changes[path]
-        if (not after or (not before) != (path in DELIVERY_MEMBERSHIP_NEW_PATHS)
-                or tuple(map(source_digest, (before, after))) != DELIVERY_MEMBERSHIP_DIGESTS[path]):
+        if (not after or (not before) != (path in new_paths)
+                or tuple(map(source_digest, (before, after))) != digests[path]):
             return False
 
     def unique_object(pairs):
@@ -967,14 +1063,14 @@ def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]]) ->
         review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
         if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
                 or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
-                or review["scope"] != REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
+                or review["scope"] != selected_scope
                 or review["visualReview"] != "native-ui-required"
-                or review["dataReview"] != DELIVERY_MEMBERSHIP_DATA_REVIEW
+                or review["dataReview"] != data_review
                 or not isinstance(review["purpose"], str) or not review["purpose"].strip()
-                or set(review["files"]) != DELIVERY_MEMBERSHIP_PATHS):
+                or set(review["files"]) != paths):
             return False
         return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
-                   for path, pair in DELIVERY_MEMBERSHIP_DIGESTS.items())
+                   for path, pair in digests.items())
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
@@ -1292,6 +1388,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_MEMBERSHIP_OFFER_SCOPE: MEMBERSHIP_OFFER_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_OFFER_COMPANION_PATHS,
         REVIEWED_MEMBERSHIP_ACCESS_SCOPE: MEMBERSHIP_ACCESS_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_ACCESS_COMPANION_PATHS,
         REVIEWED_DELIVERY_MEMBERSHIP_SCOPE: DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST} | DELIVERY_MEMBERSHIP_COMPANION_PATHS,
+        REVIEWED_WINDOW_SUPPORT_SCOPE: WINDOW_SUPPORT_PATHS | {REVIEW_MANIFEST} | WINDOW_SUPPORT_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -1361,6 +1458,10 @@ REVIEWED_DELIVERY_MEMBERSHIP_TESTS = (
     "NekoWidgetUITests/MomentDeliveryComposerUITests/testPhotoWindowRetryPreservesConfirmedPhotoAndCaption",
     "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
 )
+REVIEWED_WINDOW_SUPPORT_TESTS = tuple("NekoWidgetUITests/MomentDeliveryComposerUITests/" + name for name in (
+    "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",
+    "testWindowSupportOwnerApprovalWaitsForOtherMembersConfirmation",
+))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -1393,6 +1494,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_WINDOW_SUPPORT_SCOPE:
+        return REVIEWED_WINDOW_SUPPORT_TESTS
     if scope == REVIEWED_DELIVERY_MEMBERSHIP_SCOPE:
         return REVIEWED_DELIVERY_MEMBERSHIP_TESTS
     if scope == REVIEWED_MEMBERSHIP_ACCESS_SCOPE:
@@ -1564,6 +1667,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_delivery_membership_changes(changes, resuming=True):
+        return (REVIEWED_WINDOW_SUPPORT_SCOPE if len(REVIEWED_WINDOW_SUPPORT_TESTS) == 2
+                and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_WINDOW_SUPPORT_TESTS) else FULL_SCOPE)
     if reviewed_delivery_membership_changes(changes):
         return (REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
                 if 2 <= len(REVIEWED_DELIVERY_MEMBERSHIP_TESTS) <= 3

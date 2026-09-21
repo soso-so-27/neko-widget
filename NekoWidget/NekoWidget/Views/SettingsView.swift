@@ -89,6 +89,7 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
+    @State private var showsWindowSupportPreview = false
 
     init(
         settings: SettingsPresentation,
@@ -273,6 +274,12 @@ struct SettingsView: View {
                         Label("会員プランのプレビュー", systemImage: "sparkles")
                     }
                     .accessibilityIdentifier("settings-membership-preview")
+                    Button {
+                        showsWindowSupportPreview = true
+                    } label: {
+                        Label("まどの再開のプレビュー", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .accessibilityIdentifier("settings-window-support-preview")
                 }
             }
 
@@ -306,6 +313,9 @@ struct SettingsView: View {
             MembershipOfferSheet(model: .preview()) { _ in
                 showsMembershipPreview = false
             }
+        }
+        .sheet(isPresented: $showsWindowSupportPreview) {
+            WindowSupportResumePreviewView()
         }
         .onChange(of: settings) { oldSettings, newSettings in
             // Each settings section saves independently. Merge incoming values

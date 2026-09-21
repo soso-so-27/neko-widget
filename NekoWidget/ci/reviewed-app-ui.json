@@ -1,93 +1,81 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-delivery-membership-v1",
-  "purpose": "One frozen delivery-support server/client batch. Only the exact 403 window_support_required response pauses automatic reservation of prepared photos; their encrypted data remains available for explicit retry. Existing accepted deliveries continue, and 503 window_support_unavailable remains a transient verification failure. Authorization, lifecycle tokens, author identity and revocation boundaries are preserved. Both enforcement defaults remain off. Build/privacy/disabled-feature checks, real Photos permission and scanning, runtime on both OS versions, and three native delivery/family-record operations remain required. Gallery is omitted only because its render/selection inputs and Widget target membership are unchanged. The separate existing Sharing Service workflow must still pass all three jobs. Native rendering and server execution have not yet been verified for this candidate. This first scope is unmeasured and is not main-promotion or TestFlight evidence by itself.",
+  "scope": "reviewed-window-support-resume-v1",
+  "purpose": "One frozen window-support resume batch. Requests are short-lived; the creator and new payer approve separately on their own devices. The live client remains bound to the selected space and current installation/lifecycle authority. A purchase result only refreshes state and cannot switch the payer or resume delivery automatically. Unknown entitlement and required purchase restoration are distinct from confirmed missing membership. Beta access enforcement and sales remain disabled. The existing runtime on both iOS versions now requires the isolated model/wire boundary case; native app UI requires the requester flow with unknown-state separation and the creator approval flow. Build/privacy/disabled-feature checks and the real Photos permission/scan remain mandatory. Widget rendering, selection inputs and target membership are unchanged, so Gallery is excluded by the existing mechanical guard. All three existing Sharing Service workflow jobs remain separately required. Native rendering and real cross-device approval have not yet been verified for this candidate. The profile is unmeasured and this manifest is not CI, main-promotion or TestFlight evidence.",
   "visualReview": "native-ui-required",
-  "dataReview": "explicit-delivery-support-boundary",
+  "dataReview": "explicit-owner-approved-support-resume",
   "files": {
-    "NekoWidget/NekoWidget/Services/MomentSharingAPIClient.swift": {
-      "before": "7cd15950d009ce7329ff73aa98af1bc12658af971abfd9f5e0a63822a7333754",
-      "after": "3463d38b82f62f8b04181e86ef5b383b8c962e6784e2f6737cba66f59cbc35ed"
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
+      "before": "c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e",
+      "after": "ce89dee737f1a0c04bd95baccce3d22cdbfef0a69f30113ddaa598d97db2c2e8"
     },
-    "NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift": {
-      "before": "ad7451ae4d63554e185955dc959a14865bda701d71ea0794ccb6c297027099d4",
-      "after": "9d7972ca38cd29e0d9dff24cd1bf3f8d459b924c2f5c873567efe54afed9034c"
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
+      "before": "3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3",
+      "after": "0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831"
+    },
+    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift": {
+      "before": "ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3",
+      "after": "bfd42ff7cc4b3f5007c9843e7e9f6a92ffb13a64acb567067955944ccfcb8b42"
+    },
+    "NekoWidget/NekoWidget/Services/BillingClientCore.swift": {
+      "before": "6ed845f5e94e933cebe6133933e07b92611dc0c4d97132c65cfbc3a3ec76449c",
+      "after": "0a47abddad31879d922396dc8753e3e295dc60476ce1c1d36096cd3a3d78684d"
+    },
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift": {
+      "before": "c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5",
+      "after": "0690f24faaa43234946953d2775cbc576cdd848959f0b68948debe38a99bb2f3"
     },
     "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "0c52664ce4352a732d99bb3d863f4a7d2dd6aba3bdb139f3d1b0da2e5fe1d2f3",
-      "after": "ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e"
+      "before": "ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e",
+      "after": "f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71"
     },
-    "NekoWidget/NekoWidget/ViewModels/MomentSharingViewModel.swift": {
-      "before": "64697baee6cfc60eac9daec5889be82fed671e26890126fac520f195708e6e74",
-      "after": "1420e61f94a1e333bf8a564be31f65a10e567ef946fbb1c49c8deff3ea208fe2"
+    "NekoWidget/NekoWidget/Services/WindowSupportResumeClient.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "f05c2ec8909d401c26d480fbf548204e2327c6fe015a6b6b71804b01022d057c"
     },
-    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
-      "before": "77a50a0fef14942798734607ee7fc63de36cc3e37ff85323627a0063dfc3b3a9",
-      "after": "9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc"
+    "NekoWidget/NekoWidget/Services/WindowSupportResumeModel.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "db0859cba9bed95923273e193439f104e8506b37229d918a8e59577d6271b6b5"
     },
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": {
-      "before": "aff858d1450736eded381c346f53ccc845a60a561e9f835607e6969ae1f948f1",
-      "after": "2e0e8036c2cbcee892ddd7760123b00bf8fa5da0ab73a70965ccaa4eb806fbeb"
+      "before": "2e0e8036c2cbcee892ddd7760123b00bf8fa5da0ab73a70965ccaa4eb806fbeb",
+      "after": "f2136c746788836b825aecc3c1bcea36c7def121be9d280c1d5246722a713711"
     },
-    "NekoWidget/NekoWidget/Views/MomentPhotoDeliveryProgressView.swift": {
-      "before": "028c216095a002f9af80979a7e696a1e95acdcd8912ae47595afde6d3371aa70",
-      "after": "18b1f42b182b35918e5a31979d0129f22d2f3d01d44dee99bd38b5fbb4f1a61e"
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
+      "before": "99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910",
+      "after": "acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43"
     },
-    "NekoWidget/NekoWidget/Views/MomentSharingPresentation.swift": {
-      "before": "53533a0bc6970e1341484abfdefcdfb770287ffea42e67ceed879135d6017027",
-      "after": "e3c55c40181140d9a11a5f8576014d35eca756a02c76d73fb9cc028d4bed8724"
+    "NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "b5ceda2c460903867debe0fb1a2380240bea77b3b28127b5711e5866ce0a2938"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "2cbc9801d7d5de425a6d417575746fce4bb810626f5d8044025f980f17c2c1a2",
-      "after": "199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f"
+      "before": "199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f",
+      "after": "9928e9e277459e5220d62664b4188ae593a08c1a923a03ee5d0169a4e372eb37"
     },
-    "NekoWidget/Shared/Logging/DiagnosticLogPrivacy.swift": {
-      "before": "c9bda8a4e32c6d4be494e29c594c4e067a431f524788e59aa14ef79bb0aa6ae5",
-      "after": "7a77bd04823ffc79cf9f85a1e7d70fa6c021de297c126274c6d0565e38c0fe40"
-    },
-    "NekoWidget/Shared/Sharing/MomentSharingCore.swift": {
-      "before": "03854ad486ecdefdaecab1ba8855e787b05e8075c7e6f1074b690abdf154246e",
-      "after": "5e684fe7d0a01b5174f8904e6848456999a0d3b3a5f7fcaa418e62c71c9b83ed"
-    },
-    "NekoWidget/SharingService/src/env.ts": {
-      "before": "b781497be089443ec8d8bad70d8f4ee2917252e448c097dfa37ebb3bfe98b3d8",
-      "after": "b82282b98d422ef6dfbcdb38720c461d4cd3a5dc2ece15b35a1eb8692fa344c4"
-    },
-    "NekoWidget/SharingService/src/family-records.ts": {
-      "before": "5b59a01fb6d0617d6efc93b346045ee674fbf316ac56430f861b5539bdd3eeb0",
-      "after": "ed45d854d4228a534656ab0b5e544c006fe1d182f69b0775682d36f129cb84c1"
-    },
-    "NekoWidget/SharingService/src/moments.ts": {
-      "before": "17f52bbbba4b0502a475df02ae9f61b2386549fbb89468f855f2dbcf796793f0",
-      "after": "8cd9493d384ee57f88ff3006a0d45c8ccbbdb901e13e1d9cfee26279114e7472"
-    },
-    "NekoWidget/SharingService/src/sharing.ts": {
-      "before": "8071e7cad534f106471d818f753350822b9d6c19e23dcef40ee7ef80bf1d7a4c",
-      "after": "90b3f04aa4a0c2488383fbb9622eb4180c3928aa6e6ad6698f34cf39aa9836c1"
-    },
-    "NekoWidget/SharingService/src/window-delivery-membership.ts": {
+    "NekoWidget/SharingService/migrations/0028_window_support_requests.sql": {
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "2b4d2c12f2f82875021bc3f3472de41fee0c0aa20e913d2aebd3dd3806984568"
+      "after": "f51be8a923046e635d03180da23c2da22fd4d38fa96db420e8317d1550deb689"
+    },
+    "NekoWidget/SharingService/src/index.ts": {
+      "before": "64502f8608834664fdc4be74767c60bb409ffab524408bc0863deee63b972da5",
+      "after": "a8556dc0f328f344e9fefba3b1c4031f903fb07dc4087b2b86339eef4901b1c3"
+    },
+    "NekoWidget/SharingService/src/window-support-requests.ts": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "f3774f5e1a9ebbac3a25bc9d687f4f856d1746e4ef28aaec6e73a0cd6a932a2b"
     },
     "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts": {
-      "before": "2d64673b2a5e3bc32ead6d22f7126bb85a9614b10bba34e98a567f49b48e96cd",
-      "after": "a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a"
+      "before": "a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a",
+      "after": "03efe2b69908f93a85f610467fb06459eb8ea948e4bf192f0f9b1f69bf875f5c"
     },
-    "NekoWidget/SharingService/test/moments.integration.test.ts": {
-      "before": "3bde626dbcc73b12ee352af779b63f99c4608cff5c20099ceb60dbbde8622e97",
-      "after": "e317c931790f76617c8dd139e8110cc3f86890d3de6b774910c7d850857d5f86"
+    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
+      "before": "5d600aaf207008e42e143663143cdb30868977b54a4f59367e79edc0c1bf3d59",
+      "after": "49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6"
     },
-    "NekoWidget/SharingService/test/sharing.integration.test.ts": {
-      "before": "9c99056c34f1e34d328c411de725158d675e060e508dcb22a9d7e75ce18a610a",
-      "after": "bc5202c20137aa2986203d3f8d800845e3a6c9e9d118c61fe8f62e1d1aa7f2c6"
-    },
-    "NekoWidget/ci/verify-moment-sharing-core.swift": {
-      "before": "ab09896157e67b9a28f7094441e5f15ee5d22567cab32930f788bd0fdaef9dfb",
-      "after": "f4bae83747fa8b468c9fba0bf010dc868aea985fb58b6f21c09b8a451a255a05"
-    },
-    "NekoWidget/ci/verify-moment-sharing-presentation.swift": {
-      "before": "85097a99b6a1ff557537bbbde0526dc6db1f6b1157bd011836ed6ae126e9069e",
-      "after": "9224b7d7baaa398c52d324662b2d1ec33bb0f96b99d69fd73652a68608a8d765"
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py": {
+      "before": "702850e95e7528c1321192eeeaacee6ea964e4033c19f5ceabc0931960393a61",
+      "after": "39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7"
     }
   }
 }

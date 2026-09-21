@@ -19,6 +19,11 @@ private struct PickedMomentIngressPhoto: Transferable {
     }
 }
 
+private struct WindowSupportTarget: Identifiable {
+    let id: String
+    let name: String
+}
+
 private struct PreparedMomentDelivery: Identifiable {
     let id = UUID()
     let photo: MomentShareIngressPhoto
@@ -106,6 +111,7 @@ struct FamilyWindowView: View {
     @StateObject private var model = MomentSharingViewModel()
     @StateObject private var nameModel = PairingViewModel()
     @State private var showsNameEditor = false
+    @State private var windowSupportTarget: WindowSupportTarget?
     @State private var nameEditRequest: UUID?
     @State private var isPreparingNameEditor = false
     @State private var windowNameDraft = ""
@@ -782,6 +788,14 @@ struct FamilyWindowView: View {
         }
         .sheet(isPresented: $showsOutgoingDetails, onDismiss: presentPendingOutgoingConfirmation) {
             outgoingDetails
+        }
+        .sheet(item: $windowSupportTarget) { target in
+            WindowSupportResumeView(windowName: target.name,
+                model: WindowSupportResumeModel(client: LiveWindowSupportResumeClient(expectedSpaceID: target.id)),
+                onComplete: {
+                    windowSupportTarget = nil
+                    Task { await model.synchronize(isManual: true) }
+                }, onClose: { windowSupportTarget = nil })
         }
         .fullScreenCover(
             item: $selectedSharedPhoto,
@@ -1479,6 +1493,16 @@ struct FamilyWindowView: View {
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
                     sharingManagementLink
+                    if WindowSupportResumeAvailability.isEnabled {
+                        Button(action: openWindowSupport) {
+                            Label("送信を再開", systemImage: "arrow.triangle.2.circlepath")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                        }
+                        .disabled(model.isWorking || model.isShowingLastKnownState)
+                        .accessibilityIdentifier("family-window-support-resume")
+                    }
                 }
 
                 privacyDisclosure
@@ -2025,8 +2049,9 @@ struct FamilyWindowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if status.kind == .supportRequired {
-                    Button("送信の再開を確認") {
-                        Task { await model.synchronize(isManual: true) }
+                    Button(WindowSupportResumeAvailability.isEnabled ? "送信を再開" : "送信の再開を確認") {
+                        if WindowSupportResumeAvailability.isEnabled { openWindowSupport() }
+                        else { Task { await model.synchronize(isManual: true) } }
                     }
                     .disabled(model.isSynchronizing || model.isShowingLastKnownState)
                     .accessibilityIdentifier("window-support-recheck")
@@ -2107,6 +2132,13 @@ struct FamilyWindowView: View {
         .padding(14)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityIdentifier("family-window-outgoing-outcome-\(outcome.reason.rawValue)")
+    }
+
+    private func openWindowSupport() {
+        guard WindowSupportResumeAvailability.isEnabled,
+              !model.isShowingLastKnownState,
+              let spaceID = model.pairingState?.spaceID else { return }
+        windowSupportTarget = WindowSupportTarget(id: spaceID, name: model.windowDisplayName)
     }
 
     private func outgoingStatusIcon(_ kind: MomentOutgoingStatusKind) -> String {

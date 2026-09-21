@@ -529,6 +529,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("private-window-legacy-conflict-quarantine-policy") {
             try Self.testPrivateWindowLegacyConflictQuarantinePolicy()
         })
+        results.append(await runAsync("window-support-explicit-resume-model") {
+            try await Self.testWindowSupportExplicitResumeModel()
+        })
         results.append(await runAsync("moment-process-serialized-refresh") {
             try await Self.testMomentProcessSerializedRefresh()
         })
@@ -698,6 +701,51 @@ actor SharingRuntimeSelfTestRunner {
             Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
+    }
+
+    @MainActor
+    private static func testWindowSupportExplicitResumeModel() async throws {
+        // In-memory client only: no account, pairing, purchase or photo writes.
+        let pending = WindowSupportResumeModel.preview(scenario: .pending)
+        await pending.refresh()
+        guard pending.isPreview, pending.ownRequest?.state == .pending,
+              !pending.grantsAccess else { throw PairingError.stateUnavailable }
+        guard let request = pending.ownRequest,
+              try JSONDecoder().decode(WindowSupportRequest.self, from: JSONEncoder().encode(request))
+                .validated() == request else { throw PairingError.stateUnavailable }
+        let requestID = request.id
+        let actionPath = BillingProtocolV1.windowSupportRequestsPath + "/" + requestID
+        guard BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: actionPath + "/commit"),
+              !BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: actionPath + "/approve"),
+              !BillingProtocolV1.isSupportedSignedRequest(method: "POST",
+                  pathname: BillingProtocolV1.windowSupportRequestsPath + "/not-a-request-id/commit")
+        else { throw PairingError.stateUnavailable }
+        await pending.complete()
+        guard pending.ownRequest?.state == .pending,
+              !pending.grantsAccess else { throw PairingError.stateUnavailable }
+        await pending.simulateApprovalForPreview()
+        guard pending.ownRequest?.id == requestID,
+              pending.ownRequest?.state == .approved else { throw PairingError.stateUnavailable }
+        await pending.complete()
+        guard pending.grantsAccess else { throw PairingError.stateUnavailable }
+
+        let unknown = WindowSupportResumeModel.preview(scenario: .unverified)
+        await unknown.refresh()
+        guard !unknown.canAct, !unknown.grantsAccess, !unknown.needsMembership,
+              !unknown.needsRestore else { throw PairingError.stateUnavailable }
+        await unknown.requestSupport()
+        guard unknown.snapshot == nil else { throw PairingError.stateUnavailable }
+
+        let purchase = WindowSupportResumeModel.preview(scenario: .needsMembership)
+        await purchase.refresh()
+        await purchase.requestSupport()
+        guard purchase.needsMembership, !purchase.grantsAccess else { throw PairingError.stateUnavailable }
+        await purchase.membershipOfferCompleted()
+        guard !purchase.needsMembership, !purchase.grantsAccess,
+              purchase.ownRequest == nil else { throw PairingError.stateUnavailable }
+        await purchase.requestSupport()
+        guard purchase.ownRequest?.state == .pending,
+              !purchase.grantsAccess else { throw PairingError.stateUnavailable }
     }
 
     @MainActor

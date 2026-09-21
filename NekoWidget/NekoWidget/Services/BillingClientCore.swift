@@ -10,6 +10,7 @@ enum BillingProtocolV1 {
     static let transactionPath = "/v1/billing/transactions"
     static let entitlementPath = "/v1/billing/entitlement"
     static let windowSponsorshipGrantPath = "/v1/window-sponsorship"
+    static let windowSupportRequestsPath = "/v1/window-support-requests"
     static let windowSponsorshipChangePathPrefix =
         "/v1/billing/window-sponsorships/"
     static let maximumSignedTransactionBytes = 48 * 1_024
@@ -18,7 +19,8 @@ enum BillingProtocolV1 {
         method: String,
         pathname: String
     ) -> Bool {
-        (method == "POST" && pathname == transactionPath)
+        (method == "POST" && (pathname == transactionPath || pathname == windowSupportRequestsPath
+            || isWindowSupportAction(pathname, action: "commit")))
             || (method == "GET" && pathname == entitlementPath)
             || (["PUT", "DELETE"].contains(method)
                 && pathname.hasPrefix(windowSponsorshipChangePathPrefix)
@@ -28,6 +30,38 @@ enum BillingProtocolV1 {
                     )),
                     bytes: 16
                 ))
+    }
+
+    static func isWindowSupportAction(_ pathname: String, action: String) -> Bool {
+        let parts = pathname.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 5 && parts[0].isEmpty && parts[1] == "v1"
+            && parts[2] == "window-support-requests" && parts[4] == action
+            && BillingValidation.canonicalUUIDv4(String(parts[3])) == String(parts[3])
+    }
+}
+
+/// Participant-safe projection. No billing identity or owner signing material.
+struct WindowSupportRequest: Codable, Equatable, Sendable, Identifiable {
+    enum State: String, Codable, Sendable { case pending, approved, completed, expired }
+    let id: String
+    let requesterMemberId: String
+    let state: State
+    let expectedGeneration: Int
+    let membershipRevision: Int
+    let createdAt: Int
+    let expiresAt: Int
+    let resultingGeneration: Int?
+
+    func validated(now: Date = .now) throws -> Self {
+        guard BillingValidation.canonicalUUIDv4(id) == id,
+              BillingValidation.canonicalOpaqueID(requesterMemberId, bytes: 16),
+              (0...1_000_000_000).contains(expectedGeneration),
+              (1...1_000_000_000).contains(membershipRevision),
+              createdAt > 0, createdAt <= Int(now.timeIntervalSince1970) + 300,
+              expiresAt > createdAt, expiresAt - createdAt <= 300,
+              state == .completed ? resultingGeneration == expectedGeneration + 1 : resultingGeneration == nil
+        else { throw BillingClientError.invalidServerResponse }
+        return self
     }
 }
 

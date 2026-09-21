@@ -36,6 +36,7 @@ REQUIRED_CASES = {
     "moment-process-serialized-refresh",
     "moment-report-outbox-bounds-and-recovery",
     "moment-terminal-authorization-classification",
+    "window-support-explicit-resume-model",
     "moment-block-withdrawal-lifecycle",
     "normalizer-orientation-scale-parity",
     "own-source-local-promotion",

@@ -135,7 +135,7 @@ struct MembershipAccessNotice: View {
     }
 }
 
-private struct MembershipRestoreSheet: View {
+struct MembershipRestoreSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = MembershipOfferModel.live()
 
