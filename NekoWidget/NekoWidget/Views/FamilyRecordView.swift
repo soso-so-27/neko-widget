@@ -780,8 +780,15 @@ private struct FamilyRecordEditor: View {
             }
             saved(); dismiss()
         } catch {
-            message = (error as? FamilyRecordError)?.errorDescription
-                ?? "追加を確認できませんでした。入力を残しています。再確認しても同じ記録を重複追加しません。"
+            switch MomentOutboxRetryPolicy.supportErrorCode(for: error) {
+            case MomentOutboxRetryPolicy.supportRequiredErrorCode:
+                message = "このまどへの追加はお休み中です。入力は残しています。届いている写真は引き続き見られます。"
+            case MomentOutboxRetryPolicy.supportUnavailableErrorCode:
+                message = "送信条件を確認できませんでした。入力は残しています。再購入せず、あとで確認してください。"
+            default:
+                message = (error as? FamilyRecordError)?.errorDescription
+                    ?? "追加を確認できませんでした。入力を残しています。再確認しても同じ記録を重複追加しません。"
+            }
         }
     }
 }

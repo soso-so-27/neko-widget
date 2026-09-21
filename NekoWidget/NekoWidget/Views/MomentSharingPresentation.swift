@@ -4,6 +4,7 @@ import Foundation
 struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
     enum Phase: Equatable, Sendable {
         case preparing, sending, confirming, waiting, quotaWaiting, attention, resultUnknown, accepted
+        case supportRequired, supportUnverified
     }
     let id: String
     let thumbnailJPEG: Data?
@@ -13,6 +14,8 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
     func title(at now: Date) -> String {
         switch phase {
         case .accepted: return "送信しました"
+        case .supportRequired: return "このまどへの送信はお休み中です"
+        case .supportUnverified: return "送信条件を確認できません"
         case .quotaWaiting: return "送信できる時刻を待っています"
         case .attention: return "確認が必要です"
         case .resultUnknown: return "送信結果を確認できません"
@@ -26,6 +29,8 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
     func detail(at now: Date) -> String? {
         switch phase {
         case .accepted: return nil
+        case .supportRequired: return "写真は保持しています。このまどの支援が再開したら、送信を再確認できます。"
+        case .supportUnverified: return "写真は保持して、あとで確認します。再購入は不要です。"
         case .attention: return "送信状況から、必要な操作を確認できます。"
         case .resultUnknown: return "届いている可能性があるため、送り直す前に送信状況を確認してください。"
         case .quotaWaiting: return "写真は保持しています。送り直しは不要です。"
@@ -360,6 +365,8 @@ enum MomentOutgoingStatusKind: Int, CaseIterable, Identifiable, Sendable, Hashab
     case confirming
     case resultUnknown
     case failed
+    case supportRequired
+    case supportUnverified
 
     var id: Int { rawValue }
 }
@@ -384,6 +391,8 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
 
     var title: String {
         switch kind {
+        case .supportRequired: "このまどへの送信はお休み中です（\(count)枚）"
+        case .supportUnverified: "送信条件を確認できません（\(count)枚）"
         case .safetyCheckWaiting: "安全確認待ち \(count)枚"
         case .preparing: "写真を準備中 \(count)枚"
         case .preparationRetryWaiting: "準備の再試行待ち \(count)枚"
@@ -401,6 +410,10 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
 
     var detail: String {
         switch kind {
+        case .supportRequired:
+            return "このまどに有効な会員支援がありません。送る写真はこのiPhoneに保持しています。届いている写真は引き続き見られます。"
+        case .supportUnverified:
+            return "写真は保持して、あとで送信条件を確認します。未契約と確認されたわけではないため、再購入は不要です。"
         case .safetyCheckWaiting:
             return "共有シートから端末内へ一時保存しました。まだ暗号化・送信していません。"
         case .preparing:
@@ -555,7 +568,8 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     /// implies that a relay upload and a local handoff have the same boundary.
     var cancellableEncryptedDeliveryCount: Int {
         statuses
-            .filter { $0.kind == .waiting || $0.kind == .dailyQuotaWaiting || $0.kind == .sending }
+            .filter { $0.kind == .waiting || $0.kind == .dailyQuotaWaiting || $0.kind == .sending
+                || $0.kind == .supportRequired || $0.kind == .supportUnverified }
             .reduce(0) { $0 + $1.cancellableCount }
     }
 
@@ -607,6 +621,10 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
             $0.kind != .waiting && !Self.needsAttention($0)
         }.reduce(0) { $0 + $1.count - Self.automaticRetryCount($1) }
         var parts: [String] = []
+        let paused = statuses.filter { $0.kind == .supportRequired }.reduce(0) { $0 + $1.count }
+        let unverified = statuses.filter { $0.kind == .supportUnverified }.reduce(0) { $0 + $1.count }
+        if paused > 0 { parts.append("送信お休み中 \(paused)枚") }
+        if unverified > 0 { parts.append("送信条件の確認待ち \(unverified)枚") }
         if unknown > 0 { parts.append("結果不明 \(unknown)枚") }
         if failed > 0 { parts.append("送信できなかった \(failed)枚") }
         if outcomeCount > 0 { parts.append("送信しなかった \(outcomeCount)枚") }
@@ -623,6 +641,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
 
     private static func needsAttention(_ status: MomentOutgoingStatusPresentation) -> Bool {
         status.kind == .failed || status.kind == .resultUnknown
+            || status.kind == .supportRequired || status.kind == .supportUnverified
             || status.requiresSensitiveContentWarning
     }
 
@@ -681,7 +700,11 @@ enum MomentSharingPresentationPolicy {
 
         for delivery in deliveries {
             let kind: MomentOutgoingStatusKind
-            if delivery.phase == .prepared,
+            if delivery.phase == .prepared && delivery.lastErrorCode == "window-support-required" {
+                kind = .supportRequired
+            } else if delivery.phase == .prepared && delivery.lastErrorCode == "window-support-unavailable" {
+                kind = .supportUnverified
+            } else if delivery.phase == .prepared,
                delivery.lastErrorCode == "daily-quota-exceeded" {
                 kind = .dailyQuotaWaiting
             } else {
@@ -855,7 +878,11 @@ enum MomentSharingPresentationPolicy {
             case .failed: phase = .attention
             case .deliveryResultUnknown: phase = .resultUnknown
             default:
-                if item.phase == .prepared && item.lastErrorCode == "daily-quota-exceeded" {
+                if item.phase == .prepared && item.lastErrorCode == "window-support-required" {
+                    phase = .supportRequired
+                } else if item.phase == .prepared && item.lastErrorCode == "window-support-unavailable" {
+                    phase = .supportUnverified
+                } else if item.phase == .prepared && item.lastErrorCode == "daily-quota-exceeded" {
                     phase = .quotaWaiting
                 } else if (item.retryAt.map { $0 > now } ?? false) || isRetryDeferred(item, at: now) {
                     phase = .waiting

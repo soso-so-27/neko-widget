@@ -5458,6 +5458,17 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     private static func testMomentOutboxBoundsAndExpiry() throws {
+        // A paid-admission pause must not erase the encrypted photo. Other
+        // authorization failures retain the existing terminal classification.
+        for (status, code, retained) in [(403, "window_support_required", true),
+                                        (503, "window_support_unavailable", true),
+                                        (403, "forbidden", false),
+                                        (410, "sharing_revoked", false)] {
+            let error = MomentSharingError.requestRejected(status: status, code: code, message: "fixture")
+            guard MomentSendFailurePolicy.canRemainQueued(error) == retained,
+                  MomentSendFailurePolicy.isPermanentOutboxFailure(error) == !retained
+            else { throw MomentSharingError.stateUnavailable }
+        }
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
         writeThumbnailProgress(

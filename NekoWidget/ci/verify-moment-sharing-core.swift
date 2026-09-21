@@ -654,6 +654,22 @@ require(diagnosticTrace != MomentDeliveryDiagnostic.correlation(for: context.cli
     && diagnosticTrace != MomentDeliveryDiagnostic.correlation(for: context.clientRequestID, processNonce: diagnosticNonce),
     "delivery correlation persisted across launches or confused distinct photos")
 
+let supportDenied = MomentSharingError.requestRejected(status: 403, code: "window_support_required", message: "private payer data")
+let supportUnknown = MomentSharingError.requestRejected(status: 503, code: "window_support_unavailable", message: "private payer data")
+require(MomentOutboxRetryPolicy.supportErrorCode(for: supportDenied) == "window-support-required", "support refusal lost its identity")
+require(MomentOutboxRetryPolicy.supportErrorCode(for: supportUnknown) == "window-support-unavailable", "unknown support was treated as inactive")
+require(MomentOutboxRetryPolicy.supportErrorCode(for: MomentSharingError.requestRejected(status: 410, code: "window_support_required", message: "")) == nil,
+        "unrelated terminal status became a billing refusal")
+for manual in [false, true] {
+    require(MomentOutboxRetryPolicy.shouldAttempt(lastErrorCode: "window-support-required", retryAt: nil,
+        awaitingReservation: true, explicitlyCheckingSupport: manual, now: Date()) == manual,
+        "known inactive support entered automatic retry or blocked an explicit check")
+}
+require(MomentOutboxRetryPolicy.shouldAttempt(lastErrorCode: "window-support-required", retryAt: nil,
+    awaitingReservation: false, explicitlyCheckingSupport: false, now: Date()), "an admitted upload was blocked by membership")
+require(!MomentOutboxRetryPolicy.shouldAttempt(lastErrorCode: "window-support-unavailable", retryAt: Date().addingTimeInterval(60),
+    awaitingReservation: true, explicitlyCheckingSupport: true, now: Date()), "uncertain support bypassed its backoff")
+require(!(supportUnknown.localizedDescription.contains("private payer")), "payer information reached client copy")
 print("Moment sharing core verifier passed")
 }
 }

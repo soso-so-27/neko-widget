@@ -1322,6 +1322,35 @@ describe("append-only encrypted moments", () => {
       .toBe("reservation_retry_limit_exceeded");
   });
 
+  it("continues an accepted exact draft after paid support ends without granting a new photo or bypassing blocks", async () => {
+    const space = await seedActiveSpace(), ciphertext = crypto.getRandomValues(new Uint8Array(256));
+    const first = await reserve(space.owner, ciphertext);
+    const accepted = await first.response.json<ReservationResponse>();
+    const enforced = { ...testEnv, WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES" } as Env;
+    const send = async (path: string, method: "GET" | "POST" | "PUT", body?: unknown) =>
+      route(await signedRequest(path, method, space.owner, body), enforced);
+    await expect(send("/v2/moments/reservations", "POST", reserveBody(ciphertext, { ciphertextSHA256: await sha256Base64url(ciphertext) })))
+      .rejects.toMatchObject({ code: "window_support_unavailable" });
+    const replay = await send("/v2/moments/reservations", "POST", first.body);
+    expect((await replay.json<ReservationResponse>()).moment.id).toBe(accepted.moment.id);
+    await runMomentCleanup(testEnv, accepted.moment.uploadExpiresAt + 1);
+    await expect(send("/v2/moments/reservations", "POST", { ...first.body, ciphertextSHA256: randomValue(32) }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    const renewed = await (await send("/v2/moments/reservations", "POST", first.body)).json<ReservationResponse>();
+    expect(renewed.moment.id).not.toBe(accepted.moment.id);
+    expect(renewed.quota.used).toBe(1);
+    expect((await send(`/v2/moments/${renewed.moment.id}/ciphertext`, "PUT", ciphertext)).status).toBe(200);
+    const commitBody = { protocolVersion: 2, clientRequestId: crypto.randomUUID() };
+    expect((await send(`/v2/moments/${renewed.moment.id}/commit`, "POST", commitBody)).status).toBe(201);
+    expect((await send(`/v2/moments/${renewed.moment.id}/commit`, "POST", commitBody)).status).toBe(201);
+    expect((await send(`/v2/participants/${space.invitee.id}/block`, "POST",
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID() })).status).toBe(200);
+    // A historical response replay is only a receipt. A fresh operation must
+    // still fail under the existing block/key/state checks.
+    await expect(send(`/v2/moments/${renewed.moment.id}/commit`, "POST",
+      { ...commitBody, clientRequestId: crypto.randomUUID() })).rejects.toBeDefined();
+  });
+
   it("makes a directional block revoke access, rotate the key epoch, and prevent new delivery", async () => {
     const space = await seedActiveSpace();
     const published = await publish(space.owner);

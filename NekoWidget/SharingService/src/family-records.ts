@@ -2,6 +2,7 @@ import { activityStatement, authenticateSignedRequest, consumeNonceAndTouch,
   nonceStatements, requireLiveSpace, type AuthenticatedMember } from "./auth";
 import { base64urlDecode, sha256Base64url } from "./encoding";
 import type { Env } from "./env";
+import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "./window-delivery-membership";
 import { ApiError, jsonResponse } from "./errors";
 import { enforceRateLimit, parseJsonBody, readBody, requireEmptyBody, transientNetworkKey } from "./http";
 import { exactKeys, integerField, stringField, uuidField } from "./validation";
@@ -115,6 +116,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     if (entry?.kind !== "photo") throw new ApiError(404, "not_found", "Record not found.");
   }
   if (prior === null) {
+    await requireWindowDeliverySupport(env, m.spaceId);
     const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM family_records WHERE space_id=? AND kind=?")
       .bind(m.spaceId, kind).first<{ count: number }>();
     if (!count || count.count >= (kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS)) {
@@ -133,11 +135,13 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     created_at: prior?.created_at ?? m.now, updated_at: m.now };
   let committed = false;
   try {
+    const support = windowDeliverySupportGuard(env, m.spaceId);
     const mutation = prior === null
       ? env.DB.prepare(`INSERT INTO family_records SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
           WHERE ${authorized} AND (SELECT COUNT(*) FROM family_records WHERE space_id=? AND kind=?) < ?
+          AND ${support.sql}
           ON CONFLICT(space_id,id) DO NOTHING`).bind(...Object.values(row), ...authBindings(m), m.spaceId, kind,
-          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS)
+          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS, ...support.bindings)
       : env.DB.prepare(`UPDATE family_records SET revision=?,state=?,ciphertext=?,object_key=?,ciphertext_size=?,
           payload_hash=?,last_operation_id=?,updated_at=? WHERE space_id=? AND id=? AND revision=?
           AND author_member_id=? AND state='active' AND ${authorized}`)
@@ -153,6 +157,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     const saved = await current(env, m, id);
     await assertAuthorized(env, m);
     if (!committed && !(saved?.last_operation_id === operationID && saved.payload_hash === payloadHash)) {
+      if (prior === null) await requireWindowDeliverySupport(env, m.spaceId);
       throw new ApiError(409, "family_record_conflict_or_capacity", "Record changed or storage capacity was reached.");
     }
     if (!saved) throw new ApiError(503, "family_record_unavailable", "Record temporarily unavailable.");

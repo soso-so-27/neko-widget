@@ -2024,6 +2024,13 @@ struct FamilyWindowView: View {
                 Text(status.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if status.kind == .supportRequired {
+                    Button("送信の再開を確認") {
+                        Task { await model.synchronize(isManual: true) }
+                    }
+                    .disabled(model.isSynchronizing || model.isShowingLastKnownState)
+                    .accessibilityIdentifier("window-support-recheck")
+                }
                 if status.destinationCount > 1 {
                     Text("\(status.destinationCount)個のまどへの送信があります")
                         .font(.caption2)
@@ -2104,6 +2111,8 @@ struct FamilyWindowView: View {
 
     private func outgoingStatusIcon(_ kind: MomentOutgoingStatusKind) -> String {
         switch kind {
+        case .supportRequired: "pause.circle"
+        case .supportUnverified: "questionmark.circle"
         case .safetyCheckWaiting: "shield.lefthalf.filled"
         case .preparationRetryWaiting, .waiting: "clock.fill"
         case .dailyQuotaWaiting: "calendar.badge.clock"
@@ -2117,7 +2126,7 @@ struct FamilyWindowView: View {
         switch kind {
         case .failed, .resultUnknown, .dailyQuotaWaiting: .orange
         case .safetyCheckWaiting, .preparing, .preparationRetryWaiting,
-             .waiting, .sending, .confirming:
+             .waiting, .sending, .confirming, .supportRequired, .supportUnverified:
             .accentColor
         }
     }

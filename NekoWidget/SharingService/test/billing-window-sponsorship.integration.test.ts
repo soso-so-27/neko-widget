@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
 import { requestBillingReconciliation } from "../src/billing-reconciliation-queue";
 import { runBillingSubscriptionReconciliation } from "../src/billing-authority";
 import type { VerifiedBillingTransaction } from "../src/billing-verifier-client";
 import { route } from "../src/index";
+import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "../src/window-delivery-membership";
 import { signedRequestTranscript } from "../src/protocol";
 import {
   billingSignedRequestTranscript,
@@ -92,7 +93,7 @@ async function signedGrantRequest(member: SignedMember): Promise<Request> {
 
 async function signedMemberMutationRequest(input: {
   member: SignedMember;
-  method: "DELETE";
+  method: "DELETE" | "POST" | "PUT";
   pathname: string;
   body: Record<string, unknown>;
 }) {
@@ -228,13 +229,13 @@ async function sponsorBody(input: {
   };
 }
 
-async function grantPlus(accountId: string) {
-  const original = String(
+async function grantPlus(accountId: string, options: { original?: string; expiresAtMs?: number } = {}) {
+  const original = options.original ?? String(
       BigInt(Date.now()) * 1000n +
         BigInt(Math.floor(Math.random() * 900 + 100)),
     ),
     now = Date.now();
-  await testEnv.DB.prepare(
+  if (options.original === undefined) await testEnv.DB.prepare(
     "INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES(?,?,'Sandbox','20999999')",
   )
     .bind(original, accountId)
@@ -264,7 +265,7 @@ async function grantPlus(accountId: string) {
     transactionReason: "PURCHASE",
     purchaseDateMs: now - 1000,
     originalPurchaseDateMs: now - 1000,
-    expiresDateMs: now + 86_400_000,
+    expiresDateMs: options.expiresAtMs ?? now + 86_400_000,
     signedDateMs: now,
     revocationDateMs: null,
     revocationReason: null,
@@ -1054,6 +1055,7 @@ describe("Plus window sponsorship foundation", () => {
 
   it("fails closed on cross-account claim races and permits reassignment only after unsponsor", async () => {
     await openD1SponsorshipGates();
+    const deliveryEnv = { ...await enableSponsorshipGates(), WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES" };
     const first = await account();
     const second = await account();
     const window = await windowFixture();
@@ -1066,6 +1068,7 @@ describe("Plus window sponsorship foundation", () => {
       generation: 0,
       entitlement: firstEnt,
     });
+    await expect(requireWindowDeliverySupport(deliveryEnv, window.space)).resolves.toBeUndefined();
     await expect(
       operation({
         account: second,
@@ -1076,6 +1079,7 @@ describe("Plus window sponsorship foundation", () => {
         entitlement: secondEnt,
       }),
     ).resolves.toBeDefined();
+    await expect(requireWindowDeliverySupport(deliveryEnv, window.space)).resolves.toBeUndefined();
     await operation({
       account: second,
       window,
@@ -1083,6 +1087,7 @@ describe("Plus window sponsorship foundation", () => {
       generation: 2,
       expectedCurrent: second.id,
     });
+    await expect(requireWindowDeliverySupport(deliveryEnv, window.space)).rejects.toMatchObject({ code: "window_support_required" });
     await operation({
       account: first,
       window,
@@ -1090,6 +1095,7 @@ describe("Plus window sponsorship foundation", () => {
       generation: 3,
       entitlement: firstEnt,
     });
+    await expect(requireWindowDeliverySupport(deliveryEnv, window.space)).resolves.toBeUndefined();
     const current = await testEnv.DB.prepare(
       "SELECT billing_account_id,state,generation FROM billing_window_sponsorships WHERE window_lineage_id=?",
     )
@@ -1476,4 +1482,121 @@ describe("Plus window sponsorship foundation", () => {
       .first<{ state: string; generation: number }>();
     expect(current).toEqual({ state: "unsponsored", generation: 2 });
   });
+  it("gates only new deliveries for both participants and keeps existing words editable after support expires", async () => {
+    const environment = { ...await enableSponsorshipGates(), WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES",
+      FAMILY_RECORD_RUNTIME_ENABLED: "YES" } as Env;
+    const payer = await account(), space = await signedSpace();
+    const entitlement = await grantPlus(payer.id);
+    await operation({ account: payer, window: space.window, operation: "sponsor", generation: 0, entitlement });
+    const send = async (member: SignedMember, path: string, body: Record<string, unknown>, method: "POST" | "PUT" = "POST") =>
+      route(await signedMemberMutationRequest({ member, pathname: path, body, method }), environment);
+    const moment = () => ({ protocolVersion: 2, clientRequestId: crypto.randomUUID(), clientMomentId: crypto.randomUUID(),
+      kind: "live", keyEpoch: 1, ciphertextSize: 100, ciphertextSHA256: random(32), clientModerationVersion: 1,
+      senderPolicyAcceptance: { version: 1, acceptedAt: new Date().toISOString() } });
+    for (const member of [space.owner, space.invitee]) {
+      expect((await send(member, "/v2/moments/reservations", moment())).status).toBe(201);
+      expect((await send(member, "/v1/sharing/generations/reserve", {
+        protocolVersion: 1, clientRequestId: crypto.randomUUID(), items: [{ mediaId: random(16) }],
+      })).status).toBe(201);
+    }
+    const photo = crypto.randomUUID(), words = crypto.randomUUID();
+    const photoBody = { entryID: photo, kind: "photo", expectedRevision: 0, operationID: crypto.randomUUID(), ciphertext: random(100) };
+    const wordsBody = { entryID: photo, kind: "words", expectedRevision: 0, operationID: crypto.randomUUID(), ciphertext: random(100) };
+    await send(space.owner, `/v2/family-records/${photo}`, photoBody, "PUT");
+    await send(space.invitee, `/v2/family-records/${words}`, wordsBody, "PUT");
+    const original = (await environment.DB.prepare("SELECT original_transaction_id FROM billing_effective_entitlement_current WHERE billing_account_id=?")
+      .bind(payer.id).first<{ original_transaction_id: string }>())!.original_transaction_id;
+    await grantPlus(payer.id, { original, expiresAtMs: Date.now() - 1000 });
+    for (const member of [space.owner, space.invitee]) {
+      await expect(send(member, "/v2/moments/reservations", moment())).rejects.toMatchObject({ status: 403, code: "window_support_required" });
+      await expect(send(member, "/v1/sharing/generations/reserve", {
+        protocolVersion: 1, clientRequestId: crypto.randomUUID(), items: [{ mediaId: random(16) }],
+      })).rejects.toMatchObject({ code: "window_support_required" });
+      await expect(send(member, `/v2/family-records/${crypto.randomUUID()}`, { ...wordsBody, operationID: crypto.randomUUID() }, "PUT"))
+        .rejects.toMatchObject({ code: "window_support_required" });
+    }
+    // An exact accepted operation can be replayed, but not changed/reassigned.
+    await send(space.owner, `/v2/family-records/${photo}`, photoBody, "PUT");
+    await send(space.invitee, `/v2/family-records/${words}`, wordsBody, "PUT");
+    await expect(send(space.owner, `/v2/family-records/${words}`, { ...wordsBody, expectedRevision: 1, operationID: crypto.randomUUID() }, "PUT"))
+      .rejects.toMatchObject({ code: "family_record_conflict" });
+    await send(space.invitee, `/v2/family-records/${words}`, { ...wordsBody, expectedRevision: 1, operationID: crypto.randomUUID(), ciphertext: random(100) }, "PUT");
+    await send(space.owner, `/v2/family-records/${photo}`, { ...photoBody, expectedRevision: 1, operationID: crypto.randomUUID(), ciphertext: null }, "PUT");
+    expect(await environment.DB.prepare("SELECT state FROM family_records WHERE id=?").bind(photo).first()).toEqual({ state: "withdrawn" });
+    expect(await environment.DB.prepare("SELECT revision,state FROM family_records WHERE id=?").bind(words).first()).toEqual({ revision: 2, state: "active" });
+  });
+
+  it("distinguishes unsupported from unavailable and leaves beta independent of billing storage", async () => {
+    const noDB = { ...testEnv, DB: { prepare: () => { throw new Error("must not query"); } } as unknown as D1Database };
+    for (const flag of [undefined, "NO", "true", "yes"]) {
+      await expect(requireWindowDeliverySupport({ ...noDB, WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: flag } as Env, random(16))).resolves.toBeUndefined();
+    }
+    await expect(requireWindowDeliverySupport({ ...noDB, WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES" } as Env, random(16)))
+      .rejects.toMatchObject({ status: 503, code: "window_support_unavailable" });
+    const environment = { ...await enableSponsorshipGates(), WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES" };
+    const space = await signedSpace(), payer = await account();
+    await expect(requireWindowDeliverySupport(environment, space.window.space)).rejects.toMatchObject({ code: "window_support_required" });
+    const entitlement = await grantPlus(payer.id, { expiresAtMs: Date.now() + 3 * 86_400_000 });
+    await operation({ account: payer, window: space.window, operation: "sponsor", generation: 0, entitlement });
+    await expect(requireWindowDeliverySupport(environment, space.window.space)).resolves.toBeUndefined();
+    // Exercise the exact SQL's deadline comparisons without changing system time.
+    const guard = windowDeliverySupportGuard(environment, space.window.space);
+    const authority = (await environment.DB.prepare("SELECT access_until_ms,authority_stale_at_ms FROM billing_effective_entitlement_current WHERE billing_account_id=?")
+      .bind(payer.id).first<{ access_until_ms: number; authority_stale_at_ms: number }>())!;
+    for (const deadline of [authority.access_until_ms, authority.authority_stale_at_ms]) {
+      expect(await environment.DB.prepare(`SELECT ${guard.sql.replaceAll("CAST(unixepoch('subsec')*1000 AS INTEGER)", "?")} AS allowed`)
+        .bind(...guard.bindings, deadline, deadline).first()).toEqual({ allowed: 0 });
+    }
+    // The subscription is still dated in the future, but authority is no longer
+    // fresh. Advance both clocks together without changing persisted facts.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(authority.authority_stale_at_ms);
+    try {
+      const staleEnv = { ...environment, DB: new Proxy(environment.DB, { get(target, key) {
+        if (key === "prepare") return (sql: string) => target.prepare(sql.replaceAll(
+          "CAST(unixepoch('subsec')*1000 AS INTEGER)", String(authority.authority_stale_at_ms)));
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      } }) } as Env;
+      await expect(requireWindowDeliverySupport(staleEnv, space.window.space)).rejects.toMatchObject({ code: "window_support_unavailable" });
+    } finally { clock.mockRestore(); }
+    await environment.DB.prepare("DELETE FROM billing_effective_entitlement_current WHERE billing_account_id=?").bind(payer.id).run();
+    await expect(requireWindowDeliverySupport(environment, space.window.space)).rejects.toMatchObject({ code: "window_support_unavailable" });
+  });
+
+  it("rolls back reservation and idempotency when support disappears before the accepting batch", async () => {
+    const enabled = { ...await enableSponsorshipGates(), WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES", FAMILY_RECORD_RUNTIME_ENABLED: "YES" };
+    for (const path of ["/v2/moments/reservations", "/v1/sharing/generations/reserve", "/v2/family-records/"]) {
+      const space = await signedSpace(), payer = await account(), entitlement = await grantPlus(payer.id);
+      await operation({ account: payer, window: space.window, operation: "sponsor", generation: 0, entitlement });
+      let interrupted = false;
+      const environment = { ...enabled, DB: new Proxy(enabled.DB, { get(target, key) {
+        if (key === "batch") return async (statements: D1PreparedStatement[]) => {
+          if (!interrupted) {
+            interrupted = true;
+            await operation({ account: payer, window: space.window, operation: "unsponsor", generation: 1, expectedCurrent: payer.id });
+          }
+          return target.batch(statements);
+        };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      } }) } as Env;
+      const requestID = crypto.randomUUID(), photo = crypto.randomUUID();
+      const body = path.startsWith("/v2/family")
+        ? { entryID: photo, kind: "photo", expectedRevision: 0, operationID: requestID, ciphertext: random(100) }
+        : path.startsWith("/v1") ? { protocolVersion: 1, clientRequestId: requestID, items: [{ mediaId: random(16) }] }
+        : { protocolVersion: 2, clientRequestId: requestID, clientMomentId: crypto.randomUUID(), kind: "live", keyEpoch: 1,
+          ciphertextSize: 100, ciphertextSHA256: random(32), clientModerationVersion: 1,
+          senderPolicyAcceptance: { version: 1, acceptedAt: new Date().toISOString() } };
+      await expect(route(await signedMemberMutationRequest({ member: space.owner, body,
+        method: path.startsWith("/v2/family") ? "PUT" : "POST", pathname: path.startsWith("/v2/family") ? path + photo : path }), environment))
+        .rejects.toMatchObject({ code: "window_support_required" });
+      expect(interrupted).toBe(true);
+      for (const table of ["moments", "sharing_generations", "family_records"]) {
+        expect(await enabled.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE space_id=?`).bind(space.window.space).first()).toEqual({ n: 0 });
+      }
+      expect(await enabled.DB.prepare("SELECT COUNT(*) AS n FROM idempotency_records WHERE client_request_id=?").bind(requestID).first()).toEqual({ n: 0 });
+    }
+  });
+
+
 });

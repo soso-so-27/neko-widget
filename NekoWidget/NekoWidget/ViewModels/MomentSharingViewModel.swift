@@ -180,7 +180,7 @@ final class MomentSharingViewModel: ObservableObject {
             }
         }
         let synchronizationSucceeded = await coordinator.synchronize(
-            trigger: "family-window"
+            trigger: isManual ? "family-window-manual" : "family-window"
         )
         let synchronizationNotice = await coordinator.synchronizationNotice()
         progressTask.cancel()

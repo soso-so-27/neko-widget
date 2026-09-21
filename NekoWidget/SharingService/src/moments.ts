@@ -29,6 +29,7 @@ import {
   transientNetworkKey,
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
+import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "./window-delivery-membership";
 import { encodeCanonicalFields, signedRequestTranscript } from "./protocol";
 import { momentNotificationEventStatements } from "./push";
 import { REACTION_USAGE_RETENTION_DAYS } from "./reactions";
@@ -919,12 +920,16 @@ export async function reserveMoment(request: Request, env: Env): Promise<Respons
     if (recipients.length === 0) {
       throw new ApiError(409, "no_eligible_recipients", "There is no eligible recipient for this moment.");
     }
+    // The original successful reserve accepted this exact hash. Reissuing its
+    // expired upload lease is not a new paid operation; all safety checks remain.
+    if (!retryingExpiredDraft) await requireWindowDeliverySupport(env, member.spaceId);
     prefix = await storagePrefix(env, member.spaceId, member.now);
   } catch (error) {
     return consumeAndThrow(env, member, error);
   }
 
   const quotaCounted = retryingExpiredDraft ? 0 : 1;
+  const support = retryingExpiredDraft ? { sql: "1", bindings: [] } : windowDeliverySupportGuard(env, member.spaceId);
   const reservationAttempt = retryingExpiredDraft && prior !== null
     ? prior.reservation_attempt + 1
     : 1;
@@ -1015,7 +1020,7 @@ export async function reserveMoment(request: Request, env: Env): Promise<Respons
            sender_policy_version, sender_policy_accepted_at, quota_day_key,
            quota_counted, reservation_attempt, reserve_request_hash,
            created_at, upload_expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ${support.sql} THEN ? ELSE NULL END, ?, ?)`,
       ).bind(
         momentID,
         clientMomentID,
@@ -1033,6 +1038,7 @@ export async function reserveMoment(request: Request, env: Env): Promise<Respons
         dayKey,
         quotaCounted,
         reservationAttempt,
+        ...support.bindings,
         requestHash,
         member.now,
         uploadExpiresAt,
@@ -1060,6 +1066,7 @@ export async function reserveMoment(request: Request, env: Env): Promise<Respons
       requestHash,
     );
     if (raced !== null) return raced;
+    if (!retryingExpiredDraft) await requireWindowDeliverySupport(env, member.spaceId);
     const currentUsage = await env.DB.prepare(
       `SELECT reserved_count + committed_count AS used
          FROM moment_daily_usage WHERE participant_id = ? AND day_key = ?`,

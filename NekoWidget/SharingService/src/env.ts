@@ -44,6 +44,8 @@ export interface Env {
   BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED?: string;
   BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED?: string;
   BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED?: string;
+  /// Independent paid-acceptance enforcement. Unset keeps the existing beta behavior.
+  WINDOW_DELIVERY_MEMBERSHIP_ENFORCED?: string;
   /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
   BILLING_VERIFIER_ORIGIN?: string;
   /// Cloudflare Access service-token credentials for the private verifier.

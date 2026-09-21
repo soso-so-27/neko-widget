@@ -23,6 +23,7 @@ import {
   transientNetworkKey,
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
+import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "./window-delivery-membership";
 import {
   encodeCanonicalFields,
   nextRotationAnchor,
@@ -346,6 +347,8 @@ export async function reserveGeneration(request: Request, env: Env): Promise<Res
   if (space === null) {
     return consumeAndThrow(env, member, new ApiError(410, "sharing_revoked", "Sharing is no longer active."));
   }
+  await requireWindowDeliverySupport(env, member.spaceId);
+  const support = windowDeliverySupportGuard(env, member.spaceId);
   let source = await sourceForPublisher(env, member);
   if (source?.cleanup_blocked === 1) {
     return consumeAndThrow(
@@ -410,7 +413,7 @@ export async function reserveGeneration(request: Request, env: Env): Promise<Res
       `INSERT INTO sharing_generations(
          id, source_id, space_id, publisher_member_id, share_day_key, state,
          item_count, reserve_request_hash, created_at, staging_expires_at
-       ) VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, 'reserved', ?, CASE WHEN ${support.sql} THEN ? ELSE NULL END, ?, ?)`,
     ).bind(
       generationId,
       sourceId,
@@ -418,6 +421,7 @@ export async function reserveGeneration(request: Request, env: Env): Promise<Res
       member.id,
       dayKey,
       items.length,
+      ...support.bindings,
       requestHash,
       member.now,
       expiresAt,
@@ -456,6 +460,7 @@ export async function reserveGeneration(request: Request, env: Env): Promise<Res
       requestHash,
     );
     if (raced !== null) return raced;
+    await requireWindowDeliverySupport(env, member.spaceId);
     source = await sourceForPublisher(env, member);
     const daily = source === null
       ? null

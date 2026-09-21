@@ -54,10 +54,11 @@ REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
 REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
+REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -293,6 +294,114 @@ PHOTO_ACTIONS_COMPANION_DIGESTS = {
         "eea27c475f48aaa523ee5f27868d7f9b4c74f78184d18178326ed3f22275ad58",
         "eba4ae1998d987bd1116fbf82508c2dd3c5ec514bc80bfb73e2b7affe6219665"
     ]
+}
+
+# One reviewed server/client delivery-support batch. Exact sources and raw
+# modes are pinned; workflow, render inputs and existing authorization stay fixed.
+DELIVERY_MEMBERSHIP_NEW_PATHS = frozenset({
+    "NekoWidget/SharingService/src/window-delivery-membership.ts",
+})
+DELIVERY_MEMBERSHIP_PATHS = DELIVERY_MEMBERSHIP_NEW_PATHS | {
+    "NekoWidget/NekoWidget/Services/MomentSharingAPIClient.swift",
+    "NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift",
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift",
+    "NekoWidget/NekoWidget/ViewModels/MomentSharingViewModel.swift",
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
+    "NekoWidget/NekoWidget/Views/MomentPhotoDeliveryProgressView.swift",
+    "NekoWidget/NekoWidget/Views/MomentSharingPresentation.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/Shared/Logging/DiagnosticLogPrivacy.swift",
+    "NekoWidget/Shared/Sharing/MomentSharingCore.swift",
+    "NekoWidget/SharingService/src/env.ts",
+    "NekoWidget/SharingService/src/family-records.ts",
+    "NekoWidget/SharingService/src/moments.ts",
+    "NekoWidget/SharingService/src/sharing.ts",
+    "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts",
+    "NekoWidget/SharingService/test/moments.integration.test.ts",
+    "NekoWidget/SharingService/test/sharing.integration.test.ts",
+    "NekoWidget/ci/verify-moment-sharing-core.swift",
+    "NekoWidget/ci/verify-moment-sharing-presentation.swift",
+}
+DELIVERY_MEMBERSHIP_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
+))
+DELIVERY_MEMBERSHIP_DATA_REVIEW = "explicit-delivery-support-boundary"
+DELIVERY_MEMBERSHIP_DIGESTS = {'NekoWidget/NekoWidget/Services/MomentSharingAPIClient.swift': ('7cd15950d009ce7329ff73aa98af1bc12658af971abfd9f5e0a63822a7333754',
+                                                                 '3463d38b82f62f8b04181e86ef5b383b8c962e6784e2f6737cba66f59cbc35ed'),
+ 'NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift': ('ad7451ae4d63554e185955dc959a14865bda701d71ea0794ccb6c297027099d4',
+                                                                   '9d7972ca38cd29e0d9dff24cd1bf3f8d459b924c2f5c873567efe54afed9034c'),
+ 'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('0c52664ce4352a732d99bb3d863f4a7d2dd6aba3bdb139f3d1b0da2e5fe1d2f3',
+                                                                 'ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e'),
+ 'NekoWidget/NekoWidget/ViewModels/MomentSharingViewModel.swift': ('64697baee6cfc60eac9daec5889be82fed671e26890126fac520f195708e6e74',
+                                                                   '1420e61f94a1e333bf8a564be31f65a10e567ef946fbb1c49c8deff3ea208fe2'),
+ 'NekoWidget/NekoWidget/Views/FamilyRecordView.swift': ('77a50a0fef14942798734607ee7fc63de36cc3e37ff85323627a0063dfc3b3a9',
+                                                        '9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc'),
+ 'NekoWidget/NekoWidget/Views/FamilyWindowView.swift': ('aff858d1450736eded381c346f53ccc845a60a561e9f835607e6969ae1f948f1',
+                                                        '2e0e8036c2cbcee892ddd7760123b00bf8fa5da0ab73a70965ccaa4eb806fbeb'),
+ 'NekoWidget/NekoWidget/Views/MomentPhotoDeliveryProgressView.swift': ('028c216095a002f9af80979a7e696a1e95acdcd8912ae47595afde6d3371aa70',
+                                                                       '18b1f42b182b35918e5a31979d0129f22d2f3d01d44dee99bd38b5fbb4f1a61e'),
+ 'NekoWidget/NekoWidget/Views/MomentSharingPresentation.swift': ('53533a0bc6970e1341484abfdefcdfb770287ffea42e67ceed879135d6017027',
+                                                                 'e3c55c40181140d9a11a5f8576014d35eca756a02c76d73fb9cc028d4bed8724'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('2cbc9801d7d5de425a6d417575746fce4bb810626f5d8044025f980f17c2c1a2',
+                                                               '199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f'),
+ 'NekoWidget/Shared/Logging/DiagnosticLogPrivacy.swift': ('c9bda8a4e32c6d4be494e29c594c4e067a431f524788e59aa14ef79bb0aa6ae5',
+                                                          '7a77bd04823ffc79cf9f85a1e7d70fa6c021de297c126274c6d0565e38c0fe40'),
+ 'NekoWidget/Shared/Sharing/MomentSharingCore.swift': ('03854ad486ecdefdaecab1ba8855e787b05e8075c7e6f1074b690abdf154246e',
+                                                       '5e684fe7d0a01b5174f8904e6848456999a0d3b3a5f7fcaa418e62c71c9b83ed'),
+ 'NekoWidget/SharingService/src/env.ts': ('b781497be089443ec8d8bad70d8f4ee2917252e448c097dfa37ebb3bfe98b3d8',
+                                          'b82282b98d422ef6dfbcdb38720c461d4cd3a5dc2ece15b35a1eb8692fa344c4'),
+ 'NekoWidget/SharingService/src/family-records.ts': ('5b59a01fb6d0617d6efc93b346045ee674fbf316ac56430f861b5539bdd3eeb0',
+                                                     'ed45d854d4228a534656ab0b5e544c006fe1d182f69b0775682d36f129cb84c1'),
+ 'NekoWidget/SharingService/src/moments.ts': ('17f52bbbba4b0502a475df02ae9f61b2386549fbb89468f855f2dbcf796793f0',
+                                              '8cd9493d384ee57f88ff3006a0d45c8ccbbdb901e13e1d9cfee26279114e7472'),
+ 'NekoWidget/SharingService/src/sharing.ts': ('8071e7cad534f106471d818f753350822b9d6c19e23dcef40ee7ef80bf1d7a4c',
+                                              '90b3f04aa4a0c2488383fbb9622eb4180c3928aa6e6ad6698f34cf39aa9836c1'),
+ 'NekoWidget/SharingService/src/window-delivery-membership.ts': ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                                                                 '2b4d2c12f2f82875021bc3f3472de41fee0c0aa20e913d2aebd3dd3806984568'),
+ 'NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts': ('2d64673b2a5e3bc32ead6d22f7126bb85a9614b10bba34e98a567f49b48e96cd',
+                                                                                   'a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a'),
+ 'NekoWidget/SharingService/test/moments.integration.test.ts': ('3bde626dbcc73b12ee352af779b63f99c4608cff5c20099ceb60dbbde8622e97',
+                                                                'e317c931790f76617c8dd139e8110cc3f86890d3de6b774910c7d850857d5f86'),
+ 'NekoWidget/SharingService/test/sharing.integration.test.ts': ('9c99056c34f1e34d328c411de725158d675e060e508dcb22a9d7e75ce18a610a',
+                                                                'bc5202c20137aa2986203d3f8d800845e3a6c9e9d118c61fe8f62e1d1aa7f2c6'),
+ 'NekoWidget/ci/verify-moment-sharing-core.swift': ('ab09896157e67b9a28f7094441e5f15ee5d22567cab32930f788bd0fdaef9dfb',
+                                                    'f4bae83747fa8b468c9fba0bf010dc868aea985fb58b6f21c09b8a451a255a05'),
+ 'NekoWidget/ci/verify-moment-sharing-presentation.swift': ('85097a99b6a1ff557537bbbde0526dc6db1f6b1157bd011836ed6ae126e9069e',
+                                                            '9224b7d7baaa398c52d324662b2d1ec33bb0f96b99d69fd73652a68608a8d765')}
+# Only this exact literal is canonicalized for the selector's self digest.
+DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "604dec979e68623ae0aedbfc7162787c547551114fd5d3147d9923cbe4ca60a7",
+        "2390775d2d48d8cc19d81a94980b9fee4e0077f13d366e6880b8985b86723dc8"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "60ab4df06ed3ec717e9b30b727f9f571c1171d0e1832ed8437dd2046e37a4552",
+        "688ac5aa91cd4324fc226d30929d725fc8977f166ed1ff3f346fbfde5e33085c"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "16210a94b9be1f75eb5b4706fc13c94c90bbbed09fd6bedda780789ba676e3f7",
+        "54c04816bb45109a12a83882ef8bf0483c159a5b1f1071950e88cd4e00a6abbd"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "55f13392f5fcf71da8c47a7578a6361f9fa7a537a6c650c5d63aead98061b51f",
+        "3dcc544887c7fc47c2718f9d6d021b9f53ed68112e9dda21417ca28bef819eeb"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "3f96d1e290d79095e5fadf09c655a6a1737c09e8006e7ac93b2145a41f6a411f",
+        "5e0088abb86835d01b0b00a383aa1a2481d2577ddd65031854dab97e5797a908"
+    ]
+}
+# Gallery can be omitted only when render/selection inputs and Widget target
+# membership are unchanged. The reviewed shared core/log edits are still built
+# and exercised by the required runtime jobs; they are not rendering changes.
+DELIVERY_GALLERY_INPUT_PREFIXES = (
+    "NekoWidget/NekoWidgetWidget/", "NekoWidget/Shared/Models/",
+    "NekoWidget/Shared/UI/", "NekoWidget/NekoWidget/Assets.xcassets/",
+)
+DELIVERY_GALLERY_INPUT_PATHS = WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS | {
+    "NekoWidget/Shared/PersonalWidgetMembershipStore.swift",
+    "NekoWidget/NekoWidget/Services/CanonicalPreviewBuilder.swift",
 }
 
 # One reviewed beta-disabled access-policy and personal Widget batch. Names
@@ -535,7 +644,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -796,6 +905,77 @@ def reviewed_membership_access_changes(changes: dict[str, tuple[str, str]]) -> b
         return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
                    for path, pair in MEMBERSHIP_ACCESS_DIGESTS.items())
     except (ValueError, KeyError, TypeError, AttributeError, plistlib.InvalidFileException):
+        return False
+
+
+def delivery_gallery_inputs_unchanged(changes) -> bool:
+    if any(path.startswith(DELIVERY_GALLERY_INPUT_PREFIXES) or path in DELIVERY_GALLERY_INPUT_PATHS
+           for path in changes):
+        return False
+    project = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
+    if project not in changes:
+        return True
+    before, after = (source.replace("\r\n", "\n") for source in changes[project])
+    # App-only Swift registration must not alter Widget source membership,
+    # build settings, resources, frameworks or target configuration.
+    patterns = [r"(?ms)^\t\tA00000000000000000000025 /\* Sources \*/ = \{.*?^\t\t\};"]
+    patterns += [r"(?s)/\* Begin " + section + r" section \*/.*?/\* End " + section + r" section \*/"
+                 for section in ("PBXNativeTarget", "XCBuildConfiguration", "XCConfigurationList",
+                                 "PBXResourcesBuildPhase", "PBXFrameworksBuildPhase")]
+    for pattern in patterns:
+        old, new = re.findall(pattern, before), re.findall(pattern, after)
+        if len(old) != 1 or old != new:
+            return False
+    return True
+
+
+def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Only the frozen delivery batch can omit unchanged Gallery rendering."""
+    if not delivery_gallery_inputs_unchanged(changes):
+        return False
+    product_paths = DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST}
+    if (set(DELIVERY_MEMBERSHIP_DIGESTS) != DELIVERY_MEMBERSHIP_PATHS
+            or set(changes) != product_paths | DELIVERY_MEMBERSHIP_COMPANION_PATHS
+            or set(DELIVERY_MEMBERSHIP_COMPANION_DIGESTS) != DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST}):
+        return False
+    for path, pair in DELIVERY_MEMBERSHIP_COMPANION_DIGESTS.items():
+        before, after = changes[path]
+        if path == "NekoWidget/ci/ios_ci_scope.py":
+            binding = "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = " + json.dumps(
+                DELIVERY_MEMBERSHIP_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+            after = after.replace("\r\n", "\n")
+            if after.count(binding) != 1:
+                return False
+            after = after.replace(binding, "DELIVERY_MEMBERSHIP_COMPANION_DIGESTS = {}\n", 1)
+        if not before or not after or list(map(source_digest, (before, after))) != pair:
+            return False
+    for path in DELIVERY_MEMBERSHIP_PATHS:
+        before, after = changes[path]
+        if (not after or (not before) != (path in DELIVERY_MEMBERSHIP_NEW_PATHS)
+                or tuple(map(source_digest, (before, after))) != DELIVERY_MEMBERSHIP_DIGESTS[path]):
+            return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
+                or review["visualReview"] != "native-ui-required"
+                or review["dataReview"] != DELIVERY_MEMBERSHIP_DATA_REVIEW
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != DELIVERY_MEMBERSHIP_PATHS):
+            return False
+        return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
+                   for path, pair in DELIVERY_MEMBERSHIP_DIGESTS.items())
+    except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
@@ -1111,6 +1291,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_PHOTO_ACTIONS_SCOPE: PHOTO_ACTIONS_PATHS | {REVIEW_MANIFEST} | PHOTO_ACTIONS_COMPANION_PATHS,
         REVIEWED_MEMBERSHIP_OFFER_SCOPE: MEMBERSHIP_OFFER_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_OFFER_COMPANION_PATHS,
         REVIEWED_MEMBERSHIP_ACCESS_SCOPE: MEMBERSHIP_ACCESS_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_ACCESS_COMPANION_PATHS,
+        REVIEWED_DELIVERY_MEMBERSHIP_SCOPE: DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST} | DELIVERY_MEMBERSHIP_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -1173,6 +1354,13 @@ REVIEWED_MEMBERSHIP_ACCESS_TESTS = (
     "NekoWidgetUITests/SoloMemoriesUITests/testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
     "NekoWidgetUITests/PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
 )
+# Filled with the real new support operation and 1-2 existing delivery paths
+# after the app fixture is finished; an empty list cannot approve a candidate.
+REVIEWED_DELIVERY_MEMBERSHIP_TESTS = (
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/testPhotoDeliveryProgressAllowsOtherActionsAndShowsTruthfulStates",
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/testPhotoWindowRetryPreservesConfirmedPhotoAndCaption",
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+)
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -1205,6 +1393,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_DELIVERY_MEMBERSHIP_SCOPE:
+        return REVIEWED_DELIVERY_MEMBERSHIP_TESTS
     if scope == REVIEWED_MEMBERSHIP_ACCESS_SCOPE:
         return REVIEWED_MEMBERSHIP_ACCESS_TESTS + (GALLERY_TEST,)
     if scope == REVIEWED_MEMBERSHIP_OFFER_SCOPE:
@@ -1374,6 +1564,10 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_delivery_membership_changes(changes):
+        return (REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
+                if 2 <= len(REVIEWED_DELIVERY_MEMBERSHIP_TESTS) <= 3
+                and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_DELIVERY_MEMBERSHIP_TESTS) else FULL_SCOPE)
     if reviewed_membership_access_changes(changes):
         return (REVIEWED_MEMBERSHIP_ACCESS_SCOPE
                 if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MEMBERSHIP_ACCESS_TESTS) else FULL_SCOPE)

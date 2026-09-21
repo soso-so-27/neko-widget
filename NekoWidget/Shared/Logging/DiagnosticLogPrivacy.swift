@@ -49,6 +49,8 @@ enum DiagnosticLogPrivacy {
         "retryable-server",
         "sensitive-content",
         "state-unavailable",
+        "window-support-required",
+        "window-support-unavailable",
         "unknown",
     ]
 

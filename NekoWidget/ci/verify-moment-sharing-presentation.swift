@@ -9,6 +9,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesPreparationBoundary()
         try verifiesEveryOutboxPhasePrecisely()
         try verifiesDailyQuotaIsSeparateFromTransport()
+        try verifiesSupportIsSeparateFromTransport()
         try verifiesPhotoProgressTimingAndIdentity()
         try verifiesPhotoProgressCompletionLifetime()
         try verifiesMultipleDestinationsRemainGrouped()
@@ -21,6 +22,27 @@ enum MomentSharingPresentationVerifier {
         try verifiesPhotoDeepLinkCompatibility()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
+    }
+
+    private static func verifiesSupportIsSeparateFromTransport() throws {
+        for (error, kind, phase) in [
+            ("window-support-required", MomentOutgoingStatusKind.supportRequired, MomentPhotoDeliveryProgress.Phase.supportRequired),
+            ("window-support-unavailable", MomentOutgoingStatusKind.supportUnverified, MomentPhotoDeliveryProgress.Phase.supportUnverified)
+        ] {
+            let presentation = MomentSharingPresentationPolicy.make(preparations: [], deliveries: [
+                delivery("same-photo", "same-window", .prepared, updatedAt: 90, error: error,
+                         localThumbnailJPEG: Data([1, 2, 3]), localCaption: "同じメモ")
+            ], now: date(100))
+            let status = try requireStatus(kind, in: presentation)
+            try require(status.cancellableCount == 1 && presentation.cancellableEncryptedDeliveryCount == 1,
+                        "a paused send could no longer be cancelled")
+            try require(!(presentation.activitySummary ?? "").contains("再試行待ち"), "support was called a transport retry")
+            try require(presentation.photoProgress.first?.id == "same-photo"
+                        && presentation.photoProgress.first?.phase == phase,
+                        "the support notice lost photo identity")
+            try require(presentation.photoProgress.first?.animates(at: date(100)) == false,
+                        "a support pause animated as sending")
+        }
     }
 
     private static func verifiesPhotoProgressTimingAndIdentity() throws {

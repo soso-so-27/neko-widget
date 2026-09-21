@@ -191,6 +191,12 @@ private struct MomentPhotoDeliveryProgressRow: View {
                 case .attention, .resultUnknown:
                     Image(systemName: "exclamationmark.circle")
                         .foregroundStyle(.orange)
+                case .supportRequired:
+                    Image(systemName: "pause.circle")
+                        .foregroundStyle(.secondary)
+                case .supportUnverified:
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
                 case .preparing, .sending, .confirming, .waiting, .quotaWaiting:
                     Image(systemName: "clock")
                         .foregroundStyle(.secondary)
@@ -272,11 +278,15 @@ struct MomentPhotoDeliveryProgressFixture: View {
                         .accessibilityIdentifier("delivery-progress-fixture-other-action-count")
 
                     Divider()
-                    fixtureStateButton("送信中", id: "sending", phase: .sending)
-                    fixtureStateButton("時間がかかる送信", id: "long-running", phase: .sending, age: 30)
-                    fixtureStateButton("待機中", id: "waiting", phase: .waiting)
-                    fixtureStateButton("確認が必要", id: "attention", phase: .attention)
-                    fixtureStateButton("受付完了", id: "accepted", phase: .accepted)
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())]) {
+                        fixtureStateButton("送信お休み中", id: "support-required", phase: .supportRequired)
+                        fixtureStateButton("条件未確認", id: "support-unverified", phase: .supportUnverified)
+                        fixtureStateButton("送信中", id: "sending", phase: .sending)
+                        fixtureStateButton("時間がかかる送信", id: "long-running", phase: .sending, age: 30)
+                        fixtureStateButton("待機中", id: "waiting", phase: .waiting)
+                        fixtureStateButton("確認が必要", id: "attention", phase: .attention)
+                        fixtureStateButton("受付完了", id: "accepted", phase: .accepted)
+                    }
                     Toggle("大きい文字", isOn: $usesLargeText)
                         .accessibilityIdentifier("delivery-progress-fixture-large-text")
                     Toggle("動きを減らす", isOn: $reducesMotion)

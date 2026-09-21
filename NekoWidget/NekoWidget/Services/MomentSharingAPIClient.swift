@@ -143,6 +143,7 @@ enum MomentReservationIdentityPolicy {
 
 enum MomentSendFailurePolicy {
     static func canRemainQueued(_ error: MomentSharingError) -> Bool {
+        if MomentOutboxRetryPolicy.supportErrorCode(for: error) != nil { return true }
         switch error {
         case .retryableServer:
             return true
@@ -157,6 +158,7 @@ enum MomentSendFailurePolicy {
     }
 
     static func isPermanentOutboxFailure(_ error: MomentSharingError) -> Bool {
+        if MomentOutboxRetryPolicy.supportErrorCode(for: error) != nil { return false }
         switch error {
         case .invalidPayload, .payloadTooLarge:
             return true

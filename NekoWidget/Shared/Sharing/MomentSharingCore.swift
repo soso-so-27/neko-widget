@@ -421,6 +421,10 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             "通信が完了しませんでした。あとで再試行します。"
         case let .requestRejected(status, code, _):
             switch code {
+            case "window_support_required" where status == 403:
+                "このまどへの送信はお休み中です。届いている写真は引き続き見られます。"
+            case "window_support_unavailable" where status == 503:
+                "このまどの送信条件を確認できませんでした。写真は保持して、あとで確認します。"
             case "sharing_revoked":
                 "このまどの共有は終了しました。もう一度招待してください。"
             case "invalid_authentication":
@@ -516,6 +520,24 @@ enum MomentDeliveryDiagnostic {
 
 enum MomentOutboxRetryPolicy {
     static let dailyQuotaErrorCode = "daily-quota-exceeded"
+    static let supportRequiredErrorCode = "window-support-required"
+    static let supportUnavailableErrorCode = "window-support-unavailable"
+
+    static func supportErrorCode(for error: Error) -> String? {
+        guard case let MomentSharingError.requestRejected(status, code, _) = error else { return nil }
+        if status == 403 && code == "window_support_required" { return supportRequiredErrorCode }
+        if status == 503 && code == "window_support_unavailable" { return supportUnavailableErrorCode }
+        return nil
+    }
+
+    /// A known-ended window never enters the ordinary automatic retry loop.
+    /// A person may explicitly check again; the server still decides admission.
+    static func shouldAttempt(lastErrorCode: String?, retryAt: Date?, awaitingReservation: Bool,
+                              explicitlyCheckingSupport: Bool,
+                              now: Date) -> Bool {
+        if awaitingReservation && lastErrorCode == supportRequiredErrorCode { return explicitlyCheckingSupport }
+        return retryAt.map { $0 <= now } ?? true
+    }
 
     static func isDailyQuotaExceeded(_ error: Error) -> Bool {
         guard case let MomentSharingError.requestRejected(status, code, _) = error

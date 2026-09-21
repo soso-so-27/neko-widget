@@ -165,6 +165,7 @@ async function signedFetch(
   value?: unknown | Uint8Array,
   extraHeaders?: Record<string, string>,
   nonce = randomValue(16),
+  environment?: Env,
 ): Promise<Response> {
   const binary = value instanceof Uint8Array;
   const bodyBytes = value === undefined
@@ -195,7 +196,8 @@ async function signedFetch(
   }
   const init: RequestInit = { method, headers };
   if (value !== undefined) init.body = binary ? bytes(bodyBytes) : new TextDecoder().decode(bodyBytes);
-  return SELF.fetch(new Request(`https://sharing.invalid${path}`, init));
+  const request = new Request(`https://sharing.invalid${path}`, init);
+  return environment ? route(request, environment) : SELF.fetch(request);
 }
 
 async function seedActiveSpace(): Promise<TestSpace> {
@@ -260,6 +262,7 @@ function shape(value: unknown): unknown {
 
 async function publishOne(
   member: TestMember,
+  afterReserve?: (body: Record<string, unknown>, accepted: ReserveResponse) => Promise<Env>,
 ): Promise<{
   reserve: ReserveResponse;
   prepare: PrepareResponse;
@@ -268,21 +271,25 @@ async function publishOne(
   manifestCiphertext: Uint8Array;
 }> {
   const mediaId = randomValue(16);
+  const reserveBody = { protocolVersion: 1, clientRequestId: crypto.randomUUID().toLowerCase(), items: [{ mediaId }] };
   const reserveResponse = await signedFetch(
     "/v1/sharing/generations/reserve",
     "POST",
     member,
-    { protocolVersion: 1, clientRequestId: crypto.randomUUID().toLowerCase(), items: [{ mediaId }] },
+    reserveBody,
   );
   expect(reserveResponse.status).toBe(201);
   const reserve = await reserveResponse.json<ReserveResponse>();
   expect(shape(reserve)).toEqual(shape(apiFixture.reserve));
   expect(reserve.generation.expiresAt - reserve.generation.createdAt)
     .toBeLessThanOrEqual(3_600);
+  const environment = await afterReserve?.(reserveBody, reserve);
+  const continuedFetch = (path: string, method: "GET" | "POST" | "PUT", sender: TestMember, value?: unknown) =>
+    signedFetch(path, method, sender, value, undefined, randomValue(16), environment);
 
   const mediaCiphertext = crypto.getRandomValues(new Uint8Array(512));
   const mediaHash = await sha256Base64url(mediaCiphertext);
-  const descriptors = await signedFetch(
+  const descriptors = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}/descriptors`,
     "POST",
     member,
@@ -295,7 +302,7 @@ async function publishOne(
   expect(descriptors.status).toBe(200);
   expect(shape(await descriptors.json())).toEqual(shape(apiFixture.descriptors));
 
-  const mediaUpload = await signedFetch(
+  const mediaUpload = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}/media/${mediaId}`,
     "PUT",
     member,
@@ -304,7 +311,7 @@ async function publishOne(
   expect(mediaUpload.status).toBe(200);
   expect(shape(await mediaUpload.json())).toEqual(shape(apiFixture.mediaVerified));
 
-  const prepareResponse = await signedFetch(
+  const prepareResponse = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}/prepare`,
     "POST",
     member,
@@ -315,7 +322,7 @@ async function publishOne(
   expect(shape(prepare)).toEqual(shape(apiFixture.prepare));
   expect(prepare.rotationAnchorUTC - Math.floor(Date.now() / 1000)).toBeGreaterThanOrEqual(299);
 
-  const resume = await signedFetch(
+  const resume = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}`,
     "GET",
     member,
@@ -324,7 +331,7 @@ async function publishOne(
   expect(shape(await resume.json())).toEqual(shape(apiFixture.generationResume));
 
   const manifestCiphertext = crypto.getRandomValues(new Uint8Array(384));
-  const manifestUpload = await signedFetch(
+  const manifestUpload = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}/prepares/${prepare.prepareAttemptId}/manifest`,
     "PUT",
     member,
@@ -333,7 +340,7 @@ async function publishOne(
   expect(manifestUpload.status).toBe(200);
   expect(shape(await manifestUpload.json())).toEqual(shape(apiFixture.manifestVerified));
 
-  const commit = await signedFetch(
+  const commit = await continuedFetch(
     `/v1/sharing/generations/${reserve.generation.id}/commit`,
     "POST",
     member,
@@ -352,6 +359,19 @@ async function publishOne(
 }
 
 describe("Phase 2 daily encrypted sharing", () => {
+  it("continues the accepted generation through commit when support becomes unavailable but rejects new reservations", async () => {
+    const space = await seedActiveSpace();
+    const enforced = { ...testEnv, WINDOW_DELIVERY_MEMBERSHIP_ENFORCED: "YES" } as Env;
+    await publishOne(space.owner, async (body, accepted) => {
+      const send = (value: unknown) => signedFetch("/v1/sharing/generations/reserve", "POST", space.owner,
+        value, undefined, randomValue(16), enforced);
+      expect((await (await send(body)).json<ReserveResponse>()).generation.id).toBe(accepted.generation.id);
+      await expect(send({ ...body, items: [{ mediaId: randomValue(16) }] })).rejects.toMatchObject({ code: "idempotency_conflict" });
+      await expect(send({ ...body, clientRequestId: crypto.randomUUID() })).rejects.toMatchObject({ code: "window_support_unavailable" });
+      return enforced;
+    });
+  });
+
   it("publishes one private canonical set and lets the paired member conditionally fetch it", async () => {
     const space = await seedActiveSpace();
     const published = await publishOne(space.owner);

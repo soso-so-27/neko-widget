@@ -648,7 +648,8 @@ actor MomentSharingCoordinator {
                     api: api,
                     pairing: loadedAuthorization.state,
                     credential: loadedAuthorization.credential,
-                    lifecycleToken: loadedAuthorization.lifecycleToken
+                    lifecycleToken: loadedAuthorization.lifecycleToken,
+                    explicitlyCheckingSupport: trigger == "family-window-manual"
                 )
                 received = try await receiveChanges(
                     api: api,
@@ -1994,7 +1995,8 @@ actor MomentSharingCoordinator {
         api: URLSessionMomentSharingAPIClient,
         pairing: PairingState,
         credential: PairingCredential,
-        lifecycleToken: SharingLifecycleGate.Token
+        lifecycleToken: SharingLifecycleGate.Token,
+        explicitlyCheckingSupport: Bool
     ) async throws -> Int {
         try SharingLifecycleGate.validate(lifecycleToken)
         var sentCount = 0
@@ -2005,7 +2007,11 @@ actor MomentSharingCoordinator {
             candidate.phase != .committed
                 && candidate.phase != .deliveryResultUnknown
                 && candidate.phase != .failed {
-            if let retryAt = candidate.nextRetryAt, retryAt > .now { continue }
+            guard MomentOutboxRetryPolicy.shouldAttempt(
+                lastErrorCode: candidate.lastErrorCode, retryAt: candidate.nextRetryAt,
+                awaitingReservation: candidate.phase == .prepared,
+                explicitlyCheckingSupport: explicitlyCheckingSupport, now: .now
+            ) else { continue }
             let trace = MomentDeliveryDiagnostic.correlation(
                 for: candidate.id, processNonce: Self.deliveryDiagnosticNonce
             )
@@ -2750,7 +2756,10 @@ actor MomentSharingCoordinator {
                 guard let index = state.outbox.firstIndex(where: { $0.id == id }) else { return }
                 state.outbox[index].attemptCount += 1
                 let now = Date()
-                state.outbox[index].nextRetryAt = MomentOutboxRetryPolicy.nextRetryAt(
+                state.outbox[index].nextRetryAt =
+                    state.outbox[index].phase == .prepared
+                    && MomentOutboxRetryPolicy.supportErrorCode(for: error) == MomentOutboxRetryPolicy.supportRequiredErrorCode
+                    ? nil : MomentOutboxRetryPolicy.nextRetryAt(
                     for: error,
                     awaitingReservation: state.outbox[index].phase == .prepared,
                     attemptCount: state.outbox[index].attemptCount,
@@ -2826,6 +2835,7 @@ actor MomentSharingCoordinator {
     }
 
     private nonisolated static func safeErrorCode(_ error: Error) -> String {
+        if let code = MomentOutboxRetryPolicy.supportErrorCode(for: error) { return code }
         if MomentOutboxRetryPolicy.isDailyQuotaExceeded(error) {
             return MomentOutboxRetryPolicy.dailyQuotaErrorCode
         }
