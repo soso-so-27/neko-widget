@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-21",
+  "as_of": "2026-09-22",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.1,
   "upload_run": 35607517485,
@@ -159,6 +159,27 @@
       "main_cancelled_attempt_runner_minutes": 25.983,
       "first_ci_to_apple_upload_minutes": 65.4,
       "note": "Candidate alone passed first attempt. Main evidence reuse failed twice without logged reason; duplicate first attempt stopped, second attempt all checks completed. Whole delivery did not meet 30-minute goal."
+    },
+    {
+      "scope": "reviewed-membership-access-v1",
+      "candidate_minutes": 6.65,
+      "run_id": 35613284204,
+      "outcome": "cancelled-after-compile-failure",
+      "note": "Stopped remaining duplicate builds after a SwiftUI type-check failure before UI execution. This is not successful full-scope timing."
+    },
+    {
+      "scope": "reviewed-membership-access-v1",
+      "candidate_minutes": 66.483,
+      "run_id": 35614502475,
+      "outcome": "success-after-environment-job-retry",
+      "main_run_id": 35622294123,
+      "main_elapsed_minutes": 0.383,
+      "main_reused": true,
+      "first_attempt_minutes": 37.317,
+      "retried_job_minutes": 28.867,
+      "runner_minutes_all_attempts": 136.9,
+      "first_ci_to_main_minutes": 80.183,
+      "note": "Includes failed Gallery app.launch background-assertion timeout and only that job retry; successful sibling jobs were reused. Main skipped Mac jobs using same-SHA evidence. No TestFlight in this batch; total did not meet 30-minute goal."
     }
   ]
 }

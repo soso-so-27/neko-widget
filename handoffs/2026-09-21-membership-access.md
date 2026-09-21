@@ -16,7 +16,18 @@
 
 操作・期限・確認不能・本人とまどの分離は純粋Swift検証。Widgetは既存の再発見検証に、期限、古い操作、確定前の失効、未来の発行、長期間停止、未発行の手動選定結果の保持を追加する。画面は既存メモ編集／新規作成境界／確認不能／β維持の1操作と、従来の再発見の1操作。停止したWidgetの描画は既存ギャラリーのLarge例で確認する。既存のビルド・写真権限・共有実行・ギャラリー確認は維持する。
 
-実装時の独立レビューで、0件・権限取消時の不適切な案内と、手動選定直後に期限切れになった写真の長期保持を修正した。CI結果・main反映は完了後に追記する。現在の記載だけを検証成功や配布済みの証拠にはしない。
+実装時の独立レビューで、0件・権限取消時の不適切な案内と、手動選定直後に期限切れになった写真の長期保持を修正した。
+
+## 完了と実測（2026-09-22）
+
+- 製品 `d50f3d8683ad0b52b122192f6d9a7bdf1d9f4e78` をmainへ反映。候補 `35614502475` attempt 2で全必須job成功。main `35622294123` は同SHAの候補を選び、23秒で成功、Mac jobはすべて省略した。planの `evidence_selected` に候補IDとSHAが残っている。
+- 操作別権利・Widget判定キャッシュ・再発見の期限／保持境界のSwift検証、実メモ編集／新規作成／確認不能／β維持、既存の再発見操作が成功。ビルド、写真権限・スキャン、共有runtime、通常／白背景・長文／文字なしのWidget Galleryも成功。
+- native成果物の `membership-new-memo-boundary` と `widget-personal-paused-large` を主担当が目視。新規メモの案内が読めること、停止状態でも写真と保存操作が残ることを確認。Galleryの描画確認であり、実機の期限到来や実StoreKit契約の検証完了とは扱わない。
+- 現在のβは制限なし。新しいTestFlightは作らず、配布中は1.0 (199)のまま。次の送信制御バッチと配布をまとめる。販売開始はしていない。
+
+初回候補CIから本線確認まで **80分11秒**（9月21日23:36:23〜9月22日00:56:34 JST）。20〜30分目標は未達。最初の `35613284204` はSwiftUIの長いForm式の型検査が失敗し、6分39秒で停止。式を子Viewへ分離し、新SHAで必要な確認を実施した。次の `35614502475` attempt 1では、個人Widgetのテストが `app.launch()` のbackground assertion取得timeoutで停止。製品コードを変えず、同runの失敗したgallery-normalだけを再実行して成功した。候補run全体は失敗・再実行を含め66分29秒。成功済みの他jobは再実行していない。
+
+証拠は `C:/dev/neko-evidence/membership-access-ci-attempt2-20260922.json`、`membership-access-main-ci-20260922.json`、`membership-access-main-reuse-20260922.log`。描画は `membership-access-native-20260921/app-ui/ios-26-2/composer-screenshots/1225EB13-D767-46CC-B02F-BBDD939FC53B.png` と `membership-access-native-20260922/gallery-normal-attempt2/ios-26-2/widget-personal-used-screenshots/52A76170-14FE-45B8-B45F-6C99274AFE47.png`。
 
 ## 有効化前に残ること
 
@@ -29,3 +40,11 @@
 前回の再利用失敗は当時の理由ログがなく、原因を断定できない。読み取り診断 `35610224345` では実際のGitHub Actions権限で同じSHAの成功 `35601807219` を取得できた。恒常的な権限不足とは認められない。
 
 同じSHAを先に探し、取得失敗・不採用理由を固定項目で記録する。取得不能ならMacを起動する前のplanで停止し、黙って長い再検証へ切り替えない。成功条件・24時間以内・同じコード・必要jobの証拠は緩めない。保守だけのCIはLinuxで完結させ、iOS配布の証拠には使用しない。
+
+今回、本線再利用は実際に成功した。一方、Galleryの3系統で共通ビルド・runtime準備が重複し、matrixの同時実行2枠で後続が待つ構造は残る。1台集約はrunner時間を減らしても総待ち時間が延び得る。共通生成物の再利用も出自・同SHA・署名を保つ必要があり、まだ短縮実績ではない。次のCI改善はこの重複準備と待ち行列を対象にし、成功済みの今回製品を再検証するためには行わない。
+
+## 次のCの接続箇所
+
+- serverの `billing-window-sponsorship.ts` に参加者向け支援grantがある。`moments.ts` のreserve／commit、`sharing.ts` のreserveGeneration／commitGeneration、`family-records.ts` の新規追加／同一operation再試行へ接続する。
+- `MomentSharingCoordinator.swift` のoutboxで支援終了・確認不能を通信再試行や共有資格失効と区別する。支援交代は `BillingAPIClient.swift` の既存sponsor／payer解除／owner解除APIを再利用する。
+- まず課金上の受付確定地点、予約期限後の再受付、既存共有文章の編集範囲を現行方針に沿って固定する。既存の `billing-window-sponsorship.integration.test.ts`、`moments.integration.test.ts`、`family-records.integration.test.ts` の境界を拡張する。今回Cの実装・worker配備は行っていない。
