@@ -3,13 +3,16 @@
 
 import os
 import json
+import importlib.util
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 CI = Path(__file__).resolve().parent
@@ -18,6 +21,75 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 
 class PreparationTests(unittest.TestCase):
+    def test_icon_readiness_precedes_single_install_and_failures_stop_the_app_check(self):
+        spec = importlib.util.spec_from_file_location("icon_preparation", CI / "verify-app-icon.py")
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        device = "00000000-0000-4000-8000-000000000001"
+        preferences, neko = "com.apple.Preferences", "fixture.neko"
+        expected = [("preferences-launch", 180), ("preferences-list", 60),
+                    ("preferences-terminate", 30), ("install", 180), ("neko-launch", 60),
+                    ("neko-list", 60), ("onboarding", 60), ("neko-terminate", 60), ("home-screen", 60)]
+        for fail in (None, "preferences-list", "preferences-terminate", "install", "neko-launch"):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app"
+                app.mkdir(parents=True)
+                (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": neko,
+                    "CFBundleIcons": {"CFBundlePrimaryIcon": {"CFBundleIconName": "AppIcon"}}}))
+                artifacts = root / "artifacts"; artifacts.mkdir()
+                events, report = [], {}
+
+                def command(*args, timeout=60):
+                    if args[0] == "codesign":
+                        return ""
+                    if args[:4] == ("xcrun", "--sdk", "iphonesimulator", "assetutil"):
+                        return json.dumps([{"Name": "AppIcon"}, {"Name": "OnboardingAppIcon"}])
+                    self.assertEqual(args[:2], ("xcrun", "simctl"))
+                    operation = args[2]
+                    if operation == "list":
+                        return json.dumps({"runtimes": [{"isAvailable": True, "version": "26.2", "identifier": "runtime"}]})
+                    if operation == "create":
+                        return device
+                    self.assertEqual(args[3], device)
+                    stage, result = operation, ""
+                    if operation in ("launch", "terminate"):
+                        owner = "preferences" if args[4] == preferences else "neko"
+                        stage = owner + "-" + operation
+                        result = f"{args[4]}: {4242 if owner == 'preferences' else 4343}"
+                    elif operation == "spawn":
+                        self.assertEqual(args[4:], ("launchctl", "list"))
+                        is_neko = ("neko-launch", 60) in events
+                        stage = "neko-list" if is_neko else "preferences-list"
+                        result = f"{4343 if is_neko else 4242} 0 UIKitApplication:{neko if is_neko else preferences}[fixture]"
+                    elif operation == "io":
+                        stage = Path(args[-1]).stem
+                    elif operation in ("boot", "bootstatus", "status_bar"):
+                        return ""
+                    events.append((stage, timeout))
+                    if stage == fail:
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    return result
+
+                with patch.object(verifier, "command", side_effect=command), patch.object(
+                        verifier.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as process, \
+                        patch.object(verifier.time, "sleep"), patch("builtins.print"):
+                    if fail is None:
+                        verifier.inspect_app(app, artifacts, report)
+                    else:
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            verifier.inspect_app(app, artifacts, report)
+                end = len(expected) if fail is None else next(i for i, event in enumerate(expected) if event[0] == fail) + 1
+                self.assertEqual(events, expected[:end], "A failed stage must stop; no install or launch retries.")
+                self.assertEqual([call.args[0] for call in process.call_args_list[1:]],
+                    [["xcrun", "simctl", "shutdown", device], ["xcrun", "simctl", "delete", device]])
+                self.assertEqual(report.get("firstLaunchAlive", False), fail is None)
+                self.assertEqual(report.get("preferencesPreparationAlive", False), fail not in ("preferences-list", "preferences-terminate"))
+                launches = [json.loads(line) for line in (artifacts / "launch-stages.jsonl").read_text().splitlines()]
+                self.assertEqual([entry["stage"] for entry in launches],
+                    ["simulator-readiness", "neko-first-launch"] if fail in (None, "neko-launch") else ["simulator-readiness"])
+                self.assertEqual(launches[-1]["state"], "timeout" if fail == "neko-launch" else "success")
+
     def run_preparation(self, fail_step="", build_status=0):
         self.assertIsNotNone(BASH, "Bash is required to exercise the real preparation helper")
         with tempfile.TemporaryDirectory() as directory:

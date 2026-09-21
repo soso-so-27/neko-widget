@@ -52,11 +52,11 @@ def prepare_with_preferences(device, artifacts=None):
     if match is None:
         raise ValueError("Preferences preparation did not return its PID")
     pid = match.group(1)
-    processes = command("xcrun", "simctl", "spawn", device, "launchctl", "list", timeout=10)
+    processes = command("xcrun", "simctl", "spawn", device, "launchctl", "list", timeout=60)
     if not any(len(fields := line.split()) >= 3 and fields[0] == pid
                and fields[2].startswith(f"UIKitApplication:{bundle}[") for line in processes.splitlines()):
         raise ValueError("Preferences preparation did not remain alive")
-    command("xcrun", "simctl", "terminate", device, bundle, timeout=10)
+    command("xcrun", "simctl", "terminate", device, bundle, timeout=30)
 
 
 def source_assets():
@@ -105,9 +105,12 @@ def inspect_app(app, artifacts, report):
         command("xcrun", "simctl", "boot", device)
         command("xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
         command("xcrun", "simctl", "status_bar", device, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
-        command("xcrun", "simctl", "install", device, str(app))
         prepare_with_preferences(device, artifacts)
         report["preferencesPreparationAlive"] = True
+        # A new Simulator can finish bootstatus while its installation service
+        # is still cold. Complete system-app readiness before the one install;
+        # this budget does not extend or retry Neko's first launch below.
+        command("xcrun", "simctl", "install", device, str(app), timeout=180)
         bundle = info["CFBundleIdentifier"]
         launch = timed_launch("neko-first-launch", device, bundle, 60, artifacts)
         pid = int(launch.rsplit(":", 1)[1].strip())
