@@ -36,7 +36,7 @@ enum BillingProtocolV1 {
         let parts = pathname.split(separator: "/", omittingEmptySubsequences: false)
         return parts.count == 5 && parts[0].isEmpty && parts[1] == "v1"
             && parts[2] == "window-support-requests" && parts[4] == action
-            && BillingValidation.canonicalUUIDv4(String(parts[3])) == String(parts[3])
+            && BillingValidation.canonicalUUIDv4(String(parts[3])) != nil
     }
 }
 
@@ -53,7 +53,7 @@ struct WindowSupportRequest: Codable, Equatable, Sendable, Identifiable {
     let resultingGeneration: Int?
 
     func validated(now: Date = .now) throws -> Self {
-        guard BillingValidation.canonicalUUIDv4(id) == id,
+        guard BillingValidation.canonicalUUIDv4(id) != nil,
               BillingValidation.canonicalOpaqueID(requesterMemberId, bytes: 16),
               (0...1_000_000_000).contains(expectedGeneration),
               (1...1_000_000_000).contains(membershipRevision),

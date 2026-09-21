@@ -431,9 +431,9 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/BillingVerificationService/test/apple-noti
  'NekoWidget/NekoWidget/App/NekoWidgetApp.swift': ('3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3',
                                                    '0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831'),
  'NekoWidget/NekoWidget/Services/BillingAPIClient.swift': ('ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3',
-                                                           'bfd42ff7cc4b3f5007c9843e7e9f6a92ffb13a64acb567067955944ccfcb8b42'),
+                                                           '0e23ebb57def1bc8e7e807b0b510db02dbc814c32e12e73116f64121fe348c03'),
  'NekoWidget/NekoWidget/Services/BillingClientCore.swift': ('6ed845f5e94e933cebe6133933e07b92611dc0c4d97132c65cfbc3a3ec76449c',
-                                                            '0a47abddad31879d922396dc8753e3e295dc60476ce1c1d36096cd3a3d78684d'),
+                                                            '41aa827193354b41bb18ad1d171cda21a440d46b5b129c6af33e397b29554a3d'),
  'NekoWidget/NekoWidget/Services/MembershipAccessContext.swift': ('c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5',
                                                                   '0690f24faaa43234946953d2775cbc576cdd848959f0b68948debe38a99bb2f3'),
  'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e',
@@ -473,7 +473,7 @@ WINDOW_SUPPORT_DIGESTS = {'NekoWidget/BillingVerificationService/test/apple-noti
 WINDOW_SUPPORT_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "bcf220c84d48e1fffbc8fc4d4d87f7d5d48df80c770b7c79218d3ba6cba16f8d",
-        "5067322a3290aef6a2453329f74a0c9b8c826b6c1ea729cdffeeffb47bf64d46"
+        "99a1a7f7ffb43523e0773fd93ed262b37ee7e059ce1f838fc34c81e0573fe0a9"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "688ac5aa91cd4324fc226d30929d725fc8977f166ed1ff3f346fbfde5e33085c",
@@ -481,7 +481,7 @@ WINDOW_SUPPORT_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "54c04816bb45109a12a83882ef8bf0483c159a5b1f1071950e88cd4e00a6abbd",
-        "a2445b3e1cceca845a66c0a533bffef46416790bec09e5633246d56b7ee1b6c9"
+        "dd61be5bb3e6ebf9d89799fff3dd29a6efded072893861df8cc5d0f0071b2ff1"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "3dcc544887c7fc47c2718f9d6d021b9f53ed68112e9dda21417ca28bef819eeb",

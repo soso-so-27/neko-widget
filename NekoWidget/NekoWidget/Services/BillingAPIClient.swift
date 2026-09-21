@@ -1244,7 +1244,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
 
     func createSupportRequest(clientRequestID: String, expectedGeneration: Int, memberID: String,
                               participant: PairingCredential, payer: BillingCredential) async throws -> WindowSupportRequest {
-        guard BillingValidation.canonicalUUIDv4(clientRequestID) == clientRequestID,
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
               (0...1_000_000_000).contains(expectedGeneration), let account = payer.billingAccountID
         else { throw BillingClientError.malformedCredential }
         let response: WindowSupportSingleResponse = try await send(endpoint: .createSupportRequest,
@@ -1261,8 +1261,8 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
 
     func changeSupportRequest(requestID: String, clientRequestID: String, approve: Bool, memberID: String,
                               participant: PairingCredential, payer: BillingCredential? = nil) async throws -> WindowSupportRequest {
-        guard BillingValidation.canonicalUUIDv4(requestID) == requestID,
-              BillingValidation.canonicalUUIDv4(clientRequestID) == clientRequestID
+        guard BillingValidation.canonicalUUIDv4(requestID) != nil,
+              BillingValidation.canonicalUUIDv4(clientRequestID) != nil
         else { throw BillingClientError.malformedCredential }
         let authentication: BillingRequestAuthentication
         if approve {
