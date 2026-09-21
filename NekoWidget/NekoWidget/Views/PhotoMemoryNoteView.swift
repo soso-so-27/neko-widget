@@ -216,62 +216,76 @@ struct PhotoMemoryNoteEditor: View {
         isLoaded && savedNotice == nil && normalizedText != (original?.text ?? archiveRecord?.text ?? "")
     }
 
+    private var hasCurrentPhoto: Bool {
+        guard let photo else { return false }
+        return photoAccess.photo(for: photo.localIdentifier) != nil
+    }
+
+    @ViewBuilder
+    private var notePhotoSection: some View {
+        if let data = archiveRecord?.jpegData {
+            Section {
+                MemoArchivePhoto(data: data)
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
+            }
+        } else if let photo, photoAccess.photo(for: photo.localIdentifier) != nil {
+            Section {
+            HStack(spacing: 12) {
+                PhotoAssetImageView(
+                    localIdentifier: photo.localIdentifier,
+                    catBoundingBox: photo.catBoundingBox,
+                    targetPixelSize: CGSize(width: 240, height: 240),
+                    showsFullImage: true
+                )
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .accessibilityHidden(true)
+                if let date = photo.creationDate {
+                    Text(date.formatted(.dateTime.year().month().day()))
+                        .font(.subheadline)
+                }
+            }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noteEditorSection: some View {
+        if isLoaded && createsNewMemo && membershipAccess.enforcementEnabled
+            && !hasCurrentPhoto {
+            Section {
+                Text("元の写真を確認できません。写真へのアクセスを確認して、写真を選び直してください。")
+            }
+        } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
+            Section {
+                MembershipAccessNotice(decision: membershipAccess.decision(for: .createPersonalMemo))
+            }
+        } else if isLoaded {
+            Section {
+                PhotoNoteInput(text: $text, focus: $isWriting,
+                    maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
+                    audience: "自分だけ", identifier: "photo-memory-note-text", minimumHeight: 160)
+                    .disabled(isSaving || savedNotice != nil || accountChanged)
+            }
+            if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
+        } else if loadFailed {
+            Section {
+                Text("メモを読み込めませんでした。保存されている内容は変更していません。")
+                Button("もう一度読み込む") { Task { await load() } }
+                    .disabled(isLoading)
+            }
+        } else {
+            ProgressView("読み込んでいます…")
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                if let data = archiveRecord?.jpegData {
-                    Section {
-                        MemoArchivePhoto(data: data)
-                            .frame(width: 80, height: 80)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .accessibilityHidden(true)
-                    }
-                } else if let photo, photoAccess.photo(for: photo.localIdentifier) != nil {
-                    Section {
-                    HStack(spacing: 12) {
-                        PhotoAssetImageView(
-                            localIdentifier: photo.localIdentifier,
-                            catBoundingBox: photo.catBoundingBox,
-                            targetPixelSize: CGSize(width: 240, height: 240),
-                            showsFullImage: true
-                        )
-                        .frame(width: 80, height: 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .accessibilityHidden(true)
-                        if let date = photo.creationDate {
-                            Text(date.formatted(.dateTime.year().month().day()))
-                                .font(.subheadline)
-                        }
-                    }
-                    }
-                }
-
-                if isLoaded && createsNewMemo && membershipAccess.enforcementEnabled
-                    && photo.flatMap({ photoAccess.photo(for: $0.localIdentifier) }) == nil {
-                    Section {
-                        Text("元の写真を確認できません。写真へのアクセスを確認して、写真を選び直してください。")
-                    }
-                } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
-                    Section {
-                        MembershipAccessNotice(decision: membershipAccess.decision(for: .createPersonalMemo))
-                    }
-                } else if isLoaded {
-                    Section {
-                        PhotoNoteInput(text: $text, focus: $isWriting,
-                            maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
-                            audience: "自分だけ", identifier: "photo-memory-note-text", minimumHeight: 160)
-                            .disabled(isSaving || savedNotice != nil || accountChanged)
-                    }
-                    if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
-                } else if loadFailed {
-                    Section {
-                        Text("メモを読み込めませんでした。保存されている内容は変更していません。")
-                        Button("もう一度読み込む") { Task { await load() } }
-                            .disabled(isLoading)
-                    }
-                } else {
-                    ProgressView("読み込んでいます…")
-                }
+                notePhotoSection
+                noteEditorSection
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("メモ")

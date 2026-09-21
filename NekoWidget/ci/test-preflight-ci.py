@@ -66,46 +66,49 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual(result["cost"]["status"], "unmeasured")
 
-    def test_unmeasured_v3_can_reference_full_maximum_without_claiming_observation(self):
-        selected = scope.REVIEWED_MEMORY_FAMILY_SCOPE
-        cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
-        self.assertEqual(cost["status"], "reference")
-        self.assertTrue(cost["scope_unmeasured"])
-        self.assertEqual(cost["reference_scope"], "full-v1")
-        self.assertEqual(cost["reference_upper_minutes"], 107)
-        self.assertEqual(cost["with_upload_minutes"], [107, 107])
-        self.assertEqual(cost["samples"], [])
-        self.assertEqual(cost["reference_samples"], self.history["observations"])
-        for other in (scope.FULL_SCOPE, scope.REVIEWED_MEMORY_SCOPE, "unknown-v9"):
+    def test_unmeasured_reviewed_profiles_can_reference_full_maximum_without_claiming_observation(self):
+        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
+            cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
+            self.assertEqual(cost["status"], "reference")
+            self.assertTrue(cost["scope_unmeasured"])
+            self.assertEqual(cost["reference_scope"], "full-v1")
+            self.assertEqual(cost["reference_upper_minutes"], 107)
+            self.assertEqual(cost["with_upload_minutes"], [107, 107])
+            self.assertEqual(cost["samples"], [])
+            self.assertEqual(cost["reference_samples"], self.history["observations"])
+            for other in (scope.FULL_SCOPE, scope.REVIEWED_MEMORY_SCOPE, "unknown-v9"):
+                with self.assertRaises(ValueError):
+                    preflight.observe_cost(other, self.history, True, use_full_baseline=True)
             with self.assertRaises(ValueError):
-                preflight.observe_cost(other, self.history, True, use_full_baseline=True)
-        with self.assertRaises(ValueError):
-            preflight.observe_cost(selected, {"observations": []}, True, use_full_baseline=True)
-        with patch.object(scope, "lanes", side_effect=lambda value: ("new-job",) if value == selected else ("runtime", "app-ui")):
-            with self.assertRaises(ValueError):
-                preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
-        measured = {**self.history, "observations": self.history["observations"] + [
-            {"scope": selected, "candidate_minutes": 40, "run_id": 3, "outcome": "success"}]}
-        self.assertEqual(preflight.observe_cost(selected, measured, True, use_full_baseline=True)["status"], "observed")
+                preflight.observe_cost(selected, {"observations": []}, True, use_full_baseline=True)
+            with patch.object(scope, "lanes", side_effect=lambda value: ("new-job",) if value == selected else ("runtime", "app-ui")):
+                with self.assertRaises(ValueError):
+                    preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
+            measured = {**self.history, "observations": self.history["observations"] + [
+                {"scope": selected, "candidate_minutes": 40, "run_id": 3, "outcome": "success"}]}
+            self.assertEqual(preflight.observe_cost(selected, measured, True, use_full_baseline=True)["status"], "observed")
 
     def test_full_reference_keeps_cumulative_budget_active_and_failed_test_gates(self):
-        cost = preflight.observe_cost(scope.REVIEWED_MEMORY_FAMILY_SCOPE, self.history, True, use_full_baseline=True)
-        now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
-        failed = {"id": 1, "created_at": "2026-09-20T11:00:00Z", "status": "completed", "conclusion": "failure",
-                  "path": ".github/workflows/ios-build.yml", "failed_tests": ["SoloMemoriesUITests/testNavigation"]}
-        diagnostic = {"id": 2, "created_at": "2026-09-20T11:58:00Z", "status": "completed", "conclusion": "success",
-                      "event": "workflow_dispatch", "head_sha": "a" * 40, "head_branch": "diagnostic/task",
-                      "path": preflight.DIAGNOSTIC_WORKFLOW, "display_title": "UI diagnosis: SoloMemoriesUITests/testNavigation"}
-        def check(target, runs):
-            return preflight.apply_task_gate({"ready": target >= 107, "head": "a" * 40,
-                   "target_minutes": target, "cost": cost}, [self.diagnostic_run_evidence(run) for run in runs], now)
-        rejected = check(30, [failed, diagnostic])
-        self.assertFalse(rejected["ready"])
-        self.assertEqual(rejected["task"]["projected_total_minutes"], 167)
-        self.assertTrue(check(180, [failed, diagnostic])["ready"])
-        self.assertFalse(check(180, [failed])["ready"])
-        self.assertFalse(check(180, [failed, {**diagnostic, "head_sha": "b" * 40}])["ready"])
-        self.assertFalse(check(180, [failed, diagnostic, {**failed, "id": 3, "status": "in_progress", "conclusion": None}])["ready"])
+        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
+            cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
+            now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
+            failed = {"id": 1, "created_at": "2026-09-20T11:00:00Z", "status": "completed", "conclusion": "failure",
+                      "path": ".github/workflows/ios-build.yml", "failed_tests": ["SoloMemoriesUITests/testNavigation"]}
+            diagnostic = {"id": 2, "created_at": "2026-09-20T11:58:00Z", "status": "completed", "conclusion": "success",
+                          "event": "workflow_dispatch", "head_sha": "a" * 40, "head_branch": "diagnostic/task",
+                          "path": preflight.DIAGNOSTIC_WORKFLOW, "display_title": "UI diagnosis: SoloMemoriesUITests/testNavigation"}
+            def check(target, runs):
+                return preflight.apply_task_gate({"ready": target >= 107, "head": "a" * 40,
+                       "target_minutes": target, "cost": cost}, [self.diagnostic_run_evidence(run) for run in runs], now)
+            rejected = check(30, [failed, diagnostic])
+            self.assertFalse(rejected["ready"])
+            self.assertEqual(rejected["task"]["projected_total_minutes"], 167)
+            self.assertTrue(check(180, [failed, diagnostic])["ready"])
+            self.assertFalse(check(180, [failed])["ready"])
+            self.assertFalse(check(180, [failed, {**diagnostic, "head_sha": "b" * 40}])["ready"])
+            self.assertFalse(check(180, [failed, diagnostic, {**failed, "id": 3, "status": "in_progress", "conclusion": None}])["ready"])
+            # A compile failure before any UI operation needs no unrelated diagnosis.
+            self.assertTrue(check(180, [{**failed, "failed_tests": []}])["ready"])
 
     def test_dirty_candidate_cannot_be_described_as_the_committed_candidate(self):
         with patch.object(planner, "git", return_value=" M Source.swift"):

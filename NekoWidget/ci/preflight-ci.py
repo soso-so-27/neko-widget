@@ -251,12 +251,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if use_full_baseline and selected != scope.REVIEWED_MEMORY_FAMILY_SCOPE:
-        raise ValueError("Full baseline reference is limited to the unmeasured reviewed-memory-read-ui-v3 profile")
+    if use_full_baseline and selected not in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
+        raise ValueError("Full baseline reference is limited to the reviewed memory-v3 and membership-access profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
     if not samples:
         if use_full_baseline:
-            # v3 reuses full's build/runtime jobs and a subset of existing tests.
+            # Both reviewed profiles keep full's build/runtime jobs and select
+            # native operations from its suites. This is only a cost reference.
             # A new job or test class would need a new measurement/review.
             full_tests = scope.native_tests(scope.FULL_SCOPE)
             if (not set(scope.lanes(selected)) <= set(scope.lanes(scope.FULL_SCOPE))
@@ -273,7 +274,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "ci_minutes": [maximum, maximum], "with_upload_minutes": [with_upload, with_upload],
                     "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
                     "includes_future_rework": False,
-                    "note": "Full-route historical maximum used for planning; v3 is unmeasured and this is not a runtime guarantee."}
+                    "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
         return {"status": "unmeasured", "samples": []}
     values = [float(row["candidate_minutes"]) for row in samples]
     upload = float(history["upload_minutes"]) if include_upload else 0
@@ -330,7 +331,7 @@ def main(argv=None):
     parser.add_argument("--measure-baseline", action="store_true",
                         help="One first measurement for an unmeasured scope; no delivery-time promise or retries")
     parser.add_argument("--use-full-baseline", action="store_true",
-                        help="For unmeasured v3 only, plan against the observed full-route maximum; keep cumulative and diagnostic gates")
+                        help="For reviewed memory-v3 or membership-access only, use the full-route maximum as an unmeasured cost reference; keep all gates")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:

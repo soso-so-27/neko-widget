@@ -324,7 +324,7 @@ MEMBERSHIP_ACCESS_PATHS = MEMBERSHIP_ACCESS_NEW_PATHS | {
     "NekoWidget/ci/verify-personal-rediscovery.swift",
 }
 MEMBERSHIP_ACCESS_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
-    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py",
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "preflight-ci.py", "test-preflight-ci.py",
 ))
 MEMBERSHIP_ACCESS_DATA_REVIEW = "beta-disabled-membership-access"
 # Frozen after product review against the verified maintenance baseline 00a6c5a.
@@ -355,7 +355,7 @@ MEMBERSHIP_ACCESS_DIGESTS = {
         "c1d3e05fe2bee6ba79c9462a7ab6d17f8ae8b605b976b580cdf764317172d25f"),
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": (
         "e18221d6e90ccd631bea05144e996a09e3343916e659642cc5ef665f2440c7e2",
-        "964d0a8efba1ff227ec4bb1dc2b0c621abd227aaca591d0d53c63a55fea07509"),
+        "9098cfcf06b1644aca75c9071ddf0555b97838ccd443a4b7538223a04649909c"),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "18b99383c189fecfd099455c3b8ba7e3ff43ca4f972be3569dbe32b815c4330a",
         "2cbc9801d7d5de425a6d417575746fce4bb810626f5d8044025f980f17c2c1a2"),
@@ -400,19 +400,27 @@ MEMBERSHIP_ACCESS_DIGESTS = {
 MEMBERSHIP_ACCESS_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "a80329eff4f7e370926bcd2192a59b511349ec386399b80d26664a074b7b0f72",
-        "f850f32747aa644a1a27dcaa9a6a32f59bbefce2624c3baac586e5d7ae6af778"
+        "e4d3acad7d0f33dc724f50d47e19a611f737e80fbd971a5e9afe2e23a6713472"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "6c5b35975a2dcbf9d798ad9a864395caa3d96d8e7d9a8c53c488786eb640c273",
         "60ab4df06ed3ec717e9b30b727f9f571c1171d0e1832ed8437dd2046e37a4552"
     ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "28a1b707f3e3e6ac57e130b0262687015f82a85b08d53a466448313c5405df2c",
+        "e3676597b870ef3d2de1820a61183cf490418a5fceb0d45d0f9a5a1b97ae8ac3"
+    ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "f74bc554cf4f7e1e7df977d21aac0b64884fdd98edc579c0e38fabe1ba2001ad",
-        "fb20f8044bef55fd55effb89f7520e1e378ad3e6faa5a9472d74274be38c1543"
+        "16210a94b9be1f75eb5b4706fc13c94c90bbbed09fd6bedda780789ba676e3f7"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "37fc742e9f05db41979af912cc9ec62f0e53e68a23a4d8da5eec7d2e6b6dd6da",
         "3f96d1e290d79095e5fadf09c655a6a1737c09e8006e7ac93b2145a41f6a411f"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "056bfc101e76fad17e3edd4a323643bb8002f8593c867dd55f37f03310ef1d46",
+        "156c1f68831e93e30828ea70126795e98e91dbe321080031a8722b3e00544669"
     ]
 }
 MEMBERSHIP_ACCESS_WORKFLOW_ADDITION = r'''      - name: Verify membership operation boundaries
