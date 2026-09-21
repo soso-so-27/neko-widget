@@ -184,10 +184,14 @@ struct SettingsView: View {
                 Text("写真とねこ")
             }
 
-            if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                Section {
-                PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+            Section {
+                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }
+                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
+                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("settings-memory-note-export")
             }
 
             Section {

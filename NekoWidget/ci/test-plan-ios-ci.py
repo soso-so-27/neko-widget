@@ -224,12 +224,12 @@ class PlanTests(unittest.TestCase):
     )
 
     @staticmethod
-    def delivery_membership_changes(resuming=False):
-        prefix = "WINDOW_SUPPORT" if resuming else "DELIVERY_MEMBERSHIP"
+    def delivery_membership_changes(resuming=False, exporting=False):
+        prefix = "RECORD_PORTABILITY" if exporting else "WINDOW_SUPPORT" if resuming else "DELIVERY_MEMBERSHIP"
         paths, new_paths = (getattr(scope, prefix + suffix) for suffix in ("_PATHS", "_NEW_PATHS"))
         companion_paths = getattr(scope, prefix + "_COMPANION_PATHS")
-        selected = scope.REVIEWED_WINDOW_SUPPORT_SCOPE if resuming else scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE
-        native = scope.REVIEWED_WINDOW_SUPPORT_TESTS if resuming else scope.REVIEWED_DELIVERY_MEMBERSHIP_TESTS
+        selected = getattr(scope, "REVIEWED_" + prefix + "_SCOPE")
+        native = getattr(scope, "REVIEWED_" + prefix + "_TESTS")
         classes = {}
         for identifier in native:
             _, owner, method = identifier.split("/")
@@ -261,6 +261,84 @@ class PlanTests(unittest.TestCase):
         literal = prefix + "_COMPANION_DIGESTS = " + json.dumps(companions, indent=4, sort_keys=True) + "\n"
         changes[selector] = (changes[selector][0], changes[selector][1].replace(empty, literal))
         return changes, product, companions
+
+    def test_record_portability_requires_complete_frozen_sources_and_two_ui_operations(self):
+        changes, product, companions = self.delivery_membership_changes(exporting=True)
+        with patch.object(scope, "RECORD_PORTABILITY_DIGESTS", {}):
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        with patch.object(scope, "RECORD_PORTABILITY_DIGESTS", product), \
+                patch.object(scope, "RECORD_PORTABILITY_COMPANION_DIGESTS", companions):
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_RECORD_PORTABILITY_SCOPE)
+            for path in changes:
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(missing), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    altered = list(changes[path]); altered[side] += " unreviewed change"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(altered)})), scope.FULL_SCOPE)
+            for extra in (scope.CI_WORKFLOW, scope.CI_DIAGNOSTIC_MATRIX,
+                          "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/preflight-ci.py",
+                          "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                          "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
+                          "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
+                          "NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift",
+                          "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                          "NekoWidget/Shared/Models/WidgetRenderPlan.swift",
+                          "NekoWidget/SharingService/src/index.ts"):
+                altered = dict(changes, **{extra: ("before", "after")})
+                self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+                self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_RECORD_PORTABILITY_SCOPE), planner.FULL)
+            with patch.object(scope, "REVIEWED_RECORD_PORTABILITY_TESTS", ()):
+                self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            selector = "NekoWidget/ci/ios_ci_scope.py"
+            source = changes[selector][1]
+            self.assertEqual(scope.select_scope(dict(changes, **{selector: (changes[selector][0], source + source)})),
+                             scope.FULL_SCOPE)
+        tests = scope.native_tests(scope.REVIEWED_RECORD_PORTABILITY_SCOPE)
+        self.assertEqual(len(set(tests)), 2)
+        self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
+        for identifier in tests:
+            self.assertFalse(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1].replace(
+                identifier.split("/")[-1], "absent"), tests))
+
+    def test_record_portability_raw_modifications_and_four_safety_jobs(self):
+        changes, product, companions = self.delivery_membership_changes(exporting=True)
+        base, paths = "b" * 40, sorted(changes)
+        def selected(path=None, modes=":100644 100644", status="M", extra=False):
+            raw = "".join(f"{modes if item == path else ':100644 100644'} {'c' * 40} {'d' * 40} "
+                          f"{status if item == path else 'M'}\0{item}\0" for item in paths)
+            if extra:
+                raw += f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0"
+            def git(*args):
+                if args[0] == "diff":
+                    return raw
+                if args[0] == "show":
+                    revision, item = args[1].split(":", 1)
+                    return changes[item][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        with patch.object(scope, "RECORD_PORTABILITY_DIGESTS", product), \
+                patch.object(scope, "RECORD_PORTABILITY_COMPANION_DIGESTS", companions):
+            self.assertEqual(selected(), scope.REVIEWED_RECORD_PORTABILITY_SCOPE)
+            self.assertEqual(selected(extra=True), scope.FULL_SCOPE)
+            for path in paths:
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":100644 100644", "R100"),
+                                      (":100644 100644", "C100"), (":000000 100644", "A")):
+                    self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
+        selected_scope = scope.REVIEWED_RECORD_PORTABILITY_SCOPE
+        required = planner.required_jobs(paths, selected_scope)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected_scope))
+        self.assertEqual(len(required), 4)
+        self.assertEqual(scope.lanes(selected_scope), ("runtime", "app-ui"))
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, base))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            for state in ("skipped", "failure", "cancelled"):
+                altered = copy.deepcopy(jobs); altered[index]["conclusion"] = state
+                self.assertFalse(planner.covers_jobs(altered, required, self.sha))
 
     @patch.object(scope, "REVIEWED_DELIVERY_MEMBERSHIP_TESTS", DELIVERY_TESTS)
     def test_delivery_membership_requires_complete_frozen_product_and_companions(self):

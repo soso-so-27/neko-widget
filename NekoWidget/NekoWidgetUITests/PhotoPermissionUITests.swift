@@ -1441,6 +1441,113 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testMemoryNoteExportCancellationKeepsText() {
+        let app = launchRecordPortabilityFixture()
+        app.buttons["albums-settings-button"].tap()
+        let entry = app.buttons["settings-memory-note-export"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !entry.isHittable { app.swipeUp() }
+        entry.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "memory-note-export-view").firstMatch.waitForExistence(timeout: 5))
+        let start = app.buttons["memory-note-export-start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        XCTAssertTrue(start.isEnabled)
+        capture("memory-note-export-options")
+        start.tap()
+        cancelRecordExportSheet(app, screenshot: "local-memory-export-system-sheet")
+        XCTAssertTrue(start.isEnabled)
+        XCTAssertFalse(app.staticTexts["record-export-error"].exists)
+        app.navigationBars["メモを書き出す"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["設定"].buttons["閉じる"].tap()
+        assertRecordPortabilitySourcesKept(app)
+        capture("local-memory-export-cancelled-source-kept")
+        app.terminate()
+    }
+
+    @MainActor
+    func testPersonalArchiveExportCancellationKeepsPhotoAndText() {
+        let app = launchRecordPortabilityFixture()
+        app.buttons["albums-settings-button"].tap()
+        let archive = app.buttons["settings-personal-archive"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
+        archive.tap()
+        let refresh = app.buttons["personal-archive-refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 15))
+        refresh.tap()
+        let record = app.buttons["personal-archive-record-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(record.waitForExistence(timeout: 10))
+        record.tap()
+        let body = app.staticTexts["memory-note-body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(body.label, "はじめて窓辺で眠った日")
+        XCTAssertTrue(app.buttons["memory-note-photo"].exists)
+        let menu = app.buttons["personal-archive-record-menu"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: menu)], timeout: 5), .completed)
+        menu.tap()
+        let export = app.buttons["personal-archive-export"].firstMatch
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        XCTAssertTrue(export.isEnabled)
+        capture("personal-archive-export-menu")
+        export.tap()
+        cancelRecordExportSheet(app, screenshot: "personal-archive-export-system-sheet")
+        XCTAssertFalse(app.staticTexts["record-export-error"].exists)
+        XCTAssertEqual(body.label, "はじめて窓辺で眠った日")
+        XCTAssertTrue(app.buttons["memory-note-photo"].isHittable)
+        capture("personal-archive-export-cancelled-source-kept")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        // Reopen from the store-backed list, rather than trusting the old detail's snapshot.
+        record.tap()
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertEqual(body.label, "はじめて窓辺で眠った日")
+        XCTAssertTrue(app.buttons["memory-note-photo"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.navigationBars["iCloudの保管と復元"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["設定"].buttons["閉じる"].tap()
+        assertRecordPortabilitySourcesKept(app)
+        app.terminate()
+    }
+
+    @MainActor
+    private func launchRecordPortabilityFixture() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
+                               "--record-portability-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let probe = app.buttons["archive-root-fixture-portability"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 5))
+        return app
+    }
+
+    @MainActor
+    private func cancelRecordExportSheet(_ app: XCUIApplication, screenshot: String) {
+        let sheet = app.descendants(matching: .any).matching(identifier: "record-export-share-sheet").firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        capture(screenshot)
+        let close = sheet.buttons.matching(NSPredicate(format: "label IN %@", ["閉じる", "Close"])).firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: sheet)], timeout: 5), .completed)
+    }
+
+    @MainActor
+    private func assertRecordPortabilitySourcesKept(_ app: XCUIApplication) {
+        let probe = app.buttons["archive-root-fixture-portability"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        probe.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "kept;files=0"), object: probe)], timeout: 5), .completed,
+            "Cancelling the real system share sheet must preserve the stored memo and remove only temporary exports")
+    }
+
+    @MainActor
     func testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown() {
         let app = XCUIApplication()
         app.launchArguments = ["--membership-access-ui-fixture", "--photo-window-ui-fixture"]

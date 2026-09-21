@@ -1,6 +1,153 @@
 import SwiftUI
 import CloudKit
 import ImageIO
+import UIKit
+
+/// Owns only explicit exports. Closing a picker never writes back to a record.
+@MainActor
+final class RecordExportController: ObservableObject {
+    @Published var payload: PhotoMemoryNoteExportPayload?
+    @Published private(set) var preparing = false
+    @Published private(set) var error: String?
+    private var operation: Task<Void, Never>?
+    private var generation = UUID()
+    private static var pendingCleanup: [UUID: PhotoMemoryNoteExportPayload] = [:]
+
+    func prepare(
+        build: @escaping @Sendable () async throws -> PhotoMemoryNoteExportPayload,
+        verify: @escaping @MainActor () async throws -> Void = {}
+    ) {
+        guard !preparing, payload == nil, retryCleanup() else { return }
+        error = nil
+        preparing = true
+        let token = UUID()
+        generation = token
+        operation = Task {
+            var prepared: PhotoMemoryNoteExportPayload?
+            defer {
+                if let prepared { remove(prepared) }
+                if generation == token { preparing = false; operation = nil }
+            }
+            do {
+                try await verify()
+                try Task.checkCancellation()
+                let worker = Task.detached(priority: .userInitiated, operation: build)
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: { worker.cancel() }
+                prepared = result
+                try Task.checkCancellation()
+                try await verify()
+                guard generation == token, !Task.isCancelled else { return }
+                payload = result
+                prepared = nil
+            } catch let pending as PhotoMemoryNoteExportCleanupPending {
+                remove(pending.payload)
+                if generation == token { error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription }
+            } catch is CancellationError {
+                // The immutable source and any other export remain unchanged.
+            } catch {
+                if generation == token {
+                    self.error = (error as? LocalizedError)?.errorDescription
+                        ?? "ファイルを準備できませんでした。元の写真とメモはそのままです。"
+                }
+            }
+        }
+    }
+
+    func cancelPreparation() {
+        generation = UUID()
+        operation?.cancel()
+        operation = nil
+        preparing = false
+    }
+
+    func invalidate() {
+        cancelPreparation()
+        if let payload { finishSharing(payload) }
+    }
+
+    func finishSharing(_ completed: PhotoMemoryNoteExportPayload, failed: Bool = false) {
+        // An old share-sheet callback must not dismiss or clean a later export.
+        if payload?.id == completed.id { payload = nil }
+        remove(completed)
+        if failed { error = "ファイルの保存・共有を完了できませんでした。元の写真とメモはそのままです。" }
+    }
+
+    @discardableResult
+    func retryCleanup() -> Bool {
+        for value in Array(Self.pendingCleanup.values) { remove(value) }
+        return Self.pendingCleanup.isEmpty
+    }
+
+    private func remove(_ value: PhotoMemoryNoteExportPayload) {
+        do {
+            try value.cleanup()
+            Self.pendingCleanup[value.id] = nil
+        } catch {
+            Self.pendingCleanup[value.id] = value
+            self.error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription
+        }
+    }
+}
+
+struct RecordExportActivity: UIViewControllerRepresentable {
+    let payload: PhotoMemoryNoteExportPayload
+    let finished: @MainActor (Bool) -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [payload.fileURL], applicationActivities: nil)
+        controller.view.accessibilityIdentifier = "record-export-share-sheet"
+        controller.completionWithItemsHandler = { _, _, _, error in
+            let failed = error != nil
+            Task { @MainActor in finished(failed) }
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+struct MemoryNoteExportView: View {
+    let store: PhotoMemoryNoteStore
+    @StateObject private var exporter = RecordExportController()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        Form {
+            Section {
+                Button {
+                    exporter.prepare(build: {
+                        let records = try await store.records()
+                        return try PhotoMemoryNoteExporter.create(records: records)
+                    })
+                } label: {
+                    Label(exporter.preparing ? "準備しています…" : "メモを書き出す", systemImage: "square.and.arrow.up")
+                }
+                .disabled(exporter.preparing || exporter.payload != nil)
+                .accessibilityIdentifier("memory-note-export-start")
+            } footer: {
+                Text("このiPhoneのメモ・日時・猫の名前を、テキストとJSONのZIPファイルにします。写真は含みません。保管した写真は、各記録の「…」から取り出せます。")
+            }
+            if exporter.preparing { ProgressView() }
+            if let error = exporter.error {
+                Text(error).foregroundStyle(.secondary).accessibilityIdentifier("record-export-error")
+            }
+        }
+        .navigationTitle("メモを書き出す")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("memory-note-export-view")
+        .sheet(item: $exporter.payload) { value in
+            RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
+                .onDisappear { exporter.finishSharing(value) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { exporter.cancelPreparation() }
+            if phase == .active { exporter.retryCleanup() }
+        }
+        .onDisappear { exporter.cancelPreparation() }
+    }
+}
 
 private struct PhotoMemoStoreKey: EnvironmentKey {
     static let defaultValue = PhotoMemoryNoteStore.shared

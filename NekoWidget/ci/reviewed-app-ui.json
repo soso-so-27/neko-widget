@@ -1,101 +1,33 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-window-support-resume-v1",
-  "purpose": "One frozen window-support resume batch. Requests are short-lived; the creator and new payer approve separately on their own devices. The live client remains bound to the selected space and current installation/lifecycle authority. A purchase result only refreshes state and cannot switch the payer or resume delivery automatically. Unknown entitlement and required purchase restoration are distinct from confirmed missing membership. Beta access enforcement and sales remain disabled. The existing runtime on both iOS versions now requires the isolated model/wire boundary case; native app UI requires the requester flow with unknown-state separation and the creator approval flow. Build/privacy/disabled-feature checks and the real Photos permission/scan remain mandatory. Widget rendering, selection inputs and target membership are unchanged, so Gallery is excluded by the existing mechanical guard. All three existing Sharing Service workflow jobs remain separately required. Native rendering and real cross-device approval have not yet been verified for this candidate. The profile is unmeasured and this manifest is not CI, main-promotion or TestFlight evidence.",
+  "scope": "reviewed-record-portability-v1",
+  "purpose": "One frozen explicit record-portability batch. Settings exports this device's private memo snapshot as text and JSON; an archive record exports its validated JPEG copy and memo, or memo-only when its photo is missing. Conflict and pending-deletion records cannot be exported. Archive generation rechecks the account and complete record revision; account changes invalidate preparation and the share sheet. The user chooses a destination in the real system sheet; cancellation preserves source records and cleans temporary files. No automatic upload, record mutation, original-photo guarantee or purchase gate is introduced. Existing export/store/account Swift verifiers, app and extension Build and existing signature checks, privacy checks, Photos permission/scan and sharing runtime on both iOS versions remain required. Two native operations check system-sheet arrival, cancellation, source retention and cleanup. Widget rendering/selection, PBX and server sources are unchanged; Gallery is excluded by the existing mechanical guard. Native rendering and system-sheet cancellation have not yet been executed for this candidate. This scope is unmeasured and this manifest is not successful CI or TestFlight evidence.",
   "visualReview": "native-ui-required",
-  "dataReview": "explicit-owner-approved-support-resume",
+  "dataReview": "explicit-private-record-export-without-source-mutation",
   "files": {
-    "NekoWidget/BillingVerificationService/test/apple-notification-history.test.ts": {
-      "before": "4ff2c4a20548ea152d00f1a745f5db69405e4e9eef73ce3d7c7d56fd850b9fd5",
-      "after": "c043a6446efef3e61eaca80d3f84df499436d133ee3f7993b619f8ac7f8a9cdc"
+    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift": {
+      "before": "7325e640cf568cedd3a8582b5aa7e23176f076e5e22b7dd7b10d6fa113ad49b7",
+      "after": "b4026d4cdad626103cf7e751dff696bee2f3c3305d5e75c951db3279cd4b10ab"
     },
-    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
-      "before": "c4769d9f3be8183f296224d7498c624bf0355236ccc02cbb97b9893d71aa125e",
-      "after": "77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997"
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
+      "before": "304bb24157a0b7a55cd7601854cab5625820e976af391f1e03f3a553119df6c0",
+      "after": "b02f0214f77cca11d437d2ff5eaf07182bac625dce1153a19e6255079bdf45a6"
     },
-    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
-      "before": "3409a87de7fb2428406e1b72de52bdd28137bf346ac972aed2a5da6350c44ac3",
-      "after": "0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831"
-    },
-    "NekoWidget/NekoWidget/Services/BillingAPIClient.swift": {
-      "before": "ffbe17d88966fc9f3fea453ed9717ad5cefdd8baaa7739f338ec8026436102e3",
-      "after": "0e23ebb57def1bc8e7e807b0b510db02dbc814c32e12e73116f64121fe348c03"
-    },
-    "NekoWidget/NekoWidget/Services/BillingClientCore.swift": {
-      "before": "6ed845f5e94e933cebe6133933e07b92611dc0c4d97132c65cfbc3a3ec76449c",
-      "after": "41aa827193354b41bb18ad1d171cda21a440d46b5b129c6af33e397b29554a3d"
-    },
-    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift": {
-      "before": "c848b555a68fd192ec1381a022d232b18805315ba32a6a3c254979dbf72f1cf5",
-      "after": "0690f24faaa43234946953d2775cbc576cdd848959f0b68948debe38a99bb2f3"
-    },
-    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "ebbab813d1415b71994eef7408d4f1c432e027924a51e61b330f8ad8ab49b19e",
-      "after": "f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71"
-    },
-    "NekoWidget/NekoWidget/Services/WindowSupportResumeClient.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "f05c2ec8909d401c26d480fbf548204e2327c6fe015a6b6b71804b01022d057c"
-    },
-    "NekoWidget/NekoWidget/Services/WindowSupportResumeModel.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "db0859cba9bed95923273e193439f104e8506b37229d918a8e59577d6271b6b5"
-    },
-    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": {
-      "before": "2e0e8036c2cbcee892ddd7760123b00bf8fa5da0ab73a70965ccaa4eb806fbeb",
-      "after": "f2136c746788836b825aecc3c1bcea36c7def121be9d280c1d5246722a713711"
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": {
+      "before": "9098cfcf06b1644aca75c9071ddf0555b97838ccd443a4b7538223a04649909c",
+      "after": "33fa1893ab3876dedcbb9f6f4da5e610f0b5947d9eaa905ed3cfbe35d48dbaa0"
     },
     "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "99a7586bb10a776bdda193521501b1c1b532ffb161dbfb776a02ce319d803910",
-      "after": "acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43"
-    },
-    "NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "b5ceda2c460903867debe0fb1a2380240bea77b3b28127b5711e5866ce0a2938"
+      "before": "acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43",
+      "after": "c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "199ea7502afb844272fb30b884540755ab1b955ccfa5ef9d02301176f5a66f1f",
-      "after": "b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64"
+      "before": "b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64",
+      "after": "ff089fdeae4594a930d3d381f2537f7acda9e653ee8707de8894ecc1aa627f42"
     },
-    "NekoWidget/SharingService/migrations/0028_window_support_requests.sql": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "15a76aa5b5047d0668597f8c8b48fda68759cb0fd24c123c4251e515f08b4ef0"
-    },
-    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": {
-      "before": "d3a0e8a9b718645f5b7b9c4b872e025b4e8e9cda8015d01fd563ea6c5063353e",
-      "after": "183db4b15059560d3fb10f22ee9a1c4877d5780a0b29c83b294de8271039bf8a"
-    },
-    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": {
-      "before": "30208a41114e19084f7ba8fb1b8b4440b05e3704ace5bc922089c1613b090da9",
-      "after": "222d320872b235bf1d8f88aede93bfef9607e2ec73ad8f6b2436b34fbb1b1cf0"
-    },
-    "NekoWidget/SharingService/src/index.ts": {
-      "before": "64502f8608834664fdc4be74767c60bb409ffab524408bc0863deee63b972da5",
-      "after": "a8556dc0f328f344e9fefba3b1c4031f903fb07dc4087b2b86339eef4901b1c3"
-    },
-    "NekoWidget/SharingService/src/window-support-requests.ts": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "f3774f5e1a9ebbac3a25bc9d687f4f856d1746e4ef28aaec6e73a0cd6a932a2b"
-    },
-    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs": {
-      "before": "4a5b629f3954ceffafa714f2655e5d7f8a1af81a84a90b02aa57efee54b9c1bc",
-      "after": "0a6e14fc56d51468feb351bad9ca1d32e1a4c2c0d5d6194a365fe0674c1cd96a"
-    },
-    "NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts": {
-      "before": "a066997e9d1dae6a6ab8872c18fca88d44734b11fe6342066fbf83daf213b98a",
-      "after": "03efe2b69908f93a85f610467fb06459eb8ea948e4bf192f0f9b1f69bf875f5c"
-    },
-    "NekoWidget/ci/test-billing-client-foundation.py": {
-      "before": "07d7bdf72b63e3eedbe8ed4b493453d48158b1d13395f8814a034b0121a3a071",
-      "after": "284afc6de420f1070320cf970a68586c7169007c73dd11067a829b7482c840b0"
-    },
-    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
-      "before": "5d600aaf207008e42e143663143cdb30868977b54a4f59367e79edc0c1bf3d59",
-      "after": "49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6"
-    },
-    "NekoWidget/ci/validate-sharing-runtime-self-test.py": {
-      "before": "702850e95e7528c1321192eeeaacee6ea964e4033c19f5ceabc0931960393a61",
-      "after": "39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7"
+    "NekoWidget/ci/verify-photo-memory-note-export.swift": {
+      "before": "3c4b4b45b400d15ae7990c5da9db70d68a0e59701632370a71ece5117908e917",
+      "after": "ccc6896d61f4af5cd96cf941f83865a0ef77875515dca9cc613545516c83e9ed"
     }
   }
 }

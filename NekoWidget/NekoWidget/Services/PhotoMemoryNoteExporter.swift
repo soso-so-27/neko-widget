@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 struct PhotoMemoryNoteExportPayload: Identifiable, Sendable {
     let id: UUID
@@ -35,6 +36,7 @@ struct PhotoMemoryNoteExportCleanupPending: Error, Sendable {
 enum PhotoMemoryNoteExportError: Error, LocalizedError, Equatable {
     case emptyRecords
     case invalidMetadata
+    case invalidJPEG
     case tooLarge
     case storageUnavailable
     case cleanupFailed
@@ -43,7 +45,8 @@ enum PhotoMemoryNoteExportError: Error, LocalizedError, Equatable {
         switch self {
         case .emptyRecords: "書き出すメモがありません。"
         case .invalidMetadata: "メモの日付を確認できないため、書き出せませんでした。"
-        case .tooLarge: "書き出す内容が大きすぎます。メモの詳細から1件ずつ書き出してください。"
+        case .invalidJPEG: "保管した写真を確認できないため、書き出せませんでした。"
+        case .tooLarge: "書き出す内容が大きすぎます。元の写真とメモはそのまま残っています。"
         case .storageUnavailable: "書き出しを準備できませんでした。空き容量などを確認してください。"
         case .cleanupFailed: "書き出し用の一時ファイルを片付けられませんでした。"
         }
@@ -87,6 +90,31 @@ enum PhotoMemoryNoteExporter {
         let records: [PortableRecord]
     }
 
+    private struct ArchiveDocument: Encodable {
+        let formatVersion = 1
+        let text: String
+        let capturedAt: String?
+        let writtenAt: String?
+        let updatedAt: String?
+        let catNames: [String]
+        let photoFile: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(formatVersion, forKey: .formatVersion)
+            try values.encode(text, forKey: .text)
+            try values.encode(capturedAt, forKey: .capturedAt)
+            try values.encode(writtenAt, forKey: .writtenAt)
+            try values.encode(updatedAt, forKey: .updatedAt)
+            try values.encode(catNames, forKey: .catNames)
+            try values.encode(photoFile, forKey: .photoFile)
+        }
+    }
+
     /// Run off the main actor. Cancellation is checked before/after disk work
     /// and throughout conversion/CRC calculation. A returned payload is shareable;
     /// a cleanup-pending error transfers ownership only so removal can be retried.
@@ -97,6 +125,102 @@ enum PhotoMemoryNoteExporter {
     ) throws -> PhotoMemoryNoteExportPayload {
         try Task.checkCancellation()
         guard !records.isEmpty else { throw PhotoMemoryNoteExportError.emptyRecords }
+        return try createPayload(temporaryDirectory: temporaryDirectory, fileManager: fileManager) {
+            let portable = try portableRecords(records)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            return try StoredZIP.archive([
+                (name: "memories.json", data: encoder.encode(Document(records: portable))),
+                (name: "memories.txt", data: Data(readableText(portable).utf8))
+            ])
+        }
+    }
+
+    /// Caller supplies one verified, immutable archive snapshot. This function
+    /// neither reads the archive/account nor changes the original record.
+    /// A missing JPEG is explicitly exported as text only, never a broken image.
+    static func createArchive(
+        text: String,
+        capturedAt: Date?,
+        writtenAt: Date?,
+        updatedAt: Date?,
+        catNames: [String],
+        jpegData: Data?,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        fileManager: FileManager = .default
+    ) throws -> PhotoMemoryNoteExportPayload {
+        try Task.checkCancellation()
+        let maximumJPEGBytes = 20 * 1_024 * 1_024
+        let maximumMetadataBytes = 2 * 1_024 * 1_024
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jpegData != nil else {
+            throw PhotoMemoryNoteExportError.emptyRecords
+        }
+        // Match the archive's accepted text/name/JPEG bounds without depending
+        // on its store type. The ZIP allowance includes metadata and headers.
+        guard text.utf8.count <= 65_536, text.count <= 500, catNames.count <= 100,
+              catNames.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 800 && $0.count <= 200 }),
+              (jpegData?.count ?? 0) <= maximumJPEGBytes else {
+            throw PhotoMemoryNoteExportError.tooLarge
+        }
+        return try createPayload(temporaryDirectory: temporaryDirectory, fileManager: fileManager) {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            func dateText(_ date: Date) throws -> String {
+                let seconds = date.timeIntervalSince1970
+                guard seconds.isFinite, seconds >= -62_135_596_800, seconds < 253_402_300_800 else {
+                    throw PhotoMemoryNoteExportError.invalidMetadata
+                }
+                let value = formatter.string(from: date)
+                guard !value.isEmpty else { throw PhotoMemoryNoteExportError.invalidMetadata }
+                return value
+            }
+            let document = try ArchiveDocument(text: text, capturedAt: capturedAt.map(dateText),
+                writtenAt: writtenAt.map(dateText), updatedAt: updatedAt.map(dateText),
+                catNames: catNames, photoFile: jpegData == nil ? nil : "photo.jpg")
+            if let jpegData { try validateJPEG(jpegData) }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let json = try encoder.encode(document)
+            let readable = "ねこのまど — 保管したメモ\n書式バージョン: 1\n"
+                + (jpegData == nil ? "メモのみの書き出しです。写真は含まれません。\n"
+                   : "保管した写真コピー: photo.jpg（写真アプリの原本ではありません）\n")
+                + "日時はUTC（Z）です。\n書いた日: \(document.writtenAt ?? "不明")\n"
+                + "更新日: \(document.updatedAt ?? "不明")\n撮影日: \(document.capturedAt ?? "不明")\n"
+                + "猫: \(catNames.isEmpty ? "未指定" : catNames.joined(separator: "、"))\n\n\(text)\n"
+            let txt = Data(readable.utf8)
+            guard json.count + txt.count <= maximumMetadataBytes else { throw PhotoMemoryNoteExportError.tooLarge }
+            var files = [(name: "memory.json", data: json), (name: "memory.txt", data: txt)]
+            if let jpegData { files.append((name: "photo.jpg", data: jpegData)) }
+            let archive = try StoredZIP.archive(files)
+            guard archive.count <= maximumJPEGBytes + maximumMetadataBytes + 1_024 else {
+                throw PhotoMemoryNoteExportError.tooLarge
+            }
+            return archive
+        }
+    }
+
+    private static func validateJPEG(_ data: Data) throws {
+        try Task.checkCancellation()
+        guard data.count >= 5, data.starts(with: [0xff, 0xd8]), data.suffix(2) == Data([0xff, 0xd9]),
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetType(source) as String? == "public.jpeg",
+              CGImageSourceGetCount(source) == 1, CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 256,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) != nil,
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
+            throw PhotoMemoryNoteExportError.invalidJPEG
+        }
+        try Task.checkCancellation()
+    }
+
+    private static func createPayload(
+        temporaryDirectory: URL, fileManager: FileManager, archiveData: () throws -> Data
+    ) throws -> PhotoMemoryNoteExportPayload {
+        try Task.checkCancellation()
         guard temporaryDirectory.isFileURL else { throw PhotoMemoryNoteExportError.storageUnavailable }
         let id = UUID()
         let root = temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
@@ -125,15 +249,7 @@ enum PhotoMemoryNoteExporter {
             }
             try Task.checkCancellation()
 
-            let portable = try portableRecords(records)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            let json = try encoder.encode(Document(records: portable))
-            let text = Data(try readableText(portable).utf8)
-            let archive = try StoredZIP.archive([
-                (name: "memories.json", data: json),
-                (name: "memories.txt", data: text)
-            ])
+            let archive = try archiveData()
             try Task.checkCancellation()
 #if os(iOS)
             let options: Data.WritingOptions = [.atomic, .completeFileProtection]

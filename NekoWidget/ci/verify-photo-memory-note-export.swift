@@ -1,4 +1,6 @@
 import Foundation
+import ImageIO
+import CoreGraphics
 
 // xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift \
 //   NekoWidget/Services/PhotoMemoryNoteExporter.swift ci/verify-photo-memory-note-export.swift \
@@ -86,7 +88,140 @@ enum PhotoMemoryNoteExportVerifier {
         try require(FileManager.default.fileExists(atPath: second.fileURL.path), "cleanup deleted another export")
         try second.cleanup()
         try require(try contents(exportRoot).isEmpty, "completed export cleanup left temporary files")
-        print("Photo memory note export: PASS (ZIP, private-field isolation, unknown dates, failure/cancellation, cleanup)")
+        try await verifyArchiveExport(root: root, date: date)
+        print("Photo memory note export: PASS (local notes and archived JPEG/text, private-field isolation, bounds, failure/cancellation, cleanup)")
+    }
+
+    private static func verifyArchiveExport(root: URL, date: Date) async throws {
+        let jpeg = try jpegFixture()
+        let note = "初めてのおふろ。\n今日は落ち着いていた 🐈"
+        let payload = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: date.addingTimeInterval(-100),
+            writtenAt: date, updatedAt: date.addingTimeInterval(10), catNames: ["ミケ", "クロ"],
+            jpegData: jpeg, temporaryDirectory: root)
+        let archive = try Data(contentsOf: payload.fileURL)
+        let members = try readStoredZIP(archive, expectedCount: 3)
+        try require(Set(members.keys) == ["memory.json", "memory.txt", "photo.jpg"] && members["photo.jpg"] == jpeg,
+                    "archive changed the JPEG or included undisclosed members")
+        guard let json = members["memory.json"], let txt = members["memory.txt"],
+              let readable = String(data: txt, encoding: .utf8),
+              let document = try JSONSerialization.jsonObject(with: json) as? [String: Any] else {
+            throw Failure.failed("archive metadata is missing")
+        }
+        try require(Set(document.keys) == ["formatVersion", "text", "capturedAt", "writtenAt", "updatedAt", "catNames", "photoFile"],
+                    "archive leaked internal IDs, source links, keys or store metadata")
+        try require(document["formatVersion"] as? Int == 1 && document["text"] as? String == note && readable.contains(note),
+                    "archive TXT and JSON disagree with the original text")
+        try require(document["photoFile"] as? String == "photo.jpg" && readable.contains("photo.jpg")
+                    && !readable.contains("写真は含まれません"), "archive metadata does not identify its photo")
+        try require(document["catNames"] as? [String] == ["ミケ", "クロ"] && readable.contains("ミケ、クロ"),
+                    "archive cat names changed")
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        for (key, expected) in [("capturedAt", date.addingTimeInterval(-100)), ("writtenAt", date), ("updatedAt", date.addingTimeInterval(10))] {
+            let value = document[key] as? String ?? ""
+            try require(value.hasSuffix("Z") && formatter.date(from: value) == expected && readable.contains(value),
+                        "archive date changed or differs between TXT and JSON")
+        }
+        for marker in [root.path, "photoIdentifier", "accountID", "recordID", "revision", "sourceLink", "roomKey"] {
+            try require(json.range(of: Data(marker.utf8)) == nil && txt.range(of: Data(marker.utf8)) == nil,
+                        "archive includes private metadata")
+        }
+        let directory = payload.fileURL.deletingLastPathComponent()
+        try require(try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true,
+                    "archive directory permits backup")
+        try require(try contents(directory) == ["neko-memories.zip"], "archive left loose plaintext or JPEG files")
+
+        let textOnly = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: nil, writtenAt: nil,
+            updatedAt: nil, catNames: [], jpegData: nil, temporaryDirectory: root)
+        let textMembers = try readStoredZIP(Data(contentsOf: textOnly.fileURL))
+        let textDocument = try JSONSerialization.jsonObject(with: textMembers["memory.json"]!) as! [String: Any]
+        let textDescription = String(data: textMembers["memory.txt"]!, encoding: .utf8)!
+        try require(Set(textMembers.keys) == ["memory.json", "memory.txt"] && textDocument["photoFile"] is NSNull
+                    && textDocument["capturedAt"] is NSNull && textDocument["writtenAt"] is NSNull
+                    && textDocument["updatedAt"] is NSNull && textDescription.contains("更新日: 不明")
+                    && textDescription.contains("メモのみ") && textDescription.contains("写真は含まれません"),
+                    "text-only archive pretended a photo or unknown dates exist")
+        let photoOnly = try PhotoMemoryNoteExporter.createArchive(text: "", capturedAt: nil, writtenAt: nil,
+            updatedAt: date, catNames: [], jpegData: jpeg, temporaryDirectory: root)
+        try require(try readStoredZIP(Data(contentsOf: photoOnly.fileURL), expectedCount: 3)["photo.jpg"] == jpeg,
+                    "valid photo-only archive was lost")
+        try photoOnly.cleanup()
+
+        let exportRoot = root.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
+        let before = try contents(exportRoot)
+        try expect(.emptyRecords) {
+            _ = try PhotoMemoryNoteExporter.createArchive(text: " \n", capturedAt: nil, writtenAt: nil,
+                updatedAt: date, catNames: [], jpegData: nil, temporaryDirectory: root)
+        }
+        for invalid in [Data(), Data([0xff, 0xd8, 0x00, 0xff, 0xd9]), Data(jpeg.dropLast())] {
+            try expect(.invalidJPEG) {
+                _ = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: nil, writtenAt: nil,
+                    updatedAt: date, catNames: [], jpegData: invalid, temporaryDirectory: root)
+            }
+        }
+        try expect(.tooLarge) {
+            _ = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: nil, writtenAt: nil,
+                updatedAt: date, catNames: [], jpegData: Data(repeating: 0, count: 20 * 1_024 * 1_024 + 1), temporaryDirectory: root)
+        }
+        try expect(.tooLarge) {
+            _ = try PhotoMemoryNoteExporter.createArchive(text: String(repeating: "猫", count: 501), capturedAt: nil,
+                writtenAt: nil, updatedAt: date, catNames: [], jpegData: nil, temporaryDirectory: root)
+        }
+        for field in 0..<3 {
+            try expect(.invalidMetadata) {
+                let invalid = Date(timeIntervalSinceReferenceDate: .nan)
+                _ = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: field == 0 ? invalid : date,
+                    writtenAt: field == 1 ? invalid : date, updatedAt: field == 2 ? invalid : date,
+                    catNames: [], jpegData: nil, temporaryDirectory: root)
+            }
+        }
+        try require(try contents(exportRoot) == before && Data(contentsOf: payload.fileURL) == archive,
+                    "invalid archive left files or changed another export")
+        // The same deterministic post-creation cancellation/failed-cleanup
+        // boundary must hold for an export containing a photo.
+        for failsCleanup in [false, true] {
+            let operation = Task<PhotoMemoryNoteExportPayload?, Error> {
+                let manager = CancelledExportFileManager(failsCleanup: failsCleanup)
+                do {
+                    let unexpected = try PhotoMemoryNoteExporter.createArchive(text: note, capturedAt: nil, writtenAt: nil,
+                        updatedAt: date, catNames: [], jpegData: jpeg, temporaryDirectory: root, fileManager: manager)
+                    try unexpected.cleanup()
+                    throw Failure.failed("archive ignored cancellation")
+                } catch let pending as PhotoMemoryNoteExportCleanupPending {
+                    try require(failsCleanup && manager.cleanupAttempts == 1
+                                && pending.payload.fileURL.deletingLastPathComponent() == manager.createdExportDirectory,
+                                "archive lost the exact cleanup-pending directory")
+                    return pending.payload
+                } catch is CancellationError {
+                    try require(!failsCleanup && manager.cleanupAttempts == 1, "archive cancellation did not clean up")
+                    return nil
+                }
+            }
+            if let retained = try await operation.value { try retained.cleanup() }
+            try require(try contents(exportRoot) == before, "archive cleanup retry left files")
+        }
+        try payload.cleanup()
+        try payload.cleanup()
+        try require(FileManager.default.fileExists(atPath: textOnly.fileURL.path), "archive cleanup removed another export")
+        try textOnly.cleanup()
+        try require(try contents(exportRoot).isEmpty, "archive exports left temporary files")
+    }
+
+    private static func jpegFixture() throws -> Data {
+        guard let context = CGContext(data: nil, width: 2, height: 1, bitsPerComponent: 8, bytesPerRow: 8,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw Failure.failed("cannot create test pixels")
+        }
+        context.setFillColor(red: 1, green: 0.5, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 1))
+        let result = NSMutableData()
+        guard let image = context.makeImage(),
+              let destination = CGImageDestinationCreateWithData(result, "public.jpeg" as CFString, 1, nil) else {
+            throw Failure.failed("cannot create test JPEG")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw Failure.failed("cannot finish test JPEG") }
+        return result as Data
     }
 
     private static func verifyCancellationAfterCreation(records: [PhotoMemoryNoteRecord], root: URL) async throws {
@@ -224,7 +359,7 @@ enum PhotoMemoryNoteExportVerifier {
 
     /// Independent reader checks directory offsets against local entries, exact
     /// sizes, encoding flags, CRC and the absence of undisclosed ZIP members.
-    private static func readStoredZIP(_ data: Data) throws -> [String: Data] {
+    private static func readStoredZIP(_ data: Data, expectedCount: Int = 2) throws -> [String: Data] {
         let bytes = [UInt8](data)
         func number(_ position: Int, _ length: Int) throws -> Int {
             guard position >= 0, length > 0, position <= bytes.count - length else {
@@ -235,7 +370,7 @@ enum PhotoMemoryNoteExportVerifier {
         let end = bytes.count - 22
         try require(try number(end, 4) == 0x06054b50 && number(end + 20, 2) == 0, "missing ZIP end record")
         let count = try number(end + 10, 2)
-        try require(try count == 2 && number(end + 8, 2) == count
+        try require(try count == expectedCount && number(end + 8, 2) == count
                     && number(end + 4, 4) == 0, "unexpected member/disk counts")
         let centralStart = try number(end + 16, 4)
         try require(try centralStart + number(end + 12, 4) == end, "incorrect central directory boundary")

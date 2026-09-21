@@ -56,10 +56,11 @@ REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
 REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
+REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -493,6 +494,51 @@ WINDOW_SUPPORT_COMPANION_DIGESTS = {
     ]
 }
 
+RECORD_PORTABILITY_NEW_PATHS = frozenset()
+RECORD_PORTABILITY_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift",
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift",
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift",
+    "NekoWidget/NekoWidget/Views/SettingsView.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/ci/verify-photo-memory-note-export.swift",
+})
+RECORD_PORTABILITY_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
+))
+RECORD_PORTABILITY_DATA_REVIEW = "explicit-private-record-export-without-source-mutation"
+# Whole-source bindings against main b6c1a9c; only the exact companion literal is canonicalized.
+RECORD_PORTABILITY_DIGESTS = {'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift': ('7325e640cf568cedd3a8582b5aa7e23176f076e5e22b7dd7b10d6fa113ad49b7',
+                                                                  'b4026d4cdad626103cf7e751dff696bee2f3c3305d5e75c951db3279cd4b10ab'),
+ 'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift': ('304bb24157a0b7a55cd7601854cab5625820e976af391f1e03f3a553119df6c0',
+                                                           'b02f0214f77cca11d437d2ff5eaf07182bac625dce1153a19e6255079bdf45a6'),
+ 'NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift': ('9098cfcf06b1644aca75c9071ddf0555b97838ccd443a4b7538223a04649909c',
+                                                           '33fa1893ab3876dedcbb9f6f4da5e610f0b5947d9eaa905ed3cfbe35d48dbaa0'),
+ 'NekoWidget/NekoWidget/Views/SettingsView.swift': ('acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43',
+                                                    'c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64',
+                                                               'ff089fdeae4594a930d3d381f2537f7acda9e653ee8707de8894ecc1aa627f42'),
+ 'NekoWidget/ci/verify-photo-memory-note-export.swift': ('3c4b4b45b400d15ae7990c5da9db70d68a0e59701632370a71ece5117908e917',
+                                                         'ccc6896d61f4af5cd96cf941f83865a0ef77875515dca9cc613545516c83e9ed')}
+RECORD_PORTABILITY_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "72cac89d200806abcf2583b4ce799c5b0f0ee9763779a476f08b7a61a0f8cbc9",
+        "4cbf2b935724756ceeccb5c15013a1507d82044d09f1afcbdf65b03f608a2873"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "bc06065df4577922b925f60d2f3459396d87b960a88e3aea0636696a332445b9",
+        "c17193c7a2adc584a91b2b5b59c6c12e9af6b346b9e8a66074623365a4852372"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "3d650c3d1cd363ac26abd5fc3824b6f0c2a5b6aa4babdfcc7742e8c5e7ea9df1",
+        "ac1f91afe019252e5a506035ed07b50821df2a11b0ec81244ddf2e8d05bc2df6"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "777e29363aa7e658be36b85f7b8b35b2cee1d89432a5c7a26c17a271467b74e6",
+        "0a2c9095f0af200c93ebca42c5f37861e2184b6d09942cb7de4a0a68fc39cf84"
+    ]
+}
+
 # Gallery can be omitted only when render/selection inputs and Widget target
 # membership are unchanged. The reviewed shared core/log edits are still built
 # and exercised by the required runtime jobs; they are not rendering changes.
@@ -745,7 +791,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -1030,9 +1076,16 @@ def delivery_gallery_inputs_unchanged(changes) -> bool:
     return True
 
 
-def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]], *, resuming=False) -> bool:
-    """Two fixed support profiles share the exact same closed-source checks."""
-    if resuming:
+def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]], *, resuming=False, exporting=False) -> bool:
+    """Fixed reviewed profiles share the exact same closed-source checks."""
+    if exporting and resuming:
+        return False
+    if exporting:
+        paths, new_paths, digests = RECORD_PORTABILITY_PATHS, RECORD_PORTABILITY_NEW_PATHS, RECORD_PORTABILITY_DIGESTS
+        companions, bindings = RECORD_PORTABILITY_COMPANION_PATHS, RECORD_PORTABILITY_COMPANION_DIGESTS
+        binding_name = "RECORD_PORTABILITY_COMPANION_DIGESTS"
+        selected_scope, data_review = REVIEWED_RECORD_PORTABILITY_SCOPE, RECORD_PORTABILITY_DATA_REVIEW
+    elif resuming:
         paths, new_paths, digests = WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_DIGESTS
         companions, bindings = WINDOW_SUPPORT_COMPANION_PATHS, WINDOW_SUPPORT_COMPANION_DIGESTS
         binding_name = "WINDOW_SUPPORT_COMPANION_DIGESTS"
@@ -1404,6 +1457,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_MEMBERSHIP_ACCESS_SCOPE: MEMBERSHIP_ACCESS_PATHS | {REVIEW_MANIFEST} | MEMBERSHIP_ACCESS_COMPANION_PATHS,
         REVIEWED_DELIVERY_MEMBERSHIP_SCOPE: DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST} | DELIVERY_MEMBERSHIP_COMPANION_PATHS,
         REVIEWED_WINDOW_SUPPORT_SCOPE: WINDOW_SUPPORT_PATHS | {REVIEW_MANIFEST} | WINDOW_SUPPORT_COMPANION_PATHS,
+        REVIEWED_RECORD_PORTABILITY_SCOPE: RECORD_PORTABILITY_PATHS | {REVIEW_MANIFEST} | RECORD_PORTABILITY_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -1477,6 +1531,10 @@ REVIEWED_WINDOW_SUPPORT_TESTS = tuple("NekoWidgetUITests/MomentDeliveryComposerU
     "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",
     "testWindowSupportOwnerApprovalWaitsForOtherMembersConfirmation",
 ))
+REVIEWED_RECORD_PORTABILITY_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testMemoryNoteExportCancellationKeepsText",
+    "testPersonalArchiveExportCancellationKeepsPhotoAndText",
+))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -1509,6 +1567,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_RECORD_PORTABILITY_SCOPE:
+        return REVIEWED_RECORD_PORTABILITY_TESTS
     if scope == REVIEWED_WINDOW_SUPPORT_SCOPE:
         return REVIEWED_WINDOW_SUPPORT_TESTS
     if scope == REVIEWED_DELIVERY_MEMBERSHIP_SCOPE:
@@ -1682,6 +1742,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_delivery_membership_changes(changes, exporting=True):
+        return (REVIEWED_RECORD_PORTABILITY_SCOPE if len(REVIEWED_RECORD_PORTABILITY_TESTS) == 2
+                and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_RECORD_PORTABILITY_TESTS) else FULL_SCOPE)
     if reviewed_delivery_membership_changes(changes, resuming=True):
         return (REVIEWED_WINDOW_SUPPORT_SCOPE if len(REVIEWED_WINDOW_SUPPORT_TESTS) == 2
                 and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_WINDOW_SUPPORT_TESTS) else FULL_SCOPE)

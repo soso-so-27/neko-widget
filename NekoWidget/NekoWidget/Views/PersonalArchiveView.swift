@@ -302,6 +302,8 @@ struct PersonalArchiveRecordView: View {
     let noteStore: PhotoMemoryNoteStore
     private let expectedAccount: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var exporter = RecordExportController()
     @State private var record: PersonalArchiveRecord
     @State private var account: String?
     @State private var editing = false
@@ -360,6 +362,10 @@ struct PersonalArchiveRecordView: View {
                     Button("iCloudの変更を確認") { Task { await refreshConflict() } }
                 }
                 if let errorMessage { Text(errorMessage).foregroundStyle(.secondary) }
+                if let error = exporter.error {
+                    Text(error).foregroundStyle(.secondary).accessibilityIdentifier("record-export-error")
+                }
+                if exporter.preparing { ProgressView("ファイルを準備しています…") }
                 if deleting || resolving { ProgressView() }
             }
             }
@@ -370,18 +376,23 @@ struct PersonalArchiveRecordView: View {
                 Button { editing = true } label: { Image(systemName: "square.and.pencil") }
                     .accessibilityLabel(record.text.isEmpty ? "メモを書く" : "メモを編集")
                     .accessibilityIdentifier("memory-note-edit")
-                    .disabled(account == nil || deleting || resolving || record.isDeletionPending || record.state == .conflict)
+                    .disabled(account == nil || deleting || resolving || exporter.preparing || record.isDeletionPending || record.state == .conflict)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Text(record.state.archiveLabel)
+                    Button(record.jpegData == nil ? "メモのみを書き出す" : "写真とメモを書き出す",
+                           systemImage: "square.and.arrow.up") { exportRecord() }
+                        .disabled(record.isDeletionPending || record.state == .conflict ||
+                                  (record.jpegData == nil && record.text.isEmpty))
+                        .accessibilityIdentifier("personal-archive-export")
                     Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
                         .disabled(record.isDeletionPending || record.state == .conflict)
                         .accessibilityIdentifier("personal-archive-delete")
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("メモの操作")
                 .accessibilityIdentifier("personal-archive-record-menu")
-                .disabled(account == nil || deleting || resolving)
+                .disabled(account == nil || deleting || resolving || exporter.preparing)
             }
         }
         .task {
@@ -396,7 +407,19 @@ struct PersonalArchiveRecordView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-            .receive(on: DispatchQueue.main)) { _ in account = nil; editing = false; dismiss() }
+            .receive(on: DispatchQueue.main)) { _ in
+                exporter.invalidate()
+                account = nil; editing = false; dismiss()
+            }
+        .sheet(item: $exporter.payload) { value in
+            RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
+                .onDisappear { exporter.finishSharing(value) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { exporter.cancelPreparation() }
+            if phase == .active { exporter.retryCleanup() }
+        }
+        .onDisappear { exporter.cancelPreparation() }
         .sheet(isPresented: $editing, onDismiss: { Task { await reloadAfterEdit() } }) {
             if let account {
                 PhotoMemoryNoteEditor(archiveRecord: record, archiveStore: store,
@@ -420,6 +443,25 @@ struct PersonalArchiveRecordView: View {
         } message: {
             Text("iCloudとこのアプリの保管一覧から削除します。別のiPhoneには次の読み込み時に反映されます。写真アプリの原本、元のメモ、相手と共有したコピーは残ります。")
         }
+    }
+
+    @MainActor private func exportRecord() {
+        guard let account, !record.isDeletionPending, record.state != .conflict,
+              !deleting, !resolving else { return }
+        let selected = record
+        exporter.prepare(build: {
+            try PhotoMemoryNoteExporter.createArchive(
+                text: selected.text, capturedAt: selected.capturedAt,
+                writtenAt: selected.context?.writtenAt,
+                updatedAt: selected.context?.updatedAt,
+                catNames: selected.context?.catNames ?? [], jpegData: selected.jpegData)
+        }, verify: {
+            let snapshot = try await store.readingSnapshot(expectedAccount: account)
+            guard let current = snapshot.records.first(where: { $0.id == selected.id }),
+                  current == selected, !current.isDeletionPending, current.state != .conflict else {
+                throw PersonalArchiveError.conflict
+            }
+        })
     }
 
     @MainActor private func reloadAfterEdit() async {
@@ -666,12 +708,20 @@ struct PersonalArchiveUIFixture: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var driver = PersonalArchiveRootFixtureDriver()
     @State private var queuedMemoState = "idle"
+    @State private var seededPortabilityMemo = false
+    @State private var portabilityStatus = "pending"
+    private let portabilityFixture = ProcessInfo.processInfo.arguments.contains("--record-portability-ui-fixture")
 
     var body: some View {
         AppRootView(viewModel: driver.viewModel, personalArchiveStore: driver.archiveStore)
             .environment(\.photoMemoStore, Self.noteStore)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack(spacing: 12) {
+                    if portabilityFixture {
+                        Button("持出し後の確認") { Task { await checkPortabilitySources() } }
+                            .accessibilityIdentifier("archive-root-fixture-portability")
+                            .accessibilityValue(portabilityStatus)
+                    }
                     Text("進捗")
                         .accessibilityIdentifier("archive-root-fixture-progress")
                         .accessibilityValue(String(driver.progressUpdates))
@@ -696,8 +746,28 @@ struct PersonalArchiveUIFixture: View {
             }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                if portabilityFixture && !seededPortabilityMemo {
+                    seededPortabilityMemo = true
+                    do {
+                        _ = try await Self.noteStore.save(text: "取り出しても残る猫のメモ", for: "portability-local-photo", expectedRevision: nil)
+                        portabilityStatus = "ready"
+                    } catch { portabilityStatus = "failed" }
+                }
                 await driver.publishProgress()
             }
+    }
+
+    private func checkPortabilitySources() async {
+        do {
+            let notes = try await Self.noteStore.records()
+            let kept = notes.count == 1 && notes.first?.note.text == "取り出しても残る猫のメモ"
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
+            let files: [URL]
+            if FileManager.default.fileExists(atPath: directory.path) {
+                files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            } else { files = [] }
+            portabilityStatus = "\(kept ? "kept" : "changed");files=\(files.count)"
+        } catch { portabilityStatus = "failed" }
     }
 
     private func queueMemoUpdate() async {
