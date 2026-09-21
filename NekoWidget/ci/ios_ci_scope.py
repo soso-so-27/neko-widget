@@ -238,7 +238,7 @@ PHOTO_ACTIONS_DIGESTS = {
         "77a50a0fef14942798734607ee7fc63de36cc3e37ff85323627a0063dfc3b3a9"),
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": (
         "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0",
-        "34c1a3137097d978d29f649b2494103658c27ed00b4e6e1cd7f0d0a2d2521af9"),
+        "aff858d1450736eded381c346f53ccc845a60a561e9f835607e6969ae1f948f1"),
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
         "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
         "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"),
@@ -250,11 +250,11 @@ PHOTO_ACTIONS_DIGESTS = {
 PHOTO_ACTIONS_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "e50bd273db41ffc1e48b0fcf1636d341eac810eab5f7f21d3b04cb92d2cf5521",
-        "890664f8295a2a98ff075e282d716ac5c25f1ab72fce551cf75c41c08966291e"
+        "187811c71f5a27e70c38522b6242e602c4385210b64eb034d3ef19a7ed22f9d7"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "3377758f9962871f437a6001de54a1e836fa4ad3d9d4206e2e06f86fea1db0e4",
-        "51bc10643ec4da9488ae900479296233239a093553bfb5449e4ba0abce1d0aeb"
+        "8fa4e861e23bf07326c5ebd67bcbba030b50e2e87318048d03ac012e55fcab90"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "90f7fc5fd41376aaa000131b156a9ee7c149f646035a1097451f905e424efa6f",

@@ -822,7 +822,7 @@ struct FamilyWindowView: View {
                 if let item = model.receivedMoments.first(where: { $0.id == momentID }),
                    !model.isShowingLastKnownState {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
-                        source: !model.isReportOnly ? model.pairingState.map { receivedFamilyRecordSource(item, spaceID: $0.spaceID) } : nil,
+                        source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
                         caption: model.caption(for: item), captionIsOwn: false,
                         captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(
@@ -3208,7 +3208,7 @@ private struct MomentSentPhotoDetail: View {
             Group {
                 if let record {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
-                        source: record.momentID != nil ? model.pairingState.map { sharedMemoSource(record, spaceID: $0.spaceID) } : nil,
+                        source: record.momentID != nil ? (model.pairingState?.spaceID).map { sharedMemoSource(record, spaceID: $0) } : nil,
                         caption: record.localCaption, captionIsOwn: true,
                         captionIdentifier: "family-window-sent-caption", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(imageURL: displayedDetailURL,
