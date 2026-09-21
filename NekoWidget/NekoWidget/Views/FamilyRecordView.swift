@@ -120,6 +120,7 @@ private struct FamilyRecordSourceEditor: View {
     let client: any FamilyRecordServing
     let source: FamilyRecordPhotoSource
     let windowName: String
+    var saved: () -> Void = {}
     @State private var prepared: FamilyRecordPreparedPhoto?
     @State private var existingEntryID: String?
     @State private var failed = false
@@ -128,10 +129,12 @@ private struct FamilyRecordSourceEditor: View {
     var body: some View {
         Group {
             if let existingEntryID {
-                FamilyRecordView(client: client, focusedEntryID: existingEntryID, windowName: windowName)
+                FamilyRecordEditor(client: client,
+                    target: FamilyRecordEditTarget(entryID: existingEntryID, row: nil, text: ""),
+                    fixturePhoto: nil, windowName: windowName, saved: saved)
             } else if let prepared {
                 FamilyRecordEditor(client: client,
-                    target: nil, fixturePhoto: nil, sourcePhoto: prepared, windowName: windowName, saved: {})
+                    target: nil, fixturePhoto: nil, sourcePhoto: prepared, windowName: windowName, saved: saved)
             } else {
                 NavigationStack {
                     Group {
@@ -161,6 +164,138 @@ private struct FamilyRecordSourceEditor: View {
                 prepared = value
             } catch { if !Task.isCancelled { failed = true } }
         }
+    }
+}
+
+/// One reading surface for the delivery caption and later words. Reading is
+/// strictly read-only: retaining the delivered photo still requires Save.
+struct FamilyPhotoMemoView: View {
+    private enum Destination: Identifiable {
+        case source, edit(FamilyRecordEditTarget), read(String)
+        var id: String {
+            switch self {
+            case .source: "source"
+            case let .edit(target): target.id.uuidString
+            case .read: "read"
+            }
+        }
+    }
+
+    let source: FamilyRecordPhotoSource
+    let caption: String?
+    let captionIsOwn: Bool
+    let captionIdentifier: String
+    let windowName: String
+    @StateObject private var model: FamilyRecordViewModel
+    @State private var destination: Destination?
+    @Environment(\.scenePhase) private var scenePhase
+
+    init(spaceID: String, source: FamilyRecordPhotoSource, caption: String?, captionIsOwn: Bool,
+         captionIdentifier: String, windowName: String = "このまど",
+         client: (any FamilyRecordServing)? = nil) {
+        self.source = source; self.caption = caption; self.captionIsOwn = captionIsOwn
+        self.captionIdentifier = captionIdentifier; self.windowName = windowName
+        _model = StateObject(wrappedValue: FamilyRecordViewModel(
+            client: client ?? FamilyRecordClient(expectedSpaceID: spaceID)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                if let caption, !caption.isEmpty {
+                    memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
+                } else { Spacer(minLength: 0) }
+                if model.snapshot != nil {
+                        Button { destination = .source } label: {
+                            Image(systemName: "square.and.pencil").font(.title3)
+                                .frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("メモを追加")
+                        .accessibilityHint("\(windowName)の相手にも表示されます")
+                        .accessibilityIdentifier("family-record-add-current-photo")
+                } else if model.loading {
+                    ProgressView().frame(width: 44, height: 44)
+                } else if model.error != nil {
+                    Button { Task { await model.reload() } } label: {
+                        Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("メモを読み込み直す")
+                }
+            }
+            if let snapshot = model.snapshot,
+               let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID) {
+                ForEach(snapshot.catalog.records.filter {
+                    $0.kind == .words && $0.entryID == photo.id && $0.state == .active
+                }.sorted { $0.createdAt < $1.createdAt }) { row in
+                    if let text = snapshot.words[row.id] {
+                        HStack(alignment: .top, spacing: 8) {
+                            memoText(text, isOwn: row.authorID == snapshot.catalog.participantID,
+                                     identifier: "family-photo-memo-\(row.id)")
+                            if row.authorID == snapshot.catalog.participantID {
+                                Button {
+                                    destination = .edit(FamilyRecordEditTarget(entryID: row.entryID, row: row, text: text))
+                                } label: {
+                                    Image(systemName: "square.and.pencil").frame(width: 44, height: 44)
+                                }
+                                .accessibilityLabel("自分のメモを編集")
+                                .accessibilityIdentifier("family-photo-memo-edit")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 4)
+        .task(id: source.momentID) { await model.reload() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { clearPresentation() }
+            else if phase == .active { Task { await model.reload() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in
+                clearPresentation()
+                if scenePhase == .active { Task { await model.reload() } }
+            }
+        .sheet(item: $destination) { destination in
+            switch destination {
+            case .source:
+                FamilyRecordSourceEditor(client: model.client, source: source, windowName: windowName,
+                    saved: { Task { await model.reload() } })
+            case let .edit(target):
+                FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil,
+                    windowName: windowName, saved: { Task { await model.reload() } })
+            case let .read(text):
+                NavigationStack {
+                    ScrollView { Text(verbatim: text).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding().textSelection(.enabled).accessibilityIdentifier(captionIdentifier) }
+                    .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { self.destination = nil }
+                    } }
+                }
+            }
+        }
+    }
+
+    private func clearPresentation() {
+        model.clear()
+        if case .read? = destination { destination = nil }
+    }
+
+    private func memoText(_ text: String, isOwn: Bool, identifier: String) -> some View {
+        Button { destination = .read(text) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isOwn ? "自分" : "相手").font(.caption2).foregroundStyle(.secondary)
+                Text(verbatim: text).font(.subheadline).foregroundStyle(.primary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(isOwn ? "自分" : "相手")のメモ。\(text)")
+        .accessibilityHint("全文を開きます")
+        .accessibilityIdentifier(identifier)
     }
 }
 

@@ -28,10 +28,11 @@ ARCHIVE_PICKER_SCOPE = "archive-picker-ui-v1"
 REVIEWED_MEMORY_SCOPE = "reviewed-memory-read-ui-v2"
 REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
+REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -221,6 +222,50 @@ CAT_NOTE_DIGESTS: dict[str, tuple[str, str]] = {
         "ca811d79911034bbf3fed32a034712ba348ded0ab8e636001b7aa20dcc2df0c6"),
 }
 
+# One independently reviewed photo-action/read-projection batch against
+# main 76043aa. No storage, author, identity, delivery or permission exception.
+PHOTO_ACTIONS_PATHS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
+    "LikedPhotosView.swift", "FamilyRecordView.swift", "FamilyWindowView.swift",
+)) | {MEMORY_TEST_PATH}
+PHOTO_ACTIONS_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
+))
+PHOTO_ACTIONS_DATA_REVIEW = "photo-actions-read-projection"
+# Frozen after independent review of this product and its CI companions.
+PHOTO_ACTIONS_DIGESTS = {
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
+        "ae4dc75def94da77f63f6393420f3a67151cd366c25cd1f6582b4941477a3031",
+        "4aa444df885c61a8cfa84ff5c0f0323180f25bd9ca57904e7abc9dad84f3db25"),
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": (
+        "4c0e3ce87159ef4cd60e4207d2ec846453917971df601c1156eec7fd64bcb7a0",
+        "92dd230f598f123329526cd7741fdb4b1089ec506f71134e41cea1067bb9b657"),
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
+        "5a10c276ba90559ac2a48c2735d0bb655cfd6b5960f14a1241d3db8f1dc1d1ed",
+        "37e7ff3fa884fd627609ab99e8cfee58a0dab05dba64098c17eaa7eed8667595"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "8233c85ac62dca21ebf48469bf0dee5ce62951506ad5b63cb1ed2387ab700fbb",
+        "3c284a8b706de469ec798c2023d92bd32e27b8abe424dcf8aee8e12abb09e9aa"),
+}
+# Canonicalize only this exact literal to avoid a recursive selector digest.
+PHOTO_ACTIONS_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "e50bd273db41ffc1e48b0fcf1636d341eac810eab5f7f21d3b04cb92d2cf5521",
+        "3577dba46d468f639f9e6afbb91dcaef6e398caa76978b7a38b352f90d59562d"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "3377758f9962871f437a6001de54a1e836fa4ad3d9d4206e2e06f86fea1db0e4",
+        "ba4dc952e2a0cc1a689cadc2357e50795de211f93cdd890f7a57edbb7ccbfdec"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "90f7fc5fd41376aaa000131b156a9ee7c149f646035a1097451f905e424efa6f",
+        "51fc43de7637decd5902a36d868d206e04e4c43d61fb89e43c1f689ccfafa121"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "eea27c475f48aaa523ee5f27868d7f9b4c74f78184d18178326ed3f22275ad58",
+        "eba4ae1998d987bd1116fbf82508c2dd3c5ec514bc80bfb73e2b7affe6219665"
+    ]
+}
+
 PAIRING_EXPLANATION_BEFORE = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 PAIRING_EXPLANATION_AFTER = '                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。共同記録も開けなくなるため、取り下げたい自分の写真や言葉があれば、先に共同記録で操作してください。相手が「自分のお気に入りに追加」で写真アプリへ保存した写真は削除できません。"'
 
@@ -245,7 +290,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -402,6 +447,53 @@ def reviewed_cat_note_changes(changes: dict[str, tuple[str, str]]) -> bool:
             return False
         return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
                    for path, pair in CAT_NOTE_DIGESTS.items())
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def reviewed_photo_actions_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Only the complete frozen product batch can use its eight UI operations."""
+    product_paths = PHOTO_ACTIONS_PATHS | {REVIEW_MANIFEST}
+    if (set(PHOTO_ACTIONS_DIGESTS) != PHOTO_ACTIONS_PATHS
+            or set(changes) != product_paths | PHOTO_ACTIONS_COMPANION_PATHS
+            or set(PHOTO_ACTIONS_COMPANION_DIGESTS) != PHOTO_ACTIONS_COMPANION_PATHS | {REVIEW_MANIFEST}):
+        return False
+    for path, pair in PHOTO_ACTIONS_COMPANION_DIGESTS.items():
+        before, after = changes[path]
+        if path == "NekoWidget/ci/ios_ci_scope.py":
+            binding = "PHOTO_ACTIONS_COMPANION_DIGESTS = " + json.dumps(
+                PHOTO_ACTIONS_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+            after = after.replace("\r\n", "\n")
+            if after.count(binding) != 1:
+                return False
+            after = after.replace(binding, "PHOTO_ACTIONS_COMPANION_DIGESTS = {}\n", 1)
+        if not before or not after or list(map(source_digest, (before, after))) != pair:
+            return False
+    for path in PHOTO_ACTIONS_PATHS:
+        before, after = changes[path]
+        if not before or not after or tuple(map(source_digest, (before, after))) != PHOTO_ACTIONS_DIGESTS[path]:
+            return False
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate review key")
+            result[key] = value
+        return result
+
+    try:
+        review = json.loads(changes[REVIEW_MANIFEST][1], object_pairs_hook=unique_object)
+        if (set(review) != {"schemaVersion", "scope", "purpose", "visualReview", "dataReview", "files"}
+                or type(review["schemaVersion"]) is not int or review["schemaVersion"] != 1
+                or review["scope"] != REVIEWED_PHOTO_ACTIONS_SCOPE
+                or review["visualReview"] != "user-device"
+                or review["dataReview"] != PHOTO_ACTIONS_DATA_REVIEW
+                or not isinstance(review["purpose"], str) or not review["purpose"].strip()
+                or set(review["files"]) != PHOTO_ACTIONS_PATHS):
+            return False
+        return all(review["files"][path] == {"before": pair[0], "after": pair[1]}
+                   for path, pair in PHOTO_ACTIONS_DIGESTS.items())
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
@@ -651,6 +743,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_MEMORY_SCOPE: REVIEWABLE_MEMORY_PATHS | {REVIEW_MANIFEST},
         REVIEWED_MEMORY_FAMILY_SCOPE: REVIEWABLE_MEMORY_PATHS | FAMILY_COMPANION_PATHS | {REVIEW_MANIFEST, LOCAL_EDITOR_PATH},
         REVIEWED_CAT_NOTE_SCOPE: CAT_NOTE_PATHS | {REVIEW_MANIFEST} | CAT_NOTE_REPAIR_PATHS,
+        REVIEWED_PHOTO_ACTIONS_SCOPE: PHOTO_ACTIONS_PATHS | {REVIEW_MANIFEST} | PHOTO_ACTIONS_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -695,6 +788,16 @@ REVIEWED_CAT_NOTE_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier
     "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
     "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
 ))
+REVIEWED_PHOTO_ACTIONS_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
+    "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
+    "SoloMemoriesUITests/testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
+    "MomentDeliveryComposerUITests/testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption",
+    "MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
+    "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
+    "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
+    "MomentDeliveryComposerUITests/testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes",
+))
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -727,6 +830,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_PHOTO_ACTIONS_SCOPE:
+        return REVIEWED_PHOTO_ACTIONS_TESTS
     if scope == REVIEWED_CAT_NOTE_SCOPE:
         return REVIEWED_CAT_NOTE_TESTS
     if scope == REVIEWED_MEMORY_FAMILY_SCOPE:
@@ -890,6 +995,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_photo_actions_changes(changes):
+        return (REVIEWED_PHOTO_ACTIONS_SCOPE
+                if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_PHOTO_ACTIONS_TESTS) else FULL_SCOPE)
     if reviewed_cat_note_changes(changes):
         return (REVIEWED_CAT_NOTE_SCOPE
                 if memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_CAT_NOTE_TESTS) else FULL_SCOPE)

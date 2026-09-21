@@ -2389,20 +2389,8 @@ struct PhotoBrowserView: View {
     private var browserFooter: some View {
         VStack(spacing: 8) {
             if let selectedPhoto {
-                if dynamicTypeSize.isAccessibilitySize {
-                    photoDate(selectedPhoto)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 12) {
-                        Spacer(minLength: 0)
-                        photoActions(selectedPhoto)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        photoDate(selectedPhoto)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        photoActions(selectedPhoto)
-                    }
-                }
+                photoDate(selectedPhoto)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
                     Button {
                         personalNotePhoto = selectedPhoto
@@ -2415,11 +2403,15 @@ struct PhotoBrowserView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("思い出のメモ")
+                    .accessibilityLabel("メモ")
                     .accessibilityValue(note.text)
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
+                HStack {
+                    photoActions(selectedPhoto)
+                }
+                .frame(maxWidth: .infinity)
             }
 
             if isExportingMemoryPhoto {
@@ -2447,19 +2439,13 @@ struct PhotoBrowserView: View {
             let spokenDate = creationDate.formatted(.dateTime.year().month().day())
             let dateText = dynamicTypeSize.isAccessibilitySize
                 ? creationDate.formatted(date: .numeric, time: .omitted) : spokenDate
-            if dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: creationDate) }) == true {
-                photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
-                    .foregroundStyle(.secondary)
-                    .frame(minHeight: 44)
-                    .accessibilityLabel(spokenDate)
-                    .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
-            } else {
-                sameDayLink(for: photo, date: creationDate, dateText: dateText)
-                .accessibilityLabel("この日の写真をすべて見る")
+            photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(spokenDate)
                 .accessibilityValue(spokenDate)
                 .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
-                .accessibilityIdentifier("photo-browser-same-day")
-            }
+                .accessibilityIdentifier("photo-browser-date")
         } else {
             Text("撮影日不明")
                 .font(.subheadline)
@@ -2488,10 +2474,7 @@ struct PhotoBrowserView: View {
     }
 
     private func sameDayLinkLabel(photo: PhotoPresentation, dateText: String) -> some View {
-        photoDateLabel(dateText, photo: photo, showsCollectionIcon: true)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(minHeight: 44)
+        Label("同じ日の写真", systemImage: "photo.stack")
     }
 
     private func photoDateLabel(_ dateText: String, photo: PhotoPresentation,
@@ -2510,6 +2493,7 @@ struct PhotoBrowserView: View {
 
     @ViewBuilder
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
+        Spacer(minLength: 0)
         if selectedPhoto.isLiked {
             Menu {
                 Button("お気に入りから外す", role: .destructive) {
@@ -2542,20 +2526,33 @@ struct PhotoBrowserView: View {
             .disabled(isExportingMemoryPhoto)
         }
 
+        Spacer(minLength: 0)
+        Button { personalNotePhoto = selectedPhoto } label: {
+            Image(systemName: "square.and.pencil")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
+        .accessibilityHint("自分だけのメモです。相手には送られません")
+        .accessibilityIdentifier("photo-memory-note-open")
+        .disabled(isExportingMemoryPhoto)
+
         if canDeliverToWindow {
+            Spacer(minLength: 0)
             Button {
                 // Freeze the visible photo before opening destination selection.
                 deliveryPhoto = selectedPhoto
             } label: {
-                Image(systemName: "photo.badge.plus")
+                Image(systemName: "paperplane")
                     .font(.title3)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("まどに追加")
-            .accessibilityHint("共有先を選んでから、写真とひとことを確認します")
+            .accessibilityLabel("まどに送る")
+            .accessibilityHint("共有先を選んでから、写真とメモを確認します")
             .accessibilityIdentifier("photo-browser-deliver")
             .disabled(isExportingMemoryPhoto)
         }
+        Spacer(minLength: 0)
     }
 
     private var browserNavigation: some View {
@@ -2563,21 +2560,16 @@ struct PhotoBrowserView: View {
         .background(Color.black)
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if let selectedPhoto {
-                    Button { personalNotePhoto = selectedPhoto } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
-                    .accessibilityHint("自分だけのメモです。相手には送られません")
-                    .accessibilityIdentifier("photo-memory-note-open")
-                    .disabled(isExportingMemoryPhoto)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) { relatedAlbumsMenu }
-            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if let photo = selectedPhoto, let date = photo.creationDate,
+                       dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
+                        sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
+                            .accessibilityIdentifier("photo-browser-same-day")
+                    }
+                    relatedAlbumsMenu
                     if PersonalArchiveStore.isConfigured,
                        let note = personalNote.note(for: selectedPhotoIdentifier) {
                         Button {
@@ -2643,6 +2635,7 @@ struct PhotoBrowserView: View {
                 } label: {
                     Label("写真メニュー", systemImage: "ellipsis")
                 }
+                .accessibilityIdentifier("photo-browser-related")
             }
         }
     }
@@ -2651,7 +2644,7 @@ struct PhotoBrowserView: View {
     private var relatedAlbumsMenu: some View {
         let links = relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []
         if let openRelatedAlbum, !links.isEmpty {
-            Menu {
+            Group {
                 ForEach(PhotoRelatedAlbumLink.Group.allCases, id: \.self) { group in
                     let groupLinks = links.filter { $0.group == group }
                     if !groupLinks.isEmpty {
@@ -2670,11 +2663,7 @@ struct PhotoBrowserView: View {
                         }
                     }
                 }
-            } label: {
-                Label("関連する写真", systemImage: "photo.stack")
             }
-            .accessibilityIdentifier("photo-browser-related")
-            .accessibilityLabel("関連する写真")
         }
     }
 

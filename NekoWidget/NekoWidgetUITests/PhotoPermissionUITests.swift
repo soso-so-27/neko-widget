@@ -49,7 +49,7 @@ final class OfficialWindowUITests: XCTestCase {
 
         // The URL host calls the same direct destination as AppRootView; it
         // must work without MainTabView.body's environment or navigation path.
-        let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
+        let sameDay = app.descendants(matching: .any).matching(identifier: "photo-browser-date")
         let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
         try foreground(app.buttons.matching(identifier: "photo-browser-related")).tap()
         try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
@@ -1654,7 +1654,7 @@ final class SoloMemoriesUITests: XCTestCase {
         albumPhotos.firstMatch.tap()
         let filteredPhoto = app.images["photo-detail-zoom-surface"]
         XCTAssertTrue(filteredPhoto.waitForExistence(timeout: 10))
-        let filteredDate = app.buttons["photo-browser-same-day"]
+        let filteredDate = app.descendants(matching: .any)["photo-browser-date"].firstMatch
         XCTAssertTrue(filteredDate.waitForExistence(timeout: 5))
         XCTAssertEqual(filteredDate.value as? String, "2025年12月18日")
         filteredPhoto.swipeLeft()
@@ -1694,7 +1694,7 @@ final class SoloMemoriesUITests: XCTestCase {
             photos.firstMatch.tap()
             let zoom = app.images["photo-detail-zoom-surface"]
             XCTAssertTrue(zoom.waitForExistence(timeout: 10))
-            let date = app.buttons["photo-browser-same-day"]
+            let date = app.descendants(matching: .any)["photo-browser-date"].firstMatch
             XCTAssertTrue(date.waitForExistence(timeout: 5))
             let expectedDate = index == 0 ? "2025年12月18日" : "2025年8月4日"
             XCTAssertEqual(date.value as? String, expectedDate, "The browser opened another cat's photo")
@@ -1961,7 +1961,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 let photo = app.images["photo-detail-zoom-surface"]
                 XCTAssertTrue(photo.waitForExistence(timeout: 15))
                 XCTAssertTrue(photo.isHittable)
-                XCTAssertTrue((app.buttons["photo-browser-same-day"].value as? String ?? "")
+                XCTAssertTrue((app.descendants(matching: .any)["photo-browser-date"].firstMatch.value as? String ?? "")
                     .contains("2025年12月18日"))
                 XCTAssertFalse(app.buttons["unavailable-widget-open-photos"].exists)
             } else {
@@ -2106,6 +2106,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let thirdYearPhoto = app.buttons.matching(identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3")
             _ = try foreground(thirdYearPhoto)
             try closeSheet(in: app)
+            try foreground(related).tap()
             try foreground(sameDay).tap()
             try foreground(secondDayPhoto).tap()
             _ = try foreground(secondPage)
@@ -2124,6 +2125,7 @@ final class SoloMemoriesUITests: XCTestCase {
             _ = try foreground(firstCatPhoto)
             _ = try hittableElements(app.buttons.matching(identifier: "curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"), count: 0)
             try foreground(firstCatPhoto).tap()
+            try foreground(related).tap()
             try foreground(sameDay).tap()
             try foreground(secondDayPhoto).tap()
             _ = try foreground(secondPage)
@@ -2144,7 +2146,7 @@ final class SoloMemoriesUITests: XCTestCase {
             try foreground(back).tap()
             _ = try foreground(secondDayPhoto)
             try foreground(back).tap()
-            _ = try foreground(sameDay)
+            _ = try foreground(app.descendants(matching: .any).matching(identifier: "photo-browser-date"))
             try foreground(back).tap()
             // Photos restores its last section. Select the scope that owns
             // the cat shortcuts instead of assuming a fresh "all" section.
@@ -2170,7 +2172,10 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testSameDayRediscoveryOpensAndSavesTheTappedPhoto() {
         let app = launch("rediscovery")
-        let sameDay = app.buttons["この日の写真をすべて見る"]
+        let sameDay = app.buttons["photo-browser-same-day"]
+        let menu = app.buttons["photo-browser-related"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        menu.tap()
         XCTAssertTrue(sameDay.waitForExistence(timeout: 15))
         for _ in 0..<3 where !sameDay.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(sameDay.isHittable)
@@ -2220,7 +2225,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
                                                         "day-photos-photo-")).count, 2)
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
         // The entry browser contains only the first photo; the same-day
         // collection contains two. Only its second photo was saved above.
         XCTAssertTrue(app.buttons["お気に入りに追加"].isHittable,
@@ -3694,8 +3699,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
         // The shipping shared-memo entry uses this exact photo. Merely opening
         // or cancelling must not create a record or copy the sender's words.
-        tapReceivedDetailControl(app, identifier: "family-record-entry")
-        app.buttons["family-record-add-current-photo"].tap()
+        tapReceivedDetailControl(app, identifier: "family-record-add-current-photo")
         let sharedInput = app.textViews["family-record-words-input"]
         func reachSharedInput() {
             XCTAssertTrue(app.navigationBars["写真にメモを追加"].waitForExistence(timeout: 10),
@@ -3708,8 +3712,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertFalse(app.buttons["family-record-pick-photo"].exists)
         XCTAssertFalse(app.buttons["family-record-reuse-caption"].exists)
         app.buttons["family-record-editor-close"].tap()
-        tapReceivedDetailControl(app, identifier: "family-record-entry")
-        app.buttons["family-record-add-current-photo"].tap()
+        tapReceivedDetailControl(app, identifier: "family-record-add-current-photo")
         reachSharedInput() // Cancel must leave the photo unregistered.
         let sharedSave = app.buttons["family-record-save"]
         for _ in 0..<5 where !sharedSave.isHittable { app.swipeUp() }
@@ -3718,15 +3721,27 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         sharedSave.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: sharedInput)], timeout: 10), .completed)
-        tapReceivedDetailControl(app, identifier: "family-record-entry")
-        app.buttons["family-record-add-current-photo"].tap()
-        XCTAssertTrue(app.navigationBars["共有メモ"].waitForExistence(timeout: 10))
-        let sharedAddWords = app.buttons["family-record-add-words"]
-        for _ in 0..<5 where !sharedAddWords.isHittable { app.swipeUp() }
-        XCTAssertTrue(sharedAddWords.waitForExistence(timeout: 5))
-        XCTAssertFalse(sharedInput.exists, "Reopening must use the existing photo record, not another upload.")
-        XCTAssertFalse(app.buttons["family-record-add"].exists)
-        app.navigationBars["共有メモ"].buttons["閉じる"].tap()
+        tapReceivedDetailControl(app, identifier: "family-record-add-current-photo")
+        XCTAssertTrue(app.navigationBars["メモを追加"].waitForExistence(timeout: 10))
+        XCTAssertTrue(sharedInput.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["family-record-pick-photo"].exists,
+                       "An existing photo must open its words editor without another upload.")
+        sharedInput.tap()
+        sharedInput.typeText("一緒に遊んだ日")
+        app.buttons["完了"].tap()
+        for _ in 0..<5 where !sharedSave.isHittable { app.swipeUp() }
+        sharedSave.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: sharedInput)], timeout: 10), .completed)
+        let addedMemo = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "一緒に遊んだ日")).firstMatch
+        XCTAssertTrue(addedMemo.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !addedMemo.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(addedMemo.isHittable)
+        XCTAssertTrue(app.buttons["photo-detail-read-caption"].exists,
+                      "The original caption and later memo must share the photo footer.")
+        XCTAssertFalse(app.buttons["family-record-entry"].exists,
+                       "Photo detail must not expose a separate shared-memo feature.")
+        attach(app, name: "shared-photo-caption-and-memo")
         closePhotoDetail(app)
 
         let second = app.buttons["received-fixture-tile-1"]
