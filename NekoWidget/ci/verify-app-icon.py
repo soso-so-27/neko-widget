@@ -74,7 +74,7 @@ def source_assets():
     return records
 
 
-def inspect_app(app, artifacts, report):
+def inspect_app(app, artifacts, report, capture_first_launch=True):
     # Reuse the existing Release products; incrementally add Simulator ad-hoc
     # signing with Xcode's real entitlements, not a hand-crafted codesign mask.
     derived = app.parents[3]
@@ -94,6 +94,11 @@ def inspect_app(app, artifacts, report):
     if "AppIcon" not in names or "OnboardingAppIcon" not in names:
         raise ValueError("Compiled icon renditions are missing")
     report["compiledAssetNames"] = sorted(names & {"AppIcon", "OnboardingAppIcon"})
+    if not capture_first_launch:
+        # Selection-only changes do not alter icon pixels. Keep the packaged
+        # asset and signature checks; app launch is exercised by native lanes.
+        report["visualCheck"] = "not-requested"
+        return
     runtimes = json.loads(command("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"]
     runtime = next((r["identifier"] for r in runtimes if r.get("isAvailable") and r.get("version") == "26.2"), None)
     if runtime is None:
@@ -133,6 +138,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path)
     parser.add_argument("--artifacts", type=Path)
+    parser.add_argument("--visual-check", choices=("true", "false"), default="true")
     args = parser.parse_args()
     report = {"schemaVersion": 1, "commit": os.environ.get("GITHUB_SHA"), "assets": source_assets()}
     if args.app:
@@ -140,7 +146,7 @@ def main():
             parser.error("--app requires --artifacts")
         args.artifacts.mkdir(parents=True, exist_ok=True)
         try:
-            inspect_app(args.app, args.artifacts, report)
+            inspect_app(args.app, args.artifacts, report, capture_first_launch=args.visual_check == "true")
         finally:
             (args.artifacts / "icon-check.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report))

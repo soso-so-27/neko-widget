@@ -85,6 +85,15 @@ class IconTests(unittest.TestCase):
     def test_rollout_preserves_existing_workflow_execution(self):
         workflow = (CI.parents[1] / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
         self.assertEqual(workflow.count(icons.ICON_WORKFLOW_STEPS), 1)
+        visual_argument = " --visual-check ${{ needs.plan.outputs.runtime_scope == 'app-icon-v1' }}"
+        self.assertEqual(workflow.count(visual_argument), 1)
+        legacy = workflow.replace(visual_argument, "")
+        self.assertTrue(scope.ci_selection_only({scope.CI_WORKFLOW: (legacy, workflow)}))
+        self.assertFalse(scope.ci_selection_only({scope.CI_WORKFLOW: (workflow, legacy)}))
+        for unsafe in (" --visual-check false", " --visual-check true",
+                       " --visual-check ${{ needs.plan.outputs.runtime_scope == 'ci-selection-v1' }}"):
+            self.assertFalse(scope.ci_selection_only({scope.CI_WORKFLOW:
+                (legacy, workflow.replace(visual_argument, unsafe))}))
         before = workflow.replace(icons.ICON_WORKFLOW_STEPS, "")
         self.assertTrue(scope.ci_selection_only({scope.CI_WORKFLOW: (before, workflow)}))
         self.assertFalse(scope.ci_selection_only({scope.CI_WORKFLOW: (workflow, before)}))

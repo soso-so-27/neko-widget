@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 
-from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, ICON_WORKFLOW_STEPS, icon_workflow_wired
+from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, ICON_WORKFLOW_STEPS, LEGACY_ICON_WORKFLOW_STEPS, icon_workflow_wired
 
 
 FULL_SCOPE = "full-v1"
@@ -476,8 +476,9 @@ def source_digest(source: str) -> str:
 
 def workflow_execution(source: str) -> tuple[str, ...]:
     """Ignore only reviewed selection wiring; keep builds/security/commands."""
-    if icon_workflow_wired(source):
-        source = source.replace(ICON_WORKFLOW_STEPS, "")
+    for steps in (ICON_WORKFLOW_STEPS, LEGACY_ICON_WORKFLOW_STEPS):
+        if icon_workflow_wired(source, steps):
+            source = source.replace(steps, "")
     source = source.replace('  push:\n    # Manual diagnostic runs use a separate workflow and are not release evidence.\n'
                             '    branches-ignore:\n      - "diagnostic/**"\n', '  push:\n', 1)
     selection_lines = {

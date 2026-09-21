@@ -27,6 +27,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - CI待機は `python NekoWidget/ci/watch-ci-run.py RUN_ID --expected-sha FULL_SHA --output RESULT_JSON` を1本だけ起動する。失敗jobの終了を検出した時点で `failed_job`・exit 1・失敗一覧を保存して主担当へ戻り、兄弟jobの終了を待たず原因調査を始める。兄弟jobのcancelは行わない。原因確認後、残りの完了を待つ必要がある時だけ `--wait-for-completion`。job内部で実行中のXCTest失敗を先行検知する機能とは区別する。60〜180秒の間隔で、同じ状態・全ログをモデルへ繰り返し返さない。JSONのrunner分は課金額やCodexトークン数ではない。
 - watcher・preflight・それらのテスト/計測資料だけを変更し、既存通常ファイルで製品・build・安全検証・配布判定が不変なら `development-tools-v1`。planのPython検証を実行し、Macの画面テストを追加しない。選択器・check runner・workflow・新規ファイル・削除・型変更が混ざれば対象外。この成功はiOS検証証拠ではなく、TestFlightの配布根拠には使えない。
 - アイコン2画像のみ（必要なら名前固定の正本資料を伴う）の変更は `app-icon-v1`。既存の通常ファイル、完全なRGB PNG、全差分を確認した上で、既存build/安全検査とコンパイル済みアイコン・実起動・初回画面の撮影を1台のMacで行う。写真送信/メモ全51操作やWidgetの全表示パターンは走らせない。Contents.json・Swift・署名・未知ファイルが混ざる場合は適用しない。専用成功をfullの成功として再利用しない。
+- `ci-selection-v1` のアイコン確認は元画像・コンパイル済みアセット・署名まで。変更していないアイコンのために別のSimulatorを起動しない。通常のアプリ起動と操作は既存の必須nativeジョブが確認する。`app-icon-v1` の実起動・画面撮影は維持し、compiled-onlyの結果を画面確認済みと報告しない。
 - 最初の具体的なエラーへ絞って修正し、同一SHAでgreenの検証を理由なく繰り返さない。
 - CIの失敗は製品の不具合・検証コードの不具合・実行環境の障害に分ける。環境障害と確認した同一SHAは失敗したjobだけ再実行する。原因が不明なまま成功するまで再試行しない。コードを直した場合は新SHAの必要範囲を検証する。
 

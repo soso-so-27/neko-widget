@@ -1020,7 +1020,7 @@ jobs:
 
       - name: Verify packaged icons and capture first launch
         if: needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1'
-        run: python3 NekoWidget/ci/verify-app-icon.py --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" --artifacts "$RUNNER_TEMP/app-icon-check"
+        run: python3 NekoWidget/ci/verify-app-icon.py --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" --artifacts "$RUNNER_TEMP/app-icon-check" --visual-check ${{ needs.plan.outputs.runtime_scope == 'app-icon-v1' }}
 
       - name: Upload icon display evidence
         if: always() && (needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1')

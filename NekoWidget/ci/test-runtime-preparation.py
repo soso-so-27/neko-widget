@@ -33,7 +33,7 @@ class PreparationTests(unittest.TestCase):
                     ("preferences-launch", 180), ("preferences-list", 60),
                     ("preferences-terminate", 30), ("install", 180), ("neko-launch", 60),
                     ("neko-list", 60), ("onboarding", 60), ("neko-terminate", 60), ("home-screen", 60)]
-        for fail in (None, "preferences-list", "preferences-terminate", "install", "neko-launch"):
+        for fail in (None, "preferences-list", "preferences-terminate", "install", "neko-launch", "compiled-only"):
             with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 app = root / "DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app"
@@ -41,13 +41,16 @@ class PreparationTests(unittest.TestCase):
                 (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": neko,
                     "CFBundleIcons": {"CFBundlePrimaryIcon": {"CFBundleIconName": "AppIcon"}}}))
                 artifacts = root / "artifacts"; artifacts.mkdir()
-                events, report = [], {}
+                events, checks, report = [], [], {}
 
                 def command(*args, timeout=60):
                     if args[0] == "codesign":
+                        checks.append("codesign")
                         return ""
                     if args[:4] == ("xcrun", "--sdk", "iphonesimulator", "assetutil"):
+                        checks.append("assets")
                         return json.dumps([{"Name": "AppIcon"}, {"Name": "OnboardingAppIcon"}])
+                    self.assertNotEqual(fail, "compiled-only", "Compiled-only must not issue any simctl command.")
                     self.assertEqual(args[:2], ("xcrun", "simctl"))
                     operation = args[2]
                     if operation == "list":
@@ -75,11 +78,24 @@ class PreparationTests(unittest.TestCase):
                 with patch.object(verifier, "command", side_effect=command), patch.object(
                         verifier.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as process, \
                         patch.object(verifier.time, "sleep"), patch("builtins.print"):
-                    if fail is None:
+                    if fail == "compiled-only":
+                        verifier.inspect_app(app, artifacts, report, capture_first_launch=False)
+                    elif fail is None:
                         verifier.inspect_app(app, artifacts, report)
                     else:
                         with self.assertRaises(subprocess.TimeoutExpired):
                             verifier.inspect_app(app, artifacts, report)
+                if fail == "compiled-only":
+                    self.assertEqual(events, [], "Compiled icon checks must not create, install or launch a Simulator.")
+                    self.assertEqual(checks, ["codesign", "assets"])
+                    self.assertEqual(process.call_count, 1, "Keep the incremental signing build; no Simulator cleanup is needed.")
+                    self.assertIn("CODE_SIGNING_ALLOWED=YES", process.call_args_list[0].args[0])
+                    self.assertEqual(report["compiledAssetNames"], ["AppIcon", "OnboardingAppIcon"])
+                    self.assertEqual(report["visualCheck"], "not-requested")
+                    self.assertNotIn("firstLaunchAlive", report)
+                    self.assertNotIn("screenshots", report)
+                    self.assertFalse((artifacts / "launch-stages.jsonl").exists())
+                    continue
                 end = len(expected) if fail is None else next(i for i, event in enumerate(expected) if event[0] == fail) + 1
                 self.assertEqual(events, expected[:end], "A failed stage must stop; no install or launch retries.")
                 self.assertEqual([call.args[0] for call in process.call_args_list[1:]],
@@ -90,6 +106,30 @@ class PreparationTests(unittest.TestCase):
                 self.assertEqual([entry["stage"] for entry in launches],
                     ["simulator-readiness", "neko-first-launch"] if fail in (None, "neko-launch") else ["simulator-readiness"])
                 self.assertEqual(launches[-1]["state"], "timeout" if fail == "neko-launch" else "success")
+
+    def test_icon_visual_mode_defaults_to_true_and_invalid_mode_stops_before_checks(self):
+        spec = importlib.util.spec_from_file_location("icon_visual_mode", CI / "verify-app-icon.py")
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        with tempfile.TemporaryDirectory() as directory:
+            app, artifacts = Path(directory) / "Neko.app", Path(directory) / "artifacts"
+            base = ["verify-app-icon.py", "--app", str(app), "--artifacts", str(artifacts)]
+            for option, expected in (([], True), (["--visual-check", "true"], True),
+                                     (["--visual-check", "false"], False), (["--visual-check", "skip"], None)):
+                with self.subTest(option=option), patch.object(sys, "argv", base + option), \
+                        patch.object(verifier, "source_assets", return_value={}) as assets, \
+                        patch.object(verifier, "inspect_app") as inspect, patch("builtins.print"), \
+                        patch("sys.stderr"):
+                    if expected is None:
+                        with self.assertRaises(SystemExit) as raised:
+                            verifier.main()
+                        self.assertEqual(raised.exception.code, 2)
+                        assets.assert_not_called(); inspect.assert_not_called()
+                    else:
+                        verifier.main()
+                        assets.assert_called_once_with()
+                        self.assertEqual(inspect.call_count, 1)
+                        self.assertEqual(inspect.call_args.kwargs, {"capture_first_launch": expected})
 
     def run_preparation(self, fail_step="", build_status=0):
         self.assertIsNotNone(BASH, "Bash is required to exercise the real preparation helper")

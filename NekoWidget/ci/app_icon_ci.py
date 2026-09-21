@@ -18,7 +18,7 @@ ICON_DOC_PATHS = frozenset({
 # privacy, signing and runtime commands must remain byte-for-byte equivalent.
 ICON_WORKFLOW_STEPS = """      - name: Verify packaged icons and capture first launch
         if: needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1'
-        run: python3 NekoWidget/ci/verify-app-icon.py --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" --artifacts "$RUNNER_TEMP/app-icon-check"
+        run: python3 NekoWidget/ci/verify-app-icon.py --app "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphonesimulator/NekoWidget.app" --artifacts "$RUNNER_TEMP/app-icon-check" --visual-check ${{ needs.plan.outputs.runtime_scope == 'app-icon-v1' }}
 
       - name: Upload icon display evidence
         if: always() && (needs.plan.outputs.runtime_scope == 'app-icon-v1' || needs.plan.outputs.runtime_scope == 'ci-selection-v1')
@@ -32,12 +32,16 @@ ICON_WORKFLOW_STEPS = """      - name: Verify packaged icons and capture first l
 """
 
 
-def icon_workflow_wired(source):
+LEGACY_ICON_WORKFLOW_STEPS = ICON_WORKFLOW_STEPS.replace(
+    " --visual-check ${{ needs.plan.outputs.runtime_scope == 'app-icon-v1' }}", "")
+
+
+def icon_workflow_wired(source, steps=ICON_WORKFLOW_STEPS):
     jobs = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
                           source.split("\njobs:\n", 1)[-1], re.M | re.S))
     body = jobs.get("build-without-signing", "")
-    anchored = "            build\n\n" + ICON_WORKFLOW_STEPS + "      - name: Upload build result bundle\n"
-    return source.count(ICON_WORKFLOW_STEPS) == 1 and anchored in body
+    anchored = "            build\n\n" + steps + "      - name: Upload build result bundle\n"
+    return source.count(steps) == 1 and anchored in body
 
 
 def icon_paths_only(paths):
