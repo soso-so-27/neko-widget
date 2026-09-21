@@ -2,7 +2,7 @@
 
 2026-09-21。制作中LPの無料・有料の区分を、本線の販売準備に採用する。根拠は利用者の「その方針にしようと思う」「すすめて」と、`C:/dev/neko-lp-clarity-alpha-20260918/app/ExhibitionLanding.tsx` の料金・FAQ（同日確認）。価格・体験期間は検証案。以下の終了時の詳細は今回具体化した実装仕様であり、販売済みの契約条件ではない。
 
-課金開始、既存TestFlightの機能制限、既存データ移行は行っていない。LPは別作業中のため編集しない。ADR-026の目的とデータ保全を引き継ぎ、古い物販中心・頭数課金・年額優先の設計を販売要件として再利用しない。
+課金開始、既存TestFlightの機能制限、既存データ移行は行っていない。LPは別作業中のため編集しない。ADR-026の目的とデータ保全を引き継ぎ、現在の商品条件は本書を優先する。旧「課金と商品化の導線」の物販中心・2匹目課金・年額優先、ADR-026採用時の未決定項目には、本書の現在仕様を適用する。
 
 ## 1. 買うもの
 
@@ -91,12 +91,12 @@ Widget → 個別写真 → 任意のメモ → アルバムやメモ一覧で�
 - 有料体験の評価：本人の写真を初めて楽しめるまでの到達、別日の自然な再訪、Widgetからの閲覧、任意のメモと再閲覧、招待相手の参加、体験からの有料転換、その後の更新と解約理由。毎日の入力数を目的にしない。
 - 採算：実際の有料継続と、写真配送・保管・サポート・獲得費から判断。LPのクリックや7日間の好評だけを、継続課金の証拠にしない。
 - 実装検証：操作別の権利・期限境界はロジックテスト中心。本人と相手／権利確認不能／支援交代／過去データ保持を独立レビュー。画面操作は購入案内→取消または復元→元の目的へ戻る代表経路に絞る。機能と関係ない既存画面の一式を繰り返さない。
-- 今回は設計文書のみ。差分・参照整合と既存の軽量CIを使い、ネイティブビルド、画面操作テスト、TestFlightを起動しない。
+- 今回は設計文書のみ。差分・参照整合と既存の開発フロー検査を使い、ネイティブビルド、画面操作テスト、TestFlightを起動しない。最初のpreflightで`NekoWidget/docs`内の文書更新まで未分類full-v1（過去64〜98分）になることが判明したため、製品文書への編集は戻し、従来のhandoffsに現在仕様を集約した。最終差分はこの仕様と台帳のみ。製品・検証コード・CI判定を変更せず、重いCIは起動していない。
 
 ## 根拠
 
-- [ADR-026](ADR-026-うちの子との時間と会員体験.md)：個人の再発見、一種類の会員、招待家族への二重課金を避ける。
-- [まど支援の既存契約](../SharingService/docs/ADR-025-plus-window-sponsorship-foundation.md)：一契約3まど、ownerとpayerの分離、通常UI・送信には未接続。
-- `SharingService/src/billing-entitlement.ts`：購読状態・猶予・有効期限と確認情報の鮮度。
-- `SharingService/test/billing-window-sponsorship.integration.test.ts`：ownerの解除・支援者交代、写真・参加者・削除キューを変更しない境界。
+- [ADR-026](../NekoWidget/docs/ADR-026-うちの子との時間と会員体験.md)：個人の再発見、一種類の会員、招待家族への二重課金を避ける。
+- [まど支援の既存契約](../NekoWidget/SharingService/docs/ADR-025-plus-window-sponsorship-foundation.md)：一契約3まど、ownerとpayerの分離、通常UI・送信には未接続。
+- `NekoWidget/SharingService/src/billing-entitlement.ts`：購読状態・猶予・有効期限と確認情報の鮮度。
+- `NekoWidget/SharingService/test/billing-window-sponsorship.integration.test.ts`：ownerの解除・支援者交代、写真・参加者・削除キューを変更しない境界。
 - [Appleのサブスクリプション案内](https://developer.apple.com/app-store/subscriptions/)：継続価値と分かりやすい契約条件。2026-09-21確認。需要や最適価格の根拠には用いない。
