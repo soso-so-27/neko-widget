@@ -2,7 +2,7 @@
 
 基点 `184b4cd53597c28c4719490369f7d84bd099df28`。2026-09-22。
 
-アプリ機能ではありません。実行時のネットワーク、利用者の写真、実認証情報、課金商品、R2/D1/CloudKit、既存のアプリコードにはアクセスしません。原価計算は依存なし。復元試作のみ、固定した `jose` をこのディレクトリ内にインストールします。
+アプリ機能ではありません。テスト・原価計算は外部通信なしで、利用者の写真、実認証情報、課金商品、R2/D1/CloudKit、既存アプリへアクセスしません。Apple接続adapterのコードもありますが既定OFF・未接続で、テストの通信はすべてmockです。原価計算は依存なし。復元試作のみ、固定した `jose` をこのディレクトリ内にインストールします。
 
 - [商品と接続境界の仕様案](../../handoffs/2026-09-22-managed-personal-preservation-design.md)
 - [実本人確認・鍵管理への接続判断と別プロセス復元](../../handoffs/2026-09-22-preservation-identity-and-key-custody.md)
@@ -42,9 +42,9 @@ node --test prototype/key-bundle.test.mjs prototype/recovery-process.test.mjs
 
 ### ここで決めていないこと
 
-- **暗号方式の採用判断**：試作は `jose` の標準JWE（`dir` / `A256GCM`）と**サービス管理鍵**。運営側が復号できる構成で、E2EEではありません。現行のプライバシー説明を変更する許可にはなりません。
+- **暗号方式の採用判断**：Apple本人確認と**サービス管理鍵**の方針は2026-09-22に利用者承認済み。試作は `jose` の標準JWE（`dir` / `A256GCM`）。運営側が復号できる構成で、E2EEではありません。現行利用者の同意・プライバシー説明の更新や、KMS業者の契約は別途必要です。
 - **鍵の実際の復旧**：初期のarchiveテストは同じMapを再注入します。追加の別プロセステストでは暗号化した鍵束からデータ鍵を取り戻しますが、そのための上位鍵はテストハーネスが保持します。KMS/HSM・クラウド障害時の鍵取得・実運用の鍵backup・運営終了時の救済は未実装。鍵が失われれば写真は読めず、エラーで止まります。
-- **実本人確認**：Sign in with Appleは候補。実コード交換、Apple公開鍵の安全な更新、取消通知、セッション失効、Appleアカウント喪失時、アプリ移管時のsubject移行、Web搬出導線は未検証。購入復元の安全条件は一切変えていません。
+- **実本人確認**：Sign in with Appleを採用方針に決定。固定Apple endpoint/JWKSを使うコード交換adapterを準備しましたが実通信は未検証。永続セッション、取消通知/失効、Appleアカウント喪失時、アプリ移管時のsubject移行、Web搬出導線は未実装。購入復元の安全条件は一切変えていません。
 - **製品の保存品質**：画像は合成バイト列です。JPEGのデコード・閲覧画質・原本/動画/Live Photosの保管を証明しません。2MiB/メモ16KiBの入力制限は試作の安全上限であり、販売容量ではありません。
 - **D2の保存基盤**：SQLite一取引に暗号文・台帳・本人ごとの変更世代を置いています。確定済みの同一ID・同一内容の再送は、契約切れでも元の成功を確認できます。ただしR2＋D1に分けた二段階受付、容量予約、通信再送キュー、復旧用副コピー、同意世代の永続管理、レート制限は未実装。export中に本人の記録が変わると未完了エラーにします。時点固定スナップショットや自動再開ではなく、途中まで出力した分の扱いを含む利用者向けUIは未実装です。
 - **削除**：この試作のtombstoneは現行DB内で古い編集による復活を防ぐためのもの。削除前のbackupを戻した場合の復活防止、ごみ箱・取消期間・副コピーの最終消去・アカウント削除は未実装。SQLiteページ上の物理消去を保証しません。利用者データに対して実行しません。
@@ -54,6 +54,19 @@ node --test prototype/key-bundle.test.mjs prototype/recovery-process.test.mjs
 本人確認と購入権を分ける理由は[設計案](../../handoffs/2026-09-22-managed-personal-preservation-design.md)を参照。署名検証の参考は[Apple: Verifying a user](https://developer.apple.com/documentation/signinwithapple/verifying-a-user)、[Authenticating users with Sign in with Apple](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)。標準実装は[jose公式](https://github.com/panva/jose)。独自暗号/JWT検証は作りません。
 
 本線接続前には、本人確認と鍵管理方式のプライバシー判断、実ID・実権利、失効、実2台、鍵と台帳を別々に失った場合の復旧証拠が必要です。この試作やテスト成功だけで「バックアップ完備」とLP・課金画面へ掲載しません。
+
+## Apple接続adapter（未公開・既定OFF）
+
+`prototype/apple-signin-adapter.mjs` は、native ID token検証→認可codeの交換→交換後tokenと本人の再照合を行うサーバー側部品です。`PreparedAppleSigninAdapter` は明示的な `enabled: true` と設定なしには動かず、本線アプリから呼び出されません。今回の実行は固定URLへの通信も含めすべてmockです。
+
+```powershell
+# このディレクトリ内で、新規adapterのテストだけを実行
+node --test prototype/apple-signin-adapter.test.mjs
+```
+
+22項目が初回成功（runner約1.95秒）。独立レビューで重大な修正必須事項なし。既存44項目と原価計算は入力/依存が不変のため再実行していません。
+
+**直接公開しないこと**：`takeChallenge` はproofを照合して一回限りに消費する永続storeの契約で、テストはMapです。返り値の `refreshToken` は内部資格情報でありクライアントに返すレスポンスではありません。秘密保存/本人ID対応付け/セッション/失効と取消通知を完成させてから接続します。交換後nonceの実互換性と、Sign in with Apple用client secretが実Appleで受理されることも未確認です。[接続契約と未完了条件](../../handoffs/2026-09-22-preservation-identity-and-key-custody.md#8-apple接続adapterの準備承認後バッチ)
 
 ## 原価計算（D0、前回の成功証拠を維持）
 

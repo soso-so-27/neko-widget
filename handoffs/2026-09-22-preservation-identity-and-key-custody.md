@@ -1,9 +1,9 @@
 # 個人保管：実本人確認と鍵管理への接続判断
 
 2026-09-22。独立実験ブランチ `codex/preservation-design-20260922`。
-アプリ側の最新参照は `origin/main=e5162be`、実験の土台は `1b52ede`。本線へのrebase/mergeや並行worktreeの編集は行っていない。
+アプリ側の最新参照は `origin/main=b6c1a9c`（08:27 JST確認）、実験の既存土台は `46bb4cd`。本線へのrebase/mergeや並行worktreeの編集は行っていない。
 
-**状態：採用前の推奨構成と、合成データによる別プロセス復元の証拠。実Apple認証・KMS・実機2台の接続は未実施。**
+**状態：Apple本人確認＋サービス管理鍵の方針は利用者承認済み。Apple接続adapterを既定OFFで準備。実Apple認証・KMS・実機2台の接続は未実施。**
 
 ## 1. 利用者にとっての完成形
 
@@ -11,16 +11,16 @@
 
 保管自体はねこのまどのサービス側で行い、本人のiCloud容量購入を必須にしない。ただし、保管前の原本をiCloud写真から取得する通信や、既存のiCloudコピーの容量まで不要になるという意味ではない。Apple Account自体を使えない場合の救済も別途必要で、「何が起きても復元できる」とは案内しない。
 
-## 2. 方式の推奨と判断待ち
+## 2. 方式の決定
 
 | 方式 | 普段の使いやすさ | 必ず説明すること |
 |---|---|---|
-| **推奨候補：Apple本人確認＋サービス管理鍵** | 同じ本人としてログインできれば、専用の復旧コードを探さず保管記録へ戻れる設計にしやすい | 運営の権限を持つ処理が復号できる。アクセス権・監査・委託先・利用目的の限定が必要。E2EEではない |
+| **採用方針：Apple本人確認＋サービス管理鍵** | 同じ本人としてログインできれば、専用の復旧コードを探さず保管記録へ戻れる設計にしやすい | 運営の権限を持つ処理が復号できる。アクセス権・監査・委託先・利用目的の限定が必要。E2EEではない |
 | 復旧可能なE2EE | 運営が読めないことを優先できる | Appleログインだけでは写真の鍵は復元しない。復旧コード、端末間移管、信頼できる同期/復旧経路等が別に必要。その経路も失った場合のデータ喪失を説明する |
 
 推奨理由は「日々の猫写真を残す一般利用者に、独自の鍵管理を要求しない」ため。安全性が無条件に上であるという意味ではない。E2EEを選ぶ場合も既存の共有鍵やThisDeviceOnly鍵をそのまま個人保管へ転用しない。
 
-利用者へ、運営が技術的に復号し得る点を明示した選択質問を提示中。回答前にこれを採用済みとして製品・LP・ポリシーに接続しない。実機試験に進む場合もApple側設定・専用環境の権限・使う本人/端末を確定する必要がある。
+「Appleで本人確認＋ねこのまど側で暗号化保管」「運営側が技術的には復号できる方式」を明示して確認し、利用者は2026-09-22に「はい」と承認した。方式の再質問は不要。ただしこの開発方針の承認を、既存利用者の移行同意、課金業者の新契約、公開済みプライバシー説明の変更、一般公開への許可に拡張しない。実機試験にはApple側設定・専用環境の権限・使う本人/端末を確定する必要がある。
 
 ## 3. 現行との違いを隠さない
 
@@ -75,10 +75,38 @@ R2には自動の保存時暗号化があるが、それだけで本人照合、
 
 ## 7. 本線に接続する前に必要なもの
 
-- 保管のプライバシー方式の選択。
+- 保管のプライバシー方式は承認済み。実際の保存先・委託先・保持条件に合った利用者向け同意と説明を整える。
 - Apple側Capability/署名と実認証用設定、専用検証環境の用意。
 - KMS/鍵管理の業者・権限・障害/終了時救済・費用の確定。
 - 最新mainと並行作業の差分を照合し、保管部分の担当範囲を独立させる。
 - 検証対象の本人、2台のiPhone、使用許可のある写真と確認シナリオを決める。
 
-最新mainではCの受付境界とBuild 200 uploadまで進んでいるが、支援再開/交代の通常導線・有料状態の実2台は残る。今回その作業や実サーバーを変更・起動しない。実2台へ行けない間に同じ合成試験を反復して、Dが完成したことにしない。
+最新mainではCの受付境界と支援再開/交代の通常導線、Build 201 uploadまで進んでいるが、実サーバー配備/有料状態の実2台は残る。今回その作業や実サーバーを変更・起動しない。実2台へ行けない間に同じ合成試験を反復して、Dが完成したことにしない。
+
+## 8. Apple接続adapterの準備（承認後バッチ）
+
+追加：`experiments/ManagedPreservation/prototype/apple-signin-adapter.mjs` と専用テスト。既定は `enabled=false`。本線からimportせず、環境変数からの暗黙有効化もしない。実秘密鍵や実Appleアカウントは使用していない。
+
+- nativeのID tokenを署名/issuer/audience/期限/nonceで検証した後、認可codeを固定のApple token endpointへform-urlencodedで交換する。HTTP redirectを拒否し、codeやclient secretを別hostへ転送しない。
+- 交換後のID tokenも検証し、同じsubject/nonce/client IDであることを確認。`c_hash`があれば[OIDCのcode照合規則](https://openid.net/specs/openid-connect-core-1_0.html#CodeValidation)で照合する。Apple資料はc_hashをnative/交換後の両方で必須とは明記していないため、欠落だけでは失敗させない。
+- challengeはサーバー側の `takeChallenge` でproof照合と一回限りの消費を原子的に行う契約。テストではMapで模擬。**この永続store・セッション発行・失効処理は未実装**なので、adapterだけを直接公開endpointにしない。
+- Appleの公開鍵は固定originから取得し、joseの署名検証/キャッシュを使用。token内の任意jku/x5uを追跡しない。秘密や生のAppleエラーをログ/例外messageへ含めない。
+- サーバー用client secretはES256、Team ID/Key ID/client IDを使う短命JWT。テストは合成のEC鍵だけ。共有の鍵やAppleへのアップロード鍵とは別管理。
+- 成功結果のrefresh tokenは**サーバー内部の資格情報**。クライアントへ返すJSONではない。安全に永続化し、本人IDと対応付ける処理ができるまで利用者セッションを発行しない。
+- `invalid_grant`、誤ったnonce/subject、失敗・期限切れ・再使用challengeは拒否。通信/Apple側障害と設定エラーを区別する。契約有無をここでは判定しない。
+
+**実機で確かめる互換性**：nonceをAppleが自動hash化する／SHA-256が必須という公式要件は確認できなかった。nativeが実際に送る値をサーバーの期待値にする。交換後tokenにも同じnonceを要求するのはこのadapterの安全側の条件で、Appleが全経路で必ず返すことを実証したわけではない。欠落時に検証を省略して通すfallbackは設けない。対象OS/実フローで確認してから接続する。
+
+公式の[Token validation](https://developer.apple.com/documentation/signinwithapplerestapi/generate-and-validate-tokens)では、native code交換に `client_id/client_secret/code/grant_type` を使い、初回に指定した場合だけ `redirect_uri` を添える。概要記事のnonce送信という表現より具体API項目を優先し、token POSTへnonceを独自追加しない。[native nonce](https://developer.apple.com/documentation/authenticationservices/asauthorizationopenidrequest/nonce)も参照した。
+
+### 次の接続先と未完了条件
+
+実client IDの候補は最新mainの `NekoWidget/Config.xcconfig` にある **`jp.nekowidget.app`**。APIへ渡すclient IDへTeam IDを連結しない。Apple管理画面のCapabilityとSign in with Apple用Key ID、署名profileの有無は未確認。秘密鍵をチャットへ貼らせず、サーバー側の秘密管理へ設定する。
+
+まだ不足するのは、永続challenge/セッション、暗号化したrefresh資格情報の保存、[署名付き取消通知](https://developer.apple.com/documentation/signinwithapple/processing-changes-for-sign-in-with-apple-accounts)、適切な頻度のrefresh確認、[トークン取り消し](https://developer.apple.com/documentation/signinwithapplerestapi/revoke-tokens)、実native画面/Capability、専用環境、KMSの方式/権限、実2台の認証と保存往復。未実装事項を今回の22件のテストで確認済みとしない。
+
+### 検証と今回の範囲
+
+AppleのHTTP通信を注入mockへ差し替え、合成署名だけで22項目が初回成功（runner 1.946秒）。ES256 client secretの検証、既定OFF、native/交換後の本人一致、nonce/issuer/audience/期限/c_hash不正、未知鍵、challenge競合/再使用/失効、invalid_grant、設定エラー、rate limit、通信/公開鍵障害、不完全/過大responseを確認した。独立レビューで重大な修正必須事項なし。既存44テストと原価計算は不変なので重複実行しない。旧37件＋追加7件＋今回22件の総数を、同時に実行した一つの実機検証として表現しない。
+
+作業開始08:27 JST。実Apple認証、App ID/Capability設定変更、鍵発行、サーバー資源作成、課金契約、既存iCloud操作、native build、CI、push、main/LP変更、TestFlight配布は行っていない。
