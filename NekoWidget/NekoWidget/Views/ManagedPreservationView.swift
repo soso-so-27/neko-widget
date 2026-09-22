@@ -87,6 +87,7 @@ struct ManagedPreservationView: View {
             else if coordinator.selected != nil { detailSection }
             else {
                 membershipSection
+                usageSection
                 if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                 recordsSection
@@ -173,6 +174,39 @@ struct ManagedPreservationView: View {
             }
         } header: { Text("新しい写真の保管") }
         footer: { Text("見る・取り出すだけなら、会員情報の接続や有効な契約は不要です。") }
+    }
+
+    private var usageSection: some View {
+        Section {
+            if let usage = coordinator.usage {
+                Text("使用中 \(Self.capacity(usage.storage.usedBytes)) / \(Self.capacity(usage.storage.limitBytes))")
+                    .accessibilityIdentifier("preservation-usage-summary")
+                ProgressView(value: Double(min(usage.storage.usedBytes, usage.storage.limitBytes)),
+                             total: Double(usage.storage.limitBytes))
+                Text("空き容量 \(Self.capacity(usage.storage.availableBytes))")
+                    .font(.subheadline)
+                if usage.storage.reservedBytes > 0 {
+                    Text("保存準備中 \(Self.capacity(usage.storage.reservedBytes)) を空き容量から除いています。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if usage.storage.availableBytes == 0 || usage.records.creationLimitReached {
+                    Text("新しい記録は追加できません。保管済みの記録は引き続き利用できます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else if coordinator.usageLoading {
+                ProgressView("容量を確認中…")
+            } else {
+                Text(coordinator.usageMessage ?? "容量を確認できません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("容量を再確認") { coordinator.refreshUsage() }
+                    .accessibilityIdentifier("preservation-usage-retry")
+            }
+        } header: { Text("この保管先の容量") }
+        footer: { Text("選んで保管したコピーとメモの容量です。iPhoneの写真原本は含みません。") }
+    }
+
+    private static func capacity(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
     }
 
     private var pendingMemoSection: some View {

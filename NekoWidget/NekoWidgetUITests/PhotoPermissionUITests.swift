@@ -1484,6 +1484,10 @@ final class SoloMemoriesUITests: XCTestCase {
         tap("preservation-membership-confirm")
         XCTAssertTrue(app.descendants(matching: .any)["preservation-membership-linked"].firstMatch.waitForExistence(timeout: 8))
         XCTAssertFalse(app.descendants(matching: .any)["preservation-membership-ready"].firstMatch.exists)
+        let usage = app.staticTexts["preservation-usage-summary"]
+        for _ in 0..<4 where !usage.exists { app.swipeUp() }
+        XCTAssertTrue(usage.waitForExistence(timeout: 8))
+        XCTAssertTrue(usage.label.contains("使用中"))
         capture("preservation-membership-expired-read-available")
         tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff")
         let memo = app.textViews["保管コピーのメモ"]

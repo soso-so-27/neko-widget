@@ -43,6 +43,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var draftRecoveryWarning: String?
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
+    @Published private(set) var usage: ManagedPreservationUsage?
+    @Published private(set) var usageLoading = false
+    @Published private(set) var usageMessage: String?
     @Published var consentToNewSave = false
     @Published var editedText = ""
 
@@ -51,6 +54,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private let onExport: ExportHandler?
     private let draftStore: ManagedPreservationSessionStore
     private var task: Task<Void, Never>?
+    private var usageTask: Task<Void, Never>?
+    private var usageRequestID = UUID()
     private var viewEpoch = UUID()
     private var nextCursor: String?
     private var listingGeneration: Int?
@@ -123,6 +128,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     func refresh() {
         run { ticket in try await self.loadFirstPage(ticket) }
+    }
+
+    func refreshUsage() {
+        guard isSignedIn, let owner = authenticatedOwnerID else { return }
+        loadUsage(viewEpoch, owner: owner)
     }
 
     /// Explicit actions only. Listing and export never wait for the billing service.
@@ -283,6 +293,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false
         membership = nil; membershipMessage = nil
+        usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
     }
 
@@ -300,6 +311,46 @@ final class ManagedPreservationCoordinator: ObservableObject {
         var ownDrafts = Dictionary(uniqueKeysWithValues: try draftStore.pendingMemos(ownerId: owner).map { ($0.id, $0) })
         for value in volatileDrafts.values where value.ownerId == owner { ownDrafts[value.id] = value }
         pendingMemoDrafts = ownDrafts.values.sorted { $0.id.uuidString < $1.id.uuidString }
+        loadUsage(ticket, owner: owner)
+    }
+
+    /// Usage must not hold the record list or old-photo access hostage to a
+    /// delayed accounting response. It is never shown for a changed owner.
+    private func loadUsage(_ ticket: UUID, owner: String) {
+        usageTask?.cancel()
+        usageRequestID = UUID()
+        let requestID = usageRequestID
+        usage = nil; usageMessage = nil; usageLoading = true
+        usageTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.viewEpoch == ticket && self.authenticatedOwnerID == owner
+                    && self.usageRequestID == requestID {
+                    self.usageLoading = false; self.usageTask = nil
+                }
+            }
+            do {
+                let result = try await self.client.usage()
+                try self.check(ticket)
+                let currentOwner = try await self.client.sessionOwnerID()
+                guard currentOwner == owner, self.authenticatedOwnerID == owner else {
+                    throw ManagedPreservationError.staleSession
+                }
+                guard self.usageRequestID == requestID else { return }
+                self.usage = result
+            } catch {
+                guard self.viewEpoch == ticket, self.authenticatedOwnerID == owner,
+                      self.usageRequestID == requestID,
+                      !(error is CancellationError) else { return }
+                if let known = error as? ManagedPreservationError,
+                   known == .authenticationRequired || known == .staleSession {
+                    self.clearAccountPresentation()
+                    return
+                }
+                self.usageMessage = (error as? ManagedPreservationError)?.errorDescription
+                    ?? ManagedPreservationError.unavailable.errorDescription
+            }
+        }
     }
 
     func resumePendingMemo(_ memo: ManagedPreservationSessionStore.PendingMemo) {
@@ -386,16 +437,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     private func cancelCurrentWork() {
-        viewEpoch = UUID(); task?.cancel(); task = nil; isBusy = false
+        viewEpoch = UUID(); task?.cancel(); task = nil; usageTask?.cancel(); usageTask = nil
+        usageRequestID = UUID(); isBusy = false
         errorMessage = nil; statusMessage = nil
     }
 
     private func clearAccountPresentation() {
         retainUnsentEdit()
+        usageTask?.cancel(); usageTask = nil; usageRequestID = UUID()
         isSignedIn = false; preparedSignIn = nil; selected = nil; editedText = ""
         records = []; nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false; draftWasSaved = false
         membership = nil; membershipMessage = nil
+        usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
     }
 }

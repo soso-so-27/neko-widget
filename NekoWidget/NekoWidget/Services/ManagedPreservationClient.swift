@@ -36,7 +36,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case disabled, authenticationRequired, authenticationFailed, staleSession
     case secureStorage, invalidRecord, invalidResponse, responseTooLarge
     case membershipRequired, consentRequired, conflict, notFound, unavailable, interrupted
-    case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure
+    case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure, accountingUnavailable
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
 
     var errorDescription: String? {
@@ -60,6 +60,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .photoReplacement: "保管済みの写真は差し替えられません。別の写真は新しい記録として選び直してください。"
         case .rateLimited: "操作が続いたため一時的に制限されています。時間をおいてお試しください。"
         case .integrityFailure: "保管された記録の内容を安全に確認できませんでした。元の写真・メモを削除せず、保管先へお問い合わせください。"
+        case .accountingUnavailable: "保管容量を安全に確認できません。空きがあるとは扱わず、時間をおいて確認してください。"
         case .membershipLinkConsent: "保管用の本人情報と会員情報をつなぐことを確認してください。"
         case .membershipLinkConflict: "別の本人情報との接続があるため変更できません。購入し直さず、サポートへお問い合わせください。保存済みの記録は引き続き利用できます。"
         case .membershipLinkExpired: "接続の確認期限が切れました。もう一度「会員情報を接続」を押してください。"
@@ -206,6 +207,42 @@ struct ManagedPreservationMembership: Codable, Equatable, Sendable {
     var canSave: Bool { linked && (status == .active || status == .grace) }
 }
 
+struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
+    struct Storage: Decodable, Equatable, Sendable {
+        let usedBytes: Int64
+        let reservedBytes: Int64
+        let limitBytes: Int64
+        let availableBytes: Int64
+        let overLimit: Bool
+    }
+    struct Records: Decodable, Equatable, Sendable {
+        let saved: Int64
+        let pending: Int64
+        let creationLimitReached: Bool
+    }
+    let version: Int
+    let accounting: String
+    let storage: Storage
+    let records: Records
+
+    func validated() throws -> Self {
+        let space = storage
+        guard version == 1, accounting == "encrypted-records-v1",
+              space.usedBytes >= 0, space.reservedBytes >= 0,
+              space.limitBytes > 0, space.availableBytes >= 0,
+              space.usedBytes <= Int64.max - space.reservedBytes,
+              records.saved >= 0, records.pending >= 0 else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let allocated = space.usedBytes + space.reservedBytes
+        guard space.overLimit == (allocated > space.limitBytes),
+              space.availableBytes == max(0, space.limitBytes - allocated) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        return self
+    }
+}
+
 /// Read existing host-only identity. No bootstrap, purchase, recovery or deletion.
 struct ManagedPreservationBillingIdentity: Sendable {
     var credential: @Sendable () throws -> BillingCredential? = { try BillingKeychainStore.load() }
@@ -318,6 +355,17 @@ actor ManagedPreservationClient {
         let result: ManagedPreservationMembership = try decode(data)
         guard result.linked || result.status == .unknown else { throw ManagedPreservationError.invalidResponse }
         return result
+    }
+
+    /// The server's authenticated snapshot is independent of membership.
+    func usage() async throws -> ManagedPreservationUsage {
+        let data = try await authenticated("GET", path: "/v1/usage", maximumBytes: 4096)
+        do {
+            let result: ManagedPreservationUsage = try decode(data)
+            return try result.validated()
+        } catch ManagedPreservationError.invalidResponse {
+            throw ManagedPreservationError.accountingUnavailable
+        }
     }
 
     func linkMembership(consent: Bool) async throws -> ManagedPreservationMembership {
@@ -570,6 +618,7 @@ actor ManagedPreservationClient {
                 case "ACCESS_UNCONFIRMED": throw ManagedPreservationError.accessUnconfirmed
                 case "PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD": throw ManagedPreservationError.photoReplacement
                 case "ARCHIVE_INTEGRITY_FAILED", "ARCHIVE_PHOTO_UNAVAILABLE": throw ManagedPreservationError.integrityFailure
+                case "ARCHIVE_ACCOUNTING_UNAVAILABLE": throw ManagedPreservationError.accountingUnavailable
                 case "INVALID_RECORD", "INVALID_RECORD_ID", "INVALID_REVISION", "INVALID_JPEG",
                      "ARCHIVE_TOO_LARGE", "REQUEST_TOO_LARGE": throw ManagedPreservationError.invalidRecord
                 case "RATE_LIMITED": throw ManagedPreservationError.rateLimited
