@@ -35,6 +35,29 @@
   ],
   "observations": [
     {
+      "scope": "reviewed-managed-preservation-app-v1",
+      "candidate_minutes": 15.033,
+      "run_id": 35677956245,
+      "outcome": "failure",
+      "runner_minutes_all_attempts": 49.867,
+      "note": "Build, Photos, both-OS runtime and disabled preservation UI passed. Window album UI failed on a real accessibility wrapper issue. Not a successful candidate; followed by the same-operation diagnostic, not a blind normal retry."
+    },
+    {
+      "scope": "reviewed-managed-preservation-app-v1",
+      "candidate_minutes": 14.783,
+      "run_id": 35680200646,
+      "outcome": "success-after-focused-diagnostic",
+      "main_run_id": 35681141702,
+      "main_elapsed_minutes": 0.317,
+      "main_reused": true,
+      "diagnostic_run_id": 35679251172,
+      "diagnostic_minutes": 12.683,
+      "runner_minutes_all_attempts": 114.767,
+      "first_ci_to_main_minutes": 52.083,
+      "candidate_commit_to_main_minutes": 57.817,
+      "note": "Initial 30-minute plan missed; explicitly revised to a 60-minute cumulative planning reference before the focused diagnostic. Same fixed candidate SHA passed the diagnostic and required normal build/Photos/both-OS runtime/two UI cases. Native screenshots inspected. Main reused same-SHA evidence without Mac jobs. No TestFlight upload, production storage activation or actual account/device restore claim."
+    },
+    {
       "scope": "development-tools-v1",
       "candidate_minutes": 0.2,
       "run_id": 35496202405,

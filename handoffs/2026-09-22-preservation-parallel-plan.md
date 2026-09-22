@@ -39,4 +39,16 @@
 - 実AX階層に写真は存在したが、Button外側の `accessibilityElement(children: .ignore)` が識別子付きの全row幅Otherを作り、内側Buttonを包んでいた。不要なAX要素化を1行除去し、Button本来のroleとlabel/hint/identifierを維持する修正を独立レビュー済み。
 - 先に同じ失敗メソッド1件をdiagnostic branchで確認する。通常CIを同じ失敗状態で再起動しない。成功後に同一SHAの通常必須CIへ戻る。診断はmain/配布の成功証拠には使わない。
 - 初回30分枠では診断と通常CIまで収まらないため、累計60分を計画参照へ変更する。初回CIの実測15分02秒と、診断で再度必要なビルドを含む。時間内完了の保証ではなく、30分達成とは報告しない。計測済み履歴は `C:/dev/neko-preservation-album-timing-20260922.json` に保持し、最終統合後に台帳へ反映する。
-- 現在は未配布。画面の修正成立と最終候補成功は、まだ未確認。
+- 同一失敗メソッドの診断 `35679251172` / SHA `c9b3425` は12分41秒、runner12.433分で成功。写真の2記録選択・戻る、本人編集、相手メモ保持、取り下げ、共有失効を確認した。一覧・詳細・取り下げ後のnative画像も主担当が確認。テストはiPhone 17 Proのfixture画像であり、実2人の写真・実サービス通信・あらゆる文字サイズの実証ではない。
+- 最終候補 `35680200646` / 同SHAは14分47秒、runner52.467分で必須4ジョブとUI2操作が成功。本線 `35681141702` は同SHAの成功を19秒で再利用し、Mac再実行なし。製品は `c9b3425` でmain反映済み。
+- 初回CI→main成功は52分05秒、最初の統合候補commit `95f0ba7`→main成功は57分49秒。初期30分は未達、診断前に変更した60分計画内。引き継ぎ以前の実装時間はこのcommit起点の計測に含まない。CI+診断のrunner計114.767分は課金額やCodexトークン数ではない。
+- 監視の最大間隔180秒により完了通知が遅れた。以降この一連の終了確認では `--max-poll-seconds 60` を利用し、同一runを複数担当で監視しない。
+- TestFlightの新規配布、サービス有効化、課金開始、契約、データ移行は未実施。既定OFFのアプリ接続完了であり、保管サービスの本番完成ではない。
+
+## 次の実装順
+
+1. 実JPEG検証providerのオフライン実装：正常/破損/偽装/デコード資源上限を確認する。契約・デプロイなしで準備できる。
+2. Apple本人→保管owner→保管鍵→会員ownerの接続と別端末復元。既定OFFのコード準備と、実Apple capability・秘密設定・実KMS・実2台確認を分ける。
+3. 専用DB/R2、総保存量、解約後保持、誤削除と最終消去、監視/復旧の提供条件。1枚20MiBの制限は総保存容量ではない。既存CloudKitと共有E2EEを暗黙に置き換えない。
+
+次段階の根拠は候補checkout `C:/dev/neko-managed-preservation-integration-20260922` の `NekoWidget/PreservationService/src/providers.ts`、`src/contracts.ts`、`handoffs/2026-09-22-managed-preservation-goal.md`。このサービスはまだmainへ移植/稼働していない。
