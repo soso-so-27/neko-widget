@@ -341,6 +341,30 @@
       "first_ci_to_apple_upload_minutes": 67.229,
       "candidate_commit_to_apple_upload_minutes": 68.196,
       "upload_run_id": 35673315212
+    },
+    {
+      "scope": "reviewed-managed-preservation-app-v2",
+      "candidate_minutes": 16.8,
+      "run_id": 35692342424,
+      "outcome": "failure",
+      "runner_minutes": 35.883,
+      "note": "Build privacy check rejected raw error text in DEBUG fixture; runtime both OS and Photos succeeded. OFF-entry UI passed; consent UI failed looking for an absent cancel row in iOS26 popover. This partial failing observation is not successful native build or completed UI evidence. Corrected text passes targeted privacy check; exact UI operation receives focused diagnostic before another candidate."
+    },
+    {
+      "scope": "reviewed-managed-preservation-app-v2",
+      "candidate_minutes": 15.183,
+      "run_id": 35694399109,
+      "outcome": "success",
+      "runner_minutes": 53.083,
+      "diagnostic_run_id": 35693419453,
+      "diagnostic_minutes": 11.7,
+      "main_run_id": 35695660609,
+      "main_elapsed_minutes": 0.333,
+      "main_reused": true,
+      "runner_minutes_all_candidates_and_diagnostic_and_main": 100.666,
+      "first_ci_to_main_minutes": 46.3,
+      "candidate_commit_to_main_minutes": 48.25,
+      "note": "All four native jobs and both UI operations passed after privacy-safe DEBUG fixture error text and an evidence-based popover dismissal selector correction. Exact one-method diagnostic passed at the final candidate SHA. Initial 30-minute frame exceeded; cost plan was revised to 110 minutes before first CI, referencing full historical max while v2 was unmeasured. Includes failed candidate and diagnostic rather than reporting only final green duration. No TestFlight, live Apple/purchase, service activation, contracts or photo migration."
     }
   ]
 }

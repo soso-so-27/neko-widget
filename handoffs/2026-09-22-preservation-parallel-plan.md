@@ -51,4 +51,6 @@
 2. Apple本人→保管owner→暗号化保存は[本人確認と鍵のバッチ](2026-09-22-preservation-custody.md)で `b62b583` に本線化。続いて[会員本人リンク](2026-09-22-preservation-billing-link.md)を `c9eb318` で統合。保管session＋billing鍵の二重確認、immutable一対一リンク、実既存署名/権利判定をprivate authorityで再利用し、67件が専用CI成功。次はnativeリンク導線と同意/再試行、実Apple capability・秘密設定・実KMS・実2台の接続。サーバーの合成試験と実利用を分ける。
 3. 専用DB/R2、総保存量、解約後保持、誤削除と最終消去、監視/復旧の提供条件。1枚20MiBの制限は総保存容量ではない。既存CloudKitと共有E2EEを暗黙に置き換えない。
 
-旧候補 `C:/dev/neko-managed-preservation-integration-20260922` は履歴参照のみ。現在の正本はmainの `NekoWidget/PreservationService/` と[最新の残条件](2026-09-22-preservation-billing-link.md)。既定OFF・未配備。KEY_CUSTODY旧契約や自己申告ownerIdでの会員判定を本線へ戻さない。
+4. [アプリ側の会員リンク](2026-09-22-preservation-native-link.md)を `f53bc4c` でmain反映。既存の登録済み鍵だけで署名し、明示同意・取消・通信失敗/応答紛失時の再確認・再試行を接続した。4必須jobとUI2操作が成功、mainでは同SHA成功を再利用。初回失敗と限定診断を含む初回CI→mainは46分18秒。既存記録の閲覧/持ち出しを会員資格で塞がない。
+
+旧候補 `C:/dev/neko-managed-preservation-integration-20260922` は履歴参照のみ。現在の正本はmainの `NekoWidget/PreservationService/` と[最新の残条件](2026-09-22-preservation-native-link.md)。既定OFF・未配備。KEY_CUSTODY旧契約や自己申告ownerIdでの会員判定を本線へ戻さない。
