@@ -13,7 +13,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
-- `preservation-service-v1` は専用保管backendだけ。既知26ファイル・通常mode・固定workflow、導入時4つのCI companion全文を照合する。別のJPEG backendとの混在も含め、未知/native/権限/署名差分はfullへ戻す。候補SHAの `preservation-service.yml` / `Validate preservation identity and storage` の成功とiOS plan成功を別々に確認する。ローカルD1/R2と合成Apple/KMSであり、実デプロイや実端末復元・TestFlight証拠ではない。依存導入にはlifecycle scriptを使わず、専用job上限5分を全体実績としない。
+- `preservation-service-v2` は専用保管backendと独立private billing authorityだけ。既知33ファイル・通常mode・固定workflow、導入時4つのCI companion全文を照合する。Sharingの署名/権利判定は直接importするが、そのソースやmigrationを変更すればfullへ戻す（専用workflowも起動）。別のJPEG backendとの混在、未知/native/権限差分もfull。候補SHAの `preservation-service.yml` / `Validate preservation identity and storage` の成功とiOS plan成功を別々に確認する。実署名・ローカルD1/R2と合成Apple/KMSであり、private workerのbundleはdry-runのみ。実デプロイや実端末復元・TestFlight証拠ではない。依存導入にlifecycle scriptを使わず、専用job上限5分を全体実績としない。v1実績をv2の実測としない。
 
 - `preservation-image-validator-v1` は独立したJPEG検証Node部品だけ。既知ファイル一覧・通常ファイルmode・固定した専用workflowを照合し、導入時のCI4ファイルも完全before/after固定とする。未知/native/他service/署名/検証基盤の未監査差分が混ざればfullへ戻す。iOS planはMacを要求しないが、別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` が候補SHAで成功していることを主担当が確認する。Node成功とplan成功はiOS release/TestFlightの証拠にしない。未計測は初回だけ明示計測し、5分job timeoutを全体所要実績としない。
 
