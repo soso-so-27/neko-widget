@@ -2,7 +2,7 @@
 
 ## 2026-09-22 個人保管：本人確認・保存・復元の統合
 
-[本人確認と鍵のバッチ](2026-09-22-preservation-custody.md)で、旧候補の専用PreservationServiceを最新main基点へ移植。Apple本人→永続owner→D1/R2保存に、所有者/用途/記録を束縛するAES-256-GCM envelopeと鍵版を接続した。製品候補 `560fd2d`。型検査と対象48件をローカル確認し、独立レビュー指摘のUUID契約不整合を修正。専用Linux CIと本線反映は同資料へ結果を記録する。
+[本人確認と鍵のバッチ](2026-09-22-preservation-custody.md)で、旧候補の専用PreservationServiceを本線化。Apple本人→永続owner→D1/R2保存に、所有者/用途/記録を束縛するAES-256-GCM envelopeと鍵版を接続した。製品 `560fd2d`、CI `5bdbb96`、候補 `b62b583` はmain反映済み。型検査と対象48件が専用CIでも成功。候補 `35688444184` は35秒、本線 `35688526756` は39秒、iOS planも各成功、Mac 0回。実サービス稼働ではない。
 
 新しい`KEY_WRAPPER`は32byteデータ鍵だけを管理鍵authorityへ渡す。写真・本文は保管serviceで暗号化。外部KMS自体、会員ownerとの二重本人証明リンク、実JPEG private bridge、実保存先・実Apple capability・実2台、容量/保持/削除の提供条件は未完。これを「設定だけで使える」「バックアップ完成」と説明しない。既定OFF、既存CloudKit/共有E2EE/課金/配布に変更なし。
 

@@ -35,6 +35,22 @@
   ],
   "observations": [
     {
+      "scope": "preservation-service-v1",
+      "candidate_minutes": 0.583,
+      "run_id": 35688444184,
+      "outcome": "success",
+      "plan_run_id": 35688444130,
+      "plan_minutes": 0.333,
+      "main_run_id": 35688526756,
+      "main_elapsed_minutes": 0.65,
+      "main_plan_run_id": 35688526821,
+      "main_reused": false,
+      "runner_minutes_all_attempts": 1.367,
+      "first_ci_to_main_minutes": 1.933,
+      "candidate_commit_to_main_minutes": 3.717,
+      "note": "48 local D1/R2 identity/envelope/storage tests, typecheck and audit0; synthetic Apple and wrapping authority, not live KMS/device recovery. Candidate and main each ran small Linux service and iOS selector jobs; Mac0, no retries/deployment/TestFlight. Product-commit elapsed excludes earlier implementation: first new implementation/record files to main16m04 plus prior investigation/import. Local deep-equality test OOM32.72s+shutdown was fixed with byte-count/SHA256 comparison; recorded in custody handoff."
+    },
+    {
       "scope": "preservation-image-validator-v1",
       "candidate_minutes": 0.317,
       "run_id": 35684198257,

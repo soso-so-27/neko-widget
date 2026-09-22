@@ -48,7 +48,7 @@
 ## 次の実装順
 
 1. 実JPEG検証providerは、[独立バッチ](2026-09-22-preservation-jpeg-validator.md)で対象21件・実adapter契約照合6件・レビューを経て `8fc7782` でmain反映済み。専用Linux CIは候補19秒・本線23秒、Mac 0回。画像を全デコードする未配備のNode providerであり、実保存サービスの稼働ではない。
-2. Apple本人→保管owner→保管鍵→会員ownerの接続と別端末復元。既定OFFのコード準備と、実Apple capability・秘密設定・実KMS・実2台確認を分ける。
+2. Apple本人→保管owner→暗号化保存は[本人確認と鍵のバッチ](2026-09-22-preservation-custody.md)で `b62b583` に本線化。ローカルD1/R2、生成署名と合成authorityによる再ログイン復元を含む48件が専用CI成功。次は保管/会員ownerの二重本人証明リンク、実Apple capability・秘密設定・実KMS・実2台の接続。コードの成功と実利用を分ける。
 3. 専用DB/R2、総保存量、解約後保持、誤削除と最終消去、監視/復旧の提供条件。1枚20MiBの制限は総保存容量ではない。既存CloudKitと共有E2EEを暗黙に置き換えない。
 
-次段階の根拠は候補checkout `C:/dev/neko-managed-preservation-integration-20260922` の `NekoWidget/PreservationService/src/providers.ts`、`src/contracts.ts`、`handoffs/2026-09-22-managed-preservation-goal.md`。このサービスはまだmainへ移植/稼働していない。
+旧候補 `C:/dev/neko-managed-preservation-integration-20260922` は履歴参照のみ。現在の正本はmainの `NekoWidget/PreservationService/` と[今回の残条件](2026-09-22-preservation-custody.md)。サービスはmainへ移植済みだが、既定OFF・未配備。KEY_CUSTODY旧契約を本線へ戻さない。
