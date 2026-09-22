@@ -1,0 +1,28 @@
+# 個人保管：アプリからの会員本人リンク
+
+基点main `acdc9d0`、worktree `C:/dev/neko-preservation-native-link-20260922`。
+
+## 目的・今回の完了条件
+
+既定OFFの保管画面で、Appleによる保管本人確認の後、既存の会員情報への接続を明示同意で行う。未接続・通信失敗・応答紛失時の再確認を提供し、既存記録は解約後も会員照会なしに開く。勝手な新規billing作成、購入・復元・移行は行わない。
+
+- 固定pathと環境audience・owner/account・期限を確認してから、端末の既存registered billing鍵でNWB1署名する。
+- awaitの前後で保管session/epoch/Keychain、billing鍵/installationを再確認。別本人への遅延結果を適用しない。
+- 接続と写真送信への同意は別。接続だけで写真・購入は送らない。会員確認失敗でも一覧・読み出し・編集・持ち出しは継続。
+- native runtime境界確認、OFF入口と合成接続UIの2操作、実描画、独立レビュー、候補CI→mainまで。
+
+## 検証範囲・費用計画
+
+今回はSwift/UIのため本体/拡張build、Photos bootstrap、両OS runtime、変更経路のUI2操作を維持する。既存の共同記録UIは変更しない。旧v1固定manifestを流用せず、今回9つの既存製品/検証ファイルとCI companionを独立レビュー・固定する。
+
+同構成の旧v1最終成功は14分47秒、失敗と診断を含む初回CI→mainは52分05秒。今回の新v2は未計測であり旧v1の時間を実績や保証にしない。preflightで既存full参照の適合性と時間上限を確認し、30分を超える場合は起動前に計画を記録し直す。必要のないTestFlightや重複Mac実行を行わない。
+
+### 起動前の計画見直し
+
+fullの観測時間は64.43 / 97.92 / 66.433分、最大97.92分。未計測v2に30分完了を約束せず、費用ゲートの計画上限を110分へ組み直す（配布なし）。これはv2を110分走らせる意味でも、短縮実績でもない。4必須jobを残したUI2件を初回計測し、失敗すれば最初の具体的原因で診断する。11群の安価なチェック後はpreflightのみを `--use-full-baseline --target-minutes 110` で行う。
+
+独立レビューで本人越境/署名先差替えのブロッカーなし。保存拒否時の古い利用可能表示、UIテストのボタン有効待ちを修正した。fixtureは3つの応答境界でsession/鍵変更、同意なし、失敗→新challenge再試行、応答喪失→状態確認、解約後の一覧/詳細、保存時資格失効を確認する。実Apple・実backend相互接続・Task.cancelそのものの追加回帰はこのfixtureの証拠ではない。
+
+## リリース境界
+
+`ManagedPreservationEnabled`、Apple capability、実origin/audience/binding、課金/保存サービスは変更しない。実Appleや購入履歴は使わず、実2台復元・公開・配布の証拠にはしない。会員情報が失われた端末の実購入復元導線、アカウント変更、容量/保持/削除・実KMS/JPEG bridgeは残条件。
