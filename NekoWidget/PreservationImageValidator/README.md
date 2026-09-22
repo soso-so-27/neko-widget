@@ -57,6 +57,8 @@ node test/test-adapter.mjs --source <PreservationService/src の絶対パス>
 
 その候補の実 `contracts.ts` / `documents.ts` / `providers.ts` を型除去し、既知の相対importだけを一時 `.mjs` へ補完して実行。boundPhotoValidatorの中身を差し替えず、このproviderへローカル接続します。外部fetchを禁止し、元ファイル非改変と専用一時出力の清掃も確認します。D1/R2保存や実Worker間ネットワークの試験とは区別してください。
 
+専用CI `.github/workflows/preservation-image-validator.yml` は Ubuntu / Node で `npm ci` と `npm test` を実行します。別候補を参照するadapterテストは含まず、実サービスへの配備も行いません。iOSの検証や配布の成功証拠とは別です。
+
 ## 配備前に残ること
 
 このフォルダーには公開HTTPリスナー・Docker/Wrangler・自動配備・秘密設定を置いていません。**Node native addon なので、そのまま Cloudflare Workers の Fetcher へ配置できるわけではありません。** `fetch(Request)` は契約の実装で、実service bindingの疎通実証とは別です。

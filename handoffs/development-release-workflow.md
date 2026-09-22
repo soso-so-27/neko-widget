@@ -13,6 +13,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- `preservation-image-validator-v1` は独立したJPEG検証Node部品だけ。既知ファイル一覧・通常ファイルmode・固定した専用workflowを照合し、導入時のCI4ファイルも完全before/after固定とする。未知/native/他service/署名/検証基盤の未監査差分が混ざればfullへ戻す。iOS planはMacを要求しないが、別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` が候補SHAで成功していることを主担当が確認する。Node成功とplan成功はiOS release/TestFlightの証拠にしない。未計測は初回だけ明示計測し、5分job timeoutを全体所要実績としない。
+
 - `reviewed-managed-preservation-app-v1` は2026-09-22の既定OFF個人保管接続＋既存共同記録アルバム表示だけを対象とする。既採用の固定companion方式を用い、製品変更とCI選択変更を独立レビュー・別commitに分離した後、完全before/after・manifest・companion一致の統合候補を1回計測する。Build・Photos・両OS runtime・変更経路のUI2操作・成功証拠条件は維持。汎用CI高速化の例外とせず、未知差分はfullへ戻す。未計測を時間短縮実績と扱わない。
 
 - 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHA、既存 `MomentDeliveryComposerUITests` または `SoloMemoriesUITests` のclass、同じclass内の失敗したメソッド名1〜3個（カンマ区切り）。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_class=SoloMemoriesUITests -f test_method=<METHOD1,METHOD2>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。

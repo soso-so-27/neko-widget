@@ -35,6 +35,16 @@ Node native addon のため、Cloudflare Workersのservice bindingへそのま�
 
 製品候補は `128e2b2`、`NekoWidget/PreservationImageValidator/`。push前preflightは新規フォルダーを未対応として `full-v1` / 過去64.43〜97.92分、既定30分を超えるため `ready:false` と判定した。新規CIを起動せず、製品はこの独立ローカル候補に保持。Macの成功証拠やmain反映済みと扱わない。CI選択の変更や診断branchへの迂回pushもしていない。
 
-繰り返し保留だけにしないため、backend統合時には非公開providerのNode/Linux対象CIとiOS入力分離を独立レビューして整える。既存iOS入力に影響しないことを確認したうえで対象試験を必須にし、unknownな変更のfail-closedは残す。今回はそのCI変更をJPEG部品へ混ぜない。
+## 続行：専用CIの分離
+
+繰り返し保留だけにしないため、このバッチ内でNode/Linuxの対象CIとiOS入力分離も整える方針へ変更した。JPEG製品とは別commit・独立レビューで扱う。既存iOS入力の不変を確認し、既知のproviderファイル・固定workflow・導入時に全文固定したCI companionだけを対象にする。unknown、native、権限・署名、mode変更の混在は従来fullへ戻す。
+
+完了条件は、選択境界のPython試験、Node/Linuxの型検査と実decoder対象確認、本線反映後の必要確認。専用jobは5分timeoutだがqueue/準備を含む全体5分の保証ではなく、新経路は未計測。既存11組の開発手順チェックは直近86.6秒の実績。初回CI測定を1回行い、失敗時は原因に絞って修正する。Nodeの成功をiOS・実サービス通信・TestFlightの証拠には使用しない。通常候補の同一CIを担当別に起動しない。
 
 保管backendの旧候補 `863ad16` と合わせて、非公開実行基盤・本人/鍵/会員接続・容量/保持/削除の未完ゲートへ進める。アプリの既定OFFは維持。別担当へ転送する操作を利用者へ求めず、主担当が候補と結果を保持する。
+
+### 専用CIの候補確認
+
+既存11組の開発手順チェックは実測79.5秒ですべて成功。変更後の選択境界2件とpreflight3件も成功。最後にcompanion定義の重複・書式変更・binding改変の拒否を追加し、影響する選択境界2件を0.022秒で再確認した。成功済みの他の組は入力不変のため再実行していない。
+
+対象はNode実デコード21件と、iOSの対象選択だけ。初回Linux実行の計測を行い、両workflowの同一SHA成功を確認するまでmainへ反映しない。別実行の旧adapter照合6件はLinux CIには含めず、ローカルの確認範囲として保持する。
