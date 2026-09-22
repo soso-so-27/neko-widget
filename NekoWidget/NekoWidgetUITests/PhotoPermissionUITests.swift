@@ -1448,7 +1448,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         func tap(_ identifier: String) {
-            let button = app.buttons[identifier]
+            let button = app.buttons.matching(identifier: identifier).firstMatch
             XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
             for _ in 0..<5 where !button.isHittable { app.swipeUp() }
             let ready = XCTNSPredicateExpectation(
@@ -1458,11 +1458,20 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         tap("preservation-membership-check")
         tap("preservation-membership-connect")
-        let confirm = app.buttons["preservation-membership-confirm"]
+        let confirm = app.buttons.matching(identifier: "preservation-membership-confirm").firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         capture("preservation-membership-explicit-consent")
-        app.buttons["キャンセル"].tap()
-        XCTAssertFalse(confirm.exists)
+        let cancel = app.buttons["キャンセル"].firstMatch
+        if cancel.exists { cancel.tap() }
+        else {
+            // iOS 26 renders this as a popover: the system omits the cancel
+            // row and exposes the outside dismissal region instead.
+            let dismissRegion = app.otherElements["PopoverDismissRegion"]
+            XCTAssertTrue(dismissRegion.waitForExistence(timeout: 5))
+            dismissRegion.tap()
+        }
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: confirm)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         XCTAssertTrue(app.buttons["preservation-membership-connect"].exists)
         tap("preservation-membership-connect")
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
