@@ -290,7 +290,7 @@ struct ManagedPreservationMembershipFixture: View {
         .task {
             guard fixture == nil else { return }
             do { fixture = try PreservationNativeFixture.make(.firstFailure) }
-            catch { failure = error.localizedDescription }
+            catch { failure = "試験用の保管画面を準備できませんでした。" }
         }
         .onDisappear { try? fixture?.cleanup() }
     }
