@@ -1441,6 +1441,51 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testManagedPreservationMembershipLinkConsentAndRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--managed-preservation-membership-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        func tap(_ identifier: String) {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
+            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, identifier)
+            button.tap()
+        }
+        tap("preservation-membership-check")
+        tap("preservation-membership-connect")
+        let confirm = app.buttons["preservation-membership-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        capture("preservation-membership-explicit-consent")
+        app.buttons["キャンセル"].tap()
+        XCTAssertFalse(confirm.exists)
+        XCTAssertTrue(app.buttons["preservation-membership-connect"].exists)
+        tap("preservation-membership-connect")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        tap("preservation-membership-confirm")
+        let failure = app.staticTexts["preservation-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 8))
+        tap("preservation-membership-check")
+        tap("preservation-membership-connect")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        tap("preservation-membership-confirm")
+        XCTAssertTrue(app.descendants(matching: .any)["preservation-membership-linked"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["preservation-membership-ready"].firstMatch.exists)
+        capture("preservation-membership-expired-read-available")
+        tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff")
+        let memo = app.textViews["保管コピーのメモ"]
+        XCTAssertTrue(memo.waitForExistence(timeout: 8))
+        XCTAssertEqual(memo.value as? String, "はじめて膝で眠った日")
+        XCTAssertTrue(app.buttons["この記録を書き出す"].exists)
+        capture("preservation-membership-expired-record-detail")
+        app.terminate()
+    }
+
+    @MainActor
     func testManagedPreservationDisabledHidesEntries() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()

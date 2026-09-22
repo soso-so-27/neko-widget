@@ -9,6 +9,7 @@ enum BillingProtocolV1 {
     static let accountRecoveryPath = "/v1/billing/accounts/recover"
     static let transactionPath = "/v1/billing/transactions"
     static let entitlementPath = "/v1/billing/entitlement"
+    static let preservationMembershipLinkPath = "/v1/preservation/membership-link"
     static let windowSponsorshipGrantPath = "/v1/window-sponsorship"
     static let windowSupportRequestsPath = "/v1/window-support-requests"
     static let windowSponsorshipChangePathPrefix =
@@ -19,7 +20,7 @@ enum BillingProtocolV1 {
         method: String,
         pathname: String
     ) -> Bool {
-        (method == "POST" && (pathname == transactionPath || pathname == windowSupportRequestsPath
+        (method == "POST" && (pathname == transactionPath || pathname == preservationMembershipLinkPath || pathname == windowSupportRequestsPath
             || isWindowSupportAction(pathname, action: "commit")))
             || (method == "GET" && pathname == entitlementPath)
             || (["PUT", "DELETE"].contains(method)

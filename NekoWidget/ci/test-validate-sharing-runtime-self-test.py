@@ -15,6 +15,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("validate-sharing-runtime-self-test.py")
 RENDERER = "cat-aware-full-bleed-v6"
 CASES = {
+    "managed-preservation-membership-boundary",
     "managed-preservation-export-boundary",
     "canonical-local-only-privacy-budget",
     "daily-store-cas-highwater-anchor",

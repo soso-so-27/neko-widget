@@ -4,10 +4,14 @@ import ImageIO
 
 struct ManagedPreservationConfiguration: Sendable {
     let origin: URL?
+    let membershipAudience: String?
     var isEnabled: Bool { origin != nil }
 
     /// Bundle/build configuration only. Never accept a user, deep-link or server supplied origin.
-    init(isEnabled: Bool = false, origin: URL? = nil) {
+    init(isEnabled: Bool = false, origin: URL? = nil, membershipAudience: String? = nil) {
+        self.membershipAudience = membershipAudience.flatMap {
+            $0.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"#, options: .regularExpression) != nil ? $0 : nil
+        }
         guard isEnabled, let origin,
               let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false),
               parts.scheme == "https", let host = parts.host, !host.isEmpty,
@@ -23,7 +27,8 @@ struct ManagedPreservationConfiguration: Sendable {
     static var current: Self {
         Self(isEnabled: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationEnabled") as? Bool == true,
              origin: (Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationOrigin") as? String)
-                .flatMap(URL.init(string:)))
+                .flatMap(URL.init(string:)),
+             membershipAudience: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationMembershipAudience") as? String)
     }
 }
 
@@ -32,6 +37,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case secureStorage, invalidRecord, invalidResponse, responseTooLarge
     case membershipRequired, consentRequired, conflict, notFound, unavailable, interrupted
     case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure
+    case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +60,11 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .photoReplacement: "保管済みの写真は差し替えられません。別の写真は新しい記録として選び直してください。"
         case .rateLimited: "操作が続いたため一時的に制限されています。時間をおいてお試しください。"
         case .integrityFailure: "保管された記録の内容を安全に確認できませんでした。元の写真・メモを削除せず、保管先へお問い合わせください。"
+        case .membershipLinkConsent: "保管用の本人情報と会員情報をつなぐことを確認してください。"
+        case .membershipLinkConflict: "別の本人情報との接続があるため変更できません。購入し直さず、サポートへお問い合わせください。保存済みの記録は引き続き利用できます。"
+        case .membershipLinkExpired: "接続の確認期限が切れました。もう一度「会員情報を接続」を押してください。"
+        case .billingIdentityUnavailable: "このiPhoneの会員情報を確認できません。会員情報の引き継ぎが必要な場合があります。購入し直さず、サポートへお問い合わせください。保存済みの記録は引き続き利用できます。"
+        case .billingIdentityChanged: "会員情報が変わったため中断しました。接続状況を確認してからやり直してください。"
         }
     }
 }
@@ -188,11 +199,59 @@ struct ManagedPreservationChallenge: Sendable {
     let expiresAt: Date
 }
 
+struct ManagedPreservationMembership: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Sendable { case active, grace, expired, unknown }
+    let linked: Bool
+    let status: Status
+    var canSave: Bool { linked && (status == .active || status == .grace) }
+}
+
+/// Read existing host-only identity. No bootstrap, purchase, recovery or deletion.
+struct ManagedPreservationBillingIdentity: Sendable {
+    var credential: @Sendable () throws -> BillingCredential? = { try BillingKeychainStore.load() }
+    var installation: @Sendable () throws -> UUID = { try BillingInstallationMarkerStore.loadOrCreate() }
+
+    func existing() throws -> BillingCredential {
+        do {
+            guard let value = try credential()?.validated(), value.phase == .registered,
+                  value.installationMarker == (try installation()).uuidString.lowercased() else {
+                throw ManagedPreservationError.billingIdentityUnavailable
+            }
+            return value
+        } catch { throw ManagedPreservationError.billingIdentityUnavailable }
+    }
+}
+
+struct ManagedPreservationLinkChallenge: Codable, Sendable {
+    let version: Int; let purpose: String; let audience: String
+    let challengeId: String; let ownerId: String; let billingAccountId: String
+    let issuedAt: Int64; let expiresAt: Int64
+
+    func signingBody(owner: String, billing: String, audience expected: String, now: Date = .now) throws -> Data {
+        let millis = now.timeIntervalSince1970 * 1000
+        guard version == 1, purpose == "preservation-membership-link", audience == expected,
+              audience.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"#, options: .regularExpression) != nil,
+              ownerId == owner, billingAccountId == billing,
+              BillingValidation.canonicalUUIDv4(ownerId) != nil,
+              BillingValidation.canonicalUUIDv4(billingAccountId) != nil,
+              BillingValidation.canonicalOpaqueID(challengeId, bytes: 32),
+              issuedAt >= 0, expiresAt > issuedAt, expiresAt - issuedAt == 300_000,
+              Double(issuedAt) <= millis + 30_000, Double(expiresAt) > millis,
+              Double(expiresAt) <= millis + 330_000 else { throw ManagedPreservationError.invalidResponse }
+        // Every interpolated string was restricted above to non-escaping ASCII.
+        // Match the server's insertion order exactly; do not sign arbitrary JSON.
+        return Data("{\"version\":1,\"purpose\":\"preservation-membership-link\",\"audience\":\"\(audience)\",\"challengeId\":\"\(challengeId)\",\"ownerId\":\"\(ownerId)\",\"billingAccountId\":\"\(billingAccountId)\",\"issuedAt\":\(issuedAt),\"expiresAt\":\(expiresAt)}".utf8)
+    }
+}
+
 actor ManagedPreservationClient {
+    typealias RequestTransport = @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)
     static let consentVersion = "managed-preservation-v1"
     private static let maximumPhotoBytes = 20 * 1024 * 1024
     private let configuration: ManagedPreservationConfiguration
     private let transport = ManagedPreservationTransport()
+    private let requestOverride: RequestTransport?
+    private let billingIdentity: ManagedPreservationBillingIdentity
     private let store: ManagedPreservationSessionStore
     private var credential: ManagedPreservationSessionStore.Credential?
     private var loaded = false
@@ -229,8 +288,10 @@ actor ManagedPreservationClient {
         let error: Code
     }
 
-    init(configuration: ManagedPreservationConfiguration = .current) {
+    init(configuration: ManagedPreservationConfiguration = .current,
+         billingIdentity: ManagedPreservationBillingIdentity = .init(), requestOverride: RequestTransport? = nil) {
         self.configuration = configuration
+        self.billingIdentity = billingIdentity; self.requestOverride = requestOverride
         self.store = ManagedPreservationSessionStore(origin: configuration.origin?.absoluteString ?? "disabled")
     }
 
@@ -250,6 +311,60 @@ actor ManagedPreservationClient {
 
     func sessionOwnerID() throws -> String? {
         try hasSession() ? credential?.ownerId : nil
+    }
+
+    func membership() async throws -> ManagedPreservationMembership {
+        let data = try await authenticated("GET", path: "/v1/membership", maximumBytes: 4096)
+        let result: ManagedPreservationMembership = try decode(data)
+        guard result.linked || result.status == .unknown else { throw ManagedPreservationError.invalidResponse }
+        return result
+    }
+
+    func linkMembership(consent: Bool) async throws -> ManagedPreservationMembership {
+        guard consent else { throw ManagedPreservationError.membershipLinkConsent }
+        guard let audience = configuration.membershipAudience else { throw ManagedPreservationError.accessUnconfirmed }
+        guard try hasSession(), let session = credential else { throw ManagedPreservationError.authenticationRequired }
+        let capturedEpoch = epoch
+        let billing = try billingIdentity.existing()
+        guard let billingID = billing.billingAccountID, let keyID = billing.billingKeyID else {
+            throw ManagedPreservationError.billingIdentityUnavailable
+        }
+        struct Issue: Encodable { let billingAccountId: String }
+        struct Issued: Decodable { let challenge: ManagedPreservationLinkChallenge; let signingPath: String; let signingBody: String }
+        struct Proof: Encodable { let billingKeyId: String; let timestamp: String; let nonce: String; let signature: String }
+        struct Complete: Encodable { let challengeId: String; let proof: Proof }
+        struct Completed: Decodable { let linked: Bool }
+        func unchanged() throws {
+            try ensureEpoch(capturedEpoch)
+            guard credential == session, session.expiresAt > Date(), try store.load() == session else {
+                throw ManagedPreservationError.staleSession
+            }
+            guard try billingIdentity.existing() == billing else { throw ManagedPreservationError.billingIdentityChanged }
+        }
+        let issueData = try await authenticated("POST", path: "/v1/membership/challenges",
+            body: ManagedPreservationWire.encoder().encode(Issue(billingAccountId: billingID)), maximumBytes: 4096)
+        try unchanged()
+        let issued: Issued = try decode(issueData)
+        let body = try issued.challenge.signingBody(owner: session.ownerId, billing: billingID, audience: audience)
+        guard issued.signingPath == BillingProtocolV1.preservationMembershipLinkPath,
+              Data(issued.signingBody.utf8) == body else { throw ManagedPreservationError.invalidResponse }
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let nonce = BillingProtocolCodec.randomNonce()
+        let transcript = try BillingProtocolCodec.signedRequestTranscript(billingAccountID: billingID, billingKeyID: keyID,
+            timestamp: timestamp, nonce: nonce, method: "POST", pathname: BillingProtocolV1.preservationMembershipLinkPath,
+            bodySHA256: BillingProtocolCodec.sha256(body))
+        let proof = Proof(billingKeyId: keyID, timestamp: String(timestamp), nonce: nonce,
+                          signature: try BillingProtocolCodec.sign(transcript, credential: billing))
+        try unchanged()
+        let completedData = try await authenticated("POST", path: "/v1/membership/link",
+            body: ManagedPreservationWire.encoder().encode(Complete(challengeId: issued.challenge.challengeId, proof: proof)), maximumBytes: 4096)
+        try unchanged()
+        let completed: Completed = try decode(completedData)
+        guard completed.linked else { throw ManagedPreservationError.invalidResponse }
+        let result = try await membership()
+        try unchanged()
+        guard result.linked else { throw ManagedPreservationError.invalidResponse }
+        return result
     }
 
     func prepareSignIn() async throws -> ManagedPreservationChallenge {
@@ -434,7 +549,9 @@ actor ManagedPreservationClient {
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let revision { request.setValue(String(revision), forHTTPHeaderField: "If-Match") }
         do {
-            let (data, response) = try await transport.data(for: request, maximumBytes: maximumBytes)
+            let (data, response): (Data, URLResponse)
+            if let requestOverride { (data, response) = try await requestOverride(request, maximumBytes) }
+            else { (data, response) = try await transport.data(for: request, maximumBytes: maximumBytes) }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse, http.url == url else {
                 throw ManagedPreservationError.invalidResponse
@@ -442,6 +559,9 @@ actor ManagedPreservationClient {
             guard (200...299).contains(http.statusCode) else {
                 let code = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error.code
                 switch code {
+                case "MEMBERSHIP_LINK_CONFLICT": throw ManagedPreservationError.membershipLinkConflict
+                case "LINK_CHALLENGE_INVALID", "INVALID_LINK_CHALLENGE": throw ManagedPreservationError.membershipLinkExpired
+                case "BILLING_PROOF_UNCONFIRMED", "MEMBERSHIP_UNCONFIRMED", "MEMBERSHIP_NOT_CONFIGURED": throw ManagedPreservationError.accessUnconfirmed
                 case "NEW_SAVE_REQUIRES_MEMBERSHIP": throw ManagedPreservationError.membershipRequired
                 case "PRESERVATION_CONSENT_REQUIRED": throw ManagedPreservationError.consentRequired
                 case "REVISION_CONFLICT", "ARCHIVE_CHANGED": throw ManagedPreservationError.conflict

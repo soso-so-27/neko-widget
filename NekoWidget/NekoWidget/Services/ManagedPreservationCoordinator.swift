@@ -41,6 +41,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var draftWasSaved = false
     @Published private(set) var pendingMemoDrafts: [ManagedPreservationSessionStore.PendingMemo] = []
     @Published private(set) var draftRecoveryWarning: String?
+    @Published private(set) var membership: ManagedPreservationMembership?
+    @Published private(set) var membershipMessage: String?
     @Published var consentToNewSave = false
     @Published var editedText = ""
 
@@ -58,9 +60,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private var volatileDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
 
     init(configuration: ManagedPreservationConfiguration = .current,
-         draft: ManagedPreservationDraft? = nil, onExport: ExportHandler? = nil) {
+         draft: ManagedPreservationDraft? = nil, onExport: ExportHandler? = nil,
+         client injectedClient: ManagedPreservationClient? = nil) {
         isEnabled = configuration.isEnabled
-        client = ManagedPreservationClient(configuration: configuration)
+        client = injectedClient ?? ManagedPreservationClient(configuration: configuration)
         draftStore = ManagedPreservationSessionStore(origin: configuration.origin?.absoluteString ?? "disabled")
         self.draft = draft; self.onExport = onExport; canExport = onExport != nil
     }
@@ -98,6 +101,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 try self.check(ticket)
                 self.isSignedIn = true
                 self.consentToNewSave = false
+                self.membership = nil; self.membershipMessage = nil
                 try await self.loadFirstPage(ticket)
             case .failure(let error):
                 await self.client.cancelSignIn()
@@ -119,6 +123,30 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     func refresh() {
         run { ticket in try await self.loadFirstPage(ticket) }
+    }
+
+    /// Explicit actions only. Listing and export never wait for the billing service.
+    func checkMembership() {
+        guard isSignedIn, !isBusy else { return }
+        membership = nil; membershipMessage = nil
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            let result = try await self.client.membership()
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
+            self.membership = result
+        }
+    }
+
+    func connectMembership(consent: Bool) {
+        guard isSignedIn, consent, !isBusy else { return }
+        membership = nil; membershipMessage = "接続結果が不明な場合は「接続状況を確認」で確かめられます。"
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            let result = try await self.client.linkMembership(consent: true)
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
+            self.membership = result; self.membershipMessage = nil
+            self.statusMessage = "会員情報を接続しました。購入や写真の送信は行っていません。"
+        }
     }
 
     func loadMore() {
@@ -158,9 +186,18 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func saveSelectedCopy() {
-        guard let draft, !draftWasSaved, consentToNewSave else { return }
+        guard let draft, !draftWasSaved, consentToNewSave, membership?.canSave == true else { return }
         run { ticket in
-            _ = try await self.client.put(draft, consent: true)
+            do { _ = try await self.client.put(draft, consent: true) }
+            catch {
+                try self.check(ticket)
+                if let known = error as? ManagedPreservationError,
+                   known == .membershipRequired || known == .accessUnconfirmed {
+                    self.membership = nil
+                    self.membershipMessage = "会員資格の確認が必要です。接続状況を確認してから、もう一度お試しください。"
+                }
+                throw error
+            }
             try self.check(ticket)
             self.draftWasSaved = true
             self.statusMessage = "選んだ記録のコピーを保管しました。元の写真・メモは変更していません。"
@@ -245,6 +282,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         preparedSignIn = nil; selected = nil; editedText = ""; records = []
         nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false
+        membership = nil; membershipMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
     }
 
@@ -357,6 +395,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         isSignedIn = false; preparedSignIn = nil; selected = nil; editedText = ""
         records = []; nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false; draftWasSaved = false
+        membership = nil; membershipMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
     }
 }

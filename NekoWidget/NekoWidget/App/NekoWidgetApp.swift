@@ -58,6 +58,8 @@ struct NekoWidgetApp: App {
 #if DEBUG
             if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
+            } else if CommandLine.arguments.contains("--managed-preservation-membership-ui-fixture") {
+                ManagedPreservationMembershipFixture()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
                 MembershipOfferFixture()
             } else if CommandLine.arguments.contains("--window-support-resume-ui-fixture") {

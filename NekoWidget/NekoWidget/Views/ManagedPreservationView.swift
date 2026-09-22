@@ -11,15 +11,16 @@ struct ManagedPreservationView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmsDeletion = false
     @State private var needsResume = false
+    @State private var confirmsMembershipLink = false
 
     init(configuration: ManagedPreservationConfiguration = .current,
-         draft: ManagedPreservationDraft? = nil) {
+         draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil) {
         let exporter = RecordExportController()
         _exporter = StateObject(wrappedValue: exporter)
         _coordinator = StateObject(wrappedValue: ManagedPreservationCoordinator(
             configuration: configuration, draft: draft, onExport: { snapshot, validate in
                 ManagedPreservationExport.prepare(snapshot, using: exporter, validate: validate)
-            }))
+            }, client: client))
     }
 
     var body: some View {
@@ -40,6 +41,7 @@ struct ManagedPreservationView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
+                confirmsMembershipLink = false
                 exporter.cancelPreparation(); coordinator.stop(); needsResume = true
             }
             if phase == .active {
@@ -50,7 +52,7 @@ struct ManagedPreservationView: View {
             }
         }
         .onChange(of: coordinator.isSignedIn) { _, signedIn in
-            if !signedIn { exporter.invalidate() }
+            if !signedIn { exporter.invalidate(); confirmsMembershipLink = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in
@@ -64,6 +66,14 @@ struct ManagedPreservationView: View {
         } message: {
             Text("この保管先からは取り戻せません。端末の元の写真・メモは削除しません。")
         }
+        .confirmationDialog("この保管先に会員情報を接続しますか？",
+                            isPresented: $confirmsMembershipLink, titleVisibility: .visible) {
+            Button("確認して接続する") { coordinator.connectMembership(consent: true) }
+                .accessibilityIdentifier("preservation-membership-confirm")
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("Appleで本人確認した保管先に、このiPhoneの会員情報を結び付けます。あとから別の本人への付け替えはできません。この操作で購入・自動更新・写真の送信は始まりません。")
+        }
     }
 
     private var content: some View {
@@ -76,6 +86,7 @@ struct ManagedPreservationView: View {
             if !coordinator.isSignedIn { authenticationSection }
             else if coordinator.selected != nil { detailSection }
             else {
+                membershipSection
                 if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                 recordsSection
@@ -86,7 +97,8 @@ struct ManagedPreservationView: View {
             if exporter.preparing { Section { ProgressView("書き出しを準備しています…") } }
             if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
             if let error = coordinator.errorMessage {
-                Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
+                Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
+                    .accessibilityIdentifier("preservation-error") }
             }
             if let status = coordinator.statusMessage {
                 Section { Text(status).foregroundStyle(.secondary) }
@@ -131,6 +143,38 @@ struct ManagedPreservationView: View {
         }
     }
 
+    private var membershipSection: some View {
+        Section {
+            if let membership = coordinator.membership {
+                if membership.canSave {
+                    Label("新しい写真を保管できます", systemImage: "checkmark.circle.fill")
+                        .accessibilityIdentifier("preservation-membership-ready")
+                } else if membership.linked {
+                    Label("会員情報は接続済みです", systemImage: "person.crop.circle.badge.checkmark")
+                        .accessibilityIdentifier("preservation-membership-linked")
+                    Text(membership.status == .expired
+                         ? "現在、新しい保管は利用できません。保管済みの写真は下の一覧から開けます。"
+                         : "会員資格をまだ確認できません。保管済みの写真は下の一覧から開けます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("会員情報が未接続です")
+                    Button("会員情報を接続") { confirmsMembershipLink = true }
+                        .accessibilityIdentifier("preservation-membership-connect")
+                }
+            } else {
+                Text("新しく保管する前に、会員情報を確認します。")
+                    .font(.subheadline)
+            }
+            Button(coordinator.membershipMessage == nil ? "会員情報を確認" : "接続状況を確認") {
+                coordinator.checkMembership()
+            }.accessibilityIdentifier("preservation-membership-check")
+            if let message = coordinator.membershipMessage {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+            }
+        } header: { Text("新しい写真の保管") }
+        footer: { Text("見る・取り出すだけなら、会員情報の接続や有効な契約は不要です。") }
+    }
+
     private var pendingMemoSection: some View {
         Section {
             ForEach(coordinator.pendingMemoDrafts) { memo in
@@ -158,7 +202,8 @@ struct ManagedPreservationView: View {
             Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
                 .font(.footnote).foregroundStyle(.secondary)
             Button("選んだコピーを保管") { coordinator.saveSelectedCopy() }
-                .disabled(!coordinator.consentToNewSave)
+                .disabled(!coordinator.consentToNewSave || coordinator.membership?.canSave != true)
+                .accessibilityIdentifier("preservation-copy-save")
         } header: { Text("今回選んだ記録") }
         footer: {
             Text("新しい保管には会員資格が必要です。保管済みの記録の閲覧・メモ編集・削除・持ち出しに会員資格は必要ありません。写真原本や端末の元メモは変更しません。")
@@ -183,6 +228,7 @@ struct ManagedPreservationView: View {
                         }
                     }
                 }
+                .accessibilityIdentifier("preservation-record-" + record.id.uuidString.lowercased())
             }
             if coordinator.records.isEmpty && !coordinator.isBusy && coordinator.errorMessage == nil {
                 Text("この本人の保管記録はまだありません。")
@@ -196,6 +242,7 @@ struct ManagedPreservationView: View {
         if let snapshot = coordinator.selected {
             Section {
                 Button("保管一覧に戻る") { coordinator.closeDetail() }
+                    .accessibilityIdentifier("preservation-detail-back")
                 if let photo = snapshot.jpegData {
                     ManagedPreservationPhotoPreview(data: photo, maximumHeight: 360)
                         .id(snapshot.record.id)
@@ -223,6 +270,32 @@ struct ManagedPreservationView: View {
         }
     }
 }
+
+#if DEBUG
+/// Runs the shipping screen with a synthetic session, billing key and transport.
+/// No Apple sign-in, purchase, photo-library access or external service is used.
+@MainActor
+struct ManagedPreservationMembershipFixture: View {
+    @State private var fixture: PreservationNativeFixture?
+    @State private var failure: String?
+
+    var body: some View {
+        NavigationStack {
+            if let fixture {
+                ManagedPreservationView(configuration: fixture.configuration, client: fixture.client)
+            } else if let failure {
+                Text(failure).accessibilityIdentifier("preservation-fixture-failure")
+            } else { ProgressView("準備中") }
+        }
+        .task {
+            guard fixture == nil else { return }
+            do { fixture = try PreservationNativeFixture.make(.firstFailure) }
+            catch { failure = error.localizedDescription }
+        }
+        .onDisappear { try? fixture?.cleanup() }
+    }
+}
+#endif
 
 /// A single explicitly selected asset. Failure never falls back to uploading only
 /// the text, and the prepared ID/content survive retry and authentication changes.

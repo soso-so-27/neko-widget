@@ -3,6 +3,167 @@ import Darwin
 import Foundation
 import Security
 import UIKit
+import CryptoKit
+
+/// Synthetic transport shared by runtime and UI checks; never mounted in Release.
+final class PreservationFixtureKeys: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: BillingCredential?
+    init(_ value: BillingCredential?) { self.value = value }
+    func load() -> BillingCredential? { lock.lock(); defer { lock.unlock() }; return value }
+    func replace(_ value: BillingCredential?) { lock.lock(); defer { lock.unlock() }; self.value = value }
+}
+
+enum PreservationFixtureScenario: Sendable {
+    case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
+    case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
+}
+
+actor PreservationFixtureServer {
+    static let recordID = UUID(uuidString: "a1223334-5556-4788-9990-aabbccddeeff")!
+    let session: ManagedPreservationSessionStore.Credential
+    let billing: BillingCredential
+    let keys: PreservationFixtureKeys
+    let store: ManagedPreservationSessionStore
+    let scenario: PreservationFixtureScenario
+    var linked = false
+    var issues = 0
+    var completes = 0
+    var reads = 0
+    var saves = 0
+    var challenge: ManagedPreservationLinkChallenge?
+    var seenNonces = Set<String>()
+    var signedBodies: [Data] = []
+    let audience = "preservation.native-fixture"
+
+    init(session: ManagedPreservationSessionStore.Credential, billing: BillingCredential, keys: PreservationFixtureKeys,
+         store: ManagedPreservationSessionStore, scenario: PreservationFixtureScenario) {
+        self.session = session; self.billing = billing; self.keys = keys; self.store = store; self.scenario = scenario
+    }
+
+    func counts() -> (issues: Int, completes: Int, reads: Int, saves: Int) { (issues, completes, reads, saves) }
+    private func replaceSession() throws {
+        let other = ManagedPreservationSessionStore.Credential(token: String(repeating: "b", count: 43),
+            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
+        guard try store.save(other, replacing: session) else { throw ManagedPreservationError.staleSession }
+    }
+    func request(_ request: URLRequest, maximum: Int) async throws -> (Data, URLResponse) {
+        guard let url = request.url, url.host?.hasSuffix(".preservation-fixture.invalid") == true,
+              request.value(forHTTPHeaderField: "Authorization") == "Bearer " + session.token else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        func reply(_ data: Data, code: Int = 200) throws -> (Data, URLResponse) {
+            guard data.count <= maximum, let response = HTTPURLResponse(url: url, statusCode: code,
+                httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else { throw ManagedPreservationError.invalidResponse }
+            return (data, response)
+        }
+        func json(_ body: [String: Any], code: Int = 200) throws -> (Data, URLResponse) {
+            try reply(JSONSerialization.data(withJSONObject: body), code: code)
+        }
+        func fail(_ code: String, status: Int) throws -> (Data, URLResponse) { try json(["error": ["code": code]], code: status) }
+        if request.httpMethod == "DELETE", url.path == "/v1/auth/session" { return try reply(Data(), code: 204) }
+        if request.httpMethod == "POST", url.path == "/v1/membership/challenges" {
+            issues += 1
+            let input = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String]
+            guard input == ["billingAccountId": billing.billingAccountID!] else { throw ManagedPreservationError.invalidResponse }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let issued = scenario == .expired ? now - 301_000 : now
+            let value = ManagedPreservationLinkChallenge(version: 1, purpose: "preservation-membership-link",
+                audience: scenario == .wrongAudience ? "other.environment" : audience,
+                challengeId: BillingProtocolCodec.base64URLEncode(Data((0..<32).map { _ in UInt8.random(in: 0...255) })),
+                ownerId: scenario == .wrongOwner ? UUID().uuidString.lowercased() : session.ownerId,
+                billingAccountId: billing.billingAccountID!, issuedAt: issued, expiresAt: issued + 300_000)
+            challenge = value
+            // An independent JSON object for the server body. The exact ordering
+            // below matches PreservationService.linkTranscript, including ms units.
+            let body = "{\"version\":1,\"purpose\":\"preservation-membership-link\",\"audience\":\"\(value.audience)\",\"challengeId\":\"\(value.challengeId)\",\"ownerId\":\"\(value.ownerId)\",\"billingAccountId\":\"\(value.billingAccountId)\",\"issuedAt\":\(value.issuedAt),\"expiresAt\":\(value.expiresAt)}"
+            if scenario == .changedKey { keys.replace(nil) }
+            if scenario == .changedSession { try replaceSession() }
+            return try json(["challenge": JSONSerialization.jsonObject(with: JSONEncoder().encode(value)),
+                             "signingPath": scenario == .wrongPath ? "/v1/billing/transactions" : "/v1/preservation/membership-link",
+                             "signingBody": scenario == .tamperedBody ? "{}" : body])
+        }
+        if request.httpMethod == "POST", url.path == "/v1/membership/link" {
+            completes += 1
+            guard let value = challenge,
+                  let input = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any],
+                  input["challengeId"] as? String == value.challengeId,
+                  let proof = input["proof"] as? [String: String], let nonce = proof["nonce"],
+                  let timestamp = proof["timestamp"].flatMap(Int.init),
+                  proof["billingKeyId"] == billing.billingKeyID,
+                  let signature = proof["signature"].flatMap(BillingProtocolCodec.base64URLDecode),
+                  seenNonces.insert(nonce).inserted else { throw ManagedPreservationError.invalidResponse }
+            let body = try value.signingBody(owner: session.ownerId, billing: billing.billingAccountID!, audience: audience)
+            let transcript = try BillingProtocolCodec.signedRequestTranscript(billingAccountID: billing.billingAccountID!,
+                billingKeyID: billing.billingKeyID!, timestamp: timestamp, nonce: nonce, method: "POST",
+                pathname: "/v1/preservation/membership-link", bodySHA256: BillingProtocolCodec.sha256(body))
+            let key = try Curve25519.Signing.PrivateKey(rawRepresentation: billing.signingPrivateKey)
+            guard key.publicKey.isValidSignature(signature, for: transcript) else { throw ManagedPreservationError.invalidResponse }
+            signedBodies.append(body); challenge = nil
+            if scenario == .firstFailure && completes == 1 { return try fail("DEPENDENCY_UNAVAILABLE", status: 503) }
+            linked = true
+            if scenario == .lostResult && completes == 1 { throw URLError(.networkConnectionLost) }
+            if scenario == .changedKeyAfterLink { keys.replace(nil) }
+            if scenario == .changedSessionAfterLink { try replaceSession() }
+            return try json(["linked": true])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/membership" {
+            if linked && scenario == .changedKeyDuringStatus { keys.replace(nil) }
+            if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
+            if scenario == .saveRejected { return try json(["linked": true, "status": "active"]) }
+            return try json(["linked": linked, "status": linked ? "expired" : "unknown"])
+        }
+        let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
+            updatedAt: nil, catNames: [], photoFile: nil)
+        let record = ManagedPreservationRecord(recordId: Self.recordID, revision: 1, document: document)
+        if request.httpMethod == "GET", url.path == "/v1/records" {
+            reads += 1
+            return try json(["items": [JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(record))],
+                             "nextCursor": NSNull(), "generation": 1])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/records/" + Self.recordID.uuidString.lowercased() {
+            reads += 1
+            return try json(["recordId": Self.recordID.uuidString.lowercased(), "revision": 1,
+                "document": JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(document)),
+                "photoBase64": NSNull(), "photoSHA256": NSNull()])
+        }
+        if request.httpMethod == "PUT" { saves += 1; return try fail("NEW_SAVE_REQUIRES_MEMBERSHIP", status: 403) }
+        throw ManagedPreservationError.invalidResponse // never fall back to network
+    }
+}
+
+struct PreservationNativeFixture: Sendable {
+    let configuration: ManagedPreservationConfiguration
+    let client: ManagedPreservationClient
+    let server: PreservationFixtureServer
+    let store: ManagedPreservationSessionStore
+    let session: ManagedPreservationSessionStore.Credential
+    static func make(_ scenario: PreservationFixtureScenario = .success) throws -> Self {
+        let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".preservation-fixture.invalid")!
+        let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin,
+            membershipAudience: "preservation.native-fixture")
+        let store = ManagedPreservationSessionStore(origin: origin.absoluteString)
+        let prepared = ManagedPreservationSessionStore.Credential(token: String(repeating: "a", count: 43),
+            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
+        guard try store.save(prepared, replacing: nil), let session = try store.load() else {
+            throw ManagedPreservationError.secureStorage
+        }
+        let installation = UUID()
+        let billing = try BillingCredential.pending(installationMarker: installation).registering(.init(
+            billingAccountID: UUID().uuidString.lowercased(), billingKeyID: BillingProtocolCodec.randomNonce(),
+            createdAt: Int(Date().timeIntervalSince1970)))
+        let keys = PreservationFixtureKeys(scenario == .missingKey ? nil : billing)
+        let server = PreservationFixtureServer(session: session, billing: billing, keys: keys, store: store, scenario: scenario)
+        let client = ManagedPreservationClient(configuration: configuration,
+            billingIdentity: .init(credential: { keys.load() }, installation: { scenario == .wrongInstallation ? UUID() : installation }),
+            requestOverride: { request, maximum in try await server.request(request, maximum: maximum) })
+        return Self(configuration: configuration, client: client, server: server, store: store, session: session)
+    }
+    func cleanup() throws {
+        // This exact newly generated fixture origin cannot address a real account.
+        if let current = try store.load() { _ = try store.clear(ifMatching: current) }
+    }
+}
 
 private enum RuntimeReserveStep: Sendable {
     case responseLost(SharingReserveResult)
@@ -510,6 +671,9 @@ actor SharingRuntimeSelfTestRunner {
         var results: [CaseResult] = []
         results.append(await runAsync("managed-preservation-export-boundary") {
             try await Self.testManagedPreservationExportBoundary()
+        })
+        results.append(await runAsync("managed-preservation-membership-boundary") {
+            try await Self.testManagedPreservationMembershipBoundary()
         })
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
@@ -9597,6 +9761,76 @@ actor SharingRuntimeSelfTestRunner {
         try await finish()
         guard checks == 2, exporter.payload == nil, try files() == before,
               snapshot.document == document else { throw ManagedPreservationError.interrupted }
+    }
+
+    @MainActor
+    private static func testManagedPreservationMembershipBoundary() async throws {
+        guard !ManagedPreservationConfiguration.current.isEnabled,
+              BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
+              !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),
+              !BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link/other")
+        else { throw ManagedPreservationError.invalidResponse }
+        for scenario in [PreservationFixtureScenario.wrongOwner, .wrongAudience, .wrongPath, .tamperedBody, .expired,
+                         .changedKey, .changedSession, .missingKey, .wrongInstallation] {
+            let f = try PreservationNativeFixture.make(scenario); defer { try? f.cleanup() }
+            var rejected = false
+            do { _ = try await f.client.linkMembership(consent: true) } catch { rejected = true }
+            let counts = await f.server.counts()
+            guard rejected, counts.completes == 0, counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        }
+        for scenario in [PreservationFixtureScenario.changedKeyAfterLink, .changedSessionAfterLink,
+                         .changedKeyDuringStatus, .changedSessionDuringStatus] {
+            let f = try PreservationNativeFixture.make(scenario); defer { try? f.cleanup() }
+            var rejected = false
+            do { _ = try await f.client.linkMembership(consent: true) } catch { rejected = true }
+            let counts = await f.server.counts()
+            guard rejected, counts.completes == 1, counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        }
+        let f = try PreservationNativeFixture.make(.firstFailure); defer { try? f.cleanup() }
+        do { _ = try await f.client.linkMembership(consent: false); throw ManagedPreservationError.invalidResponse }
+        catch ManagedPreservationError.membershipLinkConsent { }
+        let untouched = await f.server.counts()
+        guard untouched.issues == 0 else { throw ManagedPreservationError.invalidResponse }
+        var failed = false
+        do { _ = try await f.client.linkMembership(consent: true) } catch { failed = true }
+        let afterFailure = try await f.client.membership()
+        guard failed, !afterFailure.linked else { throw ManagedPreservationError.invalidResponse }
+        let result = try await f.client.linkMembership(consent: true)
+        let counts = await f.server.counts()
+        guard result.linked, result.status == .expired, !result.canSave, counts.issues == 2, counts.completes == 2,
+              counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        let page = try await f.client.list()
+        guard page.items.count == 1 else { throw ManagedPreservationError.invalidResponse }
+        _ = try await f.client.detail(PreservationFixtureServer.recordID)
+        let lost = try PreservationNativeFixture.make(.lostResult); defer { try? lost.cleanup() }
+        do { _ = try await lost.client.linkMembership(consent: true) } catch { }
+        let afterLostResult = try await lost.client.membership()
+        guard afterLostResult.linked else { throw ManagedPreservationError.invalidResponse }
+        let lostCounts = await lost.server.counts()
+        guard lostCounts.completes == 1, lostCounts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+
+        // Eligibility can change after the screen check. The server remains
+        // authoritative, and a rejected save must clear stale positive UI state.
+        let rejected = try PreservationNativeFixture.make(.saveRejected); defer { try? rejected.cleanup() }
+        let document = ManagedPreservationDocument(text: "選んだメモ", capturedAt: nil, writtenAt: nil,
+            updatedAt: nil, catNames: [], photoFile: nil)
+        let coordinator = ManagedPreservationCoordinator(configuration: rejected.configuration,
+            draft: .init(recordID: UUID(), document: document, jpegData: nil), client: rejected.client)
+        func settle() async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while coordinator.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !coordinator.isBusy else { throw ManagedPreservationError.interrupted }
+        }
+        coordinator.start(); try await settle()
+        coordinator.checkMembership(); try await settle()
+        guard coordinator.membership?.canSave == true else { throw ManagedPreservationError.invalidResponse }
+        coordinator.consentToNewSave = true
+        coordinator.saveSelectedCopy(); try await settle()
+        guard coordinator.membership == nil, !coordinator.draftWasSaved, coordinator.records.count == 1,
+              coordinator.errorMessage == ManagedPreservationError.membershipRequired.errorDescription else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        coordinator.stop()
     }
 
     private static func opaque(_ byte: UInt8) -> String {
