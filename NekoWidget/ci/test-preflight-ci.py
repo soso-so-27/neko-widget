@@ -27,7 +27,9 @@ class PreflightTests(unittest.TestCase):
     def test_preservation_cost_is_scope_specific_and_first_measurement_only(self):
         history = {**self.history, "observations": self.history["observations"] + [
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},
-            {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"}]}
+            {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
+            {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v3")
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
@@ -53,7 +55,8 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(result["task"]["active_runs"], [1] if state == "in_progress" else [])
 
     def test_preservation_candidate_and_history_require_its_job_without_hiding_other_task_runs(self):
-        paths = ["NekoWidget/PreservationService/src/index.ts", planner.PRESERVATION_WORKFLOW]
+        paths = ["NekoWidget/PreservationService/src/index.ts", planner.PRESERVATION_WORKFLOW,
+                 "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"]
         with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
                 patch.object(planner, "comparison_base", return_value="b" * 40), \
                 patch.object(planner, "changed_paths", return_value=paths), \
@@ -64,6 +67,7 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertTrue(result["cost_review_required"])
         self.assertIn("no native or release evidence", result["reason"])
+        self.assertIn("owner-index migration", result["reason"])
         runs = [{"id": 9, "path": planner.PRESERVATION_WORKFLOW, "conclusion": "failure"},
                 {"id": 10, "path": planner.JPEG_WORKFLOW, "conclusion": "success"},
                 {"id": 11, "path": ".github/workflows/other.yml", "conclusion": "success"}]

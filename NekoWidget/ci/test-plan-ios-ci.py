@@ -46,6 +46,8 @@ class PlanTests(unittest.TestCase):
 
     def test_preservation_backend_requires_frozen_introduction_and_rejects_mixed_or_unsafe_inputs(self):
         original, bindings = self.jpeg_changes(profile="PRESERVATION")
+        migration = "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"
+        original[migration] = ("", "CREATE INDEX pa_upload_owner_bytes ON pa_uploads(owner_id,reserved_bytes);\n")
         workflow_digest = scope.source_digest(original[planner.PRESERVATION_WORKFLOW][1])
         def select(changes, alter=lambda raw: raw, ancestor=True):
             def git(*args):
@@ -66,10 +68,13 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 33)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v2")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 34)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v3")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
+        self.assertEqual(select({migration: original[migration],
+                                 planner.PRESERVATION_WORKFLOW: plain[planner.PRESERVATION_WORKFLOW]}),
+                         planner.PRESERVATION_SCOPE)
         self.assertEqual(select({**plain, "handoffs/custody.md": ("", "notes")}), planner.PRESERVATION_SCOPE)
         self.assertEqual(select({**plain, "NekoWidget/PreservationService/test/key-fixture.ts": ("", "synthetic helper")}),
                          planner.PRESERVATION_SCOPE)
@@ -79,7 +84,9 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
-        for extra in ("NekoWidget/PreservationService/src/new.ts", "NekoWidget/SharingService/src/index.ts",
+        for extra in ("NekoWidget/PreservationService/src/new.ts",
+                      "NekoWidget/PreservationService/migrations/0005_unknown.sql",
+                      "NekoWidget/PreservationService/migrations/0004_other.sql", "NekoWidget/SharingService/src/index.ts",
                       "NekoWidget/SharingService/src/billing-auth.ts", "NekoWidget/SharingService/src/billing-entitlement.ts",
                       "NekoWidget/SharingService/migrations/0019_billing_foundation.sql",
                       "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift", "NekoWidget/Config.xcconfig",
@@ -101,6 +108,12 @@ class PlanTests(unittest.TestCase):
                        original[selector][1].replace(bindings[selector][0], "f" * 64)):
             self.assertEqual(select({**original, selector: (original[selector][0], source)}), scope.FULL_SCOPE)
         self.assertEqual(select({**original, planner.PRESERVATION_WORKFLOW: ("", "changed workflow")}), scope.FULL_SCOPE)
+        migration_raw = f":000000 100644 {'c' * 40} {'d' * 40} A\0{migration}\0"
+        for changed in (migration_raw.replace("100644", "100755"),
+                        migration_raw.replace("100644", "120000"),
+                        migration_raw.replace(" A\0", " D\0"),
+                        migration_raw.replace(" A\0", " R100\0")):
+            self.assertEqual(select(original, alter=lambda raw: raw.replace(migration_raw, changed)), scope.FULL_SCOPE)
         for transform in (lambda raw: raw.replace(":000000 100644", ":000000 100755", 1),
                           lambda raw: raw.replace(":000000 100644", ":100644 120000", 1),
                           lambda raw: raw.replace(" A\0", " D\0", 1),

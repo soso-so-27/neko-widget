@@ -258,6 +258,8 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
         raise ValueError("Full baseline reference is limited to the reviewed memory-v3, membership-access and managed-preservation-v2 profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
+    # A new backend allowlist version is unmeasured even when its unchanged
+    # job has observations under an older scope (for example service v1/v2).
     if not samples:
         if use_full_baseline:
             # These reviewed profiles keep full's build/runtime jobs and select
@@ -323,7 +325,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
     reason = ("Independent JPEG provider and frozen Node workflow; no native or release evidence"
               if selected == planner.JPEG_SCOPE else
-              "Preservation and private billing-link service with frozen Node workflow; no native or release evidence"
+              "Preservation, private billing-link service and owner-index migration with frozen Node workflow; no native or release evidence"
               if selected == planner.PRESERVATION_SCOPE else
               "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else
