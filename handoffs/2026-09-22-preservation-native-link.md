@@ -33,3 +33,5 @@ fullの観測時間は64.43 / 97.92 / 66.433分、最大97.92分。未計測v2�
 
 - 安価な11群の確認中に主担当がcommitしたため、実HEADと検査開始時SHAの一致を確認する2ケースが失敗した。製品失敗ではなく実行手順の不備。HEADを固定して該当2ケースだけ9.349秒で再確認し、未実行の残り6群も成功。成功済みの前半4群・同スイートの他13ケースは繰り返していない。以後チェック完了までcommitしない。
 - native候補 `35692342424` は安全検査で試験用Viewの `error.localizedDescription` を検出。DEBUG fixtureにも生エラーを載せない方針に合わせ、固定の案内文へ置換。privacyの該当1ケースは0.190秒で成功。チェック自体を弱めず、同じ入力の盲目的なCI再実行はしない。他のjob結果は回収中。
+- 両OS runtimeとOFF入口UIは成功。リンクUIはiOS 26の確認Popoverに存在しない「キャンセル」Button検索で失敗。描画とAXを回収して、外側の `PopoverDismissRegion` が閉じる操作であること、同じ確認Buttonが親子で2個現れることを確認。テストだけを実表示に合わせて `.firstMatch` とsystem dismissalへ変更し、閉じたことも待機する。製品の同意を自動承認する変更ではない。
+- 次は専用diagnosticで `SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry` 1件だけ確認。近い診断経路の観測は11分34秒〜16分08秒、専用job上限30分。今回の1件そのものは未計測。成功後に同一SHAの通常候補へ進み、診断を本線/配布成功証拠として代用しない。失敗分・診断分も合計時間へ含める。
