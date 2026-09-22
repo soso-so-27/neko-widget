@@ -92,20 +92,65 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-def jpeg_paths_only(paths):
+PRESERVATION_SCOPE = "preservation-service-v1"
+PRESERVATION_JOB = "Validate preservation identity and storage"
+PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
+PRESERVATION_JOB_TIMEOUT_MINUTES = 5
+PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name in (
+    ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
+    "vitest.config.ts", "wrangler.jsonc", "migrations/0001_auth.sql", "migrations/0002_records.sql",
+    "src/apple.ts", "src/auth.ts", "src/contracts.ts", "src/documents.ts",
+    "src/index.ts", "src/providers.ts", "src/storage.ts", "src/key-custody.ts", "src/bounded-body.ts",
+    "test/apple.integration.test.ts", "test/auth.integration.test.ts", "test/setup.ts",
+    "test/storage.integration.test.ts", "test/key-custody.test.ts",
+    "test/recovery.integration.test.ts", "test/bounded-body.test.ts", "test/key-fixture.ts",
+))
+PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
+# Remain fail-closed until the service workflow and this introduction are reviewed.
+PRESERVATION_WORKFLOW_DIGEST = "edcfa210b06832701f3c5605b2e211da0c7678848101e442bedac72ca19fe0de"
+PRESERVATION_COMPANION_DIGESTS = {
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "508c756c0c3182dd41fc36a37219ce18986ea4767cc03ee00b8fbea9ca6d8cc0",
+        "3427fe5bcaf35d862d2a8f826aace91ff8e9e024bb195f5fe9b0f0a48afb8874"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "282e00476b4dd2aef574610e562b8d68618f1c50faa71c7cea786b2bd2ae213c",
+        "0c11afb68cba900d34ad95e5599946cb3db514f0a5629d8d6b45bf9c3c50b1d8"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "0cbb3ea311b6b08d93aae23f2abf597b77c32ec77e42cedaba693ae25fbb258d",
+        "8c57e8f61b3c0126d655f4f7741c4bd8dd2c154ff713d4a1aab767d0cfbd1552"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "9a0f4f4c57d4af5cd85e3951401d8459cb4f94423ddb9e3ff3dadeb84aebdc75",
+        "c87aa3a899a7570699d7794ddd14aff4058a058d081976226954bd8997e0a16f"
+    ]
+}
+
+
+def backend_paths_only(paths, product_paths, workflow, companion_paths):
     sources = source_paths(paths)
-    companions = sources & JPEG_COMPANION_PATHS
-    return bool(sources & (JPEG_PATHS | {JPEG_WORKFLOW})) and (
-        sources <= JPEG_PATHS | {JPEG_WORKFLOW} | JPEG_COMPANION_PATHS
-        and (not companions or companions == JPEG_COMPANION_PATHS))
+    companions = sources & companion_paths
+    return bool(sources & (product_paths | {workflow})) and (
+        sources <= product_paths | {workflow} | companion_paths
+        and (not companions or companions == companion_paths))
 
 
-def jpeg_backend_only(paths, base, head):
-    if not jpeg_paths_only(paths) or len(paths) != len(set(paths)):
+def jpeg_paths_only(paths):
+    return backend_paths_only(paths, JPEG_PATHS, JPEG_WORKFLOW, JPEG_COMPANION_PATHS)
+
+
+def preservation_paths_only(paths):
+    return backend_paths_only(paths, PRESERVATION_PATHS, PRESERVATION_WORKFLOW, PRESERVATION_COMPANION_PATHS)
+
+
+def backend_only(paths, base, head, *, product_paths, workflow, workflow_digest, companion_paths, bindings, binding_name):
+    # Shared mechanical checks, called only with the two explicit closed profiles.
+    if not backend_paths_only(paths, product_paths, workflow, companion_paths) or len(paths) != len(set(paths)):
         return False
     # The exact private Node job, its tests and five-minute job timeout are
     # reviewed together. A different workflow cannot silently drop those checks.
-    if not JPEG_WORKFLOW_DIGEST or source_digest(git("show", f"{head}:{JPEG_WORKFLOW}")) != JPEG_WORKFLOW_DIGEST:
+    if not workflow_digest or source_digest(git("show", f"{head}:{workflow}")) != workflow_digest:
         return False
     records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
     if records[-1:] == [""]:
@@ -119,27 +164,38 @@ def jpeg_backend_only(paths, base, head):
             return False
         seen.add(path)
         valid = (fields[0:2], fields[4]) == ([":100644", "100644"], "M")
-        if path not in JPEG_COMPANION_PATHS:
+        if path not in companion_paths:
             valid = valid or (fields[0:2], fields[4]) == ([":000000", "100644"], "A")
         if not valid:
             return False
     if seen != set(paths):
         return False
-    if source_paths(paths) & JPEG_COMPANION_PATHS:
-        if set(JPEG_COMPANION_DIGESTS) != JPEG_COMPANION_PATHS:
+    if source_paths(paths) & companion_paths:
+        if set(bindings) != companion_paths:
             return False
-        for path, pair in JPEG_COMPANION_DIGESTS.items():
+        for path, pair in bindings.items():
             before, after = (git("show", f"{revision}:{path}") for revision in (base, head))
             if path == "NekoWidget/ci/plan-ios-ci.py":
-                assignment = "JPEG_COMPANION_DIGESTS = " + json.dumps(
-                    JPEG_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+                assignment = binding_name + " = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
                 after = after.replace("\r\n", "\n")
                 if after.count(assignment) != 1:
                     return False
-                after = after.replace(assignment, "JPEG_COMPANION_DIGESTS = {}\n", 1)
+                after = after.replace(assignment, binding_name + " = {}\n", 1)
             if not before or not after or list(map(source_digest, (before, after))) != pair:
                 return False
     return True
+
+
+def jpeg_backend_only(paths, base, head):
+    return backend_only(paths, base, head, product_paths=JPEG_PATHS, workflow=JPEG_WORKFLOW,
+                        workflow_digest=JPEG_WORKFLOW_DIGEST, companion_paths=JPEG_COMPANION_PATHS,
+                        bindings=JPEG_COMPANION_DIGESTS, binding_name="JPEG_COMPANION_DIGESTS")
+
+
+def preservation_backend_only(paths, base, head):
+    return backend_only(paths, base, head, product_paths=PRESERVATION_PATHS, workflow=PRESERVATION_WORKFLOW,
+                        workflow_digest=PRESERVATION_WORKFLOW_DIGEST, companion_paths=PRESERVATION_COMPANION_PATHS,
+                        bindings=PRESERVATION_COMPANION_DIGESTS, binding_name="PRESERVATION_COMPANION_DIGESTS")
 
 
 def development_tools_only(paths, base, head):
@@ -169,6 +225,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
         return (JPEG_JOB,)
+    if runtime_scope == PRESERVATION_SCOPE and preservation_paths_only(paths):
+        return (PRESERVATION_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == CI_EVIDENCE_SCOPE and source_paths(paths) == CI_EVIDENCE_PATHS:
@@ -229,12 +287,15 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
-    if jpeg_paths_only(paths):
+    for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
+                                       (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only)):
+        if not matches(paths):
+            continue
         try:
             base = comparison_base(event, env)
             git("merge-base", "--is-ancestor", "refs/remotes/origin/main", env["GITHUB_SHA"])
-            if base and jpeg_backend_only(paths, base, env["GITHUB_SHA"]):
-                return JPEG_SCOPE
+            if base and verify(paths, base, env["GITHUB_SHA"]):
+                return selected
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
@@ -581,7 +642,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -595,9 +656,11 @@ def main() -> None:
               "scope": selected_scope, "required_jobs": required,
               "evidence_run_id": None, "evidence_sha": None}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
-            output.write(("## Backend-only verification\n\nRequired separately: " + JPEG_JOB
-                          + " in `" + JPEG_WORKFLOW + "`. This plan does not certify that job's success. "
-                          "Mac jobs are not requested. Not iOS release evidence.\n") if selected_scope == JPEG_SCOPE else
+            backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
+                       PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW)}.get(selected_scope)
+            output.write(("## Backend-only verification\n\nRequired separately: " + backend[0]
+                          + " in `" + backend[1] + "`. This plan does not certify that job's success. "
+                          "Mac jobs are not requested. Not iOS release evidence.\n") if backend else
                          "## CI maintenance only\n\nOrchestration tests executed. "
                          "Mac jobs are not requested for this verified maintenance scope. Not iOS release evidence.\n")
         return

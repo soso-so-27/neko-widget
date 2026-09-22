@@ -1,0 +1,49 @@
+name: Preservation service check
+
+on:
+  push:
+    branches-ignore:
+      - "diagnostic/**"
+    paths:
+      - "NekoWidget/PreservationService/**"
+      - ".github/workflows/preservation-service.yml"
+  pull_request:
+    paths:
+      - "NekoWidget/PreservationService/**"
+      - ".github/workflows/preservation-service.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preservation-service-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate preservation identity and storage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22.17.0"
+          cache: npm
+          cache-dependency-path: NekoWidget/PreservationService/package-lock.json
+      - name: Install locked dependencies without lifecycle scripts
+        working-directory: NekoWidget/PreservationService
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Typecheck the disabled service
+        working-directory: NekoWidget/PreservationService
+        run: npm run typecheck
+      - name: Verify local identity, custody and storage boundaries
+        working-directory: NekoWidget/PreservationService
+        run: npm test
+      # Local synthetic tests only: no secrets, remote migrations or deployment.
+      # This job is not native iOS release or TestFlight evidence.
