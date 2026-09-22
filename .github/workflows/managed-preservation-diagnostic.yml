@@ -1,0 +1,26 @@
+name: Managed preservation isolated diagnostic
+
+# Intentionally only on a disposable diagnostic branch. No secrets, deploy,
+# product CI selection changes, or claim of release/full-app verification.
+on:
+  push:
+    branches: ['diagnostic/managed-preservation-integration-20260922']
+    paths:
+      - 'NekoWidget/NekoWidget/Services/ManagedPreservation*.swift'
+      - 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift'
+      - 'experiments/ManagedPreservation/*native*'
+      - '.github/workflows/managed-preservation-diagnostic.yml'
+permissions:
+  contents: read
+jobs:
+  native-contract:
+    runs-on: macos-15
+    timeout-minutes: 8
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Typecheck iOS candidate and execute portable wire checks
+        run: bash experiments/ManagedPreservation/run-native-check.sh
