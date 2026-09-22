@@ -13,6 +13,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- `preservation-service-v1` は専用保管backendだけ。既知26ファイル・通常mode・固定workflow、導入時4つのCI companion全文を照合する。別のJPEG backendとの混在も含め、未知/native/権限/署名差分はfullへ戻す。候補SHAの `preservation-service.yml` / `Validate preservation identity and storage` の成功とiOS plan成功を別々に確認する。ローカルD1/R2と合成Apple/KMSであり、実デプロイや実端末復元・TestFlight証拠ではない。依存導入にはlifecycle scriptを使わず、専用job上限5分を全体実績としない。
+
 - `preservation-image-validator-v1` は独立したJPEG検証Node部品だけ。既知ファイル一覧・通常ファイルmode・固定した専用workflowを照合し、導入時のCI4ファイルも完全before/after固定とする。未知/native/他service/署名/検証基盤の未監査差分が混ざればfullへ戻す。iOS planはMacを要求しないが、別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` が候補SHAで成功していることを主担当が確認する。Node成功とplan成功はiOS release/TestFlightの証拠にしない。未計測は初回だけ明示計測し、5分job timeoutを全体所要実績としない。
 
 - `reviewed-managed-preservation-app-v1` は2026-09-22の既定OFF個人保管接続＋既存共同記録アルバム表示だけを対象とする。既採用の固定companion方式を用い、製品変更とCI選択変更を独立レビュー・別commitに分離した後、完全before/after・manifest・companion一致の統合候補を1回計測する。Build・Photos・両OS runtime・変更経路のUI2操作・成功証拠条件は維持。汎用CI高速化の例外とせず、未知差分はfullへ戻す。未計測を時間短縮実績と扱わない。
