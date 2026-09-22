@@ -457,9 +457,9 @@ class PlanTests(unittest.TestCase):
         if managed:
             for path, source in (
                 ("NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift",
-                 f'runAsync("{scope.MANAGED_PRESERVATION_RUNTIME_CASE}") {{ boundary() }}'),
+                 '\n'.join(f'runAsync("{case}") {{ boundary() }}' for case in scope.MANAGED_PRESERVATION_RUNTIME_CASES)),
                 ("NekoWidget/ci/validate-sharing-runtime-self-test.py",
-                 f'REQUIRED_CASES = {{"{scope.MANAGED_PRESERVATION_RUNTIME_CASE}",}}'),
+                 'REQUIRED_CASES = {' + ''.join(f'"{case}",' for case in scope.MANAGED_PRESERVATION_RUNTIME_CASES) + '}'),
             ):
                 changes[path] = (changes[path][0], source)
         project = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
@@ -499,7 +499,10 @@ class PlanTests(unittest.TestCase):
                     altered = list(changes[path]); altered[side] += " unreviewed change"
                     self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(altered)})), scope.FULL_SCOPE)
             for extra in (scope.CI_WORKFLOW, scope.CI_DIAGNOSTIC_MATRIX,
-                          "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/ci-timing-baseline.json",
+                          "NekoWidget/ci/ci-timing-baseline.json",
+                          "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
+                          "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift",
+                          "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
                           "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
                           "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
                           "NekoWidget/NekoWidget/Info.plist", "NekoWidget/Config.xcconfig",
@@ -511,25 +514,35 @@ class PlanTests(unittest.TestCase):
                 self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)
             tests = scope.REVIEWED_MANAGED_PRESERVATION_TESTS
             for incomplete in ((), tests[:1], tests[1:], (tests[0], tests[0]),
-                               (tests[0], "NekoWidgetUITests/MomentDeliveryComposerUITests/testMissingGallery")):
+                               (tests[0], "NekoWidgetUITests/SoloMemoriesUITests/testMissingMembershipLink")):
                 with patch.object(scope, "REVIEWED_MANAGED_PRESERVATION_TESTS", incomplete):
                     self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
-            with patch.object(scope, "MANAGED_PRESERVATION_RUNTIME_CASE", "missing-boundary"):
-                self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            cases = scope.MANAGED_PRESERVATION_RUNTIME_CASES
+            for incomplete in ((), cases[:1], cases[1:], (cases[0], cases[0]), (cases[0], 'missing-boundary')):
+                with patch.object(scope, "MANAGED_PRESERVATION_RUNTIME_CASES", incomplete):
+                    self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
             selector = "NekoWidget/ci/ios_ci_scope.py"
             source = changes[selector][1]
             self.assertEqual(scope.select_scope(dict(changes, **{selector: (changes[selector][0], source + source)})),
                              scope.FULL_SCOPE)
+            # Changing the manifest to an old evidence namespace is not review.
+            old_review = json.loads(changes[scope.REVIEW_MANIFEST][1]); old_review['scope'] = 'reviewed-managed-preservation-app-v1'
+            self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ('{}', json.dumps(old_review))})), scope.FULL_SCOPE)
         tests = scope.native_tests(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
         self.assertEqual(tests, (
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
         ))
-        self.assertIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_NEW_PATHS)
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v2')
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 9)
+        self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
+        self.assertIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertIn("NekoWidget/NekoWidget/App/NekoWidgetApp.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
         self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
 
-    def test_managed_preservation_raw_additions_and_four_safety_jobs(self):
+    def test_managed_preservation_raw_modifications_and_four_safety_jobs(self):
         changes, product, companions = self.delivery_membership_changes(managed=True)
         base, paths = "b" * 40, sorted(changes)
         def selected(path=None, modes=":100644 100644", status="M", extra=False):
@@ -570,6 +583,8 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v2]', '-app-v1]')) for job in jobs]
+        self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
             for state in ("skipped", "failure", "cancelled"):

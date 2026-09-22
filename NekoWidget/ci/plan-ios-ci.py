@@ -380,9 +380,9 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                     if valid:
                         added_sources.add(path)
                 if managed_preservation_only and path in MANAGED_PRESERVATION_NEW_PATHS:
-                    # Only the four frozen OFF-by-default integration files
-                    # are additions. FamilyRecordView must remain an existing
-                    # regular file; its complete before/after is also pinned.
+                    # v2 has no additions. Keep the reviewed set explicit:
+                    # every native/validator/selector input must already be a
+                    # regular file; an added or unknown input falls back full.
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)

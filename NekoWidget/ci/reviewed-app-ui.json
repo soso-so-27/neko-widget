@@ -1,57 +1,45 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-managed-preservation-app-v1",
-  "purpose": "One frozen integration batch combining OFF-by-default managed preservation entries/export with the existing window record album's photo overview and selected-record detail. No live service, Apple capability, automatic upload/migration, purchase gate or shared retention change is enabled. The existing shared-record test selects two distinct records, returns to the overview, edits only the author's words, withdraws the photo while retaining the other author's words, and checks access revocation in detail and overview. The other native operation checks that OFF entries remain hidden while existing entries remain available. All existing Release app/extension build, signature, privacy and storage checks, real Photos permission/scan, and sharing runtime on both iOS versions remain required, including the added managed-preservation export boundary. Widget rendering/selection and Widget target inputs must remain unchanged under the existing mechanical guard; this app album is not Widget Gallery. Only the exact before/after product sources, four existing CI selector companions and this manifest are accepted. Workflow, matrix, build/runtime execution and success-evidence reuse rules are unchanged. Product and CI selection changes are reviewed and committed separately, then measured once as one integrated candidate; this is not a general CI-optimization exception. Native rendering has not yet run for this candidate. This unmeasured scope and manifest are not successful CI or TestFlight evidence.",
+  "scope": "reviewed-managed-preservation-app-v2",
+  "purpose": "One frozen native integration batch for explicit consent and retry when linking the current preservation session to an existing installation-bound billing signing key. The signed proof binds a server-issued challenge to its exact owner, billing account and audience. Missing or changed credentials never create a billing account; paid status never becomes preservation identity or a condition of reading existing records. Configuration remains OFF, no purchase, Apple capability, live provider or deployment is enabled. UI checks cover hidden OFF entries and a synthetic consent/cancel/failure/retry membership flow. Release app/extension build, signature, privacy and storage checks, real Photos permission/scan, and runtime on both iOS versions remain required, including export and membership boundaries. The unchanged family album and Widget gallery are outside this UI selection; all Widget rendering/selection inputs must stay unchanged. Only the nine exact existing regular product/validator files, six fixed selector/preflight companions and this manifest are accepted. Workflow, matrix, build/runtime execution and successful-evidence reuse rules are unchanged. Product and CI selection changes are reviewed separately. Product, fixture and CI meaning were independently reviewed before freezing these exact hashes; actual native execution remains required. This unmeasured v2 profile is not v1 timing or successful native/device/TestFlight evidence.",
   "visualReview": "native-ui-required",
-  "dataReview": "disabled-managed-preservation-export-and-window-gallery-boundary",
+  "dataReview": "disabled-managed-preservation-dual-proof-membership-boundary",
   "files": {
-    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
-      "before": "77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997",
-      "after": "9eec37cdb3fd11a1868299010cd7c188d7e4ad1576fe6231f6f89bc4d8f67942"
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": {
+      "before": "0034a011f67b44cccb1a9f940babc962ba6dd291d3fe8d11d9a811a9840f8831",
+      "after": "f8988c63b52292a7a44e37417a9dd0aef9bcdbe05fa712b9e365e346a85218d8"
+    },
+    "NekoWidget/NekoWidget/Services/BillingClientCore.swift": {
+      "before": "41aa827193354b41bb18ad1d171cda21a440d46b5b129c6af33e397b29554a3d",
+      "after": "9f1dfd40f42cfea3e57918fafa6196e573efe4ed719e5fff0c58c0de0b8cc228"
     },
     "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "eb4a3225d3ea9f0e6c0b3b212b820fec6e6d497b82ffea776d0a07606343f150"
+      "before": "eb4a3225d3ea9f0e6c0b3b212b820fec6e6d497b82ffea776d0a07606343f150",
+      "after": "afec312818399caab8cf6df6191bb07d708f4e579420f73f50c06993f361489a"
     },
     "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "56728ea42658ab46cc8dce9f7b980098d6849662776615ab25a6820e57541a5c"
-    },
-    "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "15d4664391fec705aa54bd79b37e29dbe4e07b3df208c1adeeded191286cd05e"
+      "before": "56728ea42658ab46cc8dce9f7b980098d6849662776615ab25a6820e57541a5c",
+      "after": "812772218990e461e6d96b3d74a014a9aca97af5b388086a3c1f8e2d6eb535d9"
     },
     "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71",
-      "after": "2eee0e5cff69bc4428dc210782914bb5d5a00d2b5abbc7609a9b55d93c5cb623"
-    },
-    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
-      "before": "9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc",
-      "after": "6563cfef08a1553934c2eb89bb19cfd4fd33fd1b028969e623232333136eb9a5"
-    },
-    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3",
-      "after": "cfab7430ff9b9371fd96ef89ddb1f1ad6d88a15be3554a2e88d2b771210b609b"
+      "before": "2eee0e5cff69bc4428dc210782914bb5d5a00d2b5abbc7609a9b55d93c5cb623",
+      "after": "0f53d2820ea22cf1c3f52146d574267737c627b2eeb49a6272256f884ded412e"
     },
     "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
-      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after": "5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a"
-    },
-    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f",
-      "after": "c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06"
+      "before": "5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a",
+      "after": "df7249a20fa0295895af99a5f7692a12ac8f99e1cf32beb4d7cb280d32b5014c"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11",
-      "after": "f5af5763aa8b29b04435b556a015aa1ce86e285495ffe522b631a545907c3599"
+      "before": "f5af5763aa8b29b04435b556a015aa1ce86e285495ffe522b631a545907c3599",
+      "after": "8daf338801abab3bf3c24cd4ab1da8374b9aacf520b4bceca4155a0db20a32bf"
     },
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
-      "before": "49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6",
-      "after": "5f10e3a0983c068ab9b15f639c922e1fcaf66ac396af17f308ebb8f1f07fc2e7"
+      "before": "5f10e3a0983c068ab9b15f639c922e1fcaf66ac396af17f308ebb8f1f07fc2e7",
+      "after": "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4"
     },
     "NekoWidget/ci/validate-sharing-runtime-self-test.py": {
-      "before": "39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7",
-      "after": "ad708059d468f702a467c1a39aa90b6a173f67fcf9d9ed7b086477035cad2a39"
+      "before": "ad708059d468f702a467c1a39aa90b6a173f67fcf9d9ed7b086477035cad2a39",
+      "after": "7fb475e5b127f407e959be6150e2c209a833695267271a466c3b6e71686f3fa7"
     }
   }
 }

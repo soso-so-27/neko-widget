@@ -167,7 +167,8 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["cost"]["status"], "unmeasured")
 
     def test_unmeasured_reviewed_profiles_can_reference_full_maximum_without_claiming_observation(self):
-        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
+        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
+                         scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
             cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
             self.assertEqual(cost["status"], "reference")
             self.assertTrue(cost["scope_unmeasured"])
@@ -184,12 +185,28 @@ class PreflightTests(unittest.TestCase):
             with patch.object(scope, "lanes", side_effect=lambda value: ("new-job",) if value == selected else ("runtime", "app-ui")):
                 with self.assertRaises(ValueError):
                     preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
+            with patch.object(planner, "required_jobs_from_scope", return_value=(planner.BUILD,)):
+                with self.assertRaises(ValueError):
+                    preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
+            original_tests = scope.native_tests
+            for invalid in ((), ('NekoWidgetUITests/NewUntestedSuite/testNewRoute',)):
+                with patch.object(scope, "native_tests", side_effect=lambda value: invalid if value == selected else original_tests(value)):
+                    with self.assertRaises(ValueError):
+                        preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
             measured = {**self.history, "observations": self.history["observations"] + [
                 {"scope": selected, "candidate_minutes": 40, "run_id": 3, "outcome": "success"}]}
             self.assertEqual(preflight.observe_cost(selected, measured, True, use_full_baseline=True)["status"], "observed")
+        v1 = {**self.history, "observations": self.history['observations'] + [
+            {"scope": "reviewed-managed-preservation-app-v1", "candidate_minutes": 14.783, "run_id": 4, "outcome": "success"}]}
+        self.assertEqual(preflight.observe_cost(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, v1, False)['status'], 'unmeasured')
+        reference = preflight.observe_cost(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, v1, False, use_full_baseline=True)
+        self.assertEqual(reference['ci_minutes'], [98, 98])
+        self.assertEqual(reference['samples'], [])
+        self.assertTrue(reference['scope_unmeasured'])
 
     def test_full_reference_keeps_cumulative_budget_active_and_failed_test_gates(self):
-        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
+        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
+                         scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
             cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
             now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
             failed = {"id": 1, "created_at": "2026-09-20T11:00:00Z", "status": "completed", "conclusion": "failure",

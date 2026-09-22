@@ -254,19 +254,25 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # failed/retried candidates: the last green job alone hides feedback cost.
     if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
-    if use_full_baseline and selected not in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
-        raise ValueError("Full baseline reference is limited to the reviewed memory-v3 and membership-access profiles")
+    if use_full_baseline and selected not in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
+                                             scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
+        raise ValueError("Full baseline reference is limited to the reviewed memory-v3, membership-access and managed-preservation-v2 profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
     if not samples:
         if use_full_baseline:
-            # Both reviewed profiles keep full's build/runtime jobs and select
+            # These reviewed profiles keep full's build/runtime jobs and select
             # native operations from its suites. This is only a cost reference.
             # A new job or test class would need a new measurement/review.
             full_tests = scope.native_tests(scope.FULL_SCOPE)
-            if (not set(scope.lanes(selected)) <= set(scope.lanes(scope.FULL_SCOPE))
+            selected_tests = scope.native_tests(selected)
+            expected_jobs = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected)
+            if (planner.required_jobs_from_scope(selected) != expected_jobs
+                    or not {"runtime", "app-ui"} <= set(scope.lanes(selected))
+                    or not set(scope.lanes(selected)) <= set(scope.lanes(scope.FULL_SCOPE))
+                    or not selected_tests or len(selected_tests) != len(set(selected_tests))
                     or not set(scope.smoke_tests(selected)) <= set(scope.smoke_tests(scope.FULL_SCOPE))
                     or any(not any(test == full or test.startswith(full + "/") for full in full_tests)
-                           for test in scope.native_tests(selected))):
+                           for test in selected_tests)):
                 raise ValueError("The requested profile is not covered by the observed full route")
             reference = observe_cost(scope.FULL_SCOPE, history, include_upload)
             if reference["status"] != "observed":
@@ -344,7 +350,7 @@ def main(argv=None):
     parser.add_argument("--measure-baseline", action="store_true",
                         help="One first measurement for an unmeasured scope; no delivery-time promise or retries")
     parser.add_argument("--use-full-baseline", action="store_true",
-                        help="For reviewed memory-v3 or membership-access only, use the full-route maximum as an unmeasured cost reference; keep all gates")
+                        help="For reviewed memory-v3, membership-access or managed-preservation-v2 only, use the full-route maximum as an unmeasured cost reference; keep all gates")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:
