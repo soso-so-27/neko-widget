@@ -25,7 +25,8 @@ from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS,
                           MEMBERSHIP_ACCESS_PATHS, MEMBERSHIP_ACCESS_NEW_PATHS, MEMBERSHIP_ACCESS_COMPANION_PATHS,
                           DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_COMPANION_PATHS,
-                          WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS)
+                          WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS,
+                          MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -159,6 +160,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         membership_access_only = sources == (MEMBERSHIP_ACCESS_PATHS | MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST})
         delivery_membership_only = sources == (DELIVERY_MEMBERSHIP_PATHS | DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST})
         window_support_only = sources == (WINDOW_SUPPORT_PATHS | WINDOW_SUPPORT_COMPANION_PATHS | {REVIEW_MANIFEST})
+        managed_preservation_only = sources == (MANAGED_PRESERVATION_PATHS | MANAGED_PRESERVATION_COMPANION_PATHS | {REVIEW_MANIFEST})
         if ci_only:
             # A stale branch is not proof that the product is unchanged from
             # current main. Every branch input still has to be accounted for.
@@ -210,6 +212,13 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                     if valid:
                         added_sources.add(path)
                 if delivery_membership_only and path in DELIVERY_MEMBERSHIP_NEW_PATHS:
+                    valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
+                    if valid:
+                        added_sources.add(path)
+                if managed_preservation_only and path in MANAGED_PRESERVATION_NEW_PATHS:
+                    # Only the four frozen OFF-by-default integration files
+                    # are additions. FamilyRecordView must remain an existing
+                    # regular file; its complete before/after is also pinned.
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)

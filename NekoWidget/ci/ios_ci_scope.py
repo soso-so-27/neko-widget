@@ -57,10 +57,11 @@ REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
+REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v1"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
 LANE_JOB_PREFIX = "Sharing checks"
@@ -539,6 +540,100 @@ RECORD_PORTABILITY_COMPANION_DIGESTS = {
     ]
 }
 
+MANAGED_PRESERVATION_NEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift",
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift",
+    "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift",
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift",
+})
+MANAGED_PRESERVATION_PATHS = MANAGED_PRESERVATION_NEW_PATHS | {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+    "NekoWidget/NekoWidget/Views/SettingsView.swift",
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift",
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py",
+    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py",
+}
+MANAGED_PRESERVATION_COMPANION_PATHS = DELIVERY_MEMBERSHIP_COMPANION_PATHS
+MANAGED_PRESERVATION_DATA_REVIEW = "disabled-managed-preservation-export-and-window-gallery-boundary"
+MANAGED_PRESERVATION_RUNTIME_CASE = "managed-preservation-export-boundary"
+# One frozen integration batch, not a general product/CI or gallery allowance.
+# Both product sources and selector companions must match their reviewed hashes.
+MANAGED_PRESERVATION_DIGESTS = {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": (
+        "77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997",
+        "9eec37cdb3fd11a1868299010cd7c188d7e4ad1576fe6231f6f89bc4d8f67942",
+    ),
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "eb4a3225d3ea9f0e6c0b3b212b820fec6e6d497b82ffea776d0a07606343f150",
+    ),
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "56728ea42658ab46cc8dce9f7b980098d6849662776615ab25a6820e57541a5c",
+    ),
+    "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "15d4664391fec705aa54bd79b37e29dbe4e07b3df208c1adeeded191286cd05e",
+    ),
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": (
+        "f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71",
+        "2eee0e5cff69bc4428dc210782914bb5d5a00d2b5abbc7609a9b55d93c5cb623",
+    ),
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
+        "9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc",
+        "81f67e550358ab312a017c775b524eec6b7ecb0a8f26e54945e2c93c4d8d754a",
+    ),
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
+        "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3",
+        "cfab7430ff9b9371fd96ef89ddb1f1ad6d88a15be3554a2e88d2b771210b609b",
+    ),
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a",
+    ),
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": (
+        "c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f",
+        "c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06",
+    ),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11",
+        "f5af5763aa8b29b04435b556a015aa1ce86e285495ffe522b631a545907c3599",
+    ),
+    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": (
+        "49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6",
+        "5f10e3a0983c068ab9b15f639c922e1fcaf66ac396af17f308ebb8f1f07fc2e7",
+    ),
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py": (
+        "39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7",
+        "ad708059d468f702a467c1a39aa90b6a173f67fcf9d9ed7b086477035cad2a39",
+    ),
+}
+MANAGED_PRESERVATION_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "43839ff05c00df5f95ef501f4bf671087d7a4a7f50b4d67914a23268108c232d",
+        "f5bce46e03a84a9ec9ac52a4e2255523a65f710196b6587a098a00d1eb7f85cc"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "c8a1d4ad2c8fc5d7dae06efc49c4215821ee56d0a53949b170935ca959976445",
+        "637762e35ce6422ce5710bce8b8360e850d1a31a9ac1d811246f0e83d85ea8de"
+    ],
+    "NekoWidget/ci/reviewed-app-ui.json": [
+        "89cee751ae1b93908e780f41bb538e56b86263a73ae97d74a5c63bd2e3ee7427",
+        "50ce690a1672262ca321ac331911740f07b738758fd0d6c70fe93c29d11f272b"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "ac1f91afe019252e5a506035ed07b50821df2a11b0ec81244ddf2e8d05bc2df6",
+        "3a3dc7695903717cbfa8391681b1f9d2b63f24dbe6a90495a0b5b7b484f67018"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "0a2c9095f0af200c93ebca42c5f37861e2184b6d09942cb7de4a0a68fc39cf84",
+        "49e90d0e2d0e7f74901001ee7205ba53c060f080a99c3e6c9063cd965960852a"
+    ]
+}
+
 # Gallery can be omitted only when render/selection inputs and Widget target
 # membership are unchanged. The reviewed shared core/log edits are still built
 # and exercised by the required runtime jobs; they are not rendering changes.
@@ -791,7 +886,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
-                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | ICON_PATHS | ICON_DOC_PATHS)
+                | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
 def archive_picker_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -1076,11 +1171,16 @@ def delivery_gallery_inputs_unchanged(changes) -> bool:
     return True
 
 
-def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]], *, resuming=False, exporting=False) -> bool:
+def reviewed_delivery_membership_changes(changes: dict[str, tuple[str, str]], *, resuming=False, exporting=False, managed=False) -> bool:
     """Fixed reviewed profiles share the exact same closed-source checks."""
-    if exporting and resuming:
+    if sum((exporting, resuming, managed)) > 1:
         return False
-    if exporting:
+    if managed:
+        paths, new_paths, digests = MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_DIGESTS
+        companions, bindings = MANAGED_PRESERVATION_COMPANION_PATHS, MANAGED_PRESERVATION_COMPANION_DIGESTS
+        binding_name = "MANAGED_PRESERVATION_COMPANION_DIGESTS"
+        selected_scope, data_review = REVIEWED_MANAGED_PRESERVATION_SCOPE, MANAGED_PRESERVATION_DATA_REVIEW
+    elif exporting:
         paths, new_paths, digests = RECORD_PORTABILITY_PATHS, RECORD_PORTABILITY_NEW_PATHS, RECORD_PORTABILITY_DIGESTS
         companions, bindings = RECORD_PORTABILITY_COMPANION_PATHS, RECORD_PORTABILITY_COMPANION_DIGESTS
         binding_name = "RECORD_PORTABILITY_COMPANION_DIGESTS"
@@ -1458,6 +1558,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_DELIVERY_MEMBERSHIP_SCOPE: DELIVERY_MEMBERSHIP_PATHS | {REVIEW_MANIFEST} | DELIVERY_MEMBERSHIP_COMPANION_PATHS,
         REVIEWED_WINDOW_SUPPORT_SCOPE: WINDOW_SUPPORT_PATHS | {REVIEW_MANIFEST} | WINDOW_SUPPORT_COMPANION_PATHS,
         REVIEWED_RECORD_PORTABILITY_SCOPE: RECORD_PORTABILITY_PATHS | {REVIEW_MANIFEST} | RECORD_PORTABILITY_COMPANION_PATHS,
+        REVIEWED_MANAGED_PRESERVATION_SCOPE: MANAGED_PRESERVATION_PATHS | {REVIEW_MANIFEST} | MANAGED_PRESERVATION_COMPANION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -1535,6 +1636,10 @@ REVIEWED_RECORD_PORTABILITY_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests
     "testMemoryNoteExportCancellationKeepsText",
     "testPersonalArchiveExportCancellationKeepsPhotoAndText",
 ))
+REVIEWED_MANAGED_PRESERVATION_TESTS = (
+    "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+)
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
@@ -1567,6 +1672,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_MANAGED_PRESERVATION_SCOPE:
+        return REVIEWED_MANAGED_PRESERVATION_TESTS
     if scope == REVIEWED_RECORD_PORTABILITY_SCOPE:
         return REVIEWED_RECORD_PORTABILITY_TESTS
     if scope == REVIEWED_WINDOW_SUPPORT_SCOPE:
@@ -1742,6 +1849,14 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
+    if reviewed_delivery_membership_changes(changes, managed=True):
+        runtime = changes["NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"][1]
+        validator = changes["NekoWidget/ci/validate-sharing-runtime-self-test.py"][1]
+        return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 2
+                and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 2
+                and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MANAGED_PRESERVATION_TESTS)
+                and f'runAsync("{MANAGED_PRESERVATION_RUNTIME_CASE}")' in runtime
+                and f'"{MANAGED_PRESERVATION_RUNTIME_CASE}",' in validator else FULL_SCOPE)
     if reviewed_delivery_membership_changes(changes, exporting=True):
         return (REVIEWED_RECORD_PORTABILITY_SCOPE if len(REVIEWED_RECORD_PORTABILITY_TESTS) == 2
                 and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_RECORD_PORTABILITY_TESTS) else FULL_SCOPE)

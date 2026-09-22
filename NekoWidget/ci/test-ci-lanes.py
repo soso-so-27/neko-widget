@@ -43,7 +43,8 @@ class LaneTests(unittest.TestCase):
         self.assertIn("LARGE_TEXT", scope.GALLERY_CONDITIONS["gallery-white"])
 
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
-        for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE):
+        for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
+                         scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
             self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
             self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.native_tests(selected))
             with self.assertRaises(ValueError):
@@ -154,8 +155,8 @@ class LaneTests(unittest.TestCase):
                 self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
                 self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
-                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE) else 5)
-                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE):
+                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
+                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")

@@ -1,33 +1,57 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-record-portability-v1",
-  "purpose": "One frozen explicit record-portability batch. Settings exports this device's private memo snapshot as text and JSON; an archive record exports its validated JPEG copy and memo, or memo-only when its photo is missing. Conflict and pending-deletion records cannot be exported. Archive generation rechecks the account and complete record revision; account changes invalidate preparation and the share sheet. The user chooses a destination in the real system sheet; cancellation preserves source records and cleans temporary files. No automatic upload, record mutation, original-photo guarantee or purchase gate is introduced. Existing export/store/account Swift verifiers, app and extension Build and existing signature checks, privacy checks, Photos permission/scan and sharing runtime on both iOS versions remain required. Two native operations check system-sheet arrival, cancellation, source retention and cleanup. Widget rendering/selection, PBX and server sources are unchanged; Gallery is excluded by the existing mechanical guard. Native rendering and system-sheet cancellation have not yet been executed for this candidate. This scope is unmeasured and this manifest is not successful CI or TestFlight evidence.",
+  "scope": "reviewed-managed-preservation-app-v1",
+  "purpose": "One frozen integration batch combining OFF-by-default managed preservation entries/export with the existing window record album's photo overview and selected-record detail. No live service, Apple capability, automatic upload/migration, purchase gate or shared retention change is enabled. The existing shared-record test selects two distinct records, returns to the overview, edits only the author's words, withdraws the photo while retaining the other author's words, and checks access revocation in detail and overview. The other native operation checks that OFF entries remain hidden while existing entries remain available. All existing Release app/extension build, signature, privacy and storage checks, real Photos permission/scan, and sharing runtime on both iOS versions remain required, including the added managed-preservation export boundary. Widget rendering/selection and Widget target inputs must remain unchanged under the existing mechanical guard; this app album is not Widget Gallery. Only the exact before/after product sources, four existing CI selector companions and this manifest are accepted. Workflow, matrix, build/runtime execution and success-evidence reuse rules are unchanged. Product and CI selection changes are reviewed and committed separately, then measured once as one integrated candidate; this is not a general CI-optimization exception. Native rendering has not yet run for this candidate. This unmeasured scope and manifest are not successful CI or TestFlight evidence.",
   "visualReview": "native-ui-required",
-  "dataReview": "explicit-private-record-export-without-source-mutation",
+  "dataReview": "disabled-managed-preservation-export-and-window-gallery-boundary",
   "files": {
-    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift": {
-      "before": "7325e640cf568cedd3a8582b5aa7e23176f076e5e22b7dd7b10d6fa113ad49b7",
-      "after": "b4026d4cdad626103cf7e751dff696bee2f3c3305d5e75c951db3279cd4b10ab"
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": {
+      "before": "77f7f3f89df9baec82fc805aa58c3eb9c2270e519ad11ab8f1e803f3f82ba997",
+      "after": "9eec37cdb3fd11a1868299010cd7c188d7e4ad1576fe6231f6f89bc4d8f67942"
     },
-    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
-      "before": "304bb24157a0b7a55cd7601854cab5625820e976af391f1e03f3a553119df6c0",
-      "after": "b02f0214f77cca11d437d2ff5eaf07182bac625dce1153a19e6255079bdf45a6"
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "eb4a3225d3ea9f0e6c0b3b212b820fec6e6d497b82ffea776d0a07606343f150"
     },
-    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": {
-      "before": "9098cfcf06b1644aca75c9071ddf0555b97838ccd443a4b7538223a04649909c",
-      "after": "33fa1893ab3876dedcbb9f6f4da5e610f0b5947d9eaa905ed3cfbe35d48dbaa0"
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "56728ea42658ab46cc8dce9f7b980098d6849662776615ab25a6820e57541a5c"
+    },
+    "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "15d4664391fec705aa54bd79b37e29dbe4e07b3df208c1adeeded191286cd05e"
+    },
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
+      "before": "f1e8b6f448b20ff1e6b7622c7fad91ddee67ae459a995c12bd7e849018130c71",
+      "after": "2eee0e5cff69bc4428dc210782914bb5d5a00d2b5abbc7609a9b55d93c5cb623"
+    },
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
+      "before": "9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc",
+      "after": "81f67e550358ab312a017c775b524eec6b7ecb0a8f26e54945e2c93c4d8d754a"
+    },
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3",
+      "after": "cfab7430ff9b9371fd96ef89ddb1f1ad6d88a15be3554a2e88d2b771210b609b"
+    },
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
+      "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after": "5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a"
     },
     "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43",
-      "after": "c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f"
+      "before": "c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f",
+      "after": "c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64",
-      "after": "efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11"
+      "before": "efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11",
+      "after": "f5af5763aa8b29b04435b556a015aa1ce86e285495ffe522b631a545907c3599"
     },
-    "NekoWidget/ci/verify-photo-memory-note-export.swift": {
-      "before": "3c4b4b45b400d15ae7990c5da9db70d68a0e59701632370a71ece5117908e917",
-      "after": "ccc6896d61f4af5cd96cf941f83865a0ef77875515dca9cc613545516c83e9ed"
+    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
+      "before": "49a6dbc59c5df324cd341e9f11d140d71fc81616a3f213002350d6e12789cba6",
+      "after": "5f10e3a0983c068ab9b15f639c922e1fcaf66ac396af17f308ebb8f1f07fc2e7"
+    },
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py": {
+      "before": "39d466c60f8f2ccfaf4f5447c467d8040a8da69f6e6996bb330ff9d53f9c18f7",
+      "after": "ad708059d468f702a467c1a39aa90b6a173f67fcf9d9ed7b086477035cad2a39"
     }
   }
 }

@@ -224,8 +224,8 @@ class PlanTests(unittest.TestCase):
     )
 
     @staticmethod
-    def delivery_membership_changes(resuming=False, exporting=False):
-        prefix = "RECORD_PORTABILITY" if exporting else "WINDOW_SUPPORT" if resuming else "DELIVERY_MEMBERSHIP"
+    def delivery_membership_changes(resuming=False, exporting=False, managed=False):
+        prefix = "MANAGED_PRESERVATION" if managed else "RECORD_PORTABILITY" if exporting else "WINDOW_SUPPORT" if resuming else "DELIVERY_MEMBERSHIP"
         paths, new_paths = (getattr(scope, prefix + suffix) for suffix in ("_PATHS", "_NEW_PATHS"))
         companion_paths = getattr(scope, prefix + "_COMPANION_PATHS")
         selected = getattr(scope, "REVIEWED_" + prefix + "_SCOPE")
@@ -239,6 +239,14 @@ class PlanTests(unittest.TestCase):
         changes = {path: ("" if path in new_paths else "before " + path,
                           source if path == scope.MEMORY_TEST_PATH else "after " + path)
                    for path in paths}
+        if managed:
+            for path, source in (
+                ("NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift",
+                 f'runAsync("{scope.MANAGED_PRESERVATION_RUNTIME_CASE}") {{ boundary() }}'),
+                ("NekoWidget/ci/validate-sharing-runtime-self-test.py",
+                 f'REQUIRED_CASES = {{"{scope.MANAGED_PRESERVATION_RUNTIME_CASE}",}}'),
+            ):
+                changes[path] = (changes[path][0], source)
         project = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
         if project in changes:
             frozen = "\t\tA00000000000000000000025 /* Sources */ = {\n\t\t\tfiles = (unchanged);\n\t\t};\n"
@@ -261,6 +269,97 @@ class PlanTests(unittest.TestCase):
         literal = prefix + "_COMPANION_DIGESTS = " + json.dumps(companions, indent=4, sort_keys=True) + "\n"
         changes[selector] = (changes[selector][0], changes[selector][1].replace(empty, literal))
         return changes, product, companions
+
+    def test_managed_preservation_requires_frozen_integration_and_runtime_ui_cases(self):
+        changes, product, companions = self.delivery_membership_changes(managed=True)
+        with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", {}):
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
+                patch.object(scope, "MANAGED_PRESERVATION_COMPANION_DIGESTS", companions):
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+            for path in changes:
+                missing = dict(changes); del missing[path]
+                self.assertEqual(scope.select_scope(missing), scope.FULL_SCOPE)
+                for side in (0, 1):
+                    altered = list(changes[path]); altered[side] += " unreviewed change"
+                    self.assertEqual(scope.select_scope(dict(changes, **{path: tuple(altered)})), scope.FULL_SCOPE)
+            for extra in (scope.CI_WORKFLOW, scope.CI_DIAGNOSTIC_MATRIX,
+                          "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/ci-timing-baseline.json",
+                          "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift",
+                          "NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift",
+                          "NekoWidget/NekoWidget/Info.plist", "NekoWidget/Config.xcconfig",
+                          "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                          "NekoWidget/Shared/Models/WidgetRenderPlan.swift",
+                          "NekoWidget/PreservationService/src/index.ts"):
+                altered = dict(changes, **{extra: ("before", "after")})
+                self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+                self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)
+            tests = scope.REVIEWED_MANAGED_PRESERVATION_TESTS
+            for incomplete in ((), tests[:1], tests[1:], (tests[0], tests[0]),
+                               (tests[0], "NekoWidgetUITests/MomentDeliveryComposerUITests/testMissingGallery")):
+                with patch.object(scope, "REVIEWED_MANAGED_PRESERVATION_TESTS", incomplete):
+                    self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            with patch.object(scope, "MANAGED_PRESERVATION_RUNTIME_CASE", "missing-boundary"):
+                self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+            selector = "NekoWidget/ci/ios_ci_scope.py"
+            source = changes[selector][1]
+            self.assertEqual(scope.select_scope(dict(changes, **{selector: (changes[selector][0], source + source)})),
+                             scope.FULL_SCOPE)
+        tests = scope.native_tests(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+        self.assertEqual(tests, (
+            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
+            "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+        ))
+        self.assertIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_NEW_PATHS)
+        self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
+
+    def test_managed_preservation_raw_additions_and_four_safety_jobs(self):
+        changes, product, companions = self.delivery_membership_changes(managed=True)
+        base, paths = "b" * 40, sorted(changes)
+        def selected(path=None, modes=":100644 100644", status="M", extra=False):
+            raw = ""
+            for item in paths:
+                new = item in scope.MANAGED_PRESERVATION_NEW_PATHS
+                raw += (f"{modes if item == path else ':000000 100644' if new else ':100644 100644'} "
+                        f"{'c' * 40} {'d' * 40} {status if item == path else 'A' if new else 'M'}\0{item}\0")
+            if extra:
+                raw += f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0"
+            def git(*args):
+                if args[0] == "diff":
+                    return raw
+                if args[0] == "show":
+                    revision, item = args[1].split(":", 1)
+                    if revision == base and item in scope.MANAGED_PRESERVATION_NEW_PATHS:
+                        raise AssertionError("A reviewed addition has no base blob")
+                    return changes[item][0 if revision == base else 1]
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(paths, {}, self.env)
+        with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
+                patch.object(scope, "MANAGED_PRESERVATION_COMPANION_DIGESTS", companions):
+            self.assertEqual(selected(), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+            self.assertEqual(selected(extra=True), scope.FULL_SCOPE)
+            for path in paths:
+                invalid = [(":100644 000000", "D"), (":100644 100755", "M"), (":100644 120000", "T"),
+                           (":100644 100644", "R100"), (":100644 100644", "C100"),
+                           (":000000 100755", "A"), (":000000 120000", "A")]
+                invalid.append((":100644 100644", "M") if path in scope.MANAGED_PRESERVATION_NEW_PATHS else (":000000 100644", "A"))
+                for modes, status in invalid:
+                    self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
+        selected_scope = scope.REVIEWED_MANAGED_PRESERVATION_SCOPE
+        required = planner.required_jobs(paths, selected_scope)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected_scope))
+        self.assertEqual(len(required), 4)
+        self.assertEqual(scope.lanes(selected_scope), ("runtime", "app-ui"))
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, base))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
+            for state in ("skipped", "failure", "cancelled"):
+                altered = copy.deepcopy(jobs); altered[index]["conclusion"] = state
+                self.assertFalse(planner.covers_jobs(altered, required, self.sha))
 
     def test_record_portability_requires_complete_frozen_sources_and_two_ui_operations(self):
         changes, product, companions = self.delivery_membership_changes(exporting=True)

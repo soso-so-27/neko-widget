@@ -13,6 +13,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- `reviewed-managed-preservation-app-v1` は2026-09-22の既定OFF個人保管接続＋既存共同記録アルバム表示だけを対象とする。既採用の固定companion方式を用い、製品変更とCI選択変更を独立レビュー・別commitに分離した後、完全before/after・manifest・companion一致の統合候補を1回計測する。Build・Photos・両OS runtime・変更経路のUI2操作・成功証拠条件は維持。汎用CI高速化の例外とせず、未知差分はfullへ戻す。未計測を時間短縮実績と扱わない。
+
 - 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHA、既存 `MomentDeliveryComposerUITests` または `SoloMemoriesUITests` のclass、同じclass内の失敗したメソッド名1〜3個（カンマ区切り）。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_class=SoloMemoriesUITests -f test_method=<METHOD1,METHOD2>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
 - 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
 - 他classの実XCTest失敗は、準備・環境失敗として無視しない。現在の診断経路の対象外として明示的に止め、対応する切り分け経路を用意する。通常CIの繰り返しや理由文で代用しない。
