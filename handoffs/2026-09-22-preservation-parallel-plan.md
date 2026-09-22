@@ -47,7 +47,7 @@
 
 ## 次の実装順
 
-1. 実JPEG検証providerのオフライン実装は、[独立バッチ](2026-09-22-preservation-jpeg-validator.md)で対象試験・実adapter契約照合・レビューまで進行。画像を全デコードする部品であり、未配備のNode provider。専用CI/本線反映の最新結果も同資料へ集約する。
+1. 実JPEG検証providerは、[独立バッチ](2026-09-22-preservation-jpeg-validator.md)で対象21件・実adapter契約照合6件・レビューを経て `8fc7782` でmain反映済み。専用Linux CIは候補19秒・本線23秒、Mac 0回。画像を全デコードする未配備のNode providerであり、実保存サービスの稼働ではない。
 2. Apple本人→保管owner→保管鍵→会員ownerの接続と別端末復元。既定OFFのコード準備と、実Apple capability・秘密設定・実KMS・実2台確認を分ける。
 3. 専用DB/R2、総保存量、解約後保持、誤削除と最終消去、監視/復旧の提供条件。1枚20MiBの制限は総保存容量ではない。既存CloudKitと共有E2EEを暗黙に置き換えない。
 

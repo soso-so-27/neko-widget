@@ -35,6 +35,22 @@
   ],
   "observations": [
     {
+      "scope": "preservation-image-validator-v1",
+      "candidate_minutes": 0.317,
+      "run_id": 35684198257,
+      "outcome": "success",
+      "plan_run_id": 35684198203,
+      "plan_minutes": 0.3,
+      "main_run_id": 35684244496,
+      "main_elapsed_minutes": 0.383,
+      "main_plan_run_id": 35684244551,
+      "main_reused": false,
+      "runner_minutes_all_attempts": 0.8,
+      "first_ci_to_main_minutes": 1.2,
+      "candidate_commit_to_main_minutes": 21.15,
+      "note": "First scoped Linux measurement: Node typecheck and 21 actual JPEG/resource-boundary tests passed. Candidate and main each ran the small Node job and the iOS selector only; no Mac jobs or TestFlight. Candidate-commit elapsed starts at product 128e2b2 and includes CI-path implementation/review, not just final green run. Local real-adapter six checks are separate evidence, not live D1/R2 or deployed preservation. Not a general duration guarantee."
+    },
+    {
       "scope": "reviewed-managed-preservation-app-v1",
       "candidate_minutes": 15.033,
       "run_id": 35677956245,
