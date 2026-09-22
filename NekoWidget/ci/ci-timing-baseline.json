@@ -27,6 +27,10 @@
     {
       "run_id": 35640296637,
       "minutes": 9.233
+    },
+    {
+      "run_id": 35673315212,
+      "minutes": 8.05
     }
   ],
   "observations": [
@@ -242,6 +246,30 @@
       "candidate_commit_to_apple_upload_minutes": 74.38,
       "server_run_id": 35640041733,
       "upload_run_id": 35640296637
+    },
+    {
+      "scope": "reviewed-record-portability-v1",
+      "candidate_minutes": 15.417,
+      "run_id": 35669119157,
+      "outcome": "failure",
+      "runner_minutes": 50.733,
+      "note": "All Build, Photos and sharing-runtime checks succeeded. Both export UI operations reached the system share sheet but failed waiting for the application-owned accessibility marker. Native artifact review found ShareSheet.RemoteContainerView and header.closeButton for both ZIP exports. This is a failed observation, not completed source-retention/cancellation evidence; a focused diagnostic of both methods is required before the next ordinary candidate."
+    },
+    {
+      "scope": "reviewed-record-portability-v1",
+      "candidate_minutes": 17.033,
+      "run_id": 35671971259,
+      "outcome": "success",
+      "note": "Both private export cancellation paths and all four mandatory jobs passed. Initial UI failure was an application-owned identifier absent from the native remote share sheet; only the two test selectors were corrected. Original 35-minute plan missed. Production source was unchanged after the first candidate; real cross-device restore and shared-record bundle export remain outside this result.",
+      "diagnostic_run_id": 35670607152,
+      "diagnostic_minutes": 16.133,
+      "main_run_id": 35673219319,
+      "main_elapsed_minutes": 0.317,
+      "main_reused": true,
+      "runner_minutes_all_candidates_and_diagnostic": 122.783,
+      "first_ci_to_apple_upload_minutes": 67.229,
+      "candidate_commit_to_apple_upload_minutes": 68.196,
+      "upload_run_id": 35673315212
     }
   ]
 }
