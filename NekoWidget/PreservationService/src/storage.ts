@@ -10,6 +10,11 @@ interface Metadata {
   version: 1; ownerId: string; recordId: string; revision: number; document: ArchiveDocument;
   photoSHA256: string | null; photoBytes: number;
 }
+interface UsageRow {
+  inventory_owner: string | null; used_bytes: number; reserved_bytes: number;
+  saved_records: number; record_identifiers: number; pending_records: number;
+  record_bytes: number; upload_bytes: number;
+}
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
   auth: { requireSession(token: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
@@ -66,6 +71,43 @@ export class ArchiveStore {
     const latest = await this.row(session.ownerId, row.record_id);
     if (!latest || latest.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (latest.revision !== row.revision) throw new ServiceError('REVISION_CONFLICT', 409);
+  }
+  async usage(token: string) {
+    const session = await this.d.auth.requireSession(token);
+    // One SQL snapshot: do not mix a committed record count with an earlier
+    // reservation total. No photo download, decryption or membership lookup.
+    const row = await this.d.db.prepare(`SELECT i.owner_id AS inventory_owner,
+      coalesce(i.used_bytes,0) AS used_bytes, coalesce(i.reserved_bytes,0) AS reserved_bytes,
+      (SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id AND r.deleted=0) AS saved_records,
+      (SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id) AS record_identifiers,
+      (SELECT count(*) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS pending_records,
+      (SELECT coalesce(sum(quota_bytes),0) FROM pa_records r WHERE r.owner_id=o.owner_id) AS record_bytes,
+      (SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS upload_bytes
+      FROM pa_owners o LEFT JOIN pa_inventory i ON i.owner_id=o.owner_id
+      WHERE o.owner_id=? AND ${activeSession}`)
+      .bind(session.ownerId, ...this.sessionBindings(session)).first<UsageRow>();
+    const current = await this.d.auth.requireSession(token);
+    if (!row || current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
+      throw new ServiceError('SESSION_INVALID', 401);
+    }
+    const counters = [row.used_bytes, row.reserved_bytes, row.saved_records, row.record_identifiers,
+      row.pending_records, row.record_bytes, row.upload_bytes];
+    if (counters.some(value => !Number.isSafeInteger(value) || value < 0)
+      || !Number.isSafeInteger(row.used_bytes + row.reserved_bytes)
+      || !Number.isSafeInteger(row.record_identifiers + row.pending_records)
+      || row.used_bytes !== row.record_bytes || row.reserved_bytes !== row.upload_bytes
+      || (!row.inventory_owner && counters.some(value => value !== 0))) {
+      // Missing/corrupt accounting is not an empty archive. Never repair it by
+      // dropping records or by reporting fabricated free capacity.
+      throw new ServiceError('ARCHIVE_ACCOUNTING_UNAVAILABLE', 503);
+    }
+    const allocated = row.used_bytes + row.reserved_bytes;
+    return { version: 1, accounting: 'encrypted-records-v1',
+      storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes: this.d.quotaBytes,
+        availableBytes: Math.max(0, this.d.quotaBytes - allocated), overLimit: allocated > this.d.quotaBytes },
+      records: { saved: row.saved_records, pending: row.pending_records,
+        // Tombstones are an anti-replay / operational bound, not customer photo slots.
+        creationLimitReached: row.record_identifiers + row.pending_records >= this.d.maximumRecords } };
   }
   async list(token: string, after = '', limit = 20) {
     if (after) recordId(after);

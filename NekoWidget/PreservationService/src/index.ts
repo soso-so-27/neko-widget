@@ -64,6 +64,9 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (request.method === 'GET' && path === '/v1/usage') {
+    return response(await services.archive.usage(token));
+  }
   if (path === '/v1/membership' || path.startsWith('/v1/membership/')) {
     if (!services.membership) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
     if (request.method === 'GET' && path === '/v1/membership') {

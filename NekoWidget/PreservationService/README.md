@@ -21,7 +21,32 @@ Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run type
 
 写真/本文の暗号化は `src/key-custody.ts` に実装済み。NKM1（8byte prefix + 上限8KiBの版付きJSON header + ciphertext/tag）はAES-256-GCM、データごとの32byte鍵、12byte IV、128bit tagを使う。header全体をAADにし、保管owner・用途・record/documentまたはrecord/photoのSHA256 contextをheaderと管理鍵の双方へ結び付ける。古いkeyIdを残すので鍵の切替後も旧記録を読む経路はあるが、鍵を実際に保全する責務は外部authorityに残る。JWE/AWS SDKとの形式互換はない。
 
-外部KMSのauthorityと実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクはサーバー側のみで、native接続・同意画面・実billing bindingは未完。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
+外部KMSのauthorityと実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
+
+## 使用量の確認
+
+本人の保管sessionで `GET /v1/usage`。query・所有者ID指定は不可、`Cache-Control: no-store`。会員資格・鍵の復号・写真ダウンロードには依存しない読み取りAPIです（本人の有効sessionとサービスの構成は必要）。アプリ表示への接続は別バッチです。
+
+追加migration `0004_upload_owner_index.sql` は予約表に所有者単位のcovering indexを作ります。旧migrationの変更やデータ変換はなく、全所有者の予約を走査しないことをローカルのquery planで確認しています。本番DBへは未適用です。
+
+```json
+{
+  "version": 1,
+  "accounting": "encrypted-records-v1",
+  "storage": { "usedBytes": 1200, "reservedBytes": 800, "limitBytes": 10000, "availableBytes": 8000, "overLimit": false },
+  "records": { "saved": 1, "pending": 1, "creationLimitReached": false }
+}
+```
+
+上の数値は説明用で、提供容量の決定ではありません。
+
+- `usedBytes` は保管中の暗号化JPEG＋暗号化本文/メタデータ。元写真の容量やR2全体の実請求量ではありません。
+- `reservedBytes` は保存処理で確保した容量。期限切れでも清掃が完了するまでは含みます。コミット時に予約→保管済みへ移り、同一SQL snapshotで二重計上しません。
+- `availableBytes` は使用中＋予約中を引き、最小0。既存本文の編集や設定容量の引下げで超過しても、既存記録を削除/非表示にせず `overLimit` を返します。この値は新規保存の予約や成功保証ではありません。
+- `saved` は未削除の記録数（本文だけの記録も含む）、`pending` は未清掃の保存処理数。`creationLimitReached` は削除済みIDも含む運用上限到達であり、残りの写真枚数や追加課金の要求へ変換しません。削除でこの上限は解除されません。
+- 会計行の欠落/不一致は `ARCHIVE_ACCOUNTING_UNAVAILABLE` / 503。0件/空き容量として成功させず、記録を消して帳尻を合わせません。使用量はR2実体や復号可能性の検査結果ではありません。
+
+解約に伴う自動削除はありませんが、無期限保持の販売上の保証ではありません。現行の明示削除は本文/参照を即時に消し、R2を清掃待ちへ移します。清掃の7日は遅延書込みへの再消去期間で、7日間の取消・ごみ箱ではありません。提供容量、解約後の保持、誤削除の取消、バックアップ内の消去、運営終了時の持ち出し条件は未決定の提供開始条件です。
 
 ## 保管ownerと購入者のリンク
 

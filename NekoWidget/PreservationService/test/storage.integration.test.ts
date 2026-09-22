@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import type { D1Migration } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { ArchiveStore, cleanupArchive } from '../src/storage';
@@ -204,4 +205,154 @@ it('HTTP record endpoints use bearer identity and fixed document fields, never c
     .rejects.toMatchObject({ code: 'INVALID_RECORD' });
   const get = await route(new Request(url, { headers }), services);
   expect((await get.json() as { document: ArchiveDocument }).document).toEqual(document);
+});
+
+it('usage starts empty without creating inventory and never queries membership, keys or photos', async () => {
+  const f = await fixture();
+  const unavailable = async (): Promise<never> => { throw new Error('must not be called'); };
+  const archive = new ArchiveStore({ ...f.options, membership: { status: unavailable },
+    keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable } });
+  expect(await archive.usage(f.session.token)).toEqual({ version: 1, accounting: 'encrypted-records-v1',
+    storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 100_000, availableBytes: 100_000, overLimit: false },
+    records: { saved: 0, pending: 0, creationLimitReached: false } });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();
+});
+
+it('usage follows encrypted record/edit/delete accounting but never advertises tombstones as free photo slots', async () => {
+  const f = await fixture({ maximumRecords: 1 }); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const saved = await f.archive.usage(f.session.token);
+  expect(saved.records).toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+  expect(saved.storage.usedBytes).toBeGreaterThan(photo.length);
+  expect(saved.storage.availableBytes).toBe(100_000 - saved.storage.usedBytes);
+  f.setState('expired');
+  await f.archive.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: document.text.repeat(10) } }));
+  expect((await f.archive.usage(f.session.token)).storage.usedBytes).toBeGreaterThan(saved.storage.usedBytes);
+  await f.archive.remove(f.session.token, id, 2);
+  const removed = await f.archive.usage(f.session.token);
+  expect(removed.storage.usedBytes).toBe(0); expect(removed.storage.availableBytes).toBe(100_000);
+  expect(removed.records).toEqual({ saved: 0, pending: 0, creationLimitReached: true });
+  // Pending physical erasure is not customer quota, nor a seven-day undo period.
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_pending_deletes').first()).not.toBeNull();
+});
+
+it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {
+  const f = await fixture({ maximumRecords: 1 });
+  let release!: () => void; let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const bucket = new Proxy(binding.ARCHIVE, { get(target, property) {
+    if (property === 'put') return async (...args: Parameters<R2Bucket['put']>) => {
+      entered(); await gate; return target.put(...args);
+    };
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const archive = new ArchiveStore({ ...f.options, bucket });
+  const upload = archive.put(f.session.token, crypto.randomUUID(), f.request());
+  let reserved = 0;
+  try {
+    await waiting;
+    const during = await archive.usage(f.session.token);
+    reserved = during.storage.reservedBytes;
+    expect(reserved).toBeGreaterThan(0); expect(during.storage.usedBytes).toBe(0);
+    expect(during.records).toEqual({ saved: 0, pending: 1, creationLimitReached: true });
+    expect(during.storage.availableBytes).toBe(100_000 - reserved);
+  } finally { release(); await upload; }
+  const after = await archive.usage(f.session.token);
+  expect(after.storage.usedBytes).toBe(reserved); expect(after.storage.reservedBytes).toBe(0);
+  expect(after.records).toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+});
+
+it('expired reservations remain allocated until cleanup releases them, not merely until the clock passes', async () => {
+  const f = await fixture(); const now = 1_790_035_200_000;
+  await binding.DB.prepare('INSERT INTO pa_inventory(owner_id) VALUES(?)').bind(f.session.ownerId).run();
+  await binding.DB.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
+    VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(), f.session.ownerId, crypto.randomUUID(), crypto.randomUUID(), 500, now - 1).run();
+  expect((await f.archive.usage(f.session.token)).storage.reservedBytes).toBe(500);
+  await f.archive.cleanup();
+  expect((await f.archive.usage(f.session.token)).storage.reservedBytes).toBe(0);
+  expect((await f.archive.usage(f.session.token)).records.pending).toBe(0);
+});
+
+it('concurrent byte reservations cannot overbook while a lower quota never deletes or locks existing records', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const size = (await f.archive.usage(f.session.token)).storage.usedBytes;
+  const bounded = new ArchiveStore({ ...f.options, quotaBytes: size * 2 });
+  const attempts = await Promise.allSettled([crypto.randomUUID(), crypto.randomUUID()]
+    .map(newId => bounded.put(f.session.token, newId, f.request())));
+  expect(attempts.filter(value => value.status === 'fulfilled')).toHaveLength(1);
+  expect(attempts.filter(value => value.status === 'rejected')).toMatchObject([
+    { reason: { code: 'ARCHIVE_CAPACITY_REACHED' } }]);
+  expect((await bounded.usage(f.session.token)).storage).toEqual({ usedBytes: size * 2,
+    reservedBytes: 0, limitBytes: size * 2, availableBytes: 0, overLimit: false });
+  const reduced = new ArchiveStore({ ...f.options, quotaBytes: 1 });
+  f.setState('expired');
+  expect((await reduced.usage(f.session.token)).storage).toMatchObject({ availableBytes: 0, overLimit: true });
+  expect((await reduced.read(f.session.token, id)).document).toEqual(document);
+  await reduced.put(f.session.token, id, f.request({ expectedRevision: 1, document: { ...document, text: '期限後も編集' } }));
+  expect((await reduced.list(f.session.token)).items).toHaveLength(2);
+});
+
+it('usage rejects inconsistent inventory instead of reporting an empty or inflated archive', async () => {
+  const f = await fixture(); await f.archive.put(f.session.token, crypto.randomUUID(), f.request());
+  await binding.DB.prepare('UPDATE pa_inventory SET used_bytes=used_bytes+1 WHERE owner_id=?').bind(f.session.ownerId).run();
+  await expect(f.archive.usage(f.session.token)).rejects.toMatchObject({ code: 'ARCHIVE_ACCOUNTING_UNAVAILABLE' });
+  await binding.DB.prepare('DELETE FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).run();
+  await expect(f.archive.usage(f.session.token)).rejects.toMatchObject({ code: 'ARCHIVE_ACCOUNTING_UNAVAILABLE' });
+  expect((await f.archive.list(f.session.token)).items).toHaveLength(1);
+});
+
+it('usage rechecks session revocation after its snapshot and refuses expired or disabled owners', async () => {
+  const f = await fixture(); let reads = 0;
+  const archive = new ArchiveStore({ ...f.options, auth: { requireSession: async token => {
+    if (++reads === 2) await f.auth.revokeSession(token);
+    return f.auth.requireSession(token);
+  } } });
+  await expect(archive.usage(f.session.token)).rejects.toMatchObject({ status: 401 });
+  const second = await f.auth.establish(f.identity);
+  await f.auth.revokeOwner(second.ownerId);
+  await expect(f.archive.usage(second.token)).rejects.toMatchObject({ status: 401 });
+  const expired = await fixture(); expired.setNow(1_790_035_200_000 + 15 * 60_000);
+  await expect(expired.archive.usage(expired.session.token)).rejects.toMatchObject({ status: 401 });
+});
+
+it('HTTP usage is owner-isolated, read-only, no-store, and accepts neither owner selectors nor anonymous requests', async () => {
+  const f = await fixture(); await f.archive.put(f.session.token, crypto.randomUUID(), f.request());
+  const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+  const services: Services = { auth: f.auth, archive: f.archive, verifier: { verifyNativeAuthorization: async () => f.identity } };
+  const url = 'https://preservation.test/v1/usage';
+  const headers = { authorization: `Bearer ${other.token}` };
+  const result = await route(new Request(url, { headers }), services);
+  expect(result.status).toBe(200); expect(result.headers.get('cache-control')).toBe('no-store');
+  const data = await result.json() as { records: { saved: number }; storage: { usedBytes: number } };
+  expect(data.records.saved).toBe(0); expect(data.storage.usedBytes).toBe(0);
+  expect(JSON.stringify(data)).not.toContain(f.session.ownerId);
+  await expect(route(new Request(`${url}?ownerId=${f.session.ownerId}`, { headers }), services))
+    .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  await expect(route(new Request(url), services)).rejects.toMatchObject({ status: 401 });
+  await expect(route(new Request(url, { headers, method: 'POST' }), services)).rejects.toMatchObject({ status: 404 });
+  expect((await worker.fetch(new Request(url, { headers }), binding as Env)).status).toBe(503);
+});
+
+it('the additive owner index preserves populated accounting and avoids scanning other owners uploads', async () => {
+  const f = await fixture(); await f.archive.put(f.session.token, crypto.randomUUID(), f.request());
+  await binding.DB.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
+    VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(), f.session.ownerId, crypto.randomUUID(), crypto.randomUUID(), 500, 1_790_035_200_001).run();
+  const before = await f.archive.usage(f.session.token);
+  // Local isolated test DB only: reproduce the populated pre-0004 schema, then
+  // run the actual migration SQL. Never edit a previously-applied migration.
+  await binding.DB.prepare('DROP INDEX pa_upload_owner_bytes').run();
+  const migration = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS
+    .find(item => item.name === '0004_upload_owner_index.sql');
+  expect(migration).toBeDefined();
+  await binding.DB.batch(migration!.queries.map(query => binding.DB.prepare(query)));
+  expect(await f.archive.usage(f.session.token)).toEqual(before);
+  for (const expression of ['count(*)', 'coalesce(sum(reserved_bytes),0)']) {
+    const plan = await binding.DB.prepare(`EXPLAIN QUERY PLAN SELECT ${expression} FROM pa_uploads u WHERE u.owner_id=?`)
+      .bind(f.session.ownerId).all<{ detail: string }>();
+    expect(plan.results.some(row => row.detail.includes('SEARCH u USING COVERING INDEX pa_upload_owner_bytes'))).toBe(true);
+    expect(plan.results.some(row => row.detail.includes('SCAN u'))).toBe(false);
+  }
 });
