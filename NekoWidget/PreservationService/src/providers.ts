@@ -1,4 +1,5 @@
-import { ServiceError, type MembershipAuthority, type PhotoValidator } from './contracts';
+import { ServiceError, sha256, type PhotoValidator } from './contracts';
+import { type BillingLinkAuthority, type MembershipStatus, linkTranscript } from './billing-link-protocol';
 import { encodePhoto } from './documents';
 import { type KeyWrappingAuthority } from './key-custody';
 import { readBoundedBody } from './bounded-body';
@@ -8,7 +9,9 @@ import { readBoundedBody } from './bounded-body';
 async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 40 * 1024 * 1024) {
   const response = await binding.fetch(`https://preservation-internal${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    redirect: 'error', signal: AbortSignal.timeout(10_000),
+    // Workers supports manual/follow, not Request's browser-only error mode.
+    // Never follow a provider redirect (response.ok below rejects every 3xx).
+    redirect: 'manual', signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok || !response.body) throw new ServiceError('DEPENDENCY_UNAVAILABLE', 503);
   try {
@@ -53,12 +56,26 @@ export function boundKeyWrapper(binding: Fetcher): KeyWrappingAuthority {
     },
   };
 }
-export function boundMembership(binding: Fetcher): MembershipAuthority {
-  return { async status(ownerId) {
-    const value = await invoke(binding, '/membership/verified-status', { ownerId }, 4096);
-    if (!['active', 'grace', 'expired', 'unknown'].includes(value.status as string)) return 'unknown';
-    return value.status as 'active' | 'grace' | 'expired' | 'unknown';
-  } };
+export function boundBillingAuthority(binding: Fetcher): BillingLinkAuthority {
+  return {
+    async verify(challenge, proof) {
+      const value = await invoke(binding, '/membership/verify-link', { challenge, proof }, 4096);
+      if (Object.keys(value).sort().join(',') !== 'billingAccountId,challengeSHA256,version'
+          || value.version !== 1 || value.billingAccountId !== challenge.billingAccountId
+          || value.challengeSHA256 !== await sha256(linkTranscript(challenge))) {
+        throw new ServiceError('BILLING_PROOF_UNCONFIRMED', 503);
+      }
+    },
+    async status(billingAccountId) {
+      const value = await invoke(binding, '/membership/verified-status', { billingAccountId }, 4096);
+      if (Object.keys(value).sort().join(',') !== 'billingAccountId,status,version'
+          || value.version !== 1 || value.billingAccountId !== billingAccountId
+          || !['active', 'grace', 'expired', 'unknown'].includes(value.status as string)) {
+        throw new ServiceError('MEMBERSHIP_UNCONFIRMED', 503);
+      }
+      return value.status as MembershipStatus;
+    },
+  };
 }
 export function boundPhotoValidator(binding: Fetcher): PhotoValidator {
   return { async validateJPEG(bytes) {

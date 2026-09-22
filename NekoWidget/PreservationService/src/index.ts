@@ -2,7 +2,8 @@ import { ServiceError, sha256, type IdentityVerifier } from './contracts';
 import { DurableAuth } from './auth';
 import { ArchiveStore, cleanupArchive } from './storage';
 import { AppleIdentityVerifier, createAppleClientSecret } from './apple';
-import { boundKeyWrapper, boundMembership, boundPhotoValidator } from './providers';
+import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './providers';
+import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
 import { readBoundedBody } from './bounded-body';
 
@@ -10,11 +11,12 @@ export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string;
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
+  PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
   KEY_WRAPPER?: Fetcher; MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
   REQUEST_LIMITER?: RateLimit;
 }
-export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier; }
+export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier; membership?: MembershipLinks; }
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const string = (value: unknown) => {
@@ -62,6 +64,23 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (path === '/v1/membership' || path.startsWith('/v1/membership/')) {
+    if (!services.membership) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
+    if (request.method === 'GET' && path === '/v1/membership') {
+      return response(await services.membership.forSession(token));
+    }
+    if (request.method === 'POST' && path === '/v1/membership/challenges') {
+      const input = await body(request, 1024);
+      if (Object.keys(input).join(',') !== 'billingAccountId') throw new ServiceError('INVALID_REQUEST');
+      return response(await services.membership.issue(token, input.billingAccountId));
+    }
+    if (request.method === 'POST' && path === '/v1/membership/link') {
+      const input = await body(request, 4096);
+      if (Object.keys(input).sort().join(',') !== 'challengeId,proof') throw new ServiceError('INVALID_REQUEST');
+      return response(await services.membership.complete(token, input.challengeId, input.proof));
+    }
+    throw new ServiceError('NOT_FOUND', 404);
+  }
   if (request.method === 'DELETE' && path === '/v1/auth/session') {
     await services.auth.revokeSession(token);
     return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
@@ -87,7 +106,7 @@ export async function route(request: Request, services: Services): Promise<Respo
 
 function configuredServices(env: Env): Services {
   if (!env.KEY_WRAPPER || !env.MEMBERSHIP_AUTHORITY || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
-    || !env.APPLE_CREDENTIALS_JSON || !env.REQUEST_LIMITER || !env.DB || !env.ARCHIVE) {
+    || !env.APPLE_CREDENTIALS_JSON || !env.PRESERVATION_LINK_AUDIENCE || !env.REQUEST_LIMITER || !env.DB || !env.ARCHIVE) {
     throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   }
   let credentials: { teamId: string; keyId: string; clientId: string; privateKey: string };
@@ -98,10 +117,12 @@ function configuredServices(env: Env): Services {
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
+  const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
+    audience: env.PRESERVATION_LINK_AUDIENCE, now });
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
-    membership: boundMembership(env.MEMBERSHIP_AUTHORITY), photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
+    membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS) });
-  return { auth, archive, verifier };
+  return { auth, archive, verifier, membership };
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -124,6 +145,8 @@ export default {
     // Continue physical deletion even while sign-in or paid saving is disabled.
     await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() });
     await env.DB.batch([
+      env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
+        (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
       env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
         (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
       env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
