@@ -66,14 +66,22 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 26)
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 33)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v2")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({**plain, "handoffs/custody.md": ("", "notes")}), planner.PRESERVATION_SCOPE)
         self.assertEqual(select({**plain, "NekoWidget/PreservationService/test/key-fixture.ts": ("", "synthetic helper")}),
                          planner.PRESERVATION_SCOPE)
+        for path in ("src/billing-link-protocol.ts", "src/membership-links.ts", "src/billing-authority.ts",
+                     "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
+                     "test/membership-links.test.ts", "test/billing-authority.test.ts"):
+            self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
+                             planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts", "NekoWidget/SharingService/src/index.ts",
+                      "NekoWidget/SharingService/src/billing-auth.ts", "NekoWidget/SharingService/src/billing-entitlement.ts",
+                      "NekoWidget/SharingService/migrations/0019_billing_foundation.sql",
                       "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift", "NekoWidget/Config.xcconfig",
                       scope.CI_WORKFLOW, "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/check-development-flow.py",
                       "NekoWidget/PreservationImageValidator/src/provider.ts", planner.JPEG_WORKFLOW):
@@ -121,7 +129,10 @@ class PlanTests(unittest.TestCase):
                          "npm run typecheck", "npm test", "working-directory: NekoWidget/PreservationService"):
             self.assertIn(required, workflow)
         self.assertNotIn("secrets.", workflow)
-        self.assertNotIn("wrangler deploy", workflow)
+        self.assertIn('"NekoWidget/SharingService/src/**"', workflow)
+        self.assertIn('"NekoWidget/SharingService/migrations/**"', workflow)
+        self.assertIn('wrangler deploy --dry-run --config wrangler.billing.disabled.jsonc', workflow)
+        self.assertIn('--autoconfig=false --experimental-provision=false --experimental-auto-create=false', workflow)
         self.assertNotIn("--remote", workflow)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / "event.json").write_text("{}")

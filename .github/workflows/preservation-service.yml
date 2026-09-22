@@ -6,10 +6,15 @@ on:
       - "diagnostic/**"
     paths:
       - "NekoWidget/PreservationService/**"
+      # The private billing authority imports these without copying their logic.
+      - "NekoWidget/SharingService/src/**"
+      - "NekoWidget/SharingService/migrations/**"
       - ".github/workflows/preservation-service.yml"
   pull_request:
     paths:
       - "NekoWidget/PreservationService/**"
+      - "NekoWidget/SharingService/src/**"
+      - "NekoWidget/SharingService/migrations/**"
       - ".github/workflows/preservation-service.yml"
   workflow_dispatch:
 
@@ -45,5 +50,8 @@ jobs:
       - name: Verify local identity, custody and storage boundaries
         working-directory: NekoWidget/PreservationService
         run: npm test
+      - name: Bundle the private authority without deployment or provisioning
+        working-directory: NekoWidget/PreservationService
+        run: npx --no-install wrangler deploy --dry-run --config wrangler.billing.disabled.jsonc --outdir "$RUNNER_TEMP/preservation-billing" --autoconfig=false --experimental-provision=false --experimental-auto-create=false
       # Local synthetic tests only: no secrets, remote migrations or deployment.
       # This job is not native iOS release or TestFlight evidence.

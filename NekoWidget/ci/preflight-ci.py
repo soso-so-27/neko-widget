@@ -317,7 +317,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
     reason = ("Independent JPEG provider and frozen Node workflow; no native or release evidence"
               if selected == planner.JPEG_SCOPE else
-              "Independent preservation service and frozen Node workflow; no native or release evidence"
+              "Preservation and private billing-link service with frozen Node workflow; no native or release evidence"
               if selected == planner.PRESERVATION_SCOPE else
               "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else
