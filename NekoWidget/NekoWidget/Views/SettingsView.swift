@@ -185,6 +185,12 @@ struct SettingsView: View {
             }
 
             Section {
+                if ManagedPreservationConfiguration.current.isEnabled {
+                    NavigationLink { ManagedPreservationView() } label: {
+                        Label("サービスに保管した記録", systemImage: "externaldrive")
+                    }
+                    .accessibilityIdentifier("settings-managed-preservation")
+                }
                 if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
                     PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }

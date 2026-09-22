@@ -508,6 +508,9 @@ actor SharingRuntimeSelfTestRunner {
         didRun = true
 
         var results: [CaseResult] = []
+        results.append(await runAsync("managed-preservation-export-boundary") {
+            try await Self.testManagedPreservationExportBoundary()
+        })
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
         })
@@ -9540,6 +9543,60 @@ actor SharingRuntimeSelfTestRunner {
               activePreservationAfter == activePreservationBytes
         else { throw PairingError.stateUnavailable }
         return recovered
+    }
+
+    @MainActor
+    private static func testManagedPreservationExportBoundary() async throws {
+        guard !ManagedPreservationConfiguration.current.isEnabled else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        let document = ManagedPreservationDocument(text: "export-boundary-fixture", capturedAt: nil,
+            writtenAt: nil, updatedAt: nil, catNames: [], photoFile: nil)
+        let snapshot = ManagedPreservationExportSnapshot(record: .init(recordId: UUID(), revision: 1,
+            document: document), jpegData: nil)
+        let exporter = RecordExportController()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
+        func files() throws -> Set<String> {
+            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+        }
+        let before = try files()
+        func finish() async throws {
+            let limit = ContinuousClock.now + .seconds(5)
+            while exporter.preparing && ContinuousClock.now < limit {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard !exporter.preparing else { exporter.invalidate(); throw ManagedPreservationError.interrupted }
+        }
+
+        var checks = 0
+        ManagedPreservationExport.prepare(snapshot, using: exporter) { checks += 1 }
+        try await finish()
+        guard checks == 2, let payload = exporter.payload else { throw ManagedPreservationError.invalidRecord }
+        let bytes = try Data(contentsOf: payload.fileURL)
+        guard bytes.range(of: Data(document.text.utf8)) != nil else { throw ManagedPreservationError.invalidRecord }
+        exporter.finishSharing(payload)
+        guard try files() == before else { throw ManagedPreservationError.secureStorage }
+
+        // Simulate a changed owner after ZIP creation, at the actual host verification boundary.
+        checks = 0
+        ManagedPreservationExport.prepare(snapshot, using: exporter) {
+            checks += 1
+            if checks == 2 { throw ManagedPreservationError.staleSession }
+        }
+        try await finish()
+        guard checks == 2, exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
+
+        // The background path cancels preparation; its just-built ZIP must be removed.
+        checks = 0
+        ManagedPreservationExport.prepare(snapshot, using: exporter) {
+            checks += 1
+            if checks == 2 { exporter.cancelPreparation() }
+        }
+        try await finish()
+        guard checks == 2, exporter.payload == nil, try files() == before,
+              snapshot.document == document else { throw ManagedPreservationError.interrupted }
     }
 
     private static func opaque(_ byte: UInt8) -> String {

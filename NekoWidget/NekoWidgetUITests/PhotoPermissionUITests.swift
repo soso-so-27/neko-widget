@@ -1441,6 +1441,29 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testManagedPreservationDisabledHidesEntries() {
+        let app = launchRecordPortabilityFixture()
+        app.buttons["albums-settings-button"].tap()
+        let existing = app.buttons["settings-memory-note-export"]
+        XCTAssertTrue(existing.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !existing.isHittable { app.swipeUp() }
+        XCTAssertTrue(existing.isHittable)
+        XCTAssertTrue(app.buttons["settings-personal-archive"].exists)
+        XCTAssertFalse(app.buttons["settings-managed-preservation"].exists)
+        capture("managed-preservation-disabled-settings")
+        app.terminate()
+
+        let photoApp = launch("rediscovery")
+        let menu = photoApp.buttons["photo-browser-related"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        menu.tap()
+        XCTAssertTrue(photoApp.buttons["photo-browser-same-day"].waitForExistence(timeout: 5))
+        XCTAssertFalse(photoApp.buttons["photo-browser-managed-preserve"].exists)
+        capture("managed-preservation-disabled-photo-menu")
+        photoApp.terminate()
+    }
+
+    @MainActor
     func testMemoryNoteExportCancellationKeepsText() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()
@@ -3379,6 +3402,33 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         save.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
+        let albumPhotos = app.buttons.matching(identifier: "family-record-album-photo")
+        let albumPhoto = albumPhotos.firstMatch
+        XCTAssertTrue(albumPhoto.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["family-record-photo-count"].label.contains("1枚"))
+        XCTAssertTrue(albumPhoto.label.contains("自分が追加した写真"),
+                      "The album describes who added the copy, not who took or sent the original photo.")
+        XCTAssertFalse(app.staticTexts["初めて一緒に過ごした日"].exists,
+                       "The album is a photo overview; full notes belong to its detail.")
+        // A second photo-only entry checks actual record selection, not just
+        // navigation to the only available record. Newest additions come first.
+        add.tap()
+        XCTAssertTrue(pick.waitForExistence(timeout: 5)); pick.tap()
+        app.buttons["family-record-fixture-choose"].tap()
+        for _ in 0..<3 where !save.isHittable { app.swipeUp() }
+        XCTAssertTrue(save.isHittable); save.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 2"), object: albumPhotos)], timeout: 10), .completed)
+        attach(app, name: "family-record-photo-album")
+        albumPhotos.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["family-record-add-words"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["初めて一緒に過ごした日"].exists,
+                       "The new photo-only entry must not show the first photo's memo.")
+        app.buttons["family-record-back-to-album"].tap()
+        XCTAssertTrue(albumPhoto.waitForExistence(timeout: 5))
+        albumPhotos.element(boundBy: 1).tap()
+        XCTAssertTrue(app.staticTexts["初めて一緒に過ごした日"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["family-record-back-to-album"].waitForExistence(timeout: 5))
         app.buttons["family-record-fixture-peer"].tap()
         let peerWords = app.staticTexts["相手が添えた言葉"]
         for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
@@ -3419,10 +3469,20 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(peerWords.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["写真は取り下げられました"].exists)
         attach(app, name: "family-record-withdrawal-retains-peer-words")
+        app.buttons["family-record-back-to-album"].tap()
+        let withdrawnEntry = app.buttons["family-record-withdrawn-entry"]
+        XCTAssertTrue(withdrawnEntry.waitForExistence(timeout: 5))
+        XCTAssertEqual(albumPhotos.count, 1, "Only the other active photo should remain in the gallery.")
+        attach(app, name: "family-record-album-retained-notes")
+        withdrawnEntry.tap()
+        XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Withdrawal must not hide the other person's words from the album.")
         app.buttons["family-record-fixture-leave"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: peerWords)], timeout: 10), .completed)
         XCTAssertTrue(app.staticTexts["共有メモを確認できませんでした。接続を確認して、もう一度読み込んでください。"].exists)
+        app.buttons["family-record-back-to-album"].tap()
+        XCTAssertFalse(albumPhoto.exists)
+        XCTAssertFalse(withdrawnEntry.exists, "Returning to the album must not restore revoked content.")
     }
 
     @MainActor

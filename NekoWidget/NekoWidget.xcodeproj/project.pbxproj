@@ -52,9 +52,13 @@
 		A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000011 /* PhotoMemoryNoteStore.swift */; };
 		A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */; };
 		A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000201 /* PersonalArchiveStore.swift */; };
+		A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000203 /* ManagedPreservationCoordinator.swift */; };
+		A20300000000000000000102 /* ManagedPreservationSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000202 /* ManagedPreservationSessionStore.swift */; };
+		A20300000000000000000101 /* ManagedPreservationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000201 /* ManagedPreservationClient.swift */; };
 		A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000202 /* PersonalArchiveCloudClient.swift */; };
 		A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000203 /* PersonalArchiveImage.swift */; };
 		A18500000000000000000104 /* PersonalArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000204 /* PersonalArchiveView.swift */; };
+		A20300000000000000000104 /* ManagedPreservationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000204 /* ManagedPreservationView.swift */; };
 		A19000000000000000000101 /* FamilyRecordCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000201 /* FamilyRecordCore.swift */; };
 		A19000000000000000000102 /* FamilyRecordClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000202 /* FamilyRecordClient.swift */; };
 		A19000000000000000000103 /* FamilyRecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000203 /* FamilyRecordView.swift */; };
@@ -316,9 +320,13 @@
 		A18200000000000000000011 /* PhotoMemoryNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteStore.swift; sourceTree = "<group>"; };
 		A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteExporter.swift; sourceTree = "<group>"; };
 		A18500000000000000000201 /* PersonalArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveStore.swift; sourceTree = "<group>"; };
+		A20300000000000000000203 /* ManagedPreservationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationCoordinator.swift; sourceTree = "<group>"; };
+		A20300000000000000000202 /* ManagedPreservationSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationSessionStore.swift; sourceTree = "<group>"; };
+		A20300000000000000000201 /* ManagedPreservationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationClient.swift; sourceTree = "<group>"; };
 		A18500000000000000000202 /* PersonalArchiveCloudClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveCloudClient.swift; sourceTree = "<group>"; };
 		A18500000000000000000203 /* PersonalArchiveImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveImage.swift; sourceTree = "<group>"; };
 		A18500000000000000000204 /* PersonalArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveView.swift; sourceTree = "<group>"; };
+		A20300000000000000000204 /* ManagedPreservationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationView.swift; sourceTree = "<group>"; };
 		A19000000000000000000201 /* FamilyRecordCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordCore.swift; sourceTree = "<group>"; };
 		A19000000000000000000202 /* FamilyRecordClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordClient.swift; sourceTree = "<group>"; };
 		A19000000000000000000203 /* FamilyRecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyRecordView.swift; sourceTree = "<group>"; };
@@ -669,6 +677,9 @@
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				A18500000000000000000201 /* PersonalArchiveStore.swift */,
+				A20300000000000000000203 /* ManagedPreservationCoordinator.swift */,
+				A20300000000000000000202 /* ManagedPreservationSessionStore.swift */,
+				A20300000000000000000201 /* ManagedPreservationClient.swift */,
 				A19000000000000000000202 /* FamilyRecordClient.swift */,
 				A18500000000000000000202 /* PersonalArchiveCloudClient.swift */,
 				A18500000000000000000203 /* PersonalArchiveImage.swift */,
@@ -749,6 +760,7 @@
 				A18200000000000000000012 /* PhotoMemoryNoteView.swift */,
 				A18300000000000000000012 /* PhotoMemoryNoteLibraryView.swift */,
 				A18500000000000000000204 /* PersonalArchiveView.swift */,
+				A20300000000000000000204 /* ManagedPreservationView.swift */,
 				A19000000000000000000203 /* FamilyRecordView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
@@ -1047,9 +1059,13 @@
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */,
+				A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */,
+				A20300000000000000000102 /* ManagedPreservationSessionStore.swift in Sources */,
+				A20300000000000000000101 /* ManagedPreservationClient.swift in Sources */,
 				A18500000000000000000102 /* PersonalArchiveCloudClient.swift in Sources */,
 				A18500000000000000000103 /* PersonalArchiveImage.swift in Sources */,
 				A18500000000000000000104 /* PersonalArchiveView.swift in Sources */,
+				A20300000000000000000104 /* ManagedPreservationView.swift in Sources */,
 				A19000000000000000000101 /* FamilyRecordCore.swift in Sources */,
 				A19000000000000000000102 /* FamilyRecordClient.swift in Sources */,
 				A19000000000000000000103 /* FamilyRecordView.swift in Sources */,

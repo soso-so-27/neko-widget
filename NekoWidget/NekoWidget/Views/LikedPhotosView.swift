@@ -2290,6 +2290,7 @@ struct PhotoBrowserView: View {
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
     @State private var preservingNote: PhotoMemoryNoteRecord?
+    @State private var managedPreservationPhoto: PhotoPresentation?
 
     init(
         photos: [PhotoPresentation],
@@ -2572,6 +2573,12 @@ struct PhotoBrowserView: View {
                             .accessibilityIdentifier("photo-browser-same-day")
                     }
                     relatedAlbumsMenu
+                    if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
+                        Button { managedPreservationPhoto = photo } label: {
+                            Label("サービスに保管", systemImage: "externaldrive.badge.plus")
+                        }
+                        .accessibilityIdentifier("photo-browser-managed-preserve")
+                    }
                     if PersonalArchiveStore.isConfigured,
                        let note = personalNote.note(for: selectedPhotoIdentifier) {
                         Button {
@@ -2690,6 +2697,10 @@ struct PhotoBrowserView: View {
         .sheet(item: $preservingNote) { record in
             PhotoMemoryNoteArchiveView(record: record, photos: libraryPhotos,
                                        noteStore: personalNote.store, archiveStore: .shared)
+        }
+        .sheet(item: $managedPreservationPhoto) { photo in
+            ManagedPreservationPhotoView(photo: photo, context: memoryNoteContext(for: photo),
+                                         noteStore: personalNote.store)
         }
         .sheet(isPresented: $showsRediscoveryHistory) {
             NavigationStack {

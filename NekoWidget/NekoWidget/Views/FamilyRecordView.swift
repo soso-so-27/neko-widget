@@ -49,20 +49,28 @@ struct FamilyRecordEntryButton: View {
                         Button("この写真にメモを追加", systemImage: "square.and.pencil") {
                             destination = .photo(source)
                         }.accessibilityIdentifier("family-record-add-current-photo")
-                        Button("このまどの共有メモを見る", systemImage: "note.text") {
+                        Button("このまどのアルバムを見る", systemImage: "photo.on.rectangle.angled") {
                             destination = .list
                         }.accessibilityIdentifier("family-record-open-list")
                     } label: {
-                        Label("共有メモ", systemImage: "note.text")
+                        Label("このまどのアルバム", systemImage: "photo.on.rectangle.angled")
                             .frame(minHeight: 44)
                     }
                     .accessibilityIdentifier("family-record-entry")
                 } else {
                     Button { destination = .list } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("共有メモ", systemImage: "note.text")
-                            Text("写真に添えた、二人のメモ")
-                                .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.title2).frame(width: 48, height: 48)
+                                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("このまどのアルバム").font(.headline)
+                                Text("二人で残した写真とメモ")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
                     }
@@ -345,8 +353,10 @@ struct FamilyRecordView: View {
     @State private var withdrawing: FamilyRecordRow?
     @State private var mutation: FamilyRecordMutation?
     @State private var saving = false
+    @State private var selectedEntryID: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let fixturePhoto: MomentShareIngressPhoto?
     private let focusedEntryID: String?
     private let windowName: String
@@ -374,35 +384,42 @@ struct FamilyRecordView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("同じ写真に、それぞれのメモを")
-                            .font(.headline)
-                        Text("写真に覚えておきたいことを添えて、\(windowName)の二人で読み返せます。")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                if currentEntryID == nil {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(windowName).font(.headline)
+                            Text("ここに追加した写真を、二人で見返せます。")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 recordSection
                 if let error = model.error {
                     Section { Text(error); Button("もう一度読み込む") { Task { await model.reload() } } }
                 }
-                if model.loading { ProgressView("共有メモを確認中") }
+                if model.loading { ProgressView("アルバムを確認中") }
             }
-            .navigationTitle("共有メモ")
+            .navigationTitle(currentEntryID == nil ? "このまどのアルバム" : "写真と二人のメモ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                    if focusedEntryID == nil && selectedEntryID != nil {
+                        Button("アルバム", systemImage: "chevron.left") { selectedEntryID = nil }
+                            .accessibilityIdentifier("family-record-back-to-album")
+                            .disabled(saving)
+                    } else {
+                        Button("閉じる", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if focusedEntryID == nil {
+                    if currentEntryID == nil {
                         Button("写真を追加", systemImage: "plus") { adding = true }
                             .disabled(model.snapshot == nil || saving)
                             .accessibilityIdentifier("family-record-add")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("共有メモについて", systemImage: "info.circle") { showingInformation = true }
+                    Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
                         .accessibilityIdentifier("family-record-information")
                 }
             }
@@ -437,19 +454,23 @@ struct FamilyRecordView: View {
             }
     }
 
+    private var currentEntryID: String? { focusedEntryID ?? selectedEntryID }
+
     @ViewBuilder private var recordSection: some View {
         if let snapshot = model.snapshot {
             let photos = snapshot.catalog.records.filter {
-                $0.kind == .photo && (focusedEntryID == nil || $0.id == focusedEntryID)
+                $0.kind == .photo && (currentEntryID == nil || $0.id == currentEntryID)
+            }.sorted {
+                $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
             }
-            if photos.isEmpty && focusedEntryID != nil {
+            if photos.isEmpty && currentEntryID != nil {
                 Section { Text("この写真の共有メモは開けません。写真の詳細に戻って、もう一度お試しください。") }
             } else if photos.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("まずは、写真を一枚", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("メモはあとからでも。相手も同じ写真にメモを添えられます。")
+                        Text("二人で見返したい写真を選んで追加します。まどに届いた写真が、自動で入ることはありません。")
                             .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
@@ -458,23 +479,97 @@ struct FamilyRecordView: View {
                     }.padding(.vertical, 8)
                 }
             }
-            ForEach(photos) { photo in
-                Section {
-                    if photo.state == .active {
-                        FamilyRecordPhoto(client: model.client, row: photo)
-                    } else { Label("写真は取り下げられました", systemImage: "photo") }
-                    photoHeader(photo, current: snapshot.catalog.participantID)
-                    ForEach(snapshot.catalog.records.filter {
-                        $0.kind == .words && $0.entryID == photo.id && $0.state == .active
-                    }) { words in
-                        wordView(words, snapshot: snapshot)
+            if currentEntryID == nil {
+                albumSections(photos: photos, snapshot: snapshot)
+            } else {
+                ForEach(photos) { photo in
+                    Section {
+                        if photo.state == .active {
+                            FamilyRecordPhoto(client: model.client, row: photo)
+                        } else { Label("写真は取り下げられました", systemImage: "photo") }
+                        photoHeader(photo, current: snapshot.catalog.participantID)
+                        ForEach(activeWords(for: photo, snapshot: snapshot)) { words in
+                            wordView(words, snapshot: snapshot)
+                        }
+                        Button("メモを追加") { editing = .init(entryID: photo.id, row: nil, text: "") }
+                            .accessibilityIdentifier("family-record-add-words")
+                            .accessibilityHint("自分のメモを追加します。相手のメモは変わりません")
                     }
-                    Button("メモを追加") { editing = .init(entryID: photo.id, row: nil, text: "") }
-                        .accessibilityIdentifier("family-record-add-words")
-                        .accessibilityHint("自分のメモを追加します。相手のメモは変わりません")
-                }.disabled(saving)
+                    .disabled(saving)
+                }
             }
         }
+    }
+
+    private func activeWords(for photo: FamilyRecordRow, snapshot: FamilyRecordSnapshot) -> [FamilyRecordRow] {
+        snapshot.catalog.records.filter {
+            $0.kind == .words && $0.entryID == photo.id && $0.state == .active
+        }.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+    }
+
+    @ViewBuilder private func albumSections(photos: [FamilyRecordRow], snapshot: FamilyRecordSnapshot) -> some View {
+        let activePhotos = photos.filter { $0.state == .active }
+        let withdrawnPhotos = photos.filter { $0.state == .withdrawn }
+        if !activePhotos.isEmpty {
+            Section {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12),
+                                         count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 20) {
+                    ForEach(activePhotos) { photo in
+                        albumTile(photo, snapshot: snapshot)
+                    }
+                }
+                .padding(.vertical, 8)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            } header: {
+                Text("追加した写真 · \(activePhotos.count)枚")
+                    .accessibilityIdentifier("family-record-photo-count")
+            }
+        }
+        if !withdrawnPhotos.isEmpty {
+            Section("写真を取り下げた記録") {
+                ForEach(withdrawnPhotos) { photo in
+                    Button { selectedEntryID = photo.id } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "text.bubble").font(.title2).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("写真は取り下げられました").foregroundStyle(.primary)
+                                Text("メモ \(activeWords(for: photo, snapshot: snapshot).count)件")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 4)
+                    }
+                    .accessibilityIdentifier("family-record-withdrawn-entry")
+                    .accessibilityHint("写真がなくても、二人のメモを開けます")
+                }
+            }
+        }
+    }
+
+    private func albumTile(_ photo: FamilyRecordRow, snapshot: FamilyRecordSnapshot) -> some View {
+        let noteCount = activeWords(for: photo, snapshot: snapshot).count
+        return Button { selectedEntryID = photo.id } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                FamilyRecordPhoto(client: model.client, row: photo, thumbnail: true)
+                    .accessibilityHidden(true)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(Date(timeIntervalSince1970: photo.createdAt), format: .dateTime.year().month().day())
+                    Spacer(minLength: 0)
+                    if noteCount > 0 { Label("\(noteCount)", systemImage: "text.bubble") }
+                }
+                .font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                Text(photo.authorID == snapshot.catalog.participantID ? "自分が追加" : "相手が追加")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(photo.authorID == snapshot.catalog.participantID ? "自分" : "相手")が追加した写真、\(Date(timeIntervalSince1970: photo.createdAt).formatted(date: .abbreviated, time: .omitted))、メモ\(noteCount)件")
+        .accessibilityHint("写真と二人のメモを開きます")
+        .accessibilityIdentifier("family-record-album-photo")
     }
     private func photoHeader(_ photo: FamilyRecordRow, current: String) -> some View {
         HStack(alignment: .top) {
@@ -546,14 +641,14 @@ struct FamilyRecordView: View {
                     Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
                 }
                 Section("写真の保管と引き継ぎ") {
-                    Text("ここに残るのは鑑賞用の写真コピーです。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
+                    Text("ここに追加した鑑賞用の写真コピーとメモを、まどごとにまとめています。一覧の日付は、このアルバムへ追加した日です。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
                     Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
                 }
                 Section("内部テストで使える範囲") {
                     Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
                 }
             }
-            .navigationTitle("共有メモについて")
+            .navigationTitle("このアルバムについて")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -578,21 +673,42 @@ struct FamilyRecordView: View {
 private struct FamilyRecordPhoto: View {
     let client: any FamilyRecordServing
     let row: FamilyRecordRow
+    var thumbnail = false
     @State private var image: UIImage?
     @State private var failed = false
     var body: some View {
         Group {
-            if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else if failed { Label("写真を読み込めません。メモは下に残っています。", systemImage: "photo") }
-            else { ProgressView() }
+            if thumbnail {
+                Color(uiColor: .secondarySystemGroupedBackground)
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        GeometryReader { geometry in
+                            if let image {
+                                Image(uiImage: image).resizable().scaledToFill()
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                            } else {
+                                photoPlaceholder.frame(width: geometry.size.width, height: geometry.size.height)
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else if let image { Image(uiImage: image).resizable().scaledToFit() }
+            else { photoPlaceholder }
         }
         .task(id: row) {
+            image = nil; failed = false
             do {
                 let data = try await client.photo(row)
                 guard !Task.isCancelled else { return }
                 image = UIImage(data: data); failed = image == nil
             } catch { if !Task.isCancelled { failed = true } }
         }
+    }
+    @ViewBuilder private var photoPlaceholder: some View {
+        if failed {
+            Label(thumbnail ? "写真を読み込めません" : "写真を読み込めません。メモは下に残っています。", systemImage: "photo")
+                .font(.caption).foregroundStyle(.secondary).padding(8)
+        } else { ProgressView() }
     }
 }
 
