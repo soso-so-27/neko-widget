@@ -517,17 +517,17 @@ RECORD_PORTABILITY_DIGESTS = {'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExp
  'NekoWidget/NekoWidget/Views/SettingsView.swift': ('acc3b67c7865335050e3f696759c76e4900f46c5ef461493c3cd5a5782670f43',
                                                     'c464d3399efcbf94f63ef152775e2cdfba19e47e3f8f220d9ed1f8e5b795299f'),
  'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64',
-                                                               'ff089fdeae4594a930d3d381f2537f7acda9e653ee8707de8894ecc1aa627f42'),
+                                                               'efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11'),
  'NekoWidget/ci/verify-photo-memory-note-export.swift': ('3c4b4b45b400d15ae7990c5da9db70d68a0e59701632370a71ece5117908e917',
                                                          'ccc6896d61f4af5cd96cf941f83865a0ef77875515dca9cc613545516c83e9ed')}
 RECORD_PORTABILITY_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "72cac89d200806abcf2583b4ce799c5b0f0ee9763779a476f08b7a61a0f8cbc9",
-        "4cbf2b935724756ceeccb5c15013a1507d82044d09f1afcbdf65b03f608a2873"
+        "1640ec155f08cf4f037831b1d84160b95f8e69170149e8db7ff459e396627101"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "bc06065df4577922b925f60d2f3459396d87b960a88e3aea0636696a332445b9",
-        "c17193c7a2adc584a91b2b5b59c6c12e9af6b346b9e8a66074623365a4852372"
+        "89cee751ae1b93908e780f41bb538e56b86263a73ae97d74a5c63bd2e3ee7427"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "3d650c3d1cd363ac26abd5fc3824b6f0c2a5b6aa4babdfcc7742e8c5e7ea9df1",

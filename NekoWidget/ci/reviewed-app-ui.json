@@ -23,7 +23,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "b7531c8800cb0dc97d9b7e783e0ec175e55078634994ab71e9c97aa4da633a64",
-      "after": "ff089fdeae4594a930d3d381f2537f7acda9e653ee8707de8894ecc1aa627f42"
+      "after": "efdc46b47351ea09823ddbd74606d75fdfdf100bae62900c7dc0d91fa59c3f11"
     },
     "NekoWidget/ci/verify-photo-memory-note-export.swift": {
       "before": "3c4b4b45b400d15ae7990c5da9db70d68a0e59701632370a71ece5117908e917",

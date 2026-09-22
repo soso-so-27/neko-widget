@@ -1527,10 +1527,12 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func cancelRecordExportSheet(_ app: XCUIApplication, screenshot: String) {
-        let sheet = app.descendants(matching: .any).matching(identifier: "record-export-share-sheet").firstMatch
+        // iOS 26 hosts UIActivityViewController remotely; the wrapper's custom
+        // identifier is absent from the captured accessibility hierarchy.
+        let sheet = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
         capture(screenshot)
-        let close = sheet.buttons.matching(NSPredicate(format: "label IN %@", ["閉じる", "Close"])).firstMatch
+        let close = sheet.buttons["header.closeButton"].firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         close.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
