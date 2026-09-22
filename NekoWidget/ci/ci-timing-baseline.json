@@ -35,6 +35,22 @@
   ],
   "observations": [
     {
+      "scope": "preservation-service-v3",
+      "candidate_minutes": 0.583,
+      "run_id": 35790177974,
+      "outcome": "success",
+      "plan_run_id": 35790177957,
+      "plan_minutes": 0.3,
+      "main_run_id": 35790332110,
+      "main_elapsed_minutes": 0.567,
+      "main_plan_run_id": 35790331986,
+      "main_reused": false,
+      "service_runner_minutes_all_attempts": 0.983,
+      "first_ci_to_main_minutes": 2.183,
+      "candidate_commit_to_main_minutes": 878.617,
+      "note": "Owner-scoped encrypted bytes and upload reservations; new owner index, 23 targeted local D1/R2 tests, typecheck and independent review. Candidate and main service jobs succeeded; iOS plan succeeded twice, Mac0, deployment0. Candidate commit to main spans an overnight user turn and is not active work time. v2 timing was not treated as v3 evidence. Runner minutes are not money or Codex tokens."
+    },
+    {
       "scope": "preservation-service-v2",
       "candidate_minutes": 0.533,
       "run_id": 35690014078,

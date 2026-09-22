@@ -53,4 +53,6 @@
 
 4. [アプリ側の会員リンク](2026-09-22-preservation-native-link.md)を `f53bc4c` でmain反映。既存の登録済み鍵だけで署名し、明示同意・取消・通信失敗/応答紛失時の再確認・再試行を接続した。4必須jobとUI2操作が成功、mainでは同SHA成功を再利用。初回失敗と限定診断を含む初回CI→mainは46分18秒。既存記録の閲覧/持ち出しを会員資格で塞がない。
 
+5. [サーバー側の容量確認](2026-09-22-preservation-capacity.md)を `6dd2e6a` でmain反映。保存済み暗号化bytes・保存中予約・空き・保存済み件数を本人単位で照会できる。既存編集/読出しは解約や容量超過で塞がない。専用CIとiOS planは候補・本線とも成功。サービスは既定OFF・未配備で、商品容量や保持日数の確定、アプリ表示、実2台復旧は別の提供開始条件。
+
 旧候補 `C:/dev/neko-managed-preservation-integration-20260922` は履歴参照のみ。現在の正本はmainの `NekoWidget/PreservationService/` と[最新の残条件](2026-09-22-preservation-native-link.md)。既定OFF・未配備。KEY_CUSTODY旧契約や自己申告ownerIdでの会員判定を本線へ戻さない。
