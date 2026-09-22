@@ -25,6 +25,111 @@ spec.loader.exec_module(planner)
 
 class PlanTests(unittest.TestCase):
     @staticmethod
+    def jpeg_changes(companions=True):
+        product = "NekoWidget/PreservationImageValidator/src/provider.ts"
+        changes = {product: ("", "reviewed provider"),
+                   planner.JPEG_WORKFLOW: ("", "name: Validate preservation JPEG provider\ntimeout-minutes: 5\n")}
+        if companions:
+            changes.update({path: ("before " + path, "after " + path) for path in planner.JPEG_COMPANION_PATHS})
+            selector = "NekoWidget/ci/plan-ios-ci.py"
+            empty = "JPEG_COMPANION_DIGESTS = {}\n"
+            changes[selector] = (changes[selector][0], empty + "# complete reviewed selector\n")
+            bindings = {path: list(map(scope.source_digest, changes[path])) for path in planner.JPEG_COMPANION_PATHS}
+            literal = "JPEG_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+            changes[selector] = (changes[selector][0], changes[selector][1].replace(empty, literal))
+        else:
+            bindings = {}
+        return changes, bindings
+
+    def test_jpeg_backend_requires_exact_paths_modes_workflow_and_frozen_companions(self):
+        original, bindings = self.jpeg_changes()
+        workflow_digest = scope.source_digest(original[planner.JPEG_WORKFLOW][1])
+        def select(changes, altered_raw=None, ancestor=True, base="b" * 40):
+            paths = sorted(changes)
+            raw = "".join(f"{':100644 100644' if pair[0] else ':000000 100644'} "
+                          f"{'c' * 40} {'d' * 40} {'M' if pair[0] else 'A'}\0{path}\0"
+                          for path, pair in sorted(changes.items()))
+            def git(*args):
+                if args[0] == "merge-base":
+                    if not ancestor:
+                        raise subprocess.CalledProcessError(1, "git")
+                    return ""
+                if args[0] == "diff":
+                    return altered_raw(raw) if altered_raw else raw
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][1 if revision == self.sha else 0]
+                raise AssertionError(args)
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git), \
+                    patch.object(planner, "JPEG_WORKFLOW_DIGEST", workflow_digest), \
+                    patch.object(planner, "JPEG_COMPANION_DIGESTS", bindings):
+                return planner.runtime_scope(paths, {}, self.env)
+        self.assertEqual(select(original), planner.JPEG_SCOPE)
+        plain, _ = self.jpeg_changes(companions=False)
+        self.assertEqual(select(plain), planner.JPEG_SCOPE)
+        self.assertEqual(select({**plain, "handoffs/jpeg.md": ("", "read-only notes")}), planner.JPEG_SCOPE)
+        self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(select(original, base=None), scope.FULL_SCOPE)  # manual iOS workflow
+        selector = "NekoWidget/ci/plan-ios-ci.py"
+        literal = "JPEG_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        for source in (original[selector][1] + literal,
+                       original[selector][1].replace(literal, literal.replace(" = ", "=", 1)),
+                       original[selector][1].replace(bindings[selector][0], "f" * 64)):
+            self.assertEqual(select({**original, selector: (original[selector][0], source)}), scope.FULL_SCOPE)
+        for extra in ("NekoWidget/PreservationImageValidator/src/new.ts", "NekoWidget/PreservationService/src/index.ts",
+                      "NekoWidget/NekoWidget/Views/SettingsView.swift", "NekoWidget/Config.xcconfig",
+                      scope.CI_WORKFLOW, "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/check-development-flow.py"):
+            mixed = {**original, extra: ("old", "new")}
+            self.assertEqual(select(mixed), scope.FULL_SCOPE, extra)
+            self.assertEqual(planner.required_jobs(list(mixed), planner.JPEG_SCOPE), planner.FULL)
+        for path in planner.JPEG_COMPANION_PATHS | {planner.JPEG_WORKFLOW}:
+            for side in (0, 1):
+                if path == planner.JPEG_WORKFLOW and side == 0:
+                    continue
+                changed = list(original[path]); changed[side] += " unreviewed"
+                self.assertEqual(select({**original, path: tuple(changed)}), scope.FULL_SCOPE, path)
+        for path in planner.JPEG_COMPANION_PATHS:
+            missing = dict(original); del missing[path]
+            self.assertEqual(select(missing), scope.FULL_SCOPE)
+        for transform in (lambda raw: raw.replace(":000000 100644", ":000000 100755", 1),
+                          lambda raw: raw.replace(":000000 100644", ":100644 120000", 1),
+                          lambda raw: raw.replace(" A\0", " D\0", 1),
+                          lambda raw: raw.replace(" A\0", " R100\0", 1),
+                          lambda raw: raw.replace(" M\0", " A\0", 1),
+                          lambda raw: raw + raw.split("\0", 2)[0] + "\0" + raw.split("\0", 2)[1] + "\0"):
+            self.assertEqual(select(original, altered_raw=transform), scope.FULL_SCOPE)
+
+    def test_jpeg_job_is_required_but_never_ios_release_or_reused_evidence(self):
+        changes, _ = self.jpeg_changes()
+        self.assertEqual(planner.required_jobs(list(changes), planner.JPEG_SCOPE), (planner.JPEG_JOB,))
+        with patch.object(planner, "jpeg_backend_only") as backend:
+            self.assertEqual(planner.runtime_scope(list(changes), {},
+                dict(self.env, GITHUB_EVENT_NAME="workflow_dispatch")), scope.FULL_SCOPE)
+            backend.assert_not_called()
+        self.assertNotIn(planner.JPEG_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(planner.JPEG_SCOPE)
+        node_job = dict(name=planner.JPEG_JOB, head_sha=self.sha, status="completed", conclusion="success")
+        self.assertFalse(planner.covers_jobs([node_job], planner.FULL, self.sha))
+        self.assertFalse(planner.covers_jobs(self.jobs, (planner.JPEG_JOB,), self.sha))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event.json").write_text("{}")
+            env = dict(self.env, GITHUB_EVENT_PATH=str(root / "event.json"),
+                       GITHUB_OUTPUT=str(root / "output"), GITHUB_STEP_SUMMARY=str(root / "summary"))
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=list(changes)), \
+                    patch.object(planner, "runtime_scope", return_value=planner.JPEG_SCOPE), \
+                    patch.object(planner, "find_evidence") as lookup, patch("sys.stdout", new_callable=io.StringIO) as output:
+                planner.main()
+            lookup.assert_not_called()
+            values = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertTrue(all(values[name] == "false" for name in ("build", "smoke", "sharing", "app_ui")))
+            self.assertEqual(values["matrix_lanes"], "[]")
+            evidence = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=", 1)[1].splitlines()[0])
+            self.assertEqual(evidence["required_jobs"], [planner.JPEG_JOB])
+            self.assertIsNone(evidence["evidence_run_id"])
+            self.assertIn("does not certify", (root / "summary").read_text())
+
+    @staticmethod
     def evidence_maintenance_changes():
         changes = {path: ("before " + path, "after " + path) for path in scope.CI_EVIDENCE_PATHS}
         selector = "NekoWidget/ci/ios_ci_scope.py"

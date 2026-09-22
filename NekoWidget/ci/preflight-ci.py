@@ -64,7 +64,7 @@ def read_task_runs(head=None):
         if page["total_count"] >= 100:
             raise ValueError("Task history exceeds 100 runs; review it before continuing")
         for run in page["workflow_runs"]:
-            if run.get("path") in {".github/workflows/ios-build.yml", DIAGNOSTIC_WORKFLOW}:
+            if run.get("path") in {".github/workflows/ios-build.yml", DIAGNOSTIC_WORKFLOW, planner.JPEG_WORKFLOW}:
                 runs[run["id"]] = run
     for run in runs.values():
         run["failed_ui"] = False
@@ -251,6 +251,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
+    if selected == planner.JPEG_SCOPE and include_upload:
+        raise ValueError("The JPEG provider scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
         raise ValueError("Full baseline reference is limited to the reviewed memory-v3 and membership-access profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
@@ -275,6 +277,10 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
                     "includes_future_rework": False,
                     "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
+        if selected == planner.JPEG_SCOPE:
+            return {"status": "unmeasured", "samples": [],
+                    "measurement_job_timeout_minutes": planner.JPEG_JOB_TIMEOUT_MINUTES,
+                    "note": "First measurement only. Five minutes is the Node job timeout, not an observed duration or a queue/total-time guarantee."}
         return {"status": "unmeasured", "samples": []}
     values = [float(row["candidate_minutes"]) for row in samples]
     upload = float(history["upload_minutes"]) if include_upload else 0
@@ -306,7 +312,9 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     if required == (planner.BUILD,) and selected != "app-icon-v1":
         selected = "movie-screen-only"
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Development helpers only; app/build/safety/release inputs unchanged"
+    reason = ("Independent JPEG provider and frozen Node workflow; no native or release evidence"
+              if selected == planner.JPEG_SCOPE else
+              "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else
               "Unmapped inputs require full checks" if selected == scope.FULL_SCOPE and unmatched else
               "No reviewed limited profile matches this complete change; full checks required"

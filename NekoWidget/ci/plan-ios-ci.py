@@ -19,7 +19,7 @@ from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only,
 from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
-                          accepts_paths, is_handoff, source_paths, select_scope, sharing_job,
+                          accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes,
                           reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST,
                           MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS,
@@ -53,6 +53,94 @@ DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "test-preflight-ci.py", "ci-timing-baseline.json",
 ))
 
+# A separate Node-only service, never an iOS build or release-evidence scope.
+# Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
+JPEG_SCOPE = "preservation-image-validator-v1"
+JPEG_JOB = "Validate preservation JPEG provider"
+JPEG_WORKFLOW = ".github/workflows/preservation-image-validator.yml"
+JPEG_JOB_TIMEOUT_MINUTES = 5
+JPEG_PATHS = frozenset("NekoWidget/PreservationImageValidator/" + name for name in (
+    ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
+    "src/decode-child.ts", "src/decode-error.ts", "src/decoder.ts",
+    "src/jpeg-envelope.ts", "src/limits.ts", "src/provider.ts",
+    "test/decode-error.test.mjs", "test/decoder.test.mjs", "test/fixtures.mjs",
+    "test/provider.test.mjs", "test/test-adapter.mjs",
+))
+JPEG_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "plan-ios-ci.py", "preflight-ci.py", "test-plan-ios-ci.py", "test-preflight-ci.py",
+))
+# Fixed only after independent review. Self hashing removes exactly this one
+# complete JSON assignment, including its single trailing newline, and nothing else.
+JPEG_WORKFLOW_DIGEST = "8e7138d1d29a916d0db84a9b20ebd050dd026fd31d98b32057f2f095e026d722"
+JPEG_COMPANION_DIGESTS = {
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "637762e35ce6422ce5710bce8b8360e850d1a31a9ac1d811246f0e83d85ea8de",
+        "bd6df06101eaf6ff9d3f33a24f15f9bcd06bf2dde56b0473597f8dd5e95837f9"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "e3676597b870ef3d2de1820a61183cf490418a5fceb0d45d0f9a5a1b97ae8ac3",
+        "282e00476b4dd2aef574610e562b8d68618f1c50faa71c7cea786b2bd2ae213c"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "49e90d0e2d0e7f74901001ee7205ba53c060f080a99c3e6c9063cd965960852a",
+        "0cbb3ea311b6b08d93aae23f2abf597b77c32ec77e42cedaba693ae25fbb258d"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "156c1f68831e93e30828ea70126795e98e91dbe321080031a8722b3e00544669",
+        "9a0f4f4c57d4af5cd85e3951401d8459cb4f94423ddb9e3ff3dadeb84aebdc75"
+    ]
+}
+
+
+def jpeg_paths_only(paths):
+    sources = source_paths(paths)
+    companions = sources & JPEG_COMPANION_PATHS
+    return bool(sources & (JPEG_PATHS | {JPEG_WORKFLOW})) and (
+        sources <= JPEG_PATHS | {JPEG_WORKFLOW} | JPEG_COMPANION_PATHS
+        and (not companions or companions == JPEG_COMPANION_PATHS))
+
+
+def jpeg_backend_only(paths, base, head):
+    if not jpeg_paths_only(paths) or len(paths) != len(set(paths)):
+        return False
+    # The exact private Node job, its tests and five-minute job timeout are
+    # reviewed together. A different workflow cannot silently drop those checks.
+    if not JPEG_WORKFLOW_DIGEST or source_digest(git("show", f"{head}:{JPEG_WORKFLOW}")) != JPEG_WORKFLOW_DIGEST:
+        return False
+    records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if records[-1:] == [""]:
+        records.pop()
+    if len(records) != 2 * len(paths):
+        return False
+    seen = set()
+    for index in range(0, len(records), 2):
+        fields, path = records[index].split(), records[index + 1]
+        if len(fields) != 5 or path not in paths or path in seen:
+            return False
+        seen.add(path)
+        valid = (fields[0:2], fields[4]) == ([":100644", "100644"], "M")
+        if path not in JPEG_COMPANION_PATHS:
+            valid = valid or (fields[0:2], fields[4]) == ([":000000", "100644"], "A")
+        if not valid:
+            return False
+    if seen != set(paths):
+        return False
+    if source_paths(paths) & JPEG_COMPANION_PATHS:
+        if set(JPEG_COMPANION_DIGESTS) != JPEG_COMPANION_PATHS:
+            return False
+        for path, pair in JPEG_COMPANION_DIGESTS.items():
+            before, after = (git("show", f"{revision}:{path}") for revision in (base, head))
+            if path == "NekoWidget/ci/plan-ios-ci.py":
+                assignment = "JPEG_COMPANION_DIGESTS = " + json.dumps(
+                    JPEG_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+                after = after.replace("\r\n", "\n")
+                if after.count(assignment) != 1:
+                    return False
+                after = after.replace(assignment, "JPEG_COMPANION_DIGESTS = {}\n", 1)
+            if not before or not after or list(map(source_digest, (before, after))) != pair:
+                return False
+    return True
+
 
 def development_tools_only(paths, base, head):
     if not paths or not source_paths(paths) or not source_paths(paths) <= DEVELOPMENT_PATHS:
@@ -79,6 +167,8 @@ def development_tools_only(paths, base, head):
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
+    if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
+        return (JPEG_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == CI_EVIDENCE_SCOPE and source_paths(paths) == CI_EVIDENCE_PATHS:
@@ -139,6 +229,15 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if jpeg_paths_only(paths):
+        try:
+            base = comparison_base(event, env)
+            git("merge-base", "--is-ancestor", "refs/remotes/origin/main", env["GITHUB_SHA"])
+            if base and jpeg_backend_only(paths, base, env["GITHUB_SHA"]):
+                return JPEG_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
     if sources and sources <= DEVELOPMENT_PATHS:
         try:
             base = comparison_base(event, env)
@@ -482,7 +581,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -496,7 +595,10 @@ def main() -> None:
               "scope": selected_scope, "required_jobs": required,
               "evidence_run_id": None, "evidence_sha": None}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
-            output.write("## CI maintenance only\n\nOrchestration tests executed. "
+            output.write(("## Backend-only verification\n\nRequired separately: " + JPEG_JOB
+                          + " in `" + JPEG_WORKFLOW + "`. This plan does not certify that job's success. "
+                          "Mac jobs are not requested. Not iOS release evidence.\n") if selected_scope == JPEG_SCOPE else
+                         "## CI maintenance only\n\nOrchestration tests executed. "
                          "Mac jobs are not requested for this verified maintenance scope. Not iOS release evidence.\n")
         return
 

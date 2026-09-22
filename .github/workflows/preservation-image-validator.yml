@@ -1,0 +1,45 @@
+name: Preservation image validator check
+
+on:
+  push:
+    branches-ignore:
+      - "diagnostic/**"
+    paths:
+      - "NekoWidget/PreservationImageValidator/**"
+      - ".github/workflows/preservation-image-validator.yml"
+  pull_request:
+    paths:
+      - "NekoWidget/PreservationImageValidator/**"
+      - ".github/workflows/preservation-image-validator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preservation-image-validator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate preservation JPEG provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22.17.0"
+          cache: npm
+          cache-dependency-path: NekoWidget/PreservationImageValidator/package-lock.json
+      - name: Install locked dependencies
+        working-directory: NekoWidget/PreservationImageValidator
+        run: npm ci --no-fund
+      - name: Typecheck and validate actual JPEG decoding and resource boundaries
+        working-directory: NekoWidget/PreservationImageValidator
+        run: npm test
+      # This is neither native iOS release evidence nor a deployment.

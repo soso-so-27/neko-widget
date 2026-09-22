@@ -24,6 +24,55 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_jpeg_first_measurement_is_not_a_five_minute_observation_or_upload_evidence(self):
+        cost = preflight.observe_cost(planner.JPEG_SCOPE, self.history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["samples"], [])
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 5)
+        self.assertNotIn("with_upload_minutes", cost)
+        self.assertIn("not an observed duration", cost["note"])
+        for extra in ({"include_upload": True}, {"include_upload": False, "use_full_baseline": True}):
+            with self.assertRaises(ValueError):
+                preflight.observe_cost(planner.JPEG_SCOPE, self.history, **extra)
+        plan = {"ready": False, "head": "a" * 40, "scope": planner.JPEG_SCOPE, "target_minutes": 5, "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [])["ready"])
+        first = preflight.apply_task_gate(dict(plan), [], measure_baseline=True)
+        self.assertTrue(first["ready"])
+        self.assertIsNone(first["task"]["projected_total_minutes"])
+        for state, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+            run = {"id": 1, "created_at": "2026-09-22T11:00:00Z", "status": state,
+                   "conclusion": conclusion, "path": planner.JPEG_WORKFLOW}
+            result = preflight.apply_task_gate(dict(plan), [run], measure_baseline=True)
+            self.assertFalse(result["ready"])
+            self.assertFalse(result["task"]["first_baseline_measurement"])
+            self.assertEqual(result["task"]["failed_runs"], [1] if conclusion == "failure" else [])
+            self.assertEqual(result["task"]["active_runs"], [1] if state == "in_progress" else [])
+
+    def test_jpeg_candidate_reports_the_dedicated_job_and_unmeasured_cost(self):
+        paths = ["NekoWidget/PreservationImageValidator/src/provider.ts", planner.JPEG_WORKFLOW]
+        with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=paths), \
+                patch.object(planner, "runtime_scope", return_value=planner.JPEG_SCOPE):
+            result = preflight.candidate_plan("origin/main", 5, False, self.history)
+        self.assertEqual(result["required_jobs"], [planner.JPEG_JOB])
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["cost_review_required"])
+        self.assertIn("no native or release evidence", result["reason"])
+
+    def test_jpeg_workflow_history_is_counted_for_both_task_branches(self):
+        run = {"id": 9, "path": planner.JPEG_WORKFLOW, "conclusion": "failure"}
+        unrelated = {"id": 10, "path": ".github/workflows/other.yml", "conclusion": "success"}
+        page = {"total_count": 2, "workflow_runs": [run, unrelated]}
+        with patch.object(planner, "git", return_value="codex/jpeg"), \
+                patch.object(preflight, "github", return_value=page) as api:
+            result = preflight.read_task_runs()
+        self.assertEqual([item["id"] for item in result], [9])
+        self.assertEqual(api.call_count, 2)
+        self.assertTrue(any("branch=diagnostic%2Fjpeg" in call.args[0] for call in api.call_args_list))
+        self.assertEqual(result[0]["failed_tests"], [])
+
     @staticmethod
     def diagnostic_run_evidence(run):
         if run.get("path") != preflight.DIAGNOSTIC_WORKFLOW:
