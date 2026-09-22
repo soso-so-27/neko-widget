@@ -35,6 +35,22 @@
   ],
   "observations": [
     {
+      "scope": "preservation-service-v2",
+      "candidate_minutes": 0.533,
+      "run_id": 35690014078,
+      "outcome": "success",
+      "plan_run_id": 35690014107,
+      "plan_minutes": 0.283,
+      "main_run_id": 35690086198,
+      "main_elapsed_minutes": 0.583,
+      "main_plan_run_id": 35690086273,
+      "main_reused": false,
+      "service_runner_minutes_all_attempts": 0.933,
+      "first_ci_to_main_minutes": 1.683,
+      "candidate_commit_to_main_minutes": 2.4,
+      "note": "67 local identity/storage/billing-link tests, real Ed25519 and billing SQL with synthetic purchase projections; typecheck, audit0 and private Worker dry-run bundle. Mac0, no CI retry or deployment. First implementation file to main12m33, earlier design excluded. Initial local authority7/8 found unsupported Workerd redirect:error; changed to manual with3xx rejection and all8 passed, affected21 passed. CI time is not total implementation time; runner figure covers the two service jobs only."
+    },
+    {
       "scope": "preservation-service-v1",
       "candidate_minutes": 0.583,
       "run_id": 35688444184,

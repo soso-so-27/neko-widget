@@ -31,3 +31,12 @@ private bindingの公式仕様： https://developers.cloudflare.com/workers/runt
 - private workerの実bundle dry-run成功（20.22KiB、配備なし）。確認コマンドに混在したworkflowハッシュ読出し1回はcwd誤りで失敗し、正しいルートで再計算した。bundle自体とは別。
 - 開発フロー11群は79.5秒で成功。CIはv2とし、旧v1時間をv2の実測として流用しない。
 - 製品とCIの独立読み取りレビューでブロッカーなし。既存SharingService/iOS変更なし。bindingと実環境は未確認。
+
+## 本線統合結果
+
+- 製品 `072f875` / CI `d821567` / 統合候補 `c9eb3186b9d3959427f1ff2471bbfa27bf2bf7e3`。mainへ同SHAで反映済み。基点mainとの差分と4companion計8値、workflow全文digest、33path・正規化assignment1箇所を独立確認した。
+- 候補Node CI `35690014078` は32秒、67/67件（実行8.54秒）・typecheck・audit0・bundle dry-run成功。iOS plan `35690014107` は17秒成功、nativeは対象外。
+- main Node `35690086198` は35秒成功、plan `35690086273` は18秒成功。Mac/再試行/実deploy/TestFlightなし。候補とmainのNode runner合計0.933分（selectorは別、課金額やトークン数ではない）。
+- 初回CI 05:15:40 UTC→main完了05:17:21は1分41秒。初回製品commit 05:14:57→mainは2分24秒。新規実装ファイルの最初の作成05:04:48→mainは12分33秒（その前の調査・設計時間別）。CIの32秒を作業全体と説明しない。
+- watcherの60秒間隔で本線完了の受領は05:18:12となった。実CI終了時刻と監視終了時刻を区別。
+- ネイティブ接続、実インフラ、本人のAccount変更/退会処理は残条件。利用者が担当間で引き継ぐ必要はない。
