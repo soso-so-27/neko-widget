@@ -584,7 +584,7 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
         "9ef44069110a26d8d943748ad67dc22e4b0bf60a79ed81d61bdac14435cc0afc",
-        "81f67e550358ab312a017c775b524eec6b7ecb0a8f26e54945e2c93c4d8d754a",
+        "6563cfef08a1553934c2eb89bb19cfd4fd33fd1b028969e623232333136eb9a5",
     ),
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": (
         "697bb628875ff60c75e2dd132ada81791f7de8ef709cce9ba5c7bb7a5ac2b2d3",
@@ -614,7 +614,7 @@ MANAGED_PRESERVATION_DIGESTS = {
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "43839ff05c00df5f95ef501f4bf671087d7a4a7f50b4d67914a23268108c232d",
-        "f5bce46e03a84a9ec9ac52a4e2255523a65f710196b6587a098a00d1eb7f85cc"
+        "836934c512bc910154479dc02461166974a41467572da8ed690783e5e14f160d"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "c8a1d4ad2c8fc5d7dae06efc49c4215821ee56d0a53949b170935ca959976445",
@@ -622,7 +622,7 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "89cee751ae1b93908e780f41bb538e56b86263a73ae97d74a5c63bd2e3ee7427",
-        "50ce690a1672262ca321ac331911740f07b738758fd0d6c70fe93c29d11f272b"
+        "d0bef6c96db59db7c5267806e1f3e0f25570d4f4df019cc8d3993c59dc27f06b"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "ac1f91afe019252e5a506035ed07b50821df2a11b0ec81244ddf2e8d05bc2df6",

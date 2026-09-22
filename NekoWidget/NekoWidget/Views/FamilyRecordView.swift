@@ -566,7 +566,6 @@ struct FamilyRecordView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(photo.authorID == snapshot.catalog.participantID ? "自分" : "相手")が追加した写真、\(Date(timeIntervalSince1970: photo.createdAt).formatted(date: .abbreviated, time: .omitted))、メモ\(noteCount)件")
         .accessibilityHint("写真と二人のメモを開きます")
         .accessibilityIdentifier("family-record-album-photo")
