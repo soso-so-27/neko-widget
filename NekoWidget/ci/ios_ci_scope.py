@@ -568,7 +568,7 @@ MANAGED_PRESERVATION_DIGESTS = {
     'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift': ('eb4a3225d3ea9f0e6c0b3b212b820fec6e6d497b82ffea776d0a07606343f150', 'afec312818399caab8cf6df6191bb07d708f4e579420f73f50c06993f361489a'),
     'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift': ('56728ea42658ab46cc8dce9f7b980098d6849662776615ab25a6820e57541a5c', '812772218990e461e6d96b3d74a014a9aca97af5b388086a3c1f8e2d6eb535d9'),
     'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('2eee0e5cff69bc4428dc210782914bb5d5a00d2b5abbc7609a9b55d93c5cb623', '0f53d2820ea22cf1c3f52146d574267737c627b2eeb49a6272256f884ded412e'),
-    'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a', 'df7249a20fa0295895af99a5f7692a12ac8f99e1cf32beb4d7cb280d32b5014c'),
+    'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('5998c230a11beebc21d00f05e5cd92cf7f96c649a99d53b731c7a625b4e7bd3a', 'ec60f6cbb1fa1a942360c41701e8a7fb4ca0e56e3c2d3dc68539d45d88f306a4'),
     'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('f5af5763aa8b29b04435b556a015aa1ce86e285495ffe522b631a545907c3599', '8daf338801abab3bf3c24cd4ab1da8374b9aacf520b4bceca4155a0db20a32bf'),
     'NekoWidget/ci/test-validate-sharing-runtime-self-test.py': ('5f10e3a0983c068ab9b15f639c922e1fcaf66ac396af17f308ebb8f1f07fc2e7', '014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4'),
     'NekoWidget/ci/validate-sharing-runtime-self-test.py': ('ad708059d468f702a467c1a39aa90b6a173f67fcf9d9ed7b086477035cad2a39', '7fb475e5b127f407e959be6150e2c209a833695267271a466c3b6e71686f3fa7'),
@@ -576,7 +576,7 @@ MANAGED_PRESERVATION_DIGESTS = {
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "c9678bbf2e4ee54ba9476c802c5191cce522c2f8811e3295aaf217df57b4be25",
-        "813939f599eb50d00635d5584dbddab1b675cc3d513e72dda8193bd00b85a93a"
+        "77dc9bc1a5dce940592cd0f3798d5552c03d92ac97fd1772f690a905226aacf8"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "78f9addb2e5531685cdd6426ab59a6cfdc5161199c5b5cc928aaa558ed1649a1",
@@ -588,7 +588,7 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "d0bef6c96db59db7c5267806e1f3e0f25570d4f4df019cc8d3993c59dc27f06b",
-        "cb96ca65bed1bc2cef1843743e72f057b4764350868b6fdbeeaa2c55644e3f39"
+        "5d4b925d76ae62d8528b03b016cb8fcb96d204e0269d735482929608d3c17aca"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "3a3dc7695903717cbfa8391681b1f9d2b63f24dbe6a90495a0b5b7b484f67018",
