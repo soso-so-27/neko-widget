@@ -33,4 +33,8 @@ Node native addon のため、Cloudflare Workersのservice bindingへそのま�
 
 ## 次の合流
 
-このproviderは `NekoWidget/PreservationImageValidator/`。保管backendの旧候補 `863ad16` と合わせて、非公開実行基盤・本人/鍵/会員接続・容量/保持/削除の未完ゲートへ進める。アプリの既定OFFは維持。別担当へ転送する操作を利用者へ求めず、主担当が候補と結果を保持する。
+製品候補は `128e2b2`、`NekoWidget/PreservationImageValidator/`。push前preflightは新規フォルダーを未対応として `full-v1` / 過去64.43〜97.92分、既定30分を超えるため `ready:false` と判定した。新規CIを起動せず、製品はこの独立ローカル候補に保持。Macの成功証拠やmain反映済みと扱わない。CI選択の変更や診断branchへの迂回pushもしていない。
+
+繰り返し保留だけにしないため、backend統合時には非公開providerのNode/Linux対象CIとiOS入力分離を独立レビューして整える。既存iOS入力に影響しないことを確認したうえで対象試験を必須にし、unknownな変更のfail-closedは残す。今回はそのCI変更をJPEG部品へ混ぜない。
+
+保管backendの旧候補 `863ad16` と合わせて、非公開実行基盤・本人/鍵/会員接続・容量/保持/削除の未完ゲートへ進める。アプリの既定OFFは維持。別担当へ転送する操作を利用者へ求めず、主担当が候補と結果を保持する。
