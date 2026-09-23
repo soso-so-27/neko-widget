@@ -150,6 +150,20 @@ struct CatProfileDetailView: View {
             }
 
             Section {
+                NavigationLink {
+                    CatPreparednessView(
+                        identityKey: profile.identifier,
+                        catName: profile.displayName,
+                        candidatePhotos: preparednessCandidates
+                    )
+                } label: {
+                    Label("もしもの備え", systemImage: "pawprint")
+                }
+            } footer: {
+                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
+            }
+
+            Section {
                 Button {
                     showsLifeReferenceEditor = true
                 } label: {
@@ -163,28 +177,14 @@ struct CatProfileDetailView: View {
             }
 
             Section {
-                if showsDeleteConfirmation {
-                    Text("\(profile.displayName)のプロフィールを削除しますか？")
-                    if deleteFailed {
-                        Text("削除できませんでした。もう一度お試しください。")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                    Button(isDeleting ? "削除中…" : "プロフィールを削除", role: .destructive) {
-                        isDeleting = true
-                        deleteFailed = false
-                        Task {
-                            let deleted = await actions.deleteProfile(profile.identifier)
-                            isDeleting = false
-                            if deleted { dismiss() } else { deleteFailed = true }
-                        }
-                    }
-                    Button("キャンセル") { showsDeleteConfirmation = false }
-                } else {
-                    Button("プロフィールを削除", role: .destructive) {
-                        deleteFailed = false
-                        showsDeleteConfirmation = true
-                    }
+                Button("プロフィールを削除", role: .destructive) {
+                    deleteFailed = false
+                    showsDeleteConfirmation = true
+                }
+                if deleteFailed {
+                    Text("削除できませんでした。もう一度お試しください。")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 }
             } header: {
                 Text("その他")
@@ -195,6 +195,24 @@ struct CatProfileDetailView: View {
         .disabled(isDeleting || isSavingName)
         .navigationBarBackButtonHidden(isDeleting || isSavingName)
         .navigationTitle(profile.displayName)
+        .alert("\(profile.displayName)のプロフィールを削除しますか？", isPresented: $showsDeleteConfirmation) {
+            Button("プロフィールを削除", role: .destructive) {
+                isDeleting = true
+                deleteFailed = false
+                Task {
+                    let deleted = await actions.deleteProfile(profile.identifier)
+                    isDeleting = false
+                    if deleted {
+                        try? CatPreparednessStore.shared.delete(for: profile.identifier)
+                        try? ShowcasePhotoStore().removeScope(profile.identifier)
+                        dismiss()
+                    } else { deleteFailed = true }
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("写真は削除されません。この子への手動所属とアルバム連携を外します。")
+        }
         .sheet(isPresented: $showsLifeReferenceEditor) {
             CatProfileLifeReferenceEditor(
                 profile: profile,
@@ -210,6 +228,14 @@ struct CatProfileDetailView: View {
                 )
             }
         }
+    }
+
+    private var preparednessCandidates: [CatProfilePhotoPresentation] {
+        let registered = Set(allProfiles.flatMap { $0.confirmedPhotos.map(\.localIdentifier) })
+        let unassigned = manualCandidatePhotos.filter {
+            !registered.contains($0.localIdentifier)
+        }
+        return profile.confirmedPhotos + unassigned
     }
 
     private var lifeReferenceSummary: String {

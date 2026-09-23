@@ -1029,8 +1029,9 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         }
         XCTAssertTrue(delete.isHittable)
         delete.tap()
-        XCTAssertTrue(app.staticTexts["テスト猫Bのプロフィールを削除しますか？"].waitForExistence(timeout: 5))
-        delete.tap()
+        let confirmation = app.alerts["テスト猫Bのプロフィールを削除しますか？"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["プロフィールを削除"].tap()
         XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 1)
         capture("multi-cat-after-delete", app: app)

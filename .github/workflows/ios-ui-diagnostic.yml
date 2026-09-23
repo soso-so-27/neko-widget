@@ -16,6 +16,7 @@ on:
         options:
           - MomentDeliveryComposerUITests
           - SoloMemoriesUITests
+          - CatProfilePhotoFlowUITests
       test_method:
         description: One to three existing method names, comma-separated without spaces
         required: true
@@ -55,7 +56,7 @@ jobs:
               raise SystemExit("Use the exact workflow SHA on a diagnostic/** branch.")
           test_class = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_CLASS", "MomentDeliveryComposerUITests")
           names = method.split(",")
-          if (test_class not in ("MomentDeliveryComposerUITests", "SoloMemoriesUITests")
+          if (test_class not in ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests")
                   or not 1 <= len(names) <= 3 or len(set(names)) != len(names)
                   or any(re.fullmatch(r"test[A-Za-z0-9_]+", name) is None for name in names)):
               raise SystemExit("Specify one supported class and one to three distinct method names.")
