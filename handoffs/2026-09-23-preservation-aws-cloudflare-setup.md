@@ -26,6 +26,28 @@
 
 - 保管Workerと鍵Workerの**非公開service binding**、保管専用D1/R2、個別secret binding。`wrangler.kms.disabled.jsonc` と `wrangler.jsonc` は現時点では安全側のローカルOFF構成であり、そのまま本番デプロイできる設定ではない。
 - KMS呼出元を当該鍵の `kms:Encrypt` / `kms:Decrypt` のみに限定し、[暗号化コンテキスト](https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html)の `neko-preservation-context-sha256` が存在する要求だけを許可する。コンテキスト値は各記録で異なるSHA-256なので固定値のIAM条件にはできない。`kms:EncryptionContextKeys` によるキー名制限とWorker側の64桁hex検査を併用し、管理・鍵削除・grant・他の鍵への権限を与えない。鍵ポリシーとIAMの両方をレビューする。
+
+  専用IAM主体に付ける許可の形は次のとおり。`<KEY_ARN>` は作成した1本の鍵の完全なARNに置き換える。`ForAnyValue` はコンテキストの存在を要求し、`ForAllValues` は余計なキーを拒否する。これは鍵ポリシー側の許可や実KMS疎通試験を代替しない。
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "PreservationRecordKeyOnly",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt"],
+      "Resource": "<KEY_ARN>",
+      "Condition": {
+        "ForAnyValue:StringEquals": {
+          "kms:EncryptionContextKeys": "neko-preservation-context-sha256"
+        },
+        "ForAllValues:StringEquals": {
+          "kms:EncryptionContextKeys": ["neko-preservation-context-sha256"]
+        }
+      }
+    }]
+  }
+  ```
 - Worker外からの認証は当面、専用IAM主体の最小権限資格情報をCloudflare secretに登録する方式を検証する。長期資格情報には漏えい・更新負担があるため、ローテーション・CloudTrail監査・失効訓練を受入条件とし、後から短期資格情報へ移行する。秘密値を標準出力・ログ・Gitに出さない。
 - `KMS_REGION`、`KMS_KEY_ARN`、`KEY_WRAPPER_CALLER_SECRET`、`KMS_ACCESS_KEY_ID`、`KMS_SECRET_ACCESS_KEY` は実環境のWorkers vars/secretsへ設定する。`KEY_WRAPPER_CALLER_SECRET` は保管Workerと鍵Workerで同値の十分長いランダム値とし、公開経路には渡さない。`IDENTITY_INDEX_SECRET` は別の復旧必須資産として安全に保管する。
 - OFFのまま署名済みKMS疎通と失敗時fail-closed、実R2/D1、旧鍵版の復号、バックアップからの復元、別端末での本人復元を検証する。どれか欠けたら有効化しない。
