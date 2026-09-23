@@ -5,7 +5,7 @@
 ## 利用者がAWS画面で行うこと
 
 1. [AWSアカウント](https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-creating.html)を作成し、請求方法と[MFA](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable.html)を設定する。rootの日常使用を避ける。[AWS Budgets](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html)で少額の月間予算通知を作る。作成と請求への同意は利用者が行う。
-2. AWS KMSの東京リージョン `ap-northeast-1` に、**対称・暗号化/復号用の顧客管理鍵**を1本作る。管理者と暗号操作の利用者を分け、鍵の無効化・削除予約は管理者だけにする。まず単一リージョン鍵で接続試験を行い、別リージョン複製は復旧設計後に判断する。KMSは[鍵ポリシーがIAM許可の前提](https://docs.aws.amazon.com/kms/latest/developerguide/key-policies.html)になるため、既定ポリシーのアカウント管理権限を不用意に除去しない。
+2. AWS KMSの東京リージョン `ap-northeast-1` に、**対称・暗号化/復号用の顧客管理鍵**を1本作る。独立復旧コピーを別リージョンで取り出せる設計を目指すため、実データ用には**マルチリージョン主キー**を推奨し、複製先とデータ所在は復旧設計で決める。マルチリージョン鍵は作成後に単一リージョン鍵から変換できないため、単一リージョン鍵を既に試作用に作った場合は実データへ使う前に相談する。管理者と暗号操作の利用者を分け、鍵の無効化・削除予約は管理者だけにする。KMSは[鍵ポリシーがIAM許可の前提](https://docs.aws.amazon.com/kms/latest/developerguide/key-policies.html)になるため、既定ポリシーのアカウント管理権限を不用意に除去しない。[鍵種別の変更制限](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)も確認する。
 3. 開発側へ伝えるのは**AWSアカウントID、リージョン、鍵ARN、鍵管理者との連絡経路だけ**。鍵素材、アクセスキーID、シークレットアクセスキー、セッショントークン、復旧コードはチャット・Git・チケットに貼らない。
 
 顧客管理鍵は[1本あたり月1米ドル、対象の暗号APIには月2万リクエストの無料枠](https://aws.amazon.com/kms/pricing/)がある。別リージョン複製鍵、CloudTrail、保管、通信その他は別に見積もる。
