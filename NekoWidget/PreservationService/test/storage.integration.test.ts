@@ -218,7 +218,7 @@ it('usage starts empty without creating inventory and never queries membership, 
   expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();
 });
 
-it('usage follows encrypted record/edit/delete accounting but never advertises tombstones as free photo slots', async () => {
+it('deleted IDs prevent replay without consuming a new active record slot', async () => {
   const f = await fixture({ maximumRecords: 1 }); const id = crypto.randomUUID();
   await f.archive.put(f.session.token, id, f.request());
   const saved = await f.archive.usage(f.session.token);
@@ -232,9 +232,24 @@ it('usage follows encrypted record/edit/delete accounting but never advertises t
   await f.archive.remove(f.session.token, id, 2);
   const removed = await f.archive.usage(f.session.token);
   expect(removed.storage.usedBytes).toBe(0); expect(removed.storage.availableBytes).toBe(100_000);
-  expect(removed.records).toEqual({ saved: 0, pending: 0, creationLimitReached: true });
+  expect(removed.records).toEqual({ saved: 0, pending: 0, creationLimitReached: false });
   // Pending physical erasure is not customer quota, nor a seven-day undo period.
   expect(await binding.DB.prepare('SELECT 1 FROM pa_pending_deletes').first()).not.toBeNull();
+  f.setState('active');
+  const replacement = crypto.randomUUID();
+  await f.archive.put(f.session.token, replacement, f.request());
+  expect((await f.archive.usage(f.session.token)).records)
+    .toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+  await expect(f.archive.put(f.session.token, id, f.request()))
+    .rejects.toMatchObject({ code: 'RECORD_DELETED' });
+  await expect(f.archive.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'ARCHIVE_CAPACITY_REACHED' });
+  await f.archive.remove(f.session.token, replacement, 1);
+  const concurrent = await Promise.allSettled([crypto.randomUUID(), crypto.randomUUID()]
+    .map(nextId => f.archive.put(f.session.token, nextId, f.request())));
+  expect(concurrent.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  expect(concurrent.filter(result => result.status === 'rejected'))
+    .toMatchObject([{ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } }]);
 });
 
 it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {
