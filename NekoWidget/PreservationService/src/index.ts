@@ -67,6 +67,9 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (request.method === 'GET' && path === '/v1/notice-contact') {
+    return response({ version: 1, ...await services.auth.noticeContact(token) });
+  }
   if (request.method === 'GET' && path === '/v1/retention') {
     if (!services.membership || !services.retention) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     const session = await services.auth.requireSession(token);

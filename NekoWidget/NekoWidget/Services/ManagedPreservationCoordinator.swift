@@ -141,6 +141,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var draftRecoveryWarning: String?
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
+    @Published private(set) var noticeContact: ManagedPreservationNoticeContact?
     @Published private(set) var usage: ManagedPreservationUsage?
     @Published private(set) var usageLoading = false
     @Published private(set) var usageMessage: String?
@@ -206,6 +207,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 self.isSignedIn = true
                 self.consentToNewSave = false
                 self.membership = nil; self.membershipMessage = nil
+                self.noticeContact = nil
                 try await self.loadFirstPage(ticket)
             case .failure(let error):
                 await self.client.cancelSignIn()
@@ -243,6 +245,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let result = try await self.client.membership()
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.membership = result
+        }
+    }
+
+    func checkNoticeContact() {
+        guard isSignedIn, !isBusy else { return }
+        noticeContact = nil
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            let result = try await self.client.noticeContact()
+            guard try await self.requireCurrentOwner(ticket) == owner else {
+                throw ManagedPreservationError.staleSession
+            }
+            self.noticeContact = result
         }
     }
 
@@ -414,6 +429,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false
         membership = nil; membershipMessage = nil
+        noticeContact = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
         exportProgress = nil
@@ -571,6 +587,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         records = []; nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false; draftWasSaved = false
         membership = nil; membershipMessage = nil
+        noticeContact = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
         exportProgress = nil

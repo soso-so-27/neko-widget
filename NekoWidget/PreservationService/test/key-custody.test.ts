@@ -30,6 +30,21 @@ it('another owner, another record and another purpose cannot open a valid envelo
     await expect(keys.open(sealed, other)).rejects.toMatchObject(error);
   }
 });
+it('isolates a verified notice contact from identity and record ciphertext', async () => {
+  const authority = await syntheticKeyAuthority(); const ownerId = crypto.randomUUID();
+  const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.make() });
+  const contact = { ownerId, purpose: 'contact' as const };
+  const sealed = await keys.seal(new TextEncoder().encode('person@privaterelay.appleid.com'), contact);
+  expect(new TextDecoder().decode(sealed)).not.toContain('person@');
+  expect(new TextDecoder().decode(await keys.open(sealed, contact))).toBe('person@privaterelay.appleid.com');
+  for (const wrong of [{ ownerId: crypto.randomUUID(), purpose: 'contact' as const },
+    { ownerId, purpose: 'identity' as const },
+    { ownerId, purpose: 'record' as const, recordId: `${crypto.randomUUID()}/document` }]) {
+    await expect(keys.open(sealed, wrong)).rejects.toMatchObject(error);
+  }
+  await expect(keys.open(sealed, { ...contact, recordId: `${crypto.randomUUID()}/document` }))
+    .rejects.toMatchObject(error);
+});
 it('tampered header, key version, ciphertext, unsupported format and noncanonical envelope fail closed', async () => {
   const authority = await syntheticKeyAuthority(); const scope = context();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.make() }); const sealed = await keys.seal(text, scope);

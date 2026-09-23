@@ -1,6 +1,6 @@
 import {
   type AuthDependencies, type Challenge, type Session, type VerifiedIdentity,
-  ServiceError, randomToken, sha256,
+  ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
 
 const CHALLENGE_MS = 5 * 60_000;
@@ -10,6 +10,7 @@ const encoder = new TextEncoder();
 interface OwnerRow { owner_id: string; epoch: number; disabled: number; }
 interface ChallengeRow { nonce: string; created_at: number; expires_at: number; }
 interface SessionRow { owner_id: string; session_hash: string; expires_at: number; }
+interface ContactRow { sealed_email: unknown; source: 'apple'; }
 const unavailable = (): ServiceError => new ServiceError('auth_unavailable', 503);
 const denied = (): ServiceError => new ServiceError('unauthorized', 401);
 const safeError = (error: unknown): ServiceError => error instanceof ServiceError ? error : unavailable();
@@ -90,6 +91,9 @@ export class DurableAuth {
       ).bind(identityKey).first<OwnerRow>();
       if (!owner || owner.disabled !== 0) throw denied();
 
+      const contactEmail = identity.issuer === 'https://appleid.apple.com' ? identity.verifiedEmail : undefined;
+      if (contactEmail !== undefined && !contactEmailValid(contactEmail)) throw denied();
+
       const plaintext = encoder.encode(JSON.stringify({
         issuer: identity.issuer, subject: identity.subject, refreshToken: identity.refreshToken,
       }));
@@ -100,17 +104,33 @@ export class DurableAuth {
       } catch { throw new ServiceError('identity_key_unavailable', 503); }
       finally { plaintext.fill(0); }
 
+      let sealedContact: Uint8Array | undefined;
+      if (contactEmail) {
+        const contactBytes = encoder.encode(JSON.stringify({ version: 1, email: contactEmail }));
+        try {
+          sealedContact = await this.dependencies.keys.seal(contactBytes, { ownerId: owner.owner_id, purpose: 'contact' });
+          if (!(sealedContact instanceof Uint8Array) || !sealedContact.byteLength || sealedContact.byteLength > 8192) throw new Error();
+        } catch { throw new ServiceError('identity_key_unavailable', 503); }
+        finally { contactBytes.fill(0); }
+      }
+
       const token = randomToken();
       const sessionHash = await sha256(token);
       const now = this.now();
       // A revocation during KMS work must win. Both writes are fenced in the same D1 transaction.
-      const results = await db.batch([
+      const statements = [
         db.prepare(
           `INSERT INTO pa_identity_credentials(owner_id, owner_epoch, sealed_credentials, updated_at)
            SELECT owner_id, epoch, ?, ? FROM pa_owners WHERE owner_id = ? AND epoch = ? AND disabled = 0
            ON CONFLICT(owner_id) DO UPDATE SET owner_epoch = excluded.owner_epoch,
              sealed_credentials = excluded.sealed_credentials, updated_at = excluded.updated_at`,
         ).bind(sealed.slice().buffer, now, owner.owner_id, owner.epoch),
+        ...(sealedContact ? [db.prepare(
+          `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at)
+           SELECT owner_id,?,'apple',?,? FROM pa_owners WHERE owner_id=? AND epoch=? AND disabled=0
+           ON CONFLICT(owner_id) DO UPDATE SET sealed_email=excluded.sealed_email,
+             source=excluded.source,verified_at=excluded.verified_at,updated_at=excluded.updated_at`,
+        ).bind(sealedContact.slice().buffer, now, now, owner.owner_id, owner.epoch)] : []),
         db.prepare(
           `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at)
            SELECT ?, owner_id, epoch, ?, ? FROM pa_owners
@@ -119,8 +139,9 @@ export class DurableAuth {
                            WHERE credential.owner_id = pa_owners.owner_id
                              AND credential.owner_epoch = pa_owners.epoch)`,
         ).bind(sessionHash, now, now + SESSION_MS, owner.owner_id, owner.epoch),
-      ]);
-      if (results[1]?.meta.changes !== 1) throw denied();
+      ];
+      const results = await db.batch(statements);
+      if (results.at(-1)?.meta.changes !== 1) throw denied();
       return { token, ownerId: owner.owner_id, expiresAt: new Date(now + SESSION_MS).toISOString() };
     } catch (error) { throw safeError(error); }
   }
@@ -136,6 +157,39 @@ export class DurableAuth {
       ).bind(await sha256(token), this.now()).first<SessionRow>();
       if (!row) throw denied();
       return { ownerId: row.owner_id, sessionHash: row.session_hash, expiresAt: row.expires_at };
+    } catch (error) { throw safeError(error); }
+  }
+
+  /** Read for the signed-in owner only. An Apple claim is not a delivery receipt. */
+  async noticeContact(token: string): Promise<{ email: string | null; source: 'apple' | null }> {
+    const session = await this.requireSession(token);
+    try {
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source FROM pa_notice_contacts c
+        JOIN pa_sessions s ON s.owner_id=c.owner_id JOIN pa_owners o ON o.owner_id=c.owner_id
+        WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND o.epoch=s.owner_epoch`)
+        .bind(session.sessionHash, session.ownerId, this.now()).first<ContactRow>();
+      let email: string | null = null;
+      if (row) {
+        const sealed = row.sealed_email instanceof ArrayBuffer ? new Uint8Array(row.sealed_email)
+          : row.sealed_email instanceof Uint8Array ? row.sealed_email
+          : Array.isArray(row.sealed_email) && row.sealed_email.every(byte =>
+            Number.isInteger(byte) && byte >= 0 && byte <= 255) ? Uint8Array.from(row.sealed_email) : null;
+        if (row.source !== 'apple' || !sealed || sealed.byteLength < 1 || sealed.byteLength > 8192) throw unavailable();
+        const opened = await this.dependencies.keys.open(sealed,
+          { ownerId: session.ownerId, purpose: 'contact' });
+        let value: unknown;
+        try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)); }
+        finally { opened.fill(0); }
+        if (!value || typeof value !== 'object' || Array.isArray(value) ||
+            Object.keys(value).sort().join(',') !== 'email,version' ||
+            (value as { version?: unknown }).version !== 1) throw unavailable();
+        const candidate = (value as { email?: unknown }).email;
+        if (!contactEmailValid(candidate)) throw unavailable();
+        email = candidate;
+      }
+      const current = await this.requireSession(token);
+      if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) throw denied();
+      return { email, source: row ? 'apple' : null };
     } catch (error) { throw safeError(error); }
   }
 

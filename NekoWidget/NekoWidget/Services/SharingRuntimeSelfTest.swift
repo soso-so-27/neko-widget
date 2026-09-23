@@ -18,6 +18,7 @@ enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
+    case malformedNoticeContact, changedSessionDuringNoticeContact
 }
 
 actor PreservationFixtureServer {
@@ -123,6 +124,12 @@ actor PreservationFixtureServer {
                             "availableBytes": scenario == .malformedUsage ? 10_737_418_240 : 10_736_369_664,
                             "overLimit": false],
                 "records": ["saved": 1, "pending": 0, "creationLimitReached": false]])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/notice-contact" {
+            if scenario == .changedSessionDuringNoticeContact { try replaceSession() }
+            return try json(["version": 1,
+                "email": scenario == .malformedNoticeContact ? "unsafe\r\nBcc:other@example.com" : "owner@example.com",
+                "source": "apple"])
         }
         let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
             updatedAt: nil, catNames: [], photoFile: nil)
@@ -9862,6 +9869,18 @@ actor SharingRuntimeSelfTestRunner {
             let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
             var rejected = false
             do { _ = try await fixture.client.usage() }
+            catch let error as ManagedPreservationError where error == expected { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
+        let contact = try await f.client.noticeContact()
+        guard contact.email == "owner@example.com", contact.source == "apple" else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        for (scenario, expected) in [(PreservationFixtureScenario.malformedNoticeContact, ManagedPreservationError.invalidResponse),
+                                     (.changedSessionDuringNoticeContact, .staleSession)] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var rejected = false
+            do { _ = try await fixture.client.noticeContact() }
             catch let error as ManagedPreservationError where error == expected { rejected = true }
             guard rejected else { throw ManagedPreservationError.invalidResponse }
         }

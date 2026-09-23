@@ -207,6 +207,27 @@ struct ManagedPreservationMembership: Codable, Equatable, Sendable {
     var canSave: Bool { linked && (status == .active || status == .grace) }
 }
 
+struct ManagedPreservationNoticeContact: Decodable, Equatable, Sendable {
+    let version: Int
+    let email: String?
+    let source: String?
+
+    func validated() throws -> Self {
+        guard version == 1, (email == nil) == (source == nil),
+              source == nil || source == "apple" else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        if let email {
+            guard email.utf8.count <= 254,
+                  email.range(of: #"^[^\s\x00-\x1f\x7f@]+@[^\s\x00-\x1f\x7f@]+\.[^\s\x00-\x1f\x7f@]+$"#,
+                              options: .regularExpression) != nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+        return self
+    }
+}
+
 struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
@@ -386,6 +407,12 @@ actor ManagedPreservationClient {
         } catch ManagedPreservationError.invalidResponse {
             throw ManagedPreservationError.accountingUnavailable
         }
+    }
+
+    func noticeContact() async throws -> ManagedPreservationNoticeContact {
+        let data = try await authenticated("GET", path: "/v1/notice-contact", maximumBytes: 4096)
+        let result: ManagedPreservationNoticeContact = try decode(data)
+        return try result.validated()
     }
 
     func linkMembership(consent: Bool) async throws -> ManagedPreservationMembership {

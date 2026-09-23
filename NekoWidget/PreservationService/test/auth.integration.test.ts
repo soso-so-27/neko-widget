@@ -76,6 +76,47 @@ describe('durable private preservation authentication', () => {
     expect(new Set(results.map((item) => item.ownerId)).size).toBe(3);
   });
 
+  it('seals an Apple-verified notice address per owner and does not lose it on an email-less login', async () => {
+    const f = await fixture();
+    const email = 'person@privaterelay.appleid.com';
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: email });
+    const stored = await db.prepare('SELECT * FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first();
+    expect(stored).toMatchObject({ owner_id: first.ownerId, source: 'apple' });
+    expect(JSON.stringify(stored)).not.toContain(email);
+    expect(await f.auth.noticeContact(first.token)).toEqual({ email, source: 'apple' });
+    const again = await f.auth.establish({ ...f.identity, refreshToken: 'rotated-without-email' });
+    expect(await f.auth.noticeContact(again.token)).toEqual({ email, source: 'apple' });
+    const changed = await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect(await f.auth.noticeContact(changed.token)).toEqual({ email: 'new@example.com', source: 'apple' });
+    const other = await f.auth.establish({ ...f.identity, subject: `${f.identity.subject}-other` });
+    expect(await f.auth.noticeContact(other.token)).toEqual({ email: null, source: null });
+    await expect(f.auth.establish({ ...f.identity, verifiedEmail: 'bad\r\nBcc:other@example.com' }))
+      .rejects.toMatchObject({ code: 'unauthorized' });
+    await f.auth.revokeSession(changed.token);
+    await expect(f.auth.noticeContact(changed.token)).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('fails closed if contact sealing fails before a session is issued', async () => {
+    const f = await fixture();
+    let attemptedOwner: string | undefined;
+    const auth = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      seal: async (bytes, context) => {
+        if (context.purpose === 'contact') {
+          attemptedOwner = context.ownerId;
+          throw new Error('synthetic contact key failure');
+        }
+        return f.keys.seal(bytes, context);
+      } } });
+    await expect(auth.establish({ ...f.identity, verifiedEmail: 'person@example.com' }))
+      .rejects.toMatchObject({ code: 'identity_key_unavailable' });
+    expect(attemptedOwner).toBeDefined();
+    expect(await db.prepare('SELECT owner_id FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(attemptedOwner!).first()).toBeNull();
+    expect(await db.prepare('SELECT session_hash FROM pa_sessions WHERE owner_id=?')
+      .bind(attemptedOwner!).first()).toBeNull();
+  });
+
   it('persists only HMAC identity, hashed session tokens and context-bound encrypted credentials', async () => {
     const f = await fixture();
     const session = await f.auth.establish(f.identity);

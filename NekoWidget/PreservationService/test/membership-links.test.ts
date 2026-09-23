@@ -65,6 +65,19 @@ describe('two-proof preservation membership link', () => {
     await expect(f.request('/v1/retention', 'GET', undefined, randomToken()))
       .rejects.toMatchObject({ code: 'unauthorized' });
   });
+  it('returns the verified notice address only to its signed-in preservation owner', async () => {
+    const f = await fixture();
+    expect(await (await f.request('/v1/notice-contact', 'GET')).json())
+      .toEqual({ version: 1, email: null, source: null });
+    const own = await f.auth.establish({ ...f.identity, verifiedEmail: 'owner@example.com' });
+    expect(await (await f.request('/v1/notice-contact', 'GET', undefined, own.token)).json())
+      .toEqual({ version: 1, email: 'owner@example.com', source: 'apple' });
+    const other = await f.auth.establish({ ...f.identity, subject: randomToken() });
+    expect(await (await f.request('/v1/notice-contact', 'GET', undefined, other.token)).json())
+      .toEqual({ version: 1, email: null, source: null });
+    await expect(f.request('/v1/notice-contact?ownerId=forged', 'GET', undefined, own.token))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  });
   it('does not grant from an account ID; routes bind owner/session and hide billing ID in status', async () => {
     const f = await fixture();
     expect(await f.links.status(f.user.ownerId)).toBe('unknown');

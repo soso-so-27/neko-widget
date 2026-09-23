@@ -94,6 +94,7 @@ struct ManagedPreservationView: View {
             else if coordinator.selected != nil { detailSection }
             else {
                 membershipSection
+                noticeContactSection
                 usageSection
                 if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
@@ -131,7 +132,7 @@ struct ManagedPreservationView: View {
         Section {
             if let challenge = coordinator.preparedSignIn {
                 SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = []
+                    request.requestedScopes = [.email]
                     // Server defines the nonce. Do not introduce an unagreed client hash.
                     request.nonce = challenge.nonce
                     request.state = challenge.state
@@ -146,6 +147,7 @@ struct ManagedPreservationView: View {
         footer: {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Appleで同じ本人と確認できた場合に、その本人の保管記録を読み込みます。ログインだけで保管や購入は始まりません。")
+                Text("Appleで確認したメールアドレスは、保管終了時の持ち出し・削除予告の連絡先として使います。写真やメモはメールに含めません。")
                 Text("未送信のメモはこの端末だけに保持します。同じ本人で確認できるまで文章を表示せず、別の本人へ引き継いだり、自動で送信したりしません。")
                 Button("この端末に残っている本人確認情報を解除") { coordinator.signOut() }
             }
@@ -182,6 +184,28 @@ struct ManagedPreservationView: View {
             }
         } header: { Text("新しい写真の保管") }
         footer: { Text("見る・取り出すだけなら、会員情報の接続や有効な契約は不要です。") }
+    }
+
+    private var noticeContactSection: some View {
+        Section {
+            if let contact = coordinator.noticeContact {
+                if let email = contact.email {
+                    Text(email).textSelection(.enabled)
+                        .accessibilityIdentifier("preservation-notice-contact-email")
+                } else {
+                    Text("連絡先が確認できていません")
+                        .accessibilityIdentifier("preservation-notice-contact-missing")
+                }
+            } else {
+                Text("この保管先の連絡先を確認できます")
+                    .foregroundStyle(.secondary)
+            }
+            Button("連絡先を確認") { coordinator.checkNoticeContact() }
+                .accessibilityIdentifier("preservation-notice-contact-check")
+        } header: { Text("保管終了時の連絡先") }
+        footer: {
+            Text("Appleで確認されたメールアドレスだけを表示します。連絡先がない、または予告の到達を確認できない場合、保管記録の削除は進めません。")
+        }
     }
 
     private var usageSection: some View {

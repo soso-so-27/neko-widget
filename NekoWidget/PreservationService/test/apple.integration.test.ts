@@ -101,6 +101,24 @@ describe('Apple adapter production-candidate port', () => {
     await expect(f.adapter.verifyNativeAuthorization(f.request)).rejects.toMatchObject({ code: 'APPLE_AUTHORIZATION_REJECTED' });
   });
 
+  it('exposes only an Apple-signed, verified email from the exchanged token', async () => {
+    for (const verified of [true, 'true']) {
+      const f = await setup({ enabled: true, nativeClaims: { email: 'person@privaterelay.appleid.com', email_verified: verified },
+        exchangeClaims: { email: 'person@privaterelay.appleid.com', email_verified: verified } });
+      expect(await f.adapter.verifyNativeAuthorization(f.request)).toMatchObject({
+        subject: 'synthetic-person', verifiedEmail: 'person@privaterelay.appleid.com',
+      });
+    }
+    for (const [nativeClaims, exchangeClaims] of [
+      [{ email: 'forged@invalid', email_verified: true }, { email: 'real@example.com', email_verified: false }],
+      [{ email: 'old@example.com', email_verified: true }, { email: 'new@example.com', email_verified: true }],
+      [{}, { email: 'header\r\nBcc:evil@example.com', email_verified: true }],
+    ] as const) {
+      const f = await setup({ enabled: true, nativeClaims, exchangeClaims });
+      expect(await f.adapter.verifyNativeAuthorization(f.request)).not.toHaveProperty('verifiedEmail');
+    }
+  });
+
   it('rejects native nonce/code substitution before exchange and consumes the failed attempt', async () => {
     for (const nativeClaims of [{ nonce: 'wrong-flow' }, { c_hash: 'wrong-code' }]) {
       const f = await setup({ enabled: true, nativeClaims });
