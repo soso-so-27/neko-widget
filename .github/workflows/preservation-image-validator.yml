@@ -48,4 +48,13 @@ jobs:
       - name: Build the linux amd64 decoder image without deployment
         working-directory: NekoWidget/PreservationImageValidator
         run: docker build --pull --platform linux/amd64 -t neko-preservation-validator-ci:local .
+      - name: Run synthetic JPEG and caller-boundary checks inside the image
+        working-directory: NekoWidget/PreservationImageValidator
+        run: |
+          docker run --rm -d --name neko-preservation-validator-ci -p 127.0.0.1:18080:8080 \
+            -e JPEG_VALIDATOR_ENABLED=YES \
+            -e JPEG_VALIDATOR_CALLER_SECRET=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+            neko-preservation-validator-ci:local
+          trap 'docker stop neko-preservation-validator-ci' EXIT
+          node test/container-probe.mjs
       # This is neither native iOS release evidence nor a deployment.

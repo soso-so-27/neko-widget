@@ -62,7 +62,7 @@ JPEG_JOB_TIMEOUT_MINUTES = 10
 JPEG_PATHS = frozenset("NekoWidget/PreservationImageValidator/" + name for name in (
     ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
     "Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
-    "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs",
+    "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs", "test/container-probe.mjs",
     "src/decode-child.ts", "src/decode-error.ts", "src/decoder.ts",
     "src/jpeg-envelope.ts", "src/limits.ts", "src/provider.ts",
     "test/decode-error.test.mjs", "test/decoder.test.mjs", "test/fixtures.mjs",
@@ -73,11 +73,11 @@ JPEG_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
 ))
 # Fixed only after independent review. Self hashing removes exactly this one
 # complete JSON assignment, including its single trailing newline, and nothing else.
-JPEG_WORKFLOW_DIGEST = "4341f6eb650a196b751a276f0e8a8c81de161feab90cfe579eb0fa3557a315ea"
+JPEG_WORKFLOW_DIGEST = "0b3629c90adac5ce8d04e70983fed85c9805ace05ef94f6b8ba89984e3820e51"
 JPEG_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "5f93474b5a05051b353bf9df584858f9c339be73eafb48a3e7c54f48d6229b53",
-        "97b42a4ae83191fb705f7a33d7afe60ac330352cb8c2106195db7bc4b728a431"
+        "5553c5888f600b99e8283d32111029391c07e2e60b3fac0bad0ae61884a37bb8"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "afb6c3e9fe0e497377d90f9d47fc38293664ca63f87c1007b6ef1744c94c13c3",
@@ -85,7 +85,7 @@ JPEG_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "8b688511c2ac032c7e78238fc1c1b4244a64ea9cb1e71a1aa1200542f9eaff71",
-        "684ad6f29e929ba5c14ddb281d371b13f91ab3afd56354059da43338471b5d90"
+        "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "30e0a535ba76cc3ddff3050ea4c6e9ead2fe990e5b668277b3bd0c3708cfc019",

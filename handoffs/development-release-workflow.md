@@ -17,7 +17,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - `preservation-service-v2` は専用保管backendと独立private billing authorityだけ。既知33ファイル・通常mode・固定workflow、導入時4つのCI companion全文を照合する。Sharingの署名/権利判定は直接importするが、そのソースやmigrationを変更すればfullへ戻す（専用workflowも起動）。別のJPEG backendとの混在、未知/native/権限差分もfull。候補SHAの `preservation-service.yml` / `Validate preservation identity and storage` の成功とiOS plan成功を別々に確認する。実署名・ローカルD1/R2と合成Apple/KMSであり、private workerのbundleはdry-runのみ。実デプロイや実端末復元・TestFlight証拠ではない。依存導入にlifecycle scriptを使わず、専用job上限5分を全体実績としない。v1実績をv2の実測としない。
 
-- `preservation-image-validator-v2` はv1の厳格JPEGデコーダーに、既定OFFの非公開Container gateway・HTTP bridge・Linux/amd64 Docker buildを追加した既知22ファイルだけ。通常ファイルmode・固定専用workflow、CI4ファイルの完全before/afterを照合する。未知/native/他service/署名/検証基盤の未監査差分はfull。候補SHAで別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` とiOS planの双方を確認する。Node/Docker/bundle成功は実Container配備・iOS release/TestFlightの証拠ではない。新scopeは初回計測し、10分job timeoutを実測時間としない。
+- `preservation-image-validator-v2` はv1の厳格JPEGデコーダーに、既定OFFの非公開Container gateway・HTTP bridge・Linux/amd64 Docker buildと人工画像でのコンテナ内検証を追加した既知23ファイルだけ。通常ファイルmode・固定専用workflow、CI4ファイルの完全before/afterを照合する。未知/native/他service/署名/検証基盤の未監査差分はfull。候補SHAで別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` とiOS planの双方を確認する。Node/Docker/bundle成功は実Container配備・iOS release/TestFlightの証拠ではない。新scopeは初回計測し、10分job timeoutを実測時間としない。
 
 - `reviewed-managed-preservation-app-v1` は2026-09-22の既定OFF個人保管接続＋既存共同記録アルバム表示だけを対象とする。既採用の固定companion方式を用い、製品変更とCI選択変更を独立レビュー・別commitに分離した後、完全before/after・manifest・companion一致の統合候補を1回計測する。Build・Photos・両OS runtime・変更経路のUI2操作・成功証拠条件は維持。汎用CI高速化の例外とせず、未知差分はfullへ戻す。未計測を時間短縮実績と扱わない。
 
