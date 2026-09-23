@@ -1957,9 +1957,10 @@ class PlanTests(unittest.TestCase):
                 planner.main()
                 outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                 self.assertEqual(outputs, {"build": "true", "build_name": planner.BUILD, "smoke": "true", "sharing": "true",
-                    "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
+                    "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "1",
                     "runtime_scope": scope.FULL_SCOPE,
-                    "lanes": json.dumps(scope.LANES, separators=(",", ":")),
+                    "lanes": json.dumps(scope.lanes(scope.FULL_SCOPE), separators=(",", ":")),
+                    "app_ui_lanes": json.dumps(scope.app_ui_lanes(scope.FULL_SCOPE), separators=(",", ":")),
                     "matrix_lanes": '["runtime","gallery-normal","gallery-white","gallery-no-caption"]'})
 
     def test_same_sha_lookup_does_not_depend_on_unrelated_old_candidate_api(self):

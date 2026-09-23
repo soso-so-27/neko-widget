@@ -30,9 +30,13 @@ def workflow_jobs():
 class LaneTests(unittest.TestCase):
     def test_full_partition_preserves_all_app_suites_and_three_gallery_conditions(self):
         self.assertEqual(scope.lanes(scope.FULL_SCOPE),
-                         ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption"))
+                         ("runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-white", "gallery-no-caption"))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "runtime"), ())
-        app = scope.lane_tests(scope.FULL_SCOPE, "app-ui")
+        solo = scope.lane_tests(scope.FULL_SCOPE, "app-ui-solo")
+        other = scope.lane_tests(scope.FULL_SCOPE, "app-ui-other")
+        self.assertTrue(solo and other)
+        self.assertFalse(set(solo) & set(other))
+        app = solo + other
         self.assertEqual(set(app), set(scope.native_tests(scope.FULL_SCOPE)) - {scope.GALLERY_TEST})
         self.assertEqual(len(app), len(set(app)))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-normal"), (scope.GALLERY_TEST,))
@@ -86,7 +90,7 @@ class LaneTests(unittest.TestCase):
     def test_lane_metadata_reports_only_executed_os_and_exact_test_selection(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for lane in scope.LANES:
+            for lane in scope.lanes(scope.FULL_SCOPE):
                 result = subprocess.run([sys.executable, str(CI / "ios_ci_scope.py"),
                     "--scope", scope.FULL_SCOPE, "--lane", lane, "--metadata", str(root / "meta.json"),
                     "--tests", str(root / "tests.txt")], env=dict(os.environ, GITHUB_SHA="a" * 40),
@@ -103,7 +107,10 @@ class LaneTests(unittest.TestCase):
     def test_workflow_isolates_products_and_preserves_independent_failures(self):
         jobs = workflow_jobs()
         matrix = jobs["sharing-runtime-matrix"]
+        app_ui = jobs["sharing-app-ui"]
         self.assertIn("fail-fast: false", matrix)
+        self.assertIn("fail-fast: false", app_ui)
+        self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.app_ui_lanes) }}", app_ui)
         self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}", matrix)
         self.assertIn("NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}", matrix)
         self.assertIn("${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", matrix)
@@ -111,14 +118,11 @@ class LaneTests(unittest.TestCase):
             body = jobs[identifier]
             self.assertNotIn("download-artifact", body)
             self.assertNotIn("continue-on-error", body)
-            expected_timeout = 75 if identifier == "sharing-app-ui" else 60
+            expected_timeout = 60
             self.assertIn(f"timeout-minutes: {expected_timeout}", body)
             # Scheduling must not change checkout isolation, commands, flags,
             # artifact provenance or whether a failure is propagated.
             steps = body.split("    steps:\n", 1)[1]
-            if identifier == "sharing-app-ui":
-                steps = steps.replace("NEKO_IOS_RUNTIME_LANE: app-ui", "NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}")
-                steps = steps.replace("ios-sharing-app-ui-", "ios-sharing-${{ matrix.lane }}-")
             self.assertEqual(steps.strip(), matrix.split("    steps:\n", 1)[1].strip())
 
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
@@ -126,12 +130,14 @@ class LaneTests(unittest.TestCase):
         for selected in scope.SCOPES:
             with self.subTest(scope=selected):
                 remaining = scope.matrix_lanes(selected)
-                has_app_ui = "app-ui" in scope.lanes(selected)
-                partition = (("app-ui",) if has_app_ui else ()) + remaining
+                ui_lanes = scope.app_ui_lanes(selected)
+                has_app_ui = bool(ui_lanes)
+                partition = ui_lanes + remaining
                 self.assertCountEqual(partition, scope.lanes(selected))
                 self.assertEqual(len(partition), len(set(partition)))
-                outputs = {"lanes": scope.lanes(selected), "matrix_lanes": remaining}
-                parallelism = 3 if selected == scope.WIDGET_STYLE_SCOPE else 2
+                outputs = {"lanes": scope.lanes(selected), "matrix_lanes": remaining,
+                           "app_ui_lanes": ui_lanes}
+                parallelism = 3 if selected == scope.WIDGET_STYLE_SCOPE else 1 if selected == scope.FULL_SCOPE else 2
                 maximum_running = 0
                 names = []
                 for identifier, body in jobs.items():
@@ -144,9 +150,10 @@ class LaneTests(unittest.TestCase):
                         continue
                     matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
                     expansion = outputs[matrix[1]] if matrix else (None,)
-                    limit = parallelism if matrix else len(expansion)
+                    limit = parallelism if identifier == "sharing-runtime-matrix" else len(expansion)
                     if matrix:
-                        self.assertIn("max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}", body)
+                        if identifier == "sharing-runtime-matrix":
+                            self.assertIn("max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}", body)
                     maximum_running += min(len(expansion), limit)
                     # Every Mac check depends only on the planner. A failed
                     # sibling neither blocks another check nor forces its rerun.
@@ -164,9 +171,7 @@ class LaneTests(unittest.TestCase):
                 self.assertCountEqual(names, planner.required_jobs_from_scope(selected))
                 self.assertEqual(len(names), len(set(names)))
                 if has_app_ui:
-                    self.assertIn("    name: " + scope.lane_job(selected, "app-ui").replace(selected,
-                        "${{ needs.plan.outputs.runtime_scope }}"), jobs["sharing-app-ui"])
-                self.assertNotIn("    strategy:", jobs["sharing-app-ui"])
+                    self.assertIn("    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
                 self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
                     4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
