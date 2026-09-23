@@ -49,8 +49,10 @@ class PlanTests(unittest.TestCase):
         migration = "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"
         original[migration] = ("", "CREATE INDEX pa_upload_owner_bytes ON pa_uploads(owner_id,reserved_bytes);\n")
         workflow_digest = scope.source_digest(original[planner.PRESERVATION_WORKFLOW][1])
-        def select(changes, alter=lambda raw: raw, ancestor=True):
+        def select(changes, alter=lambda raw: raw, ancestor=True, tree_ok=True):
             def git(*args):
+                if args[0] == "rev-parse" and args[1].endswith(":NekoWidget/PreservationService"):
+                    return planner.PRESERVATION_REVIEWED_TREE if tree_ok else "0" * 40
                 if args[0] == "merge-base":
                     if not ancestor:
                         raise subprocess.CalledProcessError(1, "git")
@@ -89,7 +91,13 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
+        # Same filenames with any different service content (including an
+        # in-place sender, Queue binding, or deletion) must not use v6.
+        self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
+                      "NekoWidget/PreservationService/src/notice-sender.ts",
+                      "NekoWidget/PreservationService/src/notice-queue.ts",
+                      "NekoWidget/PreservationService/src/delete-worker.ts",
                       "NekoWidget/PreservationService/migrations/0008_unknown.sql",
                       "NekoWidget/PreservationService/migrations/0004_other.sql", "NekoWidget/SharingService/src/index.ts",
                       "NekoWidget/SharingService/src/billing-auth.ts", "NekoWidget/SharingService/src/billing-entitlement.ts",

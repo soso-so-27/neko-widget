@@ -117,13 +117,15 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/notice-events.test.ts", "test/notice-submissions.test.ts",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v6 adds the verified-contact and evidence-only notice boundary to v5.
-# Queue wiring, mail sending, deletion, imported Sharing sources and unknown migrations still require FULL.
+# v6 is a one-candidate review of the entire disabled service tree, not a
+# reusable semantic claim about paths. Any later service edit requires a new
+# review/profile or FULL; external Queue/sending/deletion is not certified here.
+PRESERVATION_REVIEWED_TREE = "ba57376cac80d13c3e7c87a2f53dbea57ec79333"
 PRESERVATION_WORKFLOW_DIGEST = "c36300e55929d9b4abc56387a390c84b71c71358c42b2fa726b4cb74e23b6c6a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "2baf69841667028a03d3caef283a18ef12bedcd6b5acc26f3f136de2b61c5e44",
-        "41852c5031afb57cfa2c25dda5ec5e9b5d4608637c146b90e548ad9283060c37"
+        "6f7e06230eec60acd78c22bfa88a5c83ad42d6e3e6557d8cf81634d21e125859"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9",
@@ -131,7 +133,7 @@ PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946",
-        "f36b91ae65ea9f8e9cf16396105599cf2fd46932e4867fc02c69af60e83552bc"
+        "b4e5c6ebd4808e9a6469f1c604d18707db75c23ecb4c56f1fbc7c36084bf8fa9"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e",
@@ -205,6 +207,8 @@ def jpeg_backend_only(paths, base, head):
 
 
 def preservation_backend_only(paths, base, head):
+    if git("rev-parse", f"{head}:NekoWidget/PreservationService") != PRESERVATION_REVIEWED_TREE:
+        return False
     return backend_only(paths, base, head, product_paths=PRESERVATION_PATHS, workflow=PRESERVATION_WORKFLOW,
                         workflow_digest=PRESERVATION_WORKFLOW_DIGEST, companion_paths=PRESERVATION_COMPANION_PATHS,
                         bindings=PRESERVATION_COMPANION_DIGESTS, binding_name="PRESERVATION_COMPANION_DIGESTS")
