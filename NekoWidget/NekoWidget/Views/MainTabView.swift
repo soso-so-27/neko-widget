@@ -243,7 +243,6 @@ struct MainTabView: View {
     @State private var showsCatPreparedness = false
     @State private var manageShowcaseAfterClosing = false
     @State private var photoLibraryRevision = 0
-    @State private var photoNotesCloudRefreshRequest = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
@@ -513,23 +512,18 @@ struct MainTabView: View {
                     .accessibilityIdentifier("photos-showcase-open")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if photoLibrarySelection.selection == .notes,
-                       personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
-                            photoNotesCloudRefreshRequest &+= 1
+            if photoLibrarySelection.selection != .notes {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("迷子のとき", systemImage: "magnifyingglass") {
+                            showsCatPreparedness = true
                         }
-                        Divider()
+                    } label: {
+                        Image(systemName: "ellipsis")
                     }
-                    Button("迷子のとき", systemImage: "magnifyingglass") {
-                        showsCatPreparedness = true
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
+                    .accessibilityLabel("写真のその他の操作")
+                    .accessibilityIdentifier("photos-more")
                 }
-                .accessibilityLabel("写真のその他の操作")
-                .accessibilityIdentifier("photos-more")
             }
         }
         .task(id: canResolveInitialPhotoSection) {
@@ -593,7 +587,7 @@ struct MainTabView: View {
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
                                      isEmbedded: true,
-                                     refreshFromCloudRequest: photoNotesCloudRefreshRequest) {
+                                     openCatPreparedness: { showsCatPreparedness = true }) {
                 photoLibrarySelection.select(.all)
             }
         }
