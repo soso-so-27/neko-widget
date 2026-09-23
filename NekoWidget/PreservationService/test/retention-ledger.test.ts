@@ -16,6 +16,48 @@ async function fixture(start = Date.UTC(2026, 8, 23, 12)) {
 const day = 24 * 60 * 60 * 1000;
 
 describe('twelve-month preservation export period', () => {
+  it('lists only fresh, verified, unnotified expiry episodes for notice review', async () => {
+    const f = await fixture();
+    const other = await fixture();
+    const upcoming = await f.ledger.observe(f.ownerId, 'expired');
+    await other.ledger.observe(other.ownerId, 'expired');
+    f.at(upcoming.dueAt! - 61 * day);
+    await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    f.at(upcoming.dueAt! - 60 * day);
+    const review = await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates(1)).toEqual([{
+      ownerId: f.ownerId, episode: review.episode, revision: review.revision, dueAt: upcoming.dueAt,
+    }]);
+    f.later(day + 1);
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]); // stale billing observation
+    await f.ledger.observe(f.ownerId, 'unknown');
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    f.later(1);
+    await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates()).toHaveLength(1);
+    f.later(1);
+    await f.ledger.observe(f.ownerId, 'active');
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    await expect(f.ledger.listNoticeReviewCandidates(101))
+      .rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+  });
+  it('excludes delivered and disabled owners from notice review', async () => {
+    const f = await fixture();
+    const first = await f.ledger.observe(f.ownerId, 'expired');
+    f.at(first.dueAt! - 45 * day);
+    await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates()).toHaveLength(1);
+    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'synthetic-delivery-receipt-1');
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    const g = await fixture();
+    const second = await g.ledger.observe(g.ownerId, 'expired');
+    g.at(second.dueAt! - 30 * day);
+    await g.ledger.observe(g.ownerId, 'expired');
+    expect(await g.ledger.listNoticeReviewCandidates()).toHaveLength(1);
+    await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?').bind(g.ownerId).run();
+    expect(await g.ledger.listNoticeReviewCandidates()).toEqual([]);
+  });
   it('starts only on verified expiry, pauses on unknown, and never purges without a delivered notice', async () => {
     const f = await fixture();
     const start = f.now();

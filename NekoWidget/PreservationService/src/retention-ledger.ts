@@ -4,6 +4,7 @@ export type VerifiedMembershipStatus = 'active' | 'grace' | 'expired' | 'unknown
 const yearInMonths = 12;
 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
 const finalNoticeWindow = 60 * 24 * 60 * 60 * 1000;
+const noticeReviewObservationAge = 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const receiptPattern = /^[A-Za-z0-9._:-]{16,256}$/u;
 type Row = { owner_id: string; revision: number; episode: number; verified_status: VerifiedMembershipStatus;
@@ -12,6 +13,7 @@ type Row = { owner_id: string; revision: number; episode: number; verified_statu
 export type RetentionState = { ownerId: string; revision: number; episode: number;
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
+export type NoticeReviewCandidate = { ownerId: string; episode: number; revision: number; dueAt: number };
 
 function clock(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
@@ -39,6 +41,23 @@ function view(row: Row): RetentionState {
 /** Internal ledger only. It never sends a notice or deletes a record by itself. */
 export class RetentionLedger {
   constructor(private readonly db: D1Database, private readonly now: () => number) {}
+
+  /** Advisory queue for a future notification outbox; never sends or proves delivery. */
+  async listNoticeReviewCandidates(limit = 20): Promise<NoticeReviewCandidate[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    const now = clock(this.now());
+    const result = await this.db.prepare(`SELECT r.owner_id,r.episode,r.revision,r.due_at
+      FROM pa_retention r JOIN pa_owners o ON o.owner_id=r.owner_id
+      JOIN pa_membership_links l ON l.owner_id=r.owner_id
+      WHERE o.disabled=0 AND r.verified_status='expired' AND r.paused_at IS NULL
+        AND r.expired_at IS NOT NULL AND r.due_at IS NOT NULL AND r.final_notice_delivered_at IS NULL
+        AND r.due_at<=? AND r.checked_at>=? AND r.checked_at<=?
+      ORDER BY r.due_at,r.owner_id LIMIT ?`)
+      .bind(clock(now + finalNoticeWindow), Math.max(0, now - noticeReviewObservationAge), now, limit)
+      .all<{ owner_id: string; episode: number; revision: number; due_at: number }>();
+    return result.results.map(row => ({ ownerId: row.owner_id, episode: row.episode,
+      revision: row.revision, dueAt: row.due_at }));
+  }
 
   /** Fair, bounded scan. A provider failure becomes an explicit pause, never an expiry. */
   async refreshBatch(statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipStatus>,
