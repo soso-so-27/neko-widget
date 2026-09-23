@@ -46,6 +46,12 @@ CREATE TRIGGER pa_owner_recovery_retention_update AFTER UPDATE ON pa_retention
 BEGIN
   UPDATE pa_owner_recovery_generations SET generation=generation+1 WHERE owner_id=NEW.owner_id;
 END;
+-- A record is acknowledged only after its independent commit marker is
+-- bound. That binding advances the owner-wide inventory snapshot generation.
+CREATE TRIGGER pa_owner_recovery_record_commit AFTER INSERT ON pa_record_commit_markers
+BEGIN
+  UPDATE pa_owner_recovery_generations SET generation=generation+1 WHERE owner_id=NEW.owner_id;
+END;
 
 -- References are local acknowledgement gates. The version itself is
 -- independently verified in S3 before insert, and D1-loss recovery must
@@ -88,6 +94,18 @@ BEFORE UPDATE OF disabled,purge_fence_id ON pa_owners
 WHEN (NEW.disabled<>OLD.disabled OR NEW.purge_fence_id IS NOT OLD.purge_fence_id)
   AND (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=1
 BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_FENCE_INTENT_REQUIRED'); END;
+CREATE TRIGGER pa_owner_recovery_commit_marker_immutable_update
+BEFORE UPDATE ON pa_record_commit_markers
+WHEN (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=1
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_MARKER_IMMUTABLE'); END;
+CREATE TRIGGER pa_owner_recovery_commit_marker_immutable_delete
+BEFORE DELETE ON pa_record_commit_markers
+WHEN (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=1
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_MARKER_IMMUTABLE'); END;
+CREATE TRIGGER pa_owner_recovery_record_physical_delete_requires_ledger
+BEFORE DELETE ON pa_records
+WHEN (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=1
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_DELETION_LEDGER_REQUIRED'); END;
 
 CREATE TABLE pa_owner_recovery_repair_cursor (
   singleton INTEGER PRIMARY KEY CHECK(singleton=1),

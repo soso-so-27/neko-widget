@@ -69,6 +69,11 @@ export class ArchiveStore {
       throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
     }
   }
+  private async acknowledgeOwnerInventory(ownerId: string): Promise<void> {
+    if (this.d.requireOwnerRecovery) {
+      await this.d.ownerRecovery!.copyCurrent(this.d.db, ownerId, this.d.now());
+    }
+  }
   private async requireWritePolicy(): Promise<void> {
     if (!this.d.requireRecovery) return;
     const policy = await this.d.db.prepare(`SELECT delete_intent_required,owner_snapshot_required
@@ -402,6 +407,7 @@ export class ArchiveStore {
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
       await this.ensureCurrentRecovery(existing, session);
       await this.unchanged(token, session, existing);
+      await this.acknowledgeOwnerInventory(session.ownerId);
       return { recordId: id, revision: existing.revision };
     }
     if (request.expectedRevision !== null) {
@@ -413,6 +419,7 @@ export class ArchiveStore {
           && JSON.stringify(latest.document) === JSON.stringify(retryDocument)) {
           await this.ensureCurrentRecovery(existing, session);
           await this.unchanged(token, session, existing);
+          await this.acknowledgeOwnerInventory(session.ownerId);
           return { recordId: id, revision: existing.revision };
         }
       }
@@ -451,6 +458,7 @@ export class ArchiveStore {
           throw new ServiceError('REVISION_CONFLICT', 409);
         }
         await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
+        await this.acknowledgeOwnerInventory(session.ownerId);
         return { recordId: id, revision: expected + 1 };
       }
       const updated = await this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
@@ -458,6 +466,7 @@ export class ArchiveStore {
         AND ${activeSession} RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id, expected,
         ...this.sessionBindings(session)).first<{ revision: number }>();
       if (!updated) { await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409); }
+      await this.acknowledgeOwnerInventory(session.ownerId);
       return { recordId: id, revision: updated.revision };
     }
     if (request.consentVersion !== 'managed-preservation-v1') throw new ServiceError('PRESERVATION_CONSENT_REQUIRED', 403);
@@ -519,6 +528,7 @@ export class ArchiveStore {
         throw new ServiceError('REVISION_CONFLICT', 409);
       }
       await this.verifiedRecoveryReference(session.ownerId, id, 1);
+      await this.acknowledgeOwnerInventory(session.ownerId);
       return { recordId: id, revision: 1 };
     } catch (error) {
       // Never remove an object that was successfully committed even if its reply was lost.
@@ -527,6 +537,7 @@ export class ArchiveStore {
       if (committed && !committed.deleted && committed.initial_fingerprint === initialFingerprint) {
         await this.ensureCurrentRecovery(committed, session);
         await this.unchanged(token, session, committed);
+        await this.acknowledgeOwnerInventory(session.ownerId);
         return { recordId: id, revision: committed.revision };
       }
       throw error;
@@ -547,6 +558,7 @@ export class ArchiveStore {
     if (!row) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (row.deleted && row.revision === expected + 1) {
       await this.ensureCurrentRecovery(row, session);
+      await this.acknowledgeOwnerInventory(session.ownerId);
       return { recordId: id, revision: row.revision };
     }
     if (row.deleted || row.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
@@ -581,6 +593,7 @@ export class ArchiveStore {
       await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409);
     }
     await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
+    await this.acknowledgeOwnerInventory(session.ownerId);
     return { recordId: id, revision: expected + 1 };
   }
   async cleanup(limit = 20) { return cleanupArchive(this.d, limit); }

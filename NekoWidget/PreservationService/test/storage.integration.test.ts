@@ -4,8 +4,9 @@ import { expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { ArchiveStore, cleanupArchive } from '../src/storage';
 import { encodePhoto } from '../src/documents';
-import { randomToken, type ArchiveDocument, type KeyCustody } from '../src/contracts';
+import { randomToken, ServiceError, type ArchiveDocument, type KeyCustody } from '../src/contracts';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
+import type { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import worker, { route, type Services, type Env } from '../src/index';
 
@@ -127,6 +128,32 @@ it('ties each acknowledged D1 revision to an exact recovery version and fails cl
   expect(restored.revision).toBe(2);
   expect(restored.deleted).toBe(false);
   expect(restored.photoCiphertext?.length).toBeGreaterThan(0);
+});
+
+it('acknowledges a record only after its owner-wide inventory copy succeeds', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const id = crypto.randomUUID();
+  const seen: number[] = [];
+  let ownerCopyAvailable = false;
+  const ownerRecovery = { async copyCurrent(db: D1Database, ownerId: string) {
+    const row = await db.prepare(`SELECT COUNT(*) AS count FROM pa_record_commit_markers
+      WHERE owner_id=?`).bind(ownerId).first<{ count: number }>();
+    seen.push(row!.count);
+    if (row!.count > 0 && !ownerCopyAvailable) {
+      throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
+    }
+  } } as unknown as OwnerRecoveryCopy;
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery,
+    ownerRecovery, requireOwnerRecovery: true });
+  await expect(archive.put(f.session.token, id, f.request()))
+    .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+  expect(seen).toContain(1);
+  ownerCopyAvailable = true;
+  expect(await archive.put(f.session.token, id, f.request()))
+    .toEqual({ recordId: id, revision: 1 });
+  expect(seen.at(-1)).toBe(1);
+  expect(await archive.remove(f.session.token, id, 1)).toEqual({ recordId: id, revision: 2 });
+  expect(seen.at(-1)).toBe(2);
 });
 
 it('only the winning concurrent edit can attach a recovery version to the next revision', async () => {

@@ -301,12 +301,12 @@ export default {
       try {
         const services = configuredServices(env);
         if (!services.ownerRecovery) throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
-        const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());
-        maintenanceFailures += owners.failed;
         if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
           const records = await services.archive.repairRecoveryBatch();
           maintenanceFailures += records.failed;
         }
+        const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());
+        maintenanceFailures += owners.failed;
       } catch { maintenanceFailures++; }
     }
     // Backup repair continues when public sign-in and cleanup are off. A

@@ -5,6 +5,8 @@ import { S3RecoveryCopy, type RecoveryObject } from './s3-recovery-copy';
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
 const ownerKeyPattern = new RegExp(`^recovery/v1/(${uuid})/owner/${uuid}$`, 'u');
+const recordPattern = new RegExp('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'u');
+const markerKeyPattern = new RegExp(`^recovery/v1/(${uuid})/manifest/${uuid}$`, 'u');
 const hex = /^[0-9a-f]{64}$/u;
 const unavailable = () => new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
 const safeInteger = (value: unknown, minimum = 0): value is number =>
@@ -23,6 +25,10 @@ export interface OwnerRecoveryImage {
   contact: { sealedEmail: Uint8Array; emailTag: string | null;
     verifiedAt: number; updatedAt: number } | null;
   billing: { accountId: string; createdAt: number } | null;
+  /** Current D1 record inventory, including tombstones. A missing commit
+   * marker makes the whole owner image ineligible for acknowledgement. */
+  inventoryGeneration: number;
+  records: { recordId: string; revision: number; deleted: boolean; marker: RecoveryObject }[];
   retention: { revision: number; episode: number; status: 'active' | 'grace' | 'expired' | 'unknown';
     checkedAt: number; expiredAt: number | null; dueAt: number | null; pausedAt: number | null;
     noticeNotBeforeAt: number; finalNoticeDeliveredAt: number | null;
@@ -30,7 +36,7 @@ export interface OwnerRecoveryImage {
 }
 
 type EncodedImage = Omit<OwnerRecoveryImage, 'credential' | 'contact'> & {
-  version: 1;
+  version: 2;
   credential: { ownerEpoch: number; sealedCredentialsBase64: string; updatedAt: number };
   contact: { sealedEmailBase64: string; emailTag: string | null;
     verifiedAt: number; updatedAt: number } | null;
@@ -46,6 +52,7 @@ interface OwnerRow {
   checked_at: number | null; expired_at: number | null; due_at: number | null;
   paused_at: number | null; notice_not_before_at: number | null;
   final_notice_delivered_at: number | null; final_notice_receipt: string | null;
+  inventory_generation: number; records_json: string;
 }
 interface RefRow { object_key: string; version_id: string; sha256: string; bytes: number }
 
@@ -102,6 +109,20 @@ function valid(image: OwnerRecoveryImage): void {
   if (image.billing !== null && (!image.billing || typeof image.billing !== 'object'
     || typeof image.billing.accountId !== 'string' || !ownerPattern.test(image.billing.accountId)
     || !safeInteger(image.billing.createdAt, image.createdAt))) throw unavailable();
+  if (!safeInteger(image.inventoryGeneration) || !Array.isArray(image.records)
+    || image.records.length > 100_000 || image.inventoryGeneration < image.records.length) throw unavailable();
+  let previousId = '';
+  for (const record of image.records) {
+    if (!exact(record, 'deleted,marker,recordId,revision')
+      || !recordPattern.test(record.recordId) || record.recordId <= previousId
+      || !safeInteger(record.revision, 1) || typeof record.deleted !== 'boolean'
+      || !exact(record.marker, 'bytes,key,sha256,versionId')
+      || markerKeyPattern.exec(record.marker.key)?.[1] !== image.ownerId
+      || typeof record.marker.versionId !== 'string' || !record.marker.versionId
+      || record.marker.versionId === 'null' || !hex.test(record.marker.sha256)
+      || !safeInteger(record.marker.bytes, 1)) throw unavailable();
+    previousId = record.recordId;
+  }
   if (image.retention !== null) {
     const r = image.retention;
     if (!r || typeof r !== 'object' || !safeInteger(r.revision, 1) || !safeInteger(r.episode)
@@ -174,7 +195,20 @@ export class OwnerRecoveryCopy {
         n.updated_at AS contact_updated_at,l.billing_account_id,l.created_at AS billing_created_at,
         r.revision AS retention_revision,r.episode,r.verified_status,r.checked_at,
         r.expired_at,r.due_at,r.paused_at,r.notice_not_before_at,
-        r.final_notice_delivered_at,r.final_notice_receipt
+        r.final_notice_delivered_at,r.final_notice_receipt,
+        coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=o.owner_id),0)
+          AS inventory_generation,
+        (SELECT json_group_array(json_object('recordId',items.record_id,
+          'revision',items.revision,'deleted',items.deleted,
+          'marker',CASE WHEN items.marker_object_key IS NULL THEN NULL ELSE json_object(
+            'key',items.marker_object_key,'versionId',items.marker_version_id,
+            'sha256',items.marker_sha256,'bytes',items.marker_bytes) END))
+          FROM (SELECT pr.record_id,pr.revision,pr.deleted,cm.marker_object_key,
+            cm.marker_version_id,cm.marker_sha256,cm.marker_bytes
+            FROM pa_records pr LEFT JOIN pa_record_commit_markers cm
+              ON cm.owner_id=pr.owner_id AND cm.record_id=pr.record_id
+                AND cm.revision=pr.revision
+            WHERE pr.owner_id=o.owner_id ORDER BY pr.record_id) items) AS records_json
         FROM pa_owners o JOIN pa_owner_recovery_generations g ON g.owner_id=o.owner_id
         JOIN pa_identity_credentials c ON c.owner_id=o.owner_id
         LEFT JOIN pa_notice_contacts n ON n.owner_id=o.owner_id
@@ -183,6 +217,14 @@ export class OwnerRecoveryCopy {
         WHERE o.owner_id=?`).bind(ownerId).first<OwnerRow>();
       if (!row || (row.disabled !== 0 && row.disabled !== 1)
         || (row.sealed_email !== null && row.contact_source !== 'apple')) throw unavailable();
+      const parsed: unknown = JSON.parse(row.records_json);
+      if (!Array.isArray(parsed)) throw unavailable();
+      const records = parsed.map((item: unknown) => {
+        if (!exact(item, 'deleted,marker,recordId,revision')
+          || (item.deleted !== 0 && item.deleted !== 1)) throw unavailable();
+        return { recordId: item.recordId, revision: item.revision,
+          deleted: item.deleted === 1, marker: item.marker };
+      }).sort((a, b) => String(a.recordId).localeCompare(String(b.recordId))) as OwnerRecoveryImage['records'];
       const image: OwnerRecoveryImage = { ownerId, generation: row.generation,
         identityKey: row.identity_key, epoch: row.epoch, disabled: row.disabled === 1,
         purgeFenceId: row.purge_fence_id, createdAt: row.created_at,
@@ -194,6 +236,7 @@ export class OwnerRecoveryCopy {
           verifiedAt: row.verified_at!, updatedAt: row.contact_updated_at! },
         billing: row.billing_account_id === null ? null : {
           accountId: row.billing_account_id, createdAt: row.billing_created_at! },
+        inventoryGeneration: row.inventory_generation, records,
         retention: row.retention_revision === null ? null : {
           revision: row.retention_revision, episode: row.episode!,
           status: row.verified_status as NonNullable<OwnerRecoveryImage['retention']>['status'],
@@ -332,12 +375,28 @@ export class OwnerRecoveryCopy {
     const first = ordered[0]!;
     let knownBilling: string | null = null;
     let lastEpoch = first.epoch;
+    let lastInventory = first.inventoryGeneration;
+    let priorRecords = new Map<string, OwnerRecoveryImage['records'][number]>();
     for (const item of ordered) {
       if (item.identityKey !== first.identityKey || item.createdAt !== first.createdAt
-        || item.epoch < lastEpoch || (knownBilling !== null && item.billing?.accountId !== knownBilling)) {
+        || item.epoch < lastEpoch || item.inventoryGeneration < lastInventory
+        || (knownBilling !== null && item.billing?.accountId !== knownBilling)) {
         return { status: 'quarantined' };
       }
+      const currentRecords = new Map(item.records.map(record => [record.recordId, record]));
+      for (const [recordId, prior] of priorRecords) {
+        const current = currentRecords.get(recordId);
+        if (!current || current.revision < prior.revision
+          || (current.revision === prior.revision
+            && (current.deleted !== prior.deleted || current.marker.key !== prior.marker.key
+              || current.marker.versionId !== prior.marker.versionId
+              || current.marker.sha256 !== prior.marker.sha256
+              || current.marker.bytes !== prior.marker.bytes))
+          || (prior.deleted && !current.deleted)) return { status: 'quarantined' };
+      }
+      priorRecords = currentRecords;
       lastEpoch = item.epoch;
+      lastInventory = item.inventoryGeneration;
       if (item.billing !== null) knownBilling = item.billing.accountId;
     }
     const latest = ordered.at(-1)!;
@@ -394,7 +453,7 @@ export class OwnerRecoveryCopy {
 
   async copy(image: OwnerRecoveryImage): Promise<RecoveryObject> {
     valid(image);
-    const payload: EncodedImage = { ...image, version: 1,
+    const payload: EncodedImage = { ...image, version: 2,
       credential: { ownerEpoch: image.credential.ownerEpoch,
         sealedCredentialsBase64: encoded(image.credential.sealedCredentials, 131_072),
         updatedAt: image.credential.updatedAt },
@@ -420,8 +479,8 @@ export class OwnerRecoveryCopy {
       const sealed = await this.s3.getVerified(reference);
       const opened = await this.keys.open(sealed, { ownerId, purpose: 'recovery' });
       const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened));
-      if (!exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,ownerId,purgeFenceId,retention,version')
-        || payload.version !== 1 || payload.ownerId !== ownerId
+      if (!exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,inventoryGeneration,ownerId,purgeFenceId,records,retention,version')
+        || payload.version !== 2 || payload.ownerId !== ownerId
         || !exact(payload.credential, 'ownerEpoch,sealedCredentialsBase64,updatedAt')
         || (payload.contact !== null && !exact(payload.contact,
           'emailTag,sealedEmailBase64,updatedAt,verifiedAt'))

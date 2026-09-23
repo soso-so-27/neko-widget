@@ -5,7 +5,9 @@ import { randomToken } from '../src/contracts';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from '../src/identity-index';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { OwnerRecoveryCopy, type OwnerRecoveryImage } from '../src/owner-recovery-copy';
+import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { S3RecoveryCopy, type RecoveryObject } from '../src/s3-recovery-copy';
+import { ArchiveStore } from '../src/storage';
 import { syntheticKeyAuthority } from './key-fixture';
 
 const ownerId = '00000000-0000-4000-8000-000000000001';
@@ -13,6 +15,7 @@ const otherOwnerId = '00000000-0000-4000-8000-000000000002';
 const accountId = '00000000-0000-4000-8000-000000000003';
 const image = (): OwnerRecoveryImage => ({ ownerId, generation: 7, identityKey: 'a'.repeat(64),
   epoch: 2, disabled: false, purgeFenceId: null, createdAt: 100,
+  inventoryGeneration: 0, records: [],
   credential: { ownerEpoch: 2, sealedCredentials: new Uint8Array([78, 75, 77, 49, 1]), updatedAt: 200 },
   contact: { sealedEmail: new Uint8Array([78, 75, 77, 49, 2]), emailTag: 'b'.repeat(64),
     verifiedAt: 150, updatedAt: 150 },
@@ -50,11 +53,44 @@ async function fixture() {
       return bytes.slice();
     },
   } as S3RecoveryCopy;
-  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret), objects, keys,
+  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret), objects, keys, s3,
     identityIndexSecret,
     rejectOwner(value: string | null) { rejectOwner = value; },
     rejectAll(value: boolean) { rejectAll = value; } };
 }
+
+it('binds each acknowledged record and tombstone to a current owner-wide manifest', async () => {
+  const f = await fixture();
+  const db = (env as unknown as { DB: D1Database; ARCHIVE: R2Bucket }).DB;
+  const bucket = (env as unknown as { ARCHIVE: R2Bucket }).ARCHIVE;
+  const now = 1_790_035_200_000;
+  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: f.identityIndexSecret,
+    now: () => now, ownerRecovery: f.copy, requireOwnerRecovery: true });
+  const session = await auth.establish({ issuer: 'https://appleid.apple.com',
+    subject: crypto.randomUUID(), refreshToken: randomToken() });
+  const archive = new ArchiveStore({ db, bucket, keys: f.keys, auth, now: () => now,
+    membership: { status: async () => 'active' }, photos: { validateJPEG: async () => true },
+    quotaBytes: 100_000, maximumRecords: 100,
+    recovery: new RecordRecoveryCopy(f.keys, f.s3), ownerRecovery: f.copy,
+    requireOwnerRecovery: true });
+  const recordId = crypto.randomUUID();
+  const request = { expectedRevision: null, consentVersion: 'managed-preservation-v1',
+    document: { formatVersion: 1, text: 'ひざで寝た日', capturedAt: null,
+      writtenAt: null, updatedAt: null, catNames: [], photoFile: null }, photoBase64: null };
+  expect(await archive.put(session.token, recordId, request))
+    .toEqual({ recordId, revision: 1 });
+  const live = await f.copy.capture(db, session.ownerId);
+  expect(live.records).toHaveLength(1);
+  expect(live.records[0]).toMatchObject({ recordId, revision: 1, deleted: false });
+  expect(await f.copy.copyCurrent(db, session.ownerId, now)).toMatchObject({ key: expect.any(String) });
+  expect(await archive.remove(session.token, recordId, 1))
+    .toEqual({ recordId, revision: 2 });
+  const deleted = await f.copy.capture(db, session.ownerId);
+  expect(deleted.generation).toBeGreaterThan(live.generation);
+  expect(deleted.records).toHaveLength(1);
+  expect(deleted.records[0]).toMatchObject({ recordId, revision: 2, deleted: true });
+  expect(deleted.records[0]?.marker.key).not.toBe(live.records[0]?.marker.key);
+});
 
 async function verifiedImage(f: Awaited<ReturnType<typeof fixture>>): Promise<OwnerRecoveryImage> {
   const original = image();
@@ -79,6 +115,10 @@ it('stores and verifies an encrypted owner bootstrap image without exposing the 
   const ref = await f.copy.copy(original);
   expect(ref.key).toMatch(new RegExp(`^recovery/v1/${ownerId}/owner/`));
   expect(await f.copy.read(ownerId, ref)).toEqual(original);
+  const opened = await f.keys.open(f.objects.get(ref.key)!, { ownerId, purpose: 'recovery' });
+  expect(JSON.parse(new TextDecoder().decode(opened))).toMatchObject({
+    version: 2, inventoryGeneration: 0, records: [],
+  });
   const raw = new TextDecoder().decode(f.objects.get(ref.key)!);
   expect(raw).not.toContain(original.identityKey);
   expect(raw).not.toContain(accountId);
@@ -158,13 +198,34 @@ it('captures a consistent D1 owner image, commits its current generation and adv
   const next = await f.copy.copyCurrent(db, session.ownerId, now + 1);
   expect(next.key).not.toBe(ref.key);
   expect(await f.copy.read(session.ownerId, next)).toEqual(second);
+  const recordId = crypto.randomUUID();
+  const markerKey = `recovery/v1/${session.ownerId}/manifest/${crypto.randomUUID()}`;
+  await db.prepare('INSERT OR IGNORE INTO pa_inventory(owner_id) VALUES(?)').bind(session.ownerId).run();
+  await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,
+    initial_operation,metadata,deleted) VALUES(?,?,1,?,?,NULL,1)`)
+    .bind(session.ownerId, recordId, 'd'.repeat(64), crypto.randomUUID()).run();
+  await db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
+    record_object_key,record_version_id,record_sha256,record_bytes,committed_at)
+    VALUES(?,?,1,?,'synthetic-v1',?,10,?)`)
+    .bind(session.ownerId, recordId,
+      `recovery/v1/${session.ownerId}/record/${crypto.randomUUID()}`, 'e'.repeat(64), now).run();
+  await db.prepare(`INSERT INTO pa_record_commit_markers(owner_id,record_id,revision,
+    marker_object_key,marker_version_id,marker_sha256,marker_bytes,confirmed_at)
+    VALUES(?,?,1,?,'synthetic-v1',?,10,?)`)
+    .bind(session.ownerId, recordId, markerKey, 'f'.repeat(64), now).run();
+  const withRecord = await f.copy.capture(db, session.ownerId);
+  expect(withRecord.generation).toBe(second.generation + 1);
+  expect(withRecord.inventoryGeneration).toBe(1);
+  expect(withRecord.records).toEqual([{ recordId, revision: 1, deleted: true,
+    marker: { key: markerKey, versionId: 'synthetic-v1', sha256: 'f'.repeat(64), bytes: 10 } }]);
+  await f.copy.copyCurrent(db, session.ownerId, now + 2);
   await db.prepare('UPDATE pa_owners SET identity_key=? WHERE owner_id=?')
     .bind('c'.repeat(64), session.ownerId).run();
-  await expect(f.copy.copyCurrent(db, session.ownerId, now + 2))
+  await expect(f.copy.copyCurrent(db, session.ownerId, now + 3))
     .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
   await db.prepare('UPDATE pa_owners SET identity_key=? WHERE owner_id=?')
     .bind(first.identityKey, session.ownerId).run();
-  await f.copy.copyCurrent(db, session.ownerId, now + 3);
+  await f.copy.copyCurrent(db, session.ownerId, now + 4);
 });
 
 it('does not acknowledge sign-in while S3 is down and repairs independent owner rows fairly', async () => {

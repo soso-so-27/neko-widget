@@ -62,9 +62,27 @@ assert.equal(generation(), 4);
 db.prepare(`INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at)
   VALUES(?,?,300)`).run(ownerId, crypto.randomUUID());
 assert.equal(generation(), 5);
+const recordId = crypto.randomUUID();
+db.prepare('INSERT INTO pa_inventory(owner_id) VALUES(?)').run(ownerId);
+db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,
+  initial_operation,metadata,deleted) VALUES(?,?,1,?,?,NULL,1)`)
+  .run(ownerId, recordId, 'a'.repeat(64), crypto.randomUUID());
+db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
+  record_object_key,record_version_id,record_sha256,record_bytes,committed_at)
+  VALUES(?,?,1,?,'synthetic-v1',?,10,300)`)
+  .run(ownerId, recordId, `recovery/v1/${ownerId}/record/${crypto.randomUUID()}`, 'b'.repeat(64));
+db.prepare(`INSERT INTO pa_record_commit_markers(owner_id,record_id,revision,
+  marker_object_key,marker_version_id,marker_sha256,marker_bytes,confirmed_at)
+  VALUES(?,?,1,?,'synthetic-v1',?,10,300)`)
+  .run(ownerId, recordId, `recovery/v1/${ownerId}/manifest/${crypto.randomUUID()}`, 'c'.repeat(64));
+assert.equal(generation(), 6);
+assert.throws(() => db.prepare(`UPDATE pa_record_commit_markers SET marker_bytes=11
+  WHERE owner_id=? AND record_id=?`).run(ownerId, recordId), /OWNER_RECOVERY_MARKER_IMMUTABLE/u);
+assert.throws(() => db.prepare('DELETE FROM pa_records WHERE owner_id=? AND record_id=?')
+  .run(ownerId, recordId), /OWNER_RECOVERY_DELETION_LEDGER_REQUIRED/u);
 db.prepare('UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1').run();
 db.prepare(`UPDATE pa_owners SET epoch=epoch+1,disabled=1 WHERE owner_id=?`).run(ownerId);
-assert.equal(generation(), 6);
+assert.equal(generation(), 7);
 assert.equal(db.prepare('SELECT COUNT(*) AS count FROM pa_owner_recovery_versions WHERE owner_id=?')
   .get(ownerId).count, 2);
 console.log('PASS: owner recovery migration preserves rows, advances generations and fences stale refs');
