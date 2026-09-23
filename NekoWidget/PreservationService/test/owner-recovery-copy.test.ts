@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { randomToken } from '../src/contracts';
+import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from '../src/identity-index';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { OwnerRecoveryCopy, type OwnerRecoveryImage } from '../src/owner-recovery-copy';
 import { S3RecoveryCopy, type RecoveryObject } from '../src/s3-recovery-copy';
@@ -24,6 +25,7 @@ const image = (): OwnerRecoveryImage => ({ ownerId, generation: 7, identityKey: 
 async function fixture() {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
+  const identityIndexSecret = randomToken();
   const objects = new Map<string, Uint8Array>();
   let rejectOwner: string | null = null;
   let rejectAll = false;
@@ -48,9 +50,27 @@ async function fixture() {
       return bytes.slice();
     },
   } as S3RecoveryCopy;
-  return { copy: new OwnerRecoveryCopy(keys, s3), objects, keys,
+  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret), objects, keys,
+    identityIndexSecret,
     rejectOwner(value: string | null) { rejectOwner = value; },
     rejectAll(value: boolean) { rejectAll = value; } };
+}
+
+async function verifiedImage(f: Awaited<ReturnType<typeof fixture>>): Promise<OwnerRecoveryImage> {
+  const original = image();
+  const key = await identityIndexKey(f.identityIndexSecret);
+  const issuer = 'https://appleid.apple.com';
+  const subject = 'recovery-test-subject';
+  const email = 'owner@example.com';
+  return { ...original, identityKey: await indexedOwnerIdentity(key, issuer, subject),
+    credential: { ...original.credential,
+      sealedCredentials: await f.keys.seal(new TextEncoder().encode(JSON.stringify({
+        issuer, subject, refreshToken: randomToken(),
+      })), { ownerId, purpose: 'identity' }) },
+    contact: { ...original.contact!,
+      sealedEmail: await f.keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1, email })),
+        { ownerId, purpose: 'contact' }),
+      emailTag: await indexedNoticeEmail(key, ownerId, email) } };
 }
 
 it('stores and verifies an encrypted owner bootstrap image without exposing the credentials', async () => {
@@ -79,7 +99,7 @@ it('rejects cross-owner reads, stale references and malformed snapshots', async 
 
 it('stages S3-only recovery without reusing an old recipient or deletion notice', async () => {
   const f = await fixture();
-  const original = image();
+  const original = await verifiedImage(f);
   original.retention = { ...original.retention!, finalNoticeDeliveredAt: 350,
     finalNoticeReceipt: 'delivery-event-00000001' };
   const ref = await f.copy.copy(original);
@@ -99,11 +119,24 @@ it('stages S3-only recovery without reusing an old recipient or deletion notice'
     .toEqual({ status: 'disabled' });
 });
 
+it('refuses an owner image whose sealed credential does not match the owner identity key', async () => {
+  const f = await fixture();
+  const valid = await verifiedImage(f);
+  const wrong = { ...valid, identityKey: 'c'.repeat(64) };
+  const ref = await f.copy.copy(wrong);
+  expect(await f.copy.selectRecoveredOwner(ownerId, [ref], 1_000))
+    .toEqual({ status: 'quarantined' });
+  const wrongContact = { ...valid, contact: { ...valid.contact!, emailTag: 'd'.repeat(64) } };
+  const contactRef = await f.copy.copy(wrongContact);
+  expect(await f.copy.selectRecoveredOwner(ownerId, [contactRef], 1_000))
+    .toEqual({ status: 'quarantined' });
+});
+
 it('captures a consistent D1 owner image, commits its current generation and advances after a link', async () => {
   const f = await fixture();
   const db = (env as unknown as { DB: D1Database }).DB;
   const now = 1_790_035_200_000;
-  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: randomToken(), now: () => now });
+  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: f.identityIndexSecret, now: () => now });
   const session = await auth.establish({ issuer: 'https://appleid.apple.com',
     subject: crypto.randomUUID(), refreshToken: randomToken(), verifiedEmail: 'owner@example.com' });
   const first = await f.copy.capture(db, session.ownerId);
@@ -125,13 +158,20 @@ it('captures a consistent D1 owner image, commits its current generation and adv
   const next = await f.copy.copyCurrent(db, session.ownerId, now + 1);
   expect(next.key).not.toBe(ref.key);
   expect(await f.copy.read(session.ownerId, next)).toEqual(second);
+  await db.prepare('UPDATE pa_owners SET identity_key=? WHERE owner_id=?')
+    .bind('c'.repeat(64), session.ownerId).run();
+  await expect(f.copy.copyCurrent(db, session.ownerId, now + 2))
+    .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+  await db.prepare('UPDATE pa_owners SET identity_key=? WHERE owner_id=?')
+    .bind(first.identityKey, session.ownerId).run();
+  await f.copy.copyCurrent(db, session.ownerId, now + 3);
 });
 
 it('does not acknowledge sign-in while S3 is down and repairs independent owner rows fairly', async () => {
   const f = await fixture();
   const db = (env as unknown as { DB: D1Database }).DB;
   const now = 1_790_035_200_000;
-  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: randomToken(),
+  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: f.identityIndexSecret,
     now: () => now, ownerRecovery: f.copy, requireOwnerRecovery: true });
   const identity = { issuer: 'https://appleid.apple.com', subject: crypto.randomUUID(),
     refreshToken: randomToken() };

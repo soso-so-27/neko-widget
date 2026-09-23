@@ -3,6 +3,7 @@ import {
   ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
 import type { ExpiryReviewCandidate, NoticeReviewCandidate } from './retention-ledger';
+import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
 
 const CHALLENGE_MS = 5 * 60_000;
 const SESSION_MS = 15 * 60_000;
@@ -16,31 +17,16 @@ const unavailable = (): ServiceError => new ServiceError('auth_unavailable', 503
 const denied = (): ServiceError => new ServiceError('unauthorized', 401);
 const safeError = (error: unknown): ServiceError => error instanceof ServiceError ? error : unavailable();
 
-function indexSecret(value: string): Uint8Array {
-  try {
-    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43,4096}$/u.test(value)) throw new Error();
-    const decoded = atob(value.replaceAll('-', '+').replaceAll('_', '/'));
-    const canonical = btoa(decoded).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-    if (decoded.length < 32 || canonical !== value) throw new Error();
-    return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-  } catch { throw new ServiceError('auth_configuration_invalid', 503); }
-}
-
 export class DurableAuth {
   private readonly indexKey: Promise<CryptoKey>;
 
   constructor(private readonly dependencies: AuthDependencies) {
-    const raw = indexSecret(dependencies.identityIndexSecret);
-    this.indexKey = crypto.subtle.importKey('raw', raw as BufferSource,
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    raw.fill(0);
+    this.indexKey = identityIndexKey(dependencies.identityIndexSecret);
   }
 
   private async noticeEmailTag(ownerId: string, email: string): Promise<string> {
     // An owner-bound tag cannot correlate two accounts that share an address.
-    const message = encoder.encode(`neko-preservation-contact-email-v1\0${JSON.stringify([ownerId, email])}`);
-    const digest = new Uint8Array(await crypto.subtle.sign('HMAC', await this.indexKey, message));
-    return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    return indexedNoticeEmail(await this.indexKey, ownerId, email);
   }
 
   private now(): number {
@@ -86,9 +72,8 @@ export class DurableAuth {
         throw denied();
       }
       // Only the trusted verifier supplies identity. No email, device or billing ID is a lookup key.
-      const identityBytes = encoder.encode(`neko-preservation-identity-v1\0${JSON.stringify([identity.issuer, identity.subject])}`);
-      const digest = new Uint8Array(await crypto.subtle.sign('HMAC', await this.indexKey, identityBytes));
-      const identityKey = [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+      const identityKey = await indexedOwnerIdentity(await this.indexKey,
+        identity.issuer, identity.subject);
       const db = this.dependencies.db;
       await db.prepare(
         `INSERT INTO pa_owners(owner_id, identity_key, epoch, disabled, created_at)

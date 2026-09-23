@@ -1,4 +1,5 @@
-import { ServiceError, type KeyCustody } from './contracts';
+import { ServiceError, contactEmailValid, type KeyCustody } from './contracts';
+import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
 import { S3RecoveryCopy, type RecoveryObject } from './s3-recovery-copy';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -123,7 +124,40 @@ function valid(image: OwnerRecoveryImage): void {
  * or authorize a restore/deletion. Callers must add those gates separately.
  */
 export class OwnerRecoveryCopy {
-  constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy) {}
+  private readonly indexKey: Promise<CryptoKey>;
+
+  constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy,
+    identityIndexSecret: string) {
+    this.indexKey = identityIndexKey(identityIndexSecret);
+  }
+
+  /** The outer recovery envelope alone cannot prove that the sealed Apple
+   * credential and owner-bound contact actually belong to this owner.
+   */
+  private async verifyInnerIdentity(image: OwnerRecoveryImage): Promise<void> {
+    const credential = await this.keys.open(image.credential.sealedCredentials,
+      { ownerId: image.ownerId, purpose: 'identity' });
+    try {
+      const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(credential));
+      if (!exact(value, 'issuer,refreshToken,subject')
+        || typeof value.issuer !== 'string' || !value.issuer.trim() || value.issuer.length > 2048
+        || typeof value.subject !== 'string' || !value.subject.trim() || value.subject.length > 1024
+        || typeof value.refreshToken !== 'string' || !value.refreshToken
+        || value.refreshToken.length > 16_384
+        || await indexedOwnerIdentity(await this.indexKey, value.issuer, value.subject)
+          !== image.identityKey) throw unavailable();
+    } finally { credential.fill(0); }
+    if (image.contact === null) return;
+    const contact = await this.keys.open(image.contact.sealedEmail,
+      { ownerId: image.ownerId, purpose: 'contact' });
+    try {
+      const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(contact));
+      if (!exact(value, 'email,version') || value.version !== 1 || !contactEmailValid(value.email)
+        || (image.contact.emailTag !== null
+          && await indexedNoticeEmail(await this.indexKey, image.ownerId, value.email)
+            !== image.contact.emailTag)) throw unavailable();
+    } finally { contact.fill(0); }
+  }
 
   /** One SQL statement reads a consistent owner row across all source tables.
    * Temporary sessions are deliberately not part of a restore image. A
@@ -181,6 +215,7 @@ export class OwnerRecoveryCopy {
     if (!safeInteger(now, 1)) throw unavailable();
     const image = await this.capture(db, ownerId);
     try {
+      await this.verifyInnerIdentity(image);
       const current = async (): Promise<RecoveryObject | null> => {
         const row = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes
           FROM pa_owner_recovery_versions v JOIN pa_owner_recovery_generations g
@@ -307,6 +342,8 @@ export class OwnerRecoveryCopy {
     }
     const latest = ordered.at(-1)!;
     if (latest.disabled || latest.purgeFenceId !== null) return { status: 'disabled' };
+    try { await this.verifyInnerIdentity(latest); }
+    catch { return { status: 'quarantined' }; }
     if (latest.retention?.revision === Number.MAX_SAFE_INTEGER) return { status: 'quarantined' };
     const retention = latest.retention === null ? null : latest.retention.expiredAt === null
       ? { ...latest.retention, revision: latest.retention.revision + 1,

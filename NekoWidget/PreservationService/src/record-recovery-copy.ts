@@ -294,6 +294,7 @@ export class RecordRecoveryCopy {
       return { status: 'quarantined' };
     }
     const ordered = [...byRevision.values()].sort((a, b) => a.revision - b.revision);
+    if (ordered[0]?.revision !== 1) return { status: 'quarantined' };
     for (let index = 1; index < ordered.length; index++) {
       if (ordered[index]!.revision !== ordered[index - 1]!.revision + 1) {
         return { status: 'quarantined' };

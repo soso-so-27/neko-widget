@@ -87,6 +87,14 @@ it('distinguishes an uploaded copy from a committed revision after D1 CAS', asyn
     .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
 });
 
+it('does not restore a later revision when the first committed revision is missing', async () => {
+  const f = await fixture();
+  const second = await f.records.copy({ ...image(), revision: 2 });
+  const marker = await f.records.commit(ownerId, recordId, 2, second);
+  expect(await f.records.selectRecoveredRecord(ownerId, recordId, [marker]))
+    .toEqual({ status: 'quarantined' });
+});
+
 it('quarantines a prior live photo when deletion was prepared but its commit marker is missing', async () => {
   const f = await fixture();
   const live = await f.records.copy(image());

@@ -177,7 +177,7 @@ function configuredServices(env: Env): Services {
   try {
     const s3 = configuredS3(env);
     recovery = new RecordRecoveryCopy(keys, s3);
-    ownerRecovery = new OwnerRecoveryCopy(keys, s3);
+    ownerRecovery = new OwnerRecoveryCopy(keys, s3, env.IDENTITY_INDEX_SECRET);
   } catch {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
@@ -210,7 +210,7 @@ function configuredNoticeServices(env: Env): NoticeServices {
   const now = () => Date.now();
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
-  const ownerRecovery = new OwnerRecoveryCopy(keys, configuredS3(env));
+  const ownerRecovery = new OwnerRecoveryCopy(keys, configuredS3(env), env.IDENTITY_INDEX_SECRET);
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
   return { auth, retention: new RetentionLedger(env.DB, now, ownerRecovery), ownerRecovery,
