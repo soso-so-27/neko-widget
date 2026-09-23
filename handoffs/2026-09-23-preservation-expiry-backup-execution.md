@@ -1,0 +1,43 @@
+# 個人保管：独立復旧コピーと期限消去の実行境界（設計中）
+
+2026-09-23。基点 `d82f495`。この記録は実装・実環境試験の順序を固定するためのもの。実データ保存、バックアップ、期限消去を有効化した証拠ではない。
+
+## 現在の実装から確かめた事実
+
+- `pa_records` の暗号化本文はD1、写真暗号文はR2。`pa_uploads` は書込途中の予約、`pa_pending_deletes` は既知の写真objectの後処理。どちらも独立した復旧コピーではない。
+- `RetentionLedger.eligibleAfterFreshCheck` は期限・通知の助言的判定だけで、実削除を行わない。`pa_retention.final_notice_*` は現在の通知送達候補から昇格されるが、昇格済みという値だけで復旧コピーや現在の課金権利まで証明しない。
+- 送信用の `DurableAuth.verifiedNoticeContactForCandidate` は未送達の候補だけを読むため、送達後の消去審査に再利用できない。消去用には現在の暗号化宛先を非公開で再照合し、`pa_notice_submissions.recipient_tag` と同じ鍵付き照合値まで確認する別経路が必要。`final_notice_receipt` は送信受付IDではなく `delivery_event_id` を保持しており、通知時に延長された `due_at` は送信行の旧期限と一致しない場合がある。
+- iOSには写真を含む全件ZIPの経路がある。ただし端末の一時容量が不足する大容量時の持ち出し保証にはならない。
+- 保管専用サービスは既定OFF。AWSアカウント、実KMS/R2、通知ドメイン、別端末復元は未確認。Cloudflareの現行CLI権限ではR2一覧が失敗する。
+
+## 保存完了と復旧の提案（利用者判断待ち）
+
+独立コピーの第一候補は、AWS KMSを置くアカウントの専用S3 bucket。R2と別の事業者・認証境界に暗号文を置ける。ただし同一AWSアカウントにKMSとS3を置くため、AWSアカウント全体の事故から完全には独立しない。別アカウント／リージョンは復旧演習と費用を見て選ぶ。
+
+推奨は、保存成功を返す前にD1参照、R2写真、S3復旧コピーの全てを照合すること。S3障害時は新規保存を完了扱いにしない。既存の閲覧・持ち出しは可能にする。バックアップが非同期なら「保管済み」と「復旧コピー完了」を別状態にして、最大損失時間を販売前に明示する必要がある。どちらを採るか、利用者に確認中。
+
+復旧コピーは写真objectだけでは足りない。ownerと認証情報、record ID/版/暗号化本文/写真hashとkey、削除済みID、保管期限、通知、課金ownerとの不変リンクを再構築する最小の整合したmanifestが要る。鍵素材と `IDENTITY_INDEX_SECRET` の保全、復元後の削除済みowner再適用も必須。復旧点から別の環境へ実際に戻し、本文・写真hash・owner隔離を照合するまで「バックアップ完了」と呼ばない。
+
+## 期限消去の実装条件
+
+1. 永続的に巡回するowner単位の候補カーソルを設け、古い不適格ownerが後続を塞がない。候補抽出は削除許可ではない。
+2. 候補ごとに非公開課金元から現在の `expired` を再取得する。`unknown`、`active`、`grace`、owner無効、期限episode変更、連絡先変更、時計停止は拒否。課金照会成功時刻を保持し、長い外部I/Oの後は再照会する。
+3. `final_notice_receipt` と提出行の `delivery_event_id`、送達時刻、owner、episode、現在の宛先の鍵付き照合値を再照合し、少なくとも30日の猶予を証明する。通知時の期限から30日猶予で延長された現在の期限を扱い、旧期限の単純一致だけを条件にしない。`send()` の受付ID、合成receipt、開封推測だけでは許可しない。
+4. 一次・復旧コピーのobject一覧を所有者prefixとmanifestから照合し、削除対象を不変の作業台帳へ記録する。既知のobjectだけを消して「全件」と報告しない。書込中reservation・再送と競合する間は削除しない。
+5. 削除開始と更新・課金復帰の競合を閉じる所有者単位のfenceを作る。fence後は新規保管／編集と保管復旧を止め、期限切れ判定と通知証拠を再確認する。失敗時には作業台帳を残し再開可能にする。
+6. S3を採る場合、versioning bucketで通常の `DELETE` はdelete markerを追加するだけ。全versionとmarkerを列挙して消去し、Object Lockで削除不能な版を持たないことを確認する。R2もdelete応答だけでなく再list/HEADとDB参照を照合する。
+7. 写真・暗号化本文・本人連絡先／credential・token・復旧コピーの消去証跡を分ける。D1 Time Travelなど即時個別消去できない過去状態の最大残存期間を明示し、復元時は削除台帳を再適用する。保存件数0だけでは完了としない。
+8. 復帰・誤判定・外部失敗の試験を先に実施し、実2端末で期限中の書き出し・復元を検証するまで、自動消去のflagはOFF。
+
+## 次の実装単位と受入証拠
+
+- まず保存と独立復旧コピーの整合した契約、owner単位の可観測な状態、障害時fail-closed、復元fixtureを実装する。モックだけで本番復旧済みと表示しない。
+- 次に削除対象inventory・課金／通知の再照合・owner fence・各コピー消去の冪等作業台帳を実装し、継続課金／課金不明／通知未達／復旧コピー欠落／途中失敗を境界試験する。
+- 実環境のKMS/R2/S3、通知ドメイン、Apple本人確認、2端末復元、容量別のZIP持ち出し、削除／復元演習が成功して初めて有効化判断を行う。
+
+## 公式仕様の確認先
+
+- [Amazon S3のversion別削除](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html)：通常の削除マーカーは実体消去ではない。
+- [Amazon S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)：compliance modeの保護版は期限前に削除できない。
+- [Cloudflare R2料金](https://developers.cloudflare.com/r2/pricing/)：一次コピーと12か月持ち出し期間の費用を容量実測後に評価する。
+- [既存の保持・鍵判断](2026-09-23-preservation-retention-key-decision.md)：利用者指定の12か月と通知条件、実環境の未確認事項。
