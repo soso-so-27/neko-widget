@@ -2,6 +2,7 @@ import {
   type AuthDependencies, type Challenge, type Session, type VerifiedIdentity,
   ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
+import type { NoticeReviewCandidate } from './retention-ledger';
 
 const CHALLENGE_MS = 5 * 60_000;
 const SESSION_MS = 15 * 60_000;
@@ -10,7 +11,7 @@ const encoder = new TextEncoder();
 interface OwnerRow { owner_id: string; epoch: number; disabled: number; }
 interface ChallengeRow { nonce: string; created_at: number; expires_at: number; }
 interface SessionRow { owner_id: string; session_hash: string; expires_at: number; }
-interface ContactRow { sealed_email: unknown; source: 'apple'; }
+interface ContactRow { sealed_email: unknown; source: 'apple'; updated_at: number; }
 const unavailable = (): ServiceError => new ServiceError('auth_unavailable', 503);
 const denied = (): ServiceError => new ServiceError('unauthorized', 401);
 const safeError = (error: unknown): ServiceError => error instanceof ServiceError ? error : unavailable();
@@ -164,33 +165,75 @@ export class DurableAuth {
   async noticeContact(token: string): Promise<{ email: string | null; source: 'apple' | null }> {
     const session = await this.requireSession(token);
     try {
-      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source FROM pa_notice_contacts c
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at FROM pa_notice_contacts c
         JOIN pa_sessions s ON s.owner_id=c.owner_id JOIN pa_owners o ON o.owner_id=c.owner_id
         WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND o.epoch=s.owner_epoch`)
         .bind(session.sessionHash, session.ownerId, this.now()).first<ContactRow>();
-      let email: string | null = null;
-      if (row) {
-        const sealed = row.sealed_email instanceof ArrayBuffer ? new Uint8Array(row.sealed_email)
-          : row.sealed_email instanceof Uint8Array ? row.sealed_email
-          : Array.isArray(row.sealed_email) && row.sealed_email.every(byte =>
-            Number.isInteger(byte) && byte >= 0 && byte <= 255) ? Uint8Array.from(row.sealed_email) : null;
-        if (row.source !== 'apple' || !sealed || sealed.byteLength < 1 || sealed.byteLength > 8192) throw unavailable();
-        const opened = await this.dependencies.keys.open(sealed,
-          { ownerId: session.ownerId, purpose: 'contact' });
-        let value: unknown;
-        try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)); }
-        finally { opened.fill(0); }
-        if (!value || typeof value !== 'object' || Array.isArray(value) ||
-            Object.keys(value).sort().join(',') !== 'email,version' ||
-            (value as { version?: unknown }).version !== 1) throw unavailable();
-        const candidate = (value as { email?: unknown }).email;
-        if (!contactEmailValid(candidate)) throw unavailable();
-        email = candidate;
-      }
+      const email = row ? await this.openNoticeContact(row, session.ownerId) : null;
       const current = await this.requireSession(token);
       if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) throw denied();
       return { email, source: row ? 'apple' : null };
     } catch (error) { throw safeError(error); }
+  }
+
+  /** Internal scheduled-notice path, never routed from an owner parameter. The
+   * retention episode/revision and enabled owner must still match this candidate.
+   */
+  async verifiedNoticeContactForCandidate(candidate: NoticeReviewCandidate): Promise<{ email: string; updatedAt: number } | null> {
+    try {
+      if (!candidate || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidate.ownerId)
+          || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
+          || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
+          || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0) throw unavailable();
+      const now = this.now();
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        WHERE c.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision=? AND r.due_at=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.final_notice_delivered_at IS NULL AND r.checked_at>=? AND r.checked_at<=?
+          AND r.due_at<=? AND r.notice_not_before_at<=?`)
+        .bind(candidate.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+          Math.max(0, now - 24 * 60 * 60 * 1000), now, now + 60 * 24 * 60 * 60 * 1000, now).first<ContactRow>();
+      if (!row) return null;
+      if (!Number.isSafeInteger(row.updated_at) || row.updated_at < 0 || row.updated_at > now) throw unavailable();
+      const sealed = this.noticeContactBytes(row);
+      const email = await this.openNoticeContact(row, candidate.ownerId);
+      // A revocation, renewal, or email replacement during key access wins.
+      // The eventual delivery event and deletion path must fence again.
+      const stillCurrent = await this.dependencies.db.prepare(`SELECT 1 AS present
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND o.disabled=0
+          AND r.episode=? AND r.revision=? AND r.due_at=? AND r.verified_status='expired'
+          AND r.paused_at IS NULL AND r.final_notice_delivered_at IS NULL`)
+        .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
+          candidate.revision, candidate.dueAt).first<{ present: number }>();
+      return stillCurrent ? { email, updatedAt: row.updated_at } : null;
+    } catch (error) { throw safeError(error); }
+  }
+
+  private noticeContactBytes(row: ContactRow): Uint8Array {
+    const sealed = row.sealed_email instanceof ArrayBuffer ? new Uint8Array(row.sealed_email)
+      : row.sealed_email instanceof Uint8Array ? row.sealed_email
+      : Array.isArray(row.sealed_email) && row.sealed_email.every(byte =>
+        Number.isInteger(byte) && byte >= 0 && byte <= 255) ? Uint8Array.from(row.sealed_email) : null;
+    if (row.source !== 'apple' || !sealed || sealed.byteLength < 1 || sealed.byteLength > 8192) throw unavailable();
+    return sealed;
+  }
+
+  private async openNoticeContact(row: ContactRow, ownerId: string): Promise<string> {
+    const sealed = this.noticeContactBytes(row);
+    const opened = await this.dependencies.keys.open(sealed, { ownerId, purpose: 'contact' });
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)); }
+    finally { opened.fill(0); }
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        Object.keys(value).sort().join(',') !== 'email,version' ||
+        (value as { version?: unknown }).version !== 1) throw unavailable();
+    const candidate = (value as { email?: unknown }).email;
+    if (!contactEmailValid(candidate)) throw unavailable();
+    return candidate;
   }
 
   async revokeSession(token: string): Promise<void> {

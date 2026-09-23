@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { type AuthDependencies, type KeyCustody, type VerifiedIdentity, sha256 } from '../src/contracts';
+import { RetentionLedger } from '../src/retention-ledger';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const START = Date.UTC(2026, 8, 22);
@@ -27,7 +28,7 @@ async function fixture() {
   };
   const dependencies: AuthDependencies = { db, keys, identityIndexSecret: secret, now: () => now };
   return { auth: new DurableAuth(dependencies), dependencies, keys,
-    advance: (ms: number) => { now += ms; },
+    advance: (ms: number) => { now += ms; }, now: () => now,
     identity: { issuer: 'https://appleid.apple.com', subject: `synthetic-${crypto.randomUUID()}`,
       refreshToken: `synthetic-refresh-${crypto.randomUUID()}` } satisfies VerifiedIdentity };
 }
@@ -115,6 +116,55 @@ describe('durable private preservation authentication', () => {
       .bind(attemptedOwner!).first()).toBeNull();
     expect(await db.prepare('SELECT session_hash FROM pa_sessions WHERE owner_id=?')
       .bind(attemptedOwner!).first()).toBeNull();
+  });
+
+  it('reads an Apple contact internally only for a fresh eligible retention episode', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'first@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    const current = await ledger.observe(first.ownerId, 'expired');
+    const candidate = { ownerId: first.ownerId, episode: current.episode,
+      revision: current.revision, dueAt: current.dueAt! };
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'first@example.com' });
+    expect(await f.auth.verifiedNoticeContactForCandidate({ ...candidate, episode: candidate.episode + 1 })).toBeNull();
+    expect(await f.auth.verifiedNoticeContactForCandidate({ ...candidate, revision: candidate.revision + 1 })).toBeNull();
+
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'new@example.com' });
+    await ledger.observe(first.ownerId, 'unknown');
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toBeNull();
+  });
+
+  it('does not return a contact replaced or revoked during asynchronous decryption', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    const current = await ledger.observe(first.ownerId, 'expired');
+    const candidate = { ownerId: first.ownerId, episode: current.episode,
+      revision: current.revision, dueAt: current.dueAt! };
+    const replaced = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      async open(bytes, context) {
+        await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+        return f.keys.open(bytes, context);
+      },
+    } });
+    expect(await replaced.verifiedNoticeContactForCandidate(candidate)).toBeNull();
+    const revoked = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      async open(bytes, context) {
+        await f.auth.revokeOwner(first.ownerId);
+        return f.keys.open(bytes, context);
+      },
+    } });
+    expect(await revoked.verifiedNoticeContactForCandidate(candidate)).toBeNull();
   });
 
   it('persists only HMAC identity, hashed session tokens and context-bound encrypted credentials', async () => {
