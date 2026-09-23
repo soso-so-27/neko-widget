@@ -68,8 +68,8 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 37)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v4")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 40)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v5")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -81,12 +81,13 @@ class PlanTests(unittest.TestCase):
         for path in ("src/billing-link-protocol.ts", "src/membership-links.ts", "src/billing-authority.ts",
                      "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
                      "test/membership-links.test.ts", "test/billing-authority.test.ts",
-                     "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc"):
+                     "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
+                     "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts"):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
-                      "NekoWidget/PreservationService/migrations/0005_unknown.sql",
+                      "NekoWidget/PreservationService/migrations/0006_unknown.sql",
                       "NekoWidget/PreservationService/migrations/0004_other.sql", "NekoWidget/SharingService/src/index.ts",
                       "NekoWidget/SharingService/src/billing-auth.ts", "NekoWidget/SharingService/src/billing-entitlement.ts",
                       "NekoWidget/SharingService/migrations/0019_billing_foundation.sql",
