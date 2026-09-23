@@ -8,5 +8,27 @@
   "observability": { "enabled": false },
   "vars": { "PRESERVATION_ENABLED": "NO", "ENVIRONMENT": "local" },
   "d1_databases": [{ "binding": "DB", "database_name": "neko-preservation-local", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
-  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "neko-preservation-local-private" }]
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "neko-preservation-local-private" }],
+  "env": {
+    "staging": {
+      "name": "neko-preservation-staging-disabled",
+      "workers_dev": false,
+      "vars": {
+        "PRESERVATION_ENABLED": "NO",
+        "CLEANUP_ENABLED": "NO",
+        "RETENTION_TRACKING_ENABLED": "NO",
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "neko-preservation-staging",
+        "database_id": "955a8530-9015-486c-8d0c-1b5a2c5b6d4f",
+        "migrations_dir": "migrations"
+      }],
+      "r2_buckets": [{
+        "binding": "ARCHIVE",
+        "bucket_name": "neko-preservation-staging-private"
+      }]
+    }
+  }
 }

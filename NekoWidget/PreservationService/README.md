@@ -6,6 +6,8 @@
 
 Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run typecheck`、`npm test`。WranglerのIDはローカル用ダミーです。remote migration/deployを実行しないでください。
 
+`wrangler.jsonc` の `staging` 環境だけは、共有用DBとは別の空の `neko-preservation-staging` D1を指します。2026-09-23にmigration 0001–0005を適用済みで、所有者・記録は0件。`neko-preservation-staging-private` R2は**予約名であり、作成・接続の実証はまだありません**。`PRESERVATION_ENABLED`、清掃、保持時計はすべて `NO`、公開routeも設定しません。`wrangler deploy --dry-run --env staging` のbundle成功を、実R2・鍵・画像検証・Apple接続・写真保存の成功と扱わないでください。既存共有資源へは接続しません。
+
 テストはローカルD1/R2、実JWT・実AES-256-GCM・実Ed25519署名を使います。鍵を包むauthorityと画像検証の返答はテスト注入です。会員リンクは既存billing検証関数と実ローカルSQLでも確認し、購入権利のprojectionはテスト用データです。Appleは生成鍵と模擬HTTPによる検証であり、実Appleアカウント成功や実KMSの復旧証明ではありません。
 
 ## 有効化前に必須の接続
