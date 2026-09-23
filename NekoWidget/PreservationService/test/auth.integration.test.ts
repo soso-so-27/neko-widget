@@ -86,6 +86,12 @@ describe('durable private preservation authentication', () => {
     expect(stored).toMatchObject({ owner_id: first.ownerId, source: 'apple' });
     expect(JSON.stringify(stored)).not.toContain(email);
     expect(await f.auth.noticeContact(first.token)).toEqual({ email, source: 'apple' });
+    const sameEmailOtherOwner = await f.auth.establish({ ...f.identity,
+      subject: `${f.identity.subject}-same-email`, verifiedEmail: email });
+    const otherTag = await db.prepare('SELECT email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(sameEmailOtherOwner.ownerId).first<{ email_tag: string }>();
+    expect(otherTag?.email_tag).toMatch(/^[0-9a-f]{64}$/u);
+    expect(otherTag?.email_tag).not.toBe(stored?.email_tag);
     const again = await f.auth.establish({ ...f.identity, refreshToken: 'rotated-without-email' });
     expect(await f.auth.noticeContact(again.token)).toEqual({ email, source: 'apple' });
     const changed = await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
@@ -127,6 +133,57 @@ describe('durable private preservation authentication', () => {
     const after = await db.prepare('SELECT updated_at FROM pa_notice_contacts WHERE owner_id=?')
       .bind(first.ownerId).first<{ updated_at: number }>();
     expect(after!.updated_at).toBeGreaterThan(before!.updated_at);
+  });
+
+  it('keeps a delivered notice for the same Apple address and reopens notice review after a real change', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    await ledger.observe(first.ownerId, 'expired');
+    const delivered = await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-for-contact-version');
+    const before = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(before?.email_tag).toMatch(/^[0-9a-f]{64}$/u);
+
+    f.advance(1);
+    await Promise.all([
+      f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' }),
+      f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' }),
+    ]);
+    const same = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(same).toEqual(before);
+    expect((await db.prepare('SELECT final_notice_receipt FROM pa_retention WHERE owner_id=?')
+      .bind(first.ownerId).first<{ final_notice_receipt: string | null }>())?.final_notice_receipt)
+      .toBe('synthetic-event-for-contact-version');
+
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    const changed = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(changed!.updated_at).toBeGreaterThan(before!.updated_at);
+    expect(changed!.email_tag).not.toBe(before!.email_tag);
+    const retention = await db.prepare(`SELECT final_notice_delivered_at,final_notice_receipt,notice_not_before_at
+      FROM pa_retention WHERE owner_id=?`).bind(first.ownerId)
+      .first<{ final_notice_delivered_at: number | null; final_notice_receipt: string | null;
+        notice_not_before_at: number }>();
+    expect(retention).toMatchObject({ final_notice_delivered_at: null, final_notice_receipt: null });
+    expect(retention!.notice_not_before_at).toBe(f.now());
+    expect((await ledger.listNoticeReviewCandidates()).map(item => item.ownerId)).toContain(first.ownerId);
+    expect(delivered.dueAt).toBe(expired.dueAt);
+
+    await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-before-contact-reinsert');
+    await db.prepare('DELETE FROM pa_notice_contacts WHERE owner_id=?').bind(first.ownerId).run();
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect((await db.prepare('SELECT final_notice_receipt FROM pa_retention WHERE owner_id=?')
+      .bind(first.ownerId).first<{ final_notice_receipt: string | null }>())?.final_notice_receipt).toBeNull();
   });
 
   it('reads an Apple contact internally only for a fresh eligible retention episode', async () => {

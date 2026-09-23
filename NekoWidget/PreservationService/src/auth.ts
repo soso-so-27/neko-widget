@@ -36,6 +36,13 @@ export class DurableAuth {
     raw.fill(0);
   }
 
+  private async noticeEmailTag(ownerId: string, email: string): Promise<string> {
+    // An owner-bound tag cannot correlate two accounts that share an address.
+    const message = encoder.encode(`neko-preservation-contact-email-v1\0${JSON.stringify([ownerId, email])}`);
+    const digest = new Uint8Array(await crypto.subtle.sign('HMAC', await this.indexKey, message));
+    return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
   private now(): number {
     const value = this.dependencies.now();
     if (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000 - SESSION_MS) {
@@ -94,6 +101,7 @@ export class DurableAuth {
 
       const contactEmail = identity.issuer === 'https://appleid.apple.com' ? identity.verifiedEmail : undefined;
       if (contactEmail !== undefined && !contactEmailValid(contactEmail)) throw denied();
+      const contactTag = contactEmail ? await this.noticeEmailTag(owner.owner_id, contactEmail) : undefined;
 
       const plaintext = encoder.encode(JSON.stringify({
         issuer: identity.issuer, subject: identity.subject, refreshToken: identity.refreshToken,
@@ -127,12 +135,14 @@ export class DurableAuth {
              sealed_credentials = excluded.sealed_credentials, updated_at = excluded.updated_at`,
         ).bind(sealed.slice().buffer, now, owner.owner_id, owner.epoch),
         ...(sealedContact ? [db.prepare(
-          `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at)
-           SELECT owner_id,?,'apple',?,? FROM pa_owners WHERE owner_id=? AND epoch=? AND disabled=0
+          `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at,email_tag)
+           SELECT owner_id,?,'apple',?,?,? FROM pa_owners WHERE owner_id=? AND epoch=? AND disabled=0
            ON CONFLICT(owner_id) DO UPDATE SET sealed_email=excluded.sealed_email,
              source=excluded.source,verified_at=excluded.verified_at,
-             updated_at=MAX(pa_notice_contacts.updated_at+1,excluded.updated_at)`,
-        ).bind(sealedContact.slice().buffer, now, now, owner.owner_id, owner.epoch)] : []),
+             updated_at=MAX(pa_notice_contacts.updated_at+1,excluded.updated_at),
+             email_tag=excluded.email_tag
+           WHERE pa_notice_contacts.email_tag IS NOT excluded.email_tag`,
+        ).bind(sealedContact.slice().buffer, now, now, contactTag, owner.owner_id, owner.epoch)] : []),
         db.prepare(
           `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at)
            SELECT ?, owner_id, epoch, ?, ? FROM pa_owners

@@ -135,6 +135,28 @@ describe('final-notice submission evidence, with all external effects disabled',
       .bind(f.ownerId).first<{ n: number }>())?.n).toBe(0);
   });
 
+  it('reopens review and permits a new notice when the verified recipient changes after delivery', async () => {
+    const f = await fixture(); const id = messageId();
+    await db.prepare('UPDATE pa_notice_contacts SET email_tag=? WHERE owner_id=?')
+      .bind('a'.repeat(64), f.ownerId).run();
+    await submit(f, id);
+    expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+    f.at(f.candidate.dueAt - 45 * day + 1);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(true);
+
+    await db.prepare(`UPDATE pa_notice_contacts SET email_tag=?,updated_at=updated_at+1
+      WHERE owner_id=?`).bind('b'.repeat(64), f.ownerId).run();
+    const retention = await db.prepare(`SELECT final_notice_delivered_at,final_notice_receipt
+      FROM pa_retention WHERE owner_id=?`).bind(f.ownerId)
+      .first<{ final_notice_delivered_at: number | null; final_notice_receipt: string | null }>();
+    expect(retention).toEqual({ final_notice_delivered_at: null, final_notice_receipt: null });
+    expect((await f.ledger.listNoticeReviewCandidates()).map(item => item.ownerId)).toContain(f.ownerId);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
+    const review = (await f.ledger.listNoticeReviewCandidates()).find(item => item.ownerId === f.ownerId)!;
+    expect(await f.submissions.claimNotice(review,
+      { email: 'new@example.net', updatedAt: f.contact.updatedAt + 1 })).not.toBeNull();
+  });
+
   it('extends the carry-out deadline to at least 30 days after a late delivered notice', async () => {
     const f = await fixture(); const id = messageId();
     const deliveredAt = f.candidate.dueAt - 20 * day;
