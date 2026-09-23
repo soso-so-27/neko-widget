@@ -170,6 +170,7 @@ struct PhotoMemoryNotesListView: View {
     let archiveStore: PersonalArchiveStore
     private let archiveEnabled: Bool
     let isEmbedded: Bool
+    let refreshFromCloudRequest: Int
     let openPhotos: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -184,6 +185,7 @@ struct PhotoMemoryNotesListView: View {
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          archiveStore: PersonalArchiveStore? = nil,
          isEmbedded: Bool = false,
+         refreshFromCloudRequest: Int = 0,
          openPhotos: @escaping () -> Void) {
         self.photos = photos
         let enabled = archiveStore != nil || PersonalArchiveStore.isConfigured
@@ -191,6 +193,7 @@ struct PhotoMemoryNotesListView: View {
         self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
         self.isEmbedded = isEmbedded
+        self.refreshFromCloudRequest = refreshFromCloudRequest
         _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store,
             archiveStore: enabled ? (archiveStore ?? .shared) : nil))
     }
@@ -341,6 +344,10 @@ struct PhotoMemoryNotesListView: View {
             access.start(photos: photos)
             await library.reload()
         }
+        .onChange(of: refreshFromCloudRequest) { _, _ in
+            guard isEmbedded && archiveEnabled else { return }
+            Task { await library.refreshFromCloud() }
+        }
         .onChange(of: selectedArchive) { _, value in
             if value == nil && scenePhase == .active { Task { await library.reload() } }
         }
@@ -367,18 +374,18 @@ struct PhotoMemoryNotesListView: View {
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
+        if archiveEnabled && !isEmbedded {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if archiveEnabled {
-                    Menu {
-                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
-                            Task { await library.refreshFromCloud() }
-                        }.disabled(library.isRefreshingCloud)
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("保管の操作")
-                    .accessibilityIdentifier("memory-notes-menu")
-                }
+                Menu {
+                    Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
+                        Task { await library.refreshFromCloud() }
+                    }.disabled(library.isRefreshingCloud)
+                } label: { Image(systemName: "ellipsis") }
+                .accessibilityLabel("保管の操作")
+                .accessibilityIdentifier("memory-notes-menu")
             }
         }
+    }
 
     @ViewBuilder private var archiveDestination: some View {
             if let selectedArchive, let selectedArchiveAccount {

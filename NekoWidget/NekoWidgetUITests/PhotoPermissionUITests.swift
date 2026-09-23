@@ -3346,7 +3346,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["photos-section-all"].tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "An empty library remains a Photos section.")
         entry.tap()
-        app.buttons["memory-notes-menu"].tap()
+        XCTAssertFalse(app.buttons["memory-notes-menu"].exists,
+                       "The embedded notes section must not add a second Photos menu.")
+        app.buttons["photos-more"].tap()
         XCTAssertTrue(app.buttons["iCloudから読み込む"].waitForExistence(timeout: 5),
                       "An empty library must still offer explicit cloud restoration.")
         app.terminate()

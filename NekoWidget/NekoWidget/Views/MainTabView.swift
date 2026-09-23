@@ -243,6 +243,7 @@ struct MainTabView: View {
     @State private var showsCatPreparedness = false
     @State private var manageShowcaseAfterClosing = false
     @State private var photoLibraryRevision = 0
+    @State private var photoNotesCloudRefreshRequest = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
@@ -514,6 +515,13 @@ struct MainTabView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if photoLibrarySelection.selection == .notes,
+                       personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
+                            photoNotesCloudRefreshRequest &+= 1
+                        }
+                        Divider()
+                    }
                     Button("迷子のとき", systemImage: "magnifyingglass") {
                         showsCatPreparedness = true
                     }
@@ -584,7 +592,10 @@ struct MainTabView: View {
                                     isEmbedded: true, exportPhotoBook: exportPhotoBook)
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
-                                     isEmbedded: true) { photoLibrarySelection.select(.all) }
+                                     isEmbedded: true,
+                                     refreshFromCloudRequest: photoNotesCloudRefreshRequest) {
+                photoLibrarySelection.select(.all)
+            }
         }
     }
 
