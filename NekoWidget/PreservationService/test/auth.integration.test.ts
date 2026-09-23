@@ -184,6 +184,18 @@ describe('durable private preservation authentication', () => {
     await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
     expect((await db.prepare('SELECT final_notice_receipt FROM pa_retention WHERE owner_id=?')
       .bind(first.ownerId).first<{ final_notice_receipt: string | null }>())?.final_notice_receipt).toBeNull();
+
+    await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-for-expiry-contact');
+    const contactAt = f.now();
+    f.advance(expired.dueAt! - f.now());
+    const expiry = await ledger.expiryReviewAfterFreshCheck(first.ownerId, 'expired');
+    expect(expiry).not.toBeNull();
+    expect(await f.auth.verifiedNoticeContactForExpiry(expiry!))
+      .toEqual({ email: 'new@example.com', updatedAt: contactAt });
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'later@example.com' });
+    expect(await f.auth.verifiedNoticeContactForExpiry(expiry!)).toBeNull();
   });
 
   it('reads an Apple contact internally only for a fresh eligible retention episode', async () => {

@@ -16,6 +16,8 @@ export type RetentionState = { ownerId: string; revision: number; episode: numbe
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
 export type NoticeReviewCandidate = { ownerId: string; episode: number; revision: number; dueAt: number };
+/** Read-only review token. This is not permission to erase any copy. */
+export type ExpiryReviewCandidate = NoticeReviewCandidate & { deliveredAt: number; deliveryEventId: string };
 export type NoticeScanCursor = { dueAt: number; ownerId: string };
 
 function clock(value: number): number {
@@ -63,7 +65,8 @@ export class RetentionLedger {
         AND (r.due_at>? OR (r.due_at=? AND r.owner_id>?))
         AND NOT EXISTS (SELECT 1 FROM pa_notice_submissions s
           JOIN pa_notice_contacts c ON c.owner_id=s.owner_id
-          WHERE s.owner_id=r.owner_id AND s.episode=r.episode AND s.due_at=r.due_at
+          WHERE s.owner_id=r.owner_id AND s.evidence_version=2
+            AND s.episode=r.episode AND s.due_at=r.due_at
             AND s.contact_updated_at=c.updated_at AND s.submitted_at>=r.notice_not_before_at
             AND (s.delivered_at>=? OR (s.delivered_at IS NULL AND s.submitted_at>=?)))
       ORDER BY r.due_at,r.owner_id LIMIT ?`)
@@ -208,5 +211,23 @@ export class RetentionLedger {
     return state.status === 'expired' && state.pausedAt === null && state.dueAt !== null
       && state.finalNoticeDeliveredAt !== null && now >= state.dueAt
       && now - state.finalNoticeDeliveredAt >= thirtyDays;
+  }
+
+  /** Capture the exact ledger version after a fresh private-billing check.
+   * Every later contact, provider and storage check must fence this version.
+   */
+  async expiryReviewAfterFreshCheck(ownerId: string,
+    status: VerifiedMembershipStatus): Promise<ExpiryReviewCandidate | null> {
+    const state = await this.observe(ownerId, status);
+    const now = clock(this.now());
+    if (state.status !== 'expired' || state.pausedAt !== null || state.dueAt === null
+      || state.finalNoticeDeliveredAt === null || now < state.dueAt
+      || now - state.finalNoticeDeliveredAt < thirtyDays) return null;
+    const row = await this.read(ownerId);
+    if (row.revision !== state.revision || row.episode !== state.episode || row.due_at !== state.dueAt
+      || row.final_notice_delivered_at !== state.finalNoticeDeliveredAt
+      || row.final_notice_receipt === null || row.checked_at !== state.checkedAt) return null;
+    return { ownerId, episode: row.episode, revision: row.revision, dueAt: row.due_at!,
+      deliveredAt: row.final_notice_delivered_at!, deliveryEventId: row.final_notice_receipt };
   }
 }

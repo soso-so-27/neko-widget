@@ -17,7 +17,7 @@ const eventId = () => crypto.randomUUID();
 const secret = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 
-async function fixture() {
+async function fixture(noticeSecret = secret()) {
   let now = Date.UTC(2026, 8, 23, 12);
   const ownerId = crypto.randomUUID();
   await db.prepare('INSERT INTO pa_owners(owner_id,identity_key,created_at) VALUES(?,?,?)')
@@ -32,7 +32,7 @@ async function fixture() {
   const current = await ledger.observe(ownerId, 'expired');
   const candidate = { ownerId, episode: current.episode, revision: current.revision, dueAt: current.dueAt! };
   const contact = { email, updatedAt: Date.UTC(2026, 8, 23, 12) };
-  const submissions = new NoticeSubmissions(db, secret(), () => now);
+  const submissions = new NoticeSubmissions(db, noticeSecret, () => now);
   const makeEvent = (id: string, recipient = email) => ({
     type: 'cf.email.sending.message.delivered',
     source: { type: 'email.sending', zoneId: source.zoneId, domain: source.domain },
@@ -50,6 +50,19 @@ async function submit(f: Awaited<ReturnType<typeof fixture>>, id: string): Promi
 }
 
 describe('final-notice submission evidence, with all external effects disabled', () => {
+  it('does not correlate different owners sharing the same notice address', async () => {
+    const noticeSecret = secret();
+    const first = await fixture(noticeSecret);
+    const second = await fixture(noticeSecret);
+    expect(await first.submissions.claimNotice(first.candidate, first.contact)).not.toBeNull();
+    expect(await second.submissions.claimNotice(second.candidate, second.contact)).not.toBeNull();
+    const tags = await db.prepare(`SELECT owner_id,recipient_tag FROM pa_notice_claims
+      WHERE owner_id IN (?,?)`).bind(first.ownerId, second.ownerId)
+      .all<{ owner_id: string; recipient_tag: string }>();
+    expect(tags.results).toHaveLength(2);
+    expect(tags.results[0]!.recipient_tag).not.toBe(tags.results[1]!.recipient_tag);
+  });
+
   it('allows only one concurrent sender and rejects a stale claim after takeover', async () => {
     const f = await fixture();
     const claims = await Promise.all([
@@ -133,6 +146,26 @@ describe('final-notice submission evidence, with all external effects disabled',
     expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
     expect((await db.prepare('SELECT COUNT(*) AS n FROM pa_records WHERE owner_id=?')
       .bind(f.ownerId).first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it('requires the same provider event, current recipient and full grace period at expiry', async () => {
+    const f = await fixture(); const id = messageId();
+    await submit(f, id);
+    expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+    f.at(f.candidate.dueAt - 45 * day + 1);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(true);
+    expect(await f.ledger.expiryReviewAfterFreshCheck(f.ownerId, 'expired')).toBeNull();
+    f.at(f.candidate.dueAt);
+    const review = await f.ledger.expiryReviewAfterFreshCheck(f.ownerId, 'expired');
+    expect(review).not.toBeNull();
+    expect(await f.submissions.verifiedFinalNoticeForExpiry(review!, f.contact)).toBe(true);
+    expect(await f.submissions.verifiedFinalNoticeForExpiry(
+      { ...review!, deliveryEventId: crypto.randomUUID() }, f.contact)).toBe(false);
+    expect(await f.submissions.verifiedFinalNoticeForExpiry(review!,
+      { email: 'someone-else@example.net', updatedAt: f.contact.updatedAt })).toBe(false);
+    await db.prepare('UPDATE pa_notice_contacts SET email_tag=?,updated_at=updated_at+1 WHERE owner_id=?')
+      .bind('c'.repeat(64), f.ownerId).run();
+    expect(await f.submissions.verifiedFinalNoticeForExpiry(review!, f.contact)).toBe(false);
   });
 
   it('reopens review and permits a new notice when the verified recipient changes after delivery', async () => {
@@ -275,7 +308,7 @@ describe('final-notice submission evidence, with all external effects disabled',
     const event = f.makeEvent(id);
     expect(await f.submissions.recordDelivery(event, source, async () => f.contact)).toBe(true);
     expect(await f.submissions.recordDelivery(event, source, async () => f.contact)).toBe(false);
-    expect((await f.ledger.listNoticeReviewCandidates()).length).toBe(0);
+    expect((await f.ledger.listNoticeReviewCandidates()).filter(item => item.ownerId === f.ownerId)).toHaveLength(0);
     const row = await db.prepare('SELECT final_notice_delivered_at FROM pa_retention WHERE owner_id=?')
       .bind(f.ownerId).first<{ final_notice_delivered_at: number | null }>();
     expect(row?.final_notice_delivered_at).toBeNull();
@@ -283,7 +316,7 @@ describe('final-notice submission evidence, with all external effects disabled',
     // forever after its evidence window has expired.
     f.at(f.candidate.dueAt + 15 * day + 1);
     await f.ledger.observe(f.ownerId, 'expired');
-    expect((await f.ledger.listNoticeReviewCandidates()).length).toBe(1);
+    expect((await f.ledger.listNoticeReviewCandidates()).filter(item => item.ownerId === f.ownerId)).toHaveLength(1);
   });
 
   it('rejects wrong recipient, changed contact, source, revoked owner, and unknown billing', async () => {

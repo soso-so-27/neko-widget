@@ -1,5 +1,9 @@
 # 個人保管：削除予告の送達台帳（実送信前の設計）
 
+## 2026-09-24 本線反映
+
+既定OFFの通知候補巡回・送信claim・送達イベント照合・昇格を `d82f49572936a9855d8e14c1fed20ba0fc456546` でmainへ反映。候補iOS [35879970178](https://github.com/soso-so-27/neko-widget/actions/runs/35879970178) は必須8 jobが全て成功（全体4145秒、Mac runner 193.8分）。候補の保管サービス [35879970188](https://github.com/soso-so-27/neko-widget/actions/runs/35879970188) も成功。本線iOS [35888602069](https://github.com/soso-so-27/neko-widget/actions/runs/35888602069) は候補の同一SHA証拠を再利用し、本線保管サービス [35888601773](https://github.com/soso-so-27/neko-widget/actions/runs/35888601773) も成功。実送信、実R2/KMS、期限消去、TestFlightは行っていない。
+
 ## この段階の目的
 
 会員期限切れから12か月の持ち出し期間を守り、削除予告が宛先メールサーバーに受理された証拠と少なくとも30日の猶予がない限り、最終消去を許可しない。Cloudflare Email Sendingの `send()` が返す `messageId` は送信受付であり、送達証拠ではない。送達には送信ドメインに紐付く `cf.email.sending.message.delivered` イベントを使う。開封の証拠とは呼ばない。

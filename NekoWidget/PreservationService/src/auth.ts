@@ -2,7 +2,7 @@ import {
   type AuthDependencies, type Challenge, type Session, type VerifiedIdentity,
   ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
-import type { NoticeReviewCandidate } from './retention-ledger';
+import type { ExpiryReviewCandidate, NoticeReviewCandidate } from './retention-ledger';
 
 const CHALLENGE_MS = 5 * 60_000;
 const SESSION_MS = 15 * 60_000;
@@ -223,6 +223,54 @@ export class DurableAuth {
           AND r.paused_at IS NULL AND r.final_notice_delivered_at IS NULL`)
         .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
           candidate.revision, candidate.dueAt).first<{ present: number }>();
+      return stillCurrent ? { email, updatedAt: row.updated_at } : null;
+    } catch (error) { throw safeError(error); }
+  }
+
+  /** Internal expiry review only. The current encrypted Apple contact must
+   * still belong to the exact delivered-notice ledger version after KMS I/O.
+   * This does not authorize deletion or expose an owner lookup over HTTP.
+   */
+  async verifiedNoticeContactForExpiry(candidate: ExpiryReviewCandidate): Promise<{ email: string; updatedAt: number } | null> {
+    try {
+      if (!candidate || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidate.ownerId)
+        || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
+        || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
+        || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0
+        || !Number.isSafeInteger(candidate.deliveredAt) || candidate.deliveredAt <= 0
+        || typeof candidate.deliveryEventId !== 'string' || candidate.deliveryEventId.length < 16
+        || candidate.deliveryEventId.length > 256) throw unavailable();
+      const now = this.now();
+      const grace = 30 * 24 * 60 * 60 * 1000;
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.source='apple' AND o.disabled=0
+          AND r.episode=? AND r.revision=? AND r.due_at=?
+          AND r.final_notice_delivered_at=? AND r.final_notice_receipt=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.checked_at>=? AND r.checked_at<=? AND r.due_at<=? AND r.final_notice_delivered_at<=?`)
+        .bind(candidate.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+          candidate.deliveredAt, candidate.deliveryEventId, Math.max(0, now - 24 * 60 * 60 * 1000),
+          now, now, Math.max(0, now - grace)).first<ContactRow>();
+      if (!row) return null;
+      if (!Number.isSafeInteger(row.updated_at) || row.updated_at < 0 || row.updated_at > now) throw unavailable();
+      const sealed = this.noticeContactBytes(row);
+      const email = await this.openNoticeContact(row, candidate.ownerId);
+      const stillCurrent = await this.dependencies.db.prepare(`SELECT 1 AS present
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND c.source='apple'
+          AND o.disabled=0 AND r.episode=? AND r.revision=? AND r.due_at=?
+          AND r.final_notice_delivered_at=? AND r.final_notice_receipt=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.checked_at>=? AND r.checked_at<=? AND r.due_at<=? AND r.final_notice_delivered_at<=?`)
+        .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
+          candidate.revision, candidate.dueAt, candidate.deliveredAt, candidate.deliveryEventId,
+          Math.max(0, now - 24 * 60 * 60 * 1000), now, now, Math.max(0, now - grace))
+        .first<{ present: number }>();
       return stillCurrent ? { email, updatedAt: row.updated_at } : null;
     } catch (error) { throw safeError(error); }
   }

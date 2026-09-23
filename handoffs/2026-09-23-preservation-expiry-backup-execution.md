@@ -11,6 +11,9 @@
 - 保管専用サービスは既定OFF。AWSアカウント、実KMS/R2、通知ドメイン、別端末復元は未確認。Cloudflareの現行CLI権限ではR2一覧が失敗する。
 - 通知先照合値は owner ID とアドレスの組を鍵付きで計算し、同一アドレスの別ownerをDB上で関連付けない。0009以前の既存連絡先は照合値がNULLのため、初回の同一アドレス再認証でも最終通知を一度だけ再要求する。早期消去を避ける保守的な扱いで、実連絡先を持つ本番運用前に移行する。
 - 2026-09-24 JST、保管専用の **staging** D1に `0009_notice_contact_fingerprint.sql` を適用した。事前Time Travel bookmarkは `00000008-00000002-000050ef-02c373786b3b6ff4f57312a3f87a07d2`。事前のowner/record/contactは全て0、適用後は未適用migration 0、`email_tag`列1・関連trigger 2・owner/record 0を確認。本番DB、共有DB、Worker配備には触れていない。
+- 次の候補では、期限後の正確な保持台帳版、復号した現在のApple連絡先、同一ownerに閉じた宛先照合値、配送イベントIDと提出行、30日以上の猶予を読み取り専用で再照合する経路を追加中。これ単体は削除許可ではなく、外部の新鮮な課金照会、一次・独立復旧コピーの完全inventory、owner fence、冪等消去台帳は依然として必要。
+- 送達台帳の旧v1宛先照合値はowner間で同じアドレスを関連付け得るうえ、旧行の `provider_accepted_at` が欠け得る。`0010_notice_evidence_version.sql` は旧v1の照合値をランダム値に置き換え、既存の最終送達receiptを取り消して再通知を要求する。旧行・旧claimは監査用に残すがv2の送達証拠には使わない。移行前に実owner数と復元位置を記録し、実送信の有効化前にstageで構造確認する。
+- 2026-09-24 JST、保管専用 **staging** D1へ0010を適用。事前bookmark `00000009-00000000-000050ef-bffd9fc126ff9e3b3e404268d578b426`、事前owner/record/submission/claimは全て0。適用後の未適用migration 0、`evidence_version`列1、v2書込guard 4、旧receipt再昇格guard 1、owner/record 0を確認。旧形式の合成ownerを用いたNode SQLite移行試験と保管サービス124試験、独立レビューは成功。本番DBやWorker配備は未変更。
 
 ## 保存完了と復旧の提案（利用者判断待ち）
 

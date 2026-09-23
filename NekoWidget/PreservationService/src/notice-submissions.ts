@@ -1,7 +1,7 @@
 import { contactEmailValid, ServiceError } from './contracts';
 import { parseDeliveredNoticeEvent, type NoticeEventSource } from './notice-events';
 import { NOTICE_DELIVERY_EVIDENCE_WINDOW_MS, NOTICE_SUBMISSION_RETRY_DELAY_MS, RetentionLedger,
-  type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
+  type ExpiryReviewCandidate, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
 
 const day = 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -15,6 +15,7 @@ export type VerifiedNoticeContact = { email: string; updatedAt: number };
 export type PendingNoticePromotion = { messageId: string; deliveredAt: number };
 type SubmissionRow = {
   message_id: string; owner_id: string; episode: number; retention_revision: number; due_at: number;
+  evidence_version: number;
   contact_updated_at: number; recipient_tag: string; account_id: string; zone_id: string;
   subscription_id: string; domain: string; sender: string; submitted_at: number;
   claim_started_at: number | null;
@@ -47,9 +48,11 @@ export class NoticeSubmissions {
     raw.fill(0);
   }
 
-  private async recipientTag(email: string): Promise<string> {
-    if (!contactEmailValid(email)) throw unavailable();
-    const bytes = new TextEncoder().encode(`neko-preservation-notice-recipient-v1\0${email}`);
+  private async recipientTag(ownerId: string, email: string): Promise<string> {
+    if (!ownerPattern.test(ownerId) || !contactEmailValid(email)) throw unavailable();
+    // The tag compares notices within one owner, without linking owners who
+    // happen to use the same address in a database snapshot.
+    const bytes = new TextEncoder().encode(`neko-preservation-notice-recipient-v1\0${JSON.stringify([ownerId, email])}`);
     const digest = new Uint8Array(await crypto.subtle.sign('HMAC', await this.key, bytes));
     return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
   }
@@ -67,10 +70,10 @@ export class NoticeSubmissions {
         || contact.updatedAt < 0 || contact.updatedAt > now || !Number.isSafeInteger(now) || now <= 0
         || !Number.isSafeInteger(now + day)) throw unavailable();
     const claimId = crypto.randomUUID();
-    const recipientTag = await this.recipientTag(contact.email);
+    const recipientTag = await this.recipientTag(candidate.ownerId, contact.email);
     const result = await this.db.prepare(`INSERT INTO pa_notice_claims
-      (owner_id,claim_id,episode,due_at,contact_updated_at,recipient_tag,claimed_at,expires_at)
-      SELECT r.owner_id,?,r.episode,r.due_at,c.updated_at,?,?,?
+      (owner_id,claim_id,episode,due_at,contact_updated_at,recipient_tag,claimed_at,expires_at,evidence_version)
+      SELECT r.owner_id,?,r.episode,r.due_at,c.updated_at,?,?,?,2
       FROM pa_retention r JOIN pa_notice_contacts c ON c.owner_id=r.owner_id
         JOIN pa_owners o ON o.owner_id=r.owner_id
         JOIN pa_membership_links l ON l.owner_id=r.owner_id
@@ -80,14 +83,17 @@ export class NoticeSubmissions {
         AND r.due_at<=? AND r.notice_not_before_at<=?
         AND c.updated_at=? AND c.source='apple' AND o.disabled=0
         AND NOT EXISTS (SELECT 1 FROM pa_notice_submissions s
-          WHERE s.owner_id=r.owner_id AND s.episode=r.episode AND s.due_at=r.due_at
+          WHERE s.owner_id=r.owner_id AND s.evidence_version=2
+            AND s.episode=r.episode AND s.due_at=r.due_at
             AND s.contact_updated_at=c.updated_at AND s.submitted_at>=r.notice_not_before_at
             AND (s.delivered_at>=? OR (s.delivered_at IS NULL AND s.submitted_at>=?)))
       ON CONFLICT(owner_id) DO UPDATE SET claim_id=excluded.claim_id,
         episode=excluded.episode,due_at=excluded.due_at,
         contact_updated_at=excluded.contact_updated_at,recipient_tag=excluded.recipient_tag,
-        claimed_at=excluded.claimed_at,expires_at=excluded.expires_at
+        claimed_at=excluded.claimed_at,expires_at=excluded.expires_at,
+        evidence_version=excluded.evidence_version
       WHERE pa_notice_claims.expires_at<=excluded.claimed_at
+        OR pa_notice_claims.evidence_version<>2
         OR pa_notice_claims.episode<>excluded.episode
         OR pa_notice_claims.due_at<>excluded.due_at`)
       .bind(claimId, recipientTag, now, now + day, candidate.ownerId, candidate.episode,
@@ -111,13 +117,14 @@ export class NoticeSubmissions {
         || !contact || !contactEmailValid(contact.email) || !Number.isSafeInteger(contact.updatedAt)
         || contact.updatedAt < 0 || contact.updatedAt > now || !claimPattern.test(claimId)
         || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
-    const tag = await this.recipientTag(contact.email);
+    const tag = await this.recipientTag(candidate.ownerId, contact.email);
     const row = await this.db.prepare(`SELECT 1 AS ready FROM pa_notice_claims q
       JOIN pa_retention r ON r.owner_id=q.owner_id
       JOIN pa_notice_contacts c ON c.owner_id=q.owner_id
       JOIN pa_owners o ON o.owner_id=q.owner_id
       JOIN pa_membership_links l ON l.owner_id=q.owner_id
-      WHERE q.owner_id=? AND q.claim_id=? AND q.episode=? AND q.due_at=?
+      WHERE q.owner_id=? AND q.claim_id=? AND q.evidence_version=2
+        AND q.episode=? AND q.due_at=?
         AND q.contact_updated_at=? AND q.recipient_tag=?
         AND q.claimed_at<=? AND q.expires_at>?
         AND r.episode=q.episode AND r.revision>=? AND r.due_at=q.due_at
@@ -145,11 +152,11 @@ export class NoticeSubmissions {
         || contact.updatedAt > now || !claimPattern.test(claimId)
         || !messagePattern.test(messageId) || !validNoticeEventSource(source)
         || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
-    const tag = await this.recipientTag(contact.email);
+    const tag = await this.recipientTag(candidate.ownerId, contact.email);
     const result = await this.db.prepare(`INSERT INTO pa_notice_submissions
       (message_id,owner_id,episode,retention_revision,due_at,contact_updated_at,recipient_tag,
-       account_id,zone_id,subscription_id,domain,sender,submitted_at,claim_id,claim_started_at)
-      SELECT ?,r.owner_id,r.episode,r.revision,r.due_at,c.updated_at,?,?,?,?,?,?,?,?,q.claimed_at
+       account_id,zone_id,subscription_id,domain,sender,submitted_at,claim_id,claim_started_at,evidence_version)
+      SELECT ?,r.owner_id,r.episode,r.revision,r.due_at,c.updated_at,?,?,?,?,?,?,?,?,q.claimed_at,2
       FROM pa_retention r JOIN pa_notice_contacts c ON c.owner_id=r.owner_id
         JOIN pa_owners o ON o.owner_id=r.owner_id
         JOIN pa_membership_links l ON l.owner_id=r.owner_id
@@ -159,7 +166,8 @@ export class NoticeSubmissions {
         AND r.final_notice_delivered_at IS NULL AND r.checked_at>=? AND r.checked_at<=?
         AND r.due_at<=? AND r.notice_not_before_at<=?
         AND c.updated_at=? AND c.source='apple' AND o.disabled=0
-        AND q.claim_id=? AND q.episode=r.episode AND q.due_at=r.due_at
+        AND q.claim_id=? AND q.evidence_version=2
+        AND q.episode=r.episode AND q.due_at=r.due_at
         AND q.contact_updated_at=c.updated_at AND q.recipient_tag=?
         AND q.claimed_at<=? AND q.expires_at>?`)
       .bind(messageId, tag, source.accountId, source.zoneId, source.subscriptionId,
@@ -191,7 +199,7 @@ export class NoticeSubmissions {
     const row = await this.db.prepare('SELECT * FROM pa_notice_submissions WHERE message_id=?')
       .bind(event.messageId).first<SubmissionRow>();
     if (!row) throw unavailable();
-    if (row.account_id !== source.accountId || row.zone_id !== source.zoneId
+    if (row.evidence_version !== 2 || row.account_id !== source.accountId || row.zone_id !== source.zoneId
         || row.subscription_id !== source.subscriptionId || row.domain !== source.domain
         || row.sender !== source.sender
         || event.acceptedAt < (row.claim_started_at ?? row.submitted_at)) return false;
@@ -202,8 +210,8 @@ export class NoticeSubmissions {
       revision: row.retention_revision, dueAt: row.due_at };
     const contact = await currentContact(candidate);
     if (!contact || contact.updatedAt !== row.contact_updated_at
-        || await this.recipientTag(contact.email) !== row.recipient_tag
-        || await this.recipientTag(event.recipient) !== row.recipient_tag) return false;
+        || await this.recipientTag(row.owner_id, contact.email) !== row.recipient_tag
+        || await this.recipientTag(row.owner_id, event.recipient) !== row.recipient_tag) return false;
     // The provider may accept the mail before send() returns and D1 records
     // submitted_at. The pre-existing table constraint requires delivered_at
     // >= submitted_at, so use the later time for the deletion grace period and
@@ -211,7 +219,8 @@ export class NoticeSubmissions {
     const safeDeliveredAt = Math.max(event.acceptedAt, row.submitted_at);
     const result = await this.db.prepare(`UPDATE pa_notice_submissions
       SET delivered_at=?,provider_accepted_at=?,delivery_event_id=?
-      WHERE message_id=? AND delivered_at IS NULL AND recipient_tag=? AND contact_updated_at=?
+      WHERE message_id=? AND evidence_version=2 AND delivered_at IS NULL
+        AND recipient_tag=? AND contact_updated_at=?
         AND EXISTS (SELECT 1 FROM pa_retention r JOIN pa_owners o ON o.owner_id=r.owner_id
           JOIN pa_notice_contacts c ON c.owner_id=r.owner_id
           JOIN pa_membership_links l ON l.owner_id=r.owner_id
@@ -244,7 +253,7 @@ export class NoticeSubmissions {
       JOIN pa_notice_contacts c ON c.owner_id=s.owner_id
       JOIN pa_owners o ON o.owner_id=s.owner_id
       JOIN pa_membership_links l ON l.owner_id=s.owner_id
-      WHERE s.delivered_at IS NOT NULL AND s.delivery_event_id IS NOT NULL
+      WHERE s.evidence_version=2 AND s.delivered_at IS NOT NULL AND s.delivery_event_id IS NOT NULL
         AND s.delivered_at>=? AND s.delivered_at<=?
         AND (s.delivered_at>? OR (s.delivered_at=? AND s.message_id>?))
         AND r.episode=s.episode AND r.due_at=s.due_at
@@ -291,12 +300,12 @@ export class NoticeSubmissions {
       JOIN pa_membership_links l ON l.owner_id=s.owner_id
       JOIN pa_owners o ON o.owner_id=s.owner_id
       WHERE s.message_id=? AND o.disabled=0`).bind(messageId).first<PromotionRow>();
-    if (!row || row.delivered_at === null || row.delivery_event_id === null) return false;
+    if (!row || row.evidence_version !== 2 || row.delivered_at === null || row.delivery_event_id === null) return false;
     const candidate = { ownerId: row.owner_id, episode: row.episode,
       revision: row.retention_revision, dueAt: row.due_at };
     const contact = await currentContact(candidate);
     if (!contact || contact.updatedAt !== row.contact_updated_at
-        || await this.recipientTag(contact.email) !== row.recipient_tag) return false;
+        || await this.recipientTag(row.owner_id, contact.email) !== row.recipient_tag) return false;
     let status: VerifiedMembershipStatus;
     try { status = await statusForBillingAccount(row.billing_account_id); }
     catch { status = 'unknown'; }
@@ -317,7 +326,7 @@ export class NoticeSubmissions {
           JOIN pa_notice_contacts c ON c.owner_id=s.owner_id
           JOIN pa_owners o ON o.owner_id=s.owner_id
           JOIN pa_membership_links l ON l.owner_id=s.owner_id
-          WHERE s.message_id=? AND s.owner_id=pa_retention.owner_id
+          WHERE s.message_id=? AND s.evidence_version=2 AND s.owner_id=pa_retention.owner_id
             AND s.episode=pa_retention.episode AND s.due_at=pa_retention.due_at
             AND s.retention_revision<=pa_retention.revision
             AND s.delivered_at=? AND s.delivery_event_id IS NOT NULL
@@ -329,5 +338,49 @@ export class NoticeSubmissions {
         observed.checkedAt, row.delivered_at, messageId, row.delivered_at,
         row.recipient_tag, row.contact_updated_at, row.billing_account_id).run();
     return result.meta.changes === 1;
+  }
+
+  /** Read-only expiry proof. A mail-server delivery event, the current sealed
+   * recipient, and the exact fresh retention version must all still agree.
+   * Physical deletion additionally needs an owner fence and complete primary
+   * and independent-backup inventory; this method performs neither.
+   */
+  async verifiedFinalNoticeForExpiry(candidate: ExpiryReviewCandidate,
+    contact: VerifiedNoticeContact | null): Promise<boolean> {
+    const now = this.now();
+    if (!candidate || !ownerPattern.test(candidate.ownerId)
+      || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
+      || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
+      || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0
+      || !Number.isSafeInteger(candidate.deliveredAt) || candidate.deliveredAt <= 0
+      || !messagePattern.test(candidate.deliveryEventId)
+      || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
+    if (!contact || !contactEmailValid(contact.email) || !Number.isSafeInteger(contact.updatedAt)
+      || contact.updatedAt < 0 || contact.updatedAt > now) return false;
+    const grace = 30 * day;
+    if (candidate.dueAt > now || candidate.deliveredAt > now - grace) return false;
+    const tag = await this.recipientTag(candidate.ownerId, contact.email);
+    const row = await this.db.prepare(`SELECT 1 AS verified FROM pa_retention r
+      JOIN pa_owners o ON o.owner_id=r.owner_id
+      JOIN pa_membership_links l ON l.owner_id=r.owner_id
+      JOIN pa_notice_contacts c ON c.owner_id=r.owner_id
+      JOIN pa_notice_submissions s ON s.owner_id=r.owner_id
+        AND s.delivery_event_id=r.final_notice_receipt
+      WHERE r.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision=? AND r.due_at=?
+        AND r.verified_status='expired' AND r.paused_at IS NULL
+        AND r.checked_at>=? AND r.checked_at<=? AND r.due_at<=?
+        AND r.final_notice_delivered_at=? AND r.final_notice_receipt=?
+        AND r.notice_not_before_at<=s.submitted_at
+        AND s.evidence_version=2 AND s.episode=r.episode AND s.retention_revision<=r.revision
+        AND s.delivered_at=r.final_notice_delivered_at
+        AND s.provider_accepted_at IS NOT NULL
+        AND s.due_at<=r.due_at AND r.due_at=MAX(s.due_at,s.delivered_at+?)
+        AND c.source='apple' AND c.updated_at=?
+        AND s.contact_updated_at=c.updated_at AND s.recipient_tag=?`)
+      .bind(candidate.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+        Math.max(0, now - day), now, now, candidate.deliveredAt,
+        candidate.deliveryEventId, grace, contact.updatedAt, tag)
+      .first<{ verified: number }>();
+    return !!row;
   }
 }

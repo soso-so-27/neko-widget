@@ -69,8 +69,8 @@ describe('twelve-month preservation export period', () => {
       .bind(f.ownerId, new Uint8Array([1]).buffer, submittedAt, submittedAt).run();
     await db.prepare(`INSERT INTO pa_notice_submissions
       (message_id,owner_id,episode,retention_revision,due_at,contact_updated_at,recipient_tag,
-       account_id,zone_id,subscription_id,domain,sender,submitted_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+       account_id,zone_id,subscription_id,domain,sender,submitted_at,evidence_version)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,2)`)
       .bind('message-retry-1', f.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
         submittedAt, 'a'.repeat(64), 'b'.repeat(32), 'c'.repeat(32), 'd'.repeat(32),
         'example.com', 'notice@example.com', submittedAt).run();
@@ -130,10 +130,17 @@ describe('twelve-month preservation export period', () => {
     expect(await f.ledger.eligibleAfterFreshCheck(f.ownerId, 'expired')).toBe(false);
     f.at(notified.dueAt!);
     expect(await f.ledger.eligibleAfterFreshCheck(f.ownerId, 'expired')).toBe(true);
+    const review = await f.ledger.expiryReviewAfterFreshCheck(f.ownerId, 'expired');
+    expect(review).toMatchObject({ ownerId: f.ownerId, episode: first.episode,
+      dueAt: notified.dueAt, deliveredAt: notified.finalNoticeDeliveredAt,
+      deliveryEventId: 'mail-provider-receipt-123' });
+    expect(review!.revision).toBeGreaterThan(0);
     expect((await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
       notified.finalNoticeDeliveredAt!, 'mail-provider-receipt-123')).dueAt).toBe(notified.dueAt);
     await expect(f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
       notified.finalNoticeDeliveredAt!, 'different-mail-receipt')).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    f.later(1);
+    expect(await f.ledger.expiryReviewAfterFreshCheck(f.ownerId, 'active')).toBeNull();
   });
 
   it('invalidates an earlier notice after billing becomes unknown', async () => {
