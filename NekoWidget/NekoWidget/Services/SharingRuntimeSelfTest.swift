@@ -9935,7 +9935,9 @@ actor SharingRuntimeSelfTestRunner {
         linkingUI.start(); try await settleLink()
         linkingUI.checkRetention(); try await settleLink()
         guard linkingUI.retention?.status == .unlinked else { throw ManagedPreservationError.invalidResponse }
-        linkingUI.connectMembership(consent: true); try await settleLink()
+        linkingUI.connectMembership(consent: true)
+        guard linkingUI.retention == nil else { throw ManagedPreservationError.invalidResponse }
+        try await settleLink()
         guard linkingUI.membership?.linked == true, linkingUI.retention == nil else {
             throw ManagedPreservationError.invalidResponse
         }

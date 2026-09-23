@@ -280,6 +280,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func connectMembership(consent: Bool) {
         guard isSignedIn, consent, !isBusy else { return }
         membership = nil; membershipMessage = "接続結果が不明な場合は「接続状況を確認」で確かめられます。"
+        retention = nil
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             let result = try await self.client.linkMembership(consent: true)
