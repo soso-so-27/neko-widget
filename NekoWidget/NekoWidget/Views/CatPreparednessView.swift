@@ -22,6 +22,11 @@ struct CatPreparednessView: View {
 
     var body: some View {
         Form {
+            if catName.isEmpty {
+                Section {
+                    TextField("猫の名前", text: $draft.name)
+                }
+            }
             Section {
                 photoButton("顔が分かる写真", photo: draft.face, role: .face)
                 photoButton("体の柄が分かる写真", photo: draft.body, role: .body)
@@ -169,7 +174,7 @@ struct CatPreparednessEntryView: View {
                             }
                         )
                     } label: {
-                        Text(profiles.isEmpty ? "写真から始める" : "猫を登録せずに始める")
+                        Text(profiles.isEmpty ? "写真から始める" : "登録せずに1匹分を準備")
                     }
                 }
                 .navigationTitle("どの子ですか？")
@@ -246,7 +251,7 @@ struct LostCatDraftView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             guard !hasLoadedDefaults else { return }
-            publicCatName = catName
+            publicCatName = record.name.isEmpty ? catName : record.name
             contact = record.contactSuggestion
             hasLoadedDefaults = true
         }

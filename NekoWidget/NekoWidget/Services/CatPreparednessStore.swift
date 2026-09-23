@@ -13,6 +13,7 @@ struct CatPreparednessRecord: Codable, Equatable {
 
     var face: Photo?
     var body: Photo?
+    var name = ""
     var identifyingFeatures = ""
     var approachAdvice = ""
     var collar = ""
@@ -48,6 +49,7 @@ final class CatPreparednessStore: ObservableObject {
 
     func save(_ record: CatPreparednessRecord, for key: String) throws {
         var safe = record
+        safe.name = String(record.name.prefix(60))
         safe.identifyingFeatures = String(record.identifyingFeatures.prefix(240))
         safe.approachAdvice = String(record.approachAdvice.prefix(160))
         safe.collar = String(record.collar.prefix(80))
