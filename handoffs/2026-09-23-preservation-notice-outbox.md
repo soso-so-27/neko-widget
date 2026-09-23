@@ -6,7 +6,7 @@
 
 この設計・模擬試験は、送信ドメイン、Email Sending、Queue、Apple Private Email Relay、実R2/KMSを有効化した証拠ではない。全て揃うまで通知と期限消去は既定OFF。
 
-`pa_notice_submissions` と `NoticeSubmissions` は送信受付IDとQueueイベントの照合材料だけを保持する。現時点ではWorkerの送信・Queue入口へ接続せず、照合成功でも保持台帳の `final_notice_delivered_at` は変更しない。これは実配達・最終消去を有効化したという意味ではない。外部設定が揃っても、同じ宛先・エピソードを原子的に再検証する接続と独立レビューが残る。
+`pa_notice_submissions` と `NoticeSubmissions` は送信受付IDとQueueイベントの照合材料を保持する。`recordDelivery` 自体は保持台帳を変えない。別の `promoteDelivered` は新鮮な非公開課金照会、現在の連絡先、同じ期限切れエピソードを再検証してから、模擬送達証拠を保持台帳へ反映できる。現時点ではWorkerの送信・Queue入口へ接続しておらず、実配達・最終消去を有効化したという意味ではない。実接続には非公開Queueの主体確認と実環境での独立レビューが残る。
 
 ## 送達の照合
 

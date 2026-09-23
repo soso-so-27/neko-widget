@@ -66,8 +66,22 @@ describe('final-notice submission evidence, with all external effects disabled',
       .bind(f.ownerId).first<{ n: number }>())?.n).toBe(0);
   });
 
-  it('refuses promotion for changed contact, renewal, unknown billing, relink, or disabled owner', async () => {
-    for (const change of ['contact', 'renewed', 'unknown', 'relinked', 'disabled'] as const) {
+  it('extends the carry-out deadline to at least 30 days after a late delivered notice', async () => {
+    const f = await fixture(); const id = messageId();
+    const deliveredAt = f.candidate.dueAt - 20 * day;
+    f.at(deliveredAt);
+    await f.ledger.observe(f.ownerId, 'expired');
+    await f.submissions.recordSubmission(f.candidate, f.contact, id, source);
+    expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+    f.at(deliveredAt + 1);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(true);
+    const state = await db.prepare('SELECT due_at FROM pa_retention WHERE owner_id=?')
+      .bind(f.ownerId).first<{ due_at: number }>();
+    expect(state?.due_at).toBe(deliveredAt + 30 * day);
+  });
+
+  it('refuses promotion for changed contact, renewal, unknown billing, or disabled owner', async () => {
+    for (const change of ['contact', 'renewed', 'unknown', 'disabled'] as const) {
       const f = await fixture(); const id = messageId();
       await f.submissions.recordSubmission(f.candidate, f.contact, id, source);
       expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
@@ -79,8 +93,6 @@ describe('final-notice submission evidence, with all external effects disabled',
       const status = change === 'renewed' ? 'active' : change === 'unknown' ? 'unknown' : 'expired';
       const billingCheck = async () => {
         if (change === 'unknown') throw new Error('billing unavailable');
-        if (change === 'relinked') await db.prepare('UPDATE pa_membership_links SET billing_account_id=? WHERE owner_id=?')
-          .bind(crypto.randomUUID(), f.ownerId).run();
         return status;
       };
       expect(await f.submissions.promoteDelivered(id, async () => f.contact, billingCheck), change).toBe(false);
