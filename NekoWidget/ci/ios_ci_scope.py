@@ -1331,7 +1331,7 @@ def swift_declaration_source(source: str) -> str | None:
     return result
 
 
-DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests")
+DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests")
 
 
 def diagnostic_tests(test_class: str, methods: str, source: str | None = None) -> tuple[str, ...]:
