@@ -96,4 +96,82 @@ describe('private, versioned S3 recovery-object transport', () => {
     await expect(corrupt.putVersioned(`recovery/v1/${owner}/photo/../wrong`, data))
       .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
   });
+
+  it('lists every version and delete marker with an owner-bound pagination cursor', async () => {
+    const second = `recovery/v1/${owner}/record/00000000-0000-4000-8000-000000000003`;
+    let calls = 0;
+    const copy = new S3RecoveryCopy(config, async (input, init) => {
+      const url = new URL(String(input)); const headers = new Headers(init?.headers);
+      expect(url.pathname).toBe('/');
+      expect(url.searchParams.has('versions')).toBe(true);
+      expect(url.searchParams.get('prefix')).toBe(`recovery/v1/${owner}/`);
+      expect(url.searchParams.get('max-keys')).toBe('1000');
+      expect(url.searchParams.get('encoding-type')).toBe('url');
+      expect(headers.get('x-amz-expected-bucket-owner')).toBe(config.expectedAccountId);
+      expect(init?.method).toBe('GET');
+      calls += 1;
+      if (calls === 1) {
+        expect(url.searchParams.has('key-marker')).toBe(false);
+        return new Response(`<?xml version="1.0"?><ListVersionsResult>
+          <Name>${config.bucket}</Name><Prefix>recovery/v1/${owner}/</Prefix>
+          <EncodingType>url</EncodingType><MaxKeys>1000</MaxKeys><IsTruncated>true</IsTruncated>
+          <Version><Key>${key}</Key><VersionId>v1</VersionId><Size>5</Size></Version>
+          <DeleteMarker><Key>${key}</Key><VersionId>m2</VersionId></DeleteMarker>
+          <NextKeyMarker>${second}</NextKeyMarker><NextVersionIdMarker>v3</NextVersionIdMarker>
+          </ListVersionsResult>`);
+      }
+      expect(url.searchParams.get('key-marker')).toBe(second);
+      expect(url.searchParams.get('version-id-marker')).toBe('v3');
+      return new Response(`<?xml version="1.0"?><ListVersionsResult>
+        <Name>${config.bucket}</Name><Prefix>recovery/v1/${owner}/</Prefix>
+        <EncodingType>url</EncodingType><MaxKeys>1000</MaxKeys>
+        <KeyMarker>${second}</KeyMarker><VersionIdMarker>v3</VersionIdMarker>
+        <IsTruncated>false</IsTruncated>
+        <Version><Key>${second}</Key><VersionId>v3</VersionId><Size>42</Size></Version>
+        </ListVersionsResult>`);
+    });
+    const first = await copy.listOwnerVersionsPage(owner);
+    expect(first).toEqual({ versions: [
+      { key, versionId: 'v1', bytes: 5, deleteMarker: false },
+      { key, versionId: 'm2', bytes: null, deleteMarker: true },
+    ], nextCursor: { keyMarker: second, versionIdMarker: 'v3' } });
+    const last = await copy.listOwnerVersionsPage(owner, first.nextCursor!);
+    expect(last).toEqual({ versions: [
+      { key: second, versionId: 'v3', bytes: 42, deleteMarker: false },
+    ], nextCursor: null });
+    expect(calls).toBe(2);
+  });
+
+  it('never treats malformed, foreign, truncated or non-versioned S3 listings as a full inventory', async () => {
+    const listing = (middle: string) => `<?xml version="1.0"?><ListVersionsResult>
+      <Name>${config.bucket}</Name><Prefix>recovery/v1/${owner}/</Prefix>
+      <EncodingType>url</EncodingType><MaxKeys>1000</MaxKeys>${middle}</ListVersionsResult>`;
+    const bad = [
+      '<ListVersionsResult>',
+      listing('<IsTruncated>true</IsTruncated>'),
+      listing(`<IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>null</VersionId><Size>5</Size></Version>`),
+      listing(`<IsTruncated>false</IsTruncated><Version><Key>recovery/v1/00000000-0000-4000-8000-000000000099/photo/00000000-0000-4000-8000-000000000002</Key><VersionId>v1</VersionId><Size>5</Size></Version>`),
+      listing(`<IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId><Size>5</Size></Version><DeleteMarker><Key>${key}</Key><VersionId>v1</VersionId></DeleteMarker>`),
+      listing(`<IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>recovery/v1/${owner}/photo/</Prefix></CommonPrefixes>`),
+      listing(`<IsTruncated>false</IsTruncated><NextKeyMarker>${key}</NextKeyMarker>`),
+      listing(`<IsTruncated>true</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId><Size>5</Size></Version><NextKeyMarker>${key}</NextKeyMarker>`),
+      `<!DOCTYPE s3 [<!ENTITY x "bad">]>${listing('<IsTruncated>false</IsTruncated>')}`,
+    ];
+    for (const xml of bad) {
+      const copy = new S3RecoveryCopy(config, async () => new Response(xml));
+      await expect(copy.listOwnerVersionsPage(owner)).rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+    }
+    const copy = new S3RecoveryCopy(config, async () => { throw new Error('unexpected network'); });
+    await expect(copy.listOwnerVersionsPage('not-an-owner')).rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+    await expect(copy.listOwnerVersionsPage(owner, { keyMarker: key, versionIdMarker: 'null' }))
+      .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+    const repeat = new S3RecoveryCopy(config, async () => new Response(listing(
+      `<IsTruncated>true</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId><Size>5</Size></Version><NextKeyMarker>${key}</NextKeyMarker><NextVersionIdMarker>v1</NextVersionIdMarker>`)));
+    await expect(repeat.listOwnerVersionsPage(owner, { keyMarker: key, versionIdMarker: 'v1' }))
+      .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+    const missingEcho = new S3RecoveryCopy(config, async () => new Response(listing(
+      `<IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>v2</VersionId><Size>5</Size></Version>`)));
+    await expect(missingEcho.listOwnerVersionsPage(owner, { keyMarker: key, versionIdMarker: 'v1' }))
+      .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+  });
 });

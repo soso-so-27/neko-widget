@@ -1,4 +1,5 @@
 import { AwsV4Signer } from 'aws4fetch';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { readBoundedBody } from './bounded-body';
 import { ServiceError } from './contracts';
 
@@ -19,16 +20,35 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 type BoundConfig = { region: string; bucket: string; accountId: string; access: string;
   secret: string; session?: string };
 export type RecoveryObject = { key: string; sha256: string; bytes: number; versionId: string };
+export type RecoveryVersion = { key: string; versionId: string; deleteMarker: boolean; bytes: number | null };
+export type RecoveryVersionCursor = { keyMarker: string; versionIdMarker?: string };
+export type RecoveryVersionPage = { versions: RecoveryVersion[]; nextCursor: RecoveryVersionCursor | null };
 
 const maxObjectBytes = 32 * 1024 * 1024;
+const maxVersionListBytes = 4 * 1024 * 1024;
 const regionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u;
 const bucketPattern = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const ownerPattern = new RegExp(`^${uuid}$`, 'u');
 const recoveryKeyPattern = new RegExp(`^recovery/v1/${uuid}/(?:photo|record|manifest)/${uuid}$`, 'u');
 const hexPattern = /^[0-9a-f]{64}$/u;
 const versionPattern = /^[\x21-\x7e]{1,1024}$/u;
 const unavailable = () => new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
 const b64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
+const stringField = (value: unknown): string => {
+  if (typeof value !== 'string') throw unavailable();
+  return value;
+};
+const objectField = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw unavailable();
+  return value as Record<string, unknown>;
+};
+const values = (value: unknown): unknown[] => value === undefined ? [] : Array.isArray(value) ? value : [value];
+const decodedKey = (value: unknown): string => {
+  const decoded = decodeURIComponent(stringField(value));
+  if (!recoveryKeyPattern.test(decoded)) throw unavailable();
+  return decoded;
+};
 
 function configured(config: S3RecoveryConfig): BoundConfig {
   if (config.enabled !== 'YES' || !regionPattern.test(config.region ?? '')
@@ -122,6 +142,85 @@ export class S3RecoveryCopy {
       const data = await readBoundedBody(reply.body, maxObjectBytes, unavailable);
       if (data.length !== item.bytes || (await checksum(data)).hex !== item.sha256) throw unavailable();
       return data;
+    } catch { throw unavailable(); }
+  }
+
+  /** An advisory, bounded page only. Completion requires following every cursor,
+   * reconciling with the DB/R2 inventory under a write fence, and checking again
+   * after version-specific deletion. A list result alone never permits deletion.
+   */
+  async listOwnerVersionsPage(ownerId: string,
+    cursor?: RecoveryVersionCursor): Promise<RecoveryVersionPage> {
+    if (!ownerPattern.test(ownerId)) throw unavailable();
+    const prefix = `recovery/v1/${ownerId}/`;
+    if (cursor && (!recoveryKeyPattern.test(cursor.keyMarker)
+      || !cursor.keyMarker.startsWith(prefix)
+      || (cursor.versionIdMarker !== undefined &&
+        (!versionPattern.test(cursor.versionIdMarker) || cursor.versionIdMarker === 'null')))) throw unavailable();
+    const params = new URLSearchParams({ prefix, 'max-keys': '1000', 'encoding-type': 'url' });
+    params.set('versions', '');
+    if (cursor) {
+      params.set('key-marker', cursor.keyMarker);
+      if (cursor.versionIdMarker) params.set('version-id-marker', cursor.versionIdMarker);
+    }
+    const url = `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/?${params}`;
+    try {
+      const signer = new AwsV4Signer({ url, method: 'GET', service: 's3', region: this.config.region,
+        accessKeyId: this.config.access, secretAccessKey: this.config.secret,
+        ...(this.config.session ? { sessionToken: this.config.session } : {}), allHeaders: true,
+        headers: { 'x-amz-expected-bucket-owner': this.config.accountId } });
+      const signed = await signer.sign();
+      const response = await this.fetcher(signed.url, { method: 'GET', headers: signed.headers,
+        redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+      if (response.status !== 200) throw unavailable();
+      const xml = new TextDecoder('utf-8', { fatal: true }).decode(
+        await readBoundedBody(response.body, maxVersionListBytes, unavailable));
+      if (/<!DOCTYPE|<!ENTITY/iu.test(xml) || XMLValidator.validate(xml) !== true) throw unavailable();
+      const root = objectField(new XMLParser({ parseTagValue: false }).parse(xml).ListVersionsResult);
+      if (stringField(root.Name) !== this.config.bucket
+        || decodeURIComponent(stringField(root.Prefix)) !== prefix
+        || root.EncodingType !== 'url' || root.MaxKeys !== '1000'
+        || (cursor !== undefined && (root.KeyMarker === undefined || root.VersionIdMarker === undefined))
+        || (root.KeyMarker !== undefined && decodeURIComponent(stringField(root.KeyMarker))
+          !== (cursor?.keyMarker ?? ''))
+        || (root.VersionIdMarker !== undefined && stringField(root.VersionIdMarker)
+          !== (cursor?.versionIdMarker ?? ''))
+        || values(root.CommonPrefixes).length > 0) throw unavailable();
+      const truncated = stringField(root.IsTruncated);
+      if (truncated !== 'true' && truncated !== 'false') throw unavailable();
+      const versions: RecoveryVersion[] = [];
+      const seen = new Set<string>();
+      for (const [kind, rows] of [['Version', values(root.Version)],
+        ['DeleteMarker', values(root.DeleteMarker)]] as const) {
+        for (const item of rows) {
+          const row = objectField(item);
+          const key = decodedKey(row.Key);
+          const versionId = stringField(row.VersionId);
+          if (!key.startsWith(prefix) || !versionPattern.test(versionId) || versionId === 'null'
+            || seen.has(`${key}\0${versionId}`)) throw unavailable();
+          seen.add(`${key}\0${versionId}`);
+          const size = kind === 'Version' ? Number(stringField(row.Size)) : null;
+          if (kind === 'Version' && (!/^\d+$/u.test(stringField(row.Size))
+            || !Number.isSafeInteger(size) || size! < 0)) throw unavailable();
+          versions.push({ key, versionId, deleteMarker: kind === 'DeleteMarker', bytes: size });
+        }
+      }
+      if (versions.length > 1000) throw unavailable();
+      if (truncated === 'false') {
+        if ((root.NextKeyMarker !== undefined && root.NextKeyMarker !== '')
+          || (root.NextVersionIdMarker !== undefined && root.NextVersionIdMarker !== '')) throw unavailable();
+        return { versions, nextCursor: null };
+      }
+      if (versions.length === 0) throw unavailable();
+      const keyMarker = decodedKey(root.NextKeyMarker);
+      const versionIdMarker = root.NextVersionIdMarker === undefined || root.NextVersionIdMarker === ''
+        ? undefined : stringField(root.NextVersionIdMarker);
+      if (!keyMarker.startsWith(prefix) || (versionIdMarker !== undefined
+        && (!versionPattern.test(versionIdMarker) || versionIdMarker === 'null'))
+        || (versions.some(item => item.key === keyMarker) && versionIdMarker === undefined)
+        || (cursor?.keyMarker === keyMarker && cursor.versionIdMarker === versionIdMarker)) throw unavailable();
+      return { versions, nextCursor: { keyMarker,
+        ...(versionIdMarker === undefined ? {} : { versionIdMarker }) } };
     } catch { throw unavailable(); }
   }
 }
