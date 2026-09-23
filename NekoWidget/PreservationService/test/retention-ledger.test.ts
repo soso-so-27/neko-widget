@@ -49,6 +49,9 @@ describe('twelve-month preservation export period', () => {
   it('requires a final delivery receipt at least 30 days before deletion', async () => {
     const f = await fixture();
     const first = await f.ledger.observe(f.ownerId, 'expired');
+    f.at(first.dueAt! - 61 * day);
+    await expect(f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
+      f.now(), 'mail-provider-receipt-early')).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
     f.at(first.dueAt! - 10 * day);
     const notified = await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'mail-provider-receipt-123');
     expect(notified.dueAt).toBe(f.now() + 30 * day);
@@ -64,7 +67,7 @@ describe('twelve-month preservation export period', () => {
   it('invalidates an earlier notice after billing becomes unknown', async () => {
     const f = await fixture();
     const first = await f.ledger.observe(f.ownerId, 'expired');
-    f.later(2 * day);
+    f.at(first.dueAt! - 45 * day);
     const oldNoticeAt = f.now();
     await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, oldNoticeAt, 'mail-provider-receipt-123');
     f.later(day);
@@ -81,7 +84,7 @@ describe('twelve-month preservation export period', () => {
   it('cancels deletion on renewed membership and rejects notices from an old episode', async () => {
     const f = await fixture();
     const first = await f.ledger.observe(f.ownerId, 'expired');
-    f.later(10 * day);
+    f.at(first.dueAt! - 45 * day);
     await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'mail-provider-receipt-123');
     f.later(day);
     const renewed = await f.ledger.observe(f.ownerId, 'grace');

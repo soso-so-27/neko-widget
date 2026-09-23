@@ -3,6 +3,7 @@ import { ServiceError } from './contracts';
 export type VerifiedMembershipStatus = 'active' | 'grace' | 'expired' | 'unknown';
 const yearInMonths = 12;
 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+const finalNoticeWindow = 60 * 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const receiptPattern = /^[A-Za-z0-9._:-]{16,256}$/u;
 type Row = { owner_id: string; revision: number; episode: number; verified_status: VerifiedMembershipStatus;
@@ -128,7 +129,8 @@ export class RetentionLedger {
       const current = await this.read(ownerId);
       if (current.episode !== episode || current.expired_at === null || current.due_at === null
           || current.verified_status !== 'expired' || current.paused_at !== null
-          || deliveredAt < current.notice_not_before_at) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+          || deliveredAt < current.notice_not_before_at
+          || deliveredAt < current.due_at - finalNoticeWindow) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (current.final_notice_delivered_at !== null) {
         if (current.final_notice_delivered_at === deliveredAt && current.final_notice_receipt === providerReceipt) {
           return view(current);
