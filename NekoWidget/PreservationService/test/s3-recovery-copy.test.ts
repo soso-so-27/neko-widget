@@ -51,6 +51,27 @@ describe('private, versioned S3 recovery-object transport', () => {
     expect(calls).toEqual(['PUT', 'HEAD', 'GET']);
   });
 
+  it('recovers a checksum-verified exact reference from a D1-independent S3 version listing', async () => {
+    const marker = `recovery/v1/${owner}/manifest/00000000-0000-4000-8000-000000000009`;
+    const copy = new S3RecoveryCopy(config, async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe(`/${marker}`);
+      expect(url.searchParams.get('versionId')).toBe('marker-v1');
+      if (init?.method === 'HEAD') return new Response(null, { status: 200,
+        headers: { 'x-amz-checksum-sha256': await digest(data),
+          'x-amz-checksum-type': 'FULL_OBJECT', 'content-length': String(data.length),
+          'x-amz-version-id': 'marker-v1' } });
+      return new Response(data as BodyInit, { status: 200,
+        headers: { 'x-amz-version-id': 'marker-v1' } });
+    });
+    const reference = await copy.referenceForListedVersion({ key: marker,
+      versionId: 'marker-v1', bytes: data.length, deleteMarker: false });
+    expect(await copy.getVerified(reference)).toEqual(data);
+    await expect(copy.referenceForListedVersion({ key: marker,
+      versionId: 'marker-v1', bytes: null, deleteMarker: true }))
+      .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+  });
+
   it('accepts only an identical already-present current version on retry', async () => {
     const copy = new S3RecoveryCopy(config, async (_input, init) => init?.method === 'PUT'
       ? new Response(null, { status: 412 })

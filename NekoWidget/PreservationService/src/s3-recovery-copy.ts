@@ -145,6 +145,30 @@ export class S3RecoveryCopy {
     } catch { throw unavailable(); }
   }
 
+  /** Reconstruct an exact-version reference from an S3 inventory after D1
+   * loss. HEAD supplies S3's validated full-object checksum; getVerified must
+   * still hash the downloaded bytes before a marker is trusted.
+   */
+  async referenceForListedVersion(item: RecoveryVersion): Promise<RecoveryObject> {
+    if (item.deleteMarker || !recoveryKeyPattern.test(item.key)
+      || !versionPattern.test(item.versionId) || item.versionId === 'null'
+      || !Number.isSafeInteger(item.bytes) || item.bytes === null
+      || item.bytes < 1 || item.bytes > maxObjectBytes) throw unavailable();
+    try {
+      const reply = await this.request('HEAD', item.key, { 'x-amz-checksum-mode': 'ENABLED' },
+        undefined, item.versionId);
+      const supplied = reply.headers.get('x-amz-checksum-sha256') ?? '';
+      if (!/^[A-Za-z0-9+/]{43}=$/u.test(supplied)) throw unavailable();
+      const decoded = atob(supplied);
+      if (reply.status !== 200 || version(reply) !== item.versionId
+        || reply.headers.get('content-length') !== String(item.bytes)
+        || reply.headers.get('x-amz-checksum-type') !== 'FULL_OBJECT'
+        || decoded.length !== 32 || btoa(decoded) !== supplied) throw unavailable();
+      const sha256 = [...decoded].map(char => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+      return { key: item.key, versionId: item.versionId, bytes: item.bytes, sha256 };
+    } catch { throw unavailable(); }
+  }
+
   /** An advisory, bounded page only. Completion requires following every cursor,
    * reconciling with the DB/R2 inventory under a write fence, and checking again
    * after version-specific deletion. A list result alone never permits deletion.

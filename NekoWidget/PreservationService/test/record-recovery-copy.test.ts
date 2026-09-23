@@ -18,6 +18,7 @@ async function fixture(failOn?: 'photo' | 'record') {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const objects = new Map<string, Uint8Array>();
+  const references: RecoveryObject[] = [];
   const s3 = {
     async putVersioned(key: string, bytes: Uint8Array): Promise<RecoveryObject> {
       if (failOn && key.includes(`/${failOn}/`)) throw new Error('synthetic S3 failure');
@@ -25,7 +26,9 @@ async function fixture(failOn?: 'photo' | 'record') {
         .map(value => value.toString(16).padStart(2, '0')).join('');
       const versionId = 'synthetic-v1';
       objects.set(`${key}:${versionId}`, bytes.slice());
-      return { key, sha256, bytes: bytes.length, versionId };
+      const reference = { key, sha256, bytes: bytes.length, versionId };
+      references.push(reference);
+      return reference;
     },
     async getVerified(item: RecoveryObject): Promise<Uint8Array> {
       const bytes = objects.get(`${item.key}:${item.versionId}`);
@@ -34,6 +37,16 @@ async function fixture(failOn?: 'photo' | 'record') {
         .map(value => value.toString(16).padStart(2, '0')).join('');
       if (digest !== item.sha256 || bytes.length !== item.bytes) throw new Error('corrupt copy');
       return bytes.slice();
+    },
+    async listOwnerVersionsPage(requestedOwner: string) {
+      if (requestedOwner !== ownerId) throw new Error('foreign owner');
+      return { versions: references.map(ref => ({ key: ref.key, versionId: ref.versionId,
+        bytes: ref.bytes, deleteMarker: false })), nextCursor: null };
+    },
+    async referenceForListedVersion(item: { key: string; versionId: string; bytes: number | null }) {
+      const found = references.find(ref => ref.key === item.key && ref.versionId === item.versionId);
+      if (!found || found.bytes !== item.bytes) throw new Error('version unavailable');
+      return found;
     },
   } as S3RecoveryCopy;
   return { records: new RecordRecoveryCopy(keys, s3), objects };
@@ -58,6 +71,55 @@ it('copies a tombstone without resurrecting the prior photo or note', async () =
   expect(latest.photo).toBeNull();
   expect(await f.records.read(ownerId, recordId, latest)).toEqual(tombstone);
   expect(prior.record.key).not.toBe(latest.record.key);
+});
+
+it('distinguishes an uploaded copy from a committed revision after D1 CAS', async () => {
+  const f = await fixture(); const original = image();
+  const copied = await f.records.copy(original);
+  expect([...f.objects.keys()].some(key => key.includes('/manifest/'))).toBe(false);
+  const marker = await f.records.commit(ownerId, recordId, 1, copied);
+  expect(marker.key).toMatch(new RegExp(`^recovery/v1/${ownerId}/manifest/`));
+  expect(await f.records.readCommitted(ownerId, recordId, { ...copied, marker })).toEqual(original);
+  await expect(f.records.commit(ownerId, recordId, 2, copied))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  await expect(f.records.readCommitted(ownerId, recordId, { ...copied,
+    marker: { ...marker, versionId: 'wrong-version' } }))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+});
+
+it('quarantines a prior live photo when deletion was prepared but its commit marker is missing', async () => {
+  const f = await fixture();
+  const live = await f.records.copy(image());
+  const first = await f.records.commit(ownerId, recordId, 1, live);
+  const tombstone: StoredRecordImage = { ...image(), revision: 2, metadata: null,
+    photoKey: null, photoBytes: 0, photoCiphertext: null, quotaBytes: 0, deleted: true };
+  const deleted = await f.records.copy(tombstone);
+  const intent = await f.records.prepareDelete(ownerId, recordId, 1, deleted);
+  expect((await f.records.inspectManifest(ownerId, intent)).kind).toBe('delete-intent');
+  expect(await f.records.selectRecoveredRecord(ownerId, recordId, [first, intent]))
+    .toEqual({ status: 'quarantined' });
+  expect(await f.records.recoverRecordFromS3(ownerId, recordId))
+    .toEqual({ status: 'quarantined' });
+  const deletionCommit = await f.records.commit(ownerId, recordId, 2, deleted);
+  expect(await f.records.selectRecoveredRecord(ownerId, recordId,
+    [first, intent, deletionCommit])).toEqual({ status: 'ready', image: tombstone });
+  expect(await f.records.recoverRecordFromS3(ownerId, recordId))
+    .toEqual({ status: 'ready', image: tombstone });
+});
+
+it('accepts a losing delete intent only when another revision committed at its exact target', async () => {
+  const f = await fixture();
+  const live = await f.records.copy(image());
+  const first = await f.records.commit(ownerId, recordId, 1, live);
+  const tombstone = await f.records.copy({ ...image(), revision: 2, metadata: null,
+    photoKey: null, photoBytes: 0, photoCiphertext: null, quotaBytes: 0, deleted: true });
+  const intent = await f.records.prepareDelete(ownerId, recordId, 1, tombstone);
+  const edited = { ...image(), revision: 2, metadata: new Uint8Array([78, 75, 77, 49, 9]),
+    quotaBytes: 11 };
+  const replacement = await f.records.copy(edited);
+  const editCommit = await f.records.commit(ownerId, recordId, 2, replacement);
+  expect(await f.records.selectRecoveredRecord(ownerId, recordId,
+    [first, intent, editCommit])).toEqual({ status: 'ready', image: edited });
 });
 
 it('fails closed if either S3 copy is unavailable and rejects foreign or corrupted references', async () => {

@@ -32,7 +32,7 @@ async function contextHash(context: Parameters<KeyCustody['seal']>[1]): Promise<
   if (!context || typeof context !== 'object' || Array.isArray(context)
       || Object.keys(context).some(key => !['ownerId', 'purpose', 'recordId'].includes(key))
       || !ownerPattern.test(context.ownerId)
-      || !['identity', 'record', 'contact'].includes(context.purpose)
+      || !['identity', 'record', 'contact', 'recovery'].includes(context.purpose)
       || (context.purpose === 'record'
         ? typeof context.recordId !== 'string' || !recordPattern.test(context.recordId)
         : context.recordId !== undefined)) throw unavailable();

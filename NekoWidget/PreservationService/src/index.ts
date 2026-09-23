@@ -18,6 +18,7 @@ import { RecordRecoveryCopy } from './record-recovery-copy';
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
+  RECOVERY_BACKFILL_ENABLED?: string;
   NOTICE_SEND_ENABLED?: string; NOTICE_EVENTS_ENABLED?: string;
   NOTICE_RECIPIENT_TAG_SECRET?: string; NOTICE_EVENT_QUEUE_NAME?: string;
   NOTICE_ACCOUNT_ID?: string; NOTICE_ZONE_ID?: string; NOTICE_SUBSCRIPTION_ID?: string;
@@ -243,6 +244,10 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
+      const policy = await env.DB?.prepare(`SELECT delete_intent_required
+        FROM pa_recovery_write_policy WHERE singleton=1`)
+        .first<{ delete_intent_required: number }>();
+      if (policy?.delete_intent_required !== 1) throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
       const services = configuredServices(env);
       const ip = request.headers.get('CF-Connecting-IP');
       if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);
@@ -268,6 +273,12 @@ export default {
       try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
       catch { maintenanceFailures++; }
     } else maintenanceFailures++;
+    if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
+      try {
+        const result = await configuredServices(env).archive.repairRecoveryBatch();
+        maintenanceFailures += result.failed;
+      } catch { maintenanceFailures++; }
+    }
     try {
       await env.DB.batch([
         env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN

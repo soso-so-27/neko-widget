@@ -16,6 +16,7 @@
       "vars": {
         "PRESERVATION_ENABLED": "NO",
         "CLEANUP_ENABLED": "NO",
+        "RECOVERY_BACKFILL_ENABLED": "NO",
         "RETENTION_TRACKING_ENABLED": "NO",
         "ENVIRONMENT": "staging"
       },

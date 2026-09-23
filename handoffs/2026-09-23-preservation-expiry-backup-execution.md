@@ -31,6 +31,8 @@ S3の版付き暗号文の転送・SHA-256照合・指定版読出しの候補�
 
 同じ後続ブランチにR2のowner写真一覧と、D1の失効owner記録・削除済みIDのページ一覧を読み取り専用で追加。D1は単一transactionでowner状態と一覧を読み、保管中アップロードと途中ページのgeneration/epoch変化を拒否する。どちらもまだ三者の全件照合や消去許可ではない。失効ownerであることは、期限経過・通知送達・課金権利消失の証拠にはならない。
 
+2026-09-24の後続ローカル候補では、記録のD1確定後にowner暗号化・版付きS3 commit markerを確認してからAPI成功を返す。削除はD1更新より先に暗号化delete-intentをS3へ置き、D1のintent参照とtriggerで意図なしの削除を拒否する。D1喪失時はS3の全版一覧からchecksum付きmarkerを読み、delete-intentに対応する確定改訂が見つからなければ旧写真を復元せず隔離する。旧記録の無制限な例外をやめ、0014移行時の改訂だけをlegacyとして固定。ownerを巡回する限定件数の修復処理は失敗行を記録して後続へ進み、D1台帳の未保護件数を数えられる。全現行記録にmarkerが揃うまでD1の書込policyをONにできず、policyがOFF/欠落なら公開Workerは503。`RECOVERY_BACKFILL_ENABLED`と公開設定はOFFのまま。独立レビューでは**旧writerを0014適用前に完全停止する運用ゲートを前提として**追加の具体的P1なし。ローカル全159試験・型検査・合成migration試験は通過したが、候補CI・本線反映は未完。D1台帳のゼロ件は実S3の完全性の証拠ではなく、旧writer停止、全legacy修復、owner/credential/課金/期限のmanifest、別環境復元、実KMS/R2/S3を満たすまで提供開始不可。
+
 さらに削除前専用のowner fenceを後続ブランチに追加。新鮮な非公開課金結果、保持episode/改訂、現在のApple通知先、v2の送達証拠、inventory generation、未完了uploadの不在を一つのD1 batchで照合してからownerの通常アクセスを止める。再照会が非失効・不明なら古い通知証拠を消して解除する。Workerが停止しても10分のlease切れ後、scheduled maintenanceが削除前fenceだけを解除・証拠無効化する。物理削除の権限や実行経路はまだない。将来`begin()`を呼ぶ前には`CLEANUP_ENABLED`とscheduled triggerが動作し、最初の不可逆操作より前に`fenced`から別状態へ遷移することが必須。ローカル型検査、保管サービス140試験、合成migration試験、独立安全レビューを通過。Workerコードは未配備・本線未反映。
 
 2026-09-24 JST、保管専用 **staging** D1（`955a8530-9015-486c-8d0c-1b5a2c5b6d4f`）へ0012を適用。事前Time Travel bookmarkは `0000000b-00000000-000050ef-439271be4b66aa56d22c0a3a03b79e10`。事前owner/record/retention/contact/submission/credentialは全て0。適用後は未適用migration 0、`purge_fence_id`・`lease_expires_at`列各1、owner/record/fence 0を確認。本番DBやWorker配備は未変更。

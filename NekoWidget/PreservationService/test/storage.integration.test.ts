@@ -15,6 +15,8 @@ const document: ArchiveDocument = { formatVersion: 1, text: 'ひざで寝た日'
   writtenAt: null, updatedAt: null, catNames: ['むぎ', 'そら'], photoFile: 'photo.jpg' };
 
 async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number } = {}) {
+  await binding.DB.prepare(`UPDATE pa_recovery_write_policy SET delete_intent_required=0
+    WHERE singleton=1`).run();
   let now = 1_790_035_200_000;
   let state: 'active' | 'expired' | 'unknown' | 'grace' = 'active';
   const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -45,15 +47,24 @@ async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number
 
 function syntheticRecovery(keys: KeyCustody) {
   const objects = new Map<string, Uint8Array>();
+  const references: RecoveryObject[] = [];
   let rejectWrites = false;
+  let rejectKind: 'photo' | 'record' | 'manifest' | null = null;
+  let manifestWritesBeforeFailure: number | null = null;
   const s3 = {
     async putVersioned(key: string, value: Uint8Array): Promise<RecoveryObject> {
-      if (rejectWrites) throw new Error('S3 unavailable');
+      if (rejectWrites || (rejectKind && key.includes(`/${rejectKind}/`))) throw new Error('S3 unavailable');
+      if (key.includes('/manifest/') && manifestWritesBeforeFailure !== null) {
+        if (manifestWritesBeforeFailure === 0) throw new Error('S3 manifest unavailable');
+        manifestWritesBeforeFailure -= 1;
+      }
       const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', value as BufferSource))]
         .map(byte => byte.toString(16).padStart(2, '0')).join('');
       const versionId = 'synthetic-version';
       objects.set(`${key}:${versionId}`, value.slice());
-      return { key, sha256, bytes: value.length, versionId };
+      const reference = { key, sha256, bytes: value.length, versionId };
+      references.push(reference);
+      return reference;
     },
     async getVerified(item: RecoveryObject): Promise<Uint8Array> {
       const value = objects.get(`${item.key}:${item.versionId}`);
@@ -64,8 +75,15 @@ function syntheticRecovery(keys: KeyCustody) {
       return value.slice();
     },
   } as S3RecoveryCopy;
-  return { recovery: new RecordRecoveryCopy(keys, s3), objects,
-    rejectWrites(value: boolean) { rejectWrites = value; } };
+  return { recovery: new RecordRecoveryCopy(keys, s3), objects, references,
+    rejectWrites(value: boolean) { rejectWrites = value; },
+    rejectKind(value: typeof rejectKind) { rejectKind = value; },
+    failManifestAfter(value: number | null) { manifestWritesBeforeFailure = value; } };
+}
+
+async function enableRecoveryWritePolicy() {
+  await binding.DB.prepare(`UPDATE pa_recovery_write_policy SET delete_intent_required=1
+    WHERE singleton=1`).run();
 }
 
 it('ties each acknowledged D1 revision to an exact recovery version and fails closed on S3 outage', async () => {
@@ -128,7 +146,10 @@ it('only the winning concurrent edit can attach a recovery version to the next r
 
 it('missing recovery configuration blocks mutations but keeps existing records readable', async () => {
   const f = await fixture(); const id = crypto.randomUUID();
-  await f.archive.put(f.session.token, id, f.request());
+  const remote = syntheticRecovery(f.options.keys);
+  await enableRecoveryWritePolicy();
+  await new ArchiveStore({ ...f.options, recovery: remote.recovery, requireRecovery: true })
+    .put(f.session.token, id, f.request());
   const readOnly = new ArchiveStore({ ...f.options, requireRecovery: true });
   expect((await readOnly.read(f.session.token, id)).recordId).toBe(id);
   expect((await readOnly.list(f.session.token)).items.some(item => item.recordId === id)).toBe(true);
@@ -137,6 +158,113 @@ it('missing recovery configuration blocks mutations but keeps existing records r
   await expect(readOnly.remove(f.session.token, id, 1))
     .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
   expect((await readOnly.read(f.session.token, id)).revision).toBe(1);
+});
+
+it('only migration-pinned legacy revisions stay readable and are copied before the first edit', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const remote = syntheticRecovery(f.options.keys);
+  const guarded = new ArchiveStore({ ...f.options, recovery: remote.recovery, requireRecovery: true });
+  await expect(guarded.read(f.session.token, id)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  await expect(guarded.usage(f.session.token)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  await binding.DB.prepare(`INSERT INTO pa_record_legacy_baseline(owner_id,record_id,revision,
+    initial_operation,initial_fingerprint,photo_key,photo_bytes,quota_bytes,deleted)
+    SELECT owner_id,record_id,revision,initial_operation,initial_fingerprint,
+      photo_key,photo_bytes,quota_bytes,deleted
+    FROM pa_records WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, id).run();
+  expect((await guarded.read(f.session.token, id)).revision).toBe(1);
+  expect((await guarded.usage(f.session.token)).records.saved).toBe(1);
+  await expect(enableRecoveryWritePolicy()).rejects.toThrow(/RECOVERY_COVERAGE_INCOMPLETE/u);
+  const preparing = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  expect(await preparing.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: '移行後の編集' } }))).toEqual({ recordId: id, revision: 2 });
+  await enableRecoveryWritePolicy();
+  const refs = await binding.DB.prepare(`SELECT revision FROM pa_record_commit_markers
+    WHERE owner_id=? AND record_id=? ORDER BY revision`).bind(f.session.ownerId, id)
+    .all<{ revision: number }>();
+  expect(refs.results.map(row => row.revision)).toEqual([1, 2]);
+  expect((await guarded.read(f.session.token, id)).document.text).toBe('移行後の編集');
+});
+
+it('repairs all legacy owners in bounded batches without one damaged photo starving later rows', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const ids = [crypto.randomUUID(), crypto.randomUUID()].sort();
+  for (const id of ids) await f.archive.put(f.session.token, id, f.request());
+  await binding.DB.prepare(`INSERT INTO pa_record_legacy_baseline(owner_id,record_id,revision,
+    initial_operation,initial_fingerprint,photo_key,photo_bytes,quota_bytes,deleted)
+    SELECT owner_id,record_id,revision,initial_operation,initial_fingerprint,
+      photo_key,photo_bytes,quota_bytes,deleted FROM pa_records WHERE owner_id=?`)
+    .bind(f.session.ownerId).run();
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  const before = await archive.recoveryLedgerCoverage();
+  expect(before.legacyUnbacked).toBe(2);
+  const first = await binding.DB.prepare(`SELECT photo_key FROM pa_records
+    WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, ids[0])
+    .first<{ photo_key: string }>();
+  const ciphertext = new Uint8Array(await (await binding.ARCHIVE.get(first!.photo_key))!.arrayBuffer());
+  await binding.ARCHIVE.delete(first!.photo_key);
+  expect(await archive.repairRecoveryBatch(2)).toEqual({ processed: 2, failed: 1 });
+  expect(await archive.recoveryLedgerCoverage()).toMatchObject({
+    confirmed: before.confirmed + 1, legacyUnbacked: 1 });
+  expect(await binding.DB.prepare(`SELECT attempts FROM pa_recovery_repair_failures
+    WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, ids[0]).first())
+    .toMatchObject({ attempts: 1 });
+  await binding.ARCHIVE.put(first!.photo_key, ciphertext);
+  expect(await archive.repairRecoveryBatch(2)).toEqual({ processed: 1, failed: 0 });
+  expect(await archive.recoveryLedgerCoverage()).toMatchObject({
+    confirmed: before.confirmed + 2, legacyUnbacked: 0 });
+});
+
+it('does not acknowledge a D1 commit until the independent S3 marker exists; retries finish it', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  await enableRecoveryWritePolicy();
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery, requireRecovery: true });
+  const id = crypto.randomUUID();
+  remote.rejectKind('manifest');
+  await expect(archive.put(f.session.token, id, f.request()))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  expect(await binding.DB.prepare('SELECT revision FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first<{ revision: number }>()).toMatchObject({ revision: 1 });
+  await expect(archive.read(f.session.token, id)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  await expect(archive.list(f.session.token)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  await expect(archive.usage(f.session.token)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  remote.rejectKind(null);
+  expect(await archive.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  expect((await archive.read(f.session.token, id)).revision).toBe(1);
+  remote.rejectKind('manifest');
+  const edit = f.request({ expectedRevision: 1, document: { ...document, text: '記録の編集' } });
+  await expect(archive.put(f.session.token, id, edit))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  await expect(archive.read(f.session.token, id)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  remote.rejectKind(null);
+  expect(await archive.put(f.session.token, id, edit)).toEqual({ recordId: id, revision: 2 });
+  expect((await archive.read(f.session.token, id)).document.text).toBe('記録の編集');
+  const markers = await binding.DB.prepare(`SELECT revision FROM pa_record_commit_markers
+    WHERE owner_id=? AND record_id=? ORDER BY revision`).bind(f.session.ownerId, id)
+    .all<{ revision: number }>();
+  expect(markers.results.map(row => row.revision)).toEqual([1, 2]);
+});
+
+it('keeps a deleted photo quarantined if its post-D1 S3 commit marker fails', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  await enableRecoveryWritePolicy();
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery, requireRecovery: true });
+  const id = crypto.randomUUID();
+  await archive.put(f.session.token, id, f.request());
+  remote.failManifestAfter(1); // durable delete intent succeeds; post-D1 commit fails.
+  await expect(archive.remove(f.session.token, id, 1))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  expect(await binding.DB.prepare('SELECT revision,deleted FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first()).toMatchObject({ revision: 2, deleted: 1 });
+  const manifests = remote.references.filter(ref => ref.key.includes('/manifest/'));
+  expect(await remote.recovery.selectRecoveredRecord(f.session.ownerId, id, manifests))
+    .toEqual({ status: 'quarantined' });
+  await expect(archive.usage(f.session.token)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+  remote.failManifestAfter(null);
+  expect(await archive.remove(f.session.token, id, 1)).toEqual({ recordId: id, revision: 2 });
+  expect(await remote.recovery.selectRecoveredRecord(f.session.ownerId, id,
+    remote.references.filter(ref => ref.key.includes('/manifest/'))))
+    .toMatchObject({ status: 'ready', image: { revision: 2, deleted: true } });
 });
 
 it('real D1/R2 round trip survives new auth/store instances and expires membership without losing access', async () => {
@@ -283,13 +411,13 @@ it('listing is paged and carries a mutation generation without downloading image
   expect(JSON.stringify(first)).not.toContain('photoBase64');
 });
 
-it('HTTP is disabled without explicit gate and missing providers cannot enable it', async () => {
+it('HTTP stays disabled until both the environment gate and recovery policy are active', async () => {
   const request = new Request('https://preservation.test/v1/records');
   const closed = await worker.fetch(request, binding as Env);
   expect(closed.status).toBe(503); expect(closed.headers.get('cache-control')).toBe('no-store');
   expect(await closed.json()).toEqual({ error: { code: 'PRESERVATION_DISABLED' } });
   const missing = await worker.fetch(request, { ...binding, PRESERVATION_ENABLED: 'YES' });
-  expect(await missing.json()).toEqual({ error: { code: 'PRESERVATION_NOT_CONFIGURED' } });
+  expect(await missing.json()).toEqual({ error: { code: 'RECOVERY_POLICY_INACTIVE' } });
 });
 
 it('HTTP record endpoints use bearer identity and fixed document fields, never caller-supplied owner', async () => {

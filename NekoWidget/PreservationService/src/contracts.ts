@@ -16,8 +16,8 @@ export interface IdentityVerifier {
   verifyNativeAuthorization(input: { challengeId: string; challengeProof: string; identityToken: string; authorizationCode: string }): Promise<VerifiedIdentity>;
 }
 export interface KeyCustody {
-  seal(plaintext: Uint8Array, context: { ownerId: string; purpose: 'identity' | 'record' | 'contact'; recordId?: string }): Promise<Uint8Array>;
-  open(ciphertext: Uint8Array, context: { ownerId: string; purpose: 'identity' | 'record' | 'contact'; recordId?: string }): Promise<Uint8Array>;
+  seal(plaintext: Uint8Array, context: { ownerId: string; purpose: 'identity' | 'record' | 'contact' | 'recovery'; recordId?: string }): Promise<Uint8Array>;
+  open(ciphertext: Uint8Array, context: { ownerId: string; purpose: 'identity' | 'record' | 'contact' | 'recovery'; recordId?: string }): Promise<Uint8Array>;
 }
 export interface MembershipAuthority { status(ownerId: string): Promise<'active' | 'grace' | 'expired' | 'unknown'>; }
 export interface PhotoValidator { validateJPEG(bytes: Uint8Array): Promise<boolean>; }

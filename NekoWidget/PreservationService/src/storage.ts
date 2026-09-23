@@ -1,7 +1,8 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
 import { decodePhoto, encodePhoto, recordId, validateDocument } from './documents';
-import { RecordRecoveryCopy, type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
+import { RecordRecoveryCopy, type CommittedRecordImage,
+  type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -14,7 +15,7 @@ interface Metadata {
 interface UsageRow {
   inventory_owner: string | null; used_bytes: number; reserved_bytes: number;
   saved_records: number; record_identifiers: number; pending_records: number;
-  record_bytes: number; upload_bytes: number;
+  record_bytes: number; upload_bytes: number; unacknowledged_records: number;
 }
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
@@ -29,6 +30,11 @@ const bytes = (value: unknown): ArrayBuffer => {
 };
 const activeSession = `EXISTS(SELECT 1 FROM pa_sessions s JOIN pa_owners o ON o.owner_id=s.owner_id
   WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND s.owner_epoch=o.epoch)`;
+const exactLegacy = `EXISTS(SELECT 1 FROM pa_record_legacy_baseline b
+  WHERE b.owner_id=r.owner_id AND b.record_id=r.record_id AND b.revision=r.revision
+  AND b.initial_operation=r.initial_operation AND b.initial_fingerprint=r.initial_fingerprint
+  AND b.photo_key IS r.photo_key
+  AND b.photo_bytes=r.photo_bytes AND b.quota_bytes=r.quota_bytes AND b.deleted=r.deleted)`;
 const revisionValue = (value: unknown): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ServiceError('INVALID_REVISION');
   return value as number;
@@ -59,6 +65,12 @@ export class ArchiveStore {
       throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
     }
   }
+  private async requireWritePolicy(): Promise<void> {
+    if (!this.d.requireRecovery) return;
+    const policy = await this.d.db.prepare(`SELECT delete_intent_required FROM pa_recovery_write_policy
+      WHERE singleton=1`).first<{ delete_intent_required: number }>();
+    if (policy?.delete_intent_required !== 1) throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
+  }
   private recoveryReference(ownerId: string, id: string, revision: number, copy: CopiedRecordImage) {
     return this.d.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
       record_object_key,record_version_id,record_sha256,record_bytes,
@@ -73,18 +85,171 @@ export class ArchiveStore {
   private async verifiedRecoveryReference(ownerId: string, id: string, revision: number) {
     if (!this.d.recovery) return;
     const row = await this.d.db.prepare(`SELECT record_object_key,record_version_id,record_sha256,
-      record_bytes,photo_object_key,photo_version_id,photo_sha256,photo_bytes
-      FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=? AND revision=?`)
+      record_bytes,photo_object_key,photo_version_id,photo_sha256,photo_bytes,
+      m.marker_object_key,m.marker_version_id,m.marker_sha256,m.marker_bytes
+      FROM pa_record_recovery_versions v LEFT JOIN pa_record_commit_markers m
+        ON m.owner_id=v.owner_id AND m.record_id=v.record_id AND m.revision=v.revision
+      WHERE v.owner_id=? AND v.record_id=? AND v.revision=?`)
       .bind(ownerId, id, revision).first<{ record_object_key: string; record_version_id: string;
         record_sha256: string; record_bytes: number; photo_object_key: string | null;
-        photo_version_id: string | null; photo_sha256: string | null; photo_bytes: number | null }>();
+        photo_version_id: string | null; photo_sha256: string | null; photo_bytes: number | null;
+        marker_object_key: string | null; marker_version_id: string | null;
+        marker_sha256: string | null; marker_bytes: number | null }>();
     if (!row) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
     const copied: CopiedRecordImage = { record: { key: row.record_object_key,
       versionId: row.record_version_id, sha256: row.record_sha256, bytes: row.record_bytes },
     photo: row.photo_object_key === null ? null : { key: row.photo_object_key,
       versionId: row.photo_version_id ?? '', sha256: row.photo_sha256 ?? '', bytes: row.photo_bytes ?? 0 } };
-    const image = await this.d.recovery.read(ownerId, id, copied);
+    let marker = row.marker_object_key === null ? null : { key: row.marker_object_key,
+      versionId: row.marker_version_id ?? '', sha256: row.marker_sha256 ?? '', bytes: row.marker_bytes ?? 0 };
+    if (!marker) {
+      const uploaded = await this.d.recovery.commit(ownerId, id, revision, copied);
+      await this.d.db.prepare(`INSERT OR IGNORE INTO pa_record_commit_markers(owner_id,record_id,revision,
+        marker_object_key,marker_version_id,marker_sha256,marker_bytes,confirmed_at)
+        SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM pa_record_recovery_versions
+          WHERE owner_id=? AND record_id=? AND revision=? AND record_object_key=?)`)
+        .bind(ownerId, id, revision, uploaded.key, uploaded.versionId, uploaded.sha256,
+          uploaded.bytes, this.d.now(), ownerId, id, revision, copied.record.key).run();
+      const confirmed = await this.d.db.prepare(`SELECT marker_object_key,marker_version_id,
+        marker_sha256,marker_bytes FROM pa_record_commit_markers
+        WHERE owner_id=? AND record_id=? AND revision=?`).bind(ownerId, id, revision)
+        .first<{ marker_object_key: string; marker_version_id: string;
+          marker_sha256: string; marker_bytes: number }>();
+      if (!confirmed) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+      marker = { key: confirmed.marker_object_key, versionId: confirmed.marker_version_id,
+        sha256: confirmed.marker_sha256, bytes: confirmed.marker_bytes };
+    }
+    const image = await this.d.recovery.readCommitted(ownerId, id,
+      { ...copied, marker } satisfies CommittedRecordImage);
     if (image.revision !== revision) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+  }
+  private async requireAcknowledged(ownerId: string, id: string, revision: number) {
+    if (!this.d.requireRecovery) return;
+    const row = await this.d.db.prepare(`SELECT v.record_object_key,m.marker_object_key,
+      ${exactLegacy} AS legacy FROM pa_records r
+      LEFT JOIN pa_record_recovery_versions v
+        ON v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision
+      LEFT JOIN pa_record_commit_markers m
+        ON m.owner_id=v.owner_id AND m.record_id=v.record_id AND m.revision=v.revision
+      WHERE r.owner_id=? AND r.record_id=? AND r.revision=?`).bind(ownerId, id, revision)
+      .first<{ record_object_key: string | null; marker_object_key: string | null; legacy: number }>();
+    if (!row) throw new ServiceError('ARCHIVE_CHANGED', 409);
+    if (!row.record_object_key) {
+      if (row.legacy === 1) return;
+      throw new ServiceError('RECOVERY_PENDING', 503);
+    }
+    if (row.marker_object_key) return;
+    if (!this.d.recovery) throw new ServiceError('RECOVERY_PENDING', 503);
+    try { await this.verifiedRecoveryReference(ownerId, id, revision); }
+    catch { throw new ServiceError('RECOVERY_PENDING', 503); }
+  }
+  private async ensureCurrentRecovery(row: Row, session?: Session) {
+    if (!this.d.recovery) return;
+    if (session && session.ownerId !== row.owner_id) throw new ServiceError('SESSION_INVALID', 401);
+    const existing = await this.d.db.prepare(`SELECT 1 AS found FROM pa_record_recovery_versions
+      WHERE owner_id=? AND record_id=? AND revision=?`).bind(row.owner_id, row.record_id, row.revision)
+      .first<{ found: number }>();
+    if (existing) {
+      await this.verifiedRecoveryReference(row.owner_id, row.record_id, row.revision);
+      return;
+    }
+    const baseline = await this.d.db.prepare(`SELECT 1 AS found FROM pa_records r
+      WHERE r.owner_id=? AND r.record_id=? AND r.revision=? AND ${exactLegacy}`)
+      .bind(row.owner_id, row.record_id, row.revision).first<{ found: number }>();
+    if (!baseline) throw new ServiceError('RECOVERY_PENDING', 503);
+    const data = row.deleted ? null : await this.metadata(row);
+    const encrypted = data === null ? null : await this.encryptedPhoto(row, data);
+    if (row.quota_bytes !== (row.deleted ? 0 : bytes(row.metadata).byteLength + (encrypted?.length ?? 0))) {
+      throw new ServiceError('ARCHIVE_ACCOUNTING_UNAVAILABLE', 503);
+    }
+    const copied = await this.d.recovery.copy({ ownerId: row.owner_id, recordId: row.record_id,
+      revision: row.revision, initialFingerprint: row.initial_fingerprint,
+      initialOperation: row.initial_operation, metadata: row.deleted ? null : new Uint8Array(bytes(row.metadata)),
+      photoKey: row.photo_key, photoBytes: row.photo_bytes, quotaBytes: row.quota_bytes,
+      deleted: row.deleted === 1, photoCiphertext: encrypted });
+    await this.d.db.prepare(`INSERT OR IGNORE INTO pa_record_recovery_versions(owner_id,record_id,revision,
+      record_object_key,record_version_id,record_sha256,record_bytes,
+      photo_object_key,photo_version_id,photo_sha256,photo_bytes,committed_at)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,? FROM pa_records r WHERE r.owner_id=? AND r.record_id=?
+      AND r.revision=? AND ${exactLegacy}${session ? ` AND ${activeSession}` : ''}`)
+      .bind(row.owner_id, row.record_id, row.revision, copied.record.key,
+        copied.record.versionId, copied.record.sha256, copied.record.bytes,
+        copied.photo?.key ?? null, copied.photo?.versionId ?? null,
+        copied.photo?.sha256 ?? null, copied.photo?.bytes ?? null, this.d.now(),
+        row.owner_id, row.record_id, row.revision,
+        ...(session ? this.sessionBindings(session) : [])).run();
+    await this.verifiedRecoveryReference(row.owner_id, row.record_id, row.revision);
+  }
+  /** Bounded internal maintenance. Launch still requires an owner-wide audit
+   * with zero missing or pending revisions, not merely one successful page.
+   */
+  async repairRecoveryBatch(limit = 20) {
+    if (!this.d.recovery) throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('INVALID_PAGE_SIZE');
+    const cursor = await this.d.db.prepare(`SELECT last_owner_id,last_record_id
+      FROM pa_recovery_repair_cursor WHERE singleton=1`)
+      .first<{ last_owner_id: string; last_record_id: string }>();
+    if (!cursor) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+    const pending = `
+      (EXISTS(SELECT 1 FROM pa_record_recovery_versions v
+        WHERE v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision)
+        OR ${exactLegacy})
+      AND NOT EXISTS(SELECT 1 FROM pa_record_commit_markers m
+        WHERE m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision)`;
+    const after = await this.d.db.prepare(`SELECT r.* FROM pa_records r WHERE ${pending}
+      AND (r.owner_id>? OR (r.owner_id=? AND r.record_id>?))
+      ORDER BY r.owner_id,r.record_id LIMIT ?`)
+      .bind(cursor.last_owner_id, cursor.last_owner_id, cursor.last_record_id, limit).all<Row>();
+    const rows = after.results.length ? after.results : (await this.d.db.prepare(`SELECT r.*
+      FROM pa_records r WHERE ${pending} ORDER BY r.owner_id,r.record_id LIMIT ?`)
+      .bind(limit).all<Row>()).results;
+    let failed = 0;
+    for (const row of rows) {
+      try {
+        await this.ensureCurrentRecovery(row);
+        await this.d.db.prepare(`DELETE FROM pa_recovery_repair_failures WHERE owner_id=? AND record_id=?`)
+          .bind(row.owner_id, row.record_id).run();
+      } catch (error) {
+        failed++;
+        const code = error instanceof ServiceError ? error.code : 'RECOVERY_REPAIR_UNAVAILABLE';
+        await this.d.db.prepare(`INSERT INTO pa_recovery_repair_failures(owner_id,record_id,
+          error_code,attempts,last_attempt_at) VALUES(?,?,?,1,?)
+          ON CONFLICT(owner_id,record_id) DO UPDATE SET error_code=excluded.error_code,
+          attempts=attempts+1,last_attempt_at=excluded.last_attempt_at`)
+          .bind(row.owner_id, row.record_id, code, this.d.now()).run();
+      }
+    }
+    if (rows.length) await this.d.db.prepare(`UPDATE pa_recovery_repair_cursor
+      SET last_owner_id=?,last_record_id=? WHERE singleton=1`)
+      .bind(rows.at(-1)!.owner_id, rows.at(-1)!.record_id).run();
+    return { processed: rows.length, failed };
+  }
+  /** Local D1 coverage only. Zero gaps is necessary but cannot replace an
+   * S3 inventory and actual restore drill before the service is enabled.
+   */
+  async recoveryLedgerCoverage() {
+    const counts = await this.d.db.prepare(`SELECT count(*) AS total,
+      coalesce(sum(CASE WHEN m.marker_object_key IS NOT NULL THEN 1 ELSE 0 END),0) AS confirmed,
+      coalesce(sum(CASE WHEN v.record_object_key IS NULL AND ${exactLegacy}
+        THEN 1 ELSE 0 END),0) AS legacy_unbacked,
+      coalesce(sum(CASE WHEN v.record_object_key IS NOT NULL AND m.marker_object_key IS NULL
+        THEN 1 ELSE 0 END),0) AS pending_marker,
+      coalesce(sum(CASE WHEN v.record_object_key IS NULL AND NOT ${exactLegacy}
+        THEN 1 ELSE 0 END),0) AS unknown_unbacked
+      FROM pa_records r LEFT JOIN pa_record_recovery_versions v
+        ON v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision
+      LEFT JOIN pa_record_commit_markers m
+        ON m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision`)
+      .first<{ total: number; confirmed: number; legacy_unbacked: number;
+        pending_marker: number; unknown_unbacked: number }>();
+    if (!counts || Object.values(counts).some(value => !Number.isSafeInteger(value) || value < 0)
+      || counts.total !== counts.confirmed + counts.legacy_unbacked
+        + counts.pending_marker + counts.unknown_unbacked) {
+      throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+    }
+    return { total: counts.total, confirmed: counts.confirmed,
+      legacyUnbacked: counts.legacy_unbacked, pendingMarker: counts.pending_marker,
+      unknownUnbacked: counts.unknown_unbacked };
   }
   private async encryptedPhoto(row: Row, expected: Metadata): Promise<Uint8Array | null> {
     if (!row.photo_key) return null;
@@ -130,12 +295,21 @@ export class ArchiveStore {
       (SELECT count(*) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS pending_records,
       (SELECT coalesce(sum(quota_bytes),0) FROM pa_records r WHERE r.owner_id=o.owner_id) AS record_bytes,
       (SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS upload_bytes
+      ,(SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id
+        AND NOT EXISTS(SELECT 1 FROM pa_record_commit_markers m
+          WHERE m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision)
+        AND (EXISTS(SELECT 1 FROM pa_record_recovery_versions v
+          WHERE v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision)
+          OR NOT ${exactLegacy})) AS unacknowledged_records
       FROM pa_owners o LEFT JOIN pa_inventory i ON i.owner_id=o.owner_id
       WHERE o.owner_id=? AND ${activeSession}`)
       .bind(session.ownerId, ...this.sessionBindings(session)).first<UsageRow>();
     const current = await this.d.auth.requireSession(token);
     if (!row || current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
       throw new ServiceError('SESSION_INVALID', 401);
+    }
+    if (this.d.requireRecovery && row.unacknowledged_records > 0) {
+      throw new ServiceError('RECOVERY_PENDING', 503);
     }
     const counters = [row.used_bytes, row.reserved_bytes, row.saved_records, row.record_identifiers,
       row.pending_records, row.record_bytes, row.upload_bytes];
@@ -165,8 +339,11 @@ export class ArchiveStore {
     const rows = await this.d.db.prepare(`SELECT * FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>?
       ORDER BY record_id LIMIT ?`).bind(session.ownerId, after, limit + 1).all<Row>();
     const items = [];
-    for (const row of rows.results.slice(0, limit)) items.push({ recordId: row.record_id, revision: row.revision,
-      document: (await this.metadata(row)).document });
+    for (const row of rows.results.slice(0, limit)) {
+      await this.requireAcknowledged(session.ownerId, row.record_id, row.revision);
+      items.push({ recordId: row.record_id, revision: row.revision,
+        document: (await this.metadata(row)).document });
+    }
     await this.d.auth.requireSession(token);
     if (await this.generation(session.ownerId) !== generation) throw new ServiceError('ARCHIVE_CHANGED', 409);
     return { items, generation, nextCursor: rows.results.length > limit ? items.at(-1)!.recordId : null };
@@ -176,6 +353,7 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     const row = await this.row(session.ownerId, id);
     if (!row || row.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
+    await this.requireAcknowledged(session.ownerId, id, row.revision);
     const data = await this.metadata(row);
     let photo: Uint8Array | null = null;
     if (row.photo_key) {
@@ -195,6 +373,7 @@ export class ArchiveStore {
     recordId(id);
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
+    await this.requireWritePolicy();
     if (!input || typeof input !== 'object') throw new ServiceError('INVALID_RECORD');
     const request = input as Record<string, unknown>;
     if (Object.keys(request).some((key) => !['document', 'photoBase64', 'expectedRevision', 'consentVersion'].includes(key))) {
@@ -210,13 +389,24 @@ export class ArchiveStore {
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
-      await this.verifiedRecoveryReference(session.ownerId, id, existing.revision);
+      await this.ensureCurrentRecovery(existing, session);
       await this.unchanged(token, session, existing);
       return { recordId: id, revision: existing.revision };
     }
     if (request.expectedRevision !== null) {
       const expected = revisionValue(request.expectedRevision);
+      if (this.d.recovery && existing && !existing.deleted && existing.revision === expected + 1) {
+        const latest = await this.metadata(existing);
+        const retryDocument = { ...document, updatedAt: latest.document.updatedAt };
+        if (latest.photoSHA256 === photoSHA256
+          && JSON.stringify(latest.document) === JSON.stringify(retryDocument)) {
+          await this.ensureCurrentRecovery(existing, session);
+          await this.unchanged(token, session, existing);
+          return { recordId: id, revision: existing.revision };
+        }
+      }
       if (!existing || existing.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
+      await this.ensureCurrentRecovery(existing, session);
       const old = await this.metadata(existing);
       if (old.photoSHA256 !== photoSHA256) throw new ServiceError('PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD', 409);
       // Server update time; captured/written dates are not invented or silently replaced.
@@ -249,6 +439,7 @@ export class ArchiveStore {
           await this.d.auth.requireSession(token);
           throw new ServiceError('REVISION_CONFLICT', 409);
         }
+        await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
         return { recordId: id, revision: expected + 1 };
       }
       const updated = await this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
@@ -316,13 +507,14 @@ export class ArchiveStore {
         await this.d.auth.requireSession(token);
         throw new ServiceError('REVISION_CONFLICT', 409);
       }
+      await this.verifiedRecoveryReference(session.ownerId, id, 1);
       return { recordId: id, revision: 1 };
     } catch (error) {
       // Never remove an object that was successfully committed even if its reply was lost.
       await this.abandon(operation);
       const committed = await this.row(session.ownerId, id);
       if (committed && !committed.deleted && committed.initial_fingerprint === initialFingerprint) {
-        await this.verifiedRecoveryReference(session.ownerId, id, committed.revision);
+        await this.ensureCurrentRecovery(committed, session);
         await this.unchanged(token, session, committed);
         return { recordId: id, revision: committed.revision };
       }
@@ -336,18 +528,31 @@ export class ArchiveStore {
     recordId(id); revisionValue(expected);
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
+    await this.requireWritePolicy();
     const row = await this.row(session.ownerId, id);
     if (!row) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (row.deleted && row.revision === expected + 1) {
-      await this.verifiedRecoveryReference(session.ownerId, id, row.revision);
+      await this.ensureCurrentRecovery(row, session);
       return { recordId: id, revision: row.revision };
     }
     if (row.deleted || row.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
+    await this.ensureCurrentRecovery(row, session);
     const copied = this.d.recovery ? await this.d.recovery.copy({ ownerId: session.ownerId,
       recordId: id, revision: expected + 1, initialFingerprint: row.initial_fingerprint,
       initialOperation: row.initial_operation, metadata: null, photoKey: null,
       photoBytes: 0, quotaBytes: 0, deleted: true, photoCiphertext: null }) : null;
+    // The owner-bound S3 intent must be durable before D1 can hide the record.
+    // Without a post-CAS marker, restore quarantines the older live photo.
+    const intent = copied ? await this.d.recovery!.prepareDelete(session.ownerId, id, expected, copied) : null;
     const result = await this.d.db.batch([
+      ...(intent ? [this.d.db.prepare(`INSERT OR IGNORE INTO pa_record_delete_intents(owner_id,record_id,
+        target_revision,record_object_key,intent_object_key,intent_version_id,intent_sha256,
+        intent_bytes,created_at)
+        SELECT ?,?,?,?,?,?,?,?,? FROM pa_records WHERE owner_id=? AND record_id=?
+        AND revision=? AND deleted=0 AND ${activeSession}`)
+        .bind(session.ownerId, id, expected + 1, copied!.record.key, intent.key,
+          intent.versionId, intent.sha256, intent.bytes, this.d.now(), session.ownerId, id,
+          expected, ...this.sessionBindings(session))] : []),
       this.d.db.prepare(`INSERT OR IGNORE INTO pa_pending_deletes(object_key,created_at)
         SELECT photo_key,? FROM pa_records WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
         AND photo_key IS NOT NULL AND ${activeSession}`).bind(this.d.now(), session.ownerId, id, expected, ...this.sessionBindings(session)),
@@ -356,9 +561,12 @@ export class ArchiveStore {
         .bind(session.ownerId, id, expected, ...this.sessionBindings(session)),
       ...(copied ? [this.recoveryReference(session.ownerId, id, expected + 1, copied)] : []),
     ]);
-    if (result[1]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
+    const updateIndex = intent ? 2 : 1;
+    if (result[updateIndex]?.results.length !== 1
+      || (copied && result[updateIndex + 1]?.meta.changes !== 1)) {
       await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409);
     }
+    await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
     return { recordId: id, revision: expected + 1 };
   }
   async cleanup(limit = 20) { return cleanupArchive(this.d, limit); }
