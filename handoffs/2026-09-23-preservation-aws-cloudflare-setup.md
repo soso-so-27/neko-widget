@@ -22,6 +22,10 @@
 
 利用者が持つ送信ドメインをCloudflare DNSへ接続できるか、Workers Paid/Email Sendingを有効化できるかを確認する。Appleの非公開メール宛てには[Apple Developerで送信元ドメインを登録しSPF/DKIMを認証](https://developer.apple.com/help/account/capabilities/configure-private-email-relay-service)する。これらが実証できなければ通知を「送れた」と扱わず、期限消去を有効化しない。Cloudflare Email Sendingを利用できない場合、[Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)を代替候補とするが、新規アカウントはsandboxに入り任意の利用者宛送信にはproduction accessが必要。どちらの実契約・ドメイン設定も未実施。
 
+## 独立復旧コピーの条件（S3案、未採用）
+
+R2と別事業者に暗号化済み写真・DB復旧点・鍵の設定/権限手順を保持し、定期的に別環境へ復元して照合する。R2自身の冗長化だけを独立バックアップとは呼ばない。S3案を採る場合は対象者ごとの削除を一次/全バージョン/復旧点まで追跡する。[S3 Object Lockのcompliance mode](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)は保持期間中に管理者でも消せないため、本人の明示削除や通知後消去と両立する設計が証明できるまで設定しない。独立コピーの契約・費用・削除/復元試験は未実施。
+
 ## 開発側が実接続前に用意すること
 
 - 保管Workerと鍵Workerの**非公開service binding**、保管専用D1/R2、個別secret binding。`wrangler.kms.disabled.jsonc` と `wrangler.jsonc` は現時点では安全側のローカルOFF構成であり、そのまま本番デプロイできる設定ではない。
