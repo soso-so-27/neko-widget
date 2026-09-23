@@ -136,6 +136,10 @@ describe('durable private preservation authentication', () => {
     f.advance(1);
     await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
     expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'new@example.com' });
+    f.advance(1);
+    await ledger.observe(first.ownerId, 'expired');
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'new@example.com' });
+    f.advance(1);
     await ledger.observe(first.ownerId, 'unknown');
     expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toBeNull();
   });

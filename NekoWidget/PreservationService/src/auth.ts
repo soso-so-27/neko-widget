@@ -177,7 +177,8 @@ export class DurableAuth {
   }
 
   /** Internal scheduled-notice path, never routed from an owner parameter. The
-   * retention episode/revision and enabled owner must still match this candidate.
+   * retention episode, unchanged deadline, and enabled owner must still match.
+   * A newer same-status billing observation may advance the revision.
    */
   async verifiedNoticeContactForCandidate(candidate: NoticeReviewCandidate): Promise<{ email: string; updatedAt: number } | null> {
     try {
@@ -189,7 +190,7 @@ export class DurableAuth {
       const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
         FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
         JOIN pa_retention r ON r.owner_id=c.owner_id
-        WHERE c.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision=? AND r.due_at=?
+        WHERE c.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision>=? AND r.due_at=?
           AND r.verified_status='expired' AND r.paused_at IS NULL
           AND r.final_notice_delivered_at IS NULL AND r.checked_at>=? AND r.checked_at<=?
           AND r.due_at<=? AND r.notice_not_before_at<=?`)
@@ -205,7 +206,7 @@ export class DurableAuth {
         FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
         JOIN pa_retention r ON r.owner_id=c.owner_id
         WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND o.disabled=0
-          AND r.episode=? AND r.revision=? AND r.due_at=? AND r.verified_status='expired'
+          AND r.episode=? AND r.revision>=? AND r.due_at=? AND r.verified_status='expired'
           AND r.paused_at IS NULL AND r.final_notice_delivered_at IS NULL`)
         .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
           candidate.revision, candidate.dueAt).first<{ present: number }>();
