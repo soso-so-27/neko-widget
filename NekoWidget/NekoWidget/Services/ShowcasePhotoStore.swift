@@ -7,10 +7,11 @@ import SwiftUI
 @MainActor
 final class ShowcasePhotoStore: ObservableObject {
     struct Entry: Codable, Equatable, Identifiable {
+        let scopeID: String
         let photoIdentifier: String
         let imageFileName: String
 
-        var id: String { photoIdentifier }
+        var id: String { scopeID + ":" + photoIdentifier }
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -27,7 +28,7 @@ final class ShowcasePhotoStore: ObservableObject {
            let saved = try? JSONDecoder().decode([Entry].self, from: data) {
             var seen = Set<String>()
             entries = saved.filter { entry in
-                guard Self.isValid(entry), seen.insert(entry.photoIdentifier).inserted else {
+                guard Self.isValid(entry), seen.insert(entry.id).inserted else {
                     return false
                 }
                 return FileManager.default.fileExists(atPath: base
@@ -51,14 +52,20 @@ final class ShowcasePhotoStore: ObservableObject {
         return entries.filter { accessible.contains($0.photoIdentifier) }
     }
 
+    func availableEntries(in scopeID: String) -> [Entry] {
+        availableEntries.filter { $0.scopeID == scopeID }
+    }
+
     func imageURL(for entry: Entry) -> URL? {
         guard Self.isValid(entry),
               availableEntries.contains(where: { $0 == entry }) else { return nil }
         return directory.appendingPathComponent(entry.imageFileName)
     }
 
-    func add(photoIdentifier: String) async throws {
-        guard !entries.contains(where: { $0.photoIdentifier == photoIdentifier }) else { return }
+    func add(photoIdentifier: String, to scopeID: String) async throws {
+        guard !entries.contains(where: {
+            $0.photoIdentifier == photoIdentifier && $0.scopeID == scopeID
+        }) else { return }
         let image = try await PhotoLibraryJPEGExporter().export(localIdentifier: photoIdentifier)
         guard PHAsset.fetchAssets(withLocalIdentifiers: [photoIdentifier], options: nil).count == 1 else {
             throw MemoryPhotoJPEGExportError.photoUnavailable
@@ -68,17 +75,25 @@ final class ShowcasePhotoStore: ObservableObject {
         let destination = directory.appendingPathComponent(fileName)
         try image.jpeg.write(to: destination, options: .atomic)
         do {
-            try save(entries + [Entry(photoIdentifier: photoIdentifier, imageFileName: fileName)])
+            try save(entries + [Entry(scopeID: scopeID, photoIdentifier: photoIdentifier,
+                                      imageFileName: fileName)])
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
     }
 
-    func remove(photoIdentifier: String) throws {
-        guard let entry = entries.first(where: { $0.photoIdentifier == photoIdentifier }) else { return }
-        try save(entries.filter { $0.photoIdentifier != photoIdentifier })
+    func remove(_ entry: Entry) throws {
+        guard entries.contains(entry) else { return }
+        try save(entries.filter { $0 != entry })
         try? FileManager.default.removeItem(at: directory.appendingPathComponent(entry.imageFileName))
+    }
+
+    func makeCover(_ entry: Entry) throws {
+        guard entries.contains(entry) else { return }
+        let selectedScope = entries.filter { $0.scopeID == entry.scopeID && $0 != entry }
+        let otherScopes = entries.filter { $0.scopeID != entry.scopeID }
+        try save([entry] + selectedScope + otherScopes)
     }
 
     private func save(_ next: [Entry]) throws {
@@ -88,7 +103,8 @@ final class ShowcasePhotoStore: ObservableObject {
     }
 
     private static func isValid(_ entry: Entry) -> Bool {
-        !entry.photoIdentifier.isEmpty && entry.photoIdentifier.utf8.count <= 4_096
+        entry.scopeID.utf8.count <= 256
+            && !entry.photoIdentifier.isEmpty && entry.photoIdentifier.utf8.count <= 4_096
             && entry.imageFileName == URL(fileURLWithPath: entry.imageFileName).lastPathComponent
             && entry.imageFileName.hasSuffix(".jpg")
     }

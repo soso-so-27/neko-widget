@@ -213,6 +213,7 @@ struct AppRootView: View {
                 ShowcasePhotoView(
                     store: widgetShowcaseStore,
                     items: [.current(selected.photoIdentifier)],
+                    title: "この写真",
                     onClose: { widgetShowcasePhoto = nil },
                     onManage: nil
                 )

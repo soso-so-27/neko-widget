@@ -228,7 +228,7 @@ struct LostCatDraftView: View {
                     Image(uiImage: LostCatFlyerRenderer.previewImage(publicDraft))
                         .resizable().scaledToFit()
                         .accessibilityLabel("共有する迷子の猫の画像")
-                    Button("画像を共有") { export(publicDraft, pdf: false) }
+                    Button("画像と文面を共有") { export(publicDraft, pdf: false) }
                         .accessibilityIdentifier("lost-cat-share-image")
                     Button("印刷用PDFを共有") { export(publicDraft, pdf: true) }
                         .accessibilityIdentifier("lost-cat-share-pdf")

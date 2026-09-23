@@ -130,6 +130,7 @@ enum PhotosRoute: Hashable {
 private struct ShowcaseSession: Identifiable {
     let id = UUID()
     let currentPhotoIdentifier: String?
+    let scopeID: String
 }
 
 enum MemoriesRoute: Hashable {
@@ -235,8 +236,10 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .memories
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
     @StateObject private var showcaseStore = ShowcasePhotoStore()
+    @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
     @State private var showsShowcasePreparation = false
+    @State private var showsShowcaseSetupHint = false
     @State private var showsCatPreparedness = false
     @State private var manageShowcaseAfterClosing = false
     @State private var photoLibraryRevision = 0
@@ -321,7 +324,7 @@ struct MainTabView: View {
             }
         }
         .environment(\.showcaseOpenOne, { identifier in
-            showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier)
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
         .fullScreenCover(item: $showcaseSession, onDismiss: {
             if manageShowcaseAfterClosing {
@@ -332,9 +335,11 @@ struct MainTabView: View {
             ShowcasePhotoView(
                 store: showcaseStore,
                 items: session.currentPhotoIdentifier.map { [.current($0)] }
-                    ?? showcaseStore.availableEntries.compactMap { entry in
+                    ?? showcaseStore.availableEntries(in: session.scopeID).compactMap { entry in
                         showcaseStore.imageURL(for: entry).map { .prepared(entry, $0) }
                     },
+                title: session.currentPhotoIdentifier == nil
+                    ? showcaseScopeTitle(session.scopeID) : "この写真",
                 onClose: { showcaseSession = nil },
                 onManage: session.currentPhotoIdentifier == nil ? {
                     manageShowcaseAfterClosing = true
@@ -343,7 +348,17 @@ struct MainTabView: View {
             )
         }
         .sheet(isPresented: $showsShowcasePreparation) {
-            ShowcasePreparationView(store: showcaseStore, candidates: showcaseCandidates)
+            ShowcasePreparationView(
+                store: showcaseStore,
+                candidates: showcaseCandidates,
+                profiles: catProfilesPresentation.profiles,
+                scopeID: $showcaseScopeID
+            )
+        }
+        .alert("見せる写真がまだありません", isPresented: $showsShowcaseSetupHint) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("写真タブの「見せる」から、見せてよい写真を選んでください。")
         }
         .sheet(isPresented: $showsCatPreparedness) {
             NavigationStack {
@@ -413,6 +428,15 @@ struct MainTabView: View {
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active { consumeShowcaseLaunchRequest() }
+        }
+        .onChange(of: hasPhotoAccess) { _, canShowPhotos in
+            if canShowPhotos { consumeShowcaseLaunchRequest() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ShowcaseLaunchRequest.notification)) { _ in
+            Task { @MainActor in consumeShowcaseLaunchRequest() }
+        }
         .onChange(of: settings.catLifeReference) { _, _ in
             // A legacy single-cat reference replaces calendar-year albums with
             // age/adoption buckets. Pop typed routes whose album may no longer
@@ -478,10 +502,11 @@ struct MainTabView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if hasPhotoAccess {
                     Button("見せる") {
-                        if showcaseStore.availableEntries.isEmpty {
+                        if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
                             showsShowcasePreparation = true
                         } else {
-                            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil)
+                            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
+                                                              scopeID: effectiveShowcaseScopeID)
                         }
                     }
                     .accessibilityIdentifier("photos-showcase-open")
@@ -512,6 +537,31 @@ struct MainTabView: View {
         return (likedPhotos + catPhotos).filter {
             seen.insert($0.localIdentifier).inserted
         }
+    }
+
+    private func consumeShowcaseLaunchRequest() {
+        guard ShowcaseLaunchRequest.hasPending else { return }
+        guard hasPhotoAccess else {
+            selectedTab = .photos
+            return
+        }
+        guard ShowcaseLaunchRequest.consume() else { return }
+        selectedTab = .photos
+        if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
+            showsShowcaseSetupHint = true
+        } else {
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
+                                              scopeID: effectiveShowcaseScopeID)
+        }
+    }
+
+    private var effectiveShowcaseScopeID: String {
+        showcaseScopeID
+    }
+
+    private func showcaseScopeTitle(_ scopeID: String) -> String {
+        catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
+            ?? (scopeID.isEmpty ? "うちのこ" : "見せる写真")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {

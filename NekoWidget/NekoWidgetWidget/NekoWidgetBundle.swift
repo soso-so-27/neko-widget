@@ -17,5 +17,8 @@ struct NekoWidgetBundle: WidgetBundle {
 
     var body: some Widget {
         NekoWidget()
+        if #available(iOS 18.0, *) {
+            ShowcaseControl()
+        }
     }
 }

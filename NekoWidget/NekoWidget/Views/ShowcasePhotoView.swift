@@ -79,6 +79,7 @@ struct ShowcasePhotoView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var store: ShowcasePhotoStore
     let items: [Item]
+    let title: String
     let onClose: () -> Void
     let onManage: (() -> Void)?
     @State private var index = 0
@@ -137,6 +138,12 @@ struct ShowcasePhotoView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 16)
             .padding(.top, 12)
+        }
+        .overlay(alignment: .top) {
+            Text(title).font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.top, 24)
+                .allowsHitTesting(false)
         }
         .overlay(alignment: .bottom) {
             if authUnavailable {
@@ -210,6 +217,8 @@ struct ShowcasePreparationView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: ShowcasePhotoStore
     let candidates: [PhotoPresentation]
+    let profiles: [CatProfilePresentation]
+    @Binding var scopeID: String
     @State private var chosen = Set<String>()
     @State private var isPreparing = false
     @State private var errorMessage: String?
@@ -225,21 +234,45 @@ struct ShowcasePreparationView: View {
                     Text("人に見せたい写真だけを選べます。お気に入りやメモは変更されません。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if !store.availableEntries.isEmpty {
+                    if !profiles.isEmpty || !scopeID.isEmpty {
+                        Picker("見せる猫", selection: $scopeID) {
+                            Text("みんな").tag("")
+                            if !scopeID.isEmpty && !profiles.contains(where: { $0.identifier == scopeID }) {
+                                Text("前に選んだ猫").tag(scopeID)
+                            }
+                            ForEach(profiles) { profile in
+                                Text(profile.displayName).tag(profile.identifier)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                    if !store.availableEntries(in: scopeID).isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("見せる写真").font(.headline)
-                            ForEach(store.availableEntries) { entry in
+                            ForEach(store.availableEntries(in: scopeID)) { entry in
                                 HStack {
                                     if let url = store.imageURL(for: entry),
                                        let image = UIImage(contentsOfFile: url.path) {
                                         Image(uiImage: image).resizable().scaledToFill()
                                             .frame(width: 56, height: 56).clipped()
                                     }
-                                    Text("選んだ写真").font(.subheadline)
+                                    Text(entry.id == store.availableEntries(in: scopeID).first?.id
+                                         ? "表紙" : "選んだ写真").font(.subheadline)
                                     Spacer()
-                                    Button("外す") {
-                                        do { try store.remove(photoIdentifier: entry.photoIdentifier) }
-                                        catch { errorMessage = "写真を外せませんでした。" }
+                                    Menu {
+                                        if entry.id != store.availableEntries(in: scopeID).first?.id {
+                                            Button("表紙にする") {
+                                                do { try store.makeCover(entry) }
+                                                catch { errorMessage = "表紙を変更できませんでした。" }
+                                            }
+                                        }
+                                        Button("外す", role: .destructive) {
+                                            do { try store.remove(entry) }
+                                            catch { errorMessage = "写真を外せませんでした。" }
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .frame(width: 44, height: 44)
                                     }
                                     .disabled(isPreparing)
                                 }
@@ -247,8 +280,13 @@ struct ShowcasePreparationView: View {
                         }
                     }
                     Text("写真を選ぶ").font(.headline)
+                    if filteredCandidates.isEmpty {
+                        Text(scopeID.isEmpty ? "選べる写真がまだありません。"
+                             : "この猫の写真はまだありません。猫ごとの写真で追加すると選べます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(candidates) { photo in
+                        ForEach(filteredCandidates) { photo in
                             Button {
                                 if !chosen.insert(photo.localIdentifier).inserted {
                                     chosen.remove(photo.localIdentifier)
@@ -290,31 +328,44 @@ struct ShowcasePreparationView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .disabled(isPreparing || (chosen.isEmpty && store.availableEntries.isEmpty))
+                .disabled(isPreparing || (chosen.isEmpty && store.availableEntries(in: scopeID).isEmpty))
                 .padding(12)
                 .background(.regularMaterial)
             }
             .fullScreenCover(isPresented: $showsViewer) {
-                ShowcasePhotoView(store: store, items: store.availableEntries.compactMap { entry in
+                ShowcasePhotoView(store: store, items: store.availableEntries(in: scopeID).compactMap { entry in
                     store.imageURL(for: entry).map { ShowcasePhotoView.Item.prepared(entry, $0) }
-                }, onClose: { showsViewer = false }, onManage: nil)
+                }, title: scopeTitle, onClose: { showsViewer = false }, onManage: nil)
             }
+            .onChange(of: scopeID) { _, _ in chosen.removeAll() }
         }
+    }
+
+    private var scopeTitle: String {
+        profiles.first(where: { $0.identifier == scopeID })?.displayName
+            ?? (scopeID.isEmpty ? "うちのこ" : "見せる写真")
+    }
+
+    private var filteredCandidates: [PhotoPresentation] {
+        if scopeID.isEmpty { return candidates }
+        guard let profile = profiles.first(where: { $0.identifier == scopeID }) else { return [] }
+        let identifiers = Set(profile.confirmedPhotos.map(\.localIdentifier))
+        return candidates.filter { identifiers.contains($0.localIdentifier) }
     }
 
     private func prepare() async {
         isPreparing = true
         errorMessage = nil
         defer { isPreparing = false }
-        for photo in candidates where chosen.contains(photo.localIdentifier) {
+        for photo in filteredCandidates where chosen.contains(photo.localIdentifier) {
             do {
-                try await store.add(photoIdentifier: photo.localIdentifier)
+                try await store.add(photoIdentifier: photo.localIdentifier, to: scopeID)
             } catch {
                 errorMessage = "一部の写真を準備できませんでした。写真へのアクセスを確認してください。"
                 return
             }
         }
         chosen.removeAll()
-        showsViewer = !store.availableEntries.isEmpty
+        showsViewer = !store.availableEntries(in: scopeID).isEmpty
     }
 }

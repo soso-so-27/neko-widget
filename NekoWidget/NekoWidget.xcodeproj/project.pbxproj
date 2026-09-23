@@ -11,6 +11,10 @@
 		E02609230000000000000003 /* ShowcasePhotoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000004 /* ShowcasePhotoView.swift */; };
 		E02609230000000000000005 /* CatPreparednessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000006 /* CatPreparednessStore.swift */; };
 		E02609230000000000000007 /* CatPreparednessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000008 /* CatPreparednessView.swift */; };
+		E02609230000000000000009 /* OpenShowcaseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000A /* OpenShowcaseIntent.swift */; };
+		E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000A /* OpenShowcaseIntent.swift */; };
+		E0260923000000000000000C /* ShowcaseControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000D /* ShowcaseControl.swift */; };
+		E0260923000000000000000E /* ShowcaseAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000F /* ShowcaseAppShortcuts.swift */; };
 		E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
 		E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
 		E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
@@ -271,6 +275,9 @@
 		E02609230000000000000004 /* ShowcasePhotoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePhotoView.swift; sourceTree = "<group>"; };
 		E02609230000000000000006 /* CatPreparednessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessStore.swift; sourceTree = "<group>"; };
 		E02609230000000000000008 /* CatPreparednessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessView.swift; sourceTree = "<group>"; };
+		E0260923000000000000000A /* OpenShowcaseIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenShowcaseIntent.swift; sourceTree = "<group>"; };
+		E0260923000000000000000D /* ShowcaseControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseControl.swift; sourceTree = "<group>"; };
+		E0260923000000000000000F /* ShowcaseAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseAppShortcuts.swift; sourceTree = "<group>"; };
 		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
@@ -667,6 +674,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000201 /* AppRootView.swift */,
+				E0260923000000000000000F /* ShowcaseAppShortcuts.swift */,
 				F00000000000000000000202 /* NekoWidgetApp.swift */,
 				F00000000000000000000267 /* BillingInternalDiagnostics.swift */,
 				F00000000000000000000259 /* AppStoreScreenshotFixture.swift */,
@@ -814,6 +822,8 @@
 			children = (
 				F00000000000000000000310 /* NekoWidget.swift */,
 				F00000000000000000000311 /* NekoWidgetBundle.swift */,
+				E0260923000000000000000A /* OpenShowcaseIntent.swift */,
+				E0260923000000000000000D /* ShowcaseControl.swift */,
 				F00000000000000000000312 /* NekoWidgetEntry.swift */,
 				F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */,
 				F00000000000000000000314 /* NekoWidgetView.swift */,
@@ -1172,6 +1182,8 @@
 				100000000000000000000133 /* MainTabView.swift in Sources */,
 				E02609230000000000000003 /* ShowcasePhotoView.swift in Sources */,
 				E02609230000000000000007 /* CatPreparednessView.swift in Sources */,
+				E02609230000000000000009 /* OpenShowcaseIntent.swift in Sources */,
+				E0260923000000000000000E /* ShowcaseAppShortcuts.swift in Sources */,
 				A16600000000000000000001 /* WidgetPhotoOpening.swift in Sources */,
 				A16600000000000000000002 /* WidgetPhotoOpeningFixture.swift in Sources */,
 				A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */,
@@ -1217,6 +1229,8 @@
 				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
 				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
 				A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */,
+				E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,
+				E0260923000000000000000C /* ShowcaseControl.swift in Sources */,
 				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
