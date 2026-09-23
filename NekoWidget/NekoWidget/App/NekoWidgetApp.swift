@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -8,6 +9,7 @@ struct NekoWidgetApp: App {
     private var appDelegate
 
     init() {
+        ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG
         if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
             // This fixture exercises the real AppRoot/MainTab lifecycle after
