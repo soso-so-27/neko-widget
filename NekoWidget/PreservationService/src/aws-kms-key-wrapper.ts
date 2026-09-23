@@ -20,7 +20,8 @@ const failure = (status: number) => Response.json({ error: { code: status === 40
   { status, headers: responseHeaders });
 const tokenPattern = /^[A-Za-z0-9_-]{43,128}$/u;
 const contextPattern = /^[0-9a-f]{64}$/u;
-const arnPattern = /^arn:aws:kms:([a-z0-9-]+):[0-9]{12}:key\/([A-Za-z0-9-]+)$/u;
+const arnPattern = /^arn:aws:kms:([a-z0-9-]+):([0-9]{12}):key\/([A-Za-z0-9-]+)$/u;
+const multiRegionKeyId = /^mrk-[0-9a-f]{32}$/u;
 const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)); // at most one 4 KiB wrapped key
 
 function decode(value: unknown, maximum: number): Uint8Array {
@@ -60,6 +61,16 @@ function configured(env: KeyWrapperEnv): { region: string; keyArn: string; acces
       || !tokenPattern.test(env.KEY_WRAPPER_CALLER_SECRET ?? '')) throw new Error();
   return { region, keyArn, access: env.KMS_ACCESS_KEY_ID, secret: env.KMS_SECRET_ACCESS_KEY,
     session: env.KMS_SESSION_TOKEN };
+}
+
+/** An approved replica differs from the stored primary ARN only by Region. */
+function matchesConfiguredKey(storedArn: unknown, configuredArn: string): boolean {
+  if (storedArn === configuredArn) return true;
+  if (typeof storedArn !== 'string') return false;
+  const stored = arnPattern.exec(storedArn);
+  const configured = arnPattern.exec(configuredArn);
+  return !!stored && !!configured && stored[2] === configured[2]
+    && stored[3] === configured[3] && multiRegionKeyId.test(stored[3]!);
 }
 
 async function kmsCall(env: KeyWrapperEnv, action: 'Encrypt' | 'Decrypt', payload: object,
@@ -123,8 +134,9 @@ export async function handleKeyWrapperRequest(request: Request, env: KeyWrapperE
       return Response.json({ version: 1, keyId: config.keyArn, wrappedKey: base64(wrapped) },
         { headers: responseHeaders });
     }
-    // No client-supplied key choice. Automatic KMS key rotation preserves the ARN.
-    if (input.keyId !== config.keyArn) return failure(400);
+    // No caller-selected KMS target. A previously stored primary ARN may be
+    // opened by its same-account, same-key-ID multi-Region replica only.
+    if (!matchesConfiguredKey(input.keyId, config.keyArn)) return failure(400);
     const wrapped = decode(input.wrappedKey, 4096);
     const result = await kmsCall(env, 'Decrypt', { KeyId: config.keyArn,
       CiphertextBlob: base64(wrapped), EncryptionContext: context }, fetcher);

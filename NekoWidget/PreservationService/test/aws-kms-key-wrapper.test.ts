@@ -60,6 +60,35 @@ describe('private AWS KMS data-key wrapper', () => {
     expect(calls).toBe(0);
   });
 
+  it('opens a stored multi-Region primary key with only its configured replica', async () => {
+    const mrk = 'mrk-1234abcd12ab34cd56ef1234567890ab';
+    const primary = `arn:aws:kms:ap-northeast-1:111122223333:key/${mrk}`;
+    const replica = `arn:aws:kms:ap-northeast-3:111122223333:key/${mrk}`;
+    const recoveryEnv = { ...env, KMS_REGION: 'ap-northeast-3', KMS_KEY_ARN: replica };
+    let calls = 0;
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      expect(String(input)).toBe('https://kms.ap-northeast-3.amazonaws.com/');
+      expect(JSON.parse(String(init?.body)).KeyId).toBe(replica);
+      return kmsResponse({ KeyId: replica, EncryptionAlgorithm: 'SYMMETRIC_DEFAULT', Plaintext: encode(raw) });
+    };
+    const unwrap = (keyId: string) => request('/keys/unwrap',
+      { version: 1, keyId, wrappedKey: encode(raw), contextSHA256 });
+    expect((await handleKeyWrapperRequest(unwrap(primary), recoveryEnv, fetcher)).status).toBe(200);
+    expect(calls).toBe(1);
+    for (const other of [
+      `arn:aws:kms:ap-northeast-1:000000000000:key/${mrk}`,
+      'arn:aws:kms:ap-northeast-1:111122223333:key/mrk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      keyArn,
+    ]) {
+      expect((await handleKeyWrapperRequest(unwrap(other), recoveryEnv, fetcher)).status).toBe(400);
+    }
+    const unrelatedSingleRegion = { ...env, KMS_REGION: 'ap-northeast-3',
+      KMS_KEY_ARN: keyArn.replace('ap-northeast-1', 'ap-northeast-3') };
+    expect((await handleKeyWrapperRequest(unwrap(keyArn), unrelatedSingleRegion, fetcher)).status).toBe(400);
+    expect(calls).toBe(1);
+  });
+
   it('never returns a key when KMS is disabled, fails, or returns a different key', async () => {
     const input = request('/keys/wrap', { version: 1, key: encode(raw), contextSHA256 });
     expect((await handleKeyWrapperRequest(input, { ...env, PRESERVATION_KMS_ENABLED: 'NO' },

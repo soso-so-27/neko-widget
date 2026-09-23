@@ -55,6 +55,7 @@ R2と別事業者に暗号化済み写真・DB復旧点・鍵の設定/権限手
 - Worker外からの認証は当面、専用IAM主体の最小権限資格情報をCloudflare secretに登録する方式を検証する。長期資格情報には漏えい・更新負担があるため、ローテーション・CloudTrail監査・失効訓練を受入条件とし、後から短期資格情報へ移行する。秘密値を標準出力・ログ・Gitに出さない。
 - `KMS_REGION`、`KMS_KEY_ARN`、`KEY_WRAPPER_CALLER_SECRET`、`KMS_ACCESS_KEY_ID`、`KMS_SECRET_ACCESS_KEY` は実環境のWorkers vars/secretsへ設定する。`KEY_WRAPPER_CALLER_SECRET` は保管Workerと鍵Workerで同値の十分長いランダム値とし、公開経路には渡さない。`IDENTITY_INDEX_SECRET` は別の復旧必須資産として安全に保管する。
 - OFFのまま署名済みKMS疎通と失敗時fail-closed、実R2/D1、旧鍵版の復号、バックアップからの復元、別端末での本人復元を検証する。どれか欠けたら有効化しない。
+- 別リージョン復旧では、保存済み主キーARNと複製鍵ARNの**同一AWSアカウント・同一`mrk-`鍵ID**だけを許す実装を合成試験済み。複製鍵の作成、地域別ポリシー、実KMS復号は未確認であり、主キーと複製鍵が本当に関連することを実環境で検証するまで復旧成功とは言わない。
 
 ## 実接続を止める条件
 
