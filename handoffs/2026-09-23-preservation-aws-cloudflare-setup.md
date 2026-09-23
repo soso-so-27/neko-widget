@@ -16,6 +16,12 @@
 2. R2、D1、Workersの対象アカウントと請求条件を確認する。既存の共有用まどDB/bucketには触れず、保管専用の資源を用意する。現在のWrangler OAuthはD1を読める一方、R2一覧が認証エラーなので、利用者の端末でWrangler再ログインとR2権限確認が必要。管理画面にサインイン済みであることとCLIの許可は別。
 3. CloudflareのアカウントIDだけを共有し、API token・OAuth token・Workers secret値を会話に貼らない。実操作は開発側のコマンドと出力を見ながら進め、公開routeや既存bucketへの接続はしない。
 
+## 12か月後の消去通知に使う送信基盤（候補）
+
+鍵管理はAWS KMSのまま、通知はまず[Cloudflare Email Sending](https://developers.cloudflare.com/email-service/)を検証する。Workers PaidとCloudflare DNS上の送信ドメインが必要で、任意宛先への送信は2026-09-23時点でbeta。送信bindingが同じWorkers基盤で使え、[Email Sendingの配達・失敗・拒否イベントをQueueへ購読](https://developers.cloudflare.com/email-service/platform/event-subscriptions/)できる。送信APIが受理しただけでは「届いた通知」にしない。`message.delivered` のmessage ID、宛先、エピソード、配送時刻を照合して台帳へ記録し、bounce・拒否・イベント欠落では自動削除を停止する。recipient serverへの到達は受信者の開封を意味しないため、アプリ内の期限表示と持ち出し導線も必要。
+
+利用者が持つ送信ドメインをCloudflare DNSへ接続できるか、Workers Paid/Email Sendingを有効化できるかを確認する。Appleの非公開メール宛てには[Apple Developerで送信元ドメインを登録しSPF/DKIMを認証](https://developer.apple.com/help/account/capabilities/configure-private-email-relay-service)する。これらが実証できなければ通知を「送れた」と扱わず、期限消去を有効化しない。Cloudflare Email Sendingを利用できない場合、[Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)を代替候補とするが、新規アカウントはsandboxに入り任意の利用者宛送信にはproduction accessが必要。どちらの実契約・ドメイン設定も未実施。
+
 ## 開発側が実接続前に用意すること
 
 - 保管Workerと鍵Workerの**非公開service binding**、保管専用D1/R2、個別secret binding。`wrangler.kms.disabled.jsonc` と `wrangler.jsonc` は現時点では安全側のローカルOFF構成であり、そのまま本番デプロイできる設定ではない。
