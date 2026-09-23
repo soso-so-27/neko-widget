@@ -12,7 +12,8 @@ const deliveredAt = now - 31 * day;
 const dueAt = now - day;
 const tag = 'a'.repeat(64);
 
-async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expired']) {
+async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expired'],
+  beforeStatusReturn?: (call: number, ownerId: string) => Promise<void>) {
   const ownerId = crypto.randomUUID();
   const billingAccount = crypto.randomUUID();
   const deliveryEventId = `delivery-${crypto.randomUUID()}`;
@@ -42,7 +43,9 @@ async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expir
   const fence = new OwnerPurgeFence({ db, now: () => now,
     statusForBillingAccount: async account => {
       expect(account).toBe(billingAccount);
-      return statuses[Math.min(calls++, statuses.length - 1)]!;
+      const call = calls++;
+      await beforeStatusReturn?.(call, ownerId);
+      return statuses[Math.min(call, statuses.length - 1)]!;
     },
     retention: { observe: (owner: string, status: VerifiedMembershipStatus) =>
       new RetentionLedger(db, () => now).observe(owner, status),
@@ -108,7 +111,7 @@ it('recovers a crashed pre-deletion fence after its lease and invalidates notice
   expect(await recoverAbandonedPurgeFences(db, now + 12 * 60_000)).toBe(0);
 });
 
-it('does not fence after a contact change or while an upload is pending', async () => {
+it('does not fence after a contact change or while storage cleanup is pending', async () => {
   const changed = await fixture();
   await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')
     .bind(changed.ownerId).run();
@@ -123,4 +126,20 @@ it('does not fence after a contact change or while an upload is pending', async 
   expect(await pending.fence.begin(pending.ownerId)).toBeNull();
   expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
     .bind(pending.ownerId).first()).toMatchObject({ disabled: 0 });
+
+  const deleting = await fixture();
+  await db.prepare(`INSERT INTO pa_pending_deletes(object_key,created_at) VALUES(?,?)`)
+    .bind(`personal/${deleting.ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`, now - day).run();
+  expect(await deleting.fence.begin(deleting.ownerId)).toBeNull();
+  expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
+    .bind(deleting.ownerId).first()).toMatchObject({ disabled: 0 });
+
+  const racing = await fixture(['expired', 'expired'], async (call, ownerId) => {
+    if (call !== 0) return;
+    await db.prepare('INSERT INTO pa_pending_deletes(object_key,created_at) VALUES(?,?)')
+      .bind(`personal/${ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`, now).run();
+  });
+  expect(await racing.fence.begin(racing.ownerId)).toBeNull();
+  expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
+    .bind(racing.ownerId).first()).toMatchObject({ disabled: 0 });
 });

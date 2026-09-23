@@ -7,8 +7,13 @@ const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const day = 86_400_000;
 const fenceLease = 10 * 60_000;
 const unavailable = () => new ServiceError('PURGE_FENCE_UNAVAILABLE', 503);
+const photoPrefixForOwner = (ownerId: string) => `personal/${ownerId}/`;
+// '/' sorts immediately before '0'; this indexed range covers every key in
+// one fixed UUID owner prefix without matching a neighbouring owner.
+const photoPrefixUpperBound = (ownerId: string) => `personal/${ownerId}0`;
 
-interface OwnerState { epoch: number; generation: number; billing_account_id: string; pending_uploads: number }
+interface OwnerState { epoch: number; generation: number; billing_account_id: string;
+  pending_uploads: number; pending_deletes: number }
 export interface PurgeFence { fenceId: string; ownerId: string; ownerEpoch: number; inventoryGeneration: number;
   candidate: ExpiryReviewCandidate }
 interface Dependencies {
@@ -35,12 +40,14 @@ export class OwnerPurgeFence {
   }
 
   private async state(ownerId: string): Promise<OwnerState | null> {
+    const photoPrefix = photoPrefixForOwner(ownerId);
     return this.d.db.prepare(`SELECT o.epoch,i.generation,l.billing_account_id,
-      (SELECT COUNT(*) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS pending_uploads
+      (SELECT COUNT(*) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS pending_uploads,
+      (SELECT COUNT(*) FROM pa_pending_deletes p WHERE p.object_key>=? AND p.object_key<?) AS pending_deletes
       FROM pa_owners o JOIN pa_inventory i ON i.owner_id=o.owner_id
       JOIN pa_membership_links l ON l.owner_id=o.owner_id
       WHERE o.owner_id=? AND o.disabled=0 AND o.purge_fence_id IS NULL`)
-      .bind(ownerId).first<OwnerState>();
+      .bind(photoPrefix, photoPrefixUpperBound(ownerId), ownerId).first<OwnerState>();
   }
 
   /** Returns null for an ineligible or changed owner; no data is erased. */
@@ -49,7 +56,7 @@ export class OwnerPurgeFence {
     const initial = await this.state(ownerId);
     if (!initial || !Number.isSafeInteger(initial.epoch) || initial.epoch < 0
       || !Number.isSafeInteger(initial.generation) || initial.generation < 0
-      || initial.pending_uploads !== 0) return null;
+      || initial.pending_uploads !== 0 || initial.pending_deletes !== 0) return null;
     let status: VerifiedMembershipStatus;
     try { status = await this.d.statusForBillingAccount(initial.billing_account_id); }
     catch { status = 'unknown'; }
@@ -85,6 +92,8 @@ export class OwnerPurgeFence {
           AND EXISTS(SELECT 1 FROM pa_inventory i WHERE i.owner_id=o.owner_id
             AND i.generation=? AND i.reserved_bytes=0)
           AND NOT EXISTS(SELECT 1 FROM pa_uploads u WHERE u.owner_id=o.owner_id)
+          AND NOT EXISTS(SELECT 1 FROM pa_pending_deletes p
+            WHERE p.object_key>=? AND p.object_key<?)
           AND EXISTS(SELECT 1 FROM pa_retention r
             JOIN pa_notice_contacts c ON c.owner_id=r.owner_id
             JOIN pa_notice_submissions s ON s.owner_id=r.owner_id
@@ -103,7 +112,8 @@ export class OwnerPurgeFence {
               AND s.contact_updated_at=c.updated_at AND s.recipient_tag=?)
         RETURNING epoch`)
         .bind(fenceId, ownerId, initial.epoch, fenceId, initial.billing_account_id,
-          initial.generation, candidate.episode, candidate.revision, candidate.dueAt,
+          initial.generation, photoPrefixForOwner(ownerId), photoPrefixUpperBound(ownerId),
+          candidate.episode, candidate.revision, candidate.dueAt,
           candidate.deliveredAt, candidate.deliveryEventId, Math.max(0, now - day), now, now,
           Math.max(0, now - 30 * day), 30 * day, evidence.contactUpdatedAt, evidence.recipientTag),
       this.d.db.prepare(`UPDATE pa_purge_fences SET state='fenced',owner_epoch=?,
