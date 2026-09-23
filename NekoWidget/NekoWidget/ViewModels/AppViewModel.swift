@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 import WidgetKit
 
 extension Notification.Name {
+    static let confirmedMemorySavedStateChanged = Notification.Name(
+        "jp.nekowidget.photo.confirmed-memory-saved-state-changed"
+    )
     static let sharingMediaSyncRequested = Notification.Name(
         "jp.nekowidget.sharing.media-sync-requested"
     )
@@ -21,6 +24,14 @@ extension Notification.Name {
     static let receivedMemoryImportNeedsRefresh = Notification.Name(
         "jp.nekowidget.received-memory-import-needs-refresh"
     )
+}
+
+/// Sent only after the private favorite store accepted the mutation. A
+/// browser opened through a navigation destination can otherwise retain an
+/// older PhotoPresentation even when its parent publishes a new snapshot.
+struct ConfirmedMemorySavedState {
+    let localIdentifier: String
+    let isSaved: Bool
 }
 
 enum AlbumUpdateStatus: Equatable {
@@ -910,6 +921,10 @@ final class AppViewModel: ObservableObject {
         Self.applySharedLikeRecord(mutation.record, at: index, to: &updatedSnapshot)
         updatedSnapshot.updatedAt = .now
         snapshot = updatedSnapshot
+        NotificationCenter.default.post(
+            name: .confirmedMemorySavedStateChanged,
+            object: ConfirmedMemorySavedState(localIdentifier: localIdentifier, isSaved: mutation.record.isLiked)
+        )
         SharedLog.app.info(
             "like",
             "Memory saved state set",

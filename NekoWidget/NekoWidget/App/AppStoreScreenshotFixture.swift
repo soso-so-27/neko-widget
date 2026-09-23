@@ -1015,6 +1015,10 @@ private struct SoloMemoriesFixtureView: View {
         highlightMemoryRequest = "\(identifier)|\(isSaved)"
         if isSaved { savedFixturePhotoIdentifiers.insert(identifier) }
         else { savedFixturePhotoIdentifiers.remove(identifier) }
+        NotificationCenter.default.post(
+            name: .confirmedMemorySavedStateChanged,
+            object: ConfirmedMemorySavedState(localIdentifier: identifier, isSaved: isSaved)
+        )
     }
 
     private func excludeFixturePhotos(_ identifiers: [String]) {
@@ -1278,7 +1282,13 @@ private struct MonthlySaveFixtureView: View {
                     )], availableSceneCount: 1
                 ), setMemorySaved: { identifier, value in
                     lastRequest = "\(identifier)|\(value)"
-                    if confirmsRequests { isSaved = value }
+                    if confirmsRequests {
+                        isSaved = value
+                        NotificationCenter.default.post(
+                            name: .confirmedMemorySavedStateChanged,
+                            object: ConfirmedMemorySavedState(localIdentifier: identifier, isSaved: value)
+                        )
+                    }
                 }
             )
         }
@@ -1311,6 +1321,10 @@ private struct SoloRediscoveryFixtureView: View {
                     } else {
                         savedIdentifiers.remove(identifier)
                     }
+                    NotificationCenter.default.post(
+                        name: .confirmedMemorySavedStateChanged,
+                        object: ConfirmedMemorySavedState(localIdentifier: identifier, isSaved: isSaved)
+                    )
                 },
                 excludedCatCandidateIdentifiers: [],
                 excludeFromCatCandidates: { _ in },

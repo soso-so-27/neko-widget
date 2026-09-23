@@ -1447,10 +1447,14 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--managed-preservation-membership-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        func tap(_ identifier: String) {
+        func tap(_ identifier: String, towardBottom: Bool = false) {
             let button = app.buttons.matching(identifier: identifier).firstMatch
             XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
-            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
+            // Membership actions stay near the top; the record is below the
+            // capacity section. Moving in the wrong direction hid the button.
+            for _ in 0..<8 where !button.isHittable {
+                if towardBottom { app.swipeUp() } else { app.swipeDown() }
+            }
             let ready = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, identifier)
@@ -1491,7 +1495,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("preservation-membership-expired-read-available")
         let record = app.buttons["preservation-record-a1223334-5556-4788-9990-aabbccddeeff"]
         for _ in 0..<8 where !record.exists { app.swipeUp() }
-        tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff")
+        tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff", towardBottom: true)
         let memo = app.textViews["保管コピーのメモ"]
         XCTAssertTrue(memo.waitForExistence(timeout: 8))
         XCTAssertEqual(memo.value as? String, "はじめて膝で眠った日")
