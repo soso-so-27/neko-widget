@@ -92,7 +92,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v3"
+PRESERVATION_SCOPE = "preservation-service-v4"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -108,27 +108,28 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
     "test/membership-links.test.ts", "test/billing-authority.test.ts",
     "migrations/0004_upload_owner_index.sql",
+    "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v3 adds only the upload owner-index migration to v2's exact service paths.
+# v4 adds only the disabled private KMS wrapper and its test/config to v3.
 # Imported Sharing sources and any other new migration still require FULL.
 PRESERVATION_WORKFLOW_DIGEST = "c36300e55929d9b4abc56387a390c84b71c71358c42b2fa726b4cb74e23b6c6a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "6b69e3e7e8f36d171352cf07ceecb54ed6d5ea2f10057c78d5217a2cb5b91fd8",
-        "01e7f70ed124ef4cfaafc72838ca65152e191e2d27d0186d867401d1d0794c89"
+        "6849e1abb9eef84d0bce0cdd49a363c3be8ba9bb70768a706c4dd0db17c9cb12",
+        "9c678126cb26fd9879635663d1c6e0d1c6f32c9cb43e3ed35af17b989d8e2889"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "953316902d493c4fa8c35b78930bcae39e186e736de88c3b974c323923905ace",
-        "5b00404d1618905e0e2618735af4029cc68cae794a96ba83164c8a56ff660b1b"
+        "afbdad4f0b1ac60da7efdb239ca68718b7f9837a77726026f4483472b74a66bd",
+        "d71a1e76721b98f24b1e7545841e2d508c2137f7ca8795609897ad1e07b4ba2d"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "8c8ece6b85bf8fe042422842b7b3058f0a5e59857d0dcb0ac0f4da8540643847",
-        "11b0db1eee6081fd9787ea08d5871b25216501f795a249eafa2743582b3aa06f"
+        "2ef3551d019f5ab0f8ab0600f1ab897ea2b2ad2141d4bdfacb3c4b0f427f66c1",
+        "de44b27fc1b384defba652e0f2b0802e21984ffe9bab32d92f20f98320178849"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "5d507fb368ead03adf59856eaea0db6f6704529f8d9424cd8b1b27a28280b8af",
-        "62db9e821c403e66a5f19461d1294ab6ad26c735afde39164ee093e3de2a8e9c"
+        "62db9e821c403e66a5f19461d1294ab6ad26c735afde39164ee093e3de2a8e9c",
+        "36d1909c413398f3b523c81d0ee2f59dfaab727bd03702d3b4950c6483266a28"
     ]
 }
 
