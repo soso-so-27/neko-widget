@@ -13,7 +13,8 @@ export interface Env {
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
-  KEY_WRAPPER?: Fetcher; MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
+  KEY_WRAPPER?: Fetcher; KEY_WRAPPER_CALLER_SECRET?: string;
+  MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier; membership?: MembershipLinks; }
@@ -108,7 +109,8 @@ export async function route(request: Request, services: Services): Promise<Respo
 }
 
 function configuredServices(env: Env): Services {
-  if (!env.KEY_WRAPPER || !env.MEMBERSHIP_AUTHORITY || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
+  if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.MEMBERSHIP_AUTHORITY
+    || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
     || !env.APPLE_CREDENTIALS_JSON || !env.PRESERVATION_LINK_AUDIENCE || !env.REQUEST_LIMITER || !env.DB || !env.ARCHIVE) {
     throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   }
@@ -116,7 +118,8 @@ function configuredServices(env: Env): Services {
   try { credentials = JSON.parse(env.APPLE_CREDENTIALS_JSON) as typeof credentials; }
   catch { throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503); }
   const now = () => Date.now();
-  const keys = envelopeKeyCustody({ enabled: true, wrapper: boundKeyWrapper(env.KEY_WRAPPER) });
+  const keys = envelopeKeyCustody({ enabled: true,
+    wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });

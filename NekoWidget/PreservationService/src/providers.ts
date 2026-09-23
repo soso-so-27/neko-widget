@@ -6,9 +6,11 @@ import { readBoundedBody } from './bounded-body';
 
 // Private service bindings only; clients never supply provider URLs. Live KMS,
 // verified billing identity linkage and JPEG service wiring remain activation gates.
-async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 40 * 1024 * 1024) {
+async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 40 * 1024 * 1024,
+  callerSecret?: string) {
   const response = await binding.fetch(`https://preservation-internal${path}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { 'content-type': 'application/json',
+      ...(callerSecret ? { 'x-neko-preservation-key-token': callerSecret } : {}) }, body: JSON.stringify(body),
     // Workers supports manual/follow, not Request's browser-only error mode.
     // Never follow a provider redirect (response.ok below rejects every 3xx).
     redirect: 'manual', signal: AbortSignal.timeout(10_000),
@@ -21,7 +23,10 @@ async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 4
     return parsed as Record<string, unknown>;
   } catch { throw new ServiceError('DEPENDENCY_UNAVAILABLE', 503); }
 }
-export function boundKeyWrapper(binding: Fetcher): KeyWrappingAuthority {
+export function boundKeyWrapper(binding: Fetcher, callerSecret: string): KeyWrappingAuthority {
+  if (!/^[A-Za-z0-9_-]{43,128}$/u.test(callerSecret)) {
+    throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503);
+  }
   const decode = (value: unknown, maximum: number) => {
     try {
       if (typeof value !== 'string' || value.length > Math.ceil(maximum / 3) * 4) throw new Error();
@@ -37,7 +42,8 @@ export function boundKeyWrapper(binding: Fetcher): KeyWrappingAuthority {
     async wrap(key, contextSHA256) {
       context(contextSHA256);
       if (!(key instanceof Uint8Array) || key.length !== 32) throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503);
-      const value = await invoke(binding, '/keys/wrap', { version: 1, key: encodePhoto(key), contextSHA256 }, 8192);
+      const value = await invoke(binding, '/keys/wrap', { version: 1, key: encodePhoto(key), contextSHA256 }, 8192,
+        callerSecret);
       if (Object.keys(value).sort().join(',') !== 'keyId,version,wrappedKey' || value.version !== 1
           || typeof value.keyId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value.keyId)) {
         throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503);
@@ -48,7 +54,8 @@ export function boundKeyWrapper(binding: Fetcher): KeyWrappingAuthority {
       context(contextSHA256);
       if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(keyId) || !(wrappedKey instanceof Uint8Array)
           || !wrappedKey.length || wrappedKey.length > 4096) throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503);
-      const value = await invoke(binding, '/keys/unwrap', { version: 1, keyId, wrappedKey: encodePhoto(wrappedKey), contextSHA256 }, 256);
+      const value = await invoke(binding, '/keys/unwrap', { version: 1, keyId, wrappedKey: encodePhoto(wrappedKey), contextSHA256 }, 256,
+        callerSecret);
       if (Object.keys(value).sort().join(',') !== 'key,version' || value.version !== 1) throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503);
       const key = decode(value.key, 32);
       if (key.length !== 32) { key.fill(0); throw new ServiceError('KEY_CUSTODY_UNAVAILABLE', 503); }

@@ -74,7 +74,8 @@ it('private bridge transports only a data key, round-trips context, and fails on
   const authority = await syntheticKeyAuthority(); const scope = context();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const encrypted = await keys.seal(text, scope); expect(await keys.open(encrypted, scope)).toEqual(text);
-  const malformed = boundKeyWrapper({ fetch: async () => Response.json({ version: 1, key: 'AA==' }) } as unknown as Fetcher);
+  const malformed = boundKeyWrapper({ fetch: async () => Response.json({ version: 1, key: 'AA==' }) } as unknown as Fetcher,
+    'x'.repeat(43));
   await expect(malformed.unwrap('synthetic/v1', new Uint8Array([1]), 'a'.repeat(64))).rejects.toMatchObject(error);
   await expect(malformed.wrap(new Uint8Array(32), 'a'.repeat(64))).rejects.toMatchObject(error);
 });

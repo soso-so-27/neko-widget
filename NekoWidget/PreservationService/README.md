@@ -12,7 +12,7 @@ Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run type
 
 - 固定HTTPS origin、専用DB/bucket、レート制限、`PRESERVATION_ENABLED=YES`。
 - Sign in with AppleのApp ID capability、鍵・client ID。native tokenと交換tokenのnonceについて実際のApple経路で確認すること。
-- `KEY_WRAPPER`: 非公開service binding。写真/本文はこのserviceで暗号化し、32byteのデータ鍵だけをauthorityへ送る。`/keys/wrap` `{version:1,key:<base64>,contextSHA256}` → `{version:1,keyId,wrappedKey:<base64>}`、`/keys/unwrap` `{version:1,keyId,wrappedKey:<base64>,contextSHA256}` → `{version:1,key:<base64>}`。本番authorityは呼出元認証、管理KMS、許可した鍵版だけの解決、同じcontextによるwrap/unwrap、旧鍵の保持・復旧を実装する。keyIdを任意URLや任意テナントの鍵として解釈しない。テスト鍵や固定鍵へのfallbackは禁止。旧候補の`KEY_CUSTODY /seal /open`とは別契約で、未配備の候補を置換したもの。既存暗号文の無断移行はない。
+- `KEY_WRAPPER`: 非公開service binding。写真/本文はこのserviceで暗号化し、32byteのデータ鍵だけをauthorityへ送る。`/keys/wrap` `{version:1,key:<base64>,contextSHA256}` → `{version:1,keyId,wrappedKey:<base64>}`、`/keys/unwrap` `{version:1,keyId,wrappedKey:<base64>,contextSHA256}` → `{version:1,key:<base64>}`。保管serviceと鍵Workerの双方に同じ43文字以上の乱数 `KEY_WRAPPER_CALLER_SECRET` をsecretとして配り、非公開bindingの呼出元を認証する。keyIdを任意URLや任意テナントの鍵として解釈しない。テスト鍵や固定鍵へのfallbackは禁止。旧候補の`KEY_CUSTODY /seal /open`とは別契約で、未配備の候補を置換したもの。既存暗号文の無断移行はない。
 - `MEMBERSHIP_AUTHORITY`: 独立billing workerのnamed entrypoint `BillingAuthority`への非公開service binding。両workerに一致する環境固有の`PRESERVATION_LINK_AUDIENCE`が必須。`/membership/verify-link`は二重本人証明、`/membership/verified-status`は`{billingAccountId}` → `{version:1,billingAccountId,status:'active'|'grace'|'expired'|'unknown'}`。未配備旧候補の`{ownerId}`契約は廃止。詳細は後述。
 - `PHOTO_VALIDATOR`: `/images/validate-jpeg`。`{photoBase64}` → `{valid:true,mediaType:'image/jpeg',frames:1}`。サーバー側の実デコードと画素数制限が必須。JPEGヘッダーだけで合格にしない。
 - `IDENTITY_INDEX_SECRET`: 32byte以上のbase64url乱数。identity HMACを変えると別所有者になるため、復旧・ローテーション設計なしで変更しない。
@@ -21,7 +21,9 @@ Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run type
 
 写真/本文の暗号化は `src/key-custody.ts` に実装済み。NKM1（8byte prefix + 上限8KiBの版付きJSON header + ciphertext/tag）はAES-256-GCM、データごとの32byte鍵、12byte IV、128bit tagを使う。header全体をAADにし、保管owner・用途・record/documentまたはrecord/photoのSHA256 contextをheaderと管理鍵の双方へ結び付ける。古いkeyIdを残すので鍵の切替後も旧記録を読む経路はあるが、鍵を実際に保全する責務は外部authorityに残る。JWE/AWS SDKとの形式互換はない。
 
-外部KMSのauthorityと実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
+AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFFの `wrangler.kms.disabled.jsonc` に用意した。`PreservationKeyWrapper` named entrypointだけが応答し、公開default routeは404。`KMS_KEY_ARN`（対称鍵の完全なARN）・`KMS_REGION`・AWS認証情報・`PRESERVATION_KMS_ENABLED=YES` が揃う場合だけ、同じSHA256 contextをAWS KMSのEncryptionContextに入れて `Encrypt` / `Decrypt` を実行する。呼出元tokenが違う、鍵ARNが違う、AWSが異常／タイムアウト、返答鍵が違う場合はfail closed。現在のコードは**単一ARN**を対象とし、AWSの同じ鍵の自動ローテーション以外の新旧鍵切替・別リージョン復旧は未検証。AWSアカウント、最小権限IAM、secret、実KMS鍵、別リージョン復旧を準備してから有効化する。ローカルテストの署名リクエストは合成AWS応答で、実KMS成功ではない。[保持・鍵設計](../../handoffs/2026-09-23-preservation-retention-key-decision.md)参照。
+
+外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 使用量の確認
 
