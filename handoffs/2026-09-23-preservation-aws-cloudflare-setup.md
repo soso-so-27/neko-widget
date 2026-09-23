@@ -24,6 +24,8 @@ R2 subscriptionと送信に使える独自ドメインの有無は、現在利�
 
 利用者が持つ送信ドメインをCloudflare DNSへ接続できるか、Workers Paid/Email Sendingを有効化できるかを確認する。Appleの非公開メール宛てには[Apple Developerで送信元ドメインを登録しSPF/DKIMを認証](https://developer.apple.com/help/account/capabilities/configure-private-email-relay-service)する。これらが実証できなければ通知を「送れた」と扱わず、期限消去を有効化しない。Cloudflare Email Sendingを利用できない場合、[Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)を代替候補とするが、新規アカウントはsandboxに入り任意の利用者宛送信にはproduction accessが必要。どちらの実契約・ドメイン設定も未実施。
 
+Workersの送信bindingは、無制限の送信元ではなく `allowed_sender_addresses` で専用アドレスに限定する。制限属性を指定しないbindingはアカウント内の検証済み宛先へしか送れず、一般利用者の宛先への通知を実証したことにならない。[bindingの仕様](https://developers.cloudflare.com/email-service/configuration/send-bindings/)参照。
+
 Cloudflareの現行料金表では、任意宛先へのEmail SendingはWorkers Paidが必要で、月3,000通を含み、超過分は1,000通あたり0.35米ドル。これは送信量の費用のみで、ドメイン・Workers・Queues等の費用や配達成功を保証しない。[料金表](https://developers.cloudflare.com/email-service/platform/pricing/)参照。
 
 ## Apple本人確認の署名前提
