@@ -154,7 +154,7 @@ struct CatProfileDetailView: View {
                     CatPreparednessView(
                         identityKey: profile.identifier,
                         catName: profile.displayName,
-                        candidatePhotos: profile.confirmedPhotos
+                        candidatePhotos: preparednessCandidates
                     )
                 } label: {
                     Label("もしもの備え", systemImage: "pawprint")
@@ -192,6 +192,7 @@ struct CatProfileDetailView: View {
                             isDeleting = false
                             if deleted {
                                 try? CatPreparednessStore.shared.delete(for: profile.identifier)
+                                try? ShowcasePhotoStore().removeScope(profile.identifier)
                                 dismiss()
                             } else { deleteFailed = true }
                         }
@@ -227,6 +228,14 @@ struct CatProfileDetailView: View {
                 )
             }
         }
+    }
+
+    private var preparednessCandidates: [CatProfilePhotoPresentation] {
+        let registered = Set(allProfiles.flatMap { $0.confirmedPhotos.map(\.localIdentifier) })
+        let unassigned = manualCandidatePhotos.filter {
+            !registered.contains($0.localIdentifier)
+        }
+        return profile.confirmedPhotos + unassigned
     }
 
     private var lifeReferenceSummary: String {

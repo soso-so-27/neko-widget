@@ -96,6 +96,15 @@ final class ShowcasePhotoStore: ObservableObject {
         try save([entry] + selectedScope + otherScopes)
     }
 
+    func removeScope(_ scopeID: String) throws {
+        let removed = entries.filter { $0.scopeID == scopeID }
+        guard !removed.isEmpty else { return }
+        try save(entries.filter { $0.scopeID != scopeID })
+        for entry in removed {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(entry.imageFileName))
+        }
+    }
+
     private func save(_ next: [Entry]) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)

@@ -183,9 +183,13 @@ struct CatPreparednessEntryView: View {
     }
 
     private func preparedView(for profile: CatProfilePresentation) -> CatPreparednessView {
-        CatPreparednessView(identityKey: profile.identifier,
-                            catName: profile.displayName,
-                            candidatePhotos: profile.confirmedPhotos)
+        var seen = Set<String>()
+        let candidates = (profile.confirmedPhotos + unregisteredPhotos.map {
+            CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier)
+        }).filter { seen.insert($0.localIdentifier).inserted }
+        return CatPreparednessView(identityKey: profile.identifier,
+                                   catName: profile.displayName,
+                                   candidatePhotos: candidates)
     }
 }
 
