@@ -108,8 +108,9 @@ CI_DIAGNOSTIC_MATRIX = "NekoWidget/ci/run-sharing-runtime-matrix.sh"
 # Exact reviewed diagnostic additions. A later change to their execution must
 # be reviewed again, never hidden by a broad marker or workflow exemption.
 PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3dab940ad288e4a56ed97b2d"
+INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST = "27e3a21f42709a87b6f8d6e99866f138827be6a1052ead5918a72a9124d135fe"
 PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
-DIAGNOSTIC_WORKFLOW_DIGEST = "27e3a21f42709a87b6f8d6e99866f138827be6a1052ead5918a72a9124d135fe"
+DIAGNOSTIC_WORKFLOW_DIGEST = "922c3e21dfe35347d4d974dfdffa811c4b38317d1503c7cbbfe7c78b27510f70"
 DIAGNOSTIC_BLOCKS_DIGEST = "f1319d5060a5a0d44efd76c21faf9693b5092b0c5cf4623b26f14747aa3b314c"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
@@ -1467,7 +1468,7 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     if CI_DIAGNOSTIC_WORKFLOW in changes:
         before, after = changes[CI_DIAGNOSTIC_WORKFLOW]
-        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
+        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
             return False
     if CI_DIAGNOSTIC_MATRIX in changes:
         normalized = []
