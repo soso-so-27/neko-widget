@@ -97,6 +97,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     @State private var position: String?
     @State private var userScrolled = false
     @State private var isVisible = false
+    @State private var hasRestoredInitialPosition = false
 
     init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
@@ -120,11 +121,19 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     }
                 }
                 .onAppear {
-                    let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
-                    userScrolled = false
-                    position = saved
                     isVisible = true
-                    PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
+                    // Navigation to a photo detail also calls onAppear when
+                    // returning. Reapplying the saved top row there moves the
+                    // list away from the photo the person just opened.
+                    if !hasRestoredInitialPosition {
+                        let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
+                        userScrolled = false
+                        position = saved
+                        hasRestoredInitialPosition = true
+                        PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
+                    } else {
+                        PhotoLibraryReadingPosition.diagnose("return \(section): \(position ?? "nil")")
+                    }
                 }
                 .onDisappear { isVisible = false }
                 .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
