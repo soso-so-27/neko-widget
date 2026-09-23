@@ -14,7 +14,8 @@ function sameReference(left: RecoveryObject, right: RecoveryObject): boolean {
 
 export type OwnerArchiveCandidate =
   | { status: 'missing' | 'disabled' | 'quarantined' }
-  | { status: 'ready-for-quarantine'; owner: OwnerRecoveryImage; verifiedRecords: number };
+  | { status: 'ready-for-quarantine'; owner: OwnerRecoveryImage; verifiedRecords: number;
+      recordMarkers: { recordId: string; markers: RecoveryObject[] }[] };
 
 /** Read-only, D1-independent consistency check for a disabled restore image.
  * A returned candidate is never authority to activate an account or serve its
@@ -85,6 +86,8 @@ export class OwnerArchiveRecovery {
       selectedRecord.image.photoCiphertext?.fill(0);
     }
     return { status: 'ready-for-quarantine', owner: selected.image,
-      verifiedRecords: expected.size };
+      verifiedRecords: expected.size, recordMarkers: selected.image.records.map(item => ({
+        recordId: item.recordId, markers: byRecord.get(item.recordId)!,
+      })) };
   }
 }
