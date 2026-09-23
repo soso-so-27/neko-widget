@@ -29,6 +29,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 `src/owner-photo-inventory.ts` はR2の一次写真をowner prefixだけで読み取るページAPI。1ページが1000件未満でも `truncated` が真なら継続し、owner・キー形式・順序・継続cursorを検査する。DB参照と独立S3版一覧との照合・書込停止・実R2での確認は未実装。単独のR2一覧結果を「全件消去」の証明に使わない。[R2 Workers APIのlist仕様](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)参照。
 
+`src/owner-record-inventory.ts` は失効済みownerの記録と削除済みIDを、D1の単一読み取りtransactionでページ取得する助言的API。ownerの無効化、保管中アップロードが0、途中ページでepoch/generationが不変、写真keyが同じowner/recordに属することを確認する。失効は期限切れ・送達・課金の証明ではないため、この一覧だけで物理消去を開始しない。全ページとR2/S3の照合、停止可能な消去台帳、外部証拠の再確認は未実装。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
