@@ -29,7 +29,9 @@ S3の版付き暗号文の転送・SHA-256照合・指定版読出しの候補�
 
 同じ後続ブランチにR2のowner写真一覧と、D1の失効owner記録・削除済みIDのページ一覧を読み取り専用で追加。D1は単一transactionでowner状態と一覧を読み、保管中アップロードと途中ページのgeneration/epoch変化を拒否する。どちらもまだ三者の全件照合や消去許可ではない。失効ownerであることは、期限経過・通知送達・課金権利消失の証拠にはならない。
 
-さらに削除前専用のowner fenceをローカルに追加。新鮮な非公開課金結果、保持episode/改訂、現在のApple通知先、v2の送達証拠、inventory generation、未完了uploadの不在を一つのD1 batchで照合してからownerの通常アクセスを止める。再照会が非失効・不明なら古い通知証拠を消して解除する。Workerが停止しても10分のlease切れ後、scheduled maintenanceが削除前fenceだけを解除・証拠無効化する。物理削除の権限や実行経路はまだない。将来`begin()`を呼ぶ前には`CLEANUP_ENABLED`とscheduled triggerが動作し、最初の不可逆操作より前に`fenced`から別状態へ遷移することが必須。ローカル型検査、保管サービス140試験、合成migration試験、独立安全レビューを通過。実環境・本線には未反映。
+さらに削除前専用のowner fenceを後続ブランチに追加。新鮮な非公開課金結果、保持episode/改訂、現在のApple通知先、v2の送達証拠、inventory generation、未完了uploadの不在を一つのD1 batchで照合してからownerの通常アクセスを止める。再照会が非失効・不明なら古い通知証拠を消して解除する。Workerが停止しても10分のlease切れ後、scheduled maintenanceが削除前fenceだけを解除・証拠無効化する。物理削除の権限や実行経路はまだない。将来`begin()`を呼ぶ前には`CLEANUP_ENABLED`とscheduled triggerが動作し、最初の不可逆操作より前に`fenced`から別状態へ遷移することが必須。ローカル型検査、保管サービス140試験、合成migration試験、独立安全レビューを通過。Workerコードは未配備・本線未反映。
+
+2026-09-24 JST、保管専用 **staging** D1（`955a8530-9015-486c-8d0c-1b5a2c5b6d4f`）へ0012を適用。事前Time Travel bookmarkは `0000000b-00000000-000050ef-439271be4b66aa56d22c0a3a03b79e10`。事前owner/record/retention/contact/submission/credentialは全て0。適用後は未適用migration 0、`purge_fence_id`・`lease_expires_at`列各1、owner/record/fence 0を確認。本番DBやWorker配備は未変更。
 
 同ブランチでR2一次写真のowner限定 `listOwnerPhotoPage` も追加。R2が上限より少ない件数を返しても `truncated` とcursorで継続し、異なるowner・順序逆転・不正キーを拒否する。現時点では読み取り候補のみで、実R2の棚卸し・D1参照やS3版との全件照合は未実施。
 
