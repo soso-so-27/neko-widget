@@ -23,6 +23,8 @@
 
 実環境に進むための利用者操作は、請求方法を設定したAWSアカウントの作成と、rootへのMFA設定まで。rootのアクセスキーは作らず、認証情報をチャットに貼らない。アカウント作成後、こちらで日常作業用の限定権限・鍵・S3 bucketの構成を提案し、実環境の権限と費用を確認する。AWS公式の[アカウント設定](https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started-account-iam.html)と[rootの保護](https://docs.aws.amazon.com/IAM/latest/UserGuide/root-user-best-practices.html)を根拠とする。Cloudflareは現行Wrangler OAuthが`workers_scripts (write)`/`d1 (write)`のみでR2操作が拒否された。`workers:write`を含む権限更新の承認が必要。2026-09-24のOAuth再試行は承認コード待ちで時間切れとなり、権限は未更新。ユーザーがPCで承認できる時にのみ再試行する。
 
+AWSの[現行アカウントプラン](https://docs.aws.amazon.com/en_en/awsaccountbilling/latest/aboutv2/free-tier-plans.html)ではFreeプランが6か月またはクレジット消尽時に終了し、未アップグレードだとアカウントが閉じデータへのアクセスを失う。12か月持ち出し期間の独立復旧コピーを本番運用するにはPaidプランが必要。新規AWSアカウントを最初からPaidにするか、検証後・本番前にPaidへ切り替えるか利用者判断待ち。無料枠やクレジットを「12か月の保全保証」として扱わない。
+
 S3の版付き暗号文の転送・SHA-256照合・指定版読出しの候補を追加したが、現行の保存APIには未接続。版管理だけでは削除権限やlifecycleによる版消去を防げないため、書込主体と消去主体のIAM分離、bucket policy、lifecycle、Object Lockの利用有無・消去可能時期を実アカウントで検証するまで保管完了の証拠としない。Object Lockの保持期間が利用者への削除約束と衝突しないことも条件。
 
 次の別ブランチで、S3の所有者prefix内にある旧versionとdelete markerを読み取る `listOwnerVersionsPage` を追加。レスポンスのbucket/prefix、ページ継続マーカー、同一keyのversion継続、版ID・件数を検証し、不正/欠落は503で拒否する。独立レビューで見つかった2件のページ欠落可能性を修正し、型検査・対象6件・保管サービス全131件・合成ownerのmigration試験に成功。これは**読み取り専用の1ページ**で、全件一覧、R2/D1照合、書込fence、物理削除、実AWSの確認ではない。版一覧の途中に書込が起きない条件と、全ページ後の再照合がない限り、消去可能と判定しない。
