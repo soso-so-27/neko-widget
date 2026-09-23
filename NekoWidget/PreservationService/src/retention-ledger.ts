@@ -7,7 +7,7 @@ const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const receiptPattern = /^[A-Za-z0-9._:-]{16,256}$/u;
 type Row = { owner_id: string; revision: number; episode: number; verified_status: VerifiedMembershipStatus;
   checked_at: number; expired_at: number | null; due_at: number | null; paused_at: number | null;
-  final_notice_delivered_at: number | null; final_notice_receipt: string | null };
+  notice_not_before_at: number; final_notice_delivered_at: number | null; final_notice_receipt: string | null };
 export type RetentionState = { ownerId: string; revision: number; episode: number;
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
@@ -85,31 +85,34 @@ export class RetentionLedger {
       let expiredAt = current.expired_at;
       let dueAt = current.due_at;
       let pausedAt = current.paused_at;
+      let noticeNotBeforeAt = current.notice_not_before_at;
       let noticeAt = current.final_notice_delivered_at;
       let receipt = current.final_notice_receipt;
       if (status === 'active' || status === 'grace') {
-        expiredAt = null; dueAt = null; pausedAt = null; noticeAt = null; receipt = null;
+        expiredAt = null; dueAt = null; pausedAt = null; noticeNotBeforeAt = 0; noticeAt = null; receipt = null;
       } else if (status === 'expired') {
         if (expiredAt === null) {
           episode += 1; expiredAt = observedAt; dueAt = nextYear(observedAt);
-          pausedAt = null; noticeAt = null; receipt = null;
+          pausedAt = null; noticeNotBeforeAt = observedAt; noticeAt = null; receipt = null;
         } else if (pausedAt !== null) {
           if (dueAt === null || observedAt < pausedAt) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
           dueAt = clock(dueAt + observedAt - pausedAt); pausedAt = null;
+          noticeNotBeforeAt = observedAt;
         }
       } else if (expiredAt !== null) {
         // An outage may last longer than the original notice window. Require
         // a fresh delivery after billing can be verified again.
         noticeAt = null; receipt = null;
         if (pausedAt === null) pausedAt = observedAt;
+        noticeNotBeforeAt = observedAt;
       }
       const result = await this.db.prepare(`UPDATE pa_retention SET revision=revision+1, episode=?,
         verified_status=?,checked_at=?,expired_at=?,due_at=?,paused_at=?,
-        final_notice_delivered_at=?,final_notice_receipt=?
+        notice_not_before_at=?,final_notice_delivered_at=?,final_notice_receipt=?
         WHERE owner_id=? AND revision=? AND EXISTS
         (SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0)`)
         .bind(episode, status, observedAt, expiredAt, dueAt, pausedAt,
-          noticeAt, receipt, ownerId, current.revision, ownerId).run();
+          noticeNotBeforeAt, noticeAt, receipt, ownerId, current.revision, ownerId).run();
       if (result.meta.changes === 1) return view(await this.read(ownerId));
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
@@ -125,7 +128,7 @@ export class RetentionLedger {
       const current = await this.read(ownerId);
       if (current.episode !== episode || current.expired_at === null || current.due_at === null
           || current.verified_status !== 'expired' || current.paused_at !== null
-          || deliveredAt < current.expired_at) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+          || deliveredAt < current.notice_not_before_at) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (current.final_notice_delivered_at !== null) {
         if (current.final_notice_delivered_at === deliveredAt && current.final_notice_receipt === providerReceipt) {
           return view(current);

@@ -65,11 +65,16 @@ describe('twelve-month preservation export period', () => {
     const f = await fixture();
     const first = await f.ledger.observe(f.ownerId, 'expired');
     f.later(2 * day);
-    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'mail-provider-receipt-123');
+    const oldNoticeAt = f.now();
+    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, oldNoticeAt, 'mail-provider-receipt-123');
     f.later(day);
     expect((await f.ledger.observe(f.ownerId, 'unknown')).finalNoticeDeliveredAt).toBeNull();
     f.at(first.dueAt! + 2 * day);
     expect((await f.ledger.observe(f.ownerId, 'expired')).finalNoticeDeliveredAt).toBeNull();
+    await expect(f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
+      oldNoticeAt, 'mail-provider-receipt-123')).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    expect((await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
+      f.now(), 'mail-provider-receipt-456')).finalNoticeDeliveredAt).toBe(f.now());
     expect(await f.ledger.eligibleAfterFreshCheck(f.ownerId, 'expired')).toBe(false);
   });
 
