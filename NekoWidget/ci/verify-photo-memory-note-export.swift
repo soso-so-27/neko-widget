@@ -1,10 +1,17 @@
 import Foundation
 import ImageIO
 import CoreGraphics
+import CryptoKit
 
 // xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift \
 //   NekoWidget/Services/PhotoMemoryNoteExporter.swift ci/verify-photo-memory-note-export.swift \
 //   -o /tmp/verify-photo-memory-note-export && /tmp/verify-photo-memory-note-export
+private actor BulkExportProgressProbe {
+    var values: [Int] = []
+    func add(_ value: Int) { values.append(value) }
+    func all() -> [Int] { values }
+}
+
 @main
 enum PhotoMemoryNoteExportVerifier {
     static func main() async throws {
@@ -89,7 +96,93 @@ enum PhotoMemoryNoteExportVerifier {
         try second.cleanup()
         try require(try contents(exportRoot).isEmpty, "completed export cleanup left temporary files")
         try await verifyArchiveExport(root: root, date: date)
+        try await verifyBulkArchive(root: root, date: date)
         print("Photo memory note export: PASS (local notes and archived JPEG/text, private-field isolation, bounds, failure/cancellation, cleanup)")
+    }
+
+    private static func verifyBulkArchive(root: URL, date: Date) async throws {
+        let jpeg = try jpegFixture()
+        let photoID = UUID(uuidString: "a1223334-5556-4788-9990-aabbccddeeff")!
+        let memoID = UUID(uuidString: "b1223334-5556-4788-9990-aabbccddeeff")!
+        let records = [
+            PhotoMemoryNoteBulkEntry(recordID: photoID, revision: 2,
+                text: "窓辺でお昼寝", capturedAt: date, writtenAt: date,
+                updatedAt: date, catNames: ["ミケ"], jpegData: jpeg),
+            PhotoMemoryNoteBulkEntry(recordID: memoID, revision: 1,
+                text: "はじめてのメモ", capturedAt: nil, writtenAt: nil,
+                updatedAt: date, catNames: [], jpegData: nil)
+        ]
+        let progress = BulkExportProgressProbe()
+        let bundle = try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: records.count,
+            fetch: { records[$0] }, progress: { count, total in
+                if total == records.count { await progress.add(count) }
+            }, temporaryDirectory: root)
+        let progressValues = await progress.all()
+        try require(progressValues == [1, 2], "bulk progress skipped a record")
+        let photoPrefix = "records/" + photoID.uuidString.lowercased() + "/"
+        let memoPrefix = "records/" + memoID.uuidString.lowercased() + "/"
+        let manifest = try unzipMember(bundle.fileURL, "manifest.json")
+        guard let manifestDocument = try JSONSerialization.jsonObject(with: manifest) as? [String: Any],
+              let entries = manifestDocument["records"] as? [[String: Any]] else {
+            throw Failure.failed("bulk manifest is unreadable")
+        }
+        try require(manifestDocument["formatVersion"] as? Int == 1 && manifestDocument["recordCount"] as? Int == 2
+                    && entries.count == 2, "bulk manifest count is wrong")
+        try require(entries[0]["recordID"] as? String == photoID.uuidString &&
+                    entries[0]["photoFile"] as? String == photoPrefix + "photo.jpg" &&
+                    entries[1]["recordID"] as? String == memoID.uuidString &&
+                    entries[1]["photoFile"] is NSNull, "bulk manifest lost photo association")
+        let expectedHash = SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined()
+        try require(entries[0]["photoSHA256"] as? String == expectedHash &&
+                    unzipMember(bundle.fileURL, photoPrefix + "photo.jpg") == jpeg,
+                    "bulk photo bytes or digest changed")
+        let photoText = try unzipMember(bundle.fileURL, photoPrefix + "memory.txt")
+        let memoText = try unzipMember(bundle.fileURL, memoPrefix + "memory.txt")
+        try require(String(data: photoText, encoding: .utf8)?.contains("窓辺でお昼寝") == true &&
+                    String(data: memoText, encoding: .utf8)?.contains("はじめてのメモ") == true,
+                    "bulk text and manifest do not match")
+        try require(try bundle.fileURL.deletingLastPathComponent()
+            .resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true,
+                    "bulk output permits backup")
+        let exportRoot = root.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
+        let before = try contents(exportRoot)
+        do {
+            _ = try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: 2,
+                fetch: { index in
+                    if index == 1 { throw PhotoMemoryNoteExportError.invalidMetadata }
+                    return records[index]
+                }, temporaryDirectory: root)
+            throw Failure.failed("partial bulk export was shareable")
+        } catch let error as PhotoMemoryNoteExportError where error == .invalidMetadata { }
+        try require(try contents(exportRoot) == before, "failed bulk export left a partial ZIP")
+        let cancelled = Task<PhotoMemoryNoteExportPayload, Error> {
+            try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: 2,
+                fetch: { index in
+                    if index == 1 { withUnsafeCurrentTask { $0?.cancel() } }
+                    return records[index]
+                }, temporaryDirectory: root)
+        }
+        do {
+            let unexpected = try await cancelled.value
+            try unexpected.cleanup()
+            throw Failure.failed("cancelled bulk export was shareable")
+        } catch is CancellationError { }
+        try require(try contents(exportRoot) == before, "cancelled bulk export left a partial ZIP")
+        try bundle.cleanup()
+    }
+
+    private static func unzipMember(_ archive: URL, _ name: String) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-p", archive.path, name]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let bytes = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        try require(process.terminationStatus == 0, "system unzip rejected a ZIP64 member")
+        return bytes
     }
 
     private static func verifyArchiveExport(root: URL, date: Date) async throws {

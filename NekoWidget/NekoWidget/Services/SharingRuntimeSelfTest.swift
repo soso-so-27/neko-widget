@@ -9772,6 +9772,46 @@ actor SharingRuntimeSelfTestRunner {
         try await finish()
         guard checks == 2, exporter.payload == nil, try files() == before,
               snapshot.document == document else { throw ManagedPreservationError.interrupted }
+
+        // A real paginated client path, using an isolated synthetic transport,
+        // must export without a paid membership and clean up on owner change.
+        let fixture = try PreservationNativeFixture.make()
+        defer { try? fixture.cleanup() }
+        checks = 0
+        ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter,
+            validate: { checks += 1 }, progress: { _, _ in })
+        try await finish()
+        // Bulk verification checks identity once before export, then on both
+        // sides of the final inventory-generation request.
+        guard checks == 3, let bulk = exporter.payload,
+              try Data(contentsOf: bulk.fileURL).range(of: Data("manifest.json".utf8)) != nil else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        exporter.finishSharing(bulk)
+        guard try files() == before else { throw ManagedPreservationError.secureStorage }
+
+        checks = 0
+        ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter,
+            validate: {
+                checks += 1
+                if checks == 2 { throw ManagedPreservationError.staleSession }
+            }, progress: { _, _ in })
+        try await finish()
+        guard checks == 2, exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
+
+        // A session can change and return to the same owner between requests.
+        // Owner-only checks must not allow that archive to reach the share sheet.
+        let changed = try PreservationNativeFixture.make()
+        defer { try? changed.cleanup() }
+        let changedClient = changed.client
+        ManagedPreservationExport.prepareAll(client: changedClient, using: exporter,
+            validate: {}, progress: { completed, _ in
+                if completed == 1 { await changedClient.cancelSignIn() }
+            })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
     }
 
     @MainActor

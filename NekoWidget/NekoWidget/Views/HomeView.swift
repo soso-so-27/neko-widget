@@ -12,6 +12,7 @@ enum PhotoLibraryReadingPosition {
         return .standard
     }()
     static var activeSection: String?
+    static let returnToPhotoNotification = Notification.Name("PhotoLibraryReturnToOpenedPhoto")
 
 #if DEBUG
     static var diagnosticEvents: [String] = []
@@ -20,7 +21,9 @@ enum PhotoLibraryReadingPosition {
     static func diagnose(_ event: String) {
 #if DEBUG
         guard ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
-        diagnosticEvents.append(event.replacingOccurrences(of: "app-store-screenshot-fixture-page-", with: "p"))
+        let compact = event.replacingOccurrences(of: "app-store-screenshot-fixture-page-", with: "p")
+        diagnosticEvents.append(compact)
+        print("[PhotoLibraryPosition] \(compact)")
         diagnosticEvents = Array(diagnosticEvents.suffix(80))
         // The native scroll binding can run inside a layout transaction.
         // Publish test diagnostics after that transaction, never mutate its ancestor.
@@ -40,6 +43,12 @@ enum PhotoLibraryReadingPosition {
         diagnose("save \(section): \(defaults.string(forKey: key) ?? "nil") -> \(identifier ?? "nil")")
         if let identifier { defaults.set(identifier, forKey: key) }
         else { defaults.removeObject(forKey: key) }
+    }
+
+    static func returnToOpenedPhoto(_ identifier: String) {
+        diagnose("return to \(identifier)")
+        save(identifier, section: "all")
+        NotificationCenter.default.post(name: returnToPhotoNotification, object: identifier)
     }
 }
 
@@ -135,6 +144,20 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
                         userScrolled = false
                         position = saved
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: PhotoLibraryReadingPosition.returnToPhotoNotification)) { notification in
+                    guard section == "all", let identifier = notification.object as? String else { return }
+                    // Navigation's final layout may update the scroll binding
+                    // after the destination disappears. Reissue the exact row
+                    // once the root list is laid out, without treating it as a
+                    // user drag or persisting that transient position.
+                    userScrolled = false
+                    position = nil
+                    PhotoLibraryReadingPosition.diagnose("restore return \(identifier)")
+                    DispatchQueue.main.async {
+                        position = normalize(identifier)
                     }
                 }
         } else {
