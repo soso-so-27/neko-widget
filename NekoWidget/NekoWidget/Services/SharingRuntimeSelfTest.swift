@@ -9923,6 +9923,24 @@ actor SharingRuntimeSelfTestRunner {
         let lostCounts = await lost.server.counts()
         guard lostCounts.completes == 1, lostCounts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
 
+        // Linking must invalidate an already displayed "unlinked" carry-out
+        // snapshot instead of leaving a known-false status on the screen.
+        let linking = try PreservationNativeFixture.make(); defer { try? linking.cleanup() }
+        let linkingUI = ManagedPreservationCoordinator(configuration: linking.configuration, client: linking.client)
+        func settleLink() async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while linkingUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !linkingUI.isBusy else { throw ManagedPreservationError.interrupted }
+        }
+        linkingUI.start(); try await settleLink()
+        linkingUI.checkRetention(); try await settleLink()
+        guard linkingUI.retention?.status == .unlinked else { throw ManagedPreservationError.invalidResponse }
+        linkingUI.connectMembership(consent: true); try await settleLink()
+        guard linkingUI.membership?.linked == true, linkingUI.retention == nil else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        linkingUI.stop()
+
         // Eligibility can change after the screen check. The server remains
         // authoritative, and a rejected save must clear stale positive UI state.
         let rejected = try PreservationNativeFixture.make(.saveRejected); defer { try? rejected.cleanup() }

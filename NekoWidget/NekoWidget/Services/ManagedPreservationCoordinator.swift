@@ -242,6 +242,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func checkMembership() {
         guard isSignedIn, !isBusy else { return }
         membership = nil; membershipMessage = nil
+        retention = nil
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             let result = try await self.client.membership()
@@ -284,6 +285,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let result = try await self.client.linkMembership(consent: true)
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.membership = result; self.membershipMessage = nil
+            self.retention = nil
             self.statusMessage = "会員情報を接続しました。購入や写真の送信は行っていません。"
         }
     }
