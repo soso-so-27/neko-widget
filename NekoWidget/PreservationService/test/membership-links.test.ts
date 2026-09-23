@@ -6,6 +6,7 @@ import { MembershipLinks } from '../src/membership-links';
 import { type BillingLinkAuthority, type BillingProof, type MembershipStatus } from '../src/billing-link-protocol';
 import { boundBillingAuthority } from '../src/providers';
 import { ArchiveStore } from '../src/storage';
+import { RetentionLedger } from '../src/retention-ledger';
 import { route } from '../src/index';
 const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const proof: BillingProof = { billingKeyId: 'a'.repeat(22), nonce: 'b'.repeat(22), signature: 'c'.repeat(86), timestamp: '1800000000' };
@@ -18,7 +19,8 @@ async function fixture() {
   const user = await auth.establish(identity); const account = crypto.randomUUID();
   const authority: BillingLinkAuthority = { verify: vi.fn(async () => {}), status: vi.fn(async () => membership) };
   const links = new MembershipLinks({ db, auth, authority, audience: 'local-preservation-v1', now: () => now });
-  const services = { auth, membership: links, verifier: { verifyNativeAuthorization: async () => identity },
+  const services = { auth, membership: links, retention: new RetentionLedger(db, () => now),
+    verifier: { verifyNativeAuthorization: async () => identity },
     archive: new ArchiveStore({ db, bucket, keys, auth, now: () => now, membership: links,
       quotaBytes: 1_000_000, maximumRecords: 100, photos: { validateJPEG: async () => true } }) };
   const request = async (path: string, method: string, body?: unknown, token = user.token) => route(new Request(`https://local.invalid${path}`, {
@@ -33,6 +35,36 @@ async function fixture() {
     advance: (ms: number) => { now += ms; }, status: (value: MembershipStatus) => { membership = value; } };
 }
 describe('two-proof preservation membership link', () => {
+  it('shows only the signed-in owner retention window and pauses it on billing failure', async () => {
+    const f = await fixture();
+    const { retention: _disabled, ...withoutRetention } = f.services;
+    await expect(route(new Request('https://local.invalid/v1/retention', {
+      headers: { authorization: `Bearer ${f.user.token}` },
+    }), withoutRetention)).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    expect(await (await f.request('/v1/retention', 'GET')).json()).toEqual({
+      version: 1, status: 'unlinked', dueAt: null, paused: false,
+    });
+    await f.link();
+    expect(await (await f.request('/v1/retention', 'GET')).json()).toMatchObject({
+      version: 1, status: 'active', dueAt: null, paused: false,
+    });
+    f.advance(1000);
+    f.status('expired');
+    const expired = await (await f.request('/v1/retention', 'GET')).json() as { dueAt: number; status: string };
+    expect(expired.status).toBe('expired');
+    expect(expired.dueAt).toBe(Date.UTC(2027, 8, 22) + 1000);
+    f.advance(1000);
+    vi.mocked(f.authority.status).mockRejectedValueOnce(new Error('billing unavailable'));
+    expect(await (await f.request('/v1/retention', 'GET')).json()).toMatchObject({
+      version: 1, status: 'unknown', dueAt: expired.dueAt, paused: true,
+    });
+    const other = await f.auth.establish({ ...f.identity, subject: randomToken() });
+    expect(await (await f.request('/v1/retention', 'GET', undefined, other.token)).json()).toEqual({
+      version: 1, status: 'unlinked', dueAt: null, paused: false,
+    });
+    await expect(f.request('/v1/retention', 'GET', undefined, randomToken()))
+      .rejects.toMatchObject({ code: 'unauthorized' });
+  });
   it('does not grant from an account ID; routes bind owner/session and hide billing ID in status', async () => {
     const f = await fixture();
     expect(await f.links.status(f.user.ownerId)).toBe('unknown');

@@ -25,6 +25,12 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
+## 期限切れ後の持ち出し時計（既定OFF）
+
+`RETENTION_TRACKING_ENABLED=YES` のときに限り、本人の保管sessionで `GET /v1/retention` を使えます。未リンクなら `status: "unlinked"`、リンク済みなら検証した `active` / `grace` / `expired` / `unknown`、予定日 `dueAt`（Unixミリ秒またはnull）、`paused`、最終通知の配達時刻を返します。請求照会失敗は `unknown` として時計を停止し、別のownerの指定や照会は受け付けません。`PRESERVATION_ENABLED` も必要で、通常運用は両方OFFです。
+
+これは12か月の閲覧・持ち出し時計と本人向け状態照会の土台です。通知先、実配送、一次/復旧コピーの最終消去、別端末復元は未実装・未実証であり、このAPIの存在をもって消去予定やバックアップを利用者へ約束しません。[安全条件](../../handoffs/2026-09-23-preservation-retention-ledger.md)を参照してください。
+
 ## 使用量の確認
 
 本人の保管sessionで `GET /v1/usage`。query・所有者ID指定は不可、`Cache-Control: no-store`。会員資格・鍵の復号・写真ダウンロードには依存しない読み取りAPIです（本人の有効sessionとサービスの構成は必要）。アプリ表示への接続は別バッチです。

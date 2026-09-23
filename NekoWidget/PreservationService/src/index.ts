@@ -18,7 +18,8 @@ export interface Env {
   MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
   REQUEST_LIMITER?: RateLimit;
 }
-export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier; membership?: MembershipLinks; }
+export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  membership?: MembershipLinks; retention?: RetentionLedger; }
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const string = (value: unknown) => {
@@ -66,6 +67,22 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (request.method === 'GET' && path === '/v1/retention') {
+    if (!services.membership || !services.retention) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    const session = await services.auth.requireSession(token);
+    const membership = await services.membership.statusForRetention(session.ownerId);
+    if (!membership.linked) {
+      await services.auth.requireSession(token);
+      return response({ version: 1, status: 'unlinked', dueAt: null, paused: false });
+    }
+    const state = await services.retention.observe(session.ownerId, membership.status);
+    const current = await services.auth.requireSession(token);
+    if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
+      throw new ServiceError('SESSION_INVALID', 401);
+    }
+    return response({ version: 1, status: state.status, dueAt: state.dueAt, paused: state.pausedAt !== null,
+      finalNoticeDeliveredAt: state.finalNoticeDeliveredAt });
+  }
   if (request.method === 'GET' && path === '/v1/usage') {
     return response(await services.archive.usage(token));
   }
@@ -129,7 +146,8 @@ function configuredServices(env: Env): Services {
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS) });
-  return { auth, archive, verifier, membership };
+  const retention = env.RETENTION_TRACKING_ENABLED === 'YES' ? new RetentionLedger(env.DB, now) : undefined;
+  return { auth, archive, verifier, membership, ...(retention ? { retention } : {}) };
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
