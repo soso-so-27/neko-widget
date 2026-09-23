@@ -27,6 +27,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 `src/s3-recovery-copy.ts` は独立復旧先の候補で、暗号化済みobjectの版付き書込／チェックサム照合／指定版の読出しと、owner prefix内の全版・削除マーカーを調べる読み取り専用のページAPIを持つ。ページ送りには `s3:ListBucketVersions` 権限が必要。**現行の保存APIには未接続**で、owner・認証情報・記録・削除台帳の整合した復元や実AWS書込の証拠ではない。一つの一覧ページや一覧終了は削除許可でも全件消去の証明でもない。一次DB/R2との照合、ownerの書込停止、全ページ走査、版ごとの削除と再走査が必要。S3のversioningだけは削除不能性を保証しない。書込主体から `DeleteObjectVersion` 権限を外し、専用の消去主体と分離し、bucket policy・lifecycle・Object Lockの有無と保持期間を実アカウントで確認する。Object Lockを使う場合は期限後消去や本人削除を妨げない設定が必要。単にバケットでversioningを有効化しただけで「独立バックアップ完成」と表示しない。[S3の全版一覧](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html)、[S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)、[版別削除](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html)。
 
+`src/owner-photo-inventory.ts` はR2の一次写真をowner prefixだけで読み取るページAPI。1ページが1000件未満でも `truncated` が真なら継続し、owner・キー形式・順序・継続cursorを検査する。DB参照と独立S3版一覧との照合・書込停止・実R2での確認は未実装。単独のR2一覧結果を「全件消去」の証明に使わない。[R2 Workers APIのlist仕様](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)参照。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
