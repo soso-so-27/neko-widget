@@ -9781,7 +9781,9 @@ actor SharingRuntimeSelfTestRunner {
         ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter,
             validate: { checks += 1 }, progress: { _, _ in })
         try await finish()
-        guard checks == 2, let bulk = exporter.payload,
+        // Bulk verification checks identity once before export, then on both
+        // sides of the final inventory-generation request.
+        guard checks == 3, let bulk = exporter.payload,
               try Data(contentsOf: bulk.fileURL).range(of: Data("manifest.json".utf8)) != nil else {
             throw ManagedPreservationError.invalidRecord
         }
