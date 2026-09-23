@@ -102,7 +102,15 @@ struct ManagedPreservationView: View {
             if coordinator.isBusy {
                 Section { ProgressView("保管先に確認しています…") }
             }
-            if exporter.preparing { Section { ProgressView("書き出しを準備しています…") } }
+            if exporter.preparing {
+                Section {
+                    ProgressView("書き出しを準備しています…")
+                    if let progress = coordinator.exportProgress, progress.total > 0 {
+                        Text("\(progress.completed) / \(progress.total) 件")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
             if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
             if let warning = coordinator.draftRecoveryWarning {
                 Section { Text(warning).foregroundStyle(.red) }
@@ -269,6 +277,10 @@ struct ManagedPreservationView: View {
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }
+            if coordinator.canExport && !coordinator.records.isEmpty {
+                Button("保管した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
+                    .accessibilityIdentifier("preservation-export-all")
+            }
         } header: { Text("保管したコピー") }
     }
 

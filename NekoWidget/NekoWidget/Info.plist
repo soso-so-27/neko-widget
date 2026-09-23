@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>見せる画面を閉じて自分の写真に戻るとき、本人確認に使用します。</string>
 	<key>MembershipAccessEnforced</key>
 	<false/>
 	<key>PersonalArchiveEnabled</key>
