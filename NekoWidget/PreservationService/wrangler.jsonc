@@ -28,6 +28,11 @@
       "r2_buckets": [{
         "binding": "ARCHIVE",
         "bucket_name": "neko-preservation-staging-private"
+      }],
+      "services": [{
+        "binding": "PHOTO_VALIDATOR",
+        "service": "neko-preservation-jpeg-disabled",
+        "entrypoint": "JPEGValidationService"
       }]
     }
   }
