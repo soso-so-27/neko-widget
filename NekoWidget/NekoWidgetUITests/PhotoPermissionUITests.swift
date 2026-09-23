@@ -1449,12 +1449,15 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         func tap(_ identifier: String, towardBottom: Bool = false) {
             let button = app.buttons.matching(identifier: identifier).firstMatch
-            XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
-            // Membership actions stay near the top; the record is below the
-            // capacity section. Moving in the wrong direction hid the button.
-            for _ in 0..<8 where !button.isHittable {
-                if towardBottom { app.swipeUp() } else { app.swipeDown() }
+            // List rows below the viewport are virtualized. Scroll before
+            // requiring the export action to exist in the accessibility tree.
+            if towardBottom {
+                for _ in 0..<8 where !button.isHittable { app.swipeUp() }
+            } else {
+                XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
+                for _ in 0..<8 where !button.isHittable { app.swipeDown() }
             }
+            XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
             let ready = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, identifier)
@@ -2278,6 +2281,9 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--app-store-screenshot-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"
+        // Other UI methods also save the photo-list position. This scenario
+        // must start with its own empty reading history.
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "PhotoPagingUITest.\(UUID().uuidString)"
         app.launch()
         openPhotosTab(in: app)
         let grid = element("photo-hub-detected-grid", in: app)
@@ -2291,7 +2297,10 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["\(number) / 50"].waitForExistence(timeout: 10))
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(target.waitForExistence(timeout: 10))
-            XCTAssertTrue(target.isHittable, "Returning preserves the opened row")
+            let returnedToRow = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hittable == true"), object: target)
+            XCTAssertEqual(XCTWaiter.wait(for: [returnedToRow], timeout: 5), .completed,
+                           "Returning preserves the opened row")
         }
         XCTAssertFalse(app.buttons["もっと見る"].exists)
         capture("photo-grid-scrolled-to-last-batch")
