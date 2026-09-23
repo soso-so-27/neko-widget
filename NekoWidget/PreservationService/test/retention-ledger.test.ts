@@ -16,6 +16,31 @@ async function fixture(start = Date.UTC(2026, 8, 23, 12)) {
 const day = 24 * 60 * 60 * 1000;
 
 describe('twelve-month preservation export period', () => {
+  it('rotates advisory expiry review past ineligible owners without granting deletion', async () => {
+    const f = await fixture();
+    const g = await fixture();
+    const h = await fixture();
+    const first = await f.ledger.observe(f.ownerId, 'expired');
+    await f.ledger.observe(g.ownerId, 'expired');
+    await f.ledger.observe(h.ownerId, 'expired');
+    f.at(first.dueAt! - 45 * day);
+    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'synthetic-delivery-receipt-f');
+    await f.ledger.markFinalNoticeDelivered(h.ownerId, first.episode, f.now(), 'synthetic-delivery-receipt-h');
+    // The oldest owner without a receipt cannot hold the one-item cursor.
+    f.at(first.dueAt!);
+    const expected = [f.ownerId, h.ownerId].sort();
+    expect((await f.ledger.nextExpiryReviewCandidates(1)).map(item => item.ownerId)).toEqual([expected[0]]);
+    expect((await f.ledger.nextExpiryReviewCandidates(1)).map(item => item.ownerId)).toEqual([expected[1]]);
+    expect((await f.ledger.nextExpiryReviewCandidates(1)).map(item => item.ownerId)).toEqual([expected[0]]);
+    f.later(1);
+    await f.ledger.observe(expected[0]!, 'active');
+    expect((await f.ledger.nextExpiryReviewCandidates(1)).map(item => item.ownerId)).toEqual([expected[1]]);
+    await expect(f.ledger.nextExpiryReviewCandidates(101))
+      .rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    await db.prepare("UPDATE pa_expiry_review_cursor SET owner_id='invalid' WHERE id=1").run();
+    await expect(f.ledger.nextExpiryReviewCandidates(1))
+      .rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+  });
   it('lists only fresh, verified, unnotified expiry episodes for notice review', async () => {
     const f = await fixture();
     const other = await fixture();

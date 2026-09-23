@@ -14,6 +14,8 @@
 - 次の候補では、期限後の正確な保持台帳版、復号した現在のApple連絡先、同一ownerに閉じた宛先照合値、配送イベントIDと提出行、30日以上の猶予を読み取り専用で再照合する経路を追加中。これ単体は削除許可ではなく、外部の新鮮な課金照会、一次・独立復旧コピーの完全inventory、owner fence、冪等消去台帳は依然として必要。
 - 送達台帳の旧v1宛先照合値はowner間で同じアドレスを関連付け得るうえ、旧行の `provider_accepted_at` が欠け得る。`0010_notice_evidence_version.sql` は旧v1の照合値をランダム値に置き換え、既存の最終送達receiptを取り消して再通知を要求する。旧行・旧claimは監査用に残すがv2の送達証拠には使わない。移行前に実owner数と復元位置を記録し、実送信の有効化前にstageで構造確認する。
 - 2026-09-24 JST、保管専用 **staging** D1へ0010を適用。事前bookmark `00000009-00000000-000050ef-bffd9fc126ff9e3b3e404268d578b426`、事前owner/record/submission/claimは全て0。適用後の未適用migration 0、`evidence_version`列1、v2書込guard 4、旧receipt再昇格guard 1、owner/record 0を確認。旧形式の合成ownerを用いたNode SQLite移行試験と保管サービス124試験、独立レビューは成功。本番DBやWorker配備は未変更。
+- `0011_expiry_review_cursor.sql` は削除許可を持たないowner単位の巡回位置と期限用indexを追加する。古い不適格ownerを飛ばして次の候補へ進み、最後まで進むと先頭へ戻る。候補の各件は課金・送達・連絡先・コピー・fenceの再照合が依然として必須。ローカル型検査と保管サービス125試験に成功。
+- 2026-09-24 JST、専用 **staging** D1へ0011を適用。事前bookmark `0000000a-00000002-000050ef-52b0a6a521331e083a9bc337cbbe35f5`、事前owner/record/submission/claimは全て0。適用後は未適用migration 0、初期cursor行1・index 1・owner/record 0を確認。本番DBやWorker配備は未変更。
 
 ## 保存完了と復旧の提案（利用者判断待ち）
 

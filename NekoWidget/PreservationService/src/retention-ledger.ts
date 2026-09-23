@@ -16,6 +16,8 @@ export type RetentionState = { ownerId: string; revision: number; episode: numbe
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
 export type NoticeReviewCandidate = { ownerId: string; episode: number; revision: number; dueAt: number };
+/** An advisory scan item, never proof of current billing or delivery. */
+export type ExpiryScanCandidate = NoticeReviewCandidate;
 /** Read-only review token. This is not permission to erase any copy. */
 export type ExpiryReviewCandidate = NoticeReviewCandidate & { deliveredAt: number; deliveryEventId: string };
 export type NoticeScanCursor = { dueAt: number; ownerId: string };
@@ -95,6 +97,43 @@ export class RetentionLedger {
     if (last) await this.db.prepare(`UPDATE pa_notice_scan_cursor
       SET due_at=?,owner_id=? WHERE id=1`).bind(last.dueAt, last.ownerId).run();
     return candidates;
+  }
+
+  /** Bounded round-robin scan. An old, repeatedly ineligible owner cannot
+   * monopolize the scheduler. Every item still needs a fresh private-billing
+   * check and independent notice, contact, inventory and fence verification.
+   */
+  async nextExpiryReviewCandidates(limit = 20): Promise<ExpiryScanCandidate[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    }
+    const cursor = await this.db.prepare('SELECT due_at,owner_id FROM pa_expiry_review_cursor WHERE id=1')
+      .first<{ due_at: number; owner_id: string }>();
+    if (!cursor || !Number.isSafeInteger(cursor.due_at) || cursor.due_at < 0
+      || (cursor.owner_id !== '' && !ownerPattern.test(cursor.owner_id))) {
+      throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    }
+    const now = clock(this.now());
+    const scan = async (dueAt: number, ownerId: string) => this.db.prepare(`SELECT r.owner_id,r.episode,r.revision,r.due_at
+      FROM pa_retention r JOIN pa_owners o ON o.owner_id=r.owner_id
+      JOIN pa_membership_links l ON l.owner_id=r.owner_id
+      WHERE o.disabled=0 AND r.verified_status='expired' AND r.paused_at IS NULL
+        AND r.due_at IS NOT NULL AND r.due_at<=?
+        AND r.final_notice_delivered_at IS NOT NULL AND r.final_notice_receipt IS NOT NULL
+        AND r.final_notice_delivered_at<=?
+        AND (r.due_at>? OR (r.due_at=? AND r.owner_id>?))
+      ORDER BY r.due_at,r.owner_id LIMIT ?`)
+      .bind(now, Math.max(0, now - thirtyDays), dueAt, dueAt, ownerId, limit)
+      .all<{ owner_id: string; episode: number; revision: number; due_at: number }>();
+    let rows = (await scan(cursor.due_at, cursor.owner_id)).results;
+    if (rows.length === 0 && (cursor.due_at !== 0 || cursor.owner_id !== '')) {
+      rows = (await scan(0, '')).results;
+    }
+    const last = rows.at(-1);
+    if (last) await this.db.prepare('UPDATE pa_expiry_review_cursor SET due_at=?,owner_id=? WHERE id=1')
+      .bind(last.due_at, last.owner_id).run();
+    return rows.map(row => ({ ownerId: row.owner_id, episode: row.episode,
+      revision: row.revision, dueAt: row.due_at }));
   }
 
   /** Fair, bounded scan. A provider failure becomes an explicit pause, never an expiry. */
