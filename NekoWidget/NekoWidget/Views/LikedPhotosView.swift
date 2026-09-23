@@ -2247,6 +2247,7 @@ struct PhotoBrowserView: View {
     @Environment(\.openPhotoRelatedAlbum) private var openRelatedAlbum
     @Environment(\.closePhotoRelatedAlbums) private var closeRelatedAlbums
     @Environment(\.photoRediscoveryScope) private var rediscoveryScope
+    @Environment(\.showcaseOpenOne) private var showcaseOpenOne
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -2567,6 +2568,15 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if let showcaseOpenOne, let selectedPhoto {
+                        Button {
+                            showcaseOpenOne(selectedPhoto.localIdentifier)
+                        } label: {
+                            Label("この写真を見せる", systemImage: "eye")
+                        }
+                        .accessibilityIdentifier("photo-browser-showcase")
+                        Divider()
+                    }
                     if let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")

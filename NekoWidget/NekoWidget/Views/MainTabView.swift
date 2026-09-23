@@ -127,6 +127,11 @@ enum PhotosRoute: Hashable {
     case unavailableWidgetPhoto
 }
 
+private struct ShowcaseSession: Identifiable {
+    let id = UUID()
+    let currentPhotoIdentifier: String?
+}
+
 enum MemoriesRoute: Hashable {
     case favorites
     case memoryNotes
@@ -229,6 +234,11 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .memories
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    @StateObject private var showcaseStore = ShowcasePhotoStore()
+    @State private var showcaseSession: ShowcaseSession?
+    @State private var showsShowcasePreparation = false
+    @State private var showsCatPreparedness = false
+    @State private var manageShowcaseAfterClosing = false
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -308,6 +318,44 @@ struct MainTabView: View {
                         .accessibilityIdentifier("main-tab-windows")
                 }
                 .tag(AppTab.windows)
+            }
+        }
+        .environment(\.showcaseOpenOne, { identifier in
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier)
+        })
+        .fullScreenCover(item: $showcaseSession, onDismiss: {
+            if manageShowcaseAfterClosing {
+                manageShowcaseAfterClosing = false
+                showsShowcasePreparation = true
+            }
+        }) { session in
+            ShowcasePhotoView(
+                store: showcaseStore,
+                items: session.currentPhotoIdentifier.map { [.current($0)] }
+                    ?? showcaseStore.availableEntries.compactMap { entry in
+                        showcaseStore.imageURL(for: entry).map { .prepared(entry, $0) }
+                    },
+                onClose: { showcaseSession = nil },
+                onManage: session.currentPhotoIdentifier == nil ? {
+                    manageShowcaseAfterClosing = true
+                    showcaseSession = nil
+                } : nil
+            )
+        }
+        .sheet(isPresented: $showsShowcasePreparation) {
+            ShowcasePreparationView(store: showcaseStore, candidates: showcaseCandidates)
+        }
+        .sheet(isPresented: $showsCatPreparedness) {
+            NavigationStack {
+                CatPreparednessEntryView(
+                    profiles: catProfilesPresentation.profiles,
+                    unregisteredPhotos: catPhotos
+                )
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("閉じる") { showsCatPreparedness = false }
+                    }
+                }
             }
         }
         .sheet(isPresented: $showsSettings, onDismiss: {
@@ -427,12 +475,42 @@ struct MainTabView: View {
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("window-settings-button")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                if hasPhotoAccess {
+                    Button("見せる") {
+                        if showcaseStore.availableEntries.isEmpty {
+                            showsShowcasePreparation = true
+                        } else {
+                            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil)
+                        }
+                    }
+                    .accessibilityIdentifier("photos-showcase-open")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("迷子のとき", systemImage: "magnifyingglass") {
+                        showsCatPreparedness = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel("写真のその他の操作")
+                .accessibilityIdentifier("photos-more")
+            }
         }
         .task(id: canResolveInitialPhotoSection) {
             guard canResolveInitialPhotoSection else { return }
             let archiveStore = personalArchiveStore
                 ?? (PersonalArchiveStore.isConfigured ? PersonalArchiveStore.shared : nil)
             await photoLibrarySelection.resolveInitialSelection(noteStore: memoStore, archiveStore: archiveStore)
+        }
+    }
+
+    private var showcaseCandidates: [PhotoPresentation] {
+        var seen = Set<String>()
+        return (likedPhotos + catPhotos).filter {
+            seen.insert($0.localIdentifier).inserted
         }
     }
 

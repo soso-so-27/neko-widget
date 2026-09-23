@@ -150,6 +150,20 @@ struct CatProfileDetailView: View {
             }
 
             Section {
+                NavigationLink {
+                    CatPreparednessView(
+                        identityKey: profile.identifier,
+                        catName: profile.displayName,
+                        candidatePhotos: profile.confirmedPhotos
+                    )
+                } label: {
+                    Label("もしもの備え", systemImage: "pawprint")
+                }
+            } footer: {
+                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
+            }
+
+            Section {
                 Button {
                     showsLifeReferenceEditor = true
                 } label: {
@@ -176,7 +190,10 @@ struct CatProfileDetailView: View {
                         Task {
                             let deleted = await actions.deleteProfile(profile.identifier)
                             isDeleting = false
-                            if deleted { dismiss() } else { deleteFailed = true }
+                            if deleted {
+                                try? CatPreparednessStore.shared.delete(for: profile.identifier)
+                                dismiss()
+                            } else { deleteFailed = true }
                         }
                     }
                     Button("キャンセル") { showsDeleteConfirmation = false }

@@ -3,6 +3,11 @@ import Photos
 import SwiftUI
 import UIKit
 
+private struct WidgetShowcasePhoto: Identifiable {
+    let id = UUID()
+    let photoIdentifier: String
+}
+
 @MainActor
 struct AppRootView: View {
     @ObservedObject var viewModel: AppViewModel
@@ -22,11 +27,16 @@ struct AppRootView: View {
     @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var officialWindowPresentationID = UUID()
     @State private var onboardingScanErrorMessage: String?
+    @StateObject private var widgetShowcaseStore = ShowcasePhotoStore()
+    @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
+    @State private var mustUnlockAfterShowcase = ShowcaseSessionGuard.needsOwner
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
             Group {
-                if OnboardingPresentationPersistence.requiresPresentation(
+                if mustUnlockAfterShowcase {
+                    ShowcaseReturnGate { mustUnlockAfterShowcase = false }
+                } else if OnboardingPresentationPersistence.requiresPresentation(
                     completedVersion: onboardingCompletedVersion
                 ) {
                     onboardingContent
@@ -195,6 +205,17 @@ struct AppRootView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
                 }
+            }
+            .environment(\.showcaseOpenOne, { identifier in
+                widgetShowcasePhoto = WidgetShowcasePhoto(photoIdentifier: identifier)
+            })
+            .fullScreenCover(item: $widgetShowcasePhoto) { selected in
+                ShowcasePhotoView(
+                    store: widgetShowcaseStore,
+                    items: [.current(selected.photoIdentifier)],
+                    onClose: { widgetShowcasePhoto = nil },
+                    onManage: nil
+                )
             }
             .task {
                 // Refresh an App Intent's saved state in place; opening the

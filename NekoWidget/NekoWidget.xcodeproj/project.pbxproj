@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E02609230000000000000001 /* ShowcasePhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000002 /* ShowcasePhotoStore.swift */; };
+		E02609230000000000000003 /* ShowcasePhotoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000004 /* ShowcasePhotoView.swift */; };
+		E02609230000000000000005 /* CatPreparednessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000006 /* CatPreparednessStore.swift */; };
+		E02609230000000000000007 /* CatPreparednessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000008 /* CatPreparednessView.swift */; };
 		E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
 		E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
 		E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
@@ -263,6 +267,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E02609230000000000000002 /* ShowcasePhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePhotoStore.swift; sourceTree = "<group>"; };
+		E02609230000000000000004 /* ShowcasePhotoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePhotoView.swift; sourceTree = "<group>"; };
+		E02609230000000000000006 /* CatPreparednessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessStore.swift; sourceTree = "<group>"; };
+		E02609230000000000000008 /* CatPreparednessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessView.swift; sourceTree = "<group>"; };
 		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
@@ -707,6 +715,8 @@
 				F00000000000000000000245 /* CatSimilarityGroupingService.swift */,
 				F00000000000000000000249 /* PhotoBookPolicy.swift */,
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
+				E02609230000000000000002 /* ShowcasePhotoStore.swift */,
+				E02609230000000000000006 /* CatPreparednessStore.swift */,
 				F0000000000000000000024B /* CatIdentityExperimentCore.swift */,
 				F0000000000000000000024C /* CatIdentityExperimentService.swift */,
 				F0000000000000000000024D /* CatIdentityExperimentExporter.swift */,
@@ -763,6 +773,8 @@
 				A20300000000000000000204 /* ManagedPreservationView.swift */,
 				A19000000000000000000203 /* FamilyRecordView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
+				E02609230000000000000004 /* ShowcasePhotoView.swift */,
+				E02609230000000000000008 /* CatPreparednessView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
 				A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */,
@@ -1128,6 +1140,8 @@
 				100000000000000000000161 /* CatSimilarityReviewCoordinatorView.swift in Sources */,
 				100000000000000000000162 /* PhotoBookPolicy.swift in Sources */,
 				100000000000000000000163 /* PhotoBookPDFExporter.swift in Sources */,
+				E02609230000000000000001 /* ShowcasePhotoStore.swift in Sources */,
+				E02609230000000000000005 /* CatPreparednessStore.swift in Sources */,
 				100000000000000000000164 /* CatIdentityExperimentCore.swift in Sources */,
 				100000000000000000000165 /* CatIdentityExperimentService.swift in Sources */,
 				100000000000000000000166 /* CatIdentityExperimentExporter.swift in Sources */,
@@ -1156,6 +1170,8 @@
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,
+				E02609230000000000000003 /* ShowcasePhotoView.swift in Sources */,
+				E02609230000000000000007 /* CatPreparednessView.swift in Sources */,
 				A16600000000000000000001 /* WidgetPhotoOpening.swift in Sources */,
 				A16600000000000000000002 /* WidgetPhotoOpeningFixture.swift in Sources */,
 				A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */,
