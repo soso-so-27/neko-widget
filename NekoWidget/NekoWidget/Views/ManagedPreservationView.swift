@@ -83,6 +83,13 @@ struct ManagedPreservationView: View {
                 Text("既存のiCloud保管とは別の保管先です。自動移行や、全写真の自動アップロードは行いません。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            if let error = coordinator.errorMessage {
+                Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
+                    .accessibilityIdentifier("preservation-error") }
+            }
+            if let status = coordinator.statusMessage {
+                Section { Text(status).foregroundStyle(.secondary) }
+            }
             if !coordinator.isSignedIn { authenticationSection }
             else if coordinator.selected != nil { detailSection }
             else {
@@ -97,13 +104,6 @@ struct ManagedPreservationView: View {
             }
             if exporter.preparing { Section { ProgressView("書き出しを準備しています…") } }
             if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
-            if let error = coordinator.errorMessage {
-                Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
-                    .accessibilityIdentifier("preservation-error") }
-            }
-            if let status = coordinator.statusMessage {
-                Section { Text(status).foregroundStyle(.secondary) }
-            }
             if let warning = coordinator.draftRecoveryWarning {
                 Section { Text(warning).foregroundStyle(.red) }
             }
