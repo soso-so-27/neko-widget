@@ -2,6 +2,7 @@ import { contactEmailValid, ServiceError } from './contracts';
 import { parseDeliveredNoticeEvent, type NoticeEventSource } from './notice-events';
 import { NOTICE_DELIVERY_EVIDENCE_WINDOW_MS, NOTICE_SUBMISSION_RETRY_DELAY_MS, RetentionLedger,
   type ExpiryReviewCandidate, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
+import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 
 const day = 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -40,7 +41,8 @@ export function validNoticeEventSource(source: NoticeEventSource): boolean {
 export class NoticeSubmissions {
   private readonly key: Promise<CryptoKey>;
 
-  constructor(private readonly db: D1Database, secret: string, private readonly now: () => number) {
+  constructor(private readonly db: D1Database, secret: string, private readonly now: () => number,
+    private readonly ownerRecovery?: OwnerRecoveryCopy) {
     if (typeof secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(secret)) throw unavailable();
     const raw = Uint8Array.from(atob(secret.replaceAll('-', '+').replaceAll('_', '/')), c => c.charCodeAt(0));
     if (raw.length !== 32) throw unavailable();
@@ -309,7 +311,8 @@ export class NoticeSubmissions {
     let status: VerifiedMembershipStatus;
     try { status = await statusForBillingAccount(row.billing_account_id); }
     catch { status = 'unknown'; }
-    const observed = await new RetentionLedger(this.db, this.now).observe(row.owner_id, status);
+    const observed = await new RetentionLedger(this.db, this.now, this.ownerRecovery)
+      .observe(row.owner_id, status);
     if (observed.status !== 'expired' || observed.pausedAt !== null
         || observed.episode !== row.episode || observed.dueAt !== row.due_at
         || row.delivered_at > now || row.delivered_at < now - NOTICE_DELIVERY_EVIDENCE_WINDOW_MS) return false;
@@ -338,7 +341,9 @@ export class NoticeSubmissions {
         row.owner_id, observed.revision, row.episode, row.due_at,
         observed.checkedAt, row.delivered_at, messageId, row.delivered_at,
         row.recipient_tag, row.contact_updated_at, row.billing_account_id).run();
-    return result.results.length === 1;
+    if (result.results.length !== 1) return false;
+    await this.ownerRecovery?.copyCurrent(this.db, row.owner_id, this.now());
+    return true;
   }
 
   /** Read-only expiry proof. A mail-server delivery event, the current sealed

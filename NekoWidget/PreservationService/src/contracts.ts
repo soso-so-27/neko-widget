@@ -27,6 +27,8 @@ export interface AuthDependencies {
   keys: KeyCustody;
   identityIndexSecret: string;
   now: () => number;
+  ownerRecovery?: { copyCurrent(db: D1Database, ownerId: string, now: number): Promise<unknown> };
+  requireOwnerRecovery?: boolean;
 }
 export class ServiceError extends Error {
   constructor(public code: string, public status = 400) { super(code); this.name = 'ServiceError'; }

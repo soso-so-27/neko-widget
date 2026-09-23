@@ -17,7 +17,9 @@
 - `0011_expiry_review_cursor.sql` は削除許可を持たないowner単位の巡回位置と期限用indexを追加する。古い不適格ownerを飛ばして次の候補へ進み、最後まで進むと先頭へ戻る。候補の各件は課金・送達・連絡先・コピー・fenceの再照合が依然として必須。ローカル型検査と保管サービス125試験に成功。
 - 2026-09-24 JST、専用 **staging** D1へ0011を適用。事前bookmark `0000000a-00000002-000050ef-52b0a6a521331e083a9bc337cbbe35f5`、事前owner/record/submission/claimは全て0。適用後は未適用migration 0、初期cursor行1・index 1・owner/record 0を確認。本番DBやWorker配備は未変更。
 
-後続ローカル候補で、ownerの本人照合キー、暗号化credential/連絡先、固定会員リンク、期限台帳を一つのD1読取で取り出し、owner-bound暗号化S3版として保存・照合する部品を追加。0015はこれらの変更ごとにowner世代を進め、S3参照を現行世代にだけ結び付ける。ローカル型検査、保管サービス162試験、合成0015移行試験は成功。追加トリガーによりD1の`meta.changes`が増えるため、通知と削除前fenceの成功判定は`RETURNING`の対象行数へ変更して回帰を修正した。**まだauth・会員リンク・通知/期限の各成功応答へowner copyを接続しておらず、D1喪失からのowner復元、鍵素材・`IDENTITY_INDEX_SECRET`の保全、削除済みownerの再適用は未完成。** 0015は実staging/本番へ未適用、Workerも未配備。公開側はowner世代コピーのpolicyまでONでない限り503を返す。
+後続ローカル候補で、ownerの本人照合キー、暗号化credential/連絡先、固定会員リンク、期限台帳を一つのD1読取で取り出し、owner-bound暗号化S3版として保存・照合する部品を追加。0015はこれらの変更ごとにowner世代を進め、S3参照を現行世代にだけ結び付ける。追加トリガーによりD1の`meta.changes`が増えるため、通知と削除前fenceの成功判定は`RETURNING`の対象行数へ変更して回帰を修正した。さらにログイン、会員リンク、保存/削除、期限状態の成功応答と通知送達の処理にowner copyを接続し、未コピーownerを失敗行で停滞させず巡回修復する候補を追加。ローカル型検査、保管サービス164試験、合成0015移行試験は成功。**D1喪失からのowner復元、内側のcredential復号・本人キー照合、鍵素材・`IDENTITY_INDEX_SECRET`の保全、削除済みownerの再適用は未完成。** 本番用`revokeOwner`はD1だけで取り消さないよう暫定的に拒否しており、耐久的な事前取消markerが必要。0015は実staging/本番へ未適用、Workerも未配備。公開側はowner世代コピーのpolicyまでONでない限り503を返す。
+
+追加の安全レビューで、D1だけで確定する削除前fenceと、D1更新後にS3が失敗した旧連絡先・通知証拠の復元リスクを確認。候補0015ではowner snapshot policyをONにする際に未完了fenceを拒否し、policy ON中の`disabled`/`purge_fence_id`変更をDB triggerで拒否する。独立した事前取消・削除intentを作るまでは削除前fenceを使えない。policy OFF時のfence中止・lease復帰はcredential epochも同じbatchで同期し、再バックアップが永久失敗する状態を避ける。S3単独のowner候補は必ず無効状態で返し、旧連絡先と最終通知証拠を除去、期限状態を不明・停止として扱う。再有効化にはApple再認証、課金・削除台帳・全記録の照合が別途必要で、現状は**再有効化経路も実際のD1復元も未実装**。owner世代の修復はpolicy ON後は一時的なbackfill flagに関係なくscheduledで再試行する。現候補の保管サービス全167試験・型検査・合成migration試験は通過。これらは局所的な安全ゲートであり、バックアップ・削除の完成証拠ではない。
 
 ## 保存完了と復旧の提案（利用者判断待ち）
 

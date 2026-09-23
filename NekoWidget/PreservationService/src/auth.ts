@@ -154,6 +154,8 @@ export class DurableAuth {
       ];
       const results = await db.batch(statements);
       if (results.at(-1)?.meta.changes !== 1) throw denied();
+      if (this.dependencies.requireOwnerRecovery && !this.dependencies.ownerRecovery) throw unavailable();
+      await this.dependencies.ownerRecovery?.copyCurrent(db, owner.owner_id, now);
       return { token, ownerId: owner.owner_id, expiresAt: new Date(now + SESSION_MS).toISOString() };
     } catch (error) { throw safeError(error); }
   }
@@ -309,6 +311,12 @@ export class DurableAuth {
   // Internal trusted operation; not authorization for a client-supplied owner ID.
   async revokeOwner(ownerId: string): Promise<void> {
     try {
+      // A D1-only revocation could be lost and an older independent snapshot
+      // would then re-enable the owner. The production path needs a durable
+      // pre-revocation marker before this operation can be used.
+      if (this.dependencies.requireOwnerRecovery) {
+        throw new ServiceError('OWNER_REVOCATION_NOT_CONFIGURED', 503);
+      }
       await this.dependencies.db.prepare(
         'UPDATE pa_owners SET epoch = epoch + 1, disabled = 1 WHERE owner_id = ? AND disabled = 0',
       ).bind(ownerId).run();

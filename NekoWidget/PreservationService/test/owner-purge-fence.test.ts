@@ -21,6 +21,9 @@ async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expir
     dueAt, deliveredAt, deliveryEventId };
   await db.prepare(`INSERT INTO pa_owners(owner_id,identity_key,created_at)
     VALUES(?,?,?)`).bind(ownerId, crypto.randomUUID(), now - 400 * day).run();
+  await db.prepare(`INSERT INTO pa_identity_credentials(owner_id,owner_epoch,
+    sealed_credentials,updated_at) VALUES(?,0,?,?)`)
+    .bind(ownerId, new Uint8Array([1]).buffer, now - 400 * day).run();
   await db.prepare('INSERT INTO pa_inventory(owner_id) VALUES(?)').bind(ownerId).run();
   await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
     .bind(ownerId, billingAccount, now - 400 * day).run();
@@ -78,6 +81,8 @@ it('unfences before deletion when a second billing check is no longer expired', 
     .bind(f.ownerId).first()).toMatchObject({ disabled: 0, epoch: 2, purge_fence_id: null });
   expect(await db.prepare('SELECT state FROM pa_purge_fences WHERE owner_id=?')
     .bind(f.ownerId).first()).toMatchObject({ state: 'aborted' });
+  expect(await db.prepare('SELECT owner_epoch FROM pa_identity_credentials WHERE owner_id=?')
+    .bind(f.ownerId).first()).toMatchObject({ owner_epoch: 2 });
   expect(await db.prepare(`SELECT verified_status,expired_at,due_at,final_notice_receipt
     FROM pa_retention WHERE owner_id=?`).bind(f.ownerId).first()).toMatchObject({
     verified_status: 'active', expired_at: null, due_at: null, final_notice_receipt: null,
@@ -104,6 +109,8 @@ it('recovers a crashed pre-deletion fence after its lease and invalidates notice
   expect(await recoverAbandonedPurgeFences(db, now + 11 * 60_000)).toBeGreaterThanOrEqual(1);
   expect(await db.prepare('SELECT disabled,epoch,purge_fence_id FROM pa_owners WHERE owner_id=?')
     .bind(f.ownerId).first()).toMatchObject({ disabled: 0, epoch: 2, purge_fence_id: null });
+  expect(await db.prepare('SELECT owner_epoch FROM pa_identity_credentials WHERE owner_id=?')
+    .bind(f.ownerId).first()).toMatchObject({ owner_epoch: 2 });
   expect(await db.prepare(`SELECT verified_status,paused_at,final_notice_receipt
     FROM pa_retention WHERE owner_id=?`).bind(f.ownerId).first()).toMatchObject({
     verified_status: 'unknown', paused_at: now + 11 * 60_000, final_notice_receipt: null,

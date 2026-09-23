@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { randomToken, sha256, type KeyCustody } from '../src/contracts';
 import { MembershipLinks } from '../src/membership-links';
+import type { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type BillingLinkAuthority, type BillingProof, type MembershipStatus } from '../src/billing-link-protocol';
 import { boundBillingAuthority } from '../src/providers';
 import { ArchiveStore } from '../src/storage';
@@ -117,6 +118,22 @@ describe('two-proof preservation membership link', () => {
     await expect(f.links.complete(f.user.token, c.challenge.challengeId, proof)).rejects.toMatchObject({ code: 'LINK_CHALLENGE_INVALID' });
     expect(await f.links.status(f.user.ownerId)).toBe('unknown');
     expect(await f.link()).toEqual({ linked: true });
+  });
+  it('does not acknowledge a new billing link until its owner image is copied', async () => {
+    const f = await fixture();
+    const copyCurrent = vi.fn().mockRejectedValueOnce(new Error('S3 unavailable'))
+      .mockResolvedValue({ key: 'synthetic' });
+    const links = new MembershipLinks({ db, auth: f.auth, authority: f.authority,
+      audience: 'local-preservation-v1', now: () => Date.UTC(2026, 8, 22),
+      ownerRecovery: { copyCurrent } as unknown as OwnerRecoveryCopy, requireOwnerRecovery: true });
+    const first = await links.issue(f.user.token, f.account);
+    await expect(links.complete(f.user.token, first.challenge.challengeId, proof)).rejects.toThrow();
+    expect(await db.prepare('SELECT billing_account_id FROM pa_membership_links WHERE owner_id=?')
+      .bind(f.user.ownerId).first()).toMatchObject({ billing_account_id: f.account });
+    const retry = await links.issue(f.user.token, f.account);
+    expect(await links.complete(f.user.token, retry.challenge.challengeId, proof))
+      .toEqual({ linked: true });
+    expect(copyCurrent).toHaveBeenCalledTimes(2);
   });
   it.each(['session', 'owner', 'deadline'] as const)('fences %s changes while billing verification awaits', async reason => {
     const f = await fixture(); const c = await f.links.issue(f.user.token, f.account);

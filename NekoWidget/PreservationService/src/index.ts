@@ -14,6 +14,7 @@ import { processDeliveredNoticeEvent } from './notice-delivery';
 import { recoverAbandonedPurgeFences } from './owner-purge-fence';
 import { S3RecoveryCopy } from './s3-recovery-copy';
 import { RecordRecoveryCopy } from './record-recovery-copy';
+import { OwnerRecoveryCopy } from './owner-recovery-copy';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
@@ -34,8 +35,9 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
-  membership?: MembershipLinks; retention?: RetentionLedger; }
+  membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
 interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
+  ownerRecovery: OwnerRecoveryCopy;
   statusForOwner: (ownerId: string) => Promise<VerifiedMembershipStatus>; }
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -63,6 +65,16 @@ const bearer = (request: Request) => {
   if (!match?.[1]) throw new ServiceError('SESSION_INVALID', 401);
   return match[1];
 };
+
+function configuredS3(env: Env): S3RecoveryCopy {
+  return new S3RecoveryCopy({ enabled: env.RECOVERY_COPY_ENABLED ?? '',
+    region: env.RECOVERY_S3_REGION ?? '', bucket: env.RECOVERY_S3_BUCKET ?? '',
+    expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
+    accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '',
+    secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '',
+    ...(env.RECOVERY_S3_SESSION_TOKEN ? { sessionToken: env.RECOVERY_S3_SESSION_TOKEN } : {}),
+  });
+}
 
 // Local tests inject dependencies. The public Worker always checks the gate.
 export async function route(request: Request, services: Services): Promise<Response> {
@@ -160,28 +172,31 @@ function configuredServices(env: Env): Services {
   const now = () => Date.now();
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
-  const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
-  const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
-    getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
-  const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
-    audience: env.PRESERVATION_LINK_AUDIENCE, now });
   let recovery: RecordRecoveryCopy | undefined;
+  let ownerRecovery: OwnerRecoveryCopy | undefined;
   try {
-    recovery = new RecordRecoveryCopy(keys, new S3RecoveryCopy({
-      enabled: env.RECOVERY_COPY_ENABLED ?? '', region: env.RECOVERY_S3_REGION ?? '',
-      bucket: env.RECOVERY_S3_BUCKET ?? '', expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
-      accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '', secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '',
-      ...(env.RECOVERY_S3_SESSION_TOKEN ? { sessionToken: env.RECOVERY_S3_SESSION_TOKEN } : {}),
-    }));
+    const s3 = configuredS3(env);
+    recovery = new RecordRecoveryCopy(keys, s3);
+    ownerRecovery = new OwnerRecoveryCopy(keys, s3);
   } catch {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
+  const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now,
+    ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
+  const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
+    getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
+  const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
+    audience: env.PRESERVATION_LINK_AUDIENCE, now,
+    ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS),
-    ...(recovery ? { recovery } : {}), requireRecovery: true });
-  const retention = env.RETENTION_TRACKING_ENABLED === 'YES' ? new RetentionLedger(env.DB, now) : undefined;
-  return { auth, archive, verifier, membership, ...(retention ? { retention } : {}) };
+    ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
+    requireRecovery: true, requireOwnerRecovery: true });
+  const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
+    ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
+  return { auth, archive, verifier, membership, ...(retention ? { retention } : {}),
+    ...(ownerRecovery ? { ownerRecovery } : {}) };
 }
 
 /** Delivery evidence must remain processable while unrelated photo upload,
@@ -195,9 +210,10 @@ function configuredNoticeServices(env: Env): NoticeServices {
   const now = () => Date.now();
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
+  const ownerRecovery = new OwnerRecoveryCopy(keys, configuredS3(env));
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
-  return { auth, retention: new RetentionLedger(env.DB, now),
+  return { auth, retention: new RetentionLedger(env.DB, now, ownerRecovery), ownerRecovery,
     statusForOwner: async ownerId => {
       const link = await env.DB.prepare(`SELECT l.billing_account_id FROM pa_membership_links l
         JOIN pa_owners o ON o.owner_id=l.owner_id WHERE l.owner_id=? AND o.disabled=0`)
@@ -216,14 +232,15 @@ function configuredNoticeSource(env: Env): NoticeEventSource {
   return source;
 }
 
-function configuredNoticeSubmissions(env: Env): NoticeSubmissions {
+function configuredNoticeSubmissions(env: Env, ownerRecovery: OwnerRecoveryCopy): NoticeSubmissions {
   if (!env.DB || !env.NOTICE_RECIPIENT_TAG_SECRET) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
-  return new NoticeSubmissions(env.DB, env.NOTICE_RECIPIENT_TAG_SECRET, () => Date.now());
+  return new NoticeSubmissions(env.DB, env.NOTICE_RECIPIENT_TAG_SECRET,
+    () => Date.now(), ownerRecovery);
 }
 
 async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Promise<number> {
   if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
-  const submissions = configuredNoticeSubmissions(env);
+  const submissions = configuredNoticeSubmissions(env, services.ownerRecovery);
   const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
   let failed = 0;
   const pending = await submissions.nextPendingPromotions();
@@ -265,22 +282,46 @@ export default {
     if (env.NOTICE_SEND_ENABLED === 'YES' && (env.CLEANUP_ENABLED !== 'YES'
         || env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES'
         || env.PRESERVATION_ENABLED !== 'YES')) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
-    if (env.CLEANUP_ENABLED !== 'YES') return;
-    if (!env.DB) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
-    // Continue physical deletion even while sign-in or paid saving is disabled.
+    if (!env.DB) {
+      if (env.CLEANUP_ENABLED === 'YES' || env.RECOVERY_BACKFILL_ENABLED === 'YES'
+        || env.PRESERVATION_ENABLED === 'YES') throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+      return;
+    }
     let maintenanceFailures = 0;
+    // Once owner snapshots are required, a D1 commit that outlived an S3
+    // outage must be retried even if the one-time record backfill is off.
+    let ownerRecoveryRequired = false;
+    try {
+      const policy = await env.DB.prepare(`SELECT owner_snapshot_required FROM pa_recovery_write_policy
+        WHERE singleton=1`).first<{ owner_snapshot_required: number }>();
+      if (!policy || ![0, 1].includes(policy.owner_snapshot_required)) throw new Error('invalid policy');
+      ownerRecoveryRequired = policy.owner_snapshot_required === 1;
+    } catch { maintenanceFailures++; }
+    if (ownerRecoveryRequired || env.RECOVERY_BACKFILL_ENABLED === 'YES') {
+      try {
+        const services = configuredServices(env);
+        if (!services.ownerRecovery) throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
+        const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());
+        maintenanceFailures += owners.failed;
+        if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
+          const records = await services.archive.repairRecoveryBatch();
+          maintenanceFailures += records.failed;
+        }
+      } catch { maintenanceFailures++; }
+    }
+    // Backup repair continues when public sign-in and cleanup are off. A
+    // transient S3 failure must not leave a D1-only generation indefinitely.
+    if (env.CLEANUP_ENABLED !== 'YES') {
+      if (maintenanceFailures > 0) throw new ServiceError('PRESERVATION_UNAVAILABLE', 503);
+      return;
+    }
+    // Continue physical deletion even while sign-in or paid saving is disabled.
     try { await recoverAbandonedPurgeFences(env.DB, Date.now()); }
     catch { maintenanceFailures++; }
     if (env.ARCHIVE) {
       try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
       catch { maintenanceFailures++; }
     } else maintenanceFailures++;
-    if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
-      try {
-        const result = await configuredServices(env).archive.repairRecoveryBatch();
-        maintenanceFailures += result.failed;
-      } catch { maintenanceFailures++; }
-    }
     try {
       await env.DB.batch([
         env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
@@ -296,7 +337,7 @@ export default {
     if (env.RETENTION_TRACKING_ENABLED === 'YES') {
       if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       try {
-        await new RetentionLedger(env.DB, () => Date.now())
+        await configuredNoticeServices(env).retention
           .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
       } catch { maintenanceFailures++; }
     }
@@ -310,7 +351,8 @@ export default {
           throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
         }
         const result = await new NoticeDispatch({ ledger: services.retention,
-          submissions: configuredNoticeSubmissions(env), source: configuredNoticeSource(env),
+          submissions: configuredNoticeSubmissions(env, services.ownerRecovery),
+          source: configuredNoticeSource(env),
           mail: env.NOTICE_EMAIL,
           statusForOwner: services.statusForOwner,
           currentContact: candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
@@ -334,7 +376,7 @@ export default {
     let source: NoticeEventSource;
     try {
       services = configuredNoticeServices(env);
-      submissions = configuredNoticeSubmissions(env);
+      submissions = configuredNoticeSubmissions(env, services.ownerRecovery);
       source = configuredNoticeSource(env);
       if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
     } catch {

@@ -12,6 +12,20 @@ const digest = async (value: Uint8Array) => base64(new Uint8Array(
   await crypto.subtle.digest('SHA-256', value as BufferSource)));
 
 describe('private, versioned S3 recovery-object transport', () => {
+  it('accepts the owner bootstrap kind under the same fixed-account version contract', async () => {
+    const ownerKey = `recovery/v1/${owner}/owner/00000000-0000-4000-8000-000000000008`;
+    const copy = new S3RecoveryCopy(config, async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe(`/${ownerKey}`);
+      if (init?.method === 'PUT') return new Response(null, { status: 412 });
+      return new Response(null, { status: 200,
+        headers: { 'x-amz-checksum-sha256': await digest(data),
+          'x-amz-checksum-type': 'FULL_OBJECT', 'content-length': String(data.length),
+          'x-amz-version-id': 'owner-v1' } });
+    });
+    expect(await copy.putVersioned(ownerKey, data)).toMatchObject({ key: ownerKey,
+      versionId: 'owner-v1', bytes: data.length });
+  });
+
   it('signs to a fixed bucket, validates a versioned checksum and reads the same version', async () => {
     let stored: Uint8Array | null = null;
     const calls: string[] = [];

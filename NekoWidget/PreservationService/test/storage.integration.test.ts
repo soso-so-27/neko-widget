@@ -375,6 +375,34 @@ it('maintenance works while Apple, membership and public requests are disabled',
   expect(await binding.ARCHIVE.get(key)).toBeNull();
 });
 
+it('required owner snapshots cannot silently skip scheduled repair when S3 is unavailable', async () => {
+  const pending = await binding.DB.prepare(`SELECT g.owner_id,g.generation
+    FROM pa_owner_recovery_generations g LEFT JOIN pa_owner_recovery_versions v
+      ON v.owner_id=g.owner_id AND v.generation=g.generation WHERE v.owner_id IS NULL`)
+    .all<{ owner_id: string; generation: number }>();
+  const inserted: string[] = [];
+  try {
+    for (const row of pending.results) {
+      const key = `recovery/v1/${row.owner_id}/owner/${crypto.randomUUID()}`;
+      await binding.DB.prepare(`INSERT INTO pa_owner_recovery_versions
+        (owner_id,generation,object_key,version_id,sha256,bytes,confirmed_at)
+        VALUES(?,?,?,'synthetic-v1',?,1,1)`)
+        .bind(row.owner_id, row.generation, key, 'a'.repeat(64)).run();
+      inserted.push(key);
+    }
+    await binding.DB.prepare(`UPDATE pa_recovery_write_policy
+      SET owner_snapshot_required=1 WHERE singleton=1`).run();
+    await expect(worker.scheduled({} as ScheduledEvent, { ...binding, CLEANUP_ENABLED: 'NO' }))
+      .rejects.toMatchObject({ code: 'PRESERVATION_UNAVAILABLE' });
+  } finally {
+    await binding.DB.prepare(`UPDATE pa_recovery_write_policy
+      SET owner_snapshot_required=0 WHERE singleton=1`).run();
+    for (const key of inserted) {
+      await binding.DB.prepare('DELETE FROM pa_owner_recovery_versions WHERE object_key=?').bind(key).run();
+    }
+  }
+});
+
 it('session revoked during R2 upload cannot commit and leaves no live record/reservation', async () => {
   const f = await fixture(); const id = crypto.randomUUID();
   const bucket = new Proxy(binding.ARCHIVE, { get(target, property) {

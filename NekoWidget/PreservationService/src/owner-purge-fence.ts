@@ -46,6 +46,7 @@ export class OwnerPurgeFence {
       (SELECT COUNT(*) FROM pa_pending_deletes p WHERE p.object_key>=? AND p.object_key<?) AS pending_deletes
       FROM pa_owners o JOIN pa_inventory i ON i.owner_id=o.owner_id
       JOIN pa_membership_links l ON l.owner_id=o.owner_id
+      JOIN pa_identity_credentials c ON c.owner_id=o.owner_id AND c.owner_epoch=o.epoch
       WHERE o.owner_id=? AND o.disabled=0 AND o.purge_fence_id IS NULL`)
       .bind(photoPrefix, photoPrefixUpperBound(ownerId), ownerId).first<OwnerState>();
   }
@@ -150,8 +151,9 @@ export class OwnerPurgeFence {
  * re-enabling access. Never thaw an owner while stale deletion proof remains. */
 async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string,
   ownerEpoch: number, now: number, status: Exclude<VerifiedMembershipStatus, 'expired'>): Promise<void> {
-    if (!ownerPattern.test(fenceId) || !ownerPattern.test(ownerId)
-      || !Number.isSafeInteger(ownerEpoch) || ownerEpoch < 1) throw unavailable();
+  if (!ownerPattern.test(fenceId) || !ownerPattern.test(ownerId)
+      || !Number.isSafeInteger(ownerEpoch) || ownerEpoch < 1
+      || ownerEpoch >= Number.MAX_SAFE_INTEGER) throw unavailable();
     const resetExpiry = status === 'active' || status === 'grace';
     const results = await db.batch([
       db.prepare(`UPDATE pa_retention SET revision=revision+1,verified_status=?,checked_at=?,
@@ -171,17 +173,27 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
           ownerId, fenceId, ownerEpoch, ownerEpoch),
       db.prepare(`UPDATE pa_owners SET disabled=0,epoch=epoch+1,purge_fence_id=NULL
         WHERE owner_id=? AND disabled=1 AND epoch=? AND purge_fence_id=?
+          AND EXISTS(SELECT 1 FROM pa_identity_credentials c
+            WHERE c.owner_id=pa_owners.owner_id AND c.owner_epoch<=?)
           AND EXISTS(SELECT 1 FROM pa_purge_fences f JOIN pa_retention r ON r.owner_id=f.owner_id
             WHERE f.fence_id=? AND f.owner_id=? AND f.state='fenced'
               AND r.episode=f.retention_episode AND r.revision=f.retention_revision+1
               AND r.verified_status=? AND r.final_notice_delivered_at IS NULL)
         RETURNING epoch`)
-        .bind(ownerId, ownerEpoch, fenceId, fenceId, ownerId, status),
+        .bind(ownerId, ownerEpoch, fenceId, ownerEpoch, fenceId, ownerId, status),
+      db.prepare(`UPDATE pa_identity_credentials SET owner_epoch=?
+        WHERE owner_id=? AND owner_epoch<=?
+          AND EXISTS(SELECT 1 FROM pa_owners o WHERE o.owner_id=pa_identity_credentials.owner_id
+            AND o.disabled=0 AND o.epoch=? AND o.purge_fence_id IS NULL)
+        RETURNING owner_epoch`)
+        .bind(ownerEpoch + 1, ownerId, ownerEpoch, ownerEpoch + 1),
       db.prepare(`UPDATE pa_purge_fences SET state='aborted',updated_at=?
         WHERE fence_id=? AND owner_id=? AND state='fenced' AND owner_epoch=?
           AND NOT EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND purge_fence_id=?)
+          AND EXISTS(SELECT 1 FROM pa_identity_credentials c
+            WHERE c.owner_id=pa_purge_fences.owner_id AND c.owner_epoch=?)
         RETURNING state`)
-        .bind(now, fenceId, ownerId, ownerEpoch, ownerId, fenceId),
+        .bind(now, fenceId, ownerId, ownerEpoch, ownerId, fenceId, ownerEpoch + 1),
     ]);
     if (results.some(result => result?.results.length !== 1)) throw unavailable();
 }

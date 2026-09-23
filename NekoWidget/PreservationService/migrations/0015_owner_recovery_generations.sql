@@ -71,8 +71,32 @@ CREATE TRIGGER pa_owner_recovery_policy_requires_coverage
 BEFORE UPDATE OF owner_snapshot_required ON pa_recovery_write_policy
 WHEN NEW.owner_snapshot_required=1
 BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM pa_purge_fences
+    WHERE state IN ('proposed','fenced'))
+    THEN RAISE(ABORT,'OWNER_RECOVERY_ACTIVE_PURGE_FENCE') END;
   SELECT CASE WHEN EXISTS(SELECT 1 FROM pa_owner_recovery_generations g
     WHERE NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
       WHERE v.owner_id=g.owner_id AND v.generation=g.generation))
     THEN RAISE(ABORT,'OWNER_RECOVERY_COVERAGE_INCOMPLETE') END;
 END;
+
+-- Until a pre-revocation S3 intent and fenced-owner replay are implemented,
+-- D1 alone must never disable or thaw an owner while snapshots are required.
+-- This also protects against an unreviewed caller bypassing OwnerPurgeFence.
+CREATE TRIGGER pa_owner_recovery_blocks_unbacked_fence
+BEFORE UPDATE OF disabled,purge_fence_id ON pa_owners
+WHEN (NEW.disabled<>OLD.disabled OR NEW.purge_fence_id IS NOT OLD.purge_fence_id)
+  AND (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=1
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_FENCE_INTENT_REQUIRED'); END;
+
+CREATE TABLE pa_owner_recovery_repair_cursor (
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  last_owner_id TEXT NOT NULL
+);
+INSERT INTO pa_owner_recovery_repair_cursor(singleton,last_owner_id) VALUES(1,'');
+CREATE TABLE pa_owner_recovery_repair_failures (
+  owner_id TEXT PRIMARY KEY NOT NULL REFERENCES pa_owners(owner_id) ON DELETE RESTRICT,
+  error_code TEXT NOT NULL,
+  attempts INTEGER NOT NULL CHECK(attempts > 0),
+  last_attempt_at INTEGER NOT NULL CHECK(last_attempt_at > 0)
+);

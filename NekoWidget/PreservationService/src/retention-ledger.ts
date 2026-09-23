@@ -47,7 +47,13 @@ function view(row: Row): RetentionState {
 
 /** Internal ledger only. It never sends a notice or deletes a record by itself. */
 export class RetentionLedger {
-  constructor(private readonly db: D1Database, private readonly now: () => number) {}
+  constructor(private readonly db: D1Database, private readonly now: () => number,
+    private readonly ownerRecovery?: { copyCurrent(db: D1Database, ownerId: string, now: number): Promise<unknown> }) {}
+
+  private async acknowledge(ownerId: string, row: Row): Promise<RetentionState> {
+    await this.ownerRecovery?.copyCurrent(this.db, ownerId, this.now());
+    return view(row);
+  }
 
   /** Advisory queue for a future notification outbox; never sends or proves delivery. */
   async listNoticeReviewCandidates(limit = 20,
@@ -177,7 +183,7 @@ export class RetentionLedger {
       const current = await this.read(ownerId);
       if (observedAt < current.checked_at || (observedAt === current.checked_at
           && status !== current.verified_status)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
-      if (observedAt === current.checked_at) return view(current);
+      if (observedAt === current.checked_at) return this.acknowledge(ownerId, current);
       let episode = current.episode;
       let expiredAt = current.expired_at;
       let dueAt = current.due_at;
@@ -211,7 +217,7 @@ export class RetentionLedger {
         RETURNING revision`)
         .bind(episode, status, observedAt, expiredAt, dueAt, pausedAt,
           noticeNotBeforeAt, noticeAt, receipt, ownerId, current.revision, ownerId).run();
-      if (result.results.length === 1) return view(await this.read(ownerId));
+      if (result.results.length === 1) return this.acknowledge(ownerId, await this.read(ownerId));
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
   }
@@ -230,7 +236,7 @@ export class RetentionLedger {
           || deliveredAt < current.due_at - finalNoticeWindow) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (current.final_notice_delivered_at !== null) {
         if (current.final_notice_delivered_at === deliveredAt && current.final_notice_receipt === providerReceipt) {
-          return view(current);
+          return this.acknowledge(ownerId, current);
         }
         throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       }
@@ -240,7 +246,7 @@ export class RetentionLedger {
         WHERE owner_id=? AND revision=? AND verified_status='expired' AND paused_at IS NULL
         RETURNING revision`)
         .bind(dueAt, deliveredAt, providerReceipt, ownerId, current.revision).run();
-      if (result.results.length === 1) return view(await this.read(ownerId));
+      if (result.results.length === 1) return this.acknowledge(ownerId, await this.read(ownerId));
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
   }

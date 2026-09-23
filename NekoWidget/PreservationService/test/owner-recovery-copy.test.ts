@@ -25,8 +25,13 @@ async function fixture() {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const objects = new Map<string, Uint8Array>();
+  let rejectOwner: string | null = null;
+  let rejectAll = false;
   const s3 = {
     async putVersioned(key: string, bytes: Uint8Array): Promise<RecoveryObject> {
+      if (rejectAll || (rejectOwner && key.startsWith(`recovery/v1/${rejectOwner}/`))) {
+        throw new Error('synthetic S3 outage');
+      }
       const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))]
         .map(byte => byte.toString(16).padStart(2, '0')).join('');
       objects.set(key, bytes.slice());
@@ -43,7 +48,9 @@ async function fixture() {
       return bytes.slice();
     },
   } as S3RecoveryCopy;
-  return { copy: new OwnerRecoveryCopy(keys, s3), objects, keys };
+  return { copy: new OwnerRecoveryCopy(keys, s3), objects, keys,
+    rejectOwner(value: string | null) { rejectOwner = value; },
+    rejectAll(value: boolean) { rejectAll = value; } };
 }
 
 it('stores and verifies an encrypted owner bootstrap image without exposing the credentials', async () => {
@@ -68,6 +75,28 @@ it('rejects cross-owner reads, stale references and malformed snapshots', async 
     .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
   await expect(f.copy.copy({ ...image(), disabled: false, epoch: 3 }))
     .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+});
+
+it('stages S3-only recovery without reusing an old recipient or deletion notice', async () => {
+  const f = await fixture();
+  const original = image();
+  original.retention = { ...original.retention!, finalNoticeDeliveredAt: 350,
+    finalNoticeReceipt: 'delivery-event-00000001' };
+  const ref = await f.copy.copy(original);
+  const selected = await f.copy.selectRecoveredOwner(ownerId, [ref], 1_000);
+  expect(selected.status).toBe('reauth-required');
+  if (selected.status !== 'reauth-required') throw new Error('expected quarantined owner');
+  expect(selected.image.disabled).toBe(true);
+  expect(selected.image.contact).toBeNull();
+  expect(selected.image.credential).toEqual(original.credential);
+  expect(selected.image.retention).toMatchObject({ status: 'unknown', checkedAt: 0,
+    revision: 5, pausedAt: 1_000, noticeNotBeforeAt: 1_000,
+    finalNoticeDeliveredAt: null, finalNoticeReceipt: null });
+  expect((await f.copy.read(ownerId, ref)).contact).toEqual(original.contact);
+  const disabled = { ...original, disabled: true };
+  const disabledRef = await f.copy.copy(disabled);
+  expect(await f.copy.selectRecoveredOwner(ownerId, [disabledRef], 1_000))
+    .toEqual({ status: 'disabled' });
 });
 
 it('captures a consistent D1 owner image, commits its current generation and advances after a link', async () => {
@@ -96,4 +125,36 @@ it('captures a consistent D1 owner image, commits its current generation and adv
   const next = await f.copy.copyCurrent(db, session.ownerId, now + 1);
   expect(next.key).not.toBe(ref.key);
   expect(await f.copy.read(session.ownerId, next)).toEqual(second);
+});
+
+it('does not acknowledge sign-in while S3 is down and repairs independent owner rows fairly', async () => {
+  const f = await fixture();
+  const db = (env as unknown as { DB: D1Database }).DB;
+  const now = 1_790_035_200_000;
+  const auth = new DurableAuth({ db, keys: f.keys, identityIndexSecret: randomToken(),
+    now: () => now, ownerRecovery: f.copy, requireOwnerRecovery: true });
+  const identity = { issuer: 'https://appleid.apple.com', subject: crypto.randomUUID(),
+    refreshToken: randomToken() };
+  f.rejectAll(true);
+  await expect(auth.establish(identity))
+    .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+  f.rejectAll(false);
+  const first = await auth.establish(identity);
+  await expect(auth.revokeOwner(first.ownerId))
+    .rejects.toMatchObject({ code: 'OWNER_REVOCATION_NOT_CONFIGURED' });
+  expect((await auth.requireSession(first.token)).ownerId).toBe(first.ownerId);
+  const second = await auth.establish({ ...identity, subject: crypto.randomUUID() });
+  const ids = [first.ownerId, second.ownerId].sort();
+  await db.prepare('UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?')
+    .bind(ids[0]).run();
+  await db.prepare('UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?')
+    .bind(ids[1]).run();
+  f.rejectOwner(ids[0]!);
+  expect(await f.copy.repairBatch(db, now + 1, 2)).toEqual({ processed: 2, failed: 1 });
+  expect((await f.copy.ledgerCoverage(db)).pending).toBe(1);
+  f.rejectOwner(null);
+  expect(await f.copy.repairBatch(db, now + 2, 2)).toEqual({ processed: 1, failed: 0 });
+  expect((await f.copy.ledgerCoverage(db)).pending).toBe(0);
+  expect(await db.prepare('SELECT owner_id FROM pa_owner_recovery_repair_failures WHERE owner_id=?')
+    .bind(ids[0]).first()).toBeNull();
 });

@@ -27,6 +27,8 @@ assert.deepEqual(db.prepare(`SELECT o.owner_id,o.identity_key,o.epoch,o.disabled
 const generation = () => db.prepare('SELECT generation FROM pa_owner_recovery_generations WHERE owner_id=?')
   .get(ownerId).generation;
 assert.equal(generation(), 1);
+assert.equal(db.prepare('SELECT last_owner_id FROM pa_owner_recovery_repair_cursor').get().last_owner_id, '');
+assert.equal(db.prepare('SELECT COUNT(*) AS count FROM pa_owner_recovery_repair_failures').get().count, 0);
 const activate = db.prepare(`UPDATE pa_recovery_write_policy SET owner_snapshot_required=1 WHERE singleton=1`);
 assert.throws(() => activate.run(), /OWNER_RECOVERY_COVERAGE_INCOMPLETE/u);
 const insertSnapshot = (revision) => db.prepare(`INSERT INTO pa_owner_recovery_versions
@@ -34,7 +36,18 @@ const insertSnapshot = (revision) => db.prepare(`INSERT INTO pa_owner_recovery_v
   VALUES(?,?,?,?,?,?,?)`).run(ownerId, revision,
   `recovery/v1/${ownerId}/owner/${crypto.randomUUID()}`, 'synthetic-v1', 'b'.repeat(64), 50, 300);
 insertSnapshot(1);
+const fenceId = crypto.randomUUID();
+db.prepare(`INSERT INTO pa_purge_fences(fence_id,owner_id,state,retention_episode,
+  retention_revision,due_at,delivered_at,delivery_event_id,contact_updated_at,
+  created_at,updated_at,lease_expires_at)
+  VALUES(?,?,'proposed',1,1,300,250,'synthetic-delivery-event',200,200,200,900)`)
+  .run(fenceId, ownerId);
+assert.throws(() => activate.run(), /OWNER_RECOVERY_ACTIVE_PURGE_FENCE/u);
+db.prepare('DELETE FROM pa_purge_fences WHERE fence_id=?').run(fenceId);
 activate.run();
+assert.throws(() => db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?')
+  .run(ownerId), /OWNER_RECOVERY_FENCE_INTENT_REQUIRED/u);
+assert.equal(db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').get(ownerId).disabled, 0);
 db.prepare(`UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?`).run(ownerId);
 assert.equal(generation(), 2);
 assert.throws(() => insertSnapshot(1), /OWNER_RECOVERY_STALE_GENERATION/u);
@@ -49,6 +62,7 @@ assert.equal(generation(), 4);
 db.prepare(`INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at)
   VALUES(?,?,300)`).run(ownerId, crypto.randomUUID());
 assert.equal(generation(), 5);
+db.prepare('UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1').run();
 db.prepare(`UPDATE pa_owners SET epoch=epoch+1,disabled=1 WHERE owner_id=?`).run(ownerId);
 assert.equal(generation(), 6);
 assert.equal(db.prepare('SELECT COUNT(*) AS count FROM pa_owner_recovery_versions WHERE owner_id=?')

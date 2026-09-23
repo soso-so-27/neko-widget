@@ -208,6 +208,153 @@ export class OwnerRecoveryCopy {
     } catch { throw unavailable(); }
   }
 
+  /** A bounded, round-robin retry for a D1 mutation that committed while S3
+   * failed. Failed owners remain unacknowledged and cannot starve later rows.
+   */
+  async repairBatch(db: D1Database, now: number, limit = 20): Promise<{ processed: number; failed: number }> {
+    if (!safeInteger(now, 1) || !Number.isInteger(limit) || limit < 1 || limit > 100) throw unavailable();
+    try {
+      const cursor = await db.prepare(`SELECT last_owner_id FROM pa_owner_recovery_repair_cursor
+        WHERE singleton=1`).first<{ last_owner_id: string }>();
+      if (!cursor || (cursor.last_owner_id !== '' && !ownerPattern.test(cursor.last_owner_id))) {
+        throw unavailable();
+      }
+      const pending = `NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
+        WHERE v.owner_id=g.owner_id AND v.generation=g.generation)`;
+      const after = await db.prepare(`SELECT g.owner_id FROM pa_owner_recovery_generations g
+        WHERE ${pending} AND g.owner_id>? ORDER BY g.owner_id LIMIT ?`)
+        .bind(cursor.last_owner_id, limit).all<{ owner_id: string }>();
+      const rows = after.results.length ? after.results
+        : (await db.prepare(`SELECT g.owner_id FROM pa_owner_recovery_generations g
+          WHERE ${pending} ORDER BY g.owner_id LIMIT ?`)
+          .bind(limit).all<{ owner_id: string }>()).results;
+      let failed = 0;
+      for (const row of rows) {
+        if (!ownerPattern.test(row.owner_id)) throw unavailable();
+        try {
+          await this.copyCurrent(db, row.owner_id, now);
+          await db.prepare('DELETE FROM pa_owner_recovery_repair_failures WHERE owner_id=?')
+            .bind(row.owner_id).run();
+        } catch (error) {
+          failed++;
+          const code = error instanceof ServiceError ? error.code : 'OWNER_RECOVERY_UNAVAILABLE';
+          await db.prepare(`INSERT INTO pa_owner_recovery_repair_failures
+            (owner_id,error_code,attempts,last_attempt_at) VALUES(?,?,1,?)
+            ON CONFLICT(owner_id) DO UPDATE SET error_code=excluded.error_code,
+            attempts=attempts+1,last_attempt_at=excluded.last_attempt_at`)
+            .bind(row.owner_id, code, now).run();
+        }
+      }
+      if (rows.length) {
+        await db.prepare(`UPDATE pa_owner_recovery_repair_cursor SET last_owner_id=? WHERE singleton=1`)
+          .bind(rows.at(-1)!.owner_id).run();
+      }
+      return { processed: rows.length, failed };
+    } catch { throw unavailable(); }
+  }
+
+  /** Local ledger coverage only. A zero gap is not proof of live S3 versions,
+   * key custody, deleted-owner replay, or a successful separate restore.
+   */
+  async ledgerCoverage(db: D1Database): Promise<{ total: number; confirmed: number; pending: number }> {
+    try {
+      const row = await db.prepare(`SELECT count(*) AS total,
+        coalesce(sum(CASE WHEN v.owner_id IS NOT NULL THEN 1 ELSE 0 END),0) AS confirmed
+        FROM pa_owner_recovery_generations g LEFT JOIN pa_owner_recovery_versions v
+          ON v.owner_id=g.owner_id AND v.generation=g.generation`)
+        .first<{ total: number; confirmed: number }>();
+      if (!row || !safeInteger(row.total) || !safeInteger(row.confirmed)
+        || row.confirmed > row.total) throw unavailable();
+      return { total: row.total, confirmed: row.confirmed, pending: row.total - row.confirmed };
+    } catch { throw unavailable(); }
+  }
+
+  /** Selects a D1-independent owner candidate in a disabled quarantine.
+   * Contact and deletion-notice evidence can be stale even in the latest S3
+   * version (D1 may have committed a newer generation before S3 failed).
+   * Activation needs fresh Apple reauthentication, billing verification,
+   * durable revocation/deletion replay and complete record validation.
+   */
+  async selectRecoveredOwner(ownerId: string, references: RecoveryObject[], now: number): Promise<
+    { status: 'reauth-required'; image: OwnerRecoveryImage } |
+    { status: 'disabled' } |
+    { status: 'missing' | 'quarantined' }> {
+    if (!ownerPattern.test(ownerId) || !Array.isArray(references) || references.length > 100_000
+      || !safeInteger(now, 1)) {
+      throw unavailable();
+    }
+    if (!references.length) return { status: 'missing' };
+    const images = await Promise.all(references.map(reference => this.read(ownerId, reference)));
+    const generations = new Map<number, OwnerRecoveryImage>();
+    for (const item of images) {
+      const previous = generations.get(item.generation);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(item)) {
+        return { status: 'quarantined' };
+      }
+      generations.set(item.generation, item);
+    }
+    const ordered = [...generations.values()].sort((a, b) => a.generation - b.generation);
+    const first = ordered[0]!;
+    let knownBilling: string | null = null;
+    let lastEpoch = first.epoch;
+    for (const item of ordered) {
+      if (item.identityKey !== first.identityKey || item.createdAt !== first.createdAt
+        || item.epoch < lastEpoch || (knownBilling !== null && item.billing?.accountId !== knownBilling)) {
+        return { status: 'quarantined' };
+      }
+      lastEpoch = item.epoch;
+      if (item.billing !== null) knownBilling = item.billing.accountId;
+    }
+    const latest = ordered.at(-1)!;
+    if (latest.disabled || latest.purgeFenceId !== null) return { status: 'disabled' };
+    if (latest.retention?.revision === Number.MAX_SAFE_INTEGER) return { status: 'quarantined' };
+    const retention = latest.retention === null ? null : latest.retention.expiredAt === null
+      ? { ...latest.retention, revision: latest.retention.revision + 1,
+          status: 'unknown' as const, checkedAt: 0, pausedAt: null,
+          noticeNotBeforeAt: 0, finalNoticeDeliveredAt: null, finalNoticeReceipt: null }
+      : { ...latest.retention, revision: latest.retention.revision + 1,
+          status: 'unknown' as const, checkedAt: 0,
+          pausedAt: Math.max(now, latest.retention.expiredAt),
+          noticeNotBeforeAt: Math.max(now, latest.retention.expiredAt,
+            latest.retention.noticeNotBeforeAt),
+          finalNoticeDeliveredAt: null, finalNoticeReceipt: null };
+    const staged: OwnerRecoveryImage = { ...latest, disabled: true, purgeFenceId: null,
+      contact: null, retention };
+    valid(staged);
+    return { status: 'reauth-required', image: staged };
+  }
+
+  /** Complete, versioned S3 owner-prefix walk; no D1 dependency. The result
+   * is still only a restore candidate, not evidence that no newer D1 state or
+   * external deletion intent exists.
+   */
+  async discoverOwnerFromS3(ownerId: string, now: number): ReturnType<OwnerRecoveryCopy['selectRecoveredOwner']> {
+    if (!ownerPattern.test(ownerId)) throw unavailable();
+    const references: RecoveryObject[] = [];
+    const seenVersions = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: { keyMarker: string; versionIdMarker?: string } | undefined;
+    do {
+      const page = await this.s3.listOwnerVersionsPage(ownerId, cursor);
+      for (const version of page.versions) {
+        const identity = `${version.key}\0${version.versionId}`;
+        if (version.deleteMarker || seenVersions.has(identity)) throw unavailable();
+        seenVersions.add(identity);
+        if (ownerKeyPattern.exec(version.key)?.[1] === ownerId) {
+          references.push(await this.s3.referenceForListedVersion(version));
+        }
+      }
+      if (seenVersions.size > 100_000) throw unavailable();
+      cursor = page.nextCursor ?? undefined;
+      if (cursor) {
+        const identity = `${cursor.keyMarker}\0${cursor.versionIdMarker ?? ''}`;
+        if (seenCursors.has(identity)) throw unavailable();
+        seenCursors.add(identity);
+      }
+    } while (cursor);
+    return this.selectRecoveredOwner(ownerId, references, now);
+  }
+
   async copy(image: OwnerRecoveryImage): Promise<RecoveryObject> {
     valid(image);
     const payload: EncodedImage = { ...image, version: 1,

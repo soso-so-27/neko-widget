@@ -1,4 +1,5 @@
 import { DurableAuth } from './auth';
+import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { type MembershipAuthority, ServiceError, randomToken } from './contracts';
 import { type BillingLinkAuthority, type LinkChallenge, LINK_TTL_MS, LINK_SIGNING_PATH,
   linkTranscript, uuidV4, validAudience, validateChallenge, validateProof } from './billing-link-protocol';
@@ -6,7 +7,8 @@ import { type BillingLinkAuthority, type LinkChallenge, LINK_TTL_MS, LINK_SIGNIN
 interface Row { challenge_id: string; owner_id: string; billing_account_id: string; audience: string; issued_at: number; expires_at: number; }
 export class MembershipLinks implements MembershipAuthority {
   constructor(private readonly d: { db: D1Database; auth: DurableAuth; authority: BillingLinkAuthority;
-    audience: string; now: () => number }) {
+    audience: string; now: () => number; ownerRecovery?: OwnerRecoveryCopy;
+    requireOwnerRecovery?: boolean }) {
     if (!validAudience(d.audience)) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
   }
   private clock() {
@@ -69,6 +71,10 @@ export class MembershipLinks implements MembershipAuthority {
     const link = results[1]?.results[0] as { billing_account_id: string } | undefined;
     if (!link) { await this.d.auth.requireSession(token); throw new ServiceError('MEMBERSHIP_LINK_CONFLICT', 409); }
     if (link.billing_account_id !== challenge.billingAccountId) throw new ServiceError('MEMBERSHIP_LINK_CONFLICT', 409);
+    if (this.d.requireOwnerRecovery && !this.d.ownerRecovery) {
+      throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
+    }
+    await this.d.ownerRecovery?.copyCurrent(this.d.db, session.ownerId, now);
     return { linked: true as const };
   }
   async status(ownerId: string) {

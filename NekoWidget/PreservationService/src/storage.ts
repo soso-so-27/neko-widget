@@ -3,6 +3,7 @@ import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type Membe
 import { decodePhoto, encodePhoto, recordId, validateDocument } from './documents';
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
+import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -21,7 +22,9 @@ interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
   auth: { requireSession(token: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
   recovery?: RecordRecoveryCopy;
+  ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
+  requireOwnerRecovery?: boolean;
 }
 const bytes = (value: unknown): ArrayBuffer => {
   if (value instanceof ArrayBuffer) return value;
@@ -61,15 +64,20 @@ export class ArchiveStore {
     if (!['active', 'grace'].includes(state)) throw new ServiceError('NEW_SAVE_REQUIRES_MEMBERSHIP', 403);
   }
   private requireRecovery(): void {
-    if (this.d.requireRecovery && !this.d.recovery) {
+    if ((this.d.requireRecovery && !this.d.recovery)
+      || (this.d.requireOwnerRecovery && !this.d.ownerRecovery)) {
       throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
     }
   }
   private async requireWritePolicy(): Promise<void> {
     if (!this.d.requireRecovery) return;
-    const policy = await this.d.db.prepare(`SELECT delete_intent_required FROM pa_recovery_write_policy
-      WHERE singleton=1`).first<{ delete_intent_required: number }>();
-    if (policy?.delete_intent_required !== 1) throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
+    const policy = await this.d.db.prepare(`SELECT delete_intent_required,owner_snapshot_required
+      FROM pa_recovery_write_policy WHERE singleton=1`)
+      .first<{ delete_intent_required: number; owner_snapshot_required: number }>();
+    if (policy?.delete_intent_required !== 1
+      || (this.d.requireOwnerRecovery && policy.owner_snapshot_required !== 1)) {
+      throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
+    }
   }
   private recoveryReference(ownerId: string, id: string, revision: number, copy: CopiedRecordImage) {
     return this.d.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
@@ -374,6 +382,9 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
+    if (this.d.requireOwnerRecovery) {
+      await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
+    }
     if (!input || typeof input !== 'object') throw new ServiceError('INVALID_RECORD');
     const request = input as Record<string, unknown>;
     if (Object.keys(request).some((key) => !['document', 'photoBase64', 'expectedRevision', 'consentVersion'].includes(key))) {
@@ -529,6 +540,9 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
+    if (this.d.requireOwnerRecovery) {
+      await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
+    }
     const row = await this.row(session.ownerId, id);
     if (!row) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (row.deleted && row.revision === expected + 1) {
