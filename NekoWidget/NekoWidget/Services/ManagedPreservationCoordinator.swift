@@ -142,6 +142,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
     @Published private(set) var noticeContact: ManagedPreservationNoticeContact?
+    @Published private(set) var retention: ManagedPreservationRetention?
     @Published private(set) var usage: ManagedPreservationUsage?
     @Published private(set) var usageLoading = false
     @Published private(set) var usageMessage: String?
@@ -208,6 +209,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 self.consentToNewSave = false
                 self.membership = nil; self.membershipMessage = nil
                 self.noticeContact = nil
+                self.retention = nil
                 try await self.loadFirstPage(ticket)
             case .failure(let error):
                 await self.client.cancelSignIn()
@@ -258,6 +260,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 throw ManagedPreservationError.staleSession
             }
             self.noticeContact = result
+        }
+    }
+
+    func checkRetention() {
+        guard isSignedIn, !isBusy else { return }
+        retention = nil
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            let result = try await self.client.retention()
+            guard try await self.requireCurrentOwner(ticket) == owner else {
+                throw ManagedPreservationError.staleSession
+            }
+            self.retention = result
         }
     }
 
@@ -430,6 +445,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         consentToNewSave = false
         membership = nil; membershipMessage = nil
         noticeContact = nil
+        retention = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
         exportProgress = nil
@@ -588,6 +604,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         consentToNewSave = false; draftWasSaved = false
         membership = nil; membershipMessage = nil
         noticeContact = nil
+        retention = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
         exportProgress = nil

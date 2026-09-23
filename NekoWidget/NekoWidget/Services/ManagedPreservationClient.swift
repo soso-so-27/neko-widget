@@ -228,6 +228,40 @@ struct ManagedPreservationNoticeContact: Decodable, Equatable, Sendable {
     }
 }
 
+struct ManagedPreservationRetention: Decodable, Equatable, Sendable {
+    enum Status: String, Decodable, Sendable { case unlinked, active, grace, expired, unknown }
+    let version: Int
+    let status: Status
+    let dueAt: Int64?
+    let paused: Bool
+    let finalNoticeDeliveredAt: Int64?
+
+    func validated() throws -> Self {
+        guard version == 1,
+              dueAt == nil || (dueAt! > 0 && dueAt! < 253_402_300_800_000),
+              finalNoticeDeliveredAt == nil || (finalNoticeDeliveredAt! > 0
+                  && finalNoticeDeliveredAt! < 253_402_300_800_000) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        switch status {
+        case .unlinked, .active, .grace:
+            guard dueAt == nil, !paused, finalNoticeDeliveredAt == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        case .unknown:
+            guard dueAt == nil, finalNoticeDeliveredAt == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        case .expired:
+            guard dueAt != nil, !paused,
+                  finalNoticeDeliveredAt == nil || finalNoticeDeliveredAt! <= dueAt! else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+        return self
+    }
+}
+
 struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
@@ -412,6 +446,12 @@ actor ManagedPreservationClient {
     func noticeContact() async throws -> ManagedPreservationNoticeContact {
         let data = try await authenticated("GET", path: "/v1/notice-contact", maximumBytes: 4096)
         let result: ManagedPreservationNoticeContact = try decode(data)
+        return try result.validated()
+    }
+
+    func retention() async throws -> ManagedPreservationRetention {
+        let data = try await authenticated("GET", path: "/v1/retention", maximumBytes: 4096)
+        let result: ManagedPreservationRetention = try decode(data)
         return try result.validated()
     }
 

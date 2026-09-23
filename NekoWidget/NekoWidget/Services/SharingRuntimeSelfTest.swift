@@ -19,6 +19,7 @@ enum PreservationFixtureScenario: Sendable {
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
     case malformedNoticeContact, changedSessionDuringNoticeContact
+    case malformedRetention, changedSessionDuringRetention, unavailableRetention
 }
 
 actor PreservationFixtureServer {
@@ -130,6 +131,20 @@ actor PreservationFixtureServer {
             return try json(["version": 1,
                 "email": scenario == .malformedNoticeContact ? "unsafe\r\nBcc:other@example.com" : "owner@example.com",
                 "source": "apple"])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/retention" {
+            if scenario == .changedSessionDuringRetention { try replaceSession() }
+            if scenario == .unavailableRetention { return try fail("RETENTION_UNAVAILABLE", status: 503) }
+            if scenario == .malformedRetention {
+                return try json(["version": 1, "status": "active", "dueAt": 1000,
+                                 "paused": false, "finalNoticeDeliveredAt": NSNull()])
+            }
+            if !linked {
+                return try json(["version": 1, "status": "unlinked", "dueAt": NSNull(), "paused": false])
+            }
+            return try json(["version": 1, "status": "expired",
+                             "dueAt": Int64(Date().addingTimeInterval(365 * 86_400).timeIntervalSince1970 * 1000),
+                             "paused": false, "finalNoticeDeliveredAt": NSNull()])
         }
         let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
             updatedAt: nil, catNames: [], photoFile: nil)
@@ -9853,6 +9868,9 @@ actor SharingRuntimeSelfTestRunner {
         do { _ = try await f.client.linkMembership(consent: true) } catch { failed = true }
         let afterFailure = try await f.client.membership()
         guard failed, !afterFailure.linked else { throw ManagedPreservationError.invalidResponse }
+        let unlinkedRetention = try await f.client.retention()
+        guard unlinkedRetention.status == .unlinked, unlinkedRetention.dueAt == nil,
+              !unlinkedRetention.paused else { throw ManagedPreservationError.invalidResponse }
         let result = try await f.client.linkMembership(consent: true)
         let counts = await f.server.counts()
         guard result.linked, result.status == .expired, !result.canSave, counts.issues == 2, counts.completes == 2,
@@ -9863,6 +9881,20 @@ actor SharingRuntimeSelfTestRunner {
         let usage = try await f.client.usage()
         guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 10_736_369_664,
               usage.records.saved == 1 else { throw ManagedPreservationError.invalidResponse }
+        let retention = try await f.client.retention()
+        guard retention.status == .expired, retention.dueAt != nil,
+              retention.finalNoticeDeliveredAt == nil else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        for (scenario, expected) in [(PreservationFixtureScenario.malformedRetention, ManagedPreservationError.invalidResponse),
+                                     (.changedSessionDuringRetention, .staleSession),
+                                     (.unavailableRetention, .unavailable)] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var rejected = false
+            do { _ = try await fixture.client.retention() }
+            catch let error as ManagedPreservationError where error == expected { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
         for (scenario, expected) in [(PreservationFixtureScenario.malformedUsage, ManagedPreservationError.accountingUnavailable),
                                      (.changedSessionDuringUsage, .staleSession),
                                      (.unavailableUsage, .accountingUnavailable)] {

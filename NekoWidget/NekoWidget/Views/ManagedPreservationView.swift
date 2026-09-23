@@ -95,6 +95,7 @@ struct ManagedPreservationView: View {
             else {
                 membershipSection
                 noticeContactSection
+                retentionSection
                 usageSection
                 if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
@@ -235,6 +236,43 @@ struct ManagedPreservationView: View {
             }
         } header: { Text("この保管先の容量") }
         footer: { Text("選んで保管したコピーとメモの容量です。iPhoneの写真原本は含みません。") }
+    }
+
+    private var retentionSection: some View {
+        Section {
+            if let retention = coordinator.retention {
+                switch retention.status {
+                case .active, .grace:
+                    Text("保管中です。持ち出し期限は始まっていません。")
+                case .expired:
+                    Text("新しい保管は停止中。写真とメモは閲覧・一括書き出しできます。")
+                    if let dueAt = retention.dueAt {
+                        Text(retention.finalNoticeDeliveredAt == nil
+                             ? "持ち出し期限の目安（削除予告によって延長）"
+                             : "現在の持ち出し期限")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Text(Date(timeIntervalSince1970: Double(dueAt) / 1000), format: .dateTime.year().month().day())
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text(retention.finalNoticeDeliveredAt == nil
+                         ? "削除予告の送達はまだ確認されていません。"
+                         : "削除予告の送達を確認済みです。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                case .unknown:
+                    Text("会員資格を確認できません。保管済みの記録はそのまま残します。")
+                case .unlinked:
+                    Text("会員情報が未接続です。持ち出し期間はまだ表示できません。")
+                }
+            } else {
+                Text("現在の持ち出し期間を確認できます")
+                    .foregroundStyle(.secondary)
+            }
+            Button("持ち出し期間を確認") { coordinator.checkRetention() }
+                .accessibilityIdentifier("preservation-retention-check")
+        } header: { Text("保管終了後の持ち出し") }
+        footer: {
+            Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。")
+        }
     }
 
     private static func capacity(_ bytes: Int64) -> String {
