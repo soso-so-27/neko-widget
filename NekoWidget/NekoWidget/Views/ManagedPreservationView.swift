@@ -256,7 +256,7 @@ struct ManagedPreservationView: View {
                     }
                     Text(retention.finalNoticeDeliveredAt == nil
                          ? "削除予告の送達はまだ確認されていません。"
-                         : "削除予告の送達を確認済みです。")
+                         : "削除予告が宛先のメールサーバーに受理されました。開封は未確認です。")
                         .font(.footnote).foregroundStyle(.secondary)
                 case .unknown:
                     Text("会員資格を確認できません。保管済みの記録はそのまま残します。")
