@@ -35,6 +35,22 @@
   ],
   "observations": [
     {
+      "scope": "preservation-service-v5",
+      "candidate_minutes": 0.6,
+      "run_id": 35848139033,
+      "outcome": "success",
+      "plan_run_id": 35848139010,
+      "plan_minutes": 0.3,
+      "main_run_id": 35848244913,
+      "main_elapsed_minutes": 0.617,
+      "main_plan_run_id": 35848245008,
+      "main_reused": false,
+      "service_runner_minutes_all_attempts": 1.117,
+      "first_ci_to_main_minutes": 1.717,
+      "candidate_commit_to_main_minutes": 3.3,
+      "note": "First v5 observation: bounded internal expiry-notice review candidates; 8 focused retention tests and typecheck locally, dedicated service and iOS selection jobs succeeded on candidate and main. No email sent, archive deleted, native release, live storage or KMS connection. Two local preflight invocations are not counted as CI time."
+    },
+    {
       "scope": "preservation-service-v3",
       "candidate_minutes": 0.583,
       "run_id": 35790177974,
