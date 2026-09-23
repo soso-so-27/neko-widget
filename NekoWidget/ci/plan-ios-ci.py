@@ -53,14 +53,16 @@ DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "test-preflight-ci.py", "ci-timing-baseline.json",
 ))
 
-# A separate Node-only service, never an iOS build or release-evidence scope.
+# A separate Node/Container-only service, never iOS or release evidence.
 # Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
-JPEG_SCOPE = "preservation-image-validator-v1"
+JPEG_SCOPE = "preservation-image-validator-v2"
 JPEG_JOB = "Validate preservation JPEG provider"
 JPEG_WORKFLOW = ".github/workflows/preservation-image-validator.yml"
-JPEG_JOB_TIMEOUT_MINUTES = 5
+JPEG_JOB_TIMEOUT_MINUTES = 10
 JPEG_PATHS = frozenset("NekoWidget/PreservationImageValidator/" + name for name in (
     ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
+    "Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
+    "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs",
     "src/decode-child.ts", "src/decode-error.ts", "src/decoder.ts",
     "src/jpeg-envelope.ts", "src/limits.ts", "src/provider.ts",
     "test/decode-error.test.mjs", "test/decoder.test.mjs", "test/fixtures.mjs",
@@ -71,23 +73,23 @@ JPEG_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
 ))
 # Fixed only after independent review. Self hashing removes exactly this one
 # complete JSON assignment, including its single trailing newline, and nothing else.
-JPEG_WORKFLOW_DIGEST = "8e7138d1d29a916d0db84a9b20ebd050dd026fd31d98b32057f2f095e026d722"
+JPEG_WORKFLOW_DIGEST = "4341f6eb650a196b751a276f0e8a8c81de161feab90cfe579eb0fa3557a315ea"
 JPEG_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "637762e35ce6422ce5710bce8b8360e850d1a31a9ac1d811246f0e83d85ea8de",
-        "bd6df06101eaf6ff9d3f33a24f15f9bcd06bf2dde56b0473597f8dd5e95837f9"
+        "5f93474b5a05051b353bf9df584858f9c339be73eafb48a3e7c54f48d6229b53",
+        "97b42a4ae83191fb705f7a33d7afe60ac330352cb8c2106195db7bc4b728a431"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "e3676597b870ef3d2de1820a61183cf490418a5fceb0d45d0f9a5a1b97ae8ac3",
-        "282e00476b4dd2aef574610e562b8d68618f1c50faa71c7cea786b2bd2ae213c"
+        "afb6c3e9fe0e497377d90f9d47fc38293664ca63f87c1007b6ef1744c94c13c3",
+        "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "49e90d0e2d0e7f74901001ee7205ba53c060f080a99c3e6c9063cd965960852a",
-        "0cbb3ea311b6b08d93aae23f2abf597b77c32ec77e42cedaba693ae25fbb258d"
+        "8b688511c2ac032c7e78238fc1c1b4244a64ea9cb1e71a1aa1200542f9eaff71",
+        "684ad6f29e929ba5c14ddb281d371b13f91ab3afd56354059da43338471b5d90"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "156c1f68831e93e30828ea70126795e98e91dbe321080031a8722b3e00544669",
-        "9a0f4f4c57d4af5cd85e3951401d8459cb4f94423ddb9e3ff3dadeb84aebdc75"
+        "30e0a535ba76cc3ddff3050ea4c6e9ead2fe990e5b668277b3bd0c3708cfc019",
+        "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e"
     ]
 }
 

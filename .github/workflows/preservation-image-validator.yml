@@ -24,7 +24,7 @@ jobs:
   validate:
     name: Validate preservation JPEG provider
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -38,8 +38,14 @@ jobs:
           cache-dependency-path: NekoWidget/PreservationImageValidator/package-lock.json
       - name: Install locked dependencies
         working-directory: NekoWidget/PreservationImageValidator
-        run: npm ci --no-fund
+        run: npm ci --ignore-scripts --no-fund
       - name: Typecheck and validate actual JPEG decoding and resource boundaries
         working-directory: NekoWidget/PreservationImageValidator
         run: npm test
+      - name: Bundle the disabled private Container gateway without deployment
+        working-directory: NekoWidget/PreservationImageValidator
+        run: npx wrangler deploy --dry-run --containers-rollout=none --config wrangler.container.disabled.jsonc
+      - name: Build the linux amd64 decoder image without deployment
+        working-directory: NekoWidget/PreservationImageValidator
+        run: docker build --pull --platform linux/amd64 -t neko-preservation-validator-ci:local .
       # This is neither native iOS release evidence nor a deployment.

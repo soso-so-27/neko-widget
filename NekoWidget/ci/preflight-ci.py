@@ -291,7 +291,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                        else planner.PRESERVATION_JOB_TIMEOUT_MINUTES)
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeout_minutes": timeout,
-                    "note": "First measurement only. Five minutes is the Node job timeout, not an observed duration or a queue/total-time guarantee."}
+                    "note": f"First measurement only. {timeout} minutes is the job timeout, not an observed duration or a queue/total-time guarantee."}
         return {"status": "unmeasured", "samples": []}
     values = [float(row["candidate_minutes"]) for row in samples]
     upload = float(history["upload_minutes"]) if include_upload else 0
@@ -323,7 +323,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     if required == (planner.BUILD,) and selected != "app-icon-v1":
         selected = "movie-screen-only"
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Independent JPEG provider and frozen Node workflow; no native or release evidence"
+    reason = ("Private JPEG Container gateway and frozen Node/Docker workflow; no deployment or release evidence"
               if selected == planner.JPEG_SCOPE else
               "Preservation, private billing-link service and owner-index migration with frozen Node workflow; no native or release evidence"
               if selected == planner.PRESERVATION_SCOPE else

@@ -61,10 +61,12 @@ node test/test-adapter.mjs --source <PreservationService/src の絶対パス>
 
 ## 配備前に残ること
 
-このフォルダーには公開HTTPリスナー・Docker/Wrangler・自動配備・秘密設定を置いていません。**Node native addon なので、そのまま Cloudflare Workers の Fetcher へ配置できるわけではありません。** `fetch(Request)` は契約の実装で、実service bindingの疎通実証とは別です。
+非公開のContainer接続候補を `Dockerfile`、`src/http-server.ts`、`src/container-worker.mjs`、`wrangler.container.disabled.jsonc` に用意しました。既定 `JPEG_VALIDATOR_ENABLED=NO`、公開default routeは404、Workers URLもOFFです。HTTP bridgeは十分長い共有secretがないと起動・処理せず、許可された写真検証リクエストだけを既存の厳格デコーダーへ渡します。コンテナからの外部通信はOFFです。**まだCloudflareへ配備しておらず、実service binding・Container cold start・1 GiB環境の最大画像メモリを確認した証拠ではありません。** `fetch(Request)` の単体試験成功を実配備成功として扱いません。
 
-1. 非公開 Node 実行環境と Workers からの信頼した橋渡しを選び、外部から到達不能・認証済みのみ呼出可能にする。新規契約や Containers 採用をこの候補だけで決定しない。
-2. OS側の総メモリ/CPU上限、同時実行、cold start込みの10秒呼出制限、依存更新と監視を実環境で確認する。latestを追う監視なしに固定versionを放置しない。
+専用CIはNodeでの全デコード試験、非配備のWorker bundle、Linux/amd64 Docker buildを行います。ローカルDockerが停止している場合はbundleのみ `npx wrangler deploy --dry-run --containers-rollout=none --config wrangler.container.disabled.jsonc` で確認できます。実配備にはWorkers Paid、Docker実行環境、Container権限、保管Workerからの名前付き `JPEGValidationService` service binding、環境ごとの共有secretが必要です。Workers PaidやContainerの費用契約をこのコードだけで開始しません。
+
+1. Workers PaidとContainer権限を確認し、非公開named service bindingとsecretを実環境で接続する。Containerが利用できなければ別の厳格デコード実行環境を選ぶ。
+2. basic 1 GiBでの総メモリ/CPU上限、同時実行、cold start込みの10秒呼出制限、依存更新と監視を実環境で確認する。現在のDocker baseは可変のNode 22タグなので、販売前に取得digest・更新/脆弱性監視・復旧を固定する。
 3. 実iOSが生成する代表画像と境界を確認し、保存サービス全体の認可→画像検証→暗号化→保管・失敗再送を接続する。
 4. KMS・Apple本人/会員owner・容量/保持/削除・別端末復元は別の未完ゲートのまま。画像検証が通っても、バックアップ提供開始としない。
 
