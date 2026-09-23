@@ -17,6 +17,7 @@ final class PreservationFixtureKeys: @unchecked Sendable {
 enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
+    case malformedUsage, changedSessionDuringUsage, unavailableUsage
 }
 
 actor PreservationFixtureServer {
@@ -112,6 +113,16 @@ actor PreservationFixtureServer {
             if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
             if scenario == .saveRejected { return try json(["linked": true, "status": "active"]) }
             return try json(["linked": linked, "status": linked ? "expired" : "unknown"])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/usage" {
+            if scenario == .changedSessionDuringUsage { try replaceSession() }
+            if scenario == .unavailableUsage { return try fail("ARCHIVE_ACCOUNTING_UNAVAILABLE", status: 503) }
+            return try json(["version": 1, "accounting": "encrypted-records-v1",
+                "storage": ["usedBytes": 1_048_576, "reservedBytes": 0,
+                            "limitBytes": 10_737_418_240,
+                            "availableBytes": scenario == .malformedUsage ? 10_737_418_240 : 10_736_369_664,
+                            "overLimit": false],
+                "records": ["saved": 1, "pending": 0, "creationLimitReached": false]])
         }
         let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
             updatedAt: nil, catNames: [], photoFile: nil)
@@ -9802,6 +9813,18 @@ actor SharingRuntimeSelfTestRunner {
         let page = try await f.client.list()
         guard page.items.count == 1 else { throw ManagedPreservationError.invalidResponse }
         _ = try await f.client.detail(PreservationFixtureServer.recordID)
+        let usage = try await f.client.usage()
+        guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 10_736_369_664,
+              usage.records.saved == 1 else { throw ManagedPreservationError.invalidResponse }
+        for (scenario, expected) in [(PreservationFixtureScenario.malformedUsage, ManagedPreservationError.accountingUnavailable),
+                                     (.changedSessionDuringUsage, .staleSession),
+                                     (.unavailableUsage, .accountingUnavailable)] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var rejected = false
+            do { _ = try await fixture.client.usage() }
+            catch let error as ManagedPreservationError where error == expected { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
         let lost = try PreservationNativeFixture.make(.lostResult); defer { try? lost.cleanup() }
         do { _ = try await lost.client.linkMembership(consent: true) } catch { }
         let afterLostResult = try await lost.client.membership()
@@ -9831,6 +9854,34 @@ actor SharingRuntimeSelfTestRunner {
             throw ManagedPreservationError.invalidResponse
         }
         coordinator.stop()
+
+        // A bad accounting response must not turn the successful record list
+        // into an empty archive or a fabricated amount of free space.
+        let invalid = try PreservationNativeFixture.make(.malformedUsage); defer { try? invalid.cleanup() }
+        let invalidUI = ManagedPreservationCoordinator(configuration: invalid.configuration, client: invalid.client)
+        invalidUI.start()
+        var deadline = Date().addingTimeInterval(5)
+        while (invalidUI.isBusy || invalidUI.usageLoading) && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        guard invalidUI.isSignedIn, invalidUI.records.count == 1, invalidUI.usage == nil,
+              invalidUI.usageMessage != nil else { throw ManagedPreservationError.invalidResponse }
+        invalidUI.stop()
+
+        // A session swap while fetching usage must erase the prior owner's
+        // list and never publish that owner's capacity to the next session.
+        let switched = try PreservationNativeFixture.make(.changedSessionDuringUsage)
+        defer { try? switched.cleanup() }
+        let switchedUI = ManagedPreservationCoordinator(configuration: switched.configuration, client: switched.client)
+        switchedUI.start()
+        deadline = Date().addingTimeInterval(5)
+        while (switchedUI.isBusy || switchedUI.usageLoading) && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        guard !switchedUI.isSignedIn, switchedUI.records.isEmpty, switchedUI.usage == nil else {
+            throw ManagedPreservationError.staleSession
+        }
+        switchedUI.stop()
     }
 
     private static func opaque(_ byte: UInt8) -> String {

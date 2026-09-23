@@ -277,7 +277,8 @@ class WidgetScopeTests(unittest.TestCase):
             for identifier in selected_ui:
                 self.assertEqual(methods.get(identifier), 1, identifier)
         # Full class selection must really include each limited method.
-        full = scope.lane_tests(scope.FULL_SCOPE, "app-ui")
+        full = tuple(test for lane in scope.app_ui_lanes(scope.FULL_SCOPE)
+                     for test in scope.lane_tests(scope.FULL_SCOPE, lane))
         for identifier in UI_TESTS:
             self.assertTrue(any(identifier == item or identifier.startswith(item + "/") for item in full), identifier)
 
@@ -331,10 +332,12 @@ class WidgetScopeTests(unittest.TestCase):
             for lane in scope.lanes(selected):
                 with self.subTest(scope=selected, lane=lane):
                     limited_name = scope.lane_job(selected, lane)
-                    full_name = scope.lane_job(scope.FULL_SCOPE, lane)
-                    self.assertTrue(planner.covers_jobs(self.jobs([full_name]), (limited_name,), sha))
-                    for other in scope.LANES:
-                        if other != lane:
+                    full_names = ([scope.lane_job(scope.FULL_SCOPE, name)
+                                   for name in scope.app_ui_lanes(scope.FULL_SCOPE)]
+                                  if lane == "app-ui" else [scope.lane_job(scope.FULL_SCOPE, lane)])
+                    self.assertTrue(planner.covers_jobs(self.jobs(full_names), (limited_name,), sha))
+                    for other in scope.lanes(scope.FULL_SCOPE):
+                        if scope.lane_job(scope.FULL_SCOPE, other) not in full_names:
                             wrong_lane = scope.lane_job(scope.FULL_SCOPE, other)
                             self.assertFalse(planner.covers_jobs(self.jobs([wrong_lane]), (limited_name,), sha))
 
@@ -352,7 +355,8 @@ class WidgetScopeTests(unittest.TestCase):
                     self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, sha))
                     self.assertFalse(planner.covers_jobs(jobs + [jobs[index]], required, sha))
             for lane in scope.lanes(selected):
-                duplicate_coverage = jobs + self.jobs([scope.lane_job(scope.FULL_SCOPE, lane)])
+                covering = (scope.app_ui_lanes(scope.FULL_SCOPE) if lane == "app-ui" else (lane,))
+                duplicate_coverage = jobs + self.jobs([scope.lane_job(scope.FULL_SCOPE, name) for name in covering])
                 self.assertFalse(planner.covers_jobs(duplicate_coverage, required, sha))
             self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
 

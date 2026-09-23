@@ -38,6 +38,7 @@ jobs:
       smoke_name: ${{ steps.scope.outputs.smoke_name }}
       sharing: ${{ steps.scope.outputs.sharing }}
       app_ui: ${{ steps.scope.outputs.app_ui }}
+      app_ui_lanes: ${{ steps.scope.outputs.app_ui_lanes }}
       runtime_scope: ${{ steps.scope.outputs.runtime_scope }}
       lanes: ${{ steps.scope.outputs.lanes }}
       matrix_lanes: ${{ steps.scope.outputs.matrix_lanes }}
@@ -1093,15 +1094,19 @@ jobs:
           retention-days: 7
 
   sharing-app-ui:
-    name: Sharing checks [app-ui; scope ${{ needs.plan.outputs.runtime_scope }}]
+    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]
     # The longest check must not compete with all five matrix lanes for the
     # initial Mac slots. App UI, build and smoke each have one slot, while
     # the remaining runtime/Gallery matrix uses at most two slots below.
     needs: plan
     if: needs.plan.outputs.app_ui == 'true'
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(needs.plan.outputs.app_ui_lanes) }}
     # Full UI execution can consume 60 minutes before result/attachment export.
-    timeout-minutes: 75
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 
@@ -1116,14 +1121,14 @@ jobs:
         shell: bash
         env:
           NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
-          NEKO_IOS_RUNTIME_LANE: app-ui
+          NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}
         run: bash ci/run-sharing-runtime-matrix.sh
 
       - name: Upload sharing runtime matrix artifacts
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: ios-sharing-app-ui-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ios-sharing-${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/neko-sharing-runtime-matrix
           if-no-files-found: warn
           retention-days: 7

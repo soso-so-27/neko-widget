@@ -105,7 +105,7 @@ case "$RUNTIME_LANE" in
         fi
         ;;
     runtime) ;;
-    app-ui|gallery-normal|gallery-white|gallery-no-caption)
+    app-ui|app-ui-solo|app-ui-other|gallery-normal|gallery-white|gallery-no-caption)
         # Each visual lane regenerates its own validated production cache.
         # Do not transfer an injected checkout or fixture build between jobs.
         RUNTIME_LABELS=("ios-26-2")
@@ -464,7 +464,7 @@ view.write_text(source, encoding="utf-8")
 PY
         # Keep the same fixture preparation/build for full and mapped UI.
         # Only test selection and the extra Gallery builds vary by scope.
-        if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui || "$RUNTIME_LANE" == gallery-normal ]]; then
+        if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui* || "$RUNTIME_LANE" == gallery-normal ]]; then
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \

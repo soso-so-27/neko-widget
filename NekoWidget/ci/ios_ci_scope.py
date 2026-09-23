@@ -64,6 +64,7 @@ SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
+FULL_APP_UI_LANES = ("app-ui-solo", "app-ui-other")
 LANE_JOB_PREFIX = "Sharing checks"
 GALLERY_CONDITIONS = {
     "gallery-normal": "",
@@ -1685,6 +1686,8 @@ def native_tests(scope: str) -> tuple[str, ...]:
 
 def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
+    if scope == FULL_SCOPE:
+        return ("runtime",) + FULL_APP_UI_LANES + LANES[2:]
     if scope == ICON_SCOPE:
         return ()
     if scope == WIDGET_STYLE_SCOPE:
@@ -1693,12 +1696,16 @@ def lanes(scope: str) -> tuple[str, ...]:
         return LANES[:3]
     if scope in (WIDGET_LAYOUT_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE):
         return LANES
-    return LANES if scope == FULL_SCOPE else LANES[:2]
+    return LANES[:2]
 
 
 def matrix_lanes(scope: str) -> tuple[str, ...]:
     """App UI runs independently; the remaining lanes share two Mac slots."""
-    return tuple(lane for lane in lanes(scope) if lane != "app-ui")
+    return tuple(lane for lane in lanes(scope) if not lane.startswith("app-ui"))
+
+
+def app_ui_lanes(scope: str) -> tuple[str, ...]:
+    return tuple(lane for lane in lanes(scope) if lane.startswith("app-ui"))
 
 
 def lane_job(scope: str, lane: str) -> str:
@@ -1719,8 +1726,13 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
     lane_job(scope, lane)
     if lane == "runtime":
         return ()
-    if lane == "app-ui":
-        return tuple(test for test in native_tests(scope) if test != GALLERY_TEST)
+    if lane.startswith("app-ui"):
+        tests = tuple(test for test in native_tests(scope) if test != GALLERY_TEST)
+        if lane == "app-ui-solo":
+            return tuple(test for test in tests if test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
+        if lane == "app-ui-other":
+            return tuple(test for test in tests if not test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
+        return tests
     if lane == "gallery-white":
         return (GALLERY_TEST.replace("testCaptureSharedWidgetAllSupportedSizes",
                                    "testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"),)
@@ -1888,7 +1900,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", choices=SCOPES, required=True)
-    parser.add_argument("--lane", choices=("all", "smoke") + LANES, default="all")
+    parser.add_argument("--lane", choices=("all", "smoke") + LANES + FULL_APP_UI_LANES, default="all")
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--tests", type=Path, required=True)
     args = parser.parse_args()

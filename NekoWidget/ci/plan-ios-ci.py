@@ -21,7 +21,7 @@ from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
                           sharing_jobs, lane_job, lanes, matrix_lanes,
-                          reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST,
+                          reviewed_memory_changes, MEMORY_TEST_PATH, REVIEW_MANIFEST, app_ui_lanes,
                           MEMBERSHIP_OFFER_PATHS, MEMBERSHIP_OFFER_NEW_PATHS, MEMBERSHIP_OFFER_COMPANION_PATHS,
                           MEMBERSHIP_ACCESS_PATHS, MEMBERSHIP_ACCESS_NEW_PATHS, MEMBERSHIP_ACCESS_COMPANION_PATHS,
                           DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_COMPANION_PATHS,
@@ -490,6 +490,9 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
         if audit:
             evidence_log("jobs_rejected", reason=reason, required_job=name)
         return False
+    mapped_ui_names = {lane_job(scope, "app-ui") for scope in SCOPES
+                       if scope != FULL_SCOPE and "app-ui" in lanes(scope)}
+    full_ui_names = {lane_job(FULL_SCOPE, lane) for lane in app_ui_lanes(FULL_SCOPE)}
     # Missing, skipped, failed or duplicate jobs are not evidence of execution.
     for name in required:
         acceptable = {name}
@@ -501,22 +504,29 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
             # names are not proof of which tests actually ran.
             for lane in lanes(scope):
                 if name == lane_job(scope, lane):
-                    acceptable.add(lane_job(FULL_SCOPE, lane))
+                    if lane in lanes(FULL_SCOPE):
+                        acceptable.add(lane_job(FULL_SCOPE, lane))
         matching = [job for job in jobs if job.get("name") in acceptable]
-        if len(matching) != 1:
+        # A full run covers a mapped UI suite only when both disjoint full
+        # shards passed. One shard, or mixed mapped/full evidence, cannot.
+        full_ui = ([job for job in jobs if job.get("name") in full_ui_names]
+                   if name in mapped_ui_names else [])
+        if len(matching) == 0 and len(full_ui) == len(app_ui_lanes(FULL_SCOPE)):
+            matching = full_ui
+        elif len(matching) != 1 or full_ui:
             return reject("missing_or_duplicate_job", name)
-        job = matching[0]
-        if (job.get("status"), job.get("conclusion"), job.get("head_sha")) != (
-            "completed", "success", sha
-        ):
-            return reject("job_not_successful_on_candidate_sha", name)
-        if now is not None:
-            try:
-                completed = dt.datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
-                if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24):
-                    return reject("job_outside_24_hours", name)
-            except (AttributeError, KeyError, TypeError, ValueError):
-                return reject("invalid_job_timestamp", name)
+        for job in matching:
+            if (job.get("status"), job.get("conclusion"), job.get("head_sha")) != (
+                "completed", "success", sha
+            ):
+                return reject("job_not_successful_on_candidate_sha", name)
+            if now is not None:
+                try:
+                    completed = dt.datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+                    if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24):
+                        return reject("job_outside_24_hours", name)
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    return reject("invalid_job_timestamp", name)
     return True
 
 
@@ -651,7 +661,7 @@ def main() -> None:
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
-                  "sharing": "false", "app_ui": "false", "runtime_scope": selected_scope,
+                  "sharing": "false", "app_ui": "false", "app_ui_lanes": "[]", "runtime_scope": selected_scope,
                   "lanes": "[]", "matrix_lanes": "[]", "matrix_parallelism": "2"}
         with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             for key, value in values.items():
@@ -683,11 +693,12 @@ def main() -> None:
         "smoke": str(evidence is None and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and bool(set(required) & set(sharing_jobs(selected_scope)))).lower(),
-        "app_ui": str(evidence is None and required != (BUILD,) and "app-ui" in lanes(selected_scope)).lower(),
+        "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
+        "app_ui_lanes": json.dumps(app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
         "matrix_lanes": json.dumps(matrix_lanes(selected_scope), separators=(",", ":")),
-        "matrix_parallelism": "3" if selected_scope == WIDGET_STYLE_SCOPE else "2",
+        "matrix_parallelism": "3" if selected_scope == WIDGET_STYLE_SCOPE else "1" if selected_scope == FULL_SCOPE else "2",
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():

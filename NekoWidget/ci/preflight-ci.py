@@ -76,7 +76,7 @@ def read_task_runs(head=None):
             if jobs["total_count"] >= 100:
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
-                if "[app-ui;" in job["name"] and job["conclusion"] in {"failure", "timed_out"}:
+                if "[app-ui" in job["name"] and job["conclusion"] in {"failure", "timed_out"}:
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
                     cases = sorted(set(re.findall(
                         r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)))
@@ -270,7 +270,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
             expected_jobs = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected)
             if (planner.required_jobs_from_scope(selected) != expected_jobs
                     or not {"runtime", "app-ui"} <= set(scope.lanes(selected))
-                    or not set(scope.lanes(selected)) <= set(scope.lanes(scope.FULL_SCOPE))
+                    or not set(scope.lanes(selected)) <= (set(scope.lanes(scope.FULL_SCOPE)) | {"app-ui"})
                     or not selected_tests or len(selected_tests) != len(set(selected_tests))
                     or not set(scope.smoke_tests(selected)) <= set(scope.smoke_tests(scope.FULL_SCOPE))
                     or any(not any(test == full or test.startswith(full + "/") for full in full_tests)

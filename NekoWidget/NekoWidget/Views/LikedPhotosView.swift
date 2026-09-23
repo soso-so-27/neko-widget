@@ -2275,6 +2275,7 @@ struct PhotoBrowserView: View {
 
     @StateObject private var performanceProbe: PhotoBrowserPerformanceProbe
     @State private var selectedPhotoIdentifier: String
+    @State private var confirmedMemorySavedStates: [String: Bool] = [:]
     @State private var preheatedPhotoIdentifiers: Set<String> = []
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
@@ -2498,7 +2499,7 @@ struct PhotoBrowserView: View {
     @ViewBuilder
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
         Spacer(minLength: 0)
-        if selectedPhoto.isLiked {
+        if confirmedMemorySavedStates[selectedPhoto.localIdentifier] ?? selectedPhoto.isLiked {
             Menu {
                 Button("お気に入りから外す", role: .destructive) {
                     let identifier = selectedPhoto.localIdentifier
@@ -2611,7 +2612,7 @@ struct PhotoBrowserView: View {
                         Divider()
                     }
                     if exportMemoryPhoto != nil,
-                       selectedPhoto?.isLiked == true {
+                       selectedPhoto.map({ confirmedMemorySavedStates[$0.localIdentifier] ?? $0.isLiked }) == true {
                         if isExportingMemoryPhoto {
                             Button(role: .cancel) {
                                 cancelMemoryPhotoExport()
@@ -2789,6 +2790,11 @@ struct PhotoBrowserView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
             if stagedDeliveryID != nil { photoDeliveryModel.reloadContentFromDisk() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .confirmedMemorySavedStateChanged)) { notification in
+            guard let change = notification.object as? ConfirmedMemorySavedState,
+                  browserPhotoByIdentifier[change.localIdentifier] != nil else { return }
+            confirmedMemorySavedStates[change.localIdentifier] = change.isSaved
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { notification in
             if stagedDeliveryID != nil,
