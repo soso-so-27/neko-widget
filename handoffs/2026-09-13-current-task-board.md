@@ -1,10 +1,10 @@
 # 現在のタスクと優先順位
 
-## 2026-09-23 個人保管：アプリ容量表示の候補は検証中
+## 2026-09-23 個人保管：アプリ容量表示は本線反映済み
 
-[アプリ側の容量表示バッチ](2026-09-23-preservation-usage-native.md)は独立branch `codex/preservation-usage-ui-20260923` にあり、**main未反映**。本人専用 `GET /v1/usage` を既定OFFの保管画面へ接続し、取得失敗時は空き容量を推測表示せず、owner切替後に古い容量を残さない。Build・runtime・Simulator smoke・Galleryは候補CIで成功し、fixtureの容量画面を目視確認した。
+[アプリ側の容量表示バッチ](2026-09-23-preservation-usage-native.md)を `92afb1d` で本線へ反映。本人専用 `GET /v1/usage` を既定OFFの保管画面へ接続し、取得失敗時は空き容量を推測表示せず、owner切替後に古い容量を残さない。fixtureの容量画面も目視確認した。
 
-一方、全件app-uiは75分上限で停止し、保管画面のUIテスト操作と、既存の同日写真のお気に入り表示に未解決の失敗がある。通常CIをgreenと扱わず、TestFlight・販売条件・実サービス有効化は進めない。次は失敗した画面操作と同日写真の確定状態の表示を別々に直し、62件を1jobに詰める検査方法も見直してから、現行mainとの差分を再評価する。
+保管画面のスクロール判定と、同日写真で保存確定後も古いお気に入り表示が残る問題を修正。失敗操作のfocused診断 [35804983187](https://github.com/soso-so-27/neko-widget/actions/runs/35804983187)、分割後の候補CI [35806117857](https://github.com/soso-so-27/neko-widget/actions/runs/35806117857) の必須8 job、本線CI [35810028824](https://github.com/soso-so-27/neko-widget/actions/runs/35810028824) が成功。UI全件を2組に分け、片方だけの成功では合格にしない。候補CIは57.2分、Mac runner 195.2分。TestFlight・販売条件・実サービス有効化は今回行っていない。
 
 ## 2026-09-23 個人保管：商品容量と保持の判断資料
 
