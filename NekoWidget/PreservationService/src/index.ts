@@ -80,7 +80,9 @@ export async function route(request: Request, services: Services): Promise<Respo
     if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
       throw new ServiceError('SESSION_INVALID', 401);
     }
-    return response({ version: 1, status: state.status, dueAt: state.dueAt, paused: state.pausedAt !== null,
+    return response({ version: 1, status: state.status,
+      dueAt: state.status === 'expired' && state.pausedAt === null ? state.dueAt : null,
+      paused: state.pausedAt !== null,
       finalNoticeDeliveredAt: state.finalNoticeDeliveredAt });
   }
   if (request.method === 'GET' && path === '/v1/usage') {

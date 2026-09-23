@@ -56,7 +56,7 @@ describe('two-proof preservation membership link', () => {
     f.advance(1000);
     vi.mocked(f.authority.status).mockRejectedValueOnce(new Error('billing unavailable'));
     expect(await (await f.request('/v1/retention', 'GET')).json()).toMatchObject({
-      version: 1, status: 'unknown', dueAt: expired.dueAt, paused: true,
+      version: 1, status: 'unknown', dueAt: null, paused: true,
     });
     const other = await f.auth.establish({ ...f.identity, subject: randomToken() });
     expect(await (await f.request('/v1/retention', 'GET', undefined, other.token)).json()).toEqual({
