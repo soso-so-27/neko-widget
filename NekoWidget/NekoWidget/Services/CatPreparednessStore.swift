@@ -164,7 +164,7 @@ enum LostCatFlyerRenderer {
     }
 
     static func createImage(_ draft: LostCatPublicDraft) throws -> URL {
-        guard fits(draft) else { throw CocoaError(.fileWriteInapplicableStringEncoding) }
+        guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
         let renderer = UIGraphicsImageRenderer(size: canvas)
         let image = renderer.image { context in draw(draft, context: context.cgContext) }
         guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
@@ -175,7 +175,7 @@ enum LostCatFlyerRenderer {
     }
 
     static func createPDF(_ draft: LostCatPublicDraft) throws -> URL {
-        guard fits(draft) else { throw CocoaError(.fileWriteInapplicableStringEncoding) }
+        guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
         let bounds = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)
         let renderer = UIGraphicsPDFRenderer(bounds: bounds)
         let data = renderer.pdfData { context in

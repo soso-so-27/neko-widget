@@ -349,7 +349,7 @@ struct MainTabView: View {
             NavigationStack {
                 CatPreparednessEntryView(
                     profiles: catProfilesPresentation.profiles,
-                    unregisteredPhotos: catPhotos
+                    unregisteredPhotos: unregisteredCatPhotos
                 )
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -512,6 +512,13 @@ struct MainTabView: View {
         return (likedPhotos + catPhotos).filter {
             seen.insert($0.localIdentifier).inserted
         }
+    }
+
+    private var unregisteredCatPhotos: [PhotoPresentation] {
+        let registeredIdentifiers = Set(catProfilesPresentation.profiles.flatMap { profile in
+            profile.confirmedPhotos.map(\.localIdentifier)
+        })
+        return catPhotos.filter { !registeredIdentifiers.contains($0.localIdentifier) }
     }
 
     private var canResolveInitialPhotoSection: Bool {
