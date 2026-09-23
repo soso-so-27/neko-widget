@@ -44,6 +44,64 @@ async function fixture() {
 }
 
 describe('final-notice submission evidence, with all external effects disabled', () => {
+  it('promotes only matched delivery after a fresh expiry check, without deleting anything', async () => {
+    const f = await fixture(); const id = messageId();
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
+    await f.submissions.recordSubmission(f.candidate, f.contact, id, source);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
+    expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+    const delivered = await db.prepare('SELECT delivery_event_id FROM pa_notice_submissions WHERE message_id=?')
+      .bind(id).first<{ delivery_event_id: string }>();
+    const originalDue = f.candidate.dueAt;
+    f.at(originalDue - 45 * day + 1);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(true);
+    const state = await db.prepare(`SELECT due_at,final_notice_delivered_at,final_notice_receipt
+      FROM pa_retention WHERE owner_id=?`).bind(f.ownerId).first<{
+        due_at: number; final_notice_delivered_at: number; final_notice_receipt: string;
+      }>();
+    expect(state).toMatchObject({ due_at: originalDue, final_notice_delivered_at: originalDue - 45 * day,
+      final_notice_receipt: delivered?.delivery_event_id });
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
+    expect((await db.prepare('SELECT COUNT(*) AS n FROM pa_records WHERE owner_id=?')
+      .bind(f.ownerId).first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it('refuses promotion for changed contact, renewal, unknown billing, relink, or disabled owner', async () => {
+    for (const change of ['contact', 'renewed', 'unknown', 'relinked', 'disabled'] as const) {
+      const f = await fixture(); const id = messageId();
+      await f.submissions.recordSubmission(f.candidate, f.contact, id, source);
+      expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+      f.at(f.candidate.dueAt - 45 * day + 1);
+      if (change === 'contact') await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')
+        .bind(f.ownerId).run();
+      if (change === 'disabled') await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?')
+        .bind(f.ownerId).run();
+      const status = change === 'renewed' ? 'active' : change === 'unknown' ? 'unknown' : 'expired';
+      const billingCheck = async () => {
+        if (change === 'unknown') throw new Error('billing unavailable');
+        if (change === 'relinked') await db.prepare('UPDATE pa_membership_links SET billing_account_id=? WHERE owner_id=?')
+          .bind(crypto.randomUUID(), f.ownerId).run();
+        return status;
+      };
+      expect(await f.submissions.promoteDelivered(id, async () => f.contact, billingCheck), change).toBe(false);
+      const row = await db.prepare('SELECT final_notice_delivered_at FROM pa_retention WHERE owner_id=?')
+        .bind(f.ownerId).first<{ final_notice_delivered_at: number | null }>();
+      expect(row?.final_notice_delivered_at).toBeNull();
+    }
+  });
+
+  it('does not promote stale-episode evidence after renewal and expiry again', async () => {
+    const f = await fixture(); const id = messageId();
+    await f.submissions.recordSubmission(f.candidate, f.contact, id, source);
+    expect(await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact)).toBe(true);
+    f.at(f.candidate.dueAt - 45 * day + 1);
+    await f.ledger.observe(f.ownerId, 'active');
+    f.at(f.candidate.dueAt - 45 * day + 2);
+    await f.ledger.observe(f.ownerId, 'expired');
+    f.at(f.candidate.dueAt - 45 * day + 3);
+    expect(await f.submissions.promoteDelivered(id, async () => f.contact, async () => 'expired')).toBe(false);
+  });
+
   it('stores only keyed recipient evidence and leaves retention unnotified', async () => {
     const f = await fixture(); const id = messageId();
     await f.submissions.recordSubmission(f.candidate, f.contact, id, source);

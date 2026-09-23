@@ -1,6 +1,6 @@
 import { contactEmailValid, ServiceError } from './contracts';
 import { parseDeliveredNoticeEvent, type NoticeEventSource } from './notice-events';
-import type { NoticeReviewCandidate } from './retention-ledger';
+import { RetentionLedger, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
 
 const day = 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -16,6 +16,7 @@ type SubmissionRow = {
   subscription_id: string; domain: string; sender: string; submitted_at: number;
   delivered_at: number | null; delivery_event_id: string | null;
 };
+type PromotionRow = SubmissionRow & { billing_account_id: string };
 
 function validSource(source: NoticeEventSource): boolean {
   return !!source && typeof source.accountId === 'string' && hex32.test(source.accountId)
@@ -116,6 +117,59 @@ export class NoticeSubmissions {
             AND r.checked_at>=? AND r.checked_at<=?)`)
       .bind(event.acceptedAt, event.eventId, event.messageId, row.recipient_tag,
         row.contact_updated_at, event.acceptedAt, Math.max(0, now - day), now).run();
+    return result.meta.changes === 1;
+  }
+
+  /** Promotes a matched delivery to the retention ledger only after a fresh
+   * private billing observation. This does not send mail or delete records.
+   * The SQL fence rechecks contact, episode and billing revision atomically.
+   */
+  async promoteDelivered(messageId: string,
+    currentContact: (candidate: NoticeReviewCandidate) => Promise<VerifiedNoticeContact | null>,
+    statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipStatus>): Promise<boolean> {
+    const now = this.now();
+    if (!messagePattern.test(messageId) || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
+    const row = await this.db.prepare(`SELECT s.*,l.billing_account_id FROM pa_notice_submissions s
+      JOIN pa_membership_links l ON l.owner_id=s.owner_id
+      JOIN pa_owners o ON o.owner_id=s.owner_id
+      WHERE s.message_id=? AND o.disabled=0`).bind(messageId).first<PromotionRow>();
+    if (!row || row.delivered_at === null || row.delivery_event_id === null) return false;
+    const candidate = { ownerId: row.owner_id, episode: row.episode,
+      revision: row.retention_revision, dueAt: row.due_at };
+    const contact = await currentContact(candidate);
+    if (!contact || contact.updatedAt !== row.contact_updated_at
+        || await this.recipientTag(contact.email) !== row.recipient_tag) return false;
+    let status: VerifiedMembershipStatus;
+    try { status = await statusForBillingAccount(row.billing_account_id); }
+    catch { status = 'unknown'; }
+    const observed = await new RetentionLedger(this.db, this.now).observe(row.owner_id, status);
+    if (observed.status !== 'expired' || observed.pausedAt !== null
+        || observed.episode !== row.episode || observed.dueAt !== row.due_at
+        || row.delivered_at > now || row.delivered_at < now - 60 * day) return false;
+    const noticeDueAt = row.delivered_at + 30 * day;
+    if (!Number.isSafeInteger(noticeDueAt)) throw unavailable();
+    const result = await this.db.prepare(`UPDATE pa_retention SET revision=revision+1,
+      due_at=CASE WHEN due_at>? THEN due_at ELSE ? END,
+      final_notice_delivered_at=?,final_notice_receipt=?
+      WHERE owner_id=? AND revision=? AND episode=? AND due_at=?
+        AND verified_status='expired' AND paused_at IS NULL
+        AND final_notice_delivered_at IS NULL AND checked_at=?
+        AND notice_not_before_at<=? AND notice_not_before_at<=checked_at
+        AND EXISTS (SELECT 1 FROM pa_notice_submissions s
+          JOIN pa_notice_contacts c ON c.owner_id=s.owner_id
+          JOIN pa_owners o ON o.owner_id=s.owner_id
+          JOIN pa_membership_links l ON l.owner_id=s.owner_id
+          WHERE s.message_id=? AND s.owner_id=pa_retention.owner_id
+            AND s.episode=pa_retention.episode AND s.due_at=pa_retention.due_at
+            AND s.retention_revision<=pa_retention.revision
+            AND s.delivered_at=? AND s.delivery_event_id IS NOT NULL
+            AND s.recipient_tag=? AND s.contact_updated_at=?
+            AND c.updated_at=s.contact_updated_at AND c.source='apple'
+            AND l.billing_account_id=? AND o.disabled=0)`)
+      .bind(noticeDueAt, noticeDueAt, row.delivered_at, row.delivery_event_id,
+        row.owner_id, observed.revision, row.episode, row.due_at,
+        observed.checkedAt, row.delivered_at, messageId, row.delivered_at,
+        row.recipient_tag, row.contact_updated_at, row.billing_account_id).run();
     return result.meta.changes === 1;
   }
 }
