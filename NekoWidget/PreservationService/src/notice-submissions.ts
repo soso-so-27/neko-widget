@@ -345,8 +345,8 @@ export class NoticeSubmissions {
    * Physical deletion additionally needs an owner fence and complete primary
    * and independent-backup inventory; this method performs neither.
    */
-  async verifiedFinalNoticeForExpiry(candidate: ExpiryReviewCandidate,
-    contact: VerifiedNoticeContact | null): Promise<boolean> {
+  async verifiedFinalNoticeEvidenceForExpiry(candidate: ExpiryReviewCandidate,
+    contact: VerifiedNoticeContact | null): Promise<{ recipientTag: string; contactUpdatedAt: number } | null> {
     const now = this.now();
     if (!candidate || !ownerPattern.test(candidate.ownerId)
       || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
@@ -356,9 +356,9 @@ export class NoticeSubmissions {
       || !messagePattern.test(candidate.deliveryEventId)
       || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
     if (!contact || !contactEmailValid(contact.email) || !Number.isSafeInteger(contact.updatedAt)
-      || contact.updatedAt < 0 || contact.updatedAt > now) return false;
+      || contact.updatedAt < 0 || contact.updatedAt > now) return null;
     const grace = 30 * day;
-    if (candidate.dueAt > now || candidate.deliveredAt > now - grace) return false;
+    if (candidate.dueAt > now || candidate.deliveredAt > now - grace) return null;
     const tag = await this.recipientTag(candidate.ownerId, contact.email);
     const row = await this.db.prepare(`SELECT 1 AS verified FROM pa_retention r
       JOIN pa_owners o ON o.owner_id=r.owner_id
@@ -381,6 +381,11 @@ export class NoticeSubmissions {
         Math.max(0, now - day), now, now, candidate.deliveredAt,
         candidate.deliveryEventId, grace, contact.updatedAt, tag)
       .first<{ verified: number }>();
-    return !!row;
+    return row ? { recipientTag: tag, contactUpdatedAt: contact.updatedAt } : null;
+  }
+
+  async verifiedFinalNoticeForExpiry(candidate: ExpiryReviewCandidate,
+    contact: VerifiedNoticeContact | null): Promise<boolean> {
+    return (await this.verifiedFinalNoticeEvidenceForExpiry(candidate, contact)) !== null;
   }
 }

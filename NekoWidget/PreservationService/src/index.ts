@@ -11,6 +11,7 @@ import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions'
 import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
 import { type NoticeEventSource } from './notice-events';
 import { processDeliveredNoticeEvent } from './notice-delivery';
+import { recoverAbandonedPurgeFences } from './owner-purge-fence';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
@@ -244,6 +245,8 @@ export default {
     if (!env.DB) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
     // Continue physical deletion even while sign-in or paid saving is disabled.
     let maintenanceFailures = 0;
+    try { await recoverAbandonedPurgeFences(env.DB, Date.now()); }
+    catch { maintenanceFailures++; }
     if (env.ARCHIVE) {
       try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
       catch { maintenanceFailures++; }
