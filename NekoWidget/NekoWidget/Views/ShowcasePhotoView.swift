@@ -228,7 +228,8 @@ struct ShowcasePreparationView: View {
                            GridItem(.flexible(), spacing: 8)]
 
     var body: some View {
-        NavigationStack {
+        let preparedEntries = store.availableEntries(in: scopeID)
+        return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("人に見せたい写真だけを選べます。お気に入りやメモは変更されません。")
@@ -246,21 +247,21 @@ struct ShowcasePreparationView: View {
                         }
                         .pickerStyle(.menu)
                     }
-                    if !store.availableEntries(in: scopeID).isEmpty {
+                    if !preparedEntries.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("見せる写真").font(.headline)
-                            ForEach(store.availableEntries(in: scopeID)) { entry in
+                            ForEach(preparedEntries) { entry in
                                 HStack {
                                     if let url = store.imageURL(for: entry),
                                        let image = UIImage(contentsOfFile: url.path) {
                                         Image(uiImage: image).resizable().scaledToFill()
                                             .frame(width: 56, height: 56).clipped()
                                     }
-                                    Text(entry.id == store.availableEntries(in: scopeID).first?.id
+                                    Text(entry.id == preparedEntries.first?.id
                                          ? "表紙" : "選んだ写真").font(.subheadline)
                                     Spacer()
                                     Menu {
-                                        if entry.id != store.availableEntries(in: scopeID).first?.id {
+                                        if entry.id != preparedEntries.first?.id {
                                             Button("表紙にする") {
                                                 do { try store.makeCover(entry) }
                                                 catch { errorMessage = "表紙を変更できませんでした。" }
@@ -328,7 +329,7 @@ struct ShowcasePreparationView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .disabled(isPreparing || (chosen.isEmpty && store.availableEntries(in: scopeID).isEmpty))
+                .disabled(isPreparing || (chosen.isEmpty && preparedEntries.isEmpty))
                 .padding(12)
                 .background(.regularMaterial)
             }
