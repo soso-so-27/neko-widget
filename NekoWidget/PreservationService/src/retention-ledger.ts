@@ -5,6 +5,8 @@ const yearInMonths = 12;
 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
 const finalNoticeWindow = 60 * 24 * 60 * 60 * 1000;
 const noticeReviewObservationAge = 24 * 60 * 60 * 1000;
+export const NOTICE_SUBMISSION_RETRY_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+export const NOTICE_DELIVERY_EVIDENCE_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const receiptPattern = /^[A-Za-z0-9._:-]{16,256}$/u;
 type Row = { owner_id: string; revision: number; episode: number; verified_status: VerifiedMembershipStatus;
@@ -14,6 +16,7 @@ export type RetentionState = { ownerId: string; revision: number; episode: numbe
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
 export type NoticeReviewCandidate = { ownerId: string; episode: number; revision: number; dueAt: number };
+export type NoticeScanCursor = { dueAt: number; ownerId: string };
 
 function clock(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
@@ -43,8 +46,13 @@ export class RetentionLedger {
   constructor(private readonly db: D1Database, private readonly now: () => number) {}
 
   /** Advisory queue for a future notification outbox; never sends or proves delivery. */
-  async listNoticeReviewCandidates(limit = 20): Promise<NoticeReviewCandidate[]> {
+  async listNoticeReviewCandidates(limit = 20,
+    after: NoticeScanCursor | null = null): Promise<NoticeReviewCandidate[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    if (after !== null && (!Number.isSafeInteger(after.dueAt) || after.dueAt < 0
+        || (after.ownerId !== '' && !ownerPattern.test(after.ownerId)))) {
+      throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    }
     const now = clock(this.now());
     const result = await this.db.prepare(`SELECT r.owner_id,r.episode,r.revision,r.due_at
       FROM pa_retention r JOIN pa_owners o ON o.owner_id=r.owner_id
@@ -52,11 +60,38 @@ export class RetentionLedger {
       WHERE o.disabled=0 AND r.verified_status='expired' AND r.paused_at IS NULL
         AND r.expired_at IS NOT NULL AND r.due_at IS NOT NULL AND r.final_notice_delivered_at IS NULL
         AND r.due_at<=? AND r.checked_at>=? AND r.checked_at<=?
+        AND (r.due_at>? OR (r.due_at=? AND r.owner_id>?))
+        AND NOT EXISTS (SELECT 1 FROM pa_notice_submissions s
+          JOIN pa_notice_contacts c ON c.owner_id=s.owner_id
+          WHERE s.owner_id=r.owner_id AND s.episode=r.episode AND s.due_at=r.due_at
+            AND s.contact_updated_at=c.updated_at AND s.submitted_at>=r.notice_not_before_at
+            AND (s.delivered_at>=? OR (s.delivered_at IS NULL AND s.submitted_at>=?)))
       ORDER BY r.due_at,r.owner_id LIMIT ?`)
-      .bind(clock(now + finalNoticeWindow), Math.max(0, now - noticeReviewObservationAge), now, limit)
+      .bind(clock(now + finalNoticeWindow), Math.max(0, now - noticeReviewObservationAge), now,
+        after?.dueAt ?? 0, after?.dueAt ?? 0, after?.ownerId ?? '',
+        Math.max(0, now - NOTICE_DELIVERY_EVIDENCE_WINDOW_MS),
+        Math.max(0, now - NOTICE_SUBMISSION_RETRY_DELAY_MS), limit)
       .all<{ owner_id: string; episode: number; revision: number; due_at: number }>();
     return result.results.map(row => ({ ownerId: row.owner_id, episode: row.episode,
       revision: row.revision, dueAt: row.due_at }));
+  }
+
+  /** Persistent round-robin cursor: unreadable or absent contacts cannot
+   * monopolize every scheduled batch. Claim fencing handles overlapping runs.
+   */
+  async nextNoticeReviewCandidates(limit = 20): Promise<NoticeReviewCandidate[]> {
+    const cursor = await this.db.prepare('SELECT due_at,owner_id FROM pa_notice_scan_cursor WHERE id=1')
+      .first<{ due_at: number; owner_id: string }>();
+    if (!cursor) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    let candidates = await this.listNoticeReviewCandidates(limit,
+      { dueAt: cursor.due_at, ownerId: cursor.owner_id });
+    if (candidates.length === 0 && (cursor.due_at !== 0 || cursor.owner_id !== '')) {
+      candidates = await this.listNoticeReviewCandidates(limit);
+    }
+    const last = candidates.at(-1);
+    if (last) await this.db.prepare(`UPDATE pa_notice_scan_cursor
+      SET due_at=?,owner_id=? WHERE id=1`).bind(last.dueAt, last.ownerId).run();
+    return candidates;
   }
 
   /** Fair, bounded scan. A provider failure becomes an explicit pause, never an expiry. */

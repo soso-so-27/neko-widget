@@ -58,6 +58,36 @@ describe('twelve-month preservation export period', () => {
     await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?').bind(g.ownerId).run();
     expect(await g.ledger.listNoticeReviewCandidates()).toEqual([]);
   });
+  it('does not repeatedly select a submitted notice, but permits retry or a changed contact', async () => {
+    const f = await fixture();
+    const first = await f.ledger.observe(f.ownerId, 'expired');
+    f.at(first.dueAt! - 45 * day);
+    const candidate = await f.ledger.observe(f.ownerId, 'expired');
+    const submittedAt = f.now();
+    await db.prepare(`INSERT INTO pa_notice_contacts
+      (owner_id,sealed_email,source,verified_at,updated_at) VALUES(?,?,'apple',?,?)`)
+      .bind(f.ownerId, new Uint8Array([1]).buffer, submittedAt, submittedAt).run();
+    await db.prepare(`INSERT INTO pa_notice_submissions
+      (message_id,owner_id,episode,retention_revision,due_at,contact_updated_at,recipient_tag,
+       account_id,zone_id,subscription_id,domain,sender,submitted_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind('message-retry-1', f.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+        submittedAt, 'a'.repeat(64), 'b'.repeat(32), 'c'.repeat(32), 'd'.repeat(32),
+        'example.com', 'notice@example.com', submittedAt).run();
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    f.later(7 * day);
+    await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    f.later(1);
+    await f.ledger.observe(f.ownerId, 'expired');
+    expect(await f.ledger.listNoticeReviewCandidates()).toHaveLength(1);
+    await db.prepare(`UPDATE pa_notice_submissions SET delivered_at=?,delivery_event_id=? WHERE message_id=?`)
+      .bind(f.now(), crypto.randomUUID(), 'message-retry-1').run();
+    expect(await f.ledger.listNoticeReviewCandidates()).toEqual([]);
+    await db.prepare('UPDATE pa_notice_contacts SET updated_at=? WHERE owner_id=?')
+      .bind(f.now(), f.ownerId).run();
+    expect(await f.ledger.listNoticeReviewCandidates()).toHaveLength(1);
+  });
   it('starts only on verified expiry, pauses on unknown, and never purges without a delivered notice', async () => {
     const f = await fixture();
     const start = f.now();

@@ -6,7 +6,9 @@
 
 この設計・模擬試験は、送信ドメイン、Email Sending、Queue、Apple Private Email Relay、実R2/KMSを有効化した証拠ではない。全て揃うまで通知と期限消去は既定OFF。
 
-`pa_notice_submissions` と `NoticeSubmissions` は送信受付IDとQueueイベントの照合材料を保持する。`recordDelivery` 自体は保持台帳を変えない。別の `promoteDelivered` は新鮮な非公開課金照会、現在の連絡先、同じ期限切れエピソードを再検証してから、模擬送達証拠を保持台帳へ反映できる。現時点ではWorkerの送信・Queue入口へ接続しておらず、実配達・最終消去を有効化したという意味ではない。実接続には非公開Queueの主体確認と実環境での独立レビューが残る。
+`pa_notice_submissions` と `NoticeSubmissions` は送信受付IDとQueueイベントの照合材料を保持する。`recordDelivery` 自体は保持台帳を変えない。別の `promoteDelivered` は新鮮な非公開課金照会、現在の連絡先、同じ期限切れエピソードを再検証してから、送達証拠を保持台帳へ反映する。Workerの予定処理・非公開Queue入口はコードで接続したが、`NOTICE_SEND_ENABLED` と `NOTICE_EVENTS_ENABLED` は既定OFFで、送信binding・Queue consumer・送信ドメインは設定していない。実配達・最終消去を有効化したという意味ではない。
+
+`0008_notice_claims.sql` の単一owner送信claimで並行実行を抑え、送信とDB保存の間に成功不明が残っても送達扱いしない。送達イベント時はownerの非公開課金状態を新たに取得してから照合する。送信候補と送達済み未昇格候補は永続カーソルで巡回し、古い連絡先不明の行で後続が止まらないようにする。各行の失敗は次の行を妨げず、予定処理全体では失敗を明示する。これらはローカル模擬検証であり、実際の送信・実Queue受信・本番配備の証拠ではない。
 
 ## 送達の照合
 
@@ -23,6 +25,7 @@
 - Appleの非公開メール利用者へ送るドメインは、Apple Developerで登録しSPF/DKIMを認証する。宛先が実際に受理される試験を行う。
 - `message.delivered` は宛先メールサーバーの受理で、受信者の開封や受信箱への表示保証ではない。アプリにも期限と持ち出しを示す。
 - 実送信や消去のON/OFFを独立させる。模擬イベントのテスト成功を実配送、復旧、削除の成功と呼ばない。
+- 現在のCloudflare OAuthではD1・Workerの権限はあるが、R2 bucket一覧は認証エラー `10000`。専用R2の閲覧・作成・実保存は未確認。AWSアカウントも未作成で、実KMS管理鍵と独立復旧コピーは未接続。送信ドメイン・Workers Paid・Queueの実設定も未完。認証情報をこの資料へ貼らない。
 
 ## 必須の模擬境界検証
 
