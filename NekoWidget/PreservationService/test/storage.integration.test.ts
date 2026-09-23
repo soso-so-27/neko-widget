@@ -5,6 +5,8 @@ import { DurableAuth } from '../src/auth';
 import { ArchiveStore, cleanupArchive } from '../src/storage';
 import { encodePhoto } from '../src/documents';
 import { randomToken, type ArchiveDocument, type KeyCustody } from '../src/contracts';
+import { RecordRecoveryCopy } from '../src/record-recovery-copy';
+import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import worker, { route, type Services, type Env } from '../src/index';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
@@ -40,6 +42,102 @@ async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number
   return { auth, authOptions, identity, session, archive, options, request,
     setState(value: typeof state) { state = value; }, setNow(value: number) { now = value; } };
 }
+
+function syntheticRecovery(keys: KeyCustody) {
+  const objects = new Map<string, Uint8Array>();
+  let rejectWrites = false;
+  const s3 = {
+    async putVersioned(key: string, value: Uint8Array): Promise<RecoveryObject> {
+      if (rejectWrites) throw new Error('S3 unavailable');
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', value as BufferSource))]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('');
+      const versionId = 'synthetic-version';
+      objects.set(`${key}:${versionId}`, value.slice());
+      return { key, sha256, bytes: value.length, versionId };
+    },
+    async getVerified(item: RecoveryObject): Promise<Uint8Array> {
+      const value = objects.get(`${item.key}:${item.versionId}`);
+      if (!value) throw new Error('copy unavailable');
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', value as BufferSource))]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('');
+      if (sha256 !== item.sha256 || value.length !== item.bytes) throw new Error('copy corrupt');
+      return value.slice();
+    },
+  } as S3RecoveryCopy;
+  return { recovery: new RecordRecoveryCopy(keys, s3), objects,
+    rejectWrites(value: boolean) { rejectWrites = value; } };
+}
+
+it('ties each acknowledged D1 revision to an exact recovery version and fails closed on S3 outage', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  const id = crypto.randomUUID();
+  remote.rejectWrites(true);
+  await expect(archive.put(f.session.token, id, f.request()))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  expect(await binding.DB.prepare('SELECT record_id FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first()).toBeNull();
+  remote.rejectWrites(false);
+  expect(await archive.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  remote.rejectWrites(true);
+  await expect(archive.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: '未保存の編集' } })))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  await expect(archive.remove(f.session.token, id, 1))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  expect((await archive.read(f.session.token, id)).revision).toBe(1);
+  remote.rejectWrites(false);
+  expect(await archive.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: '編集後' } }))).toEqual({ recordId: id, revision: 2 });
+  expect(await archive.remove(f.session.token, id, 2)).toEqual({ recordId: id, revision: 3 });
+  const rows = await binding.DB.prepare(`SELECT revision,record_object_key,record_version_id,
+    record_sha256,record_bytes,photo_object_key,photo_version_id,photo_sha256,photo_bytes
+    FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=? ORDER BY revision`)
+    .bind(f.session.ownerId, id).all<{ revision: number; record_object_key: string;
+      record_version_id: string; record_sha256: string; record_bytes: number;
+      photo_object_key: string | null; photo_version_id: string | null;
+      photo_sha256: string | null; photo_bytes: number | null }>();
+  expect(rows.results.map(row => row.revision)).toEqual([1, 2, 3]);
+  expect(rows.results[2]?.photo_object_key).toBeNull();
+  const revisionTwo = rows.results[1]!;
+  const restored = await remote.recovery.read(f.session.ownerId, id, {
+    record: { key: revisionTwo.record_object_key, versionId: revisionTwo.record_version_id,
+      sha256: revisionTwo.record_sha256, bytes: revisionTwo.record_bytes },
+    photo: { key: revisionTwo.photo_object_key!, versionId: revisionTwo.photo_version_id!,
+      sha256: revisionTwo.photo_sha256!, bytes: revisionTwo.photo_bytes! },
+  });
+  expect(restored.revision).toBe(2);
+  expect(restored.deleted).toBe(false);
+  expect(restored.photoCiphertext?.length).toBeGreaterThan(0);
+});
+
+it('only the winning concurrent edit can attach a recovery version to the next revision', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  const id = crypto.randomUUID(); await archive.put(f.session.token, id, f.request());
+  const results = await Promise.allSettled(['A', 'B'].map(text => archive.put(f.session.token, id,
+    f.request({ expectedRevision: 1, document: { ...document, text } }))));
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  const failure = results.find(result => result.status === 'rejected');
+  expect(failure).toMatchObject({ reason: { code: 'REVISION_CONFLICT' } });
+  const references = await binding.DB.prepare(`SELECT revision FROM pa_record_recovery_versions
+    WHERE owner_id=? AND record_id=? ORDER BY revision`).bind(f.session.ownerId, id)
+    .all<{ revision: number }>();
+  expect(references.results.map(row => row.revision)).toEqual([1, 2]);
+});
+
+it('missing recovery configuration blocks mutations but keeps existing records readable', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const readOnly = new ArchiveStore({ ...f.options, requireRecovery: true });
+  expect((await readOnly.read(f.session.token, id)).recordId).toBe(id);
+  expect((await readOnly.list(f.session.token)).items.some(item => item.recordId === id)).toBe(true);
+  await expect(readOnly.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+  await expect(readOnly.remove(f.session.token, id, 1))
+    .rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+  expect((await readOnly.read(f.session.token, id)).revision).toBe(1);
+});
 
 it('real D1/R2 round trip survives new auth/store instances and expires membership without losing access', async () => {
   const f = await fixture(); const id = crypto.randomUUID();

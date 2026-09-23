@@ -1,8 +1,9 @@
 import { ServiceError } from './contracts';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const recordUuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
-const photoKeyPattern = new RegExp(`^personal/${uuid}/${uuid}/${uuid}$`, 'u');
+const photoKeyPattern = new RegExp(`^personal/${uuid}/${recordUuid}/${uuid}$`, 'u');
 const unavailable = () => new ServiceError('ARCHIVE_INVENTORY_UNAVAILABLE', 503);
 
 export type OwnerPhoto = { key: string; version: string; bytes: number };

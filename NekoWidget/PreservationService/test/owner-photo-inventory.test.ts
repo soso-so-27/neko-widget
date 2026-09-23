@@ -51,3 +51,10 @@ it('fails closed on foreign keys, non-progressing pages and malformed cursors', 
   await expect(listOwnerPhotoPage(bucket, owner, { ownerId: other, token: 'same', lastKey: null }))
     .rejects.toMatchObject({ code: 'ARCHIVE_INVENTORY_UNAVAILABLE' });
 });
+
+it('includes photo keys for record IDs accepted by the existing archive API', async () => {
+  const key = `personal/${owner}/00000000-0000-1000-8000-000000000010/00000000-0000-4000-8000-000000000011`;
+  const bucket = mock(async () => ({ objects: [item(key)], truncated: false, delimitedPrefixes: [] }));
+  expect((await listOwnerPhotoPage(bucket, owner)).objects).toEqual([{ key,
+    version: 'r2-v1', bytes: 5 }]);
+});

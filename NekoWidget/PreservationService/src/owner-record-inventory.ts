@@ -2,7 +2,9 @@ import { ServiceError } from './contracts';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const idPattern = new RegExp(`^${uuid}$`, 'u');
-const photoKeyPattern = new RegExp(`^personal/(${uuid})/(${uuid})/${uuid}$`, 'u');
+const recordUuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const recordIdPattern = new RegExp(`^${recordUuid}$`, 'u');
+const photoKeyPattern = new RegExp(`^personal/(${uuid})/(${recordUuid})/${uuid}$`, 'u');
 const unavailable = () => new ServiceError('ARCHIVE_INVENTORY_UNAVAILABLE', 503);
 
 interface OwnerRow {
@@ -25,7 +27,7 @@ export type FencedRecordPage = {
 export async function listFencedRecordReferencesPage(db: D1Database, ownerId: string,
   cursor?: FencedRecordCursor, limit = 100): Promise<FencedRecordPage> {
   if (!idPattern.test(ownerId) || !Number.isInteger(limit) || limit < 1 || limit > 100
-    || (cursor && (cursor.ownerId !== ownerId || !idPattern.test(cursor.lastRecordId)
+    || (cursor && (cursor.ownerId !== ownerId || !recordIdPattern.test(cursor.lastRecordId)
       || !Number.isSafeInteger(cursor.epoch) || cursor.epoch < 0
       || !Number.isSafeInteger(cursor.generation) || cursor.generation < 0))) throw unavailable();
   try {
@@ -53,7 +55,7 @@ export async function listFencedRecordReferencesPage(db: D1Database, ownerId: st
     const records: FencedRecord[] = [];
     let last = cursor?.lastRecordId ?? '';
     for (const row of rows.slice(0, limit)) {
-      if (!idPattern.test(row.record_id) || row.record_id <= last
+      if (!recordIdPattern.test(row.record_id) || row.record_id <= last
         || !Number.isSafeInteger(row.revision) || row.revision < 1
         || (row.deleted !== 0 && row.deleted !== 1)
         || (row.deleted === 1 && row.photo_key !== null)

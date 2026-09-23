@@ -12,6 +12,8 @@ import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
 import { type NoticeEventSource } from './notice-events';
 import { processDeliveredNoticeEvent } from './notice-delivery';
 import { recoverAbandonedPurgeFences } from './owner-purge-fence';
+import { S3RecoveryCopy } from './s3-recovery-copy';
+import { RecordRecoveryCopy } from './record-recovery-copy';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
@@ -23,6 +25,9 @@ export interface Env {
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
+  RECOVERY_COPY_ENABLED?: string; RECOVERY_S3_REGION?: string; RECOVERY_S3_BUCKET?: string;
+  RECOVERY_S3_ACCOUNT_ID?: string; RECOVERY_S3_ACCESS_KEY_ID?: string;
+  RECOVERY_S3_SECRET_ACCESS_KEY?: string; RECOVERY_S3_SESSION_TOKEN?: string;
   KEY_WRAPPER?: Fetcher; KEY_WRAPPER_CALLER_SECRET?: string;
   MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
   REQUEST_LIMITER?: RateLimit;
@@ -159,9 +164,21 @@ function configuredServices(env: Env): Services {
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
   const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
     audience: env.PRESERVATION_LINK_AUDIENCE, now });
+  let recovery: RecordRecoveryCopy | undefined;
+  try {
+    recovery = new RecordRecoveryCopy(keys, new S3RecoveryCopy({
+      enabled: env.RECOVERY_COPY_ENABLED ?? '', region: env.RECOVERY_S3_REGION ?? '',
+      bucket: env.RECOVERY_S3_BUCKET ?? '', expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
+      accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '', secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '',
+      ...(env.RECOVERY_S3_SESSION_TOKEN ? { sessionToken: env.RECOVERY_S3_SESSION_TOKEN } : {}),
+    }));
+  } catch {
+    // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
+  }
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
-    quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS) });
+    quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS),
+    ...(recovery ? { recovery } : {}), requireRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' ? new RetentionLedger(env.DB, now) : undefined;
   return { auth, archive, verifier, membership, ...(retention ? { retention } : {}) };
 }

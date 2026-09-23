@@ -64,3 +64,11 @@ it('refuses active owners, pending writes, changed generations and foreign photo
   await expect(listFencedRecordReferencesPage(db, bad)).rejects
     .toMatchObject({ code: 'ARCHIVE_INVENTORY_UNAVAILABLE' });
 });
+
+it('keeps legacy non-v4 record IDs within a fenced owner inventory', async () => {
+  const id = await owner(); const oldRecordId = '00000000-0000-1000-8000-000000000010';
+  const key = await record(id, oldRecordId);
+  const page = await listFencedRecordReferencesPage(db, id);
+  expect(page.records).toEqual([{ recordId: oldRecordId, revision: 1,
+    deleted: false, photoKey: key }]);
+});

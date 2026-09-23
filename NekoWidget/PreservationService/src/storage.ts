@@ -1,6 +1,7 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
 import { decodePhoto, encodePhoto, recordId, validateDocument } from './documents';
+import { RecordRecoveryCopy, type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -18,6 +19,8 @@ interface UsageRow {
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
   auth: { requireSession(token: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
+  recovery?: RecordRecoveryCopy;
+  requireRecovery?: boolean;
 }
 const bytes = (value: unknown): ArrayBuffer => {
   if (value instanceof ArrayBuffer) return value;
@@ -50,6 +53,50 @@ export class ArchiveStore {
     const state = await this.d.membership.status(owner);
     if (state === 'unknown') throw new ServiceError('ACCESS_UNCONFIRMED', 503);
     if (!['active', 'grace'].includes(state)) throw new ServiceError('NEW_SAVE_REQUIRES_MEMBERSHIP', 403);
+  }
+  private requireRecovery(): void {
+    if (this.d.requireRecovery && !this.d.recovery) {
+      throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
+    }
+  }
+  private recoveryReference(ownerId: string, id: string, revision: number, copy: CopiedRecordImage) {
+    return this.d.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
+      record_object_key,record_version_id,record_sha256,record_bytes,
+      photo_object_key,photo_version_id,photo_sha256,photo_bytes,committed_at)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM pa_records
+        WHERE owner_id=? AND record_id=? AND revision=?)`)
+      .bind(ownerId, id, revision, copy.record.key, copy.record.versionId,
+        copy.record.sha256, copy.record.bytes, copy.photo?.key ?? null,
+        copy.photo?.versionId ?? null, copy.photo?.sha256 ?? null, copy.photo?.bytes ?? null,
+        this.d.now(), ownerId, id, revision);
+  }
+  private async verifiedRecoveryReference(ownerId: string, id: string, revision: number) {
+    if (!this.d.recovery) return;
+    const row = await this.d.db.prepare(`SELECT record_object_key,record_version_id,record_sha256,
+      record_bytes,photo_object_key,photo_version_id,photo_sha256,photo_bytes
+      FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=? AND revision=?`)
+      .bind(ownerId, id, revision).first<{ record_object_key: string; record_version_id: string;
+        record_sha256: string; record_bytes: number; photo_object_key: string | null;
+        photo_version_id: string | null; photo_sha256: string | null; photo_bytes: number | null }>();
+    if (!row) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+    const copied: CopiedRecordImage = { record: { key: row.record_object_key,
+      versionId: row.record_version_id, sha256: row.record_sha256, bytes: row.record_bytes },
+    photo: row.photo_object_key === null ? null : { key: row.photo_object_key,
+      versionId: row.photo_version_id ?? '', sha256: row.photo_sha256 ?? '', bytes: row.photo_bytes ?? 0 } };
+    const image = await this.d.recovery.read(ownerId, id, copied);
+    if (image.revision !== revision) throw new ServiceError('RECOVERY_RECORD_UNAVAILABLE', 503);
+  }
+  private async encryptedPhoto(row: Row, expected: Metadata): Promise<Uint8Array | null> {
+    if (!row.photo_key) return null;
+    const object = await this.d.bucket.get(row.photo_key);
+    if (!object || object.size > 30 * 1024 * 1024) throw new ServiceError('ARCHIVE_PHOTO_UNAVAILABLE', 503);
+    const encrypted = new Uint8Array(await object.arrayBuffer());
+    const opened = await this.d.keys.open(encrypted,
+      { ownerId: row.owner_id, purpose: 'record', recordId: `${row.record_id}/photo` });
+    if (opened.length !== expected.photoBytes || await sha256(opened) !== expected.photoSHA256) {
+      throw new ServiceError('ARCHIVE_INTEGRITY_FAILED', 503);
+    }
+    return encrypted;
   }
   private async metadata(row: Row): Promise<Metadata> {
     try {
@@ -147,6 +194,7 @@ export class ArchiveStore {
   async put(token: string, id: string, input: unknown) {
     recordId(id);
     const session = await this.d.auth.requireSession(token);
+    this.requireRecovery();
     if (!input || typeof input !== 'object') throw new ServiceError('INVALID_RECORD');
     const request = input as Record<string, unknown>;
     if (Object.keys(request).some((key) => !['document', 'photoBase64', 'expectedRevision', 'consentVersion'].includes(key))) {
@@ -162,6 +210,7 @@ export class ArchiveStore {
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
+      await this.verifiedRecoveryReference(session.ownerId, id, existing.revision);
       await this.unchanged(token, session, existing);
       return { recordId: id, revision: existing.revision };
     }
@@ -176,7 +225,32 @@ export class ArchiveStore {
         revision: expected + 1, document } satisfies Metadata)),
       { ownerId: session.ownerId, purpose: 'record', recordId: `${id}/document` });
       if (metadata.length > 512 * 1024) throw new ServiceError('ARCHIVE_TOO_LARGE', 413);
+      const encrypted = this.d.recovery ? await this.encryptedPhoto(existing, old) : null;
+      if (this.d.recovery && existing.quota_bytes !== bytes(existing.metadata).byteLength + (encrypted?.length ?? 0)) {
+        throw new ServiceError('ARCHIVE_ACCOUNTING_UNAVAILABLE', 503);
+      }
+      const replacement: StoredRecordImage = { ownerId: session.ownerId, recordId: id,
+        revision: expected + 1, initialFingerprint: existing.initial_fingerprint,
+        initialOperation: existing.initial_operation, metadata,
+        photoKey: existing.photo_key, photoBytes: existing.photo_bytes,
+        quotaBytes: metadata.length + (encrypted?.length ?? 0), deleted: false,
+        photoCiphertext: encrypted };
+      const copied = this.d.recovery ? await this.d.recovery.copy(replacement) : null;
       // Existing edits remain possible without membership; quota overage stops only new records.
+      if (copied) {
+        const results = await this.d.db.batch([
+          this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
+            quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
+            AND ${activeSession} RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id,
+              expected, ...this.sessionBindings(session)),
+          this.recoveryReference(session.ownerId, id, expected + 1, copied),
+        ]);
+        if (results[0]?.results.length !== 1 || results[1]?.meta.changes !== 1) {
+          await this.d.auth.requireSession(token);
+          throw new ServiceError('REVISION_CONFLICT', 409);
+        }
+        return { recordId: id, revision: expected + 1 };
+      }
       const updated = await this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
         quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
         AND ${activeSession} RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id, expected,
@@ -209,7 +283,21 @@ export class ArchiveStore {
       if (sealedPhoto !== null) {
         const stored = await this.d.bucket.put(key, bytes(sealedPhoto), { httpMetadata: { contentType: 'application/octet-stream' } });
         if (!stored) throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
+        if (this.d.recovery) {
+          const confirmed = await this.d.bucket.get(key);
+          if (!confirmed || confirmed.size !== sealedPhoto.length || confirmed.size > 30 * 1024 * 1024) {
+            throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
+          }
+          const confirmedBytes = new Uint8Array(await confirmed.arrayBuffer());
+          if (await sha256(confirmedBytes) !== await sha256(sealedPhoto)) {
+            throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
+          }
+        }
       }
+      const copied = this.d.recovery ? await this.d.recovery.copy({ ownerId: session.ownerId,
+        recordId: id, revision: 1, initialFingerprint, initialOperation: operation,
+        metadata, photoKey: sealedPhoto === null ? null : key, photoBytes: photo?.length ?? 0,
+        quotaBytes: size, deleted: false, photoCiphertext: sealedPhoto }) : null;
       await this.paid(session.ownerId);
       // Commit reference and consume its reservation in one D1 transaction.
       const result = await this.d.db.batch([
@@ -222,8 +310,9 @@ export class ArchiveStore {
         this.d.db.prepare(`DELETE FROM pa_uploads WHERE operation_id=? AND EXISTS
           (SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=?)`)
           .bind(operation, session.ownerId, id, operation),
+        ...(copied ? [this.recoveryReference(session.ownerId, id, 1, copied)] : []),
       ]);
-      if (result[0]?.results.length !== 1) {
+      if (result[0]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
         await this.d.auth.requireSession(token);
         throw new ServiceError('REVISION_CONFLICT', 409);
       }
@@ -233,6 +322,7 @@ export class ArchiveStore {
       await this.abandon(operation);
       const committed = await this.row(session.ownerId, id);
       if (committed && !committed.deleted && committed.initial_fingerprint === initialFingerprint) {
+        await this.verifiedRecoveryReference(session.ownerId, id, committed.revision);
         await this.unchanged(token, session, committed);
         return { recordId: id, revision: committed.revision };
       }
@@ -245,10 +335,18 @@ export class ArchiveStore {
   async remove(token: string, id: string, expected: number) {
     recordId(id); revisionValue(expected);
     const session = await this.d.auth.requireSession(token);
+    this.requireRecovery();
     const row = await this.row(session.ownerId, id);
     if (!row) throw new ServiceError('RECORD_NOT_FOUND', 404);
-    if (row.deleted && row.revision === expected + 1) return { recordId: id, revision: row.revision };
+    if (row.deleted && row.revision === expected + 1) {
+      await this.verifiedRecoveryReference(session.ownerId, id, row.revision);
+      return { recordId: id, revision: row.revision };
+    }
     if (row.deleted || row.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
+    const copied = this.d.recovery ? await this.d.recovery.copy({ ownerId: session.ownerId,
+      recordId: id, revision: expected + 1, initialFingerprint: row.initial_fingerprint,
+      initialOperation: row.initial_operation, metadata: null, photoKey: null,
+      photoBytes: 0, quotaBytes: 0, deleted: true, photoCiphertext: null }) : null;
     const result = await this.d.db.batch([
       this.d.db.prepare(`INSERT OR IGNORE INTO pa_pending_deletes(object_key,created_at)
         SELECT photo_key,? FROM pa_records WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
@@ -256,8 +354,11 @@ export class ArchiveStore {
       this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,deleted=1,metadata=NULL,photo_key=NULL,photo_bytes=0,quota_bytes=0
         WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0 AND ${activeSession} RETURNING revision`)
         .bind(session.ownerId, id, expected, ...this.sessionBindings(session)),
+      ...(copied ? [this.recoveryReference(session.ownerId, id, expected + 1, copied)] : []),
     ]);
-    if (result[1]?.results.length !== 1) { await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409); }
+    if (result[1]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
+      await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409);
+    }
     return { recordId: id, revision: expected + 1 };
   }
   async cleanup(limit = 20) { return cleanupArchive(this.d, limit); }
