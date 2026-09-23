@@ -13,7 +13,7 @@
 ## 利用者がCloudflare画面で確認すること
 
 1. 現在の管理者で[R2 subscriptionが有効](https://developers.cloudflare.com/r2/get-started/)か確認する。R2は「Cloudflareアカウントがある」だけでは利用できない。
-2. R2、D1、Workersの対象アカウントと請求条件を確認する。既存の共有用まどDB/bucketには触れず、保管専用の資源を用意する。現在のWrangler OAuthはD1を読める一方、R2一覧が認証エラーなので、利用者の端末でWrangler再ログインとR2権限確認が必要。管理画面にサインイン済みであることとCLIの許可は別。
+2. R2、D1、Workersの対象アカウントと請求条件を確認する。既存の共有用まどDB/bucketには触れず、保管専用の資源を用意する。現在のWrangler OAuthはD1を読める一方、R2一覧が認証エラー。再ログインは承認コード待ちでタイムアウトし、権限は未確認。管理画面にサインイン済みであることとCLIの許可は別。[R2用API権限](https://developers.cloudflare.com/r2/api/tokens/#permissions)の管理読取／書込が必要な場合は、権限を絞ったトークンを端末内で設定し、チャットやGitには貼らない。
 3. CloudflareのアカウントIDだけを共有し、API token・OAuth token・Workers secret値を会話に貼らない。実操作は開発側のコマンドと出力を見ながら進め、公開routeや既存bucketへの接続はしない。
 
 ## 12か月後の消去通知に使う送信基盤（候補）
