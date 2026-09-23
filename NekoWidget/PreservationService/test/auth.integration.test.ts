@@ -118,6 +118,17 @@ describe('durable private preservation authentication', () => {
       .bind(attemptedOwner!).first()).toBeNull();
   });
 
+  it('advances contact version even when two verified addresses arrive in the same millisecond', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    const before = await db.prepare('SELECT updated_at FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number }>();
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    const after = await db.prepare('SELECT updated_at FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number }>();
+    expect(after!.updated_at).toBeGreaterThan(before!.updated_at);
+  });
+
   it('reads an Apple contact internally only for a fresh eligible retention episode', async () => {
     const f = await fixture();
     const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'first@example.com' });

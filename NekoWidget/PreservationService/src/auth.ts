@@ -130,7 +130,8 @@ export class DurableAuth {
           `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at)
            SELECT owner_id,?,'apple',?,? FROM pa_owners WHERE owner_id=? AND epoch=? AND disabled=0
            ON CONFLICT(owner_id) DO UPDATE SET sealed_email=excluded.sealed_email,
-             source=excluded.source,verified_at=excluded.verified_at,updated_at=excluded.updated_at`,
+             source=excluded.source,verified_at=excluded.verified_at,
+             updated_at=MAX(pa_notice_contacts.updated_at+1,excluded.updated_at)`,
         ).bind(sealedContact.slice().buffer, now, now, owner.owner_id, owner.epoch)] : []),
         db.prepare(
           `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at)
@@ -190,6 +191,7 @@ export class DurableAuth {
       const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
         FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
         JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
         WHERE c.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision>=? AND r.due_at=?
           AND r.verified_status='expired' AND r.paused_at IS NULL
           AND r.final_notice_delivered_at IS NULL AND r.checked_at>=? AND r.checked_at<=?
@@ -205,6 +207,7 @@ export class DurableAuth {
       const stillCurrent = await this.dependencies.db.prepare(`SELECT 1 AS present
         FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
         JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
         WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND o.disabled=0
           AND r.episode=? AND r.revision>=? AND r.due_at=? AND r.verified_status='expired'
           AND r.paused_at IS NULL AND r.final_notice_delivered_at IS NULL`)

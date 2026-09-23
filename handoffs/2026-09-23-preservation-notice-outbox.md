@@ -6,6 +6,8 @@
 
 この設計・模擬試験は、送信ドメイン、Email Sending、Queue、Apple Private Email Relay、実R2/KMSを有効化した証拠ではない。全て揃うまで通知と期限消去は既定OFF。
 
+`pa_notice_submissions` と `NoticeSubmissions` は送信受付IDとQueueイベントの照合材料だけを保持する。現時点ではWorkerの送信・Queue入口へ接続せず、照合成功でも保持台帳の `final_notice_delivered_at` は変更しない。これは実配達・最終消去を有効化したという意味ではない。外部設定が揃っても、同じ宛先・エピソードを原子的に再検証する接続と独立レビューが残る。
+
 ## 送達の照合
 
 1. 課金権利の新しい検証結果を保持台帳へ反映し、期限切れ・時計停止なし・本人有効・通知未配達・期限まで60日以内の候補だけを選ぶ。取得失敗は `unknown` として停止する。
