@@ -16,13 +16,23 @@
 
 ### 鍵管理の推奨
 
+2026-09-23、利用者は本番の鍵管理をAWS KMSで進めると指定した。下記は採用方針であり、AWSアカウント・鍵・権限の実作成や接続成功を意味しない。
+
 本番の管理鍵は **AWS KMS の顧客管理・対称鍵**を第一候補にする。Cloudflare R2/D1には暗号文だけを置き、保管Workerは記録ごとに生成した32バイトのデータ鍵だけを非公開 `KEY_WRAPPER` へ渡す。専用の鍵WorkerがAWS KMS `Encrypt`/`Decrypt`を実行し、既存の `contextSHA256` を暗号化コンテキストとして必ず指定する。管理鍵・権限をCloudflareのデータ保存権限と分離でき、KMSの操作監査と別リージョン復旧が可能。KMS鍵IDは応答の許可リストに固定し、任意のクライアント指定鍵や外部URLとして解釈しない。鍵を削除・無効化する前に旧暗号文とバックアップを復元できることを実証する。
 
 初期構成は専用KMS鍵1本と最小権限の呼出元。別リージョン鍵は復旧手順が確認された後に作る。外部WorkerからAWSを呼ぶ認証には長期アクセスキーの漏えい・ローテーション負担があるため、少なくとも専用鍵・`kms:Encrypt/Decrypt`だけのIAM権限・Cloudflareの専用secret binding・ローテーション・監査を必須にする。短期資格情報へ移す方法（IAM Roles Anywhere等）は別途実環境で検証し、未確認のまま「鍵が安全に分離済み」と言わない。
 
-Cloudflare Secrets StoreはWorkerとの接続が容易だが2026-09-23時点でopen betaであり、Workerは秘密値そのものを取得できる。暗号鍵を同一Cloudflareアカウントに置く方法は運用が軽い反面、独立KMSの権限／復旧境界にはならないため、本番の第一候補としない。Google Cloud KMSは低額な選択肢だが、現行Cloudflare構成との認証・監査・復旧の接続を別途作る点は同じ。鍵の月額差より、管理権限を切り分けて復旧を実証できることを優先する。
+Cloudflare Secrets StoreはWorkerとの接続が容易だが2026-09-23時点でopen betaであり、Workerは秘密値そのものを取得できる。暗号鍵を同一Cloudflareアカウントに置く方法は運用が軽い反面、独立KMSの権限／復旧境界にはならないため、本番の第一候補としない。R2のSSE-Cも対象はR2 objectだけで、D1内の暗号化本文や鍵版管理を解決しない。秘密値やSSE-C鍵を失うとCloudflareは復号できない。Google Cloud KMSは低額な選択肢だが、現行Cloudflare構成との認証・監査・復旧の接続を別途作る点は同じ。鍵の月額差より、管理権限を切り分けて復旧を実証できることを優先する。
 
-AWSのアカウント作成、請求情報、鍵の作成・課金承諾は利用者操作。現PCにはAWS設定がなく、Cloudflare R2の権限も不足している。コード・モック・非公開設定の準備は先行できるが、実KMS/R2接続や別端末復元の成功を主張しない。
+利用者の回答ではCloudflareアカウントはあるがAWSアカウントは未準備。Cloudflareの現在のCLI認証ではD1が読める一方、R2操作は権限エラーになる。まず既存Cloudflare管理者としてR2/Workers/D1の対象権限を確認する。AWSのアカウント作成、請求情報、鍵の作成・課金承諾は利用者操作であり、Cloudflareしかない現状を理由に本番保管の鍵独立性を黙って下げない。限定環境でCloudflare Secrets Storeを使う場合も実写真を入れず、本番保管の完成証拠と区別する。コード・模擬試験・非公開設定の準備は先行できるが、実KMS/R2接続や別端末復元の成功を主張しない。
+
+## 利用者による実環境の準備（秘密値はチャットに送らない）
+
+1. AWSアカウントを本人が作成し、請求とMFAを設定する。初期リージョンは東京 `ap-northeast-1` を候補にする。管理鍵・API利用・ログや復旧用資源には実費が発生し得るため、Billingの予算通知を設定する。
+2. AWS KMSに専用の対称・顧客管理鍵を作り、鍵ARNとAWSアカウントIDだけを開発へ伝える。鍵素材や秘密アクセスキーをチャット、Git、チケットへ貼らない。鍵削除予約・無効化を運用者が誤操作しないよう、管理者と暗号操作の権限を分離する。
+3. 呼出元には当該鍵への `kms:Encrypt` / `kms:Decrypt` だけを許す。`neko-preservation-context-sha256` の暗号化コンテキストを必須にし、他の鍵・管理操作を許可しない。CloudTrailで鍵管理と復号操作の監査が取れるようにする。初期の長期IAM資格情報は漏えい・更新負担があるため暫定とし、短期資格情報への移行方法を接続試験で検証する。
+4. Cloudflareの管理者としてCLIの認可を更新し、専用R2・D1・非公開Workers・Secrets Storeの操作権限を確認する。既存の共有用DB/bucketや稼働中のまどには接続しない。
+5. 管理鍵・`IDENTITY_INDEX_SECRET`・D1・R2・削除記録をそろえた別環境復元を成功させるまで、保管の有効化・販売文言・「バックアップ完了」の表示をしない。
 
 ## 実装・受入条件
 
@@ -38,5 +48,6 @@ AWSのアカウント作成、請求情報、鍵の作成・課金承諾は利�
 - [AWS KMS 複数リージョン鍵](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)：関連鍵で別リージョン復号が可能。ただし鍵ごとに管理が必要。
 - [AWS KMS 料金](https://aws.amazon.com/kms/pricing/)：顧客管理鍵は1本につき月1米ドル、対象リクエストは月2万件まで無料枠。別リージョンの複製鍵は別料金。
 - [Cloudflare Secrets Store](https://developers.cloudflare.com/secrets-store/)：open beta。 [Workers連携](https://developers.cloudflare.com/secrets-store/integrations/workers/)ではbindingから秘密値を取得する。
+- [Cloudflare R2 SSE-C](https://developers.cloudflare.com/r2/examples/ssec/)：鍵紛失時はCloudflareがobjectを復旧できない。D1本文の鍵管理とは別の機能。
 - [Appleプライベートメールリレー](https://developer.apple.com/documentation/signinwithapple/communicating-using-the-private-email-relay-service)：アプリ未インストールでもメール送信可能。送信元登録と認証が必要。 [Appleの2026年新ドメイン案内](https://developer.apple.com/news/?id=1ptvdtcm)も考慮する。
 - [Appleのサブスクリプション指針](https://developer.apple.com/app-store/subscriptions/)：有効／期限切れ／請求猶予を区別し、失効後の扱いを説明する。

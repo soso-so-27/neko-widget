@@ -97,8 +97,11 @@ export class RetentionLedger {
           if (dueAt === null || observedAt < pausedAt) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
           dueAt = clock(dueAt + observedAt - pausedAt); pausedAt = null;
         }
-      } else if (expiredAt !== null && pausedAt === null) {
-        pausedAt = observedAt;
+      } else if (expiredAt !== null) {
+        // An outage may last longer than the original notice window. Require
+        // a fresh delivery after billing can be verified again.
+        noticeAt = null; receipt = null;
+        if (pausedAt === null) pausedAt = observedAt;
       }
       const result = await this.db.prepare(`UPDATE pa_retention SET revision=revision+1, episode=?,
         verified_status=?,checked_at=?,expired_at=?,due_at=?,paused_at=?,

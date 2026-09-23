@@ -37,6 +37,7 @@ describe('twelve-month preservation export period', () => {
     g.later(20 * day);
     const paused = await g.ledger.observe(g.ownerId, 'unknown');
     expect(paused.pausedAt).toBe(g.now());
+    expect(paused.finalNoticeDeliveredAt).toBeNull();
     g.at(first.dueAt! + 10 * day);
     expect(await g.ledger.eligibleAfterFreshCheck(g.ownerId, 'unknown')).toBe(false);
     g.later(1);
@@ -58,6 +59,18 @@ describe('twelve-month preservation export period', () => {
       notified.finalNoticeDeliveredAt!, 'mail-provider-receipt-123')).dueAt).toBe(notified.dueAt);
     await expect(f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode,
       notified.finalNoticeDeliveredAt!, 'different-mail-receipt')).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+  });
+
+  it('invalidates an earlier notice after billing becomes unknown', async () => {
+    const f = await fixture();
+    const first = await f.ledger.observe(f.ownerId, 'expired');
+    f.later(2 * day);
+    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'mail-provider-receipt-123');
+    f.later(day);
+    expect((await f.ledger.observe(f.ownerId, 'unknown')).finalNoticeDeliveredAt).toBeNull();
+    f.at(first.dueAt! + 2 * day);
+    expect((await f.ledger.observe(f.ownerId, 'expired')).finalNoticeDeliveredAt).toBeNull();
+    expect(await f.ledger.eligibleAfterFreshCheck(f.ownerId, 'expired')).toBe(false);
   });
 
   it('cancels deletion on renewed membership and rejects notices from an old episode', async () => {
