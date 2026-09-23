@@ -1,10 +1,10 @@
 # 個人保管：AWS KMS / Cloudflare 実環境準備（未実施）
 
-2026-09-23の利用者指定は **AWS KMSを使う**。この資料は利用者のアカウント準備と開発側の接続条件を分ける。現時点ではAWSアカウント、管理鍵、実R2、実端末復元の成功証拠はない。`PRESERVATION_ENABLED` と `PRESERVATION_KMS_ENABLED` はともに `NO` を維持し、実データ・販売を始めない。
+2026-09-23の利用者指定は **AWS KMSを使う**。この資料は利用者のアカウント準備と開発側の接続条件を分ける。利用者確認時点でAWSアカウントは未作成。管理鍵、実R2、実端末復元の成功証拠もない。`PRESERVATION_ENABLED` と `PRESERVATION_KMS_ENABLED` はともに `NO` を維持し、実データ・販売を始めない。
 
 ## 利用者がAWS画面で行うこと
 
-1. [AWSアカウント](https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-creating.html)を作成し、請求方法と[MFA](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable.html)を設定する。rootの日常使用を避ける。[AWS Budgets](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html)で少額の月間予算通知を作る。作成と請求への同意は利用者が行う。
+1. [AWSアカウント](https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-creating.html)を作成し、請求方法と[MFA](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable.html)を設定する。rootの日常使用を避ける。[AWS Budgets](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html)で少額の月間予算通知を作る。作成と請求への同意は利用者が行う。**現段階では鍵やアクセスキーを先に作らない**。次の権限・復旧構成を確定してから行う。
 2. AWS KMSの東京リージョン `ap-northeast-1` に、**対称・暗号化/復号用の顧客管理鍵**を1本作る。独立復旧コピーを別リージョンで取り出せる設計を目指すため、実データ用には**マルチリージョン主キー**を推奨し、複製先とデータ所在は復旧設計で決める。マルチリージョン鍵は作成後に単一リージョン鍵から変換できないため、単一リージョン鍵を既に試作用に作った場合は実データへ使う前に相談する。管理者と暗号操作の利用者を分け、鍵の無効化・削除予約は管理者だけにする。KMSは[鍵ポリシーがIAM許可の前提](https://docs.aws.amazon.com/kms/latest/developerguide/key-policies.html)になるため、既定ポリシーのアカウント管理権限を不用意に除去しない。[鍵種別の変更制限](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)も確認する。
 3. 開発側へ伝えるのは**AWSアカウントID、リージョン、鍵ARN、鍵管理者との連絡経路だけ**。鍵素材、アクセスキーID、シークレットアクセスキー、セッショントークン、復旧コードはチャット・Git・チケットに貼らない。
 
@@ -16,11 +16,19 @@
 2. R2、D1、Workersの対象アカウントと請求条件を確認する。既存の共有用まどDB/bucketには触れず、保管専用の資源を用意する。現在のWrangler OAuthはD1を読める一方、R2一覧が認証エラー。再ログインは承認コード待ちでタイムアウトし、権限は未確認。管理画面にサインイン済みであることとCLIの許可は別。[R2用API権限](https://developers.cloudflare.com/r2/api/tokens/#permissions)の管理読取／書込が必要な場合は、権限を絞ったトークンを端末内で設定し、チャットやGitには貼らない。
 3. CloudflareのアカウントIDだけを共有し、API token・OAuth token・Workers secret値を会話に貼らない。実操作は開発側のコマンドと出力を見ながら進め、公開routeや既存bucketへの接続はしない。
 
+R2 subscriptionと送信に使える独自ドメインの有無は、現在利用者へ確認中。未確認を「利用可能」と読み替えない。
+
 ## 12か月後の消去通知に使う送信基盤（候補）
 
 鍵管理はAWS KMSのまま、通知はまず[Cloudflare Email Sending](https://developers.cloudflare.com/email-service/)を検証する。Workers PaidとCloudflare DNS上の送信ドメインが必要で、任意宛先への送信は2026-09-23時点でbeta。送信bindingが同じWorkers基盤で使え、[Email Sendingの配達・失敗・拒否イベントをQueueへ購読](https://developers.cloudflare.com/email-service/platform/event-subscriptions/)できる。送信APIが受理しただけでは「届いた通知」にしない。`message.delivered` のmessage ID、宛先、エピソード、配送時刻を照合して台帳へ記録し、bounce・拒否・イベント欠落では自動削除を停止する。recipient serverへの到達は受信者の開封を意味しないため、アプリ内の期限表示と持ち出し導線も必要。
 
 利用者が持つ送信ドメインをCloudflare DNSへ接続できるか、Workers Paid/Email Sendingを有効化できるかを確認する。Appleの非公開メール宛てには[Apple Developerで送信元ドメインを登録しSPF/DKIMを認証](https://developer.apple.com/help/account/capabilities/configure-private-email-relay-service)する。これらが実証できなければ通知を「送れた」と扱わず、期限消去を有効化しない。Cloudflare Email Sendingを利用できない場合、[Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)を代替候補とするが、新規アカウントはsandboxに入り任意の利用者宛送信にはproduction accessが必要。どちらの実契約・ドメイン設定も未実施。
+
+Cloudflareの現行料金表では、任意宛先へのEmail SendingはWorkers Paidが必要で、月3,000通を含み、超過分は1,000通あたり0.35米ドル。これは送信量の費用のみで、ドメイン・Workers・Queues等の費用や配達成功を保証しない。[料金表](https://developers.cloudflare.com/email-service/platform/pricing/)参照。
+
+## Apple本人確認の署名前提
+
+アプリのentitlementsには現在 `com.apple.developer.applesignin` がない。実端末での成功確認前に、Apple Developerの対象App IDでSign in with Appleを有効化し、アプリtargetに `Default` のentitlementを付け、変化したApp IDに対応するprovisioning profileを再生成する必要がある。既存の署名済み配布に影響するため、App IDだけ先に変更して配布済み構成が正常だとみなさない。[Appleの能力設定手順](https://developer.apple.com/help/account/identifiers/enable-app-capabilities)参照。
 
 ## 独立復旧コピーの条件（S3案、未採用）
 
