@@ -362,7 +362,10 @@ export class OwnerRecoveryCopy {
       throw unavailable();
     }
     if (!references.length) return { status: 'missing' };
-    const images = await Promise.all(references.map(reference => this.read(ownerId, reference)));
+    // An owner may have many historical versions. Bound concurrent downloads
+    // instead of letting an S3 listing fan out into an unbounded Worker burst.
+    const images: OwnerRecoveryImage[] = [];
+    for (const reference of references) images.push(await this.read(ownerId, reference));
     const generations = new Map<number, OwnerRecoveryImage>();
     for (const item of images) {
       const previous = generations.get(item.generation);

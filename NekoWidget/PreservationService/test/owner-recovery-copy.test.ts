@@ -4,6 +4,7 @@ import { DurableAuth } from '../src/auth';
 import { randomToken } from '../src/contracts';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from '../src/identity-index';
 import { envelopeKeyCustody } from '../src/key-custody';
+import { OwnerArchiveRecovery } from '../src/owner-archive-recovery';
 import { OwnerRecoveryCopy, type OwnerRecoveryImage } from '../src/owner-recovery-copy';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { S3RecoveryCopy, type RecoveryObject } from '../src/s3-recovery-copy';
@@ -30,6 +31,9 @@ async function fixture() {
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const identityIndexSecret = randomToken();
   const objects = new Map<string, Uint8Array>();
+  const references: RecoveryObject[] = [];
+  const omittedFromListing = new Set<string>();
+  let pageSize = Number.MAX_SAFE_INTEGER;
   let rejectOwner: string | null = null;
   let rejectAll = false;
   const s3 = {
@@ -40,7 +44,9 @@ async function fixture() {
       const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))]
         .map(byte => byte.toString(16).padStart(2, '0')).join('');
       objects.set(key, bytes.slice());
-      return { key, versionId: 'synthetic-v1', sha256, bytes: bytes.length };
+      const reference = { key, versionId: 'synthetic-v1', sha256, bytes: bytes.length };
+      references.push(reference);
+      return reference;
     },
     async getVerified(reference: RecoveryObject) {
       const bytes = objects.get(reference.key);
@@ -52,9 +58,33 @@ async function fixture() {
       if (digest !== reference.sha256) throw new Error('checksum');
       return bytes.slice();
     },
+    async listOwnerVersionsPage(requestedOwner: string,
+      cursor?: { keyMarker: string; versionIdMarker?: string }) {
+      if (!/^[0-9a-f-]{36}$/u.test(requestedOwner)) throw new Error('bad owner');
+      const listed = references.filter(ref => ref.key.startsWith(`recovery/v1/${requestedOwner}/`)
+        && !omittedFromListing.has(ref.key));
+      const previous = cursor === undefined ? -1 : listed.findIndex(ref =>
+        ref.key === cursor.keyMarker && ref.versionId === cursor.versionIdMarker);
+      if (cursor !== undefined && previous < 0) throw new Error('missing cursor');
+      const page = listed.slice(previous + 1, previous + 1 + pageSize);
+      const last = page.at(-1);
+      return { versions: page.map(ref => ({ key: ref.key, versionId: ref.versionId,
+        bytes: ref.bytes, deleteMarker: false })),
+      nextCursor: previous + 1 + page.length < listed.length && last
+        ? { keyMarker: last.key, versionIdMarker: last.versionId } : null };
+    },
+    async referenceForListedVersion(item: { key: string; versionId: string; bytes: number | null }) {
+      const found = references.find(ref => ref.key === item.key && ref.versionId === item.versionId);
+      if (!found || found.bytes !== item.bytes || omittedFromListing.has(item.key)) {
+        throw new Error('version missing');
+      }
+      return found;
+    },
   } as S3RecoveryCopy;
   return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret), objects, keys, s3,
     identityIndexSecret,
+    omitFromListing(key: string) { omittedFromListing.add(key); },
+    setPageSize(value: number) { pageSize = value; },
     rejectOwner(value: string | null) { rejectOwner = value; },
     rejectAll(value: boolean) { rejectAll = value; } };
 }
@@ -90,6 +120,18 @@ it('binds each acknowledged record and tombstone to a current owner-wide manifes
   expect(deleted.records).toHaveLength(1);
   expect(deleted.records[0]).toMatchObject({ recordId, revision: 2, deleted: true });
   expect(deleted.records[0]?.marker.key).not.toBe(live.records[0]?.marker.key);
+  f.setPageSize(2);
+  const candidate = await new OwnerArchiveRecovery(f.s3, f.copy,
+    new RecordRecoveryCopy(f.keys, f.s3)).assembleQuarantineCandidate(session.ownerId, now + 1);
+  expect(candidate.status).toBe('ready-for-quarantine');
+  if (candidate.status !== 'ready-for-quarantine') throw new Error('expected candidate');
+  expect(candidate.owner.disabled).toBe(true);
+  expect(candidate.owner.records).toMatchObject([{ recordId, revision: 2, deleted: true }]);
+  expect(candidate.verifiedRecords).toBe(1);
+  f.omitFromListing(deleted.records[0]!.marker.key);
+  expect(await new OwnerArchiveRecovery(f.s3, f.copy,
+    new RecordRecoveryCopy(f.keys, f.s3)).assembleQuarantineCandidate(session.ownerId, now + 2))
+    .toEqual({ status: 'quarantined' });
 });
 
 async function verifiedImage(f: Awaited<ReturnType<typeof fixture>>): Promise<OwnerRecoveryImage> {
@@ -122,6 +164,42 @@ it('stores and verifies an encrypted owner bootstrap image without exposing the 
   const raw = new TextDecoder().decode(f.objects.get(ref.key)!);
   expect(raw).not.toContain(original.identityKey);
   expect(raw).not.toContain(accountId);
+});
+
+it('quarantines a committed record absent from the owner-wide inventory', async () => {
+  const f = await fixture();
+  await f.copy.copy(await verifiedImage(f));
+  const records = new RecordRecoveryCopy(f.keys, f.s3);
+  const recordId = crypto.randomUUID();
+  const metadata = new Uint8Array([78, 75, 77, 49, 1]);
+  const copied = await records.copy({ ownerId, recordId, revision: 1,
+    initialFingerprint: 'a'.repeat(64), initialOperation: crypto.randomUUID(),
+    metadata, photoKey: null, photoBytes: 0, quotaBytes: metadata.length,
+    deleted: false, photoCiphertext: null });
+  await records.commit(ownerId, recordId, 1, copied);
+  expect(await new OwnerArchiveRecovery(f.s3, f.copy, records)
+    .assembleQuarantineCandidate(ownerId, 1_000)).toEqual({ status: 'quarantined' });
+});
+
+it('quarantines a live owner snapshot when a later delete intent has no commit', async () => {
+  const f = await fixture();
+  const records = new RecordRecoveryCopy(f.keys, f.s3);
+  const recordId = crypto.randomUUID();
+  const initialOperation = crypto.randomUUID();
+  const metadata = new Uint8Array([78, 75, 77, 49, 1]);
+  const base = { ownerId, recordId, initialFingerprint: 'a'.repeat(64), initialOperation,
+    photoKey: null, photoBytes: 0, photoCiphertext: null };
+  const live = await records.copy({ ...base, revision: 1, metadata,
+    quotaBytes: metadata.length, deleted: false });
+  const marker = await records.commit(ownerId, recordId, 1, live);
+  const owner = await verifiedImage(f);
+  await f.copy.copy({ ...owner, inventoryGeneration: 1,
+    records: [{ recordId, revision: 1, deleted: false, marker }] });
+  const tombstone = await records.copy({ ...base, revision: 2, metadata: null,
+    quotaBytes: 0, deleted: true });
+  await records.prepareDelete(ownerId, recordId, 1, tombstone);
+  expect(await new OwnerArchiveRecovery(f.s3, f.copy, records)
+    .assembleQuarantineCandidate(ownerId, 1_000)).toEqual({ status: 'quarantined' });
 });
 
 it('rejects cross-owner reads, stale references and malformed snapshots', async () => {

@@ -277,7 +277,8 @@ export class RecordRecoveryCopy {
     markers: RecoveryObject[]): Promise<{ status: 'ready'; image: StoredRecordImage } |
       { status: 'quarantined' }> {
     if (!idPattern.test(ownerId) || !recordIdPattern.test(recordId)) throw unavailable();
-    const inspected = await Promise.all(markers.map(marker => this.inspectManifest(ownerId, marker)));
+    const inspected: DiscoveredRecordManifest[] = [];
+    for (const marker of markers) inspected.push(await this.inspectManifest(ownerId, marker));
     const related = inspected.filter(item => item.recordId === recordId);
     const commits = related.filter((item): item is DiscoveredRecordCommit => item.kind === 'commit');
     const intents = related.filter((item): item is DiscoveredDeleteIntent => item.kind === 'delete-intent');
@@ -300,9 +301,15 @@ export class RecordRecoveryCopy {
         return { status: 'quarantined' };
       }
     }
-    const images = await Promise.all(ordered.map(commit => this.readCommitted(ownerId, recordId, commit)));
-    if (images.slice(0, -1).some(image => image.deleted)) return { status: 'quarantined' };
-    return { status: 'ready', image: images.at(-1)! };
+    let latest: StoredRecordImage | null = null;
+    for (const commit of ordered) {
+      if (latest?.deleted) return { status: 'quarantined' };
+      const next = await this.readCommitted(ownerId, recordId, commit);
+      latest?.metadata?.fill(0);
+      latest?.photoCiphertext?.fill(0);
+      latest = next;
+    }
+    return { status: 'ready', image: latest! };
   }
 
   /** Complete, D1-independent owner-prefix inventory. This still does not
