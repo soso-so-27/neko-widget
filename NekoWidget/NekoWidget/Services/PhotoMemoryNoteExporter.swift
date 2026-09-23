@@ -297,6 +297,7 @@ enum PhotoMemoryNoteExporter {
               (jpegData?.count ?? 0) <= maximumJPEGBytes else {
             throw PhotoMemoryNoteExportError.tooLarge
         }
+        let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         func dateText(_ date: Date) throws -> String {
