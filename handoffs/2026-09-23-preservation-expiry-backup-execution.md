@@ -10,6 +10,7 @@
 - iOSには写真を含む全件ZIPの経路がある。ただし端末の一時容量が不足する大容量時の持ち出し保証にはならない。
 - 保管専用サービスは既定OFF。AWSアカウント、実KMS/R2、通知ドメイン、別端末復元は未確認。Cloudflareの現行CLI権限ではR2一覧が失敗する。
 - 通知先照合値は owner ID とアドレスの組を鍵付きで計算し、同一アドレスの別ownerをDB上で関連付けない。0009以前の既存連絡先は照合値がNULLのため、初回の同一アドレス再認証でも最終通知を一度だけ再要求する。早期消去を避ける保守的な扱いで、実連絡先を持つ本番運用前に移行する。
+- 2026-09-24 JST、保管専用の **staging** D1に `0009_notice_contact_fingerprint.sql` を適用した。事前Time Travel bookmarkは `00000008-00000002-000050ef-02c373786b3b6ff4f57312a3f87a07d2`。事前のowner/record/contactは全て0、適用後は未適用migration 0、`email_tag`列1・関連trigger 2・owner/record 0を確認。本番DB、共有DB、Worker配備には触れていない。
 
 ## 保存完了と復旧の提案（利用者判断待ち）
 
