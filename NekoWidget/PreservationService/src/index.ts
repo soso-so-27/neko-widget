@@ -6,10 +6,11 @@ import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './p
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
 import { readBoundedBody } from './bounded-body';
+import { RetentionLedger } from './retention-ledger';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
-  PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string;
+  PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
@@ -158,5 +159,12 @@ export default {
       env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
         (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
     ]);
+    // Billing outages pause the clock. This only records status; notification
+    // and irreversible deletion remain separately gated and disabled.
+    if (env.RETENTION_TRACKING_ENABLED === 'YES') {
+      if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+      await new RetentionLedger(env.DB, () => Date.now())
+        .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
+    }
   },
 };
