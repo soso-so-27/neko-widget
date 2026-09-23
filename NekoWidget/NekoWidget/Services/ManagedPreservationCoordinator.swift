@@ -4,6 +4,12 @@ import Combine
 
 /// The same export transaction is used by the screen and the runtime boundary check.
 enum ManagedPreservationExport {
+    private actor BulkGeneration {
+        private var value: Int?
+        func set(_ generation: Int) { value = generation }
+        func get() -> Int? { value }
+    }
+
     @MainActor static func prepare(_ snapshot: ManagedPreservationExportSnapshot,
                                   using exporter: RecordExportController,
                                   validate: @escaping ManagedPreservationCoordinator.ExportValidation) {
@@ -18,6 +24,86 @@ enum ManagedPreservationExport {
         return try PhotoMemoryNoteExporter.createArchive(text: document.text,
             capturedAt: document.capturedAt, writtenAt: document.writtenAt,
             updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData)
+    }
+
+    @MainActor static func prepareAll(client: ManagedPreservationClient,
+                                      using exporter: RecordExportController,
+                                      validate: @escaping ManagedPreservationCoordinator.ExportValidation,
+                                      progress: @escaping @Sendable (Int, Int) async -> Void) {
+        let completed = BulkGeneration()
+        exporter.prepare(build: {
+            let (payload, generation) = try await archiveAll(client: client, progress: progress)
+            await completed.set(generation)
+            return payload
+        }, verify: {
+            try await validate()
+            if let generation = await completed.get() {
+                let current = try await client.list()
+                guard current.generation == generation else { throw ManagedPreservationError.conflict }
+                try await validate()
+            }
+        })
+    }
+
+    private static func archiveAll(client: ManagedPreservationClient,
+                                   progress: @escaping @Sendable (Int, Int) async -> Void)
+        async throws -> (PhotoMemoryNoteExportPayload, Int) {
+        var listing: [ManagedPreservationRecord] = []
+        var seen: Set<UUID> = []
+        var cursor: String?
+        var generation: Int?
+        var previousID: String?
+        repeat {
+            try Task.checkCancellation()
+            let page = try await client.list(after: cursor)
+            if let generation, page.generation != generation { throw ManagedPreservationError.conflict }
+            generation = page.generation
+            guard !page.items.isEmpty || page.nextCursor == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            for record in page.items {
+                let identifier = record.id.uuidString.lowercased()
+                if let previousID, identifier <= previousID {
+                    throw ManagedPreservationError.invalidResponse
+                }
+                guard seen.insert(record.id).inserted else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+                previousID = identifier
+                listing.append(record)
+            }
+            if let next = page.nextCursor,
+               next.lowercased() != page.items.last?.id.uuidString.lowercased() {
+                throw ManagedPreservationError.invalidResponse
+            }
+            cursor = page.nextCursor
+        } while cursor != nil
+        guard let generation else { throw ManagedPreservationError.invalidResponse }
+        let records = listing
+        let payload = try await PhotoMemoryNoteExporter.createBulkArchive(
+            recordCount: records.count, fetch: { index in
+                let listed = records[index]
+                let snapshot = try await client.detail(listed.id)
+                guard snapshot.record.revision == listed.revision,
+                      snapshot.document == listed.document else {
+                    throw ManagedPreservationError.conflict
+                }
+                let document = try snapshot.document.validated()
+                return PhotoMemoryNoteBulkEntry(recordID: listed.id, revision: listed.revision,
+                    text: document.text, capturedAt: document.capturedAt,
+                    writtenAt: document.writtenAt, updatedAt: document.updatedAt,
+                    catNames: document.catNames, jpegData: snapshot.jpegData)
+            }, progress: progress)
+        do {
+            try Task.checkCancellation()
+            let current = try await client.list()
+            guard current.generation == generation else { throw ManagedPreservationError.conflict }
+            return (payload, generation)
+        } catch {
+            do { try payload.cleanup() }
+            catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+            throw error
+        }
     }
 }
 
@@ -46,6 +132,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var usage: ManagedPreservationUsage?
     @Published private(set) var usageLoading = false
     @Published private(set) var usageMessage: String?
+    @Published private(set) var exportProgress: (completed: Int, total: Int)?
     @Published var consentToNewSave = false
     @Published var editedText = ""
 
@@ -284,6 +371,28 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    func exportAllCopies(using exporter: RecordExportController) {
+        guard isSignedIn, !isBusy, canExport else { return }
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            self.exportProgress = (0, 0)
+            let validate: ExportValidation = {
+                try self.check(ticket)
+                guard try await self.requireCurrentOwner(ticket) == owner else {
+                    throw ManagedPreservationError.staleSession
+                }
+            }
+            ManagedPreservationExport.prepareAll(client: self.client, using: exporter,
+                validate: validate, progress: { [weak self] completed, total in
+                    await MainActor.run {
+                        guard let self, self.viewEpoch == ticket,
+                              self.authenticatedOwnerID == owner else { return }
+                        self.exportProgress = (completed, total)
+                    }
+                })
+        }
+    }
+
     /// View disappearance cancels network work and drops this screen's sensitive copies.
     /// A dispatched write might still have reached the server; re-read on returning.
     func stop() {
@@ -295,6 +404,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         membership = nil; membershipMessage = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
+        exportProgress = nil
     }
 
     private func loadFirstPage(_ ticket: UUID) async throws {
@@ -451,5 +561,6 @@ final class ManagedPreservationCoordinator: ObservableObject {
         membership = nil; membershipMessage = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
+        exportProgress = nil
     }
 }

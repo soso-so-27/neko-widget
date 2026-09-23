@@ -1493,6 +1493,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(usage.waitForExistence(timeout: 8))
         XCTAssertTrue(usage.label.contains("使用中"))
         capture("preservation-membership-expired-read-available")
+        tap("preservation-export-all", towardBottom: true)
+        cancelRecordExportSheet(app, screenshot: "preservation-all-export-system-sheet")
+        XCTAssertFalse(app.staticTexts["record-export-error"].exists)
         let record = app.buttons["preservation-record-a1223334-5556-4788-9990-aabbccddeeff"]
         for _ in 0..<8 where !record.exists { app.swipeUp() }
         tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff", towardBottom: true)
