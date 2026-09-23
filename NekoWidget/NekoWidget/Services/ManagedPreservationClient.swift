@@ -283,6 +283,12 @@ struct ManagedPreservationLinkChallenge: Codable, Sendable {
 
 actor ManagedPreservationClient {
     typealias RequestTransport = @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)
+    /// An opaque identity for one uninterrupted authenticated operation. The
+    /// epoch changes even when the same owner signs out and back in.
+    struct SessionCheckpoint: Sendable {
+        fileprivate let epoch: UInt64
+        fileprivate let credential: ManagedPreservationSessionStore.Credential
+    }
     static let consentVersion = "managed-preservation-v1"
     private static let maximumPhotoBytes = 20 * 1024 * 1024
     private let configuration: ManagedPreservationConfiguration
@@ -348,6 +354,20 @@ actor ManagedPreservationClient {
 
     func sessionOwnerID() throws -> String? {
         try hasSession() ? credential?.ownerId : nil
+    }
+
+    func captureSessionCheckpoint() throws -> SessionCheckpoint {
+        guard try hasSession(), let credential else { throw ManagedPreservationError.authenticationRequired }
+        return SessionCheckpoint(epoch: epoch, credential: credential)
+    }
+
+    func requireSessionCheckpoint(_ checkpoint: SessionCheckpoint) throws {
+        try ensureEpoch(checkpoint.epoch)
+        guard try hasSession(), credential == checkpoint.credential,
+              checkpoint.credential.expiresAt > Date(),
+              try store.load() == checkpoint.credential else {
+            throw ManagedPreservationError.staleSession
+        }
     }
 
     func membership() async throws -> ManagedPreservationMembership {

@@ -5,9 +5,11 @@ import Combine
 /// The same export transaction is used by the screen and the runtime boundary check.
 enum ManagedPreservationExport {
     private actor BulkGeneration {
-        private var value: Int?
-        func set(_ generation: Int) { value = generation }
-        func get() -> Int? { value }
+        private var value: (generation: Int, session: ManagedPreservationClient.SessionCheckpoint)?
+        func set(_ generation: Int, session: ManagedPreservationClient.SessionCheckpoint) {
+            value = (generation, session)
+        }
+        func get() -> (generation: Int, session: ManagedPreservationClient.SessionCheckpoint)? { value }
     }
 
     @MainActor static func prepare(_ snapshot: ManagedPreservationExportSnapshot,
@@ -32,22 +34,26 @@ enum ManagedPreservationExport {
                                       progress: @escaping @Sendable (Int, Int) async -> Void) {
         let completed = BulkGeneration()
         exporter.prepare(build: {
-            let (payload, generation) = try await archiveAll(client: client, progress: progress)
-            await completed.set(generation)
+            let (payload, generation, session) = try await archiveAll(client: client, progress: progress)
+            await completed.set(generation, session: session)
             return payload
         }, verify: {
             try await validate()
-            if let generation = await completed.get() {
+            if let (generation, session) = await completed.get() {
+                try await client.requireSessionCheckpoint(session)
                 let current = try await client.list()
+                try await client.requireSessionCheckpoint(session)
                 guard current.generation == generation else { throw ManagedPreservationError.conflict }
                 try await validate()
+                try await client.requireSessionCheckpoint(session)
             }
         })
     }
 
     private static func archiveAll(client: ManagedPreservationClient,
                                    progress: @escaping @Sendable (Int, Int) async -> Void)
-        async throws -> (PhotoMemoryNoteExportPayload, Int) {
+        async throws -> (PhotoMemoryNoteExportPayload, Int, ManagedPreservationClient.SessionCheckpoint) {
+        let session = try await client.captureSessionCheckpoint()
         var listing: [ManagedPreservationRecord] = []
         var seen: Set<UUID> = []
         var cursor: String?
@@ -55,7 +61,9 @@ enum ManagedPreservationExport {
         var previousID: String?
         repeat {
             try Task.checkCancellation()
+            try await client.requireSessionCheckpoint(session)
             let page = try await client.list(after: cursor)
+            try await client.requireSessionCheckpoint(session)
             if let generation, page.generation != generation { throw ManagedPreservationError.conflict }
             generation = page.generation
             guard !page.items.isEmpty || page.nextCursor == nil else {
@@ -83,7 +91,9 @@ enum ManagedPreservationExport {
         let payload = try await PhotoMemoryNoteExporter.createBulkArchive(
             recordCount: records.count, fetch: { index in
                 let listed = records[index]
+                try await client.requireSessionCheckpoint(session)
                 let snapshot = try await client.detail(listed.id)
+                try await client.requireSessionCheckpoint(session)
                 guard snapshot.record.revision == listed.revision,
                       snapshot.document == listed.document else {
                     throw ManagedPreservationError.conflict
@@ -96,9 +106,11 @@ enum ManagedPreservationExport {
             }, progress: progress)
         do {
             try Task.checkCancellation()
+            try await client.requireSessionCheckpoint(session)
             let current = try await client.list()
+            try await client.requireSessionCheckpoint(session)
             guard current.generation == generation else { throw ManagedPreservationError.conflict }
-            return (payload, generation)
+            return (payload, generation, session)
         } catch {
             do { try payload.cleanup() }
             catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }

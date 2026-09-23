@@ -9799,6 +9799,19 @@ actor SharingRuntimeSelfTestRunner {
         try await finish()
         guard checks == 2, exporter.payload == nil, exporter.error != nil,
               try files() == before else { throw ManagedPreservationError.staleSession }
+
+        // A session can change and return to the same owner between requests.
+        // Owner-only checks must not allow that archive to reach the share sheet.
+        let changed = try PreservationNativeFixture.make()
+        defer { try? changed.cleanup() }
+        let changedClient = changed.client
+        ManagedPreservationExport.prepareAll(client: changedClient, using: exporter,
+            validate: {}, progress: { completed, _ in
+                if completed == 1 { await changedClient.cancelSignIn() }
+            })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
     }
 
     @MainActor
