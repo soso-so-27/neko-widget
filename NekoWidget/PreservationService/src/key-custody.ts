@@ -32,9 +32,10 @@ async function contextHash(context: Parameters<KeyCustody['seal']>[1]): Promise<
   if (!context || typeof context !== 'object' || Array.isArray(context)
       || Object.keys(context).some(key => !['ownerId', 'purpose', 'recordId'].includes(key))
       || !ownerPattern.test(context.ownerId)
-      || !['identity', 'record'].includes(context.purpose)
-      || (context.purpose === 'identity' ? context.recordId !== undefined
-        : typeof context.recordId !== 'string' || !recordPattern.test(context.recordId))) throw unavailable();
+      || !['identity', 'record', 'contact'].includes(context.purpose)
+      || (context.purpose === 'record'
+        ? typeof context.recordId !== 'string' || !recordPattern.test(context.recordId)
+        : context.recordId !== undefined)) throw unavailable();
   return sha256(JSON.stringify(['neko-preservation-context-v1', context.ownerId, context.purpose, context.recordId ?? null]));
 }
 async function dataKey(raw: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { SignJWT, createRemoteJWKSet, customFetch, importPKCS8, jwtVerify } from 'jose';
-import { type Challenge, type IdentityVerifier, type VerifiedIdentity, ServiceError } from './contracts';
+import { type Challenge, type IdentityVerifier, type VerifiedIdentity, ServiceError, contactEmailValid } from './contracts';
 import { readBoundedBody } from './bounded-body';
 
 export const APPLE_ISSUER = 'https://appleid.apple.com';
@@ -18,6 +18,11 @@ const bounded = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= max;
 const clientIDValid = (value: unknown): value is string =>
   bounded(value, 255) && /^[a-zA-Z0-9][a-zA-Z0-9.-]+$/u.test(value);
+const verifiedEmail = (email: unknown, verified: unknown): string | null => {
+  if (verified !== true && verified !== 'true') return null;
+  if (!contactEmailValid(email)) return null;
+  return email;
+};
 const timeValue = (now: () => number): number => {
   try {
     const value = now();
@@ -85,7 +90,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     });
   }
 
-  private async verifyToken(idToken: string, nonce: string, authorizationCode: string): Promise<string> {
+  private async verifyToken(idToken: string, nonce: string, authorizationCode: string): Promise<{ subject: string; email: string | null }> {
     if (!bounded(idToken, MAX_TOKEN)) return fail('APPLE_IDENTITY_UNCONFIRMED');
     try {
       const { payload } = await jwtVerify(idToken, this.keys, {
@@ -102,7 +107,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
         const expected = Buffer.from(createHash('sha256').update(authorizationCode, 'ascii').digest()).subarray(0, 16).toString('base64url');
         if (payload.c_hash !== expected) return fail('APPLE_IDENTITY_UNCONFIRMED');
       }
-      return payload.sub;
+      return { subject: payload.sub, email: verifiedEmail(payload.email, payload.email_verified) };
     } catch { return fail('APPLE_IDENTITY_UNCONFIRMED'); }
   }
 
@@ -153,9 +158,11 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     const initial = await this.verifyToken(identityToken, challenge.nonce, authorizationCode);
     const exchanged = await this.exchangeCode(authorizationCode);
     const confirmed = await this.verifyToken(exchanged.id_token, challenge.nonce, authorizationCode);
-    if (confirmed !== initial) return fail('APPLE_IDENTITY_MISMATCH');
+    if (confirmed.subject !== initial.subject) return fail('APPLE_IDENTITY_MISMATCH');
     if (timeValue(this.now) >= challenge.expiresAt) return fail('APPLE_AUTHORIZATION_REJECTED');
     // Server-internal result only; DurableAuth must seal the refresh credential before issuing a session.
-    return { issuer: APPLE_ISSUER, subject: confirmed, refreshToken: exchanged.refresh_token };
+    const matchingEmail = confirmed.email !== null && (initial.email === null || initial.email === confirmed.email);
+    return { issuer: APPLE_ISSUER, subject: confirmed.subject, refreshToken: exchanged.refresh_token,
+      ...(matchingEmail ? { verifiedEmail: confirmed.email! } : {}) };
   }
 }

@@ -656,6 +656,15 @@ struct MainTabView: View {
             detailView(for: localIdentifier)
         case let .collectionPhoto(localIdentifier):
             collectionDetailView(for: localIdentifier)
+                .onDisappear {
+                    // The grid saves its top visible row while scrolling. If
+                    // a lower visible photo is opened, returning to that old
+                    // top row can hide the photo that was just viewed. Restore
+                    // after the pop rather than before its layout transition.
+                    PhotoLibraryReadingPosition.returnToOpenedPhoto(
+                        PhotoLibraryGridRow.identifier(containing: localIdentifier, in: catPhotos)
+                    )
+                }
         case .automaticAlbums:
             automaticAlbumsView
         case .unavailableWidgetPhoto:

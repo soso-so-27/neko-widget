@@ -94,6 +94,8 @@ struct ManagedPreservationView: View {
             else if coordinator.selected != nil { detailSection }
             else {
                 membershipSection
+                noticeContactSection
+                retentionSection
                 usageSection
                 if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
@@ -102,7 +104,15 @@ struct ManagedPreservationView: View {
             if coordinator.isBusy {
                 Section { ProgressView("保管先に確認しています…") }
             }
-            if exporter.preparing { Section { ProgressView("書き出しを準備しています…") } }
+            if exporter.preparing {
+                Section {
+                    ProgressView("書き出しを準備しています…")
+                    if let progress = coordinator.exportProgress, progress.total > 0 {
+                        Text("\(progress.completed) / \(progress.total) 件")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
             if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
             if let warning = coordinator.draftRecoveryWarning {
                 Section { Text(warning).foregroundStyle(.red) }
@@ -123,7 +133,7 @@ struct ManagedPreservationView: View {
         Section {
             if let challenge = coordinator.preparedSignIn {
                 SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = []
+                    request.requestedScopes = [.email]
                     // Server defines the nonce. Do not introduce an unagreed client hash.
                     request.nonce = challenge.nonce
                     request.state = challenge.state
@@ -138,6 +148,7 @@ struct ManagedPreservationView: View {
         footer: {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Appleで同じ本人と確認できた場合に、その本人の保管記録を読み込みます。ログインだけで保管や購入は始まりません。")
+                Text("Appleで確認したメールアドレスは、保管終了時の持ち出し・削除予告の連絡先として使います。写真やメモはメールに含めません。")
                 Text("未送信のメモはこの端末だけに保持します。同じ本人で確認できるまで文章を表示せず、別の本人へ引き継いだり、自動で送信したりしません。")
                 Button("この端末に残っている本人確認情報を解除") { coordinator.signOut() }
             }
@@ -176,6 +187,28 @@ struct ManagedPreservationView: View {
         footer: { Text("見る・取り出すだけなら、会員情報の接続や有効な契約は不要です。") }
     }
 
+    private var noticeContactSection: some View {
+        Section {
+            if let contact = coordinator.noticeContact {
+                if let email = contact.email {
+                    Text(email).textSelection(.enabled)
+                        .accessibilityIdentifier("preservation-notice-contact-email")
+                } else {
+                    Text("連絡先が確認できていません")
+                        .accessibilityIdentifier("preservation-notice-contact-missing")
+                }
+            } else {
+                Text("この保管先の連絡先を確認できます")
+                    .foregroundStyle(.secondary)
+            }
+            Button("連絡先を確認") { coordinator.checkNoticeContact() }
+                .accessibilityIdentifier("preservation-notice-contact-check")
+        } header: { Text("保管終了時の連絡先") }
+        footer: {
+            Text("Appleで確認されたメールアドレスだけを表示します。連絡先がない、または予告の到達を確認できない場合、保管記録の削除は進めません。")
+        }
+    }
+
     private var usageSection: some View {
         Section {
             if let usage = coordinator.usage {
@@ -203,6 +236,43 @@ struct ManagedPreservationView: View {
             }
         } header: { Text("この保管先の容量") }
         footer: { Text("選んで保管したコピーとメモの容量です。iPhoneの写真原本は含みません。") }
+    }
+
+    private var retentionSection: some View {
+        Section {
+            if let retention = coordinator.retention {
+                switch retention.status {
+                case .active, .grace:
+                    Text("保管中です。持ち出し期限は始まっていません。")
+                case .expired:
+                    Text("新しい保管は停止中。写真とメモは閲覧・一括書き出しできます。")
+                    if let dueAt = retention.dueAt {
+                        Text(retention.finalNoticeDeliveredAt == nil
+                             ? "持ち出し期限の目安（削除予告によって延長）"
+                             : "現在の持ち出し期限")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Text(Date(timeIntervalSince1970: Double(dueAt) / 1000), format: .dateTime.year().month().day())
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text(retention.finalNoticeDeliveredAt == nil
+                         ? "削除予告の送達はまだ確認されていません。"
+                         : "削除予告が宛先のメールサーバーに受理されました。開封は未確認です。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                case .unknown:
+                    Text("会員資格を確認できません。保管済みの記録はそのまま残します。")
+                case .unlinked:
+                    Text("会員情報が未接続です。持ち出し期間はまだ表示できません。")
+                }
+            } else {
+                Text("現在の持ち出し期間を確認できます")
+                    .foregroundStyle(.secondary)
+            }
+            Button("持ち出し期間を確認") { coordinator.checkRetention() }
+                .accessibilityIdentifier("preservation-retention-check")
+        } header: { Text("保管終了後の持ち出し") }
+        footer: {
+            Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。")
+        }
     }
 
     private static func capacity(_ bytes: Int64) -> String {
@@ -269,6 +339,10 @@ struct ManagedPreservationView: View {
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }
+            if coordinator.canExport && !coordinator.records.isEmpty {
+                Button("保管した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
+                    .accessibilityIdentifier("preservation-export-all")
+            }
         } header: { Text("保管したコピー") }
     }
 

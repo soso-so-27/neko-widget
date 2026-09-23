@@ -106,8 +106,9 @@ export class ArchiveStore {
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes: this.d.quotaBytes,
         availableBytes: Math.max(0, this.d.quotaBytes - allocated), overLimit: allocated > this.d.quotaBytes },
       records: { saved: row.saved_records, pending: row.pending_records,
-        // Tombstones are an anti-replay / operational bound, not customer photo slots.
-        creationLimitReached: row.record_identifiers + row.pending_records >= this.d.maximumRecords } };
+        // Keep tombstones for replay protection, but do not let lifetime deletions
+        // exhaust the number of records a customer may currently keep.
+        creationLimitReached: row.saved_records + row.pending_records >= this.d.maximumRecords } };
   }
   async list(token: string, after = '', limit = 20) {
     if (after) recordId(after);
@@ -198,7 +199,7 @@ export class ArchiveStore {
     await this.d.db.prepare('INSERT OR IGNORE INTO pa_inventory(owner_id) VALUES(?)').bind(session.ownerId).run();
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
-      AND ((SELECT count(*) FROM pa_records WHERE owner_id=?)
+      AND ((SELECT count(*) FROM pa_records WHERE owner_id=? AND deleted=0)
         +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession}
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,
       session.ownerId, size, this.d.quotaBytes, session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session))

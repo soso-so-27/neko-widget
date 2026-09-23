@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { type AuthDependencies, type KeyCustody, type VerifiedIdentity, sha256 } from '../src/contracts';
+import { RetentionLedger } from '../src/retention-ledger';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const START = Date.UTC(2026, 8, 22);
@@ -27,7 +28,7 @@ async function fixture() {
   };
   const dependencies: AuthDependencies = { db, keys, identityIndexSecret: secret, now: () => now };
   return { auth: new DurableAuth(dependencies), dependencies, keys,
-    advance: (ms: number) => { now += ms; },
+    advance: (ms: number) => { now += ms; }, now: () => now,
     identity: { issuer: 'https://appleid.apple.com', subject: `synthetic-${crypto.randomUUID()}`,
       refreshToken: `synthetic-refresh-${crypto.randomUUID()}` } satisfies VerifiedIdentity };
 }
@@ -74,6 +75,180 @@ describe('durable private preservation authentication', () => {
       f.auth.establish({ ...f.identity, issuer: 'https://other.invalid' }),
     ]);
     expect(new Set(results.map((item) => item.ownerId)).size).toBe(3);
+  });
+
+  it('seals an Apple-verified notice address per owner and does not lose it on an email-less login', async () => {
+    const f = await fixture();
+    const email = 'person@privaterelay.appleid.com';
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: email });
+    const stored = await db.prepare('SELECT * FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first();
+    expect(stored).toMatchObject({ owner_id: first.ownerId, source: 'apple' });
+    expect(JSON.stringify(stored)).not.toContain(email);
+    expect(await f.auth.noticeContact(first.token)).toEqual({ email, source: 'apple' });
+    const sameEmailOtherOwner = await f.auth.establish({ ...f.identity,
+      subject: `${f.identity.subject}-same-email`, verifiedEmail: email });
+    const otherTag = await db.prepare('SELECT email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(sameEmailOtherOwner.ownerId).first<{ email_tag: string }>();
+    expect(otherTag?.email_tag).toMatch(/^[0-9a-f]{64}$/u);
+    expect(otherTag?.email_tag).not.toBe(stored?.email_tag);
+    const again = await f.auth.establish({ ...f.identity, refreshToken: 'rotated-without-email' });
+    expect(await f.auth.noticeContact(again.token)).toEqual({ email, source: 'apple' });
+    const changed = await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect(await f.auth.noticeContact(changed.token)).toEqual({ email: 'new@example.com', source: 'apple' });
+    const other = await f.auth.establish({ ...f.identity, subject: `${f.identity.subject}-other` });
+    expect(await f.auth.noticeContact(other.token)).toEqual({ email: null, source: null });
+    await expect(f.auth.establish({ ...f.identity, verifiedEmail: 'bad\r\nBcc:other@example.com' }))
+      .rejects.toMatchObject({ code: 'unauthorized' });
+    await f.auth.revokeSession(changed.token);
+    await expect(f.auth.noticeContact(changed.token)).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('fails closed if contact sealing fails before a session is issued', async () => {
+    const f = await fixture();
+    let attemptedOwner: string | undefined;
+    const auth = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      seal: async (bytes, context) => {
+        if (context.purpose === 'contact') {
+          attemptedOwner = context.ownerId;
+          throw new Error('synthetic contact key failure');
+        }
+        return f.keys.seal(bytes, context);
+      } } });
+    await expect(auth.establish({ ...f.identity, verifiedEmail: 'person@example.com' }))
+      .rejects.toMatchObject({ code: 'identity_key_unavailable' });
+    expect(attemptedOwner).toBeDefined();
+    expect(await db.prepare('SELECT owner_id FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(attemptedOwner!).first()).toBeNull();
+    expect(await db.prepare('SELECT session_hash FROM pa_sessions WHERE owner_id=?')
+      .bind(attemptedOwner!).first()).toBeNull();
+  });
+
+  it('advances contact version even when two verified addresses arrive in the same millisecond', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    const before = await db.prepare('SELECT updated_at FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number }>();
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    const after = await db.prepare('SELECT updated_at FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number }>();
+    expect(after!.updated_at).toBeGreaterThan(before!.updated_at);
+  });
+
+  it('keeps a delivered notice for the same Apple address and reopens notice review after a real change', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    await ledger.observe(first.ownerId, 'expired');
+    const delivered = await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-for-contact-version');
+    const before = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(before?.email_tag).toMatch(/^[0-9a-f]{64}$/u);
+
+    f.advance(1);
+    await Promise.all([
+      f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' }),
+      f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' }),
+    ]);
+    const same = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(same).toEqual(before);
+    expect((await db.prepare('SELECT final_notice_receipt FROM pa_retention WHERE owner_id=?')
+      .bind(first.ownerId).first<{ final_notice_receipt: string | null }>())?.final_notice_receipt)
+      .toBe('synthetic-event-for-contact-version');
+
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    const changed = await db.prepare('SELECT updated_at,email_tag FROM pa_notice_contacts WHERE owner_id=?')
+      .bind(first.ownerId).first<{ updated_at: number; email_tag: string }>();
+    expect(changed!.updated_at).toBeGreaterThan(before!.updated_at);
+    expect(changed!.email_tag).not.toBe(before!.email_tag);
+    const retention = await db.prepare(`SELECT final_notice_delivered_at,final_notice_receipt,notice_not_before_at
+      FROM pa_retention WHERE owner_id=?`).bind(first.ownerId)
+      .first<{ final_notice_delivered_at: number | null; final_notice_receipt: string | null;
+        notice_not_before_at: number }>();
+    expect(retention).toMatchObject({ final_notice_delivered_at: null, final_notice_receipt: null });
+    expect(retention!.notice_not_before_at).toBe(f.now());
+    expect((await ledger.listNoticeReviewCandidates()).map(item => item.ownerId)).toContain(first.ownerId);
+    expect(delivered.dueAt).toBe(expired.dueAt);
+
+    await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-before-contact-reinsert');
+    await db.prepare('DELETE FROM pa_notice_contacts WHERE owner_id=?').bind(first.ownerId).run();
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect((await db.prepare('SELECT final_notice_receipt FROM pa_retention WHERE owner_id=?')
+      .bind(first.ownerId).first<{ final_notice_receipt: string | null }>())?.final_notice_receipt).toBeNull();
+
+    await ledger.markFinalNoticeDelivered(first.ownerId, expired.episode,
+      f.now(), 'synthetic-event-for-expiry-contact');
+    const contactAt = f.now();
+    f.advance(expired.dueAt! - f.now());
+    const expiry = await ledger.expiryReviewAfterFreshCheck(first.ownerId, 'expired');
+    expect(expiry).not.toBeNull();
+    expect(await f.auth.verifiedNoticeContactForExpiry(expiry!))
+      .toEqual({ email: 'new@example.com', updatedAt: contactAt });
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'later@example.com' });
+    expect(await f.auth.verifiedNoticeContactForExpiry(expiry!)).toBeNull();
+  });
+
+  it('reads an Apple contact internally only for a fresh eligible retention episode', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'first@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    const current = await ledger.observe(first.ownerId, 'expired');
+    const candidate = { ownerId: first.ownerId, episode: current.episode,
+      revision: current.revision, dueAt: current.dueAt! };
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'first@example.com' });
+    expect(await f.auth.verifiedNoticeContactForCandidate({ ...candidate, episode: candidate.episode + 1 })).toBeNull();
+    expect(await f.auth.verifiedNoticeContactForCandidate({ ...candidate, revision: candidate.revision + 1 })).toBeNull();
+
+    f.advance(1);
+    await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'new@example.com' });
+    f.advance(1);
+    await ledger.observe(first.ownerId, 'expired');
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toMatchObject({ email: 'new@example.com' });
+    f.advance(1);
+    await ledger.observe(first.ownerId, 'unknown');
+    expect(await f.auth.verifiedNoticeContactForCandidate(candidate)).toBeNull();
+  });
+
+  it('does not return a contact replaced or revoked during asynchronous decryption', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish({ ...f.identity, verifiedEmail: 'old@example.com' });
+    await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
+      .bind(first.ownerId, crypto.randomUUID(), f.now()).run();
+    const ledger = new RetentionLedger(db, f.now);
+    const expired = await ledger.observe(first.ownerId, 'expired');
+    f.advance(expired.dueAt! - f.now() - 45 * 86_400_000);
+    const current = await ledger.observe(first.ownerId, 'expired');
+    const candidate = { ownerId: first.ownerId, episode: current.episode,
+      revision: current.revision, dueAt: current.dueAt! };
+    const replaced = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      async open(bytes, context) {
+        await f.auth.establish({ ...f.identity, verifiedEmail: 'new@example.com' });
+        return f.keys.open(bytes, context);
+      },
+    } });
+    expect(await replaced.verifiedNoticeContactForCandidate(candidate)).toBeNull();
+    const revoked = new DurableAuth({ ...f.dependencies, keys: { ...f.keys,
+      async open(bytes, context) {
+        await f.auth.revokeOwner(first.ownerId);
+        return f.keys.open(bytes, context);
+      },
+    } });
+    expect(await revoked.verifiedNoticeContactForCandidate(candidate)).toBeNull();
   });
 
   it('persists only HMAC identity, hashed session tokens and context-bound encrypted credentials', async () => {

@@ -49,8 +49,10 @@ class PlanTests(unittest.TestCase):
         migration = "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"
         original[migration] = ("", "CREATE INDEX pa_upload_owner_bytes ON pa_uploads(owner_id,reserved_bytes);\n")
         workflow_digest = scope.source_digest(original[planner.PRESERVATION_WORKFLOW][1])
-        def select(changes, alter=lambda raw: raw, ancestor=True):
+        def select(changes, alter=lambda raw: raw, ancestor=True, tree_ok=True):
             def git(*args):
+                if args[0] == "rev-parse" and args[1].endswith(":NekoWidget/PreservationService"):
+                    return planner.PRESERVATION_REVIEWED_TREE if tree_ok else "0" * 40
                 if args[0] == "merge-base":
                     if not ancestor:
                         raise subprocess.CalledProcessError(1, "git")
@@ -68,8 +70,8 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 34)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v3")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 46)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v6")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -80,12 +82,23 @@ class PlanTests(unittest.TestCase):
                          planner.PRESERVATION_SCOPE)
         for path in ("src/billing-link-protocol.ts", "src/membership-links.ts", "src/billing-authority.ts",
                      "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
-                     "test/membership-links.test.ts", "test/billing-authority.test.ts"):
+                     "test/membership-links.test.ts", "test/billing-authority.test.ts",
+                     "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
+                     "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts",
+                     "migrations/0006_notice_contacts.sql", "migrations/0007_notice_submissions.sql",
+                     "src/notice-events.ts", "src/notice-submissions.ts",
+                     "test/notice-events.test.ts", "test/notice-submissions.test.ts"):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
+        # Same filenames with any different service content (including an
+        # in-place sender, Queue binding, or deletion) must not use v6.
+        self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
-                      "NekoWidget/PreservationService/migrations/0005_unknown.sql",
+                      "NekoWidget/PreservationService/src/notice-sender.ts",
+                      "NekoWidget/PreservationService/src/notice-queue.ts",
+                      "NekoWidget/PreservationService/src/delete-worker.ts",
+                      "NekoWidget/PreservationService/migrations/0008_unknown.sql",
                       "NekoWidget/PreservationService/migrations/0004_other.sql", "NekoWidget/SharingService/src/index.ts",
                       "NekoWidget/SharingService/src/billing-auth.ts", "NekoWidget/SharingService/src/billing-entitlement.ts",
                       "NekoWidget/SharingService/migrations/0019_billing_foundation.sql",
@@ -165,6 +178,9 @@ class PlanTests(unittest.TestCase):
             self.assertIn(planner.PRESERVATION_WORKFLOW, (root / "summary").read_text())
 
     def test_jpeg_backend_requires_exact_paths_modes_workflow_and_frozen_companions(self):
+        self.assertEqual(planner.JPEG_SCOPE, "preservation-image-validator-v2")
+        self.assertEqual(planner.JPEG_JOB_TIMEOUT_MINUTES, 10)
+        self.assertEqual(len(planner.JPEG_PATHS), 23)
         original, bindings = self.jpeg_changes()
         workflow_digest = scope.source_digest(original[planner.JPEG_WORKFLOW][1])
         def select(changes, altered_raw=None, ancestor=True, base="b" * 40):
@@ -190,6 +206,11 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(select(original), planner.JPEG_SCOPE)
         plain, _ = self.jpeg_changes(companions=False)
         self.assertEqual(select(plain), planner.JPEG_SCOPE)
+        for name in ("Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
+                     "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs",
+                     "test/container-probe.mjs"):
+            addition = "NekoWidget/PreservationImageValidator/" + name
+            self.assertEqual(select({**plain, addition: ("", "reviewed container addition")}), planner.JPEG_SCOPE)
         self.assertEqual(select({**plain, "handoffs/jpeg.md": ("", "read-only notes")}), planner.JPEG_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         self.assertEqual(select(original, base=None), scope.FULL_SCOPE)  # manual iOS workflow

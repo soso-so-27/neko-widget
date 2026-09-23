@@ -3,8 +3,8 @@
  * node test/test-adapter.mjs --source <PreservationService/src>
  * Run the provider build first. A missing source is an error, never a skip.
  *
- * Test-only transformation: transpile the actual contracts/documents/providers
- * files with TypeScript (type erasure, not type checking), rewriting only their
+ * Test-only transformation: transpile the actual adapter's closed dependency
+ * graph with TypeScript (type erasure, not type checking), rewriting only its
  * known relative static imports to temporary .mjs modules. No adapter function,
  * response, error or timeout is replaced. Nothing is copied into product src.
  * Fetcher is bridged to the real local provider; cancellation is injected into
@@ -26,7 +26,8 @@ const { values } = parseArgs({ options: { source: { type: 'string' } }, strict: 
 if (!values.source) throw new Error('Required: --source <PreservationService/src>; this run cannot skip.');
 assert.ok(Number(process.versions.node.split('.')[0]) >= 22, 'Node 22 or newer is required.');
 const sourceDirectory = await realpath(path.resolve(values.source));
-const moduleNames = ['contracts', 'documents', 'providers'];
+const moduleNames = ['contracts', 'documents', 'billing-link-protocol',
+  'key-custody', 'bounded-body', 'providers'];
 const originals = new Map(await Promise.all(moduleNames.map(async (name) => [name,
   await readFile(path.join(sourceDirectory, `${name}.ts`))])));
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -42,7 +43,7 @@ const temporaryImports = (context) => {
     if (ts.isImportDeclaration(node) || (ts.isExportDeclaration(node) && node.moduleSpecifier)) {
       const specifier = node.moduleSpecifier;
       assert.ok(ts.isStringLiteral(specifier), 'Only literal static imports are supported.');
-      const match = /^\.\/(contracts|documents|providers)(?:\.js)?$/.exec(specifier.text);
+      const match = /^\.\/(contracts|documents|billing-link-protocol|key-custody|bounded-body|providers)(?:\.js)?$/.exec(specifier.text);
       assert.ok(match, `Unreviewed adapter dependency: ${specifier.text}`);
       const replacement = ts.factory.createStringLiteral(`./${match[1]}.mjs`);
       return ts.isImportDeclaration(node)
@@ -82,7 +83,7 @@ try {
     const binding = { async fetch(url, init) {
       assert.equal(url, 'https://preservation-internal/images/validate-jpeg');
       assert.equal(init.method, 'POST');
-      assert.equal(init.redirect, 'error');
+      assert.equal(init.redirect, 'manual');
       assert.ok(init.signal instanceof AbortSignal);
       calls.push(init.body);
       const cancellation = getCancellation();
@@ -153,7 +154,7 @@ try {
     assert.equal(calls[0], calls[1]);
   });
 
-  await test('the three actual TypeScript input files remain byte-identical', async () => {
+  await test('all actual TypeScript input files remain byte-identical', async () => {
     for (const [name, original] of originals) {
       assert.equal(digest(await readFile(path.join(sourceDirectory, `${name}.ts`))), digest(original), `${name}.ts changed`);
     }

@@ -50,6 +50,9 @@ jobs:
       - name: Verify local identity, custody and storage boundaries
         working-directory: NekoWidget/PreservationService
         run: npm test
+      - name: Verify legacy notice evidence migration with synthetic owners
+        working-directory: NekoWidget/PreservationService
+        run: npm run test:migration
       - name: Bundle the private authority without deployment or provisioning
         working-directory: NekoWidget/PreservationService
         run: npx --no-install wrangler deploy --dry-run --config wrangler.billing.disabled.jsonc --outdir "$RUNNER_TEMP/preservation-billing" --autoconfig=false --experimental-provision=false --experimental-auto-create=false

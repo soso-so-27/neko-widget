@@ -1,7 +1,8 @@
 import {
   type AuthDependencies, type Challenge, type Session, type VerifiedIdentity,
-  ServiceError, randomToken, sha256,
+  ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
+import type { ExpiryReviewCandidate, NoticeReviewCandidate } from './retention-ledger';
 
 const CHALLENGE_MS = 5 * 60_000;
 const SESSION_MS = 15 * 60_000;
@@ -10,6 +11,7 @@ const encoder = new TextEncoder();
 interface OwnerRow { owner_id: string; epoch: number; disabled: number; }
 interface ChallengeRow { nonce: string; created_at: number; expires_at: number; }
 interface SessionRow { owner_id: string; session_hash: string; expires_at: number; }
+interface ContactRow { sealed_email: unknown; source: 'apple'; updated_at: number; }
 const unavailable = (): ServiceError => new ServiceError('auth_unavailable', 503);
 const denied = (): ServiceError => new ServiceError('unauthorized', 401);
 const safeError = (error: unknown): ServiceError => error instanceof ServiceError ? error : unavailable();
@@ -32,6 +34,13 @@ export class DurableAuth {
     this.indexKey = crypto.subtle.importKey('raw', raw as BufferSource,
       { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     raw.fill(0);
+  }
+
+  private async noticeEmailTag(ownerId: string, email: string): Promise<string> {
+    // An owner-bound tag cannot correlate two accounts that share an address.
+    const message = encoder.encode(`neko-preservation-contact-email-v1\0${JSON.stringify([ownerId, email])}`);
+    const digest = new Uint8Array(await crypto.subtle.sign('HMAC', await this.indexKey, message));
+    return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
   private now(): number {
@@ -90,6 +99,10 @@ export class DurableAuth {
       ).bind(identityKey).first<OwnerRow>();
       if (!owner || owner.disabled !== 0) throw denied();
 
+      const contactEmail = identity.issuer === 'https://appleid.apple.com' ? identity.verifiedEmail : undefined;
+      if (contactEmail !== undefined && !contactEmailValid(contactEmail)) throw denied();
+      const contactTag = contactEmail ? await this.noticeEmailTag(owner.owner_id, contactEmail) : undefined;
+
       const plaintext = encoder.encode(JSON.stringify({
         issuer: identity.issuer, subject: identity.subject, refreshToken: identity.refreshToken,
       }));
@@ -100,17 +113,36 @@ export class DurableAuth {
       } catch { throw new ServiceError('identity_key_unavailable', 503); }
       finally { plaintext.fill(0); }
 
+      let sealedContact: Uint8Array | undefined;
+      if (contactEmail) {
+        const contactBytes = encoder.encode(JSON.stringify({ version: 1, email: contactEmail }));
+        try {
+          sealedContact = await this.dependencies.keys.seal(contactBytes, { ownerId: owner.owner_id, purpose: 'contact' });
+          if (!(sealedContact instanceof Uint8Array) || !sealedContact.byteLength || sealedContact.byteLength > 8192) throw new Error();
+        } catch { throw new ServiceError('identity_key_unavailable', 503); }
+        finally { contactBytes.fill(0); }
+      }
+
       const token = randomToken();
       const sessionHash = await sha256(token);
       const now = this.now();
       // A revocation during KMS work must win. Both writes are fenced in the same D1 transaction.
-      const results = await db.batch([
+      const statements = [
         db.prepare(
           `INSERT INTO pa_identity_credentials(owner_id, owner_epoch, sealed_credentials, updated_at)
            SELECT owner_id, epoch, ?, ? FROM pa_owners WHERE owner_id = ? AND epoch = ? AND disabled = 0
            ON CONFLICT(owner_id) DO UPDATE SET owner_epoch = excluded.owner_epoch,
              sealed_credentials = excluded.sealed_credentials, updated_at = excluded.updated_at`,
         ).bind(sealed.slice().buffer, now, owner.owner_id, owner.epoch),
+        ...(sealedContact ? [db.prepare(
+          `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at,email_tag)
+           SELECT owner_id,?,'apple',?,?,? FROM pa_owners WHERE owner_id=? AND epoch=? AND disabled=0
+           ON CONFLICT(owner_id) DO UPDATE SET sealed_email=excluded.sealed_email,
+             source=excluded.source,verified_at=excluded.verified_at,
+             updated_at=MAX(pa_notice_contacts.updated_at+1,excluded.updated_at),
+             email_tag=excluded.email_tag
+           WHERE pa_notice_contacts.email_tag IS NOT excluded.email_tag`,
+        ).bind(sealedContact.slice().buffer, now, now, contactTag, owner.owner_id, owner.epoch)] : []),
         db.prepare(
           `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at)
            SELECT ?, owner_id, epoch, ?, ? FROM pa_owners
@@ -119,8 +151,9 @@ export class DurableAuth {
                            WHERE credential.owner_id = pa_owners.owner_id
                              AND credential.owner_epoch = pa_owners.epoch)`,
         ).bind(sessionHash, now, now + SESSION_MS, owner.owner_id, owner.epoch),
-      ]);
-      if (results[1]?.meta.changes !== 1) throw denied();
+      ];
+      const results = await db.batch(statements);
+      if (results.at(-1)?.meta.changes !== 1) throw denied();
       return { token, ownerId: owner.owner_id, expiresAt: new Date(now + SESSION_MS).toISOString() };
     } catch (error) { throw safeError(error); }
   }
@@ -137,6 +170,132 @@ export class DurableAuth {
       if (!row) throw denied();
       return { ownerId: row.owner_id, sessionHash: row.session_hash, expiresAt: row.expires_at };
     } catch (error) { throw safeError(error); }
+  }
+
+  /** Read for the signed-in owner only. An Apple claim is not a delivery receipt. */
+  async noticeContact(token: string): Promise<{ email: string | null; source: 'apple' | null }> {
+    const session = await this.requireSession(token);
+    try {
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at FROM pa_notice_contacts c
+        JOIN pa_sessions s ON s.owner_id=c.owner_id JOIN pa_owners o ON o.owner_id=c.owner_id
+        WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND o.epoch=s.owner_epoch`)
+        .bind(session.sessionHash, session.ownerId, this.now()).first<ContactRow>();
+      const email = row ? await this.openNoticeContact(row, session.ownerId) : null;
+      const current = await this.requireSession(token);
+      if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) throw denied();
+      return { email, source: row ? 'apple' : null };
+    } catch (error) { throw safeError(error); }
+  }
+
+  /** Internal scheduled-notice path, never routed from an owner parameter. The
+   * retention episode, unchanged deadline, and enabled owner must still match.
+   * A newer same-status billing observation may advance the revision.
+   */
+  async verifiedNoticeContactForCandidate(candidate: NoticeReviewCandidate): Promise<{ email: string; updatedAt: number } | null> {
+    try {
+      if (!candidate || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidate.ownerId)
+          || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
+          || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
+          || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0) throw unavailable();
+      const now = this.now();
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND o.disabled=0 AND r.episode=? AND r.revision>=? AND r.due_at=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.final_notice_delivered_at IS NULL AND r.checked_at>=? AND r.checked_at<=?
+          AND r.due_at<=? AND r.notice_not_before_at<=?`)
+        .bind(candidate.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+          Math.max(0, now - 24 * 60 * 60 * 1000), now, now + 60 * 24 * 60 * 60 * 1000, now).first<ContactRow>();
+      if (!row) return null;
+      if (!Number.isSafeInteger(row.updated_at) || row.updated_at < 0 || row.updated_at > now) throw unavailable();
+      const sealed = this.noticeContactBytes(row);
+      const email = await this.openNoticeContact(row, candidate.ownerId);
+      // A revocation, renewal, or email replacement during key access wins.
+      // The eventual delivery event and deletion path must fence again.
+      const stillCurrent = await this.dependencies.db.prepare(`SELECT 1 AS present
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND o.disabled=0
+          AND r.episode=? AND r.revision>=? AND r.due_at=? AND r.verified_status='expired'
+          AND r.paused_at IS NULL AND r.final_notice_delivered_at IS NULL`)
+        .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
+          candidate.revision, candidate.dueAt).first<{ present: number }>();
+      return stillCurrent ? { email, updatedAt: row.updated_at } : null;
+    } catch (error) { throw safeError(error); }
+  }
+
+  /** Internal expiry review only. The current encrypted Apple contact must
+   * still belong to the exact delivered-notice ledger version after KMS I/O.
+   * This does not authorize deletion or expose an owner lookup over HTTP.
+   */
+  async verifiedNoticeContactForExpiry(candidate: ExpiryReviewCandidate): Promise<{ email: string; updatedAt: number } | null> {
+    try {
+      if (!candidate || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidate.ownerId)
+        || !Number.isSafeInteger(candidate.episode) || candidate.episode < 1
+        || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
+        || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0
+        || !Number.isSafeInteger(candidate.deliveredAt) || candidate.deliveredAt <= 0
+        || typeof candidate.deliveryEventId !== 'string' || candidate.deliveryEventId.length < 16
+        || candidate.deliveryEventId.length > 256) throw unavailable();
+      const now = this.now();
+      const grace = 30 * 24 * 60 * 60 * 1000;
+      const row = await this.dependencies.db.prepare(`SELECT c.sealed_email,c.source,c.updated_at
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.source='apple' AND o.disabled=0
+          AND r.episode=? AND r.revision=? AND r.due_at=?
+          AND r.final_notice_delivered_at=? AND r.final_notice_receipt=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.checked_at>=? AND r.checked_at<=? AND r.due_at<=? AND r.final_notice_delivered_at<=?`)
+        .bind(candidate.ownerId, candidate.episode, candidate.revision, candidate.dueAt,
+          candidate.deliveredAt, candidate.deliveryEventId, Math.max(0, now - 24 * 60 * 60 * 1000),
+          now, now, Math.max(0, now - grace)).first<ContactRow>();
+      if (!row) return null;
+      if (!Number.isSafeInteger(row.updated_at) || row.updated_at < 0 || row.updated_at > now) throw unavailable();
+      const sealed = this.noticeContactBytes(row);
+      const email = await this.openNoticeContact(row, candidate.ownerId);
+      const stillCurrent = await this.dependencies.db.prepare(`SELECT 1 AS present
+        FROM pa_notice_contacts c JOIN pa_owners o ON o.owner_id=c.owner_id
+        JOIN pa_retention r ON r.owner_id=c.owner_id
+        JOIN pa_membership_links l ON l.owner_id=c.owner_id
+        WHERE c.owner_id=? AND c.updated_at=? AND c.sealed_email=? AND c.source='apple'
+          AND o.disabled=0 AND r.episode=? AND r.revision=? AND r.due_at=?
+          AND r.final_notice_delivered_at=? AND r.final_notice_receipt=?
+          AND r.verified_status='expired' AND r.paused_at IS NULL
+          AND r.checked_at>=? AND r.checked_at<=? AND r.due_at<=? AND r.final_notice_delivered_at<=?`)
+        .bind(candidate.ownerId, row.updated_at, sealed.slice().buffer, candidate.episode,
+          candidate.revision, candidate.dueAt, candidate.deliveredAt, candidate.deliveryEventId,
+          Math.max(0, now - 24 * 60 * 60 * 1000), now, now, Math.max(0, now - grace))
+        .first<{ present: number }>();
+      return stillCurrent ? { email, updatedAt: row.updated_at } : null;
+    } catch (error) { throw safeError(error); }
+  }
+
+  private noticeContactBytes(row: ContactRow): Uint8Array {
+    const sealed = row.sealed_email instanceof ArrayBuffer ? new Uint8Array(row.sealed_email)
+      : row.sealed_email instanceof Uint8Array ? row.sealed_email
+      : Array.isArray(row.sealed_email) && row.sealed_email.every(byte =>
+        Number.isInteger(byte) && byte >= 0 && byte <= 255) ? Uint8Array.from(row.sealed_email) : null;
+    if (row.source !== 'apple' || !sealed || sealed.byteLength < 1 || sealed.byteLength > 8192) throw unavailable();
+    return sealed;
+  }
+
+  private async openNoticeContact(row: ContactRow, ownerId: string): Promise<string> {
+    const sealed = this.noticeContactBytes(row);
+    const opened = await this.dependencies.keys.open(sealed, { ownerId, purpose: 'contact' });
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)); }
+    finally { opened.fill(0); }
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        Object.keys(value).sort().join(',') !== 'email,version' ||
+        (value as { version?: unknown }).version !== 1) throw unavailable();
+    const candidate = (value as { email?: unknown }).email;
+    if (!contactEmailValid(candidate)) throw unavailable();
+    return candidate;
   }
 
   async revokeSession(token: string): Promise<void> {

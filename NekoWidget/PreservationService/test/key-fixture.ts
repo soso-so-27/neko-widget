@@ -30,6 +30,9 @@ export async function syntheticKeyAuthority() {
   const bridge = (): KeyWrappingAuthority => {
     const authority = make();
     const binding = { async fetch(url: string | Request | URL, init?: RequestInit) {
+      if (new Headers(init?.headers).get('x-neko-preservation-key-token') !== 'x'.repeat(43)) {
+        throw new Error('Missing test caller token');
+      }
       const input = JSON.parse(String(init?.body));
       if (String(url) === 'https://preservation-internal/keys/wrap') {
         const value = await authority.wrap(Uint8Array.from(atob(input.key), char => char.charCodeAt(0)), input.contextSHA256);
@@ -42,7 +45,7 @@ export async function syntheticKeyAuthority() {
       }
       throw new Error('Unexpected endpoint');
     } } as unknown as Fetcher;
-    return boundKeyWrapper(binding);
+    return boundKeyWrapper(binding, 'x'.repeat(43));
   };
   return { make, bridge, rotate, rawKeys, remove: (id: string) => versions.delete(id) };
 }

@@ -207,6 +207,61 @@ struct ManagedPreservationMembership: Codable, Equatable, Sendable {
     var canSave: Bool { linked && (status == .active || status == .grace) }
 }
 
+struct ManagedPreservationNoticeContact: Decodable, Equatable, Sendable {
+    let version: Int
+    let email: String?
+    let source: String?
+
+    func validated() throws -> Self {
+        guard version == 1, (email == nil) == (source == nil),
+              source == nil || source == "apple" else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        if let email {
+            guard email.utf8.count <= 254,
+                  email.range(of: #"^[^\s\x00-\x1f\x7f@]+@[^\s\x00-\x1f\x7f@]+\.[^\s\x00-\x1f\x7f@]+$"#,
+                              options: .regularExpression) != nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+        return self
+    }
+}
+
+struct ManagedPreservationRetention: Decodable, Equatable, Sendable {
+    enum Status: String, Decodable, Sendable { case unlinked, active, grace, expired, unknown }
+    let version: Int
+    let status: Status
+    let dueAt: Int64?
+    let paused: Bool
+    let finalNoticeDeliveredAt: Int64?
+
+    func validated() throws -> Self {
+        guard version == 1,
+              dueAt == nil || (dueAt! > 0 && dueAt! < 253_402_300_800_000),
+              finalNoticeDeliveredAt == nil || (finalNoticeDeliveredAt! > 0
+                  && finalNoticeDeliveredAt! < 253_402_300_800_000) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        switch status {
+        case .unlinked, .active, .grace:
+            guard dueAt == nil, !paused, finalNoticeDeliveredAt == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        case .unknown:
+            guard dueAt == nil, finalNoticeDeliveredAt == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        case .expired:
+            guard dueAt != nil, !paused,
+                  finalNoticeDeliveredAt == nil || finalNoticeDeliveredAt! <= dueAt! else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+        return self
+    }
+}
+
 struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
@@ -283,6 +338,12 @@ struct ManagedPreservationLinkChallenge: Codable, Sendable {
 
 actor ManagedPreservationClient {
     typealias RequestTransport = @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)
+    /// An opaque identity for one uninterrupted authenticated operation. The
+    /// epoch changes even when the same owner signs out and back in.
+    struct SessionCheckpoint: Sendable {
+        fileprivate let epoch: UInt64
+        fileprivate let credential: ManagedPreservationSessionStore.Credential
+    }
     static let consentVersion = "managed-preservation-v1"
     private static let maximumPhotoBytes = 20 * 1024 * 1024
     private let configuration: ManagedPreservationConfiguration
@@ -350,6 +411,20 @@ actor ManagedPreservationClient {
         try hasSession() ? credential?.ownerId : nil
     }
 
+    func captureSessionCheckpoint() throws -> SessionCheckpoint {
+        guard try hasSession(), let credential else { throw ManagedPreservationError.authenticationRequired }
+        return SessionCheckpoint(epoch: epoch, credential: credential)
+    }
+
+    func requireSessionCheckpoint(_ checkpoint: SessionCheckpoint) throws {
+        try ensureEpoch(checkpoint.epoch)
+        guard try hasSession(), credential == checkpoint.credential,
+              checkpoint.credential.expiresAt > Date(),
+              try store.load() == checkpoint.credential else {
+            throw ManagedPreservationError.staleSession
+        }
+    }
+
     func membership() async throws -> ManagedPreservationMembership {
         let data = try await authenticated("GET", path: "/v1/membership", maximumBytes: 4096)
         let result: ManagedPreservationMembership = try decode(data)
@@ -366,6 +441,18 @@ actor ManagedPreservationClient {
         } catch ManagedPreservationError.invalidResponse {
             throw ManagedPreservationError.accountingUnavailable
         }
+    }
+
+    func noticeContact() async throws -> ManagedPreservationNoticeContact {
+        let data = try await authenticated("GET", path: "/v1/notice-contact", maximumBytes: 4096)
+        let result: ManagedPreservationNoticeContact = try decode(data)
+        return try result.validated()
+    }
+
+    func retention() async throws -> ManagedPreservationRetention {
+        let data = try await authenticated("GET", path: "/v1/retention", maximumBytes: 4096)
+        let result: ManagedPreservationRetention = try decode(data)
+        return try result.validated()
     }
 
     func linkMembership(consent: Bool) async throws -> ManagedPreservationMembership {

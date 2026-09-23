@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-jpeg-disabled",
+  "main": "src/container-worker.mjs",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": false },
+  "vars": { "JPEG_VALIDATOR_ENABLED": "NO" },
+  "containers": [{
+    "class_name": "JPEGValidatorContainer",
+    "image": "./Dockerfile",
+    "max_instances": 1,
+    "instance_type": "basic"
+  }],
+  "durable_objects": { "bindings": [{
+    "name": "VALIDATOR_CONTAINER",
+    "class_name": "JPEGValidatorContainer"
+  }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["JPEGValidatorContainer"] }]
+}

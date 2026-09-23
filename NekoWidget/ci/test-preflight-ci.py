@@ -29,7 +29,7 @@ class PreflightTests(unittest.TestCase):
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},
             {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
             {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v3")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v6")
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
@@ -79,11 +79,11 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(any("branch=diagnostic%2Fcustody" in call.args[0] for call in api.call_args_list))
         self.assertTrue(all(item["failed_tests"] == [] for item in history))
 
-    def test_jpeg_first_measurement_is_not_a_five_minute_observation_or_upload_evidence(self):
+    def test_jpeg_first_measurement_is_not_a_ten_minute_observation_or_upload_evidence(self):
         cost = preflight.observe_cost(planner.JPEG_SCOPE, self.history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
-        self.assertEqual(cost["measurement_job_timeout_minutes"], 5)
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 10)
         self.assertNotIn("with_upload_minutes", cost)
         self.assertIn("not an observed duration", cost["note"])
         for extra in ({"include_upload": True}, {"include_upload": False, "use_full_baseline": True}):
@@ -111,10 +111,11 @@ class PreflightTests(unittest.TestCase):
                 patch.object(planner, "runtime_scope", return_value=planner.JPEG_SCOPE):
             result = preflight.candidate_plan("origin/main", 5, False, self.history)
         self.assertEqual(result["required_jobs"], [planner.JPEG_JOB])
+        self.assertIn("Container", result["reason"])
         self.assertEqual(result["unmapped_files"], [])
         self.assertFalse(result["ready"])
         self.assertTrue(result["cost_review_required"])
-        self.assertIn("no native or release evidence", result["reason"])
+        self.assertIn("no deployment or release evidence", result["reason"])
 
     def test_jpeg_workflow_history_is_counted_for_both_task_branches(self):
         run = {"id": 9, "path": planner.JPEG_WORKFLOW, "conclusion": "failure"}

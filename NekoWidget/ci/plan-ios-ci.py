@@ -53,14 +53,16 @@ DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "test-preflight-ci.py", "ci-timing-baseline.json",
 ))
 
-# A separate Node-only service, never an iOS build or release-evidence scope.
+# A separate Node/Container-only service, never iOS or release evidence.
 # Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
-JPEG_SCOPE = "preservation-image-validator-v1"
+JPEG_SCOPE = "preservation-image-validator-v2"
 JPEG_JOB = "Validate preservation JPEG provider"
 JPEG_WORKFLOW = ".github/workflows/preservation-image-validator.yml"
-JPEG_JOB_TIMEOUT_MINUTES = 5
+JPEG_JOB_TIMEOUT_MINUTES = 10
 JPEG_PATHS = frozenset("NekoWidget/PreservationImageValidator/" + name for name in (
     ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
+    "Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
+    "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs", "test/container-probe.mjs",
     "src/decode-child.ts", "src/decode-error.ts", "src/decoder.ts",
     "src/jpeg-envelope.ts", "src/limits.ts", "src/provider.ts",
     "test/decode-error.test.mjs", "test/decoder.test.mjs", "test/fixtures.mjs",
@@ -71,28 +73,28 @@ JPEG_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
 ))
 # Fixed only after independent review. Self hashing removes exactly this one
 # complete JSON assignment, including its single trailing newline, and nothing else.
-JPEG_WORKFLOW_DIGEST = "8e7138d1d29a916d0db84a9b20ebd050dd026fd31d98b32057f2f095e026d722"
+JPEG_WORKFLOW_DIGEST = "0b3629c90adac5ce8d04e70983fed85c9805ace05ef94f6b8ba89984e3820e51"
 JPEG_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "637762e35ce6422ce5710bce8b8360e850d1a31a9ac1d811246f0e83d85ea8de",
-        "bd6df06101eaf6ff9d3f33a24f15f9bcd06bf2dde56b0473597f8dd5e95837f9"
+        "5f93474b5a05051b353bf9df584858f9c339be73eafb48a3e7c54f48d6229b53",
+        "5553c5888f600b99e8283d32111029391c07e2e60b3fac0bad0ae61884a37bb8"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "e3676597b870ef3d2de1820a61183cf490418a5fceb0d45d0f9a5a1b97ae8ac3",
-        "282e00476b4dd2aef574610e562b8d68618f1c50faa71c7cea786b2bd2ae213c"
+        "afb6c3e9fe0e497377d90f9d47fc38293664ca63f87c1007b6ef1744c94c13c3",
+        "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "49e90d0e2d0e7f74901001ee7205ba53c060f080a99c3e6c9063cd965960852a",
-        "0cbb3ea311b6b08d93aae23f2abf597b77c32ec77e42cedaba693ae25fbb258d"
+        "8b688511c2ac032c7e78238fc1c1b4244a64ea9cb1e71a1aa1200542f9eaff71",
+        "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "156c1f68831e93e30828ea70126795e98e91dbe321080031a8722b3e00544669",
-        "9a0f4f4c57d4af5cd85e3951401d8459cb4f94423ddb9e3ff3dadeb84aebdc75"
+        "30e0a535ba76cc3ddff3050ea4c6e9ead2fe990e5b668277b3bd0c3708cfc019",
+        "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e"
     ]
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v3"
+PRESERVATION_SCOPE = "preservation-service-v6"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -108,27 +110,34 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
     "test/membership-links.test.ts", "test/billing-authority.test.ts",
     "migrations/0004_upload_owner_index.sql",
+    "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
+    "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts",
+    "migrations/0006_notice_contacts.sql", "migrations/0007_notice_submissions.sql",
+    "src/notice-events.ts", "src/notice-submissions.ts",
+    "test/notice-events.test.ts", "test/notice-submissions.test.ts",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v3 adds only the upload owner-index migration to v2's exact service paths.
-# Imported Sharing sources and any other new migration still require FULL.
+# v6 is a one-candidate review of the entire disabled service tree, not a
+# reusable semantic claim about paths. Any later service edit requires a new
+# review/profile or FULL; external Queue/sending/deletion is not certified here.
+PRESERVATION_REVIEWED_TREE = "ba57376cac80d13c3e7c87a2f53dbea57ec79333"
 PRESERVATION_WORKFLOW_DIGEST = "c36300e55929d9b4abc56387a390c84b71c71358c42b2fa726b4cb74e23b6c6a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "6b69e3e7e8f36d171352cf07ceecb54ed6d5ea2f10057c78d5217a2cb5b91fd8",
-        "01e7f70ed124ef4cfaafc72838ca65152e191e2d27d0186d867401d1d0794c89"
+        "2baf69841667028a03d3caef283a18ef12bedcd6b5acc26f3f136de2b61c5e44",
+        "6f7e06230eec60acd78c22bfa88a5c83ad42d6e3e6557d8cf81634d21e125859"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "953316902d493c4fa8c35b78930bcae39e186e736de88c3b974c323923905ace",
-        "5b00404d1618905e0e2618735af4029cc68cae794a96ba83164c8a56ff660b1b"
+        "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9",
+        "7e8717ec2b70095473a027b455c61c6439b853327c01dfe22e4be9f9d7bf05f5"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "8c8ece6b85bf8fe042422842b7b3058f0a5e59857d0dcb0ac0f4da8540643847",
-        "11b0db1eee6081fd9787ea08d5871b25216501f795a249eafa2743582b3aa06f"
+        "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946",
+        "b4e5c6ebd4808e9a6469f1c604d18707db75c23ecb4c56f1fbc7c36084bf8fa9"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "5d507fb368ead03adf59856eaea0db6f6704529f8d9424cd8b1b27a28280b8af",
-        "62db9e821c403e66a5f19461d1294ab6ad26c735afde39164ee093e3de2a8e9c"
+        "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e",
+        "9ab51f3c708b2b9bfdd61a193ba6b5247df5037c2d1bdf736d434e63bd59aea7"
     ]
 }
 
@@ -198,6 +207,8 @@ def jpeg_backend_only(paths, base, head):
 
 
 def preservation_backend_only(paths, base, head):
+    if git("rev-parse", f"{head}:NekoWidget/PreservationService") != PRESERVATION_REVIEWED_TREE:
+        return False
     return backend_only(paths, base, head, product_paths=PRESERVATION_PATHS, workflow=PRESERVATION_WORKFLOW,
                         workflow_digest=PRESERVATION_WORKFLOW_DIGEST, companion_paths=PRESERVATION_COMPANION_PATHS,
                         bindings=PRESERVATION_COMPANION_DIGESTS, binding_name="PRESERVATION_COMPANION_DIGESTS")

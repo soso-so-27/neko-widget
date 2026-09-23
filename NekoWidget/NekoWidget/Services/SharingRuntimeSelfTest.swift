@@ -18,6 +18,8 @@ enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
+    case malformedNoticeContact, changedSessionDuringNoticeContact
+    case malformedRetention, changedSessionDuringRetention, unavailableRetention
 }
 
 actor PreservationFixtureServer {
@@ -123,6 +125,26 @@ actor PreservationFixtureServer {
                             "availableBytes": scenario == .malformedUsage ? 10_737_418_240 : 10_736_369_664,
                             "overLimit": false],
                 "records": ["saved": 1, "pending": 0, "creationLimitReached": false]])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/notice-contact" {
+            if scenario == .changedSessionDuringNoticeContact { try replaceSession() }
+            return try json(["version": 1,
+                "email": scenario == .malformedNoticeContact ? "unsafe\r\nBcc:other@example.com" : "owner@example.com",
+                "source": "apple"])
+        }
+        if request.httpMethod == "GET", url.path == "/v1/retention" {
+            if scenario == .changedSessionDuringRetention { try replaceSession() }
+            if scenario == .unavailableRetention { return try fail("RETENTION_UNAVAILABLE", status: 503) }
+            if scenario == .malformedRetention {
+                return try json(["version": 1, "status": "active", "dueAt": 1000,
+                                 "paused": false, "finalNoticeDeliveredAt": NSNull()])
+            }
+            if !linked {
+                return try json(["version": 1, "status": "unlinked", "dueAt": NSNull(), "paused": false])
+            }
+            return try json(["version": 1, "status": "expired",
+                             "dueAt": Int64(Date().addingTimeInterval(365 * 86_400).timeIntervalSince1970 * 1000),
+                             "paused": false, "finalNoticeDeliveredAt": NSNull()])
         }
         let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
             updatedAt: nil, catNames: [], photoFile: nil)
@@ -9772,6 +9794,46 @@ actor SharingRuntimeSelfTestRunner {
         try await finish()
         guard checks == 2, exporter.payload == nil, try files() == before,
               snapshot.document == document else { throw ManagedPreservationError.interrupted }
+
+        // A real paginated client path, using an isolated synthetic transport,
+        // must export without a paid membership and clean up on owner change.
+        let fixture = try PreservationNativeFixture.make()
+        defer { try? fixture.cleanup() }
+        checks = 0
+        ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter,
+            validate: { checks += 1 }, progress: { _, _ in })
+        try await finish()
+        // Bulk verification checks identity once before export, then on both
+        // sides of the final inventory-generation request.
+        guard checks == 3, let bulk = exporter.payload,
+              try Data(contentsOf: bulk.fileURL).range(of: Data("manifest.json".utf8)) != nil else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        exporter.finishSharing(bulk)
+        guard try files() == before else { throw ManagedPreservationError.secureStorage }
+
+        checks = 0
+        ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter,
+            validate: {
+                checks += 1
+                if checks == 2 { throw ManagedPreservationError.staleSession }
+            }, progress: { _, _ in })
+        try await finish()
+        guard checks == 2, exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
+
+        // A session can change and return to the same owner between requests.
+        // Owner-only checks must not allow that archive to reach the share sheet.
+        let changed = try PreservationNativeFixture.make()
+        defer { try? changed.cleanup() }
+        let changedClient = changed.client
+        ManagedPreservationExport.prepareAll(client: changedClient, using: exporter,
+            validate: {}, progress: { completed, _ in
+                if completed == 1 { await changedClient.cancelSignIn() }
+            })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil,
+              try files() == before else { throw ManagedPreservationError.staleSession }
     }
 
     @MainActor
@@ -9806,6 +9868,9 @@ actor SharingRuntimeSelfTestRunner {
         do { _ = try await f.client.linkMembership(consent: true) } catch { failed = true }
         let afterFailure = try await f.client.membership()
         guard failed, !afterFailure.linked else { throw ManagedPreservationError.invalidResponse }
+        let unlinkedRetention = try await f.client.retention()
+        guard unlinkedRetention.status == .unlinked, unlinkedRetention.dueAt == nil,
+              !unlinkedRetention.paused else { throw ManagedPreservationError.invalidResponse }
         let result = try await f.client.linkMembership(consent: true)
         let counts = await f.server.counts()
         guard result.linked, result.status == .expired, !result.canSave, counts.issues == 2, counts.completes == 2,
@@ -9816,6 +9881,20 @@ actor SharingRuntimeSelfTestRunner {
         let usage = try await f.client.usage()
         guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 10_736_369_664,
               usage.records.saved == 1 else { throw ManagedPreservationError.invalidResponse }
+        let retention = try await f.client.retention()
+        guard retention.status == .expired, retention.dueAt != nil,
+              retention.finalNoticeDeliveredAt == nil else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        for (scenario, expected) in [(PreservationFixtureScenario.malformedRetention, ManagedPreservationError.invalidResponse),
+                                     (.changedSessionDuringRetention, .staleSession),
+                                     (.unavailableRetention, .unavailable)] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var rejected = false
+            do { _ = try await fixture.client.retention() }
+            catch let error as ManagedPreservationError where error == expected { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
         for (scenario, expected) in [(PreservationFixtureScenario.malformedUsage, ManagedPreservationError.accountingUnavailable),
                                      (.changedSessionDuringUsage, .staleSession),
                                      (.unavailableUsage, .accountingUnavailable)] {
@@ -9825,12 +9904,44 @@ actor SharingRuntimeSelfTestRunner {
             catch let error as ManagedPreservationError where error == expected { rejected = true }
             guard rejected else { throw ManagedPreservationError.invalidResponse }
         }
+        let contact = try await f.client.noticeContact()
+        guard contact.email == "owner@example.com", contact.source == "apple" else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        for (scenario, expected) in [(PreservationFixtureScenario.malformedNoticeContact, ManagedPreservationError.invalidResponse),
+                                     (.changedSessionDuringNoticeContact, .staleSession)] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var rejected = false
+            do { _ = try await fixture.client.noticeContact() }
+            catch let error as ManagedPreservationError where error == expected { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
         let lost = try PreservationNativeFixture.make(.lostResult); defer { try? lost.cleanup() }
         do { _ = try await lost.client.linkMembership(consent: true) } catch { }
         let afterLostResult = try await lost.client.membership()
         guard afterLostResult.linked else { throw ManagedPreservationError.invalidResponse }
         let lostCounts = await lost.server.counts()
         guard lostCounts.completes == 1, lostCounts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+
+        // Linking must invalidate an already displayed "unlinked" carry-out
+        // snapshot instead of leaving a known-false status on the screen.
+        let linking = try PreservationNativeFixture.make(); defer { try? linking.cleanup() }
+        let linkingUI = ManagedPreservationCoordinator(configuration: linking.configuration, client: linking.client)
+        func settleLink() async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while linkingUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !linkingUI.isBusy else { throw ManagedPreservationError.interrupted }
+        }
+        linkingUI.start(); try await settleLink()
+        linkingUI.checkRetention(); try await settleLink()
+        guard linkingUI.retention?.status == .unlinked else { throw ManagedPreservationError.invalidResponse }
+        linkingUI.connectMembership(consent: true)
+        guard linkingUI.retention == nil else { throw ManagedPreservationError.invalidResponse }
+        try await settleLink()
+        guard linkingUI.membership?.linked == true, linkingUI.retention == nil else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        linkingUI.stop()
 
         // Eligibility can change after the screen check. The server remains
         // authoritative, and a rejected save must clear stale positive UI state.

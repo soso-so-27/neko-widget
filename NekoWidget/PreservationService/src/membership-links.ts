@@ -77,6 +77,15 @@ export class MembershipLinks implements MembershipAuthority {
       .bind(ownerId).first<{ billing_account_id: string }>();
     return link ? this.d.authority.status(link.billing_account_id) : 'unknown';
   }
+  /** Retention must pause, rather than guess expiry, when billing is unavailable. */
+  async statusForRetention(ownerId: string) {
+    const link = await this.d.db.prepare(`SELECT l.billing_account_id FROM pa_membership_links l
+      JOIN pa_owners o ON o.owner_id=l.owner_id WHERE l.owner_id=? AND o.disabled=0`)
+      .bind(ownerId).first<{ billing_account_id: string }>();
+    if (!link) return { linked: false as const, status: 'unknown' as const };
+    try { return { linked: true as const, status: await this.d.authority.status(link.billing_account_id) }; }
+    catch { return { linked: true as const, status: 'unknown' as const }; }
+  }
   async forSession(token: string) {
     const session = await this.d.auth.requireSession(token);
     const link = await this.d.db.prepare('SELECT billing_account_id FROM pa_membership_links WHERE owner_id=?')

@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.17.0" },
-  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "jose": "6.2.12" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run",
+    "test:migration": "node scripts/verify-notice-evidence-migration.mjs" },
+  "dependencies": { "aws4fetch": "1.0.20", "jose": "6.2.12" },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.3",
     "@cloudflare/workers-types": "5.20260822.1",

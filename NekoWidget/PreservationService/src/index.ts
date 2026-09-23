@@ -6,17 +6,30 @@ import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './p
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
 import { readBoundedBody } from './bounded-body';
+import { RetentionLedger, type VerifiedMembershipStatus } from './retention-ledger';
+import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions';
+import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
+import { type NoticeEventSource } from './notice-events';
+import { processDeliveredNoticeEvent } from './notice-delivery';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
-  PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string;
+  PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
+  NOTICE_SEND_ENABLED?: string; NOTICE_EVENTS_ENABLED?: string;
+  NOTICE_RECIPIENT_TAG_SECRET?: string; NOTICE_EVENT_QUEUE_NAME?: string;
+  NOTICE_ACCOUNT_ID?: string; NOTICE_ZONE_ID?: string; NOTICE_SUBSCRIPTION_ID?: string;
+  NOTICE_DOMAIN?: string; NOTICE_SENDER?: string; NOTICE_EMAIL?: NoticeMailProvider;
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
-  KEY_WRAPPER?: Fetcher; MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
+  KEY_WRAPPER?: Fetcher; KEY_WRAPPER_CALLER_SECRET?: string;
+  MEMBERSHIP_AUTHORITY?: Fetcher; PHOTO_VALIDATOR?: Fetcher;
   REQUEST_LIMITER?: RateLimit;
 }
-export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier; membership?: MembershipLinks; }
+export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  membership?: MembershipLinks; retention?: RetentionLedger; }
+interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
+  statusForOwner: (ownerId: string) => Promise<VerifiedMembershipStatus>; }
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const string = (value: unknown) => {
@@ -64,6 +77,27 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (request.method === 'GET' && path === '/v1/notice-contact') {
+    return response({ version: 1, ...await services.auth.noticeContact(token) });
+  }
+  if (request.method === 'GET' && path === '/v1/retention') {
+    if (!services.membership || !services.retention) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    const session = await services.auth.requireSession(token);
+    const membership = await services.membership.statusForRetention(session.ownerId);
+    if (!membership.linked) {
+      await services.auth.requireSession(token);
+      return response({ version: 1, status: 'unlinked', dueAt: null, paused: false });
+    }
+    const state = await services.retention.observe(session.ownerId, membership.status);
+    const current = await services.auth.requireSession(token);
+    if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
+      throw new ServiceError('SESSION_INVALID', 401);
+    }
+    return response({ version: 1, status: state.status,
+      dueAt: state.status === 'expired' && state.pausedAt === null ? state.dueAt : null,
+      paused: state.pausedAt !== null,
+      finalNoticeDeliveredAt: state.finalNoticeDeliveredAt });
+  }
   if (request.method === 'GET' && path === '/v1/usage') {
     return response(await services.archive.usage(token));
   }
@@ -108,7 +142,8 @@ export async function route(request: Request, services: Services): Promise<Respo
 }
 
 function configuredServices(env: Env): Services {
-  if (!env.KEY_WRAPPER || !env.MEMBERSHIP_AUTHORITY || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
+  if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.MEMBERSHIP_AUTHORITY
+    || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
     || !env.APPLE_CREDENTIALS_JSON || !env.PRESERVATION_LINK_AUDIENCE || !env.REQUEST_LIMITER || !env.DB || !env.ARCHIVE) {
     throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   }
@@ -116,7 +151,8 @@ function configuredServices(env: Env): Services {
   try { credentials = JSON.parse(env.APPLE_CREDENTIALS_JSON) as typeof credentials; }
   catch { throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503); }
   const now = () => Date.now();
-  const keys = envelopeKeyCustody({ enabled: true, wrapper: boundKeyWrapper(env.KEY_WRAPPER) });
+  const keys = envelopeKeyCustody({ enabled: true,
+    wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
@@ -125,7 +161,65 @@ function configuredServices(env: Env): Services {
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS) });
-  return { auth, archive, verifier, membership };
+  const retention = env.RETENTION_TRACKING_ENABLED === 'YES' ? new RetentionLedger(env.DB, now) : undefined;
+  return { auth, archive, verifier, membership, ...(retention ? { retention } : {}) };
+}
+
+/** Delivery evidence must remain processable while unrelated photo upload,
+ * HTTP rate limiting, or Apple-login configuration is unavailable.
+ */
+function configuredNoticeServices(env: Env): NoticeServices {
+  if (!env.DB || !env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET
+      || !env.IDENTITY_INDEX_SECRET || !env.MEMBERSHIP_AUTHORITY) {
+    throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  }
+  const now = () => Date.now();
+  const keys = envelopeKeyCustody({ enabled: true,
+    wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
+  const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
+  const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
+  return { auth, retention: new RetentionLedger(env.DB, now),
+    statusForOwner: async ownerId => {
+      const link = await env.DB.prepare(`SELECT l.billing_account_id FROM pa_membership_links l
+        JOIN pa_owners o ON o.owner_id=l.owner_id WHERE l.owner_id=? AND o.disabled=0`)
+        .bind(ownerId).first<{ billing_account_id: string }>();
+      if (!link) return 'unknown';
+      try { return await authority.status(link.billing_account_id); }
+      catch { return 'unknown'; }
+    } };
+}
+
+function configuredNoticeSource(env: Env): NoticeEventSource {
+  const source = { accountId: env.NOTICE_ACCOUNT_ID ?? '', zoneId: env.NOTICE_ZONE_ID ?? '',
+    subscriptionId: env.NOTICE_SUBSCRIPTION_ID ?? '', domain: env.NOTICE_DOMAIN ?? '',
+    sender: env.NOTICE_SENDER ?? '' };
+  if (!validNoticeEventSource(source)) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  return source;
+}
+
+function configuredNoticeSubmissions(env: Env): NoticeSubmissions {
+  if (!env.DB || !env.NOTICE_RECIPIENT_TAG_SECRET) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  return new NoticeSubmissions(env.DB, env.NOTICE_RECIPIENT_TAG_SECRET, () => Date.now());
+}
+
+async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Promise<number> {
+  if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  const submissions = configuredNoticeSubmissions(env);
+  const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
+  let failed = 0;
+  const pending = await submissions.nextPendingPromotions();
+  for (const item of pending) {
+    try {
+      await submissions.promoteDelivered(item.messageId,
+        candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
+        accountId => authority.status(accountId));
+    } catch {
+      // One corrupt or temporarily unreadable contact must not starve later
+      // notices. Leave this row unpromoted and surface failure after the scan.
+      failed++;
+    }
+  }
+  return failed;
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -143,17 +237,90 @@ export default {
     }
   },
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    if (env.NOTICE_SEND_ENABLED === 'YES' && (env.CLEANUP_ENABLED !== 'YES'
+        || env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES'
+        || env.PRESERVATION_ENABLED !== 'YES')) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
     if (env.CLEANUP_ENABLED !== 'YES') return;
-    if (!env.DB || !env.ARCHIVE) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+    if (!env.DB) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
     // Continue physical deletion even while sign-in or paid saving is disabled.
-    await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() });
-    await env.DB.batch([
-      env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
-        (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-      env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
-        (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-      env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
-        (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-    ]);
+    let maintenanceFailures = 0;
+    if (env.ARCHIVE) {
+      try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
+      catch { maintenanceFailures++; }
+    } else maintenanceFailures++;
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
+          (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+        env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
+          (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+        env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
+          (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+      ]);
+    } catch { maintenanceFailures++; }
+    // Billing outages pause the clock. This only records status; notification
+    // and irreversible deletion remain separately gated and disabled.
+    if (env.RETENTION_TRACKING_ENABLED === 'YES') {
+      if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+      try {
+        await new RetentionLedger(env.DB, () => Date.now())
+          .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
+      } catch { maintenanceFailures++; }
+    }
+    if (env.NOTICE_EVENTS_ENABLED === 'YES') {
+      if (env.RETENTION_TRACKING_ENABLED !== 'YES') throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+      const services = configuredNoticeServices(env);
+      const reconciliationFailures = await reconcileDeliveredNotices(env, services);
+      let dispatchFailures = 0;
+      if (env.NOTICE_SEND_ENABLED === 'YES') {
+        if (!env.NOTICE_EMAIL) {
+          throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+        }
+        const result = await new NoticeDispatch({ ledger: services.retention,
+          submissions: configuredNoticeSubmissions(env), source: configuredNoticeSource(env),
+          mail: env.NOTICE_EMAIL,
+          statusForOwner: services.statusForOwner,
+          currentContact: candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
+        }).run();
+        dispatchFailures = result.failed;
+      }
+      if (reconciliationFailures + dispatchFailures + maintenanceFailures > 0) {
+        throw new ServiceError('NOTICE_SEND_UNAVAILABLE', 503);
+      }
+    }
+    if (maintenanceFailures > 0) throw new ServiceError('PRESERVATION_UNAVAILABLE', 503);
+  },
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    if (env.NOTICE_EVENTS_ENABLED !== 'YES' || env.RETENTION_TRACKING_ENABLED !== 'YES'
+        || !env.NOTICE_EVENT_QUEUE_NAME || batch.queue !== env.NOTICE_EVENT_QUEUE_NAME) {
+      batch.retryAll({ delaySeconds: 3600 });
+      return;
+    }
+    let services: NoticeServices;
+    let submissions: NoticeSubmissions;
+    let source: NoticeEventSource;
+    try {
+      services = configuredNoticeServices(env);
+      submissions = configuredNoticeSubmissions(env);
+      source = configuredNoticeSource(env);
+      if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+    } catch {
+      batch.retryAll({ delaySeconds: 3600 });
+      return;
+    }
+    const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY!);
+    for (const message of batch.messages) {
+      try {
+        await processDeliveredNoticeEvent(message.body, { source, submissions,
+          ledger: services.retention, now: () => Date.now(),
+          statusForOwner: services.statusForOwner,
+          statusForBillingAccount: accountId => authority.status(accountId),
+          currentContact: candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
+        });
+        message.ack();
+      } catch {
+        message.retry({ delaySeconds: 300 });
+      }
+    }
   },
 };
