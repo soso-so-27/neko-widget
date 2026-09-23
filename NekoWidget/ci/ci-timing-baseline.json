@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-22",
+  "as_of": "2026-09-23",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.1,
   "upload_run": 35607517485,
@@ -97,6 +97,15 @@
       "first_ci_to_main_minutes": 1.2,
       "candidate_commit_to_main_minutes": 21.15,
       "note": "First scoped Linux measurement: Node typecheck and 21 actual JPEG/resource-boundary tests passed. Candidate and main each ran the small Node job and the iOS selector only; no Mac jobs or TestFlight. Candidate-commit elapsed starts at product 128e2b2 and includes CI-path implementation/review, not just final green run. Local real-adapter six checks are separate evidence, not live D1/R2 or deployed preservation. Not a general duration guarantee."
+    },
+    {
+      "scope": "preservation-image-validator-v2",
+      "candidate_minutes": 0.617,
+      "run_id": 35843671576,
+      "outcome": "success",
+      "plan_run_id": 35843671538,
+      "plan_minutes": 0.317,
+      "note": "First v2 candidate from push to completion: 37s. Node full-decode tests, disabled private Worker bundle and Linux/amd64 Docker build succeeded; iOS selector ran separately, Mac0. The later synthetic JPEG check inside the built image was not in this first run, so its added duration and actual Cloudflare deployment are not measured by this sample. Ten-minute job timeout is not elapsed time."
     },
     {
       "scope": "reviewed-managed-preservation-app-v1",
