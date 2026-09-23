@@ -6,7 +6,7 @@
   "engines": { "node": ">=22.17.0" },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs && node test/test-adapter.mjs --source ../PreservationService/src",
     "start": "node dist/start-server.js"
   },
   "dependencies": { "sharp": "0.35.4" },

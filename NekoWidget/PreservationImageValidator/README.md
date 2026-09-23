@@ -49,15 +49,15 @@ npm test
 
 テスト画像はローカル生成した人工画素のみ。実ユーザー写真・Apple認証・外部保存先を使いません。通常 `npm test` は型検査と実デコーダーの対象確認であり、iOSの一式CIを起動しません。タイマー制御のテストは Node の実験的 MockTimers を使用します。
 
-既存の保管候補がある場合の別実行（source未指定をskip成功にしません）:
+同じリポジトリの実 `PreservationService/src` とのオフライン契約照合も `npm test` と専用CIで実行します。単体で再実行する場合（source未指定をskip成功にしません）:
 
 ```sh
 node test/test-adapter.mjs --source <PreservationService/src の絶対パス>
 ```
 
-その候補の実 `contracts.ts` / `documents.ts` / `providers.ts` を型除去し、既知の相対importだけを一時 `.mjs` へ補完して実行。boundPhotoValidatorの中身を差し替えず、このproviderへローカル接続します。外部fetchを禁止し、元ファイル非改変と専用一時出力の清掃も確認します。D1/R2保存や実Worker間ネットワークの試験とは区別してください。
+保管serviceの実 `providers.ts` と、その既知の依存ファイルを型除去し、相対importだけを一時 `.mjs` へ補完して実行。boundPhotoValidatorの中身を差し替えず、このproviderへローカル接続します。依存が増えれば無審査で読み込まず失敗します。外部fetchを禁止し、元ファイル非改変と専用一時出力の清掃も確認します。D1/R2保存や実Worker間ネットワークの試験とは区別してください。
 
-専用CI `.github/workflows/preservation-image-validator.yml` は Ubuntu / Node で `npm ci` と `npm test` を実行します。別候補を参照するadapterテストは含まず、実サービスへの配備も行いません。iOSの検証や配布の成功証拠とは別です。
+専用CI `.github/workflows/preservation-image-validator.yml` は Ubuntu / Node で `npm ci` と `npm test` を実行します。上記の同じリポジトリの実adapter契約も含みますが、実サービスへの配備は行いません。iOSの検証や配布の成功証拠とは別です。
 
 ## 配備前に残ること
 
