@@ -30,7 +30,7 @@ const regionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u;
 const bucketPattern = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
-const recoveryKeyPattern = new RegExp(`^recovery/v1/${uuid}/(?:photo|record|manifest)/${uuid}$`, 'u');
+const recoveryKeyPattern = new RegExp(`^recovery/v1/${uuid}/(?:photo|record|manifest|owner)/${uuid}$`, 'u');
 const hexPattern = /^[0-9a-f]{64}$/u;
 const versionPattern = /^[\x21-\x7e]{1,1024}$/u;
 const unavailable = () => new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);

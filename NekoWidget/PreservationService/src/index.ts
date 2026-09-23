@@ -244,10 +244,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
-      const policy = await env.DB?.prepare(`SELECT delete_intent_required
+      const policy = await env.DB?.prepare(`SELECT delete_intent_required,owner_snapshot_required
         FROM pa_recovery_write_policy WHERE singleton=1`)
-        .first<{ delete_intent_required: number }>();
-      if (policy?.delete_intent_required !== 1) throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
+        .first<{ delete_intent_required: number; owner_snapshot_required: number }>();
+      if (policy?.delete_intent_required !== 1 || policy.owner_snapshot_required !== 1) {
+        throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
+      }
       const services = configuredServices(env);
       const ip = request.headers.get('CF-Connecting-IP');
       if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);

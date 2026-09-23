@@ -165,7 +165,8 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
             WHERE f.fence_id=? AND f.owner_id=pa_retention.owner_id AND f.state='fenced'
               AND f.owner_epoch=? AND f.retention_episode=pa_retention.episode
               AND f.retention_revision=pa_retention.revision
-              AND o.disabled=1 AND o.epoch=? AND o.purge_fence_id=f.fence_id)`)
+              AND o.disabled=1 AND o.epoch=? AND o.purge_fence_id=f.fence_id)
+        RETURNING revision`)
         .bind(status, now, resetExpiry, resetExpiry, resetExpiry, now, resetExpiry, now,
           ownerId, fenceId, ownerEpoch, ownerEpoch),
       db.prepare(`UPDATE pa_owners SET disabled=0,epoch=epoch+1,purge_fence_id=NULL
@@ -173,14 +174,16 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
           AND EXISTS(SELECT 1 FROM pa_purge_fences f JOIN pa_retention r ON r.owner_id=f.owner_id
             WHERE f.fence_id=? AND f.owner_id=? AND f.state='fenced'
               AND r.episode=f.retention_episode AND r.revision=f.retention_revision+1
-              AND r.verified_status=? AND r.final_notice_delivered_at IS NULL)`)
+              AND r.verified_status=? AND r.final_notice_delivered_at IS NULL)
+        RETURNING epoch`)
         .bind(ownerId, ownerEpoch, fenceId, fenceId, ownerId, status),
       db.prepare(`UPDATE pa_purge_fences SET state='aborted',updated_at=?
         WHERE fence_id=? AND owner_id=? AND state='fenced' AND owner_epoch=?
-          AND NOT EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND purge_fence_id=?)`)
+          AND NOT EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND purge_fence_id=?)
+        RETURNING state`)
         .bind(now, fenceId, ownerId, ownerEpoch, ownerId, fenceId),
     ]);
-    if (results.some(result => result?.meta.changes !== 1)) throw unavailable();
+    if (results.some(result => result?.results.length !== 1)) throw unavailable();
 }
 
 /** Crash recovery for a lease that was fenced but never entered deletion.

@@ -332,12 +332,13 @@ export class NoticeSubmissions {
             AND s.delivered_at=? AND s.delivery_event_id IS NOT NULL
             AND s.recipient_tag=? AND s.contact_updated_at=?
             AND c.updated_at=s.contact_updated_at AND c.source='apple'
-            AND l.billing_account_id=? AND o.disabled=0)`)
+            AND l.billing_account_id=? AND o.disabled=0)
+      RETURNING revision`)
       .bind(noticeDueAt, noticeDueAt, row.delivered_at, row.delivery_event_id,
         row.owner_id, observed.revision, row.episode, row.due_at,
         observed.checkedAt, row.delivered_at, messageId, row.delivered_at,
         row.recipient_tag, row.contact_updated_at, row.billing_account_id).run();
-    return result.meta.changes === 1;
+    return result.results.length === 1;
   }
 
   /** Read-only expiry proof. A mail-server delivery event, the current sealed

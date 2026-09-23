@@ -207,10 +207,11 @@ export class RetentionLedger {
         verified_status=?,checked_at=?,expired_at=?,due_at=?,paused_at=?,
         notice_not_before_at=?,final_notice_delivered_at=?,final_notice_receipt=?
         WHERE owner_id=? AND revision=? AND EXISTS
-        (SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0)`)
+        (SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0)
+        RETURNING revision`)
         .bind(episode, status, observedAt, expiredAt, dueAt, pausedAt,
           noticeNotBeforeAt, noticeAt, receipt, ownerId, current.revision, ownerId).run();
-      if (result.meta.changes === 1) return view(await this.read(ownerId));
+      if (result.results.length === 1) return view(await this.read(ownerId));
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
   }
@@ -236,9 +237,10 @@ export class RetentionLedger {
       const dueAt = clock(Math.max(current.due_at, deliveredAt + thirtyDays));
       const result = await this.db.prepare(`UPDATE pa_retention
         SET revision=revision+1,due_at=?,final_notice_delivered_at=?,final_notice_receipt=?
-        WHERE owner_id=? AND revision=? AND verified_status='expired' AND paused_at IS NULL`)
+        WHERE owner_id=? AND revision=? AND verified_status='expired' AND paused_at IS NULL
+        RETURNING revision`)
         .bind(dueAt, deliveredAt, providerReceipt, ownerId, current.revision).run();
-      if (result.meta.changes === 1) return view(await this.read(ownerId));
+      if (result.results.length === 1) return view(await this.read(ownerId));
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
   }
