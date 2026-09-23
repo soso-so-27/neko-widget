@@ -1489,6 +1489,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(usage.waitForExistence(timeout: 8))
         XCTAssertTrue(usage.label.contains("使用中"))
         capture("preservation-membership-expired-read-available")
+        let record = app.buttons["preservation-record-a1223334-5556-4788-9990-aabbccddeeff"]
+        for _ in 0..<8 where !record.exists { app.swipeUp() }
         tap("preservation-record-a1223334-5556-4788-9990-aabbccddeeff")
         let memo = app.textViews["保管コピーのメモ"]
         XCTAssertTrue(memo.waitForExistence(timeout: 8))
