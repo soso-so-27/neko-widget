@@ -14,6 +14,7 @@
 - 60日前と30日前を候補通知時点とする。少なくとも30日前の通知が成功した証拠、保管内容・書き出し先・最終日を画面から確認できる状態、送信失敗の再試行がない限り自動消去しない。通知経路はサインイン時に提供されたAppleのプライベートリレーを含むメールを第一候補とし、アプリ内表示を併用する。送信元ドメイン、SPF/DKIM、到達失敗の扱いが実装・確認されるまで消去を有効にしない。
 - primary R2、D1の暗号文／索引／token、復旧用バックアップまで対象ごとの削除証跡を作る。部分失敗は再試行し、完了として表示しない。鍵全体の破棄を個別ユーザー削除の代用にしない。法定保存が必要な最小情報は別定義し、写真・本文と混同しない。
 - D1のTime TravelはWorkers有料版で最大30日、無料版で最大7日の過去状態を保持し、復元はDB全体を上書きする。したがって「12か月後、一次保管を削除」と「同日に復旧コピーからも完全消去」は同義ではない。復旧コピーの保存上限・個別削除の実効時刻・復元後の削除再適用を先に定め、利用者への説明と一致させる。長期の独立バックアップを追加する際も無期限のObject Lockを使わず、消去期限を証明できる構成にする。
+- R2はS3互換APIでバケットのVersioning/Replication設定をサポートしない。別R2バケットを作るだけでは自動複製にも、Cloudflareアカウント全体の障害からの独立復旧にもならない。暗号文とD1索引の整合する復旧コピーを別権限で取り、実際に復元して照合する設計が必要。AWS S3への分離は利用者へ選択を確認中で、未採用・未配備。
 
 ### 鍵管理の推奨
 
@@ -51,6 +52,7 @@ Cloudflare Secrets StoreはWorkerとの接続が容易だが2026-09-23時点でo
 - [Cloudflare Secrets Store](https://developers.cloudflare.com/secrets-store/)：open beta。 [Workers連携](https://developers.cloudflare.com/secrets-store/integrations/workers/)ではbindingから秘密値を取得する。
 - [Cloudflare R2 SSE-C](https://developers.cloudflare.com/r2/examples/ssec/)：鍵紛失時はCloudflareがobjectを復旧できない。D1本文の鍵管理とは別の機能。
 - [Cloudflare D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)：有料30日／無料7日で、復元はin-placeの破壊的操作。独立したR2/別基盤のバックアップを代替しない。
+- [Cloudflare R2 S3 API互換表](https://developers.cloudflare.com/r2/api/s3/api/)：`GetBucketVersioning`、`PutBucketVersioning`、`PutBucketReplication` は非対応。
 - [Amazon S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)：保持期間中は古い版が削除されず、削除マーカーのみでは実体を消せない。
 - [Appleプライベートメールリレー](https://developer.apple.com/documentation/signinwithapple/communicating-using-the-private-email-relay-service)：アプリ未インストールでもメール送信可能。送信元登録と認証が必要。 [Appleの2026年新ドメイン案内](https://developer.apple.com/news/?id=1ptvdtcm)も考慮する。
 - [Appleのサブスクリプション指針](https://developer.apple.com/app-store/subscriptions/)：有効／期限切れ／請求猶予を区別し、失効後の扱いを説明する。
