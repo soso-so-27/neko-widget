@@ -3510,7 +3510,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["family-record-back-to-album"].waitForExistence(timeout: 5))
         app.buttons["family-record-fixture-peer"].tap()
         let peerWords = app.staticTexts["相手が添えた言葉"]
-        for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
+        for _ in 0..<4 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["相手のメモ"].exists)
         let ownWordsMenu = app.buttons["family-record-words-menu"]
@@ -3533,9 +3533,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
         let editedWords = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "また一緒に遊ぼう")).firstMatch
-        for _ in 0..<3 where !editedWords.isHittable { app.swipeUp() }
+        for _ in 0..<3 where !editedWords.exists { app.swipeUp() }
         XCTAssertTrue(editedWords.waitForExistence(timeout: 5))
-        for _ in 0..<3 where !peerWords.isHittable { app.swipeUp() }
+        for _ in 0..<3 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Editing my words must leave the other author's words unchanged.")
         attach(app, name: "family-record-authors-and-edited-words")
         let photoMenu = app.buttons["family-record-photo-menu"]
