@@ -70,8 +70,8 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 106)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v11")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 109)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v12")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -87,12 +87,14 @@ class PlanTests(unittest.TestCase):
                      "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts",
                      "migrations/0006_notice_contact.sql", "migrations/0007_notice_submissions.sql",
                      "src/notice-events.ts", "src/notice-submissions.ts",
-                     "test/notice-events.test.ts", "test/notice-submissions.test.ts"):
+                     "test/notice-events.test.ts", "test/notice-submissions.test.ts",
+                     "migrations/0017_purge_execution_claims.sql", "src/owner-purge-abort.ts",
+                     "test/owner-purge-abort.test.ts"):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         # Same filenames with any different service content (including an
-        # in-place sender, Queue binding, or deletion) must not use v8.
+        # in-place sender, Queue binding, or deletion) must not use v12.
         self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
                       "NekoWidget/PreservationService/src/notice-sender.ts",

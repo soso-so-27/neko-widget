@@ -94,7 +94,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v11"
+PRESERVATION_SCOPE = "preservation-service-v12"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -117,6 +117,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "migrations/0014_record_commit_markers.sql",
     "migrations/0015_owner_recovery_generations.sql",
     "migrations/0016_owner_purge_events.sql",
+    "migrations/0017_purge_execution_claims.sql",
     "package-lock.json",
     "package.json",
     "scripts/aws-staging-probe-policy.json",
@@ -150,6 +151,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "src/owner-photo-inventory.ts",
     "src/owner-primary-reconciliation.ts",
     "src/owner-purge-fence.ts",
+    "src/owner-purge-abort.ts",
     "src/owner-purge-intent-ledger.ts",
     "src/purge-intent-replay.ts",
     "src/owner-quarantine-restore.ts",
@@ -181,6 +183,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/owner-photo-inventory.test.ts",
     "test/owner-primary-reconciliation.test.ts",
     "test/owner-purge-fence.test.ts",
+    "test/owner-purge-abort.test.ts",
     "test/owner-purge-events.test.ts",
     "test/owner-purge-intent-ledger.test.ts",
     "test/purge-intent-replay.test.ts",
@@ -207,27 +210,27 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v11 is a one-candidate review of the entire disabled service tree, not a
+# v12 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
-PRESERVATION_REVIEWED_TREE = "a12c59828edd48e563d7a7477b86dc56dc6e77bd"
+PRESERVATION_REVIEWED_TREE = "293cda1d9a94fe0be15b325e5583f9a66532e950"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "9cbfa7f364a86dc473cf705521da2311a2fdff7de284d60cdaf1fbb335030ed5",
-        "64aa4c93c012d1f573e73921fd0827eac7a9e5270804090370930328b73cda6d"
+        "b39139c84fcda4def08c7a35f7971257f3291e293411a085b73ab2fed65e7ae8"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa",
-        "d3ea3aa7ef2c8187a80b53f8ec42b03712caad23ec3027ea9cb70f4c2ecf8255"
+        "8e21397b646120efb0bcfd892cacc6f2f71a7c90e0556757daeafd09fd157072"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f",
-        "8271c71f629ac1285b24d691d8de031397939d1493088cc2eae272a6dafec19b"
+        "205f324e72b1945ebb3c77ddb61d22c32833b86a436189eafdd69a9ad7235e4e"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322",
-        "f308f793735659e7363d00c7d1e0b15582650a91d6405fdb3862a0116fa5257f"
+        "940cac8d0a303d4b065176c0dca425b7dc2d460bf70fde13ac80e32cec6c750e"
     ]
 }
 
