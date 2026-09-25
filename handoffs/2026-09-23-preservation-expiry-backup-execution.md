@@ -23,6 +23,7 @@
 - 保管用R2 `neko-preservation-staging-private` は公開アクセス無効。`wrangler dev` のremote bindingによる合成文字列のPUT/GET/DELETEに成功し、`probes/`再一覧は0件。共有用の既存R2には触れていない。
 - S3には、毎回作成・終了時削除する権限限定IAMテストユーザーで、アプリの `S3RecoveryCopy` の版付きPUT、checksum/版指定GET、owner版一覧を合成暗号文で実行して成功。一時IAMアクセスキー、ユーザー、今回のS3版を削除した。先行CLIの合成object版も削除し、S3全版・delete markerの一覧はともに0件。初回の失敗はIAMキー反映前の `InvalidAccessKeyId` で、STSの本人確認後に成功した。
 - これは**部品ごとの実環境試験**である。保管Workerと鍵Workerの接続、D1/R2/S3の一連の写真保存、別環境復元、通知・期限消去、実iPhone、課金連動は未実証。AWSはFree planのままでは12か月の持ち出し保証に使えず、本番前にPaid planが必要。staging Workerも未配備、全ての有効化flagはOFFのまま。
+- 初回のアプリS3実試験は約14:01 JST。鍵のIAM反映待ちを解消し、S3実試験とKMS実試験のコード修正・再確認まで約10分。関連する型検査、KMS既存4試験、通常Vitestからの実クラウド試験除外、差分の空白検査を実施。以前の候補iOS CI実測64–98分は30分目標を超え、今回の部品検証の不確実性も解かないため実行していない。通し保存・隔離復元が実環境で成立してから必要な候補CIを計画する。
 
 後続ローカル候補で、ownerの本人照合キー、暗号化credential/連絡先、固定会員リンク、期限台帳を一つのD1読取で取り出し、owner-bound暗号化S3版として保存・照合する部品を追加。0015はこれらの変更ごとにowner世代を進め、S3参照を現行世代にだけ結び付ける。追加トリガーによりD1の`meta.changes`が増えるため、通知と削除前fenceの成功判定は`RETURNING`の対象行数へ変更して回帰を修正した。さらにログイン、会員リンク、保存/削除、期限状態の成功応答と通知送達の処理にowner copyを接続し、未コピーownerを失敗行で停滞させず巡回修復する候補を追加。ローカル型検査、保管サービス164試験、合成0015移行試験は成功。**D1喪失からのowner復元、内側のcredential復号・本人キー照合、鍵素材・`IDENTITY_INDEX_SECRET`の保全、削除済みownerの再適用は未完成。** 本番用`revokeOwner`はD1だけで取り消さないよう暫定的に拒否しており、耐久的な事前取消markerが必要。0015は実staging/本番へ未適用、Workerも未配備。公開側はowner世代コピーのpolicyまでONでない限り503を返す。
 
