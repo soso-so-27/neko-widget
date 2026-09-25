@@ -3518,7 +3518,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
         let add = app.buttons["family-record-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
