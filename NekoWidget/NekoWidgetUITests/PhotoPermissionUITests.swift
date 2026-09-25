@@ -1824,14 +1824,16 @@ final class SoloMemoriesUITests: XCTestCase {
                 .flatMap { Int($0.dropFirst(key.count + 1)) } ?? -1
         }
         func assertReadyRemainsVisible(for seconds: TimeInterval) {
-            // A single root-exists check also passes while its child is an
-            // endlessly restarting ProgressView. Observe the actual ready state.
-            let hidden = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "exists == false OR value CONTAINS %@", ";visible:0;"),
-                object: catalog)
-            hidden.isInverted = true
-            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: seconds), .completed)
-            XCTAssertFalse(app.progressIndicators["albums-preparing"].exists)
+            // The debug label can leave the accessibility tree during a sheet
+            // transition even while the album cards remain on screen. Observe
+            // the user-visible loading state, then require a ready catalog.
+            let preparing = app.progressIndicators["albums-preparing"]
+            let appeared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true"), object: preparing)
+            appeared.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [appeared], timeout: seconds), .completed)
+            waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:6000;visibleContainsProbe:1"])
+            XCTAssertFalse(preparing.exists)
         }
 
         XCTAssertTrue(catalog.waitForExistence(timeout: 15))
@@ -1931,7 +1933,9 @@ final class SoloMemoriesUITests: XCTestCase {
                                  "A single MainActor publication burst must not restart catalog work unnecessarily")
 
         app.buttons["archive-root-fixture-remove"].tap()
-        waitForCatalog(["visibleContainsProbe:0"], timeout: 2)
+        // Removal revokes the old catalog immediately. Its replacement waits
+        // for the deliberately delayed fixture builder, so a spinner is safe.
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"])
         app.buttons["archive-root-fixture-access"].tap()
         XCTAssertEqual(app.buttons["archive-root-fixture-access"].value as? String, "denied")
         waitForCatalog([";visible:0;", "visibleCount:0;visibleContainsProbe:0"])
