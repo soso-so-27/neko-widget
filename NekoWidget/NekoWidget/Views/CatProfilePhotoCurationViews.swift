@@ -94,6 +94,20 @@ struct CatProfileDetailView: View {
 
             Section {
                 NavigationLink {
+                    CatPreparednessView(
+                        identityKey: profile.identifier,
+                        catName: profile.displayName,
+                        candidatePhotos: preparednessCandidates
+                    )
+                } label: {
+                    Label("迷子への備え", systemImage: "pawprint")
+                }
+            } footer: {
+                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
+            }
+
+            Section {
+                NavigationLink {
                     UnassignedCatPhotosView(
                         photos: manualCandidatePhotos,
                         profiles: allProfiles,
@@ -147,20 +161,6 @@ struct CatProfileDetailView: View {
                 Text("写真")
             } footer: {
                 Text("一緒に写っている猫を複数選べます。写真は移動・削除されません。")
-            }
-
-            Section {
-                NavigationLink {
-                    CatPreparednessView(
-                        identityKey: profile.identifier,
-                        catName: profile.displayName,
-                        candidatePhotos: preparednessCandidates
-                    )
-                } label: {
-                    Label("もしもの備え", systemImage: "pawprint")
-                }
-            } footer: {
-                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
             }
 
             Section {

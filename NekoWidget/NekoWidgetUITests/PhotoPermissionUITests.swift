@@ -1442,6 +1442,66 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertFalse(app.buttons["lost-cat-share-image"].exists)
+        for (field, value) in [("猫の名前", "むぎ"),
+                               ("最後に見た場所（地域・目印）", "駅の近く"),
+                               ("公開する連絡先", "08000000000")] {
+            let input = app.textFields[field]
+            XCTAssertTrue(input.waitForExistence(timeout: 5), field)
+            input.tap()
+            input.typeText(value)
+        }
+        let done = app.buttons["lost-cat-keyboard-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )], timeout: 5), .completed)
+        let preview = app.images["共有する迷子の猫の画像"]
+        for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue((preview.value as? String ?? "").contains("日時: 不明"))
+        capture("lost-cat-unprepared-preview")
+        for action in ["lost-cat-share-image", "lost-cat-share-pdf"] {
+            let button = app.buttons[action]
+            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
+            XCTAssertTrue(button.isHittable, action)
+            button.tap()
+            let sheet = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
+            XCTAssertTrue(sheet.waitForExistence(timeout: 10), action)
+            capture("lost-cat-unprepared-\(action)")
+            let close = sheet.buttons["header.closeButton"].firstMatch
+            XCTAssertTrue(close.waitForExistence(timeout: 5))
+            close.tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: sheet
+            )], timeout: 5), .completed)
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    func testShowcaseAlbumEntryRendersBeforeAlbumsAtStandardAndLargeText() {
+        for scenario in ["saved", "seasonal-large"] {
+            let app = launch(scenario)
+            let row = app.buttons["albums-showcase-open"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertTrue(row.isHittable)
+            XCTAssertTrue(row.label.contains("見せるアルバム"))
+            XCTAssertTrue(row.label.contains("写真を選ぶ"))
+            XCTAssertGreaterThanOrEqual(row.frame.height, 64)
+            capture("showcase-entry-\(scenario)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testManagedPreservationMembershipLinkConsentAndRetry() {
         continueAfterFailure = false
         let app = XCUIApplication()

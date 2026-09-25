@@ -239,9 +239,9 @@ struct MainTabView: View {
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
     @State private var showsShowcasePreparation = false
-    @State private var showsShowcaseSetupHint = false
-    @State private var showsCatPreparedness = false
     @State private var manageShowcaseAfterClosing = false
+    @State private var showcaseAddPhotoIdentifier: String?
+    @State private var showcaseAddError = false
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -326,6 +326,30 @@ struct MainTabView: View {
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
+        .environment(\.showcaseAddPhoto, { identifier in
+            showcaseAddPhotoIdentifier = identifier
+        })
+        .confirmationDialog("追加先を選ぶ", isPresented: Binding(
+            get: { showcaseAddPhotoIdentifier != nil },
+            set: { if !$0 { showcaseAddPhotoIdentifier = nil } }
+        )) {
+            ForEach(showcaseAddScopes, id: \.self) { scope in
+                Button(showcaseScopeTitle(scope)) {
+                    guard let identifier = showcaseAddPhotoIdentifier else { return }
+                    showcaseAddPhotoIdentifier = nil
+                    showcaseScopeID = scope
+                    Task {
+                        do { try await showcaseStore.add(photoIdentifier: identifier, to: scope) }
+                        catch { showcaseAddError = true }
+                    }
+                }
+            }
+        } message: {
+            Text("選んだ写真だけを見せるアルバムに追加します。")
+        }
+        .alert("写真を追加できませんでした", isPresented: $showcaseAddError) {
+            Button("閉じる", role: .cancel) {}
+        }
         .fullScreenCover(item: $showcaseSession, onDismiss: {
             if manageShowcaseAfterClosing {
                 manageShowcaseAfterClosing = false
@@ -354,24 +378,6 @@ struct MainTabView: View {
                 profiles: catProfilesPresentation.profiles,
                 scopeID: $showcaseScopeID
             )
-        }
-        .alert("見せる写真がまだありません", isPresented: $showsShowcaseSetupHint) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("写真タブの「見せる」から、見せてよい写真を選んでください。")
-        }
-        .sheet(isPresented: $showsCatPreparedness) {
-            NavigationStack {
-                CatPreparednessEntryView(
-                    profiles: catProfilesPresentation.profiles,
-                    unregisteredPhotos: unregisteredCatPhotos
-                )
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("閉じる") { showsCatPreparedness = false }
-                    }
-                }
-            }
         }
         .sheet(isPresented: $showsSettings, onDismiss: {
             photoLibraryRevision &+= 1
@@ -499,32 +505,6 @@ struct MainTabView: View {
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("window-settings-button")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                if hasPhotoAccess {
-                    Button("見せる") {
-                        if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
-                            showsShowcasePreparation = true
-                        } else {
-                            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
-                                                              scopeID: effectiveShowcaseScopeID)
-                        }
-                    }
-                    .accessibilityIdentifier("photos-showcase-open")
-                }
-            }
-            if photoLibrarySelection.selection != .notes {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("迷子のとき", systemImage: "magnifyingglass") {
-                            showsCatPreparedness = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .accessibilityLabel("写真のその他の操作")
-                    .accessibilityIdentifier("photos-more")
-                }
-            }
         }
         .task(id: canResolveInitialPhotoSection) {
             guard canResolveInitialPhotoSection else { return }
@@ -536,7 +516,7 @@ struct MainTabView: View {
 
     private var showcaseCandidates: [PhotoPresentation] {
         var seen = Set<String>()
-        return (likedPhotos + catPhotos).filter {
+        return (libraryPhotos + likedPhotos + catPhotos).filter {
             seen.insert($0.localIdentifier).inserted
         }
     }
@@ -548,9 +528,9 @@ struct MainTabView: View {
             return
         }
         guard ShowcaseLaunchRequest.consume() else { return }
-        selectedTab = .photos
+        selectedTab = .memories
         if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
-            showsShowcaseSetupHint = true
+            showsShowcasePreparation = true
         } else {
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
                                               scopeID: effectiveShowcaseScopeID)
@@ -561,9 +541,15 @@ struct MainTabView: View {
         showcaseScopeID
     }
 
+    private var showcaseAddScopes: [String] {
+        let scopes = [""] + catProfilesPresentation.profiles.map(\.identifier)
+        guard scopes.contains(showcaseScopeID) else { return scopes }
+        return [showcaseScopeID] + scopes.filter { $0 != showcaseScopeID }
+    }
+
     private func showcaseScopeTitle(_ scopeID: String) -> String {
         catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "うちのこ" : "見せる写真")
+            ?? (scopeID.isEmpty ? "選んだ写真" : "前に選んだ猫")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {
@@ -587,7 +573,7 @@ struct MainTabView: View {
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
                                      isEmbedded: true,
-                                     openCatPreparedness: { showsCatPreparedness = true }) {
+                                     openCatPreparedness: nil) {
                 photoLibrarySelection.select(.all)
             }
         }
@@ -644,7 +630,8 @@ struct MainTabView: View {
                     replaysWidgetGuideAfterSettingsDismiss = true
                     showsSettings = false
                 },
-                personalArchiveStore: personalArchiveStore
+                personalArchiveStore: personalArchiveStore,
+                unregisteredCatPhotos: unregisteredCatPhotos
             )
         }
     }
@@ -954,6 +941,18 @@ struct MainTabView: View {
             albumProfileActions: catProfilesActions,
             albumScope: .constant(scope),
             showSettings: { showsSettings = true },
+            openShowcase: {
+                if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
+                    showsShowcasePreparation = true
+                } else {
+                    showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
+                                                      scopeID: effectiveShowcaseScopeID)
+                }
+            },
+            showcaseEntries: showcaseStore.availableEntries(in: effectiveShowcaseScopeID),
+            showcaseCoverURL: showcaseStore.availableEntries(in: effectiveShowcaseScopeID).first
+                .flatMap { showcaseStore.imageURL(for: $0) },
+            showcaseScopeTitle: showcaseScopeTitle(effectiveShowcaseScopeID),
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
             referenceDate: albumHighlightsReferenceDate,
