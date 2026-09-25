@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import PhotosUI
+import ImageIO
 
 /// Prepared information belongs to a cat profile; incident drafts remain separate.
 struct CatPreparednessView: View {
@@ -210,6 +211,14 @@ struct LostCatDraftView: View {
     let record: CatPreparednessRecord
     @ObservedObject var store: CatPreparednessStore
 
+    init(catName: String, record: CatPreparednessRecord, store: CatPreparednessStore,
+         initialPhotoImage: UIImage? = nil) {
+        self.catName = catName
+        self.record = record
+        self.store = store
+        _selectedPhotoImage = State(initialValue: initialPhotoImage)
+    }
+
     @State private var lastSeenAt = Date()
     @State private var knowsLastSeenAt = false
     @State private var publicCatName = ""
@@ -271,6 +280,7 @@ struct LostCatDraftView: View {
                     Image(uiImage: LostCatFlyerRenderer.previewImage(publicDraft))
                         .resizable().scaledToFit()
                         .accessibilityLabel("共有する迷子の猫の画像")
+                        .accessibilityValue(publicDraft.message)
                     Button("画像と文面を共有") { export(publicDraft, pdf: false) }
                         .accessibilityIdentifier("lost-cat-share-image")
                     Button("印刷用PDFを共有") { export(publicDraft, pdf: true) }
@@ -303,8 +313,20 @@ struct LostCatDraftView: View {
         }
         .onChange(of: selectedPhotoItem) { _, item in
             Task {
-                guard let data = try? await item?.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data) else {
+                guard let item,
+                      let data = try? await item.loadTransferable(type: Data.self) else {
+                    return
+                }
+                let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                          let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                            kCGImageSourceCreateThumbnailFromImageAlways: true,
+                            kCGImageSourceCreateThumbnailWithTransform: true,
+                            kCGImageSourceThumbnailMaxPixelSize: 1600
+                          ] as CFDictionary) else { return nil }
+                    return UIImage(cgImage: thumbnail)
+                }.value
+                guard let image else {
                     photoLoadError = true
                     return
                 }
@@ -372,3 +394,22 @@ private struct LostCatActivitySheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
+
+#if DEBUG
+/// Isolated unprepared incident: the injected image represents one explicit
+/// PhotosPicker selection without writing a profile or invoking photo access.
+struct LostCatDraftFixtureView: View {
+    private let image = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 900))
+        .image { context in
+            UIColor.systemOrange.setFill()
+            context.cgContext.fill(CGRect(x: 0, y: 0, width: 1200, height: 900))
+        }
+
+    var body: some View {
+        NavigationStack {
+            LostCatDraftView(catName: "", record: CatPreparednessRecord(),
+                             store: .shared, initialPhotoImage: image)
+        }
+    }
+}
+#endif
