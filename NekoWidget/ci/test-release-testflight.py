@@ -121,6 +121,19 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(release.Blocked):
             self.prepare()
 
+    def test_reused_main_accepts_duplicate_skipped_matrix_placeholders(self):
+        self.candidate()
+        result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]
+        placeholder = "Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]"
+        result["jobs"].extend({
+            "id": 400 + index, "name": placeholder, "head_sha": self.sha,
+            "status": "completed", "conclusion": "skipped",
+            "completed_at": self.now.isoformat(),
+        } for index in range(2))
+        result["total_count"] = len(result["jobs"])
+        self.assertEqual(self.prepare()["ci"]["tested_run"], 10)
+        self.assertEqual(self.prepare()["ci"]["required_jobs"], list(release.planner.FULL))
+
     def test_candidate_must_be_fresh_matching_push_workflow_and_repository(self):
         self.candidate()
         baseline = copy.deepcopy(self.gh.values["actions/runs/10"])

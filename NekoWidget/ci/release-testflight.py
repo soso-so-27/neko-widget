@@ -165,7 +165,10 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             and current.get("repository", {}).get("full_name") == REPOSITORY
             and current.get("head_repository", {}).get("full_name") == REPOSITORY,
             "--main-ci-run is not a successful same-repository main push for --sha.")
-    jobs = executed_jobs_for(gh, current)
+    # A reused main run may contain multiple skipped, unexpanded matrix jobs
+    # with the same display name. Only its unique plan is release evidence;
+    # the required native jobs are verified on the referenced candidate below.
+    jobs = jobs_for(gh, run_id)
     plans = [job for job in jobs if job.get("name") == PLAN_JOB]
     require(len(plans) == 1 and type(plans[0].get("id")) is int
             and plans[0].get("head_sha") == sha and plans[0].get("status") == "completed"
@@ -180,6 +183,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     if source_id is None:
         require(source_sha is None, "CI plan has an incomplete evidence reference.")
         source_id, source_sha = run_id, sha
+        jobs = executed_jobs_for(gh, current)
     else:
         require(type(source_id) is int and source_id > 0 and type(source_sha) is str,
                 "CI plan has a malformed evidence reference.")
