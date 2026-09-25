@@ -21,6 +21,9 @@ interface UsageRow {
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
   auth: { requireSession(token: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
+  /** Operational admission cap across all owners. This does not cap S3 history or request charges. */
+  globalActiveBytesLimit?: number;
+  requireGlobalAdmissionLimit?: boolean;
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
@@ -46,7 +49,10 @@ const revisionValue = (value: unknown): number => {
 export class ArchiveStore {
   constructor(private readonly d: Dependencies) {
     if (!Number.isSafeInteger(d.quotaBytes) || d.quotaBytes < 1 || !Number.isSafeInteger(d.maximumRecords)
-      || d.maximumRecords < 1) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+      || d.maximumRecords < 1 || (d.globalActiveBytesLimit !== undefined
+        && (!Number.isSafeInteger(d.globalActiveBytesLimit) || d.globalActiveBytesLimit < 1))) {
+      throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+    }
   }
   private sessionBindings(session: Session): [string, string, number] {
     return [session.sessionHash, session.ownerId, this.d.now()];
@@ -483,6 +489,11 @@ export class ArchiveStore {
       return { recordId: id, revision: updated.revision };
     }
     if (request.consentVersion !== 'managed-preservation-v1') throw new ServiceError('PRESERVATION_CONSENT_REQUIRED', 403);
+    // A missing operator limit must stop only new intake. Reads, exports,
+    // edits, removals and backup repair remain available to existing owners.
+    if (this.d.requireGlobalAdmissionLimit && this.d.globalActiveBytesLimit === undefined) {
+      throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+    }
     await this.paid(session.ownerId);
     if (photo !== null && !await this.d.photos.validateJPEG(photo)) throw new ServiceError('INVALID_JPEG');
     const operation = crypto.randomUUID();
@@ -497,10 +508,14 @@ export class ArchiveStore {
     await this.d.db.prepare('INSERT OR IGNORE INTO pa_inventory(owner_id) VALUES(?)').bind(session.ownerId).run();
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
+      AND (? IS NULL OR ((SELECT coalesce(sum(quota_bytes),0) FROM pa_records)
+        +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?)
       AND ((SELECT count(*) FROM pa_records WHERE owner_id=? AND deleted=0)
         +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession}
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,
-      session.ownerId, size, this.d.quotaBytes, session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session))
+      session.ownerId, size, this.d.quotaBytes,
+      this.d.globalActiveBytesLimit ?? null, this.d.globalActiveBytesLimit ?? null, size,
+      session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session))
       .first<{ operation_id: string }>();
     if (!reserved) { await this.d.auth.requireSession(token); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
     try {

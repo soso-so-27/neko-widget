@@ -19,6 +19,7 @@ Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run type
 - `PHOTO_VALIDATOR`: `/images/validate-jpeg`。`{photoBase64}` → `{valid:true,mediaType:'image/jpeg',frames:1}`。サーバー側の実デコードと画素数制限が必須。JPEGヘッダーだけで合格にしない。
 - `IDENTITY_INDEX_SECRET`: 32byte以上のbase64url乱数。identity HMACを変えると別所有者になるため、復旧・ローテーション設計なしで変更しない。
 - `OWNER_QUOTA_BYTES` / `MAXIMUM_RECORDS`: 正整数。後者は保存中＋処理中の記録数の上限。削除済みIDは再送防止のため残すが、新規保存枠は消費しない。最終商品の容量・保存期限は未決定。
+- `GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES`: 公開Workerでは必須の正整数。全ownerの現行暗号文と未完了予約の合計がこの値を超える新規保存を、D1の原子的な予約時点で拒否する。既存の閲覧・持ち出しは維持する。これは試験運用の新規受付上限であり、S3の過去版・R2の後片付け待ちobject・API/転送費や請求額の上限ではない。実測と履歴消去の検証前に「月額上限」として案内しない。
 - `CLEANUP_ENABLED=YES`と専用cron。清掃はApple/課金/KMS停止中も動く。削除待ちを1時間ごとに再試行し、7日超の成功でキューを消す。全object棚卸し・バックアップ内削除・監視・復旧試験は公開前に別途必要。
 
 写真/本文の暗号化は `src/key-custody.ts` に実装済み。NKM1（8byte prefix + 上限8KiBの版付きJSON header + ciphertext/tag）はAES-256-GCM、データごとの32byte鍵、12byte IV、128bit tagを使う。header全体をAADにし、保管owner・用途・record/documentまたはrecord/photoのSHA256 contextをheaderと管理鍵の双方へ結び付ける。古いkeyIdを残すので鍵の切替後も旧記録を読む経路はあるが、鍵を実際に保全する責務は外部authorityに残る。JWE/AWS SDKとの形式互換はない。

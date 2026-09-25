@@ -27,6 +27,7 @@ export interface Env {
   IDENTITY_INDEX_SECRET?: string; APPLE_CREDENTIALS_JSON?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   OWNER_QUOTA_BYTES?: string; MAXIMUM_RECORDS?: string;
+  GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES?: string;
   RECOVERY_COPY_ENABLED?: string; RECOVERY_S3_REGION?: string; RECOVERY_S3_BUCKET?: string;
   RECOVERY_S3_ACCOUNT_ID?: string; RECOVERY_S3_ACCESS_KEY_ID?: string;
   RECOVERY_S3_SECRET_ACCESS_KEY?: string; RECOVERY_S3_SESSION_TOKEN?: string;
@@ -191,6 +192,9 @@ function configuredServices(env: Env): Services {
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS),
+    ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
+      : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
+    requireGlobalAdmissionLimit: true,
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery

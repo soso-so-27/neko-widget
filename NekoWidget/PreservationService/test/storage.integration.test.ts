@@ -594,6 +594,44 @@ it('concurrent byte reservations cannot overbook while a lower quota never delet
   expect((await reduced.list(f.session.token)).items).toHaveLength(2);
 });
 
+it('atomically bounds new storage across owners without blocking existing records', async () => {
+  const baseline = (await binding.DB.prepare(`SELECT coalesce(sum(used_bytes+reserved_bytes),0) AS bytes
+    FROM pa_inventory`).first<{ bytes: number }>())!.bytes;
+  const f = await fixture();
+  const firstId = crypto.randomUUID();
+  await f.archive.put(f.session.token, firstId, f.request());
+  const bytes = (await f.archive.usage(f.session.token)).storage.usedBytes;
+  const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+  const bounded = new ArchiveStore({ ...f.options, globalActiveBytesLimit: baseline + bytes * 2 });
+  const attempts = await Promise.allSettled([
+    bounded.put(f.session.token, crypto.randomUUID(), f.request()),
+    bounded.put(other.token, crypto.randomUUID(), f.request()),
+  ]);
+  expect(attempts.filter(value => value.status === 'fulfilled'),
+    JSON.stringify(attempts.map(value => value.status === 'rejected'
+      ? { status: value.status, reason: String(value.reason), code: value.reason?.code } : value)))
+    .toHaveLength(1);
+  expect(attempts.filter(value => value.status === 'rejected'))
+    .toMatchObject([{ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } }]);
+  const total = await binding.DB.prepare('SELECT sum(used_bytes+reserved_bytes) AS bytes FROM pa_inventory')
+    .first<{ bytes: number }>();
+  expect(total?.bytes).toBe(baseline + bytes * 2);
+  const closed = new ArchiveStore({ ...f.options, globalActiveBytesLimit: 1 });
+  expect((await closed.read(f.session.token, firstId)).recordId).toBe(firstId);
+  expect((await closed.list(f.session.token)).items.length).toBeGreaterThan(0);
+  await expect(closed.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'ARCHIVE_CAPACITY_REACHED' });
+  const unconfigured = new ArchiveStore({ ...f.options, requireGlobalAdmissionLimit: true });
+  await expect(unconfigured.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'PRESERVATION_NOT_CONFIGURED' });
+  expect((await unconfigured.read(f.session.token, firstId)).recordId).toBe(firstId);
+  await unconfigured.put(f.session.token, firstId, f.request({ expectedRevision: 1,
+    document: { ...document, text: '保存済みのメモを編集' } }));
+  expect((await unconfigured.read(f.session.token, firstId)).revision).toBe(2);
+  expect(() => new ArchiveStore({ ...f.options, globalActiveBytesLimit: Number.NaN }))
+    .toThrowError(expect.objectContaining({ code: 'PRESERVATION_NOT_CONFIGURED' }));
+});
+
 it('usage rejects inconsistent inventory instead of reporting an empty or inflated archive', async () => {
   const f = await fixture(); await f.archive.put(f.session.token, crypto.randomUUID(), f.request());
   await binding.DB.prepare('UPDATE pa_inventory SET used_bytes=used_bytes+1 WHERE owner_id=?').bind(f.session.ownerId).run();
