@@ -32,6 +32,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 `src/owner-record-inventory.ts` は失効済みownerの記録と削除済みIDを、D1の単一読み取りtransactionでページ取得する助言的API。ownerの無効化、保管中アップロードが0、途中ページでepoch/generationが不変、写真keyが同じowner/recordに属することを確認する。失効は期限切れ・送達・課金の証明ではないため、この一覧だけで物理消去を開始しない。全ページとR2/S3の照合、停止可能な消去台帳、外部証拠の再確認は未実装。
 
+`src/owner-cloud-inventory.ts` と `src/owner-cloud-snapshot.ts` はownerのR2現物とS3の全過去版を読み取り専用で数え、後者は無効ownerのD1参照・R2実体と二巡の物理一覧を突合する。途中でDB世代・R2実体・S3版が変われば結果を破棄する。既存の写真や版の原価を調べる材料であり、全アカウントの請求額、S3内容の完全性、削除権限、復旧完了は証明しない。実クラウド全件での検証と、課金・通知・削除台帳の確定は別途必要。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
