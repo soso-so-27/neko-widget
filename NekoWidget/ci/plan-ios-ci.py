@@ -187,6 +187,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/owner-purge-events.test.ts",
     "test/owner-purge-intent-ledger.test.ts",
     "test/purge-intent-replay.test.ts",
+    "test/purge-execution-claims.test.ts",
     "test/owner-quarantine-restore.test.ts",
     "test/owner-record-inventory.test.ts",
     "test/owner-recovery-copy.test.ts",
@@ -218,7 +219,7 @@ PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "9cbfa7f364a86dc473cf705521da2311a2fdff7de284d60cdaf1fbb335030ed5",
-        "b39139c84fcda4def08c7a35f7971257f3291e293411a085b73ab2fed65e7ae8"
+        "141ca78725e0df497c0587f95e0b530dee2566715a885c39253d606323325f08"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa",
@@ -226,7 +227,7 @@ PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f",
-        "205f324e72b1945ebb3c77ddb61d22c32833b86a436189eafdd69a9ad7235e4e"
+        "d931450666bf6432454ff80e8adb8aef9275fc744ec3931807fe3073ab2dbf6f"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322",
