@@ -34,7 +34,8 @@ describe('private AWS KMS data-key wrapper', () => {
       }
       expect(action).toBe('TrentService.Decrypt');
       expect(body.CiphertextBlob).toBe(encode(raw));
-      return kmsResponse({ KeyId: keyArn, EncryptionAlgorithm: 'SYMMETRIC_DEFAULT', Plaintext: encode(raw) });
+      return kmsResponse({ KeyId: keyArn, EncryptionAlgorithm: 'SYMMETRIC_DEFAULT',
+        KeyMaterialId: 'a'.repeat(64), KeyOrigin: 'AWS_KMS', Plaintext: encode(raw) });
     };
     const wrapped = await handleKeyWrapperRequest(request('/keys/wrap',
       { version: 1, key: encode(raw), contextSHA256 }), env, fetcher);

@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlyStagingRecoveryObjects",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568/recovery/v1/*"
+    },
+    {
+      "Sid": "OnlyStagingRecoveryInventory",
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568",
+      "Condition": { "StringLike": { "s3:prefix": "recovery/v1/*" } }
+    },
+    {
+      "Sid": "OnlyStagingKmsKey",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt"],
+      "Resource": "arn:aws:kms:ap-northeast-1:164892691568:key/339319dc-388b-4bd7-adb8-29d37d836d72"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-r2-local-probe",
+  "main": "scripts/r2-remote-probe.ts",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": false,
+  "r2_buckets": [{
+    "binding": "ARCHIVE",
+    "bucket_name": "neko-preservation-staging-private",
+    "remote": true
+  }]
+}

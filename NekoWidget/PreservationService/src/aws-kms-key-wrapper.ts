@@ -96,7 +96,7 @@ async function kmsCall(env: KeyWrapperEnv, action: 'Encrypt' | 'Decrypt', payloa
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
   const result = value as Record<string, unknown>;
   const allowed = action === 'Encrypt' ? ['CiphertextBlob', 'KeyId', 'EncryptionAlgorithm', 'KeyMaterialId']
-    : ['Plaintext', 'KeyId', 'EncryptionAlgorithm', 'KeyMaterialId'];
+    : ['Plaintext', 'KeyId', 'EncryptionAlgorithm', 'KeyMaterialId', 'KeyOrigin'];
   if (Object.keys(result).some(key => !allowed.includes(key))) throw new Error();
   return result;
 }
