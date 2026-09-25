@@ -347,6 +347,8 @@ private final class FamilyRecordViewModel: ObservableObject {
 
 struct FamilyRecordView: View {
     @StateObject private var model: FamilyRecordViewModel
+    @StateObject private var exporter = RecordExportController()
+    @State private var exportSheetPresented = false
     @State private var adding = false
     @State private var showingInformation = false
     @State private var editing: FamilyRecordEditTarget?
@@ -398,6 +400,13 @@ struct FamilyRecordView: View {
                     Section { Text(error); Button("もう一度読み込む") { Task { await model.reload() } } }
                 }
                 if model.loading { ProgressView("アルバムを確認中") }
+                if exporter.preparing {
+                    Section {
+                        ProgressView("写真とメモを準備しています…")
+                        Button("書き出しを取り消す") { exporter.cancelPreparation() }
+                    }
+                }
+                if let error = exporter.error { Section { Text(error) } }
             }
             .navigationTitle(currentEntryID == nil ? "このまどのアルバム" : "写真と二人のメモ")
             .navigationBarTitleDisplayMode(.inline)
@@ -419,19 +428,40 @@ struct FamilyRecordView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
-                        .accessibilityIdentifier("family-record-information")
+                    if currentEntryID == nil {
+                        Menu {
+                            Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
+                                let client = model.client
+                                guard let snapshot = model.snapshot else { return }
+                                exporter.prepare(build: {
+                                    try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
+                                }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
+                            }
+                            .disabled(!hasExportableRecords || exporter.preparing || exporter.payload != nil)
+                            .accessibilityIdentifier("family-record-export")
+                            Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                                .accessibilityIdentifier("family-record-information")
+                        } label: { Label("アルバムの操作", systemImage: "ellipsis") }
+                            .accessibilityIdentifier("family-record-menu")
+                    } else {
+                        Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                            .accessibilityIdentifier("family-record-information")
+                    }
                 }
             }
             .refreshable { await model.reload() }
         }
         .task { await model.reload() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.clear() }
+            if phase == .background { exporter.cancelPreparation(); model.clear() }
             else if phase == .active { Task { await model.reload() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
             .receive(on: DispatchQueue.main)) { _ in
+                if exportSheetPresented {
+                    exporter.cancelPreparation()
+                    exporter.payload = nil // onDisappear removes the file after the share sheet releases it.
+                } else { exporter.invalidate() }
                 model.clear()
                 Task { await model.reload() }
             }
@@ -442,6 +472,12 @@ struct FamilyRecordView: View {
             FamilyRecordEditor(client: model.client, target: target, fixturePhoto: nil, windowName: windowName) { Task { await model.reload() } }
         }
         .sheet(isPresented: $showingInformation) { information }
+        .sheet(item: $exporter.payload) { value in
+            RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
+                .onAppear { exportSheetPresented = true }
+                .onDisappear { exportSheetPresented = false; exporter.finishSharing(value) }
+        }
+        .onDisappear { exporter.cancelPreparation() }
         .confirmationDialog("この記録から取り下げますか？", isPresented: Binding(
             get: { withdrawing != nil }, set: { if !$0 { withdrawing = nil } })) {
                 if let row = withdrawing {
@@ -455,6 +491,15 @@ struct FamilyRecordView: View {
     }
 
     private var currentEntryID: String? { focusedEntryID ?? selectedEntryID }
+
+    private var hasExportableRecords: Bool {
+        guard let rows = model.snapshot?.catalog.records else { return false }
+        return rows.contains { photo in
+            photo.kind == .photo && (photo.state == .active || rows.contains {
+                $0.kind == .words && $0.entryID == photo.id && $0.state == .active
+            })
+        }
+    }
 
     @ViewBuilder private var recordSection: some View {
         if let snapshot = model.snapshot {

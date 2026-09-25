@@ -69,6 +69,67 @@ enum PhotoMemoryNoteExportError: Error, LocalizedError, Equatable {
 /// Converts an immutable snapshot into a portable, explicitly shared copy.
 /// Never serializes the store's schema, PhotoKit identifiers, revisions or paths.
 enum PhotoMemoryNoteExporter {
+    /// Shared albums supply their own human-readable files. The ZIP writer and
+    /// private temporary-file lifecycle are shared; personal-record metadata is not.
+    static func createPortableArchive(
+        itemCount: Int,
+        fileName: String,
+        introduction: String,
+        fetch: @escaping @Sendable (Int) async throws -> [(name: String, data: Data)],
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        fileManager: FileManager = .default
+    ) async throws -> PhotoMemoryNoteExportPayload {
+        try Task.checkCancellation()
+        guard itemCount > 0, itemCount <= 1100 else { throw PhotoMemoryNoteExportError.emptyRecords }
+        guard temporaryDirectory.isFileURL, fileName == "ねこのまど_書き出し.zip" else {
+            throw PhotoMemoryNoteExportError.storageUnavailable
+        }
+        let id = UUID()
+        let root = temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
+        let directory = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        let payload = PhotoMemoryNoteExportPayload(id: id, fileURL: directory.appendingPathComponent(fileName), directory: directory)
+        var createdDirectory = false
+        var writer: StoredZIP64Writer?
+        do {
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+#if os(iOS)
+            let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.complete]
+#else
+            let attributes: [FileAttributeKey: Any] = [:]
+#endif
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: attributes)
+            createdDirectory = true
+            var protectedDirectory = directory
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try protectedDirectory.setResourceValues(values)
+            guard try protectedDirectory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true else {
+                throw PhotoMemoryNoteExportError.storageUnavailable
+            }
+            let archiveWriter = try StoredZIP64Writer(url: payload.fileURL, fileManager: fileManager)
+            writer = archiveWriter
+            try archiveWriter.append(name: "はじめに.txt", data: Data(introduction.utf8))
+            for index in 0..<itemCount {
+                try Task.checkCancellation()
+                for file in try await fetch(index) { try archiveWriter.append(name: file.name, data: file.data) }
+            }
+            try archiveWriter.finish()
+            try archiveWriter.close()
+            writer = nil
+            try Task.checkCancellation()
+            return payload
+        } catch {
+            try? writer?.close()
+            if createdDirectory {
+                do { try payload.cleanup(using: fileManager) }
+                catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+            }
+            if error is CancellationError { throw CancellationError() }
+            if let known = error as? PhotoMemoryNoteExportError { throw known }
+            if error is CocoaError || error is POSIXError { throw PhotoMemoryNoteExportError.storageUnavailable }
+            throw error
+        }
+    }
     private struct PortableCat: Encodable {
         let exportID: UUID
         let name: String

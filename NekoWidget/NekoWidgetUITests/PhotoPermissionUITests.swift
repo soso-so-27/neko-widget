@@ -3523,6 +3523,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"), object: add)], timeout: 10), .completed)
+        app.buttons["family-record-menu"].tap()
         app.buttons["family-record-information"].tap()
         let ending = app.staticTexts["family-record-ending-explanation"]
         for _ in 0..<3 where !ending.isHittable { app.swipeUp() }
@@ -3551,6 +3552,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["family-record-photo-count"].label.contains("1枚"))
         XCTAssertTrue(albumPhoto.label.contains("自分が追加した写真"),
                       "The album describes who added the copy, not who took or sent the original photo.")
+        app.buttons["family-record-menu"].tap()
+        app.buttons["family-record-export"].tap()
+        let exportSheet = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
+        XCTAssertTrue(exportSheet.waitForExistence(timeout: 30))
+        attach(app, name: "family-record-export-share-sheet")
+        let exportClose = exportSheet.buttons["header.closeButton"].firstMatch
+        XCTAssertTrue(exportClose.waitForExistence(timeout: 5))
+        exportClose.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: exportSheet
+        )], timeout: 5), .completed)
         XCTAssertFalse(app.staticTexts["初めて一緒に過ごした日"].exists,
                        "The album is a photo overview; full notes belong to its detail.")
         // A second photo-only entry checks actual record selection, not just
