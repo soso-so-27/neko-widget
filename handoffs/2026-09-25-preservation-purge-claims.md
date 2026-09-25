@@ -8,9 +8,14 @@
 
 後続の合成部品`owner-purge-abort.ts`では、全版replayを中止claimの前後に行い、aborted eventがS3とD1で読めるまでownerをdisabledのまま維持する。S3成功・D1 claim未完の再試行、S3失敗、D1から見えないerasing eventを試験した。これは**中止の記録まで**であり、本人の利用再開・policy ONのfence・物理消去を有効化していない。
 
+独立レビューで、D1 Time Travel後にS3のerasing eventだけが残る場合、旧スケジューラのD1-only期限切れfence解除が写真欠損ownerを再開し得ると判明した。候補v13ではスケジューラの自動解除と公開のD1-only解除メソッドを削除し、S3再生を行う専用の復帰経路ができるまでdisabledを維持する。古い期限通知でclaimしないよう、確認関数とD1 triggerの両方で10分leaseを要求する。0017はstaging適用済みのため改変せず、専用staging D1へ0018でtriggerを置換した。0018前bookmark `00000011-00000000-000050f1-d6f2f8603c8830ce3f411122dfc1238e`、適用後はowner/record/event/claim各0、lease guardのtrigger 1件。公開・実写真は変更なし。
+
+さらに、S3 abort成功後にD1が巻き戻った場合は、元のS3 event時刻でprepared/aborted参照とclaimを再調停する。新しい時刻でimmutable S3 eventを上書きしない。合成D1試験で確認したが、実S3 Time Travel演習・利用再開は未実施。
+
 ### v12候補のCI投入前記録
 
 - 最初の製品候補は2026-09-25 18:38:33 JSTの`3196965`。以後の調整も初回からの経過時間に含める。
 - 変更挙動は、D1の排他的中止/消去claim、外部S3全版での段階確認、pre-deletion中止eventの安全な記録。owner再開・物理消去・公開APIには接続しない。
 - 直接証拠は、空の専用staging D1への0017適用（owner/record/event/claim各0、claim trigger 4）、合成サービス216テストと型検査の成功、Cloudflare非公開staging R2のCLIおよびremote binding合成往復と0件への復帰。実S3/KMS、実JPEG、実Apple/購入/別端末、12か月持ち出しと35日後の削除は未検証。
 - 保管専用Node job一つを候補CIで確認する。v12のjob timeoutは5分で、待ち時間と初回からの総所要時間の保証ではない。iPhone全件CIは今回の変更の初回検査にしない。並行するTestFlight配布から本線push停止の連絡があり、解除までmainは更新しない。
+- v13で上記3件の安全修正を加えた。対象4ファイル20試験、サービス全216試験、型検査、migration検証はローカルで成功。v13のCI・本線結果はまだ記入しない。
