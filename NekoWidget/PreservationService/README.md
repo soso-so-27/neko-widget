@@ -48,6 +48,8 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 
 `purge-intent-replay.ts` は全S3版を検証したうえでintentごとの段階も返せる。復元の既存`clear/quarantined/deleted`判定は維持する。claim実行器がこれを照合するまで、D1のprepared参照だけで新規claimを発行してはいけない。
 
+`owner-purge-abort.ts` は合成環境のpre-deletion中止専用部品。S3全版で対象intentがprepared/abortedであり、他の未完了intentがないことを確認してから中止claimを占有し、S3 abortedの同一版読戻し→D1参照→S3全版再照合→claim完了まで進める。失敗時はownerをdisabledのまま残す。**ownerを再開する処理は未実装**で、この部品は公開経路・schedulerから呼ばない。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
