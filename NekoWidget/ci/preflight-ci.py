@@ -320,6 +320,12 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                 "decision": "Handoff paths do not trigger iOS CI", "ready": True}
     selected = planner.runtime_scope(paths, event, env)
     required = planner.required_jobs(paths, selected)
+    if selected == planner.ORCHESTRATION_SCOPE:
+        return {"head": head, "base": comparison, "changed_files": paths,
+                "scope": selected, "required_jobs": list(required),
+                "reason": "CI control plane only; Python checks, no Mac jobs or upload",
+                "ready": not include_upload, "release_evidence": False,
+                "note": "The plan job has a 5 minute execution limit; queue time is separate. Not a measured release duration."}
     if required == (planner.BUILD,) and selected != "app-icon-v1":
         selected = "movie-screen-only"
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
@@ -366,7 +372,7 @@ def main(argv=None):
     try:
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
-        if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE}:
+        if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE}:
             result = apply_task_gate(result, read_task_runs(result["head"]), measure_baseline=args.measure_baseline)
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:

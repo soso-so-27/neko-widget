@@ -13,6 +13,10 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- 制御用Python、対応する単体テスト、workflowの起動条件・配布SHA固定だけの変更は `ci-orchestration-v1`。Ubuntuのplan jobで検証し、Mac・Simulator・Widget画面検証は起動しない。native build/test/upload本体の変更や製品変更との混在はこの範囲に含めない。この成功はiOS製品・配布の検証証拠に使えない。
+- 既存のアプリViews内だけの動作変更は `app-view-ui-v1`。アプリ操作・Photos・runtime・buildを確認し、Widget galleryは起動しない。共有モデル・Widget・project・fixtureの変更を含む場合は別途判定する。既存の文字・余白だけの限定判定は維持する。
+- 同一リポジトリのPRはpush CIを使い、PR側ではMac jobを重複起動しない。fork PRは従来通り検証する。main pushは一致する候補の成功証拠を再利用し、一致する候補がない場合はplanで終了する。無条件に広い検証へ戻さず、配布済みでない固定候補を使うか、必要な統合候補を作る。
+
 - `preservation-service-v3` はv2の既知33ファイルへ、予約のowner indexを追加する `migrations/0004_upload_owner_index.sql` だけを加えた34ファイル。専用workflow・必須Node job・通常mode・未知/native/Sharing混在時のfull fallbackを維持し、4 companionのbefore/afterを独立レビューして固定する。v3は初回計測し、v1/v2の時間をv3実績にしない。iOS planの成功と同SHA専用Node jobの成功を別々に確認し、Mac/配布の証拠として流用しない。
 
 - `preservation-service-v2` は専用保管backendと独立private billing authorityだけ。既知33ファイル・通常mode・固定workflow、導入時4つのCI companion全文を照合する。Sharingの署名/権利判定は直接importするが、そのソースやmigrationを変更すればfullへ戻す（専用workflowも起動）。別のJPEG backendとの混在、未知/native/権限差分もfull。候補SHAの `preservation-service.yml` / `Validate preservation identity and storage` の成功とiOS plan成功を別々に確認する。実署名・ローカルD1/R2と合成Apple/KMSであり、private workerのbundleはdry-runのみ。実デプロイや実端末復元・TestFlight証拠ではない。依存導入にlifecycle scriptを使わず、専用job上限5分を全体実績としない。v1実績をv2の実測としない。
@@ -41,20 +45,21 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## 候補からmainへ反映するとき
 
-- 配布時は候補SHA CI → main CI → TestFlightの順で確認する。
+- 配布時は固定した候補SHAのCI成功 → そのSHAをmainへ反映 → 同じSHAでTestFlight。配布CLIの `--ci-run` は成功した候補push CIを直接受け付ける。main CIをもう一度待つ必要はない。既存の `--main-ci-run` も互換引数として利用できる。
 - main CIは、同一リポジトリ・同一workflowの候補ブランチで過去24時間以内に必要ジョブが実行成功している証拠を再利用できる。原則は同一SHA。
 - 別SHAは、成功した候補がmainのancestorであり、独立した研究アプリ `experiments/PetIdentityProbe/` 以外の全trackedファイル（パス・内容・mode・type）が同一と確認できる場合に限る。本アプリ・CIが研究フォルダーを入力にする変更時は、この例外を除去する。
-- 省略ジョブ・失敗・未検証の差分は成功の代用にせず、判定不能時は一式実行する。archive・署名・配布記録は実際の配布SHAで新規に作成する。
+- 省略ジョブ・失敗・未検証の差分は成功の代用にしない。mainで証拠が一致しない場合はMac jobを自動再実行せず原因を示す。archive・署名・配布記録は実際の配布SHAで新規に作成する。
 - mainで成功証拠を再利用する候補CIはpushで起動する。現行の証拠判定はworkflow_dispatchを再利用元にしないため、起動前にこの条件を確認する。
 
 ## TestFlightを配布するとき
 
 - 軽微な修正ごとに配布せず、関連修正を一つのrelease candidateへまとめる。
 - 内部TestFlightは `NekoWidget/ci/release-testflight.py` のdry-runで対象SHA・成功CI・build番号・重複を確認してから同じ引数に `--dispatch` を付ける。毎回workflowのフラグを手入力しない。アプリを変更していない開発基盤だけの修正は、検証のために新しいTestFlightを作らない。
+- 対象SHAがmainに含まれていれば、mainの最新SHAと一致する必要はない。候補のcheckoutから `--sha <候補の完全SHA> --ci-run <その候補の成功run> --build-number <未使用番号>` を使う。配布workflowはそのSHAをcheckoutし、署名metadataも同じSHAへ結び付ける。候補以降にtestflight.yml自体が変わった場合は混在させず停止する。この経路の導入前SHAの再配布には使わない。
 - 配布runが `waiting` の場合は、そのrunの `pending_deployments` を確認する。既に承認された内部配布の対象SHA・buildに一致する場合に、そのrunの `testflight` 環境を承認する。環境の保護ルール自体は変更しない。対象や許可範囲が異なる操作へ流用しない。
 - Appleへのアップロード成功とエラーの有無を基本の完了証拠とし、毎回のApp Store Connect画面確認・再ログインを次の開発の前提にしない。配布が見えない、処理エラーなどの問題がある場合にだけ画面を確認する。アップロード成功と内部配布画面の確認済みは区別して記録する（2026-09-13ユーザー指定）。
 
 ## CIを改善するとき
 
 - CI高速化の試作は専用候補で検証する。製品側は検証済み構成を使うが、既知の時間超過を繰り返すことをこの分離規則で正当化しない。選択理由と所要時間を実行前に確認し、必要なら基盤側を先に改善する。
-- CI改善は全必須チェック成功と候補全体の実測時間・runner分を確認して採用する。未計測の短縮予想を実績として扱わず、失敗部分だけ再実行できる効果も区別して記録する。
+- CI改善は変更に対応する必須チェック成功と実測時間を確認して採用する。`ci-orchestration-v1` の必須はPythonを実行するplan jobのみであり、CI修正のために製品の全画面テストを追加しない。未計測の配布所要時間を短縮実績として扱わない。

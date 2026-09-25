@@ -21,11 +21,13 @@ permissions:
 
 concurrency:
   group: ios-build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   plan:
     name: Select iOS checks and verify reusable evidence
+    # Same-repository branches already have push CI. Forks need PR CI.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

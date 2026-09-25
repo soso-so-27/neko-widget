@@ -149,7 +149,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_main_run_identity_must_match_target(self):
         baseline = copy.deepcopy(self.run)
-        for key, value in [("head_sha", "b" * 40), ("head_branch", "codex/candidate"),
+        for key, value in [("head_sha", "b" * 40), ("head_branch", "unreviewed/candidate"),
                            ("event", "workflow_dispatch"), ("conclusion", "failure"),
                            ("workflow_id", 8), ("repository", {"full_name": "other/repo"})]:
             with self.subTest(key=key):
@@ -262,6 +262,22 @@ class ReleaseTests(unittest.TestCase):
                 self.prepare()
             self.git_values[key] = old
         self.gh.values["git/ref/heads/main"]["object"]["sha"] = "b" * 40
+        self.gh.values[f"compare/{self.sha}...{'b' * 40}"] = {
+            "status": "diverged", "merge_base_commit": {"sha": "c" * 40}}
+        with self.assertRaises(release.Blocked):
+            self.prepare()
+
+    def test_pinned_candidate_ci_remains_valid_when_main_advances(self):
+        tip = "b" * 40
+        self.gh.values["git/ref/heads/main"]["object"]["sha"] = tip
+        comparison = {"status": "ahead", "merge_base_commit": {"sha": self.sha}}
+        self.gh.values[f"compare/{self.sha}...{tip}"] = comparison
+        self.run["head_branch"] = "codex/release-candidate"
+        self.assertEqual(self.prepare()["sha"], self.sha)
+        comparison["status"] = "behind"
+        with self.assertRaises(release.Blocked):
+            self.prepare()
+        comparison.update(status="ahead", merge_base_commit={"sha": "c" * 40})
         with self.assertRaises(release.Blocked):
             self.prepare()
 
@@ -290,10 +306,11 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(log=log), self.assertRaises(release.Blocked):
                 release.legacy_build_number(log, 12)
 
-    def test_title_sha_must_match_run(self):
+    def test_pinned_source_title_reserves_build_even_when_workflow_main_moves(self):
         self.previous["display_title"] = "TestFlight build 164 @ " + "b" * 40
+        self.assertEqual(self.prepare()["previous_reserved_build"], 164)
         with self.assertRaises(release.Blocked):
-            self.prepare()
+            self.prepare(build="164")
 
     def test_legacy_failure_is_not_proof_of_no_upload(self):
         self.previous.update(display_title="old title", conclusion="failure")
@@ -399,10 +416,13 @@ class ReleaseTests(unittest.TestCase):
     def test_workflow_checks_expected_commit_before_signing_and_names_build(self):
         source = (release.ROOT / ".github/workflows/testflight.yml").read_text(encoding="utf-8")
         self.assertIn('run-name: "TestFlight build ' + '$' + '{{ inputs.build_number || github.run_number }} @ '
-                      + '$' + '{{ github.sha }}"', source)
+                      + '$' + '{{ inputs.expected_main_sha || github.sha }}"', source)
         self.assertIn("EXPECTED_MAIN_SHA: " + "$" + "{{ inputs.expected_main_sha }}", source)
-        self.assertIn('[[ "$GITHUB_SHA" != "$EXPECTED_MAIN_SHA" ]]', source)
+        self.assertIn('ref: ${{ inputs.expected_main_sha || github.sha }}', source)
+        self.assertIn('git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" origin/main', source)
         self.assertIn('[[ "$(git rev-parse HEAD)" != "$EXPECTED_MAIN_SHA" ]]', source)
+        self.assertNotIn('--source-commit "$GITHUB_SHA"', source)
+        self.assertIn('--source-commit "$RELEASE_SOURCE_SHA"', source)
         self.assertLess(source.index("Verify the requested main commit"), source.index("Install distribution certificate"))
 
 

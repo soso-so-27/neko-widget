@@ -1,11 +1,11 @@
 name: Archive and upload to TestFlight
-run-name: "TestFlight build ${{ inputs.build_number || github.run_number }} @ ${{ github.sha }}"
+run-name: "TestFlight build ${{ inputs.build_number || github.run_number }} @ ${{ inputs.expected_main_sha || github.sha }}"
 
 on:
   workflow_dispatch:
     inputs:
       expected_main_sha:
-        description: "配布CLIが確認したmainの40桁SHA。指定時はcheckoutとの一致が必須"
+        description: "検証済み・main反映済みの固定40桁SHA。mainが先へ進んでもこの版を配布"
         required: false
         default: ""
         type: string
@@ -56,11 +56,14 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PROJECT_DIRECTORY: NekoWidget
+      RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ inputs.expected_main_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify the requested main commit before signing
@@ -71,11 +74,13 @@ jobs:
           set -euo pipefail
           if [[ -n "$EXPECTED_MAIN_SHA" ]]; then
             if [[ ! "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] \
-              || [[ "$GITHUB_SHA" != "$EXPECTED_MAIN_SHA" ]] \
               || [[ "$(git rev-parse HEAD)" != "$EXPECTED_MAIN_SHA" ]]; then
               echo "The requested main commit changed. Nothing was signed or uploaded." >&2
               exit 1
             fi
+            git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" origin/main
+            # Do not mix a changed signing workflow with an older candidate.
+            git diff --exit-code "$EXPECTED_MAIN_SHA" "$GITHUB_SHA" -- .github/workflows/testflight.yml
           fi
 
       - name: Verify Xcode installation
@@ -1326,7 +1331,7 @@ jobs:
             --ipa "$IPA_PATH" \
             --rollout-policy "$PROJECT_DIRECTORY/ci/moderation-client-rollout-policy.json" \
             --release-environment "$RELEASE_ENVIRONMENT" \
-            --source-commit "$GITHUB_SHA" \
+            --source-commit "$RELEASE_SOURCE_SHA" \
             --release-mode "$SHARING_EXPECTED_MODE" \
             --moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
             --moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
@@ -1459,7 +1464,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
             --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
             --ipa "$IPA_PATH" \
-            --expected-source-commit "$GITHUB_SHA" \
+            --expected-source-commit "$RELEASE_SOURCE_SHA" \
             --expected-build-number "$RELEASE_BUILD_NUMBER" \
             --expected-github-run-id "$GITHUB_RUN_ID" \
             --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
@@ -1529,7 +1534,7 @@ jobs:
             --release-metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
             --artifact-authentication "$RUNNER_TEMP/signed-artifact-authentication.json" \
             --output-directory "$RUNNER_TEMP/local-only-release-evidence" \
-            --source-commit "$GITHUB_SHA" \
+            --source-commit "$RELEASE_SOURCE_SHA" \
             --version "$release_version" \
             --build-number "$processed_build" \
             --release-mode "$SELECTED_RELEASE_MODE" \

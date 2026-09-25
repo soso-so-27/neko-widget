@@ -47,11 +47,17 @@ INDEPENDENT_RESEARCH = "experiments/PetIdentityProbe/"
 # Selection/check-runner/workflow changes are deliberately excluded. Their
 # existing orchestration tests always run in the plan job before selection.
 DEVELOPMENT_SCOPE = "development-tools-v1"
+ORCHESTRATION_SCOPE = "ci-orchestration-v1"
 PLAN_JOB = "Select iOS checks and verify reusable evidence"
 DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "watch-ci-run.py", "test-watch-ci-run.py", "preflight-ci.py",
     "test-preflight-ci.py", "ci-timing-baseline.json",
 ))
+ORCHESTRATION_PATHS = DEVELOPMENT_PATHS | frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "release-testflight.py", "check-development-flow.py",
+    "test-plan-ios-ci.py", "test-ci-lanes.py", "test-widget-ci-scope.py", "test-ci-smoke-scope.py",
+    "test-release-testflight.py", "test-testflight-release-evidence-workflow.py", "test-release-flow.py",
+)) | {".github/workflows/ios-build.yml", ".github/workflows/testflight.yml"}
 
 # A separate Node/Container-only service, never iOS or release evidence.
 # Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
@@ -311,8 +317,8 @@ def preservation_backend_only(paths, base, head):
                         bindings=PRESERVATION_COMPANION_DIGESTS, binding_name="PRESERVATION_COMPANION_DIGESTS")
 
 
-def development_tools_only(paths, base, head):
-    if not paths or not source_paths(paths) or not source_paths(paths) <= DEVELOPMENT_PATHS:
+def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
+    if not paths or not source_paths(paths) or not source_paths(paths) <= allowed:
         return False
     records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
     if records[-1:] == [""]:
@@ -323,7 +329,7 @@ def development_tools_only(paths, base, head):
         fields, path = records[index].split(), records[index + 1]
         if len(fields) != 5 or path not in paths:
             return False
-        if is_handoff(path):
+        if is_handoff(path) or (allowed == ORCHESTRATION_PATHS and Path(path).name.startswith("test-")):
             valid = (fields[0:2], fields[4]) in (([":100644", "100644"], "M"),
                                                ([":000000", "100644"], "A"))
         else:
@@ -333,9 +339,43 @@ def development_tools_only(paths, base, head):
     return True
 
 
+def orchestration_only(paths, base, head):
+    """Python control-plane changes run Python tests, never native UI tests.
+
+    Workflow scheduling/planning and the pre-signing commit guard belong here;
+    native build/test/upload commands must remain unchanged.
+    """
+    if not development_tools_only(paths, base, head, ORCHESTRATION_PATHS):
+        return False
+    for path, boundary in (
+        (".github/workflows/ios-build.yml", "\n  build-without-signing:"),
+        (".github/workflows/testflight.yml", "      - name: Verify Xcode installation"),
+    ):
+        if path not in paths:
+            continue
+        before, after = (git("show", f"{revision}:{path}") for revision in (base, head))
+        if before.count(boundary) != 1 or after.count(boundary) != 1:
+            return False
+        if path.endswith("testflight.yml"):
+            def native_job_header(source):
+                header = source.split("\njobs:\n", 1)[1].split("\n    steps:\n", 1)[0]
+                return "\n".join(line for line in header.splitlines()
+                                 if not line.startswith("      RELEASE_SOURCE_SHA:"))
+            if native_job_header(before) != native_job_header(after):
+                return False
+        # The explicit source variable binds signing metadata to pinned checkout.
+        old_native = before.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
+        new_native = after.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
+        if old_native != new_native:
+            return False
+    return True
+
+
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
+    if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
+        return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
         return (JPEG_JOB,)
     if runtime_scope == PRESERVATION_SCOPE and preservation_paths_only(paths):
@@ -400,6 +440,14 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources <= ORCHESTRATION_PATHS and not sources <= DEVELOPMENT_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and orchestration_only(paths, base, env["GITHUB_SHA"]):
+                return ORCHESTRATION_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
     for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
                                        (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only)):
         if not matches(paths):
@@ -765,7 +813,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -795,6 +843,9 @@ def main() -> None:
         # A failed plan cannot authorize expensive dependent Mac jobs. The
         # normal no-evidence case still executes all required checks below.
         raise SystemExit("Evidence lookup failed; no Mac checks were authorized. Inspect IOS_CI_EVIDENCE_JSON.") from None
+    if evidence is None and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/main":
+        raise SystemExit("No matching candidate evidence for main. No duplicate Mac checks started. "
+                         "Use the tested merged candidate for release, or validate a new integration candidate.")
     values = {
         "build": str(evidence is None).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,

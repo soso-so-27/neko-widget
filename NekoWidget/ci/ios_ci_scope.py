@@ -172,6 +172,13 @@ APP_VIEW_PATHS = frozenset({
     MEMORY_TEST_PATH,
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
+# App-only view sources have no Widget compilation membership. Project/shared
+# model/fixture changes still select their own checks or the full suite. The
+# planner also checks the entire diff and regular file modes before using this.
+APP_ONLY_VIEWS = frozenset(
+    path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+    for path in (Path(__file__).resolve().parents[1] / "NekoWidget" / "Views").rglob("*.swift")
+)
 # v3 is an exact reviewed presentation pair, not permission to change shared
 # authorisation, persistence, transport or revocation implementations.
 FAMILY_PRESENTATION_PATH = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
@@ -868,7 +875,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
     "NekoWidget/ci/run-sharing-runtime-matrix.sh",
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
-                | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
+                | APP_ONLY_VIEWS | APP_VIEW_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
@@ -1528,8 +1535,7 @@ def accepts_paths(scope: str, paths) -> bool:
         # The sole reviewed UI-test file belongs only to the app UI-test
         # target. Its isolated edits need both full app UI shards, but do not
         # change the Widget gallery fixture or any shipped product source.
-        return bool(sources and sources <= APP_VIEW_PATHS and
-                    (sources & APP_VIEW_PRODUCT_PATHS or sources == {MEMORY_TEST_PATH}))
+        return bool(sources and sources <= APP_VIEW_PATHS | APP_ONLY_VIEWS)
     if scope == REVIEWED_APP_SCOPE and CAT_ENTRY_SEARCH_COMPANION in sources:
         # Path prefilter only; reviewed_app_changes must first prove the exact
         # one-line content change and complete manifest before selecting scope.
@@ -1919,6 +1925,13 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         if set(changes) <= WIDGET_LAYOUT_PATHS and presentation_only(changes):
             return WIDGET_STYLE_SCOPE
         return WIDGET_LAYOUT_SCOPE if set(changes) & WIDGET_LAYOUT_PATHS else WIDGET_BEHAVIOR_SCOPE
+    if set(changes) <= APP_ONLY_VIEWS | APP_VIEW_PATHS and not (
+            set(changes) <= MAPPED_VIEWS and presentation_only(changes)):
+        if any(conditional_blocks(before) is None or
+               conditional_blocks(before) != conditional_blocks(after)
+               for before, after in changes.values()):
+            return FULL_SCOPE
+        return APP_VIEW_SCOPE
     if not set(changes) <= MAPPED_VIEWS or not presentation_only(changes):
         return FULL_SCOPE
     has_photo = bool(set(changes) & PHOTO_VIEWS)
