@@ -1442,6 +1442,21 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testShowcaseAlbumEntryRendersBeforeAlbumsAtStandardAndLargeText() {
+        for scenario in ["saved", "seasonal-large"] {
+            let app = launch(scenario)
+            let row = app.buttons["albums-showcase-open"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertTrue(row.isHittable)
+            XCTAssertTrue(row.label.contains("見せるアルバム"))
+            XCTAssertTrue(row.label.contains("写真を選ぶ"))
+            XCTAssertGreaterThanOrEqual(row.frame.height, 64)
+            capture("showcase-entry-\(scenario)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testManagedPreservationMembershipLinkConsentAndRetry() {
         continueAfterFailure = false
         let app = XCUIApplication()

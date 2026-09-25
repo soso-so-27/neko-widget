@@ -1,7 +1,8 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
-/// The same flow is opened from the cat profile and from Photos' emergency menu.
+/// Prepared information belongs to a cat profile; incident drafts remain separate.
 struct CatPreparednessView: View {
     let identityKey: String
     let catName: String
@@ -70,12 +71,10 @@ struct CatPreparednessView: View {
                 } label: {
                     Label("迷子のとき", systemImage: "magnifyingglass")
                 }
-                .disabled(draft.face == nil && draft.body == nil)
                 Link("迷子のときの公式案内", destination:
                     URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/if.html")!)
             } footer: {
-                Text(draft.face == nil && draft.body == nil
-                     ? "まず写真を1枚選んでください。" : "写真と特徴を使って、共有用の画像やチラシを作れます。")
+                Text("写真と特徴を使って、共有用の画像やチラシを作れます。写真は下書きでも選べます。")
             }
 
             if saveError {
@@ -85,7 +84,7 @@ struct CatPreparednessView: View {
                 }
             }
         }
-        .navigationTitle("もしもの備え")
+        .navigationTitle("迷子への備え")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $photoRole) { role in
             NavigationStack {
@@ -148,33 +147,38 @@ extension CatPreparednessStore.PhotoRole: Identifiable {
     var id: String { self == .face ? "face" : "body" }
 }
 
-struct CatPreparednessEntryView: View {
+struct LostCatEmergencyEntryView: View {
     let profiles: [CatProfilePresentation]
     let unregisteredPhotos: [PhotoPresentation]
 
+    private var hasUnregisteredRecord: Bool {
+        CatPreparednessStore.shared.record(for: "unregistered") != CatPreparednessRecord()
+    }
+
     var body: some View {
         Group {
-            if profiles.count == 1, unregisteredPhotos.isEmpty, let profile = profiles.first {
-                preparedView(for: profile)
+            if profiles.count == 1, unregisteredPhotos.isEmpty,
+               !hasUnregisteredRecord, let profile = profiles.first {
+                draftView(for: profile)
+            } else if profiles.isEmpty {
+                unregisteredDraft
             } else {
                 List {
                     ForEach(profiles) { profile in
                         NavigationLink {
-                            preparedView(for: profile)
+                            draftView(for: profile)
                         } label: {
-                            Text(profile.displayName)
+                            HStack(spacing: 12) {
+                                CatProfileThumbnail(photo: profile.coverPhoto)
+                                    .frame(width: 44, height: 44)
+                                Text(profile.displayName)
+                            }
                         }
                     }
                     NavigationLink {
-                        CatPreparednessView(
-                            identityKey: "unregistered",
-                            catName: "",
-                            candidatePhotos: unregisteredPhotos.map {
-                                CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier)
-                            }
-                        )
+                        unregisteredDraft
                     } label: {
-                        Text(profiles.isEmpty ? "写真から始める" : "登録せずに1匹分を準備")
+                        Label(hasUnregisteredRecord ? "未登録の猫" : "登録していない猫", systemImage: "cat")
                     }
                 }
                 .navigationTitle("どの子ですか？")
@@ -182,14 +186,16 @@ struct CatPreparednessEntryView: View {
         }
     }
 
-    private func preparedView(for profile: CatProfilePresentation) -> CatPreparednessView {
-        var seen = Set<String>()
-        let candidates = (profile.confirmedPhotos + unregisteredPhotos.map {
-            CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier)
-        }).filter { seen.insert($0.localIdentifier).inserted }
-        return CatPreparednessView(identityKey: profile.identifier,
-                                   catName: profile.displayName,
-                                   candidatePhotos: candidates)
+    private func draftView(for profile: CatProfilePresentation) -> LostCatDraftView {
+        LostCatDraftView(catName: profile.displayName,
+                         record: CatPreparednessStore.shared.record(for: profile.identifier),
+                         store: .shared)
+    }
+
+    private var unregisteredDraft: LostCatDraftView {
+        LostCatDraftView(catName: "",
+                         record: CatPreparednessStore.shared.record(for: "unregistered"),
+                         store: .shared)
     }
 }
 
@@ -205,9 +211,16 @@ struct LostCatDraftView: View {
     @ObservedObject var store: CatPreparednessStore
 
     @State private var lastSeenAt = Date()
+    @State private var knowsLastSeenAt = false
     @State private var publicCatName = ""
     @State private var lastSeenNear = ""
     @State private var contact = ""
+    @State private var features = ""
+    @State private var collar = ""
+    @State private var approachAdvice = ""
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoImage: UIImage?
+    @State private var photoLoadError = false
     @State private var hasLoadedDefaults = false
     @State private var sharePayload: LostCatSharePayload?
     @State private var shareCleanupURL: URL?
@@ -217,7 +230,10 @@ struct LostCatDraftView: View {
         Form {
             Section {
                 TextField("猫の名前", text: $publicCatName)
-                DatePicker("最後に見た日時", selection: $lastSeenAt, in: ...Date())
+                Toggle("最後に見た日時が分かる", isOn: $knowsLastSeenAt)
+                if knowsLastSeenAt {
+                    DatePicker("最後に見た日時", selection: $lastSeenAt, in: ...Date())
+                }
                 TextField("最後に見た場所（地域・目印）", text: $lastSeenNear)
                 TextField("公開する連絡先", text: $contact)
                     .textInputAutocapitalization(.never)
@@ -225,6 +241,29 @@ struct LostCatDraftView: View {
                 Text("今回の情報")
             } footer: {
                 Text("公開する場所と連絡先を確認してください。自宅の詳しい住所やマイクロチップ番号は入りません。")
+            }
+
+            Section("渡す写真と特徴") {
+                if let image = selectedPhotoImage ?? preparedFaceImage {
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .frame(maxHeight: 220)
+                }
+                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                    Label(selectedPhotoImage == nil && preparedFaceImage == nil
+                          ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo.badge.plus")
+                }
+                TextField("見分ける特徴", text: $features, axis: .vertical)
+                    .lineLimit(2...3)
+                TextField("首輪", text: $collar)
+                TextField("近づき方", text: $approachAdvice, axis: .vertical)
+                    .lineLimit(2...3)
+                Text("この下書きの入力は、猫プロフィールの備えを上書きしません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            if photoLoadError {
+                Section { Text("写真を読み込めませんでした。もう一度選んでください。")
+                    .foregroundStyle(.red) }
             }
 
             if let publicDraft, LostCatFlyerRenderer.fits(publicDraft) {
@@ -240,7 +279,7 @@ struct LostCatDraftView: View {
             } else {
                 Section {
                     Text(publicDraft == nil
-                         ? "猫の名前・場所・連絡先を入れると、渡す画像を確認できます。"
+                         ? "写真・猫の名前・場所・連絡先を入れると、渡す画像を確認できます。"
                          : "文字が画像に収まりません。特徴・場所・連絡先を短くしてご確認ください。")
                         .foregroundStyle(.secondary)
                 }
@@ -255,9 +294,23 @@ struct LostCatDraftView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             guard !hasLoadedDefaults else { return }
-            publicCatName = record.name.isEmpty ? catName : record.name
+            publicCatName = catName.isEmpty ? record.name : catName
             contact = record.contactSuggestion
+            features = record.identifyingFeatures
+            collar = record.collar
+            approachAdvice = record.approachAdvice
             hasLoadedDefaults = true
+        }
+        .onChange(of: selectedPhotoItem) { _, item in
+            Task {
+                guard let data = try? await item?.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data) else {
+                    photoLoadError = true
+                    return
+                }
+                selectedPhotoImage = image
+                photoLoadError = false
+            }
         }
         .sheet(item: $sharePayload, onDismiss: {
             if let shareCleanupURL { try? FileManager.default.removeItem(at: shareCleanupURL) }
@@ -273,24 +326,27 @@ struct LostCatDraftView: View {
         let name = publicCatName.trimmingCharacters(in: .whitespacesAndNewlines)
         let publicContact = contact.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !place.isEmpty, !publicContact.isEmpty,
-              let imageURL = store.photoURL(record.face ?? record.body),
-              let image = UIImage(contentsOfFile: imageURL.path) else { return nil }
+              let image = selectedPhotoImage ?? preparedFaceImage else { return nil }
         let bodyImage = record.face == nil ? nil
             : store.photoURL(record.body).flatMap { UIImage(contentsOfFile: $0.path) }
-        let features = [record.identifyingFeatures,
-                        record.collar.isEmpty ? "" : "首輪: \(record.collar)"]
+        let publicFeatures = [features,
+                        collar.isEmpty ? "" : "首輪: \(collar)"]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }.joined(separator: "／")
         return LostCatPublicDraft(
             name: name,
-            features: features,
-            approachAdvice: record.approachAdvice.trimmingCharacters(in: .whitespacesAndNewlines),
-            lastSeenAt: lastSeenAt,
+            features: publicFeatures,
+            approachAdvice: approachAdvice.trimmingCharacters(in: .whitespacesAndNewlines),
+            lastSeenAt: knowsLastSeenAt ? lastSeenAt : nil,
             lastSeenNear: place,
             contact: publicContact,
             faceImage: image,
             bodyImage: bodyImage
         )
+    }
+
+    private var preparedFaceImage: UIImage? {
+        store.photoURL(record.face ?? record.body).flatMap { UIImage(contentsOfFile: $0.path) }
     }
 
     private func export(_ draft: LostCatPublicDraft, pdf: Bool) {

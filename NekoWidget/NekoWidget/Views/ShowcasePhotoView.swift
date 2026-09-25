@@ -6,10 +6,18 @@ struct ShowcaseOpenOneKey: EnvironmentKey {
     static let defaultValue: ((String) -> Void)? = nil
 }
 
+struct ShowcaseAddPhotoKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
 extension EnvironmentValues {
     var showcaseOpenOne: ((String) -> Void)? {
         get { self[ShowcaseOpenOneKey.self] }
         set { self[ShowcaseOpenOneKey.self] = newValue }
+    }
+    var showcaseAddPhoto: ((String) -> Void)? {
+        get { self[ShowcaseAddPhotoKey.self] }
+        set { self[ShowcaseAddPhotoKey.self] = newValue }
     }
 }
 
@@ -232,12 +240,12 @@ struct ShowcasePreparationView: View {
         return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("人に見せたい写真だけを選べます。お気に入りやメモは変更されません。")
+                    Text("選んだ写真だけを、人に見せられます。お気に入りやメモは変更されません。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     if !profiles.isEmpty || !scopeID.isEmpty {
                         Picker("見せる猫", selection: $scopeID) {
-                            Text("みんな").tag("")
+                            Text("選んだ写真").tag("")
                             if !scopeID.isEmpty && !profiles.contains(where: { $0.identifier == scopeID }) {
                                 Text("前に選んだ猫").tag(scopeID)
                             }
@@ -249,7 +257,7 @@ struct ShowcasePreparationView: View {
                     }
                     if !preparedEntries.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("見せる写真").font(.headline)
+                            Text("見せるアルバムの写真").font(.headline)
                             ForEach(preparedEntries) { entry in
                                 HStack {
                                     if let url = store.imageURL(for: entry),
@@ -316,7 +324,7 @@ struct ShowcasePreparationView: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("見せる写真")
+            .navigationTitle("見せるアルバム")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -324,7 +332,7 @@ struct ShowcasePreparationView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                Button(isPreparing ? "写真を準備中…" : "この写真を見せる") {
+                Button(isPreparing ? "写真を準備中…" : "見せる") {
                     Task { await prepare() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -333,7 +341,7 @@ struct ShowcasePreparationView: View {
                 .padding(12)
                 .background(.regularMaterial)
             }
-            .fullScreenCover(isPresented: $showsViewer) {
+            .fullScreenCover(isPresented: $showsViewer, onDismiss: { dismiss() }) {
                 ShowcasePhotoView(store: store, items: store.availableEntries(in: scopeID).compactMap { entry in
                     store.imageURL(for: entry).map { ShowcasePhotoView.Item.prepared(entry, $0) }
                 }, title: scopeTitle, onClose: { showsViewer = false }, onManage: nil)
@@ -344,7 +352,7 @@ struct ShowcasePreparationView: View {
 
     private var scopeTitle: String {
         profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "うちのこ" : "見せる写真")
+            ?? (scopeID.isEmpty ? "選んだ写真" : "前に選んだ猫")
     }
 
     private var filteredCandidates: [PhotoPresentation] {

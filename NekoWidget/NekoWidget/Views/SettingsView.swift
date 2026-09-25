@@ -72,6 +72,7 @@ struct SettingsView: View {
     let catProfilesActions: CatProfilesViewActions
     let privateWindowDisplayName: String
     let showWidgetPlacementGuide: () -> Void
+    let unregisteredCatPhotos: [PhotoPresentation]
     private let personalArchiveStore: PersonalArchiveStore?
 
     @State private var draft: SettingsPresentation
@@ -118,7 +119,8 @@ struct SettingsView: View {
         catProfilesActions: CatProfilesViewActions,
         privateWindowDisplayName: String,
         showWidgetPlacementGuide: @escaping () -> Void,
-        personalArchiveStore: PersonalArchiveStore? = nil
+        personalArchiveStore: PersonalArchiveStore? = nil,
+        unregisteredCatPhotos: [PhotoPresentation] = []
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
@@ -147,6 +149,7 @@ struct SettingsView: View {
         self.privateWindowDisplayName = privateWindowDisplayName
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
         self.personalArchiveStore = personalArchiveStore
+        self.unregisteredCatPhotos = unregisteredCatPhotos
         _draft = State(initialValue: settings)
     }
 
@@ -179,6 +182,16 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings-cat-profiles")
+
+                NavigationLink {
+                    LostCatEmergencyEntryView(
+                        profiles: catProfilesPresentation.profiles,
+                        unregisteredPhotos: unregisteredCatPhotos
+                    )
+                } label: {
+                    Label("迷子のとき", systemImage: "magnifyingglass")
+                }
+                .accessibilityIdentifier("settings-lost-cat")
 
             } header: {
                 Text("写真とねこ")
