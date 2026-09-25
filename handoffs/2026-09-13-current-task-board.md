@@ -4,7 +4,7 @@
 
 main `d254bda` には外部S3の消去intentを参照するD1台帳と、隔離復元での全版replayが入った。ただし保管サービスは未配備・既定OFFで、実利用者の写真は保存していない。空の専用staging D1へ0013–0016を適用済み（owner/record/消去eventは0）。遠隔D1がtrigger中の`SELECT CASE`を受理しなかったため、同等の`WHEN ... BEGIN SELECT RAISE ... END`へ直した候補は `codex/preservation-fence-bridge-20260925` 上であり、まだmain未反映。写真・メモの物理消去は行っていない。
 
-利用者の費用目安は**保管サービス全体で月3,000円程度**。これは請求の強制上限ではない。容量・月980円商品との整合、解約後12か月の持ち出し負債は、実測後に判断する。AWSはFree planのまま、Paid切替・一般提供の判断はまだ行わない。[費用ゲート](2026-09-25-preservation-cost-gate.md)。Cloudflare管理画面でR2の空バケットは確認できるが、現在のWrangler OAuthはR2 APIに`Authentication error 10000`となり、実R2書込試験は未実施。
+利用者の費用目安は**保管サービス全体で月3,000円程度**。これは請求の強制上限ではない。容量・月980円商品との整合、解約後12か月の持ち出し負債は、実測後に判断する。AWSはFree planのまま、Paid切替・一般提供の判断はまだ行わない。[費用ゲート](2026-09-25-preservation-cost-gate.md)。Cloudflareの追加OAuth承認後、保管専用staging R2 `neko-preservation-staging-private` の一覧・非公開設定を確認。2026-09-25、合成テキスト1件を遠隔保存・読み戻し・その1件だけ削除し、再度object_count=0を確認した。自動期限ルールは未完了multipartの7日中止だけ、bucket lock ruleはなし。これはCLIのR2到達証拠であり、保管WorkerのR2 binding、暗号化、実JPEG、復元、容量計測の成功証拠ではない。
 
 次の製品ゲートは、外部intentと期限fence/解除/物理消去の一貫した状態機械、S3の全版・R2・D1の消去と再一覧、35日以内の最小識別子消去、実請求/容量測定、実Apple・購入・別端末復元と通知の照合。合成の部品試験や空DB migration成功をサービス完成・復元保証と扱わない。並行中のTestFlight配布作業が完了するまで、この候補のmain push/mergeは保留する。
 
