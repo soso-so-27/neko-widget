@@ -1723,8 +1723,10 @@ class PlanTests(unittest.TestCase):
                 path: {"before": scope.source_digest(pair[0]), "after": scope.source_digest(pair[1])}}})
         changes = {path: pair, scope.REVIEW_MANIFEST: ("{}", manifest)}
         self.assertEqual(scope.select_scope(changes), scope.REVIEWED_APP_SCOPE)
+        # Without a visual-review manifest, app-only views retain every app UI
+        # suite and smoke check, while Widget Gallery does not run.
+        self.assertEqual(scope.select_scope({path: pair}), scope.APP_VIEW_SCOPE)
         for altered in (
-            {path: pair},
             dict(changes, **{path: (pair[0] + "unreviewed", pair[1])}),
             dict(changes, **{path: (pair[0], pair[1] + "unreviewed")}),
             dict(changes, **{"NekoWidget/Shared/Storage/AtomicJSON.swift": ("a", "b")}),

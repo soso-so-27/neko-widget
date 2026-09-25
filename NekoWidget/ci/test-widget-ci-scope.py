@@ -310,11 +310,13 @@ class WidgetScopeTests(unittest.TestCase):
                 self.assertEqual(required, (planner.ICON_BUILD,))
                 continue
             self.assertIn(planner.smoke_job(selected), required)
-            if selected != scope.FULL_SCOPE:
+            if selected not in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE):
                 self.assertEqual(scope.smoke_tests(selected), bootstrap)
                 self.assertEqual(planner.smoke_job(selected), planner.BOOTSTRAP_SMOKE)
-        self.assertEqual(scope.smoke_tests(scope.FULL_SCOPE),
-                         bootstrap + scope.OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",))
+        for selected in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE):
+            self.assertEqual(scope.smoke_tests(selected),
+                             bootstrap + scope.OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",))
+            self.assertEqual(planner.smoke_job(selected), planner.SMOKE)
         self.assertTrue(planner.covers_jobs(self.jobs([planner.SMOKE]), (planner.BOOTSTRAP_SMOKE,), sha))
         self.assertFalse(planner.covers_jobs(self.jobs([planner.BOOTSTRAP_SMOKE]), (planner.SMOKE,), sha))
         self.assertFalse(planner.covers_jobs(self.jobs([planner.SMOKE, planner.BOOTSTRAP_SMOKE]),

@@ -96,15 +96,16 @@ source "$1"
                 continue
             with self.subTest(scope=selected_scope):
                 result, metadata, arguments, heavy = self.run_smoke(selected_scope)
+                expected_tests = FULL_TESTS if selected_scope == scope.APP_VIEW_SCOPE else (BOOTSTRAP,)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(metadata["scope"], selected_scope)
                 self.assertEqual(metadata["lane"], "smoke")
-                self.assertEqual(metadata["nativeTests"], [BOOTSTRAP])
+                self.assertEqual(metadata["nativeTests"], list(expected_tests))
                 self.assertEqual(metadata["sharingRuntime"], [])
                 self.assertEqual(metadata["photoBootstrapRuntime"],
                                  "com.apple.CoreSimulator.SimRuntime.iOS-18-6")
                 self.assertEqual([arg for arg in arguments if arg.startswith("-only-testing:")],
-                                 ["-only-testing:" + BOOTSTRAP])
+                                 ["-only-testing:" + test for test in expected_tests])
                 self.assertEqual(arguments[arguments.index("-parallel-testing-enabled") + 1], "NO")
                 self.assertIn("CODE_SIGNING_ALLOWED=YES", arguments)
                 self.assertIn("AD_HOC_CODE_SIGNING_ALLOWED=YES", arguments)

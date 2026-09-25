@@ -22,6 +22,7 @@ WIDGET_BEHAVIOR_SCOPE = "widget-behavior-v1"
 WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
+APP_VIEW_SCOPE = "app-view-ui-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
 # Deliberately absent from SCOPES and native/release scope lookup.
 CI_EVIDENCE_SCOPE = "ci-evidence-maintenance-v1"
@@ -60,6 +61,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
+          APP_VIEW_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -161,6 +163,15 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
     "NekoWidget/ci/test-app-store-screenshot-workflow.py",
     MEMORY_TEST_PATH,
 }) | MEMORY_PROJECTION_PATHS
+# These are app-target views and their UI fixture, not Widget extension or
+# shared-model sources. Keep all app UI suites for arbitrary behavior changes
+# here, but do not run Widget rendering/Gallery variants with no Widget input.
+APP_VIEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Views/MainTabView.swift",
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
+    MEMORY_TEST_PATH,
+})
+APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
 # v3 is an exact reviewed presentation pair, not permission to change shared
 # authorisation, persistence, transport or revocation implementations.
 FAMILY_PRESENTATION_PATH = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
@@ -1508,6 +1519,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == APP_VIEW_SCOPE:
+        return bool(sources and sources <= APP_VIEW_PATHS and sources & APP_VIEW_PRODUCT_PATHS)
     if scope == REVIEWED_APP_SCOPE and CAT_ENTRY_SEARCH_COMPANION in sources:
         # Path prefilter only; reviewed_app_changes must first prove the exact
         # one-line content change and complete manifest before selecting scope.
@@ -1634,7 +1647,8 @@ def smoke_tests(scope: str) -> tuple[str, ...]:
     if scope not in SCOPES:
         raise ValueError("Unknown iOS runtime scope")
     bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",)
-    return bootstrap + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",) if scope == FULL_SCOPE else bootstrap
+    return (bootstrap + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",)
+            if scope in (FULL_SCOPE, APP_VIEW_SCOPE) else bootstrap)
 
 
 def sharing_job(scope: str) -> str:
@@ -1670,6 +1684,8 @@ def native_tests(scope: str) -> tuple[str, ...]:
         return ()  # The build job installs/captures the real app once.
     if scope == REVIEWED_APP_SCOPE:
         return REVIEWED_APP_TESTS
+    if scope == APP_VIEW_SCOPE:
+        return PHOTO_TESTS + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",)
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
         return WIDGET_UI_TESTS + (GALLERY_TEST,)
     if scope == WIDGET_STYLE_SCOPE:
@@ -1689,6 +1705,8 @@ def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
     if scope == FULL_SCOPE:
         return ("runtime",) + FULL_APP_UI_LANES + LANES[2:]
+    if scope == APP_VIEW_SCOPE:
+        return ("runtime",) + FULL_APP_UI_LANES
     if scope == ICON_SCOPE:
         return ()
     if scope == WIDGET_STYLE_SCOPE:
@@ -1830,6 +1848,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if set(changes) <= APP_VIEW_PATHS and set(changes) & APP_VIEW_PRODUCT_PATHS:
+        return APP_VIEW_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
     if reviewed_delivery_membership_changes(changes, managed=True):

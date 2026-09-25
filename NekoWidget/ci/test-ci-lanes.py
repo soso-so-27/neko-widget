@@ -28,6 +28,50 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_app_view_scope_sources_belong_only_to_app_or_ui_test_target(self):
+        project = (CI.parents[0] / "NekoWidget.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
+        phases = dict(re.findall(
+            r"([A-F0-9]{24}) /\* Sources \*/ = \{\s*isa = PBXSourcesBuildPhase;.*?files = \((.*?)\);",
+            project, re.S,
+        ))
+        app_sources = phases["A00000000000000000000021"]
+        ui_test_sources = phases["A00000000000000000000028"]
+        for name in ("MainTabView.swift", "PhotoMemoryNoteLibraryView.swift"):
+            marker = f"/* {name} in Sources */"
+            self.assertIn(marker, app_sources)
+            self.assertEqual(sum(marker in sources for sources in phases.values()), 1)
+        marker = "/* PhotoPermissionUITests.swift in Sources */"
+        self.assertIn(marker, ui_test_sources)
+        self.assertEqual(sum(marker in sources for sources in phases.values()), 1)
+
+    def test_app_view_changes_keep_full_app_checks_without_widget_gallery(self):
+        main = "NekoWidget/NekoWidget/Views/MainTabView.swift"
+        notes = "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift"
+        ui_test = scope.MEMORY_TEST_PATH
+        changed = {path: ("old", "new") for path in (main, notes, ui_test)}
+        selected = scope.APP_VIEW_SCOPE
+        self.assertEqual(scope.select_scope(changed), selected)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui-solo", "app-ui-other"))
+        self.assertEqual(scope.native_tests(selected),
+                         tuple(test for test in scope.native_tests(scope.FULL_SCOPE)
+                               if test != scope.GALLERY_TEST))
+        self.assertEqual(scope.smoke_tests(selected), scope.smoke_tests(scope.FULL_SCOPE))
+        self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
+        self.assertEqual(planner.required_jobs_from_scope(selected), (
+            planner.BUILD, planner.SMOKE,
+            scope.lane_job(selected, "runtime"),
+            scope.lane_job(selected, "app-ui-solo"),
+            scope.lane_job(selected, "app-ui-other"),
+        ))
+        self.assertEqual(planner.required_jobs([ui_test], selected),
+                         planner.required_jobs_from_scope(scope.FULL_SCOPE))
+        for unsafe in (
+            {ui_test: ("old", "new")},
+            dict(changed, **{"NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift": ("old", "new")}),
+            dict(changed, **{"NekoWidget/Shared/AppGroup/SharedContainer.swift": ("old", "new")}),
+        ):
+            self.assertEqual(scope.select_scope(unsafe), scope.FULL_SCOPE)
+
     def test_full_partition_preserves_all_app_suites_and_three_gallery_conditions(self):
         self.assertEqual(scope.lanes(scope.FULL_SCOPE),
                          ("runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-white", "gallery-no-caption"))
