@@ -194,10 +194,10 @@ APP_ONLY_RECORD_EXPORT_PATHS = frozenset({
 APP_ONLY_RECORD_EXPORT_DIGESTS = {
     "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift": (
         "9e0866bd19e30e6ccd04c9d2f146f84532f15791fdc713098162dffab6d97936",
-        "0243d25ac101416407515c7fc435a41b0f70f528dc5493766b3b0835802c454d"),
+        "76a4022d9abd8b63127ecbd3e54840617c57edfcdd582a045f95810265562843"),
     "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift": (
         "63ed488b234637f7b3dadca1cad1a127cdf3c0195627c1879814b4b91c16d556",
-        "67665040d184bfe58ed5ddec6199fb637045f31198c2a14023aa04b6d50cf41e"),
+        "30a934a3b4c5a1b88d754281e2a6480c380df4e9ecd11dd3d9c094834bb294a3"),
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
         "6563cfef08a1553934c2eb89bb19cfd4fd33fd1b028969e623232333136eb9a5",
         "7cb212a833b6bf056a05ad7a84950cf1c823819b17ae440c3a0fffb841e7a422"),
@@ -206,13 +206,13 @@ APP_ONLY_RECORD_EXPORT_DIGESTS = {
         "c0d15efa0af30e4c21006212dbee67ec4246f1e15668e53b6890168e848f2044"),
     "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": (
         "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574",
-        "7860f5a4c2964d73112790d1bab2e645bd64676844f65f45b369f1e10a175aa3"),
+        "b6a1dc5acf0bb7835cc2763757d0106496c87b5e4a987f9081325f7bcd324f4a"),
     "NekoWidget/ci/verify-family-records.swift": (
         "ca811d79911034bbf3fed32a034712ba348ded0ab8e636001b7aa20dcc2df0c6",
-        "d61a8b903af63dca60cc048a281927481a4b243f7d3d12146e8cfcd1b88b928c"),
+        "d63c10007faa1a9ff82655a8c18be57edbbef80b359f2d688fda0613ac8b9b00"),
     "NekoWidget/ci/verify-photo-memory-note-export.swift": (
         "98910b2dea5c12479bfdaee2ce189f9f4d56c9a3993985089e95e7ea47d353cd",
-        "d2eb7c8ac95829b6a6d4e3cf212d4b0993df259d90cfb241a63c57a177cbfd69"),
+        "eb9c1e44e2d6d2c495a7b3bae245b3e06e9546d57e52d20689d9888faeeb41bd"),
 }
 # v3 is an exact reviewed presentation pair, not permission to change shared
 # authorisation, persistence, transport or revocation implementations.
