@@ -77,7 +77,7 @@ GALLERY_CONDITIONS = {
 # FamilyWindowView contains shared detail/zoom and settings; PairingView and
 # SettingsView also own permission/security actions. They remain outside the
 # generic map; a Settings UI diff needs the exact reviewed-memory manifest.
-# New files, helpers and test/fixture changes need a fresh mapping review.
+# Other new files, helpers and test/fixture changes need a fresh mapping review.
 PHOTO_VIEWS = frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
     "HomeView.swift", "LikedPhotosView.swift", "MonthlyWindowView.swift",
     "PhotoAssetImageView.swift", "CatProfilesView.swift",
@@ -1510,7 +1510,12 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
 
 
 def is_handoff(path: str) -> bool:
-    return path.startswith("handoffs/") and path.endswith(".md")
+    if path.startswith("handoffs/") and path.endswith(".md"):
+        return True
+    # Release candidate notes are prose consumed by reviewers, not by the app,
+    # Widget, build, or release helper. Keep this to regular, one-level notes;
+    # planner still rejects a changed file type or executable mode.
+    return re.fullmatch(r"NekoWidget/ci/release-candidates/\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.md", path) is not None
 
 
 def source_paths(paths):
@@ -1520,7 +1525,11 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == APP_VIEW_SCOPE:
-        return bool(sources and sources <= APP_VIEW_PATHS and sources & APP_VIEW_PRODUCT_PATHS)
+        # The sole reviewed UI-test file belongs only to the app UI-test
+        # target. Its isolated edits need both full app UI shards, but do not
+        # change the Widget gallery fixture or any shipped product source.
+        return bool(sources and sources <= APP_VIEW_PATHS and
+                    (sources & APP_VIEW_PRODUCT_PATHS or sources == {MEMORY_TEST_PATH}))
     if scope == REVIEWED_APP_SCOPE and CAT_ENTRY_SEARCH_COMPANION in sources:
         # Path prefilter only; reviewed_app_changes must first prove the exact
         # one-line content change and complete manifest before selecting scope.
@@ -1848,7 +1857,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
-    if set(changes) <= APP_VIEW_PATHS and set(changes) & APP_VIEW_PRODUCT_PATHS:
+    if set(changes) <= APP_VIEW_PATHS and (set(changes) & APP_VIEW_PRODUCT_PATHS or
+                                          set(changes) == {MEMORY_TEST_PATH}):
         return APP_VIEW_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
