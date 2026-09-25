@@ -1935,7 +1935,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["archive-root-fixture-remove"].tap()
         // Removal revokes the old catalog immediately. Its replacement waits
         // for the deliberately delayed fixture builder, so a spinner is safe.
-        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"])
+        waitForCatalog(["active:0;pending:0;visible:1;", "visibleCount:5999;visibleContainsProbe:0"], timeout: 30)
         app.buttons["archive-root-fixture-access"].tap()
         XCTAssertEqual(app.buttons["archive-root-fixture-access"].value as? String, "denied")
         waitForCatalog([";visible:0;", "visibleCount:0;visibleContainsProbe:0"])
