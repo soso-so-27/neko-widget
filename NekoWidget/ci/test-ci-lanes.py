@@ -63,14 +63,20 @@ class LaneTests(unittest.TestCase):
             scope.lane_job(selected, "app-ui-solo"),
             scope.lane_job(selected, "app-ui-other"),
         ))
-        self.assertEqual(planner.required_jobs([ui_test], selected),
-                         planner.required_jobs_from_scope(scope.FULL_SCOPE))
+        release_note = "NekoWidget/ci/release-candidates/2026-09-25-showcase-ia.md"
+        self.assertEqual(scope.select_scope({ui_test: ("old", "new")}), selected)
+        self.assertEqual(scope.select_scope({ui_test: ("old", "new"), release_note: ("", "reviewed")}), selected)
+        self.assertEqual(planner.required_jobs([ui_test, release_note], selected),
+                         planner.required_jobs_from_scope(selected))
         for unsafe in (
-            {ui_test: ("old", "new")},
+            {ui_test: ("old", "new"), "NekoWidget/ci/release-candidates/selector.py": ("", "code")},
+            {ui_test: ("old", "new"), "NekoWidget/ci/release-candidates/nested/review.md": ("", "note")},
+            {ui_test: ("old", "new"), "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift": ("old", "new")},
             dict(changed, **{"NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift": ("old", "new")}),
             dict(changed, **{"NekoWidget/Shared/AppGroup/SharedContainer.swift": ("old", "new")}),
         ):
             self.assertEqual(scope.select_scope(unsafe), scope.FULL_SCOPE)
+            self.assertEqual(planner.required_jobs(list(unsafe), selected), planner.FULL)
 
     def test_full_partition_preserves_all_app_suites_and_three_gallery_conditions(self):
         self.assertEqual(scope.lanes(scope.FULL_SCOPE),

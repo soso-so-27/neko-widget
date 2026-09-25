@@ -24,6 +24,22 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_ui_test_and_release_note_plan_keeps_full_app_checks_without_widget_gallery(self):
+        paths = [scope.MEMORY_TEST_PATH, "NekoWidget/ci/release-candidates/2026-09-25-showcase-ia.md"]
+        history = {**self.history, "observations": self.history["observations"] + [
+            {"scope": scope.APP_VIEW_SCOPE, "candidate_minutes": 54, "run_id": 3, "outcome": "success"}]}
+        with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=paths), \
+                patch.object(planner, "runtime_scope", return_value=scope.APP_VIEW_SCOPE):
+            result = preflight.candidate_plan("origin/main", 90, True, history)
+        self.assertEqual(result["scope"], scope.APP_VIEW_SCOPE)
+        self.assertEqual(result["required_jobs"], list(planner.required_jobs_from_scope(scope.APP_VIEW_SCOPE)))
+        self.assertEqual(len(result["required_jobs"]), 5)
+        self.assertFalse(any("gallery" in name for name in result["required_jobs"]))
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertTrue(result["ready"])
+
     def test_preservation_cost_is_scope_specific_and_first_measurement_only(self):
         history = {**self.history, "observations": self.history["observations"] + [
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},

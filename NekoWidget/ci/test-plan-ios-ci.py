@@ -2204,6 +2204,38 @@ class PlanTests(unittest.TestCase):
             jobs[0]["conclusion"] = result
             self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
 
+    def test_real_git_ui_test_and_release_note_select_app_view_without_widget_gallery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ui_test = scope.MEMORY_TEST_PATH
+            note = "NekoWidget/ci/release-candidates/2026-09-25-review.md"
+            def git(*args):
+                return subprocess.check_output(["git", "-C", directory, *args], text=True,
+                                               encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def commit():
+                git("add", ".")
+                git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "fixture")
+                return git("rev-parse", "HEAD")
+            git("init", "-q")
+            target = root / ui_test
+            target.parent.mkdir(parents=True)
+            target.write_text("before\n")
+            base = commit()
+            git("update-ref", "refs/remotes/origin/main", base)
+            target.write_text("after\n")
+            release_note = root / note
+            release_note.parent.mkdir(parents=True)
+            release_note.write_text("Reviewed release candidate.\n")
+            head = commit()
+            env = dict(self.env, GITHUB_REF="refs/heads/codex/ui-test", GITHUB_SHA=head)
+            with patch.object(planner, "git", side_effect=git):
+                paths = planner.changed_paths({}, env)
+                self.assertEqual(set(paths), {ui_test, note})
+                selected = planner.runtime_scope(paths, {}, env)
+                self.assertEqual(selected, scope.APP_VIEW_SCOPE)
+                self.assertEqual(planner.required_jobs(paths, selected),
+                                 planner.required_jobs_from_scope(scope.APP_VIEW_SCOPE))
+
     def test_real_git_ui_selection_rejects_moves_additions_deletions_and_mode_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2237,6 +2269,16 @@ class PlanTests(unittest.TestCase):
                 commit()
                 self.assertEqual(selected(), scope.PHOTO_SCOPE)
                 git("update-index", "--chmod=+x", "handoffs/change.md")
+                commit(stage=False)
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+                git("update-index", "--chmod=-x", "handoffs/change.md")
+                commit(stage=False)
+                release_note = root / "NekoWidget/ci/release-candidates/2026-09-25-review.md"
+                release_note.parent.mkdir(parents=True)
+                release_note.write_text("Release evidence is reviewed separately.\n")
+                commit()
+                self.assertEqual(selected(), scope.PHOTO_SCOPE)
+                git("update-index", "--chmod=+x", "NekoWidget/ci/release-candidates/2026-09-25-review.md")
                 commit(stage=False)
                 self.assertEqual(selected(), scope.FULL_SCOPE)
                 env = dict(self.env, GITHUB_SHA=git("rev-parse", "HEAD"), GITHUB_EVENT_NAME="workflow_dispatch")
