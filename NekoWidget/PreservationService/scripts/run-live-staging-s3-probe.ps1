@@ -1,4 +1,4 @@
-param([switch]$KmsOnly)
+param([switch]$KmsOnly, [switch]$FlowOnly)
 $ErrorActionPreference = 'Stop'
 $aws = "$env:LOCALAPPDATA\Programs\Amazon\AWSCLIV2\aws.exe"
 $profile = 'neko-preservation-test'
@@ -45,14 +45,20 @@ try {
   }
   if (-not $propagated) { throw 'Temporary IAM key did not propagate' }
   Write-Output 'TEMP_IAM_KEY_READY'
-  if (-not $KmsOnly) {
+  if (-not $KmsOnly -and -not $FlowOnly) {
     & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging.config.ts
     if ($LASTEXITCODE -ne 0) { throw 'Live staging app S3 test failed' }
     Write-Output 'APP_S3_LIVE_STAGING_PASS'
   }
-  & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-kms.config.ts
-  if ($LASTEXITCODE -ne 0) { throw 'Live staging app KMS test failed' }
-  Write-Output 'APP_KMS_LIVE_STAGING_PASS'
+  if (-not $FlowOnly) {
+    & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-kms.config.ts
+    if ($LASTEXITCODE -ne 0) { throw 'Live staging app KMS test failed' }
+    Write-Output 'APP_KMS_LIVE_STAGING_PASS'
+  } else {
+    & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-flow.config.ts
+    if ($LASTEXITCODE -ne 0) { throw 'Live staging flow test failed' }
+    Write-Output 'APP_FLOW_LIVE_STAGING_PASS'
+  }
 } finally {
   foreach ($name in @('AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID',
       'NEKO_PROBE_AWS_SECRET_ACCESS_KEY', 'NEKO_PROBE_AWS_ACCESS_KEY_ID', 'NEKO_PROBE_AWS_REGION',
@@ -69,12 +75,13 @@ try {
     $null = & $aws iam delete-user --user-name $userName --profile $profile
     Write-Output "TEMP_USER_DELETE_EXIT=$LASTEXITCODE"
   }
-  $versionJson = & $aws s3api list-object-versions --bucket $bucket --prefix $objectKey --profile $profile --output json
+  $cleanupPrefix = if ($FlowOnly) { "recovery/v1/$ownerId/" } else { $objectKey }
+  $versionJson = & $aws s3api list-object-versions --bucket $bucket --prefix $cleanupPrefix --profile $profile --output json
   if ($LASTEXITCODE -eq 0) {
     $listing = $versionJson | ConvertFrom-Json
     foreach ($version in @($listing.Versions) + @($listing.DeleteMarkers)) {
-      if ($null -ne $version -and $version.Key -eq $objectKey) {
-        $null = & $aws s3api delete-object --bucket $bucket --key $objectKey --version-id $version.VersionId --profile $profile
+      if ($null -ne $version -and $version.Key.StartsWith($cleanupPrefix, [System.StringComparison]::Ordinal)) {
+        $null = & $aws s3api delete-object --bucket $bucket --key $version.Key --version-id $version.VersionId --profile $profile
         Write-Output "SYNTHETIC_VERSION_DELETE_EXIT=$LASTEXITCODE"
       }
     }
