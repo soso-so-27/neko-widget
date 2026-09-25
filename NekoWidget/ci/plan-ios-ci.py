@@ -94,7 +94,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v9"
+PRESERVATION_SCOPE = "preservation-service-v10"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -116,6 +116,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "migrations/0013_record_recovery_versions.sql",
     "migrations/0014_record_commit_markers.sql",
     "migrations/0015_owner_recovery_generations.sql",
+    "migrations/0016_owner_purge_events.sql",
     "package-lock.json",
     "package.json",
     "scripts/aws-staging-probe-policy.json",
@@ -123,6 +124,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "scripts/run-live-staging-s3-probe.ps1",
     "scripts/verify-notice-evidence-migration.mjs",
     "scripts/verify-owner-recovery-migration.mjs",
+    "scripts/verify-purge-intent-migration.mjs",
     "scripts/verify-purge-fence-migration.mjs",
     "scripts/verify-record-recovery-migration.mjs",
     "src/apple.ts",
@@ -147,6 +149,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "src/owner-photo-inventory.ts",
     "src/owner-primary-reconciliation.ts",
     "src/owner-purge-fence.ts",
+    "src/owner-purge-intent-ledger.ts",
     "src/purge-intent-replay.ts",
     "src/owner-quarantine-restore.ts",
     "src/owner-record-inventory.ts",
@@ -177,6 +180,8 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/owner-photo-inventory.test.ts",
     "test/owner-primary-reconciliation.test.ts",
     "test/owner-purge-fence.test.ts",
+    "test/owner-purge-events.test.ts",
+    "test/owner-purge-intent-ledger.test.ts",
     "test/purge-intent-replay.test.ts",
     "test/owner-quarantine-restore.test.ts",
     "test/owner-record-inventory.test.ts",
@@ -201,27 +206,27 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v9 is a one-candidate review of the entire disabled service tree, not a
+# v10 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
-PRESERVATION_REVIEWED_TREE = "323d7ece3c93bbc0ff2929195b9a7c5c544d587e"
+PRESERVATION_REVIEWED_TREE = "d8cf98b82dbbe8fd63242a375f1be26e9eba373c"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "0529bbea2d032ec95db7ff1c6de069f7df393225722c1728e86d449a6b9d6120",
-        "1b71af83e5fb979f066cc69249f5069550fbe21925ace38de13be9d9f2c63223"
+        "a653acd5fd0a645648189e6d2d810372765c7435981866f7376e221f3ccea66d"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "243c1adec2f36beab35f91d1316e6dec09328f607e82c709cfdef8209132f383",
-        "fcd4a0ae0535336962979e2d70788496d0c4518a07c913e8fce444ddc8f4b302"
+        "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "373473efa6d1c44b9af2715ec13843458e0beb21007c33dd3f2de865ca136499",
-        "ffdbab11ed634d9b525e2d62f6590e1c3da24a910b93f4f9f9b680199f8e8a98"
+        "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "90bb98d7a37185073696195018245e1b855e1810b35cd79e676d2911da3c0bad",
-        "e88990f26f3e5299446f7d244ba290b83ecc783f9556a48d3499e05f33ceca26"
+        "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322"
     ]
 }
 
