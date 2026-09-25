@@ -1,4 +1,6 @@
-# 個人保管：AWS KMS / Cloudflare 実環境準備（未実施）
+# 個人保管：AWS KMS / Cloudflare 実環境準備（当時の手順と現況）
+
+> 2026-09-25 更新：以下の「AWSアカウント未作成」「R2バケット未確認」は作成当時の記録。現在、AWSアカウントは作成済みだが**Free plan**で、KMS/S3の合成データ疎通は部品単位に限る。Cloudflareには保管専用の空R2バケットと空staging D1があり、D1の0013–0016は適用済み。ただしWranglerの現行OAuthはR2 API権限がなく、R2実書込・秘密設定・保管Worker配備は未実施。費用目安はサービス全体で月3,000円程度。[最新の費用ゲート](2026-09-25-preservation-cost-gate.md)と[staging migration記録](2026-09-25-preservation-staging-migrations.md)を優先し、以下をそのまま実施手順と見なさない。
 
 2026-09-23の利用者指定は **AWS KMSを使う**。この資料は利用者のアカウント準備と開発側の接続条件を分ける。利用者確認時点でAWSアカウントは未作成。管理鍵、実R2、実端末復元の成功証拠もない。`PRESERVATION_ENABLED` と `PRESERVATION_KMS_ENABLED` はともに `NO` を維持し、実データ・販売を始めない。
 

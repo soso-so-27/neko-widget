@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
 import type { DurableAuth } from '../src/auth';
 import type { NoticeSubmissions } from '../src/notice-submissions';
+import { verifyFencedPurgeEligibility } from '../src/fenced-purge-eligibility';
 import { OwnerPurgeFence, recoverAbandonedPurgeFences } from '../src/owner-purge-fence';
 import { RetentionLedger, type ExpiryReviewCandidate, type VerifiedMembershipStatus } from '../src/retention-ledger';
 
@@ -127,6 +128,45 @@ it('requires snapshot policy OFF before selecting any lease for automatic thaw',
   expect(await recoverAbandonedPurgeFences(isolated, now + 11 * 60_000)).toBe(0);
   expect(selection).toContain('owner_snapshot_required FROM pa_recovery_write_policy');
   expect(selection).toContain('WHERE singleton=1)=0');
+});
+
+it('rechecks a disabled fence against fresh billing and exact notice evidence', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  const candidate = fenced!;
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async account => account === f.billingAccount ? 'expired' : 'unknown')).toBe(true);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => 'active')).toBe(false);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => { throw new Error('billing unavailable'); })).toBe(false);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => {
+      await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')
+        .bind(f.ownerId).run();
+      return 'expired';
+    })).toBe(false);
+});
+
+it('does not trust the fence after an inventory generation change', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?')
+    .bind(f.ownerId).run();
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now, async () => 'expired')).toBe(false);
+});
+
+it('detects changed notification evidence across the private billing check', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now, async () => {
+    await db.prepare('UPDATE pa_notice_submissions SET recipient_tag=? WHERE owner_id=?')
+      .bind('c'.repeat(64), f.ownerId).run();
+    return 'expired';
+  })).toBe(false);
 });
 
 it('does not fence after a contact change or while storage cleanup is pending', async () => {

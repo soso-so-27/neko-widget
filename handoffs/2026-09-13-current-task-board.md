@@ -1,5 +1,13 @@
 # 現在のタスクと優先順位
 
+## 2026-09-25 個人保管：現在の公開境界と次の作業
+
+main `d254bda` には外部S3の消去intentを参照するD1台帳と、隔離復元での全版replayが入った。ただし保管サービスは未配備・既定OFFで、実利用者の写真は保存していない。空の専用staging D1へ0013–0016を適用済み（owner/record/消去eventは0）。遠隔D1がtrigger中の`SELECT CASE`を受理しなかったため、同等の`WHEN ... BEGIN SELECT RAISE ... END`へ直した候補は `codex/preservation-fence-bridge-20260925` 上であり、まだmain未反映。写真・メモの物理消去は行っていない。
+
+利用者の費用目安は**保管サービス全体で月3,000円程度**。これは請求の強制上限ではない。容量・月980円商品との整合、解約後12か月の持ち出し負債は、実測後に判断する。AWSはFree planのまま、Paid切替・一般提供の判断はまだ行わない。[費用ゲート](2026-09-25-preservation-cost-gate.md)。Cloudflare管理画面でR2の空バケットは確認できるが、現在のWrangler OAuthはR2 APIに`Authentication error 10000`となり、実R2書込試験は未実施。
+
+次の製品ゲートは、外部intentと期限fence/解除/物理消去の一貫した状態機械、S3の全版・R2・D1の消去と再一覧、35日以内の最小識別子消去、実請求/容量測定、実Apple・購入・別端末復元と通知の照合。合成の部品試験や空DB migration成功をサービス完成・復元保証と扱わない。並行中のTestFlight配布作業が完了するまで、この候補のmain push/mergeは保留する。
+
 ## 2026-09-24 個人保管：期限・通知の安全基盤は本線反映済み
 
 通知先変更時の旧証拠無効化、v2送達証拠、期限候補の公平な巡回、読み取り専用S3版一覧を `95a12f8` でmainへ反映。候補iOS 9 jobと保管サービスCI、本線の同一SHA再利用・保管サービスCIが成功。保管専用staging D1の0009–0011は0 owner/recordで適用済み。実通知・期限消去・写真保管は既定OFFで、提供開始ではない。[実行境界](2026-09-23-preservation-expiry-backup-execution.md)を次の判断基準とする。後続ブランチでは削除前owner fenceとR2/D1/S3の読み取り候補を実装し、staging D1へ0012を適用済み。本線反映・実AWS/R2/復元/削除試験は未完。

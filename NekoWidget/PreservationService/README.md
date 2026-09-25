@@ -42,6 +42,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけでは自動解除しない。D1は外部S3に消去開始eventがないことを証明できないため、外部台帳を照合する経路が完成するまでdisabledのまま扱う。現行のpolicy ONのfence開始もDB triggerで拒否しており、これは可用性より誤復帰防止を優先する暫定状態である。
 
+`src/fenced-purge-eligibility.ts` はfence後の読み取り専用再照合。本人・通知・記録世代を二度読み、間に非公開の会員状態を取り直す。`expired`以外や読み取り中の変更ではfalseにするが、S3 intent・物理一覧・消去台帳を検証せず、削除権限にはならない。現行の公開経路やschedulerからは呼ばない。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
