@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { loadOwnerPurgeReplay, reconcileOwnerPurgeEvents } from '../src/purge-intent-replay';
+import { loadOwnerPurgeReplay, loadOwnerPurgeTimeline,
+  reconcileOwnerPurgeEvents, reconcileOwnerPurgeTimeline } from '../src/purge-intent-replay';
 import type { PurgeIntentEvent, PurgeIntentVersion,
   PurgeIntentVersionPage } from '../src/s3-purge-intent';
 
@@ -20,6 +21,26 @@ it('never opens an owner with an unmatched preparation or interrupted erasure', 
   expect(reconcileOwnerPurgeEvents(ownerId, [completed, prepared, erasing])).toBe('deleted');
   expect(reconcileOwnerPurgeEvents(ownerId, [prepared, { ...prepared, stage: 'aborted',
     recordedAt: prepared.recordedAt + 1 }])).toBe('clear');
+});
+
+it('exposes only a validated exact-intent stage for later claim decisions', async () => {
+  expect(reconcileOwnerPurgeTimeline(ownerId, [prepared]).intents)
+    .toMatchObject([{ intentId, stage: 'prepared', ownerEpoch: 2,
+      inventoryGeneration: 8, manifestSha256: null }]);
+  expect(reconcileOwnerPurgeTimeline(ownerId, [erasing, prepared]).intents)
+    .toMatchObject([{ intentId, stage: 'erasing', manifestSha256: 'a'.repeat(64) }]);
+  expect(reconcileOwnerPurgeTimeline(ownerId, [prepared, erasing, completed]))
+    .toMatchObject({ replay: 'deleted', intents: [{ intentId, stage: 'completed' }] });
+  const key = `purge/v1/${ownerId}/${intentId}/prepared`;
+  const store = {
+    listOwnerVersionsPage: async () => ({ versions: [{ key, versionId: 'v1',
+      deleteMarker: false, bytes: 10 }], nextCursor: null }),
+    referenceForListedVersion: async () => ({ key, versionId: 'v1',
+      sha256: 'a'.repeat(64), bytes: 10 }),
+    readExact: async () => prepared,
+  };
+  expect(await loadOwnerPurgeTimeline(store, ownerId))
+    .toMatchObject({ replay: 'quarantined', intents: [{ intentId, stage: 'prepared' }] });
 });
 
 it('rejects missing or contradictory transitions, changed owner evidence and duplicate versions', () => {
