@@ -44,6 +44,8 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 
 `src/fenced-purge-eligibility.ts` はfence後の読み取り専用再照合。本人・通知・記録世代を二度読み、間に非公開の会員状態を取り直す。`expired`以外や読み取り中の変更ではfalseにするが、S3 intent・物理一覧・消去台帳を検証せず、削除権限にはならない。現行の公開経路やschedulerからは呼ばない。
 
+`0017_purge_execution_claims.sql` は、事前fence後に中止または消去のどちらへ進むかを一度だけ占有する作業台帳を加える。S3で読戻したprepared参照がD1にない場合はclaimを拒否し、claim後は既存の10分自動解除も手動のpre-deletion解除も拒否する。aborted/completedへの遷移は対応する外部event参照を要求する。ただしD1参照だけでS3の全版・実削除を証明できず、claimを作る実行器・物理削除・35日後の台帳消去も未実装。migration適用だけでは写真は消えない。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）

@@ -169,6 +169,29 @@ it('detects changed notification evidence across the private billing check', asy
   })).toBe(false);
 });
 
+it('cannot thaw a claimed owner even when the fence is still pre-deletion', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  const item = fenced!;
+  await db.prepare(`INSERT INTO pa_owner_purge_events(owner_id,intent_id,stage,
+    owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
+    recorded_at,manifest_sha256,s3_object_key,s3_version_id,s3_sha256,s3_bytes)
+    VALUES(?,?,'prepared',?,?,?,?,?,?,NULL,?,?,?,1)`)
+    .bind(f.ownerId, item.fenceId, item.ownerEpoch, item.inventoryGeneration,
+      item.candidate.episode, item.candidate.revision, item.candidate.dueAt, now,
+      `purge/v1/${f.ownerId}/${item.fenceId}/prepared`, 'v1', 'a'.repeat(64)).run();
+  await db.prepare(`INSERT INTO pa_purge_execution_claims(owner_id,intent_id,state,
+    owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
+    manifest_sha256,claimed_at) VALUES(?,?,'aborting',?,?,?,?,?,NULL,?)`)
+    .bind(f.ownerId, item.fenceId, item.ownerEpoch, item.inventoryGeneration,
+      item.candidate.episode, item.candidate.revision, item.candidate.dueAt, now).run();
+  await expect(f.fence.abortBeforeDeletion(item.fenceId, f.ownerId, item.ownerEpoch))
+    .rejects.toMatchObject({ code: 'PURGE_FENCE_UNAVAILABLE' });
+  expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+    .bind(f.ownerId).first()).toMatchObject({ disabled: 1, purge_fence_id: item.fenceId });
+});
+
 it('does not fence after a contact change or while storage cleanup is pending', async () => {
   const changed = await fixture();
   await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')
