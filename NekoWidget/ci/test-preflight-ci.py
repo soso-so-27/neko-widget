@@ -29,7 +29,7 @@ class PreflightTests(unittest.TestCase):
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},
             {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
             {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v10")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v11")
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])

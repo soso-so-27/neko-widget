@@ -94,7 +94,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v10"
+PRESERVATION_SCOPE = "preservation-service-v11"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -135,6 +135,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "src/bounded-body.ts",
     "src/contracts.ts",
     "src/documents.ts",
+    "src/fenced-purge-eligibility.ts",
     "src/identity-index.ts",
     "src/index.ts",
     "src/key-custody.ts",
@@ -206,27 +207,27 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v10 is a one-candidate review of the entire disabled service tree, not a
+# v11 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
-PRESERVATION_REVIEWED_TREE = "d8cf98b82dbbe8fd63242a375f1be26e9eba373c"
+PRESERVATION_REVIEWED_TREE = "a12c59828edd48e563d7a7477b86dc56dc6e77bd"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "43683d046ff07fce8f8c7e81271b0cb3d59cc0b81398b635e7609b2f9706a82e",
-        "a653acd5fd0a645648189e6d2d810372765c7435981866f7376e221f3ccea66d"
+        "a653acd5fd0a645648189e6d2d810372765c7435981866f7376e221f3ccea66d",
+        "64aa4c93c012d1f573e73921fd0827eac7a9e5270804090370930328b73cda6d"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "fcd4a0ae0535336962979e2d70788496d0c4518a07c913e8fce444ddc8f4b302",
-        "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa"
+        "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa",
+        "d3ea3aa7ef2c8187a80b53f8ec42b03712caad23ec3027ea9cb70f4c2ecf8255"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "ffdbab11ed634d9b525e2d62f6590e1c3da24a910b93f4f9f9b680199f8e8a98",
-        "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f"
+        "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f",
+        "8271c71f629ac1285b24d691d8de031397939d1493088cc2eae272a6dafec19b"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "e88990f26f3e5299446f7d244ba290b83ecc783f9556a48d3499e05f33ceca26",
-        "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322"
+        "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322",
+        "f308f793735659e7363d00c7d1e0b15582650a91d6405fdb3862a0116fa5257f"
     ]
 }
 

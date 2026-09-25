@@ -70,8 +70,8 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 105)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v10")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 106)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v11")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
