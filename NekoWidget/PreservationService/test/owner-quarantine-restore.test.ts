@@ -55,11 +55,16 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   const photoKey = `personal/${ownerId}/${recordId}/${crypto.randomUUID()}`;
   const metadata = new Uint8Array([78, 75, 77, 49, 1]);
   const photoCiphertext = new Uint8Array([78, 75, 77, 49, 2, 3]);
-  const copied = await records.copy({ ownerId, recordId, revision: 1,
-    initialFingerprint: 'a'.repeat(64), initialOperation: crypto.randomUUID(),
+  const initialOperation = crypto.randomUUID();
+  const base = { ownerId, recordId, initialFingerprint: 'a'.repeat(64), initialOperation };
+  const firstCopy = await records.copy({ ...base, revision: 1,
+    metadata, photoKey: null, photoBytes: 0, quotaBytes: metadata.length,
+    deleted: false, photoCiphertext: null });
+  await records.commit(ownerId, recordId, 1, firstCopy);
+  const copied = await records.copy({ ...base, revision: 2,
     metadata, photoKey, photoBytes: 3, quotaBytes: metadata.length + photoCiphertext.length,
     deleted: false, photoCiphertext });
-  const marker = await records.commit(ownerId, recordId, 1, copied);
+  const marker = await records.commit(ownerId, recordId, 2, copied);
   const issuer = 'https://appleid.apple.com';
   const subject = 'restore-test-subject';
   const credential = await keys.seal(new TextEncoder().encode(JSON.stringify({ issuer, subject,
@@ -68,8 +73,8 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     identityKey: await indexedOwnerIdentity(await identityIndexKey(secret), issuer, subject),
     epoch: 0, disabled: false, purgeFenceId: null, createdAt: 100,
     credential: { ownerEpoch: 0, sealedCredentials: credential, updatedAt: 100 },
-    contact: null, billing: null, retention: null, inventoryGeneration: 1,
-    records: [{ recordId, revision: 1, deleted: false, marker }] };
+    contact: null, billing: null, retention: null, inventoryGeneration: 2,
+    records: [{ recordId, revision: 2, deleted: false, marker }] };
   await owners.copy(owner);
   const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
   const restore = new OwnerQuarantineRestore(
@@ -85,7 +90,13 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .bind(ownerId).first()).toMatchObject({ disabled: 1, epoch: 0 });
   expect(await binding.DB.prepare(`SELECT revision,deleted,photo_key FROM pa_records
     WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId).first())
-    .toMatchObject({ revision: 1, deleted: 0, photo_key: photoKey });
+    .toMatchObject({ revision: 2, deleted: 0, photo_key: photoKey });
+  expect(await binding.DB.prepare(`SELECT count(*) AS count FROM pa_record_recovery_versions
+    WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId).first())
+    .toMatchObject({ count: 2 });
+  expect(await binding.DB.prepare(`SELECT count(*) AS count FROM pa_record_commit_markers
+    WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId).first())
+    .toMatchObject({ count: 2 });
   expect(new Uint8Array(await (await binding.ARCHIVE.get(photoKey))!.arrayBuffer()))
     .toEqual(photoCiphertext);
   expect(await binding.DB.prepare('SELECT count(*) AS count FROM pa_sessions').first())

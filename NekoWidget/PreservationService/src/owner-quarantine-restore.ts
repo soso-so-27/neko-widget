@@ -1,6 +1,7 @@
 import { ServiceError } from './contracts';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
-import { RecordRecoveryCopy } from './record-recovery-copy';
+import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
+  type DiscoveredRecordCommit } from './record-recovery-copy';
 
 const unavailable = () => new ServiceError('OWNER_QUARANTINE_RESTORE_UNAVAILABLE', 503);
 
@@ -92,6 +93,8 @@ export class OwnerQuarantineRestore {
     const markerGroups = new Map(candidate.recordMarkers.map(item => [item.recordId,
       item.markers]));
     let photos = 0;
+    let historyRows = 0;
+    let expectedUsedBytes = 0;
     for (const expected of owner.records) {
       const group = markerGroups.get(expected.recordId);
       if (!group) throw unavailable();
@@ -99,10 +102,28 @@ export class OwnerQuarantineRestore {
         group);
       if (selected.status !== 'ready' || selected.image.revision !== expected.revision
         || selected.image.deleted !== expected.deleted) throw unavailable();
-      const commit = await this.records.inspectCommit(ownerId, expected.marker);
-      if (commit.recordId !== expected.recordId || commit.revision !== expected.revision) {
-        throw unavailable();
+      const commits = new Map<number, DiscoveredRecordCommit>();
+      const intents = new Map<number, DiscoveredDeleteIntent>();
+      for (const marker of group) {
+        const manifest = await this.records.inspectManifest(ownerId, marker);
+        if (manifest.recordId !== expected.recordId) throw unavailable();
+        if (manifest.kind === 'commit') {
+          const current = commits.get(manifest.revision);
+          if (!current || manifest.marker.key === expected.marker.key
+            || manifest.marker.key < current.marker.key) commits.set(manifest.revision, manifest);
+        } else {
+          const current = intents.get(manifest.revision);
+          if (!current || manifest.marker.key < current.marker.key) {
+            intents.set(manifest.revision, manifest);
+          }
+        }
       }
+      const latest = commits.get(expected.revision);
+      if (!latest || latest.marker.key !== expected.marker.key
+        || latest.marker.versionId !== expected.marker.versionId
+        || latest.marker.sha256 !== expected.marker.sha256
+        || latest.marker.bytes !== expected.marker.bytes
+        || commits.size !== expected.revision) throw unavailable();
       const image = selected.image;
       try {
         if (image.photoKey !== null) {
@@ -110,7 +131,9 @@ export class OwnerQuarantineRestore {
           await this.restorePhoto(image.photoKey, image.photoCiphertext);
           photos++;
         }
-        await this.db.batch([
+        expectedUsedBytes += image.quotaBytes;
+        if (!Number.isSafeInteger(expectedUsedBytes)) throw unavailable();
+        const statements: D1PreparedStatement[] = [
           this.db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,
             initial_fingerprint,initial_operation,metadata,photo_key,photo_bytes,
             quota_bytes,deleted) VALUES(?,?,?,?,?,?,?,?,?,?)`)
@@ -118,20 +141,35 @@ export class OwnerQuarantineRestore {
               image.initialFingerprint, image.initialOperation,
               image.metadata?.slice().buffer ?? null, image.photoKey,
               image.photoBytes, image.quotaBytes, image.deleted ? 1 : 0),
-          this.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,
+        ];
+        for (const historical of [...commits.values()].sort((a, b) => a.revision - b.revision)) {
+          statements.push(this.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,
             revision,record_object_key,record_version_id,record_sha256,record_bytes,
             photo_object_key,photo_version_id,photo_sha256,photo_bytes,committed_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .bind(ownerId, expected.recordId, image.revision, commit.record.key,
-              commit.record.versionId, commit.record.sha256, commit.record.bytes,
-              commit.photo?.key ?? null, commit.photo?.versionId ?? null,
-              commit.photo?.sha256 ?? null, commit.photo?.bytes ?? null, now),
-          this.db.prepare(`INSERT INTO pa_record_commit_markers(owner_id,record_id,
+            .bind(ownerId, expected.recordId, historical.revision, historical.record.key,
+              historical.record.versionId, historical.record.sha256, historical.record.bytes,
+              historical.photo?.key ?? null, historical.photo?.versionId ?? null,
+              historical.photo?.sha256 ?? null, historical.photo?.bytes ?? null, now));
+          statements.push(this.db.prepare(`INSERT INTO pa_record_commit_markers(owner_id,record_id,
             revision,marker_object_key,marker_version_id,marker_sha256,marker_bytes,
             confirmed_at) VALUES(?,?,?,?,?,?,?,?)`)
-            .bind(ownerId, expected.recordId, image.revision, expected.marker.key,
-              expected.marker.versionId, expected.marker.sha256, expected.marker.bytes, now),
-        ]);
+            .bind(ownerId, expected.recordId, historical.revision, historical.marker.key,
+              historical.marker.versionId, historical.marker.sha256, historical.marker.bytes, now));
+          historyRows++;
+        }
+        for (const intent of [...intents.values()].sort((a, b) => a.revision - b.revision)) {
+          statements.push(this.db.prepare(`INSERT INTO pa_record_delete_intents(owner_id,
+            record_id,target_revision,record_object_key,intent_object_key,
+            intent_version_id,intent_sha256,intent_bytes,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?)`)
+            .bind(ownerId, expected.recordId, intent.revision, intent.record.key,
+              intent.marker.key, intent.marker.versionId, intent.marker.sha256,
+              intent.marker.bytes, now));
+        }
+        for (let offset = 0; offset < statements.length; offset += 50) {
+          await this.db.batch(statements.slice(offset, offset + 50));
+        }
       } finally {
         image.metadata?.fill(0);
         image.photoCiphertext?.fill(0);
@@ -142,12 +180,18 @@ export class OwnerQuarantineRestore {
       (SELECT count(*) FROM pa_sessions WHERE owner_id=o.owner_id) AS sessions,
       (SELECT count(*) FROM pa_notice_contacts WHERE owner_id=o.owner_id) AS contacts,
       (SELECT count(*) FROM pa_records WHERE owner_id=o.owner_id AND photo_key IS NOT NULL)
-        AS photos
+        AS photos,
+      (SELECT count(*) FROM pa_record_recovery_versions WHERE owner_id=o.owner_id)
+        AS history_rows,
+      (SELECT used_bytes FROM pa_inventory WHERE owner_id=o.owner_id) AS used_bytes
       FROM pa_owners o WHERE o.owner_id=?`).bind(ownerId)
       .first<{ disabled: number; records: number; sessions: number;
-        contacts: number; photos: number }>();
+        contacts: number; photos: number; history_rows: number; used_bytes: number }>();
     if (!count || count.disabled !== 1 || count.records !== candidate.verifiedRecords
-      || count.sessions !== 0 || count.contacts !== 0 || count.photos !== photos) throw unavailable();
+      || count.sessions !== 0 || count.contacts !== 0 || count.photos !== photos
+      || count.history_rows !== historyRows || count.used_bytes !== expectedUsedBytes) {
+      throw unavailable();
+    }
     return { status: 'staged-disabled', ownerId, records: count.records, photos };
   }
 }
