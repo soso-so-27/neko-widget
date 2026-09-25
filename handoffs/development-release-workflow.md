@@ -46,6 +46,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 ## 候補からmainへ反映するとき
 
 - 配布時は固定した候補SHAのCI成功 → そのSHAをmainへ反映 → 同じSHAでTestFlight。配布CLIの `--ci-run` は成功した候補push CIを直接受け付ける。main CIをもう一度待つ必要はない。既存の `--main-ci-run` も互換引数として利用できる。
+- 配布候補のPRはmerge commitで統合する。squash/rebaseは検証済み候補SHAをmainのancestorに残さず、配布証拠がつながらない。統合直後に `git merge-base --is-ancestor <候補SHA> origin/main` を確認してから配布dry-runへ進む。
 - main CIは、同一リポジトリ・同一workflowの候補ブランチで過去24時間以内に必要ジョブが実行成功している証拠を再利用できる。原則は同一SHA。
 - 別SHAは、成功した候補がmainのancestorであり、独立した研究アプリ `experiments/PetIdentityProbe/` 以外の全trackedファイル（パス・内容・mode・type）が同一と確認できる場合に限る。本アプリ・CIが研究フォルダーを入力にする変更時は、この例外を除去する。
 - 省略ジョブ・失敗・未検証の差分は成功の代用にしない。mainで証拠が一致しない場合はMac jobを自動再実行せず原因を示す。archive・署名・配布記録は実際の配布SHAで新規に作成する。
