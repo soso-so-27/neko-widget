@@ -201,11 +201,11 @@ PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
 PRESERVATION_REVIEWED_TREE = "6da01aec45a5d3394a57600f6d253f648e1374be"
-PRESERVATION_WORKFLOW_DIGEST = "c36300e55929d9b4abc56387a390c84b71c71358c42b2fa726b4cb74e23b6c6a"
+PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "09e6e74f6c92716d095b0ee0298c52b0eecd1abe0b4e4ab986eb41065703c975",
-        "1394a5ac51383a5624b794d58a6c456b8780f5edeede5fa2509a387fd3c48f10"
+        "e281e844c603e38cfe586f25af803756d45eed6d0c82293956a5301ea550ace7"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "7e8717ec2b70095473a027b455c61c6439b853327c01dfe22e4be9f9d7bf05f5",
