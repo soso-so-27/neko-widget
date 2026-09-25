@@ -27,7 +27,7 @@
 
 - まず外部intentとD1作業台帳の形式、owner-boundな照合、再試行・二重実行・復帰競合を合成で実装。送信権限と版削除権限を分離し、公開Workerに版削除資格情報を置かない。
 - `src/s3-purge-intent.ts` と `src/purge-intent-replay.ts` は合成環境で検証されたappend-only transportと全版replay。prepared/aborted/erasing/completedの内容なしイベントを版付きS3へ書き、チェックサム・同一版の読戻し・全版列挙ができる。未完了と消去途中は隔離、完了は復元禁止と判定する。オフライン隔離復元の写真ステージ前に全版replayを必須にしたが、実S3での復元試験はまだない。D1 fence・削除実行・35日期限消去には接続していない。S3のIAM権限分離と実環境の安全性も未検証。
-- `0016_owner_purge_events.sql`はS3で検証済みの各イベント参照をD1に追記するための表・遷移guardを追加。`src/owner-purge-intent-ledger.ts`はS3で読戻した参照だけを保存する。`prepared→aborted`または`prepared→erasing→completed`を局所DBで確認するが、D1だけで外部S3の全版を証明しない。identityを含むowner本体の物理消去を妨げないよう、この参照にはowner外部キーを張らず、準備時のみowner行の存在を確認する。合成D1の境界試験は通過。実staging D1への適用、fence/消去からの使用はまだない。
+- `0016_owner_purge_events.sql`はS3で検証済みの各イベント参照をD1に追記するための表・遷移guardを追加。`src/owner-purge-intent-ledger.ts`はS3で読戻した参照だけを保存する。`prepared→aborted`または`prepared→erasing→completed`を局所DBで確認するが、D1だけで外部S3の全版を証明しない。identityを含むowner本体の物理消去を妨げないよう、この参照にはowner外部キーを張らず、準備時のみowner行の存在を確認する。合成D1の境界試験は通過。2026-09-25に空のstaging D1へ0013–0016を適用したが、実S3 intent・fence・消去からの使用はまだない。
 - `revokeOwner`や期限fenceのpolicy ON経路、復元時の台帳再適用、版ごとの消去と再一覧を一つの契約で検証する。D1 Time Travelを使った旧状態の隔離復元と、別端末ownerの本人確認も必要。
 - 実AWS/KMS/R2で**合成データだけ**を削除して版・marker 0を確認し、最後に実iPhoneと請求状態の境界を確認するまで自動消去はOFF。課金不明・通知未達・S3失敗時はデータ保持を優先する。
 

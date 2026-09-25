@@ -29,16 +29,17 @@ CREATE INDEX pa_owner_purge_events_owner ON pa_owner_purge_events(owner_id,inten
 -- D1 cannot prove S3 contents. Only a caller that has read back the exact
 -- S3 version may insert a reference. These guards prevent local ambiguity;
 -- restore must independently list and verify every external event again.
-CREATE TRIGGER pa_owner_purge_events_order BEFORE INSERT ON pa_owner_purge_events
-BEGIN
-  SELECT CASE WHEN NEW.stage='prepared' AND NOT EXISTS(
+CREATE TRIGGER pa_owner_purge_event_owner_required BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage='prepared' AND NOT EXISTS(
     SELECT 1 FROM pa_owners o WHERE o.owner_id=NEW.owner_id)
-    THEN RAISE(ABORT,'PURGE_EVENT_OWNER_MISSING') END;
-  SELECT CASE WHEN NEW.stage='prepared' AND EXISTS(
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_OWNER_MISSING'); END;
+CREATE TRIGGER pa_owner_purge_event_prepared_first BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage='prepared' AND EXISTS(
     SELECT 1 FROM pa_owner_purge_events e
     WHERE e.owner_id=NEW.owner_id AND e.intent_id=NEW.intent_id)
-    THEN RAISE(ABORT,'PURGE_EVENT_PREPARED_NOT_FIRST') END;
-  SELECT CASE WHEN NEW.stage<>'prepared' AND NOT EXISTS(
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_PREPARED_NOT_FIRST'); END;
+CREATE TRIGGER pa_owner_purge_event_requires_prepared BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage<>'prepared' AND NOT EXISTS(
     SELECT 1 FROM pa_owner_purge_events p
     WHERE p.owner_id=NEW.owner_id AND p.intent_id=NEW.intent_id AND p.stage='prepared'
       AND p.owner_epoch=NEW.owner_epoch
@@ -46,22 +47,24 @@ BEGIN
       AND p.retention_episode=NEW.retention_episode
       AND p.retention_revision=NEW.retention_revision AND p.due_at=NEW.due_at
       AND p.recorded_at<=NEW.recorded_at)
-    THEN RAISE(ABORT,'PURGE_EVENT_PREPARATION_MISSING') END;
-  SELECT CASE WHEN NEW.stage='aborted' AND EXISTS(
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_PREPARATION_MISSING'); END;
+CREATE TRIGGER pa_owner_purge_event_abort_before_erasure BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage='aborted' AND EXISTS(
     SELECT 1 FROM pa_owner_purge_events e
     WHERE e.owner_id=NEW.owner_id AND e.intent_id=NEW.intent_id
       AND e.stage IN ('erasing','completed'))
-    THEN RAISE(ABORT,'PURGE_EVENT_ERASURE_CANNOT_ABORT') END;
-  SELECT CASE WHEN NEW.stage='erasing' AND EXISTS(
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_ERASURE_CANNOT_ABORT'); END;
+CREATE TRIGGER pa_owner_purge_event_no_erasure_after_abort BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage='erasing' AND EXISTS(
     SELECT 1 FROM pa_owner_purge_events e
     WHERE e.owner_id=NEW.owner_id AND e.intent_id=NEW.intent_id AND e.stage='aborted')
-    THEN RAISE(ABORT,'PURGE_EVENT_ABORTED_CANNOT_ERASE') END;
-  SELECT CASE WHEN NEW.stage='completed' AND NOT EXISTS(
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_ABORTED_CANNOT_ERASE'); END;
+CREATE TRIGGER pa_owner_purge_event_requires_erasure BEFORE INSERT ON pa_owner_purge_events
+WHEN NEW.stage='completed' AND NOT EXISTS(
     SELECT 1 FROM pa_owner_purge_events e
     WHERE e.owner_id=NEW.owner_id AND e.intent_id=NEW.intent_id AND e.stage='erasing'
       AND e.manifest_sha256=NEW.manifest_sha256
       AND e.recorded_at<=NEW.recorded_at)
-    THEN RAISE(ABORT,'PURGE_EVENT_ERASURE_MISSING') END;
-END;
+BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_ERASURE_MISSING'); END;
 CREATE TRIGGER pa_owner_purge_events_immutable_update BEFORE UPDATE ON pa_owner_purge_events
 BEGIN SELECT RAISE(ABORT,'PURGE_EVENT_IMMUTABLE'); END;

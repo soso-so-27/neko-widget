@@ -6,7 +6,7 @@
 
 Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run typecheck`、`npm test`。WranglerのIDはローカル用ダミーです。remote migration/deployを実行しないでください。
 
-`wrangler.jsonc` の `staging` 環境だけは、共有用DBとは別の空の `neko-preservation-staging` D1を指します。2026-09-24までにmigration 0001–0012を適用し、所有者・記録は0件。`neko-preservation-staging-private` R2は2026-09-25に作成され、公開アクセス無効の状態で、ローカルWorkerのremote bindingから合成文字列の書込・読戻し・削除に成功しました。後続の`probes/`一覧は0件です。写真検証は `neko-preservation-jpeg-disabled` の非公開 `JPEGValidationService` へ向ける設定だけを用意しました。宛先Worker自体は未配備で、secretも未設定です。`PRESERVATION_ENABLED`、清掃、保持時計はすべて `NO`、公開routeも設定しません。R2単体の成功を、鍵・画像検証・Apple接続・写真保存の成功と扱わないでください。既存共有資源へは接続しません。
+`wrangler.jsonc` の `staging` 環境だけは、共有用DBとは別の空の `neko-preservation-staging` D1を指します。2026-09-25にmigration 0001–0016を適用し、所有者・記録・削除eventは0件、復旧policyは両方OFF。[適用記録](../../handoffs/2026-09-25-preservation-staging-migrations.md)。`neko-preservation-staging-private` R2は2026-09-25に作成され、公開アクセス無効の状態で、ローカルWorkerのremote bindingから合成文字列の書込・読戻し・削除に成功しました。後続の`probes/`一覧は0件です。写真検証は `neko-preservation-jpeg-disabled` の非公開 `JPEGValidationService` へ向ける設定だけを用意しました。宛先Worker自体は未配備で、secretも未設定です。`PRESERVATION_ENABLED`、清掃、保持時計はすべて `NO`、公開routeも設定しません。R2単体の成功を、鍵・画像検証・Apple接続・写真保存の成功と扱わないでください。既存共有資源へは接続しません。
 
 テストはローカルD1/R2、実JWT・実AES-256-GCM・実Ed25519署名を使います。鍵を包むauthorityと画像検証の返答はテスト注入です。会員リンクは既存billing検証関数と実ローカルSQLでも確認し、購入権利のprojectionはテスト用データです。Appleは生成鍵と模擬HTTPによる検証であり、実Appleアカウント成功や実KMSの復旧証明ではありません。
 
