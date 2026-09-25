@@ -104,14 +104,16 @@ enum PhotoMemoryNoteExportVerifier {
     private static func verifyPortableArchive(root: URL) async throws {
         let image = Data([0xff, 0xd8, 0xff, 0xd9])
         let sample: [[(name: String, data: Data)]] = [
-            [("001/写真.jpg", image), ("001/メモ.txt", Data("書いた人: 自分\n窓辺".utf8))],
-            [("002/メモ.txt", Data("写真: 取り下げ済み\n書いた人: 相手\n昼寝".utf8))]
+            [("001/photo.jpg", image), ("001/memo.txt", Data("書いた人: 自分\n窓辺".utf8))],
+            [("002/memo.txt", Data("写真: 取り下げ済み\n書いた人: 相手\n昼寝".utf8))]
         ]
         let bundle = try await PhotoMemoryNoteExporter.createPortableArchive(itemCount: sample.count,
             fileName: "ねこのまど_書き出し.zip", introduction: "共有コピー", fetch: { sample[$0] },
             temporaryDirectory: root)
-        try require(try unzipMember(bundle.fileURL, "001/写真.jpg") == image, "Portable archive lost photo bytes")
-        try require(String(data: unzipMember(bundle.fileURL, "002/メモ.txt"), encoding: .utf8)?
+        try require(try unzipMember(bundle.fileURL, "README.txt") == Data("共有コピー".utf8),
+            "Portable archive lost its Japanese introduction")
+        try require(try unzipMember(bundle.fileURL, "001/photo.jpg") == image, "Portable archive lost photo bytes")
+        try require(String(data: unzipMember(bundle.fileURL, "002/memo.txt"), encoding: .utf8)?
             .contains("書いた人: 相手") == true, "Portable archive lost the other author's words")
         let before = try contents(root.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true))
         do {
@@ -217,12 +219,15 @@ enum PhotoMemoryNoteExportVerifier {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = ["-p", archive.path, name]
         let output = Pipe()
+        let diagnostics = Pipe()
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = diagnostics
         try process.run()
         let bytes = output.fileHandleForReading.readDataToEndOfFile()
+        let stderr = diagnostics.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        try require(process.terminationStatus == 0, "system unzip rejected a ZIP64 member")
+        try require(process.terminationStatus == 0,
+            "system unzip rejected ZIP64 member \(name): \(String(decoding: stderr, as: UTF8.self))")
         return bytes
     }
 

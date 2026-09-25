@@ -108,7 +108,7 @@ enum PhotoMemoryNoteExporter {
             }
             let archiveWriter = try StoredZIP64Writer(url: payload.fileURL, fileManager: fileManager)
             writer = archiveWriter
-            try archiveWriter.append(name: "はじめに.txt", data: Data(introduction.utf8))
+            try archiveWriter.append(name: "README.txt", data: Data(introduction.utf8))
             for index in 0..<itemCount {
                 try Task.checkCancellation()
                 for file in try await fetch(index) { try archiveWriter.append(name: file.name, data: file.data) }

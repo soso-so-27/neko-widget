@@ -122,6 +122,7 @@ enum FamilyRecordPortableFiles {
         guard photo.kind == .photo, (photo.state == .active) == (image != nil), index >= 0 else {
             throw FamilyRecordError.invalid
         }
+        // ASCII member names work with older ZIP readers; the text remains Japanese.
         let prefix = String(format: "%03d/", index + 1)
         let date = ISO8601DateFormatter()
         date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -133,7 +134,7 @@ enum FamilyRecordPortableFiles {
         var files: [(name: String, data: Data)] = []
         if let image {
             if let capturedAt = image.capturedAt { lines.append("撮影日: \(date.string(from: capturedAt))") }
-            files.append((prefix + "写真.jpg", image.jpeg))
+            files.append((prefix + "photo.jpg", image.jpeg))
         } else { lines.append("写真: 取り下げ済み（画像は含まれません）") }
         let notes = records.filter { $0.kind == .words && $0.entryID == photo.id && $0.state == .active }
             .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
@@ -145,7 +146,7 @@ enum FamilyRecordPortableFiles {
             if note.updatedAt > note.createdAt { lines.append("更新日: \(stamp(note.updatedAt))") }
             lines.append(text)
         }
-        files.append((prefix + "メモ.txt", Data((lines.joined(separator: "\n") + "\n").utf8)))
+        files.append((prefix + "memo.txt", Data((lines.joined(separator: "\n") + "\n").utf8)))
         return files
     }
 }

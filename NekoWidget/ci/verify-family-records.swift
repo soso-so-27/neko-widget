@@ -95,14 +95,14 @@ struct VerifyFamilyRecords {
         let portableWords = [ownNote.id: "自分の文章", peerNote.id: "相手の文章"]
         let withdrawnFiles = try FamilyRecordPortableFiles.files(index: 0, photo: photo,
             records: portableRecords, words: portableWords, participantID: author, image: nil)
-        require(withdrawnFiles.map { $0.name } == ["001/メモ.txt"], "Withdrawn image must not be restored")
+        require(withdrawnFiles.map { $0.name } == ["001/memo.txt"], "Withdrawn image must not be restored")
         let withdrawnText = String(data: withdrawnFiles[0].data, encoding: .utf8) ?? ""
         require(withdrawnText.contains("自分の文章") && withdrawnText.contains("写真: 取り下げ済み"),
             "Words must survive their photo's withdrawal")
         let activeFiles = try FamilyRecordPortableFiles.files(index: 1, photo: activePhoto,
             records: portableRecords, words: portableWords, participantID: author,
             image: FamilyRecordPhotoContent(jpeg: Data([0xff, 0xd8, 0xff, 0xd9]), capturedAt: nil))
-        require(activeFiles.map { $0.name } == ["002/写真.jpg", "002/メモ.txt"], "Photo and notes must share a folder")
+        require(activeFiles.map { $0.name } == ["002/photo.jpg", "002/memo.txt"], "Photo and notes must share a folder")
         let activeText = String(data: activeFiles[1].data, encoding: .utf8) ?? ""
         require(activeText.contains("相手の文章") && activeText.contains("書いた人: 相手") &&
             !activeText.contains("自分の文章") && !activeText.contains("取り下げた文章"),
