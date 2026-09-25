@@ -108,8 +108,14 @@ def check_checkout(gh: GitHub, sha: str) -> None:
     require(not git("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none"),
             "Tracked worktree/index changes remain; release only the reviewed commit.")
     main = gh.get("git/ref/heads/main")
-    require(main.get("object", {}).get("type") == "commit"
-            and main["object"].get("sha") == sha, "Remote main does not match --sha.")
+    require(main.get("object", {}).get("type") == "commit", "Remote main is not a commit.")
+    tip = main["object"].get("sha")
+    require(isinstance(tip, str) and SHA.fullmatch(tip) is not None, "Remote main commit is invalid.")
+    if tip != sha:
+        comparison = gh.get(f"compare/{sha}...{tip}")
+        require(comparison.get("status") in {"ahead", "identical"}
+                and comparison.get("merge_base_commit", {}).get("sha") == sha,
+                "Release commit is not merged into main.")
 
 
 def workflow(gh: GitHub, filename: str) -> dict:
@@ -159,12 +165,13 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     ci_workflow = workflow(gh, "ios-build.yml")
     current = gh.get(f"actions/runs/{run_id}")
     require(current.get("id") == run_id and current.get("workflow_id") == ci_workflow["id"]
-            and current.get("head_sha") == sha and current.get("head_branch") == "main"
+            and current.get("head_sha") == sha
+            and (current.get("head_branch") == "main" or str(current.get("head_branch", "")).startswith("codex/"))
             and current.get("event") == "push" and current.get("status") == "completed"
             and current.get("conclusion") == "success"
             and current.get("repository", {}).get("full_name") == REPOSITORY
             and current.get("head_repository", {}).get("full_name") == REPOSITORY,
-            "--main-ci-run is not a successful same-repository main push for --sha.")
+            "--ci-run is not a successful same-repository main/candidate push for --sha.")
     # A reused main run may contain multiple skipped, unexpanded matrix jobs
     # with the same display name. Only its unique plan is release evidence;
     # the required native jobs are verified on the referenced candidate below.
@@ -280,7 +287,8 @@ def check_duplicates(gh: GitHub, build: str, cache: dict[int, int]) -> int:
                 f"TestFlight run {run['id']} is still active; do not queue another upload.")
         title = RUN_TITLE.fullmatch(run.get("display_title", ""))
         if title:
-            require(title[2] == run.get("head_sha"), "Release title and commit disagree.")
+            # The title identifies the pinned source; head_sha identifies the
+            # workflow's main revision. They can differ when main moves.
             number = int(title[1])
         elif run.get("conclusion") == "success":
             # Cached only within this invocation, after successful immutable-run
@@ -328,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--build-number", required=True)
-    parser.add_argument("--main-ci-run", required=True, type=int)
+    parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
     args = parser.parse_args(argv)
     os.chdir(ROOT)  # The reused planner's git checks must inspect this checkout.

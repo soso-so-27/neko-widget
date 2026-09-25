@@ -10,6 +10,7 @@ import time
 
 CI = Path(__file__).resolve().parent
 CHECKS = (
+    "test-release-flow.py",
     "test-plan-ios-ci.py",
     "test-ci-lanes.py",
     "test-widget-ci-scope.py",

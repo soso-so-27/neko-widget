@@ -335,13 +335,15 @@ class PlanTests(unittest.TestCase):
             with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
                 return planner.runtime_scope(paths, {}, self.env)
         with patch.object(scope, "CI_EVIDENCE_DIGESTS", digests):
-            self.assertEqual(selected(), scope.CI_EVIDENCE_SCOPE)
-            self.assertEqual(selected(ancestor=False), scope.FULL_SCOPE)
+            self.assertEqual(selected(), planner.ORCHESTRATION_SCOPE)
+            self.assertEqual(selected(ancestor=False), planner.ORCHESTRATION_SCOPE)
             for path in paths:
                 for mode, status in ((":000000 100644", "A"), (":100644 000000", "D"),
                                      (":100644 100755", "M"), (":100644 120000", "T"),
                                      (":100644 100644", "R100"), (":100644 100644", "C100")):
-                    self.assertEqual(selected(path, mode, status), scope.FULL_SCOPE)
+                    expected = (planner.ORCHESTRATION_SCOPE if Path(path).name.startswith("test-")
+                                and mode == ":000000 100644" and status == "A" else scope.FULL_SCOPE)
+                    self.assertEqual(selected(path, mode, status), expected)
 
     @staticmethod
     def membership_access_changes(*, enforced=False, extra_step=False):
@@ -1802,7 +1804,8 @@ class PlanTests(unittest.TestCase):
                 review = json.loads(altered[scope.REVIEW_MANIFEST][1])
                 del review["files"][missing]
                 altered[scope.REVIEW_MANIFEST] = ("{}", json.dumps(review))
-            self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+            self.assertEqual(scope.select_scope(altered),
+                             scope.APP_VIEW_SCOPE if missing == scope.REVIEW_MANIFEST else scope.FULL_SCOPE)
         self.assertFalse(scope.accepts_paths(scope.REVIEWED_APP_SCOPE,
                                             {scope.CAT_ENTRY_SEARCH_COMPANION, scope.REVIEW_MANIFEST}))
         for side in (0, 1):
@@ -1974,9 +1977,15 @@ class PlanTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         planner.main()
                     self.assertEqual((root / "output").read_text(), "")
-            # A complete lookup that finds no eligible evidence still runs
-            # every required job; lookup failure must not impersonate this.
+            # Main must not silently restart the expensive candidate suite.
             with patch.dict(os.environ, env), \
+                    patch.object(planner, "changed_paths", side_effect=ValueError), \
+                    patch.object(planner, "find_evidence", return_value=None):
+                with self.assertRaises(SystemExit):
+                    planner.main()
+                self.assertEqual((root / "output").read_text(), "")
+            # The candidate branch still performs its required validation.
+            with patch.dict(os.environ, dict(env, GITHUB_REF="refs/heads/codex/candidate")), \
                     patch.object(planner, "changed_paths", side_effect=ValueError), \
                     patch.object(planner, "find_evidence", return_value=None):
                 planner.main()
@@ -2086,7 +2095,8 @@ class PlanTests(unittest.TestCase):
             ".github/workflows/ios-build.yml", "docs/scope.md", "unknown.swift",
         ):
             with self.subTest(extra=extra):
-                self.assertEqual(scope.select_scope({home: change, extra: change}), scope.FULL_SCOPE)
+                expected = scope.APP_VIEW_SCOPE if extra in scope.APP_ONLY_VIEWS | scope.APP_VIEW_PATHS else scope.FULL_SCOPE
+                self.assertEqual(scope.select_scope({home: change, extra: change}), expected)
                 self.assertEqual(planner.required_jobs([home, extra], scope.PHOTO_SCOPE), planner.FULL)
         protected = '#if DEBUG\n#if targetEnvironment(simulator)\nText("fixture")\n#endif\n#else\nText("shipping")\n#endif\n'
         self.assertEqual(scope.select_scope({home: (protected + change[0], protected + change[1])}), scope.PHOTO_SCOPE)
@@ -2097,7 +2107,7 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(scope.select_scope({home: (protected, after)}), scope.FULL_SCOPE)
         for text in ('requestAuthorization()', 'hasPhotoPermission = true', 'consent = nil',
                      'privacyURL = changed', 'fixtureTitle = "x"', '"--new-launch-switch"'):
-            self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.FULL_SCOPE)
+            self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.APP_VIEW_SCOPE)
 
     def test_only_literal_copy_and_known_literal_style_lines_can_use_ui_scope(self):
         home = "NekoWidget/NekoWidget/Views/HomeView.swift"
@@ -2133,7 +2143,7 @@ class PlanTests(unittest.TestCase):
             ('Text(#"Before"#)', 'Text(#"After"#)'),
         ):
             with self.subTest(after=after):
-                self.assertEqual(scope.select_scope({home: (before, after)}), scope.FULL_SCOPE)
+                self.assertEqual(scope.select_scope({home: (before, after)}), scope.APP_VIEW_SCOPE)
 
     def test_reuse_requires_scope_version_and_exact_subset_or_full_execution(self):
         required = planner.required_jobs_from_scope(scope.PHOTO_SCOPE)

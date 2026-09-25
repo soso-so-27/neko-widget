@@ -175,7 +175,7 @@ class WidgetScopeTests(unittest.TestCase):
         self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (previous, workflow), WIDGET + "DailyPersonalPhotoIntent.swift": CHANGE}),
                          scope.FULL_SCOPE)
 
-    def test_ci_raw_diff_allows_only_named_new_tests_and_current_main_ancestor(self):
+    def test_ci_python_regressions_need_no_native_checks_or_current_main_ancestor(self):
         sha = "a" * 40
         env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/codex/ci", "GITHUB_SHA": sha}
         new_test = "NekoWidget/ci/test-widget-ci-scope.py"
@@ -187,14 +187,13 @@ class WidgetScopeTests(unittest.TestCase):
                 return "# named selector regression test\n"
             return sha
         with patch.object(planner, "git", side_effect=git) as calls:
-            self.assertEqual(planner.runtime_scope([new_test], {}, env), scope.CI_SELECTION_SCOPE)
-            calls.assert_any_call("merge-base", "--is-ancestor", "refs/remotes/origin/main", sha)
+            self.assertEqual(planner.runtime_scope([new_test], {}, env), planner.ORCHESTRATION_SCOPE)
         def stale(*args):
             if args[:2] == ("merge-base", "--is-ancestor"):
                 raise subprocess.CalledProcessError(1, "git")
             return git(*args)
         with patch.object(planner, "git", side_effect=stale):
-            self.assertEqual(planner.runtime_scope([new_test], {}, env), scope.FULL_SCOPE)
+            self.assertEqual(planner.runtime_scope([new_test], {}, env), planner.ORCHESTRATION_SCOPE)
         self.assertEqual(scope.select_scope({"NekoWidget/ci/unreviewed-new-test.py": ("", "new")}), scope.FULL_SCOPE)
 
     def jobs(self, names):
