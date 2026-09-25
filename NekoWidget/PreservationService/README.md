@@ -6,7 +6,7 @@
 
 Node 22.17以上で `npm ci --ignore-scripts --legacy-peer-deps`、`npm run typecheck`、`npm test`。WranglerのIDはローカル用ダミーです。remote migration/deployを実行しないでください。
 
-`wrangler.jsonc` の `staging` 環境だけは、共有用DBとは別の空の `neko-preservation-staging` D1を指します。2026-09-24までにmigration 0001–0012を適用し、所有者・記録は0件。`neko-preservation-staging-private` R2は2026-09-25に作成され、公開アクセス無効の状態で、ローカルWorkerのremote bindingから合成文字列の書込・読戻し・削除に成功しました。後続の`probes/`一覧は0件です。写真検証は `neko-preservation-jpeg-disabled` の非公開 `JPEGValidationService` へ向ける設定だけを用意しました。宛先Worker自体は未配備で、secretも未設定です。`PRESERVATION_ENABLED`、清掃、保持時計はすべて `NO`、公開routeも設定しません。R2単体の成功を、鍵・画像検証・Apple接続・写真保存の成功と扱わないでください。既存共有資源へは接続しません。
+`wrangler.jsonc` の `staging` 環境だけは、共有用DBとは別の空の `neko-preservation-staging` D1を指します。2026-09-25にmigration 0001–0016を適用し、所有者・記録・削除eventは0件、復旧policyは両方OFF。[適用記録](../../handoffs/2026-09-25-preservation-staging-migrations.md)。`neko-preservation-staging-private` R2は2026-09-25に作成され、公開アクセス無効の状態で、ローカルWorkerのremote bindingから合成文字列の書込・読戻し・削除に成功しました。後続の`probes/`一覧は0件です。写真検証は `neko-preservation-jpeg-disabled` の非公開 `JPEGValidationService` へ向ける設定だけを用意しました。宛先Worker自体は未配備で、secretも未設定です。`PRESERVATION_ENABLED`、清掃、保持時計はすべて `NO`、公開routeも設定しません。R2単体の成功を、鍵・画像検証・Apple接続・写真保存の成功と扱わないでください。既存共有資源へは接続しません。
 
 テストはローカルD1/R2、実JWT・実AES-256-GCM・実Ed25519署名を使います。鍵を包むauthorityと画像検証の返答はテスト注入です。会員リンクは既存billing検証関数と実ローカルSQLでも確認し、購入権利のprojectionはテスト用データです。Appleは生成鍵と模擬HTTPによる検証であり、実Appleアカウント成功や実KMSの復旧証明ではありません。
 
@@ -39,6 +39,16 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 `src/s3-purge-intent.ts` は期限消去の外部台帳候補。写真・メモ本文・宛先を含まないprepared/aborted/erasing/completedイベントを、別権限の版付きS3 prefixへ追記し、SHA256・指定版の読戻し・全版一覧で検証する。`src/purge-intent-replay.ts` は全版を読戻して、未完了の準備・消去途中を隔離、完了した消去を復元禁止と判定する。オフライン隔離復元はこの全版replayが`clear`のときだけ写真をステージする。復元後のowner有効化経路はなく、復元時の同時更新防止と実S3を使った試験は未完。公開Worker・cron・fence・削除実行からはまだ呼ばない。D1失効状態との原子的な照合、作業再開、完了後の最小識別子だけ最大35日保持する実処理、実IAMのprefix分離は未実装・未検証。2026-09-25の利用者判断は「内容や連絡先のない削除済み識別子を最大35日」であり、長期の手動バックアップは作らない前提。実装済みのデータ保持期間や削除保証と誤認しない。
 
 `0016_owner_purge_events.sql` は外部S3 intentの**参照だけ**をD1へ追記する台帳。`src/owner-purge-intent-ledger.ts` はS3同一版の読戻し後だけ参照を保存する孤立部品。prepared→abortedまたはprepared→erasing→completed以外を拒否し、登録済み参照のUPDATEを拒否する。準備時はownerの存在を要求する一方、削除完了後にidentityを含むowner行を消せるよう参照自体には外部キーを張らない。D1単独では外部objectの存在・内容・追加版を証明できないので、復元時にはS3全版の再走査が必須。現在のfence・消去実行からはまだ参照しない。35日後の識別子消去を実装する余地としてD1参照のDELETEは許容するが、そのタイミングを制御する処理も未実装。migrationを適用しても期限消去は始まらない。
+
+owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけでは自動解除しない。D1は外部S3に消去開始eventがないことを証明できないため、外部台帳を照合する経路が完成するまでdisabledのまま扱う。現行のpolicy ONのfence開始もDB triggerで拒否しており、これは可用性より誤復帰防止を優先する暫定状態である。
+
+`src/fenced-purge-eligibility.ts` はfence後の読み取り専用再照合。本人・通知・記録世代を二度読み、間に非公開の会員状態を取り直す。`expired`以外や読み取り中の変更ではfalseにするが、S3 intent・物理一覧・消去台帳を検証せず、削除権限にはならない。現行の公開経路やschedulerからは呼ばない。
+
+`0017_purge_execution_claims.sql` は、事前fence後に中止または消去のどちらへ進むかを一度だけ占有する作業台帳を加える。S3で読戻したprepared参照がD1にない場合はclaimを拒否し、claim後は既存の10分自動解除も手動のpre-deletion解除も拒否する。aborted/completedへの遷移は対応する外部event参照を要求する。ただしD1参照だけでS3の全版・実削除を証明できず、claimを作る実行器・物理削除・35日後の台帳消去も未実装。migration適用だけでは写真は消えない。
+
+`purge-intent-replay.ts` は全S3版を検証したうえでintentごとの段階も返せる。復元の既存`clear/quarantined/deleted`判定は維持する。claim実行器がこれを照合するまで、D1のprepared参照だけで新規claimを発行してはいけない。
+
+`owner-purge-abort.ts` は合成環境のpre-deletion中止専用部品。S3全版で対象intentがprepared/abortedであり、他の未完了intentがないことを確認してから中止claimを占有し、S3 abortedの同一版読戻し→D1参照→S3全版再照合→claim完了まで進める。失敗時はownerをdisabledのまま残す。**ownerを再開する処理は未実装**で、この部品は公開経路・schedulerから呼ばない。
 
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 

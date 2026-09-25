@@ -1,5 +1,25 @@
 # 現在のタスクと優先順位
 
+## 2026-09-25 個人保管：候補v16の本線反映
+
+並行TestFlight作業からmain更新の保留解除を受け、候補v16を最新mainに競合なく統合し、`d7d08be`をmainへ早送り反映した。候補SHAで保管Node job `36142363735`、mainの同SHAで保管Node job `36142552535`とiOS選択job `36142552582`が成功。後二者は本線反映の証拠であり、Mac実機・実Apple・公開Worker・物理消去の検証ではない。公開保管、課金、期限消去は引き続きOFF。次の製品残件は外部prepared intentを先行させたpolicy ONのowner fence、安全な中止・復帰、S3/R2/D1全版消去と再一覧、35日以内の最小識別子掃除、実端末と費用の受入検証。以下の「本線反映待ち」は各候補作成時の履歴であり、現在の保留ではない。
+
+## 2026-09-25 個人保管：現在の公開境界と次の作業
+
+main `d254bda` には外部S3の消去intentを参照するD1台帳と、隔離復元での全版replayが入った。ただし保管サービスは未配備・既定OFFで、実利用者の写真は保存していない。空の専用staging D1へ0013–0016を適用済み（owner/record/消去eventは0）。遠隔D1がtrigger中の`SELECT CASE`を受理しなかったため、同等の`WHEN ... BEGIN SELECT RAISE ... END`へ直した候補は `codex/preservation-fence-bridge-20260925` 上であり、まだmain未反映。写真・メモの物理消去は行っていない。
+
+利用者の費用目安は**保管サービス全体で月3,000円程度**。これは請求の強制上限ではない。容量・月980円商品との整合、解約後12か月の持ち出し負債は、実測後に判断する。AWSはFree planのまま、Paid切替・一般提供の判断はまだ行わない。[費用ゲート](2026-09-25-preservation-cost-gate.md)。Cloudflareの追加OAuth承認後、保管専用staging R2 `neko-preservation-staging-private` の一覧・非公開設定を確認。2026-09-25、合成テキスト1件をCLIで遠隔保存・読み戻し・その1件だけ削除し、再度object_count=0を確認した。続いて既存の検査用Workerを`wrangler dev --remote`でローカルプレビューし、remote R2 bindingの`GET /status`（0件）→`POST /probe`（保存・読み戻し・削除PASS）→`GET /status`（0件）を確認、プレビューを終了した。自動期限ルールは未完了multipartの7日中止だけ、bucket lock ruleはなし。これはCLIと検査WorkerのR2到達証拠であり、本体Workerの暗号化、実JPEG、復元、容量計測の成功証拠ではない。
+
+次の製品ゲートは、外部intentと期限fence/解除/物理消去の一貫した状態機械、S3の全版・R2・D1の消去と再一覧、35日以内の最小識別子消去、実請求/容量測定、実Apple・購入・別端末復元と通知の照合。合成の部品試験や空DB migration成功をサービス完成・復元保証と扱わない。並行中のTestFlight配布作業が完了するまで、この候補のmain push/mergeは保留する。
+
+後続の独立ブランチでは[消去claim](2026-09-25-preservation-purge-claims.md)を追加し、空のstaging D1へ0017を適用した。claim後の誤解除を防ぐ段階であり、S3 replay・物理消去はまだ接続していない。
+後続レビューでD1-onlyの自動解除がTime Travel後の外部消去eventを見落とす危険を確認し、候補から削除。期限切れleaseでの古い通知再利用も0018 migrationで拒否する。空の専用staging D1へ0018を適用済み。S3 abortのD1巻戻し再調停は合成試験済みだが、owner利用再開・物理削除・実AWS試験は未実装。TestFlight作業からmain更新の継続保留を受けており、本線にはまだ反映していない。
+その後、実AWSの試験環境で合成データのKMS wrap/unwrapとS3全版確認、実R2/S3/KMS＋ローカルD1で写真編集→オフライン隔離復元まで成功。最初の統合試験は検査用IAMの外部消去台帳read権限不足で止まったため、読取だけ追加して再試験した。検査用IAM利用者・S3全版・R2 objectの残存0を確認。これは実iPhone/Apple本人・公開Worker・12か月の持ち出し・物理削除の証明ではない。
+
+利用者はAWSを当面Free planのまま検証すると指定。v14候補`ae4e84b`の保管Node CI `36125337267`（49秒）とiOS plan `36125337231`は成功、Macは対象外。続けて独立した合成S3削除検査で、`S3VersionPurge`による**単一版**の削除と再一覧0件を実AWSで確認した。初回は後片付け用PowerShellがAWSの空一覧を1件と誤読してexit1となったが、直接一覧は空で一時IAMも0件。判定修正後の再試験は終了コード0。独立レビューで次回の一時IAM削除権限が広すぎる点とcleanup失敗を見逃す点を指摘されたため、対象を毎回生成する合成object 1件に限定し、key/policy/userの削除後に一覧で残存を確認して失敗を返すよう修正。再試験は終了コード0、全`recovery/v1/`版・delete marker 0件。これは期限消去の状態機械、R2/D1の物理削除、全版・35日識別子処理を証明しない。公開・課金・自動消去はOFF、本線pushは並行TestFlight作業の解除待ち。
+
+v15候補`aecb6d9`は保管Node CI `36127015207`（57秒）とiOS plan `36127015291`が成功。後続の合成S3検査で、同じ生成キーに旧版→delete marker→新版を作り、3つ全てを版ID指定で削除して再一覧0件を確認。短命IAMのDeleteObject追加も生成した合成キー1件に限定し、独立再レビューで具体的P1/P2なし。これは複数版の実S3動作の証拠で、保管サービス全体の期限消去完成ではない。
+
 ## 2026-09-24 個人保管：期限・通知の安全基盤は本線反映済み
 
 通知先変更時の旧証拠無効化、v2送達証拠、期限候補の公平な巡回、読み取り専用S3版一覧を `95a12f8` でmainへ反映。候補iOS 9 jobと保管サービスCI、本線の同一SHA再利用・保管サービスCIが成功。保管専用staging D1の0009–0011は0 owner/recordで適用済み。実通知・期限消去・写真保管は既定OFFで、提供開始ではない。[実行境界](2026-09-23-preservation-expiry-backup-execution.md)を次の判断基準とする。後続ブランチでは削除前owner fenceとR2/D1/S3の読み取り候補を実装し、staging D1へ0012を適用済み。本線反映・実AWS/R2/復元/削除試験は未完。

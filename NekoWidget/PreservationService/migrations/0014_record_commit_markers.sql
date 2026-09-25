@@ -44,21 +44,17 @@ BEGIN SELECT RAISE(ABORT,'RECOVERY_POLICY_REQUIRED'); END;
 CREATE TRIGGER pa_recovery_write_policy_requires_coverage
 BEFORE UPDATE OF delete_intent_required ON pa_recovery_write_policy
 WHEN NEW.delete_intent_required=1
-BEGIN
-  SELECT CASE WHEN EXISTS(SELECT 1 FROM pa_records r WHERE NOT EXISTS(
+  AND EXISTS(SELECT 1 FROM pa_records r WHERE NOT EXISTS(
     SELECT 1 FROM pa_record_commit_markers m WHERE m.owner_id=r.owner_id
       AND m.record_id=r.record_id AND m.revision=r.revision))
-    THEN RAISE(ABORT,'RECOVERY_COVERAGE_INCOMPLETE') END;
-END;
+BEGIN SELECT RAISE(ABORT,'RECOVERY_COVERAGE_INCOMPLETE'); END;
 CREATE TRIGGER pa_record_delete_requires_intent BEFORE UPDATE OF deleted ON pa_records
 WHEN OLD.deleted=0 AND NEW.deleted=1
   AND coalesce((SELECT delete_intent_required FROM pa_recovery_write_policy WHERE singleton=1),1)=1
-BEGIN
-  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM pa_record_delete_intents i
+  AND NOT EXISTS(SELECT 1 FROM pa_record_delete_intents i
     WHERE i.owner_id=OLD.owner_id AND i.record_id=OLD.record_id
       AND i.target_revision=NEW.revision)
-    THEN RAISE(ABORT,'DELETE_INTENT_REQUIRED') END;
-END;
+BEGIN SELECT RAISE(ABORT,'DELETE_INTENT_REQUIRED'); END;
 
 -- Capture only the exact revisions that existed before commit markers were
 -- introduced. A later writer cannot turn a new, unbacked revision into a

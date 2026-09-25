@@ -1,4 +1,6 @@
-# 個人保管：AWS KMS / Cloudflare 実環境準備（未実施）
+# 個人保管：AWS KMS / Cloudflare 実環境準備（当時の手順と現況）
+
+> 2026-09-25 最新：以下の初期手順は当時の記録で、そのまま再実行しない。AWSは**Free planのまま**。東京リージョンの単一リージョンKMS鍵と、非公開・版管理ONの試験用S3がある。Cloudflareの保管用staging R2は非公開、D1は0018まで適用済み。合成データのみでKMS wrap/unwrap、S3版付き保存・読戻し、さらにローカルD1＋実R2/S3/KMSによる写真編集→オフライン隔離復元を通した。試験用IAM利用者・S3全版・R2の対象objectは削除後に残存0を確認。初回の統合試験は検査用IAMの`purge/v1/*`読取権限不足で止まり、最小の読取権限を追加して再試験で成功した。公開Worker・実利用者写真・実Apple端末・販売は**未接続／OFF**。CLIで使ったAWS profileはroot権限なので、本番用の長期資格情報には使わない。費用目安はサービス全体で月3,000円程度で、請求hard capではない。[費用ゲート](2026-09-25-preservation-cost-gate.md)と[消去claim](2026-09-25-preservation-purge-claims.md)を優先する。
 
 2026-09-23の利用者指定は **AWS KMSを使う**。この資料は利用者のアカウント準備と開発側の接続条件を分ける。利用者確認時点でAWSアカウントは未作成。管理鍵、実R2、実端末復元の成功証拠もない。`PRESERVATION_ENABLED` と `PRESERVATION_KMS_ENABLED` はともに `NO` を維持し、実データ・販売を始めない。
 

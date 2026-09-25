@@ -1,6 +1,6 @@
 # 個人保管：Paid切替前の費用ゲート（未提供）
 
-2026-09-25。利用者は「まず費用の上限を確認したい」と指定。AWSはFree plan、保管Workerと期限消去はOFF。Paid切替・販売容量の確約・公開提供はまだ行わない。
+2026-09-25。利用者は「まず費用の上限を確認したい」と指定し、その後**保管サービス全体で月3,000円程度**を運用目安として選択した。請求の強制上限ではない。AWSはFree plan、保管Workerと期限消去はOFF。Paid切替・販売容量の確約・公開提供はまだ行わない。
 
 ## 確認できた従量課金と概算
 
@@ -27,5 +27,9 @@
 2. まず小さな**試験専用**の全体容量・owner数に制限し、1件あたり平均/95パーセンタイルと編集後の版増加を測る。これは販売容量ではない。
 3. AWS/Cloudflareの予算通知を設定し、通知先を利用者が確認する。通知をhard capと呼ばず、停止手順を演習する。
 4. 実測した月額・12か月の解約後負債・商品容量案を利用者へ提示したうえで、Paid切替と一般提供を別々に判断する。
+
+### 月3,000円目安の扱い
+
+CloudflareとAWSの請求は別で、米ドル単価・為替・税・既存Cloudflare用途の共通料金が混ざる。各社の予算通知を合算しても課金を停止するhard capにはならない。試験では保管専用のWorker・bucket・KMS鍵とAWSタグで増分を分け、日次の実請求と最悪時の翌12か月保持負債を円換算して確認する。予測が目安に近づく場合は**新規保存だけを停止し、本人の閲覧・持ち出しは維持**する運用手順を先に演習する。写真やメモを費用理由で予告なく削除しない。停止の正確な閾値、販売容量と単価は実測後に決める。
 
 出典：[Cloudflare Workers](https://developers.cloudflare.com/workers/platform/pricing/)、[R2](https://developers.cloudflare.com/r2/pricing/)、[AWS KMS](https://aws.amazon.com/kms/pricing/)、[AWS東京リージョンのS3試算例](https://aws.amazon.com/jp/cdp/onpre-restore-backup/)、[AWS Budgets](https://aws.amazon.com/aws-cost-management/aws-budgets/faqs/)。

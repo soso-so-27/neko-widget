@@ -49,6 +49,7 @@ export async function snapshotFencedOwnerCloudStorage(db: D1Database, bucket: R2
     if (firstPrimary.epoch !== secondPrimary.epoch
       || firstPrimary.generation !== secondPrimary.generation
       || firstPrimary.records !== secondPrimary.records
+      || firstPrimary.recordDigest !== secondPrimary.recordDigest
       || firstPrimary.photos !== secondPrimary.photos
       || !matchesPrimary(secondPrimary, secondCloud)
       || physicalSignature(firstCloud) !== physicalSignature(secondCloud)) throw unavailable();

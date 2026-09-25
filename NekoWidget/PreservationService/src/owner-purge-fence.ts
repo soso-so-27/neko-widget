@@ -139,12 +139,6 @@ export class OwnerPurgeFence {
     }
     return fence;
   }
-
-  /** Only a pre-deletion fence can be undone. Future physical deletion must
-   * move to a separate state so it can never use this thaw operation. */
-  async abortBeforeDeletion(fenceId: string, ownerId: string, ownerEpoch: number): Promise<void> {
-    await abortFencedOwner(this.d.db, fenceId, ownerId, ownerEpoch, this.now(), 'unknown');
-  }
 }
 
 /** A pre-deletion abort also revokes the old notice in the same D1 batch as
@@ -167,6 +161,8 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
             WHERE f.fence_id=? AND f.owner_id=pa_retention.owner_id AND f.state='fenced'
               AND f.owner_epoch=? AND f.retention_episode=pa_retention.episode
               AND f.retention_revision=pa_retention.revision
+              AND NOT EXISTS(SELECT 1 FROM pa_purge_execution_claims c
+                WHERE c.owner_id=f.owner_id AND c.intent_id=f.fence_id)
               AND o.disabled=1 AND o.epoch=? AND o.purge_fence_id=f.fence_id)
         RETURNING revision`)
         .bind(status, now, resetExpiry, resetExpiry, resetExpiry, now, resetExpiry, now,
@@ -177,6 +173,8 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
             WHERE c.owner_id=pa_owners.owner_id AND c.owner_epoch<=?)
           AND EXISTS(SELECT 1 FROM pa_purge_fences f JOIN pa_retention r ON r.owner_id=f.owner_id
             WHERE f.fence_id=? AND f.owner_id=? AND f.state='fenced'
+              AND NOT EXISTS(SELECT 1 FROM pa_purge_execution_claims c
+                WHERE c.owner_id=f.owner_id AND c.intent_id=f.fence_id)
               AND r.episode=f.retention_episode AND r.revision=f.retention_revision+1
               AND r.verified_status=? AND r.final_notice_delivered_at IS NULL)
         RETURNING epoch`)
@@ -189,6 +187,8 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
         .bind(ownerEpoch + 1, ownerId, ownerEpoch, ownerEpoch + 1),
       db.prepare(`UPDATE pa_purge_fences SET state='aborted',updated_at=?
         WHERE fence_id=? AND owner_id=? AND state='fenced' AND owner_epoch=?
+          AND NOT EXISTS(SELECT 1 FROM pa_purge_execution_claims c
+            WHERE c.owner_id=pa_purge_fences.owner_id AND c.intent_id=pa_purge_fences.fence_id)
           AND NOT EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND purge_fence_id=?)
           AND EXISTS(SELECT 1 FROM pa_identity_credentials c
             WHERE c.owner_id=pa_purge_fences.owner_id AND c.owner_epoch=?)
@@ -196,22 +196,4 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
         .bind(now, fenceId, ownerId, ownerEpoch, ownerId, fenceId, ownerEpoch + 1),
     ]);
     if (results.some(result => result?.results.length !== 1)) throw unavailable();
-}
-
-/** Crash recovery for a lease that was fenced but never entered deletion.
- * Future physical purge must transition out of `fenced` before its first
- * destructive action; that later state must not be recoverable here. */
-export async function recoverAbandonedPurgeFences(db: D1Database, now: number, limit = 20): Promise<number> {
-  if (!Number.isSafeInteger(now) || now <= 30 * day
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw unavailable();
-  const rows = await db.prepare(`SELECT f.fence_id,f.owner_id,f.owner_epoch
-    FROM pa_purge_fences f JOIN pa_owners o ON o.owner_id=f.owner_id
-    WHERE f.state='fenced' AND f.lease_expires_at<=? AND o.disabled=1
-      AND o.epoch=f.owner_epoch AND o.purge_fence_id=f.fence_id
-    ORDER BY f.lease_expires_at,f.fence_id LIMIT ?`).bind(now, limit)
-    .all<{ fence_id: string; owner_id: string; owner_epoch: number }>();
-  for (const row of rows.results) {
-    await abortFencedOwner(db, row.fence_id, row.owner_id, row.owner_epoch, now, 'unknown');
-  }
-  return rows.results.length;
 }

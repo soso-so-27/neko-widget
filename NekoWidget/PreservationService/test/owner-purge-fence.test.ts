@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
 import type { DurableAuth } from '../src/auth';
 import type { NoticeSubmissions } from '../src/notice-submissions';
-import { OwnerPurgeFence, recoverAbandonedPurgeFences } from '../src/owner-purge-fence';
+import { verifyFencedPurgeEligibility } from '../src/fenced-purge-eligibility';
+import { OwnerPurgeFence } from '../src/owner-purge-fence';
 import { RetentionLedger, type ExpiryReviewCandidate, type VerifiedMembershipStatus } from '../src/retention-ledger';
 
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -101,21 +102,53 @@ it('invalidates an old notice when billing renewed before a later expiry', async
     .bind(f.ownerId).first()).toMatchObject({ disabled: 0, purge_fence_id: null });
 });
 
-it('recovers a crashed pre-deletion fence after its lease and invalidates notice', async () => {
+it('rejects an expired fence instead of reusing its old notice', async () => {
   const f = await fixture();
   const fenced = await f.fence.begin(f.ownerId);
   expect(fenced).not.toBeNull();
-  expect(await recoverAbandonedPurgeFences(db, now + 9 * 60_000)).toBe(0);
-  expect(await recoverAbandonedPurgeFences(db, now + 11 * 60_000)).toBeGreaterThanOrEqual(1);
-  expect(await db.prepare('SELECT disabled,epoch,purge_fence_id FROM pa_owners WHERE owner_id=?')
-    .bind(f.ownerId).first()).toMatchObject({ disabled: 0, epoch: 2, purge_fence_id: null });
-  expect(await db.prepare('SELECT owner_epoch FROM pa_identity_credentials WHERE owner_id=?')
-    .bind(f.ownerId).first()).toMatchObject({ owner_epoch: 2 });
-  expect(await db.prepare(`SELECT verified_status,paused_at,final_notice_receipt
-    FROM pa_retention WHERE owner_id=?`).bind(f.ownerId).first()).toMatchObject({
-    verified_status: 'unknown', paused_at: now + 11 * 60_000, final_notice_receipt: null,
-  });
-  expect(await recoverAbandonedPurgeFences(db, now + 12 * 60_000)).toBe(0);
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now + 11 * 60_000,
+    async () => 'expired')).toBe(false);
+  expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+    .bind(f.ownerId).first()).toMatchObject({ disabled: 1, purge_fence_id: fenced!.fenceId });
+});
+
+it('rechecks a disabled fence against fresh billing and exact notice evidence', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  const candidate = fenced!;
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async account => account === f.billingAccount ? 'expired' : 'unknown')).toBe(true);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => 'active')).toBe(false);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => { throw new Error('billing unavailable'); })).toBe(false);
+  expect(await verifyFencedPurgeEligibility(db, candidate, now,
+    async () => {
+      await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')
+        .bind(f.ownerId).run();
+      return 'expired';
+    })).toBe(false);
+});
+
+it('does not trust the fence after an inventory generation change', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?')
+    .bind(f.ownerId).run();
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now, async () => 'expired')).toBe(false);
+});
+
+it('detects changed notification evidence across the private billing check', async () => {
+  const f = await fixture();
+  const fenced = await f.fence.begin(f.ownerId);
+  expect(fenced).not.toBeNull();
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now, async () => {
+    await db.prepare('UPDATE pa_notice_submissions SET recipient_tag=? WHERE owner_id=?')
+      .bind('c'.repeat(64), f.ownerId).run();
+    return 'expired';
+  })).toBe(false);
 });
 
 it('does not fence after a contact change or while storage cleanup is pending', async () => {

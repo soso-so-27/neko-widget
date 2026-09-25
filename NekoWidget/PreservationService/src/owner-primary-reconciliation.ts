@@ -11,6 +11,8 @@ export type PrimaryInventory = {
   generation: number;
   records: number;
   photos: number;
+  /** SHA-256 of ordered record IDs, revisions, tombstones and photo keys. */
+  recordDigest: string;
   /** Present only to support a later, separately authorized deletion plan. */
   photoKeys: string[];
 };
@@ -24,6 +26,7 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
   bucket: R2Bucket, ownerId: string): Promise<PrimaryInventory> {
   try {
     const references = new Set<string>();
+    const recordTuples: [string, number, boolean, string | null][] = [];
     let records = 0;
     let recordPages = 0;
     let epoch: number | undefined;
@@ -39,6 +42,7 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
       generation = page.generation;
       for (const item of page.records) {
         if (++records > maximumItems) throw unavailable();
+        recordTuples.push([item.recordId, item.revision, item.deleted, item.photoKey]);
         if (item.photoKey !== null) {
           if (references.has(item.photoKey)) throw unavailable();
           references.add(item.photoKey);
@@ -69,7 +73,10 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
     // A changed DB generation while R2 was listed invalidates this snapshot.
     const final = await listFencedRecordReferencesPage(db, ownerId, undefined, 1);
     if (final.epoch !== epoch || final.generation !== generation) throw unavailable();
+    const serialized = new TextEncoder().encode(JSON.stringify(recordTuples));
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', serialized));
+    const recordDigest = Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('');
     return { ownerId, epoch: epoch!, generation: generation!, records,
-      photos: objects.size, photoKeys: [...objects].sort() };
+      photos: objects.size, recordDigest, photoKeys: [...objects].sort() };
   } catch { throw unavailable(); }
 }

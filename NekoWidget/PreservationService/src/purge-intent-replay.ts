@@ -7,14 +7,28 @@ const unavailable = () => new ServiceError('PURGE_INTENT_REPLAY_UNAVAILABLE', 50
 const maxVersions = 10_000;
 
 export type OwnerPurgeReplay = 'clear' | 'quarantined' | 'deleted';
+export type OwnerPurgeIntentState = {
+  intentId: string;
+  stage: PurgeIntentEvent['stage'];
+  ownerEpoch: number;
+  inventoryGeneration: number;
+  retentionEpisode: number;
+  retentionRevision: number;
+  dueAt: number;
+  preparedAt: number;
+  recordedAt: number;
+  manifestSha256: string | null;
+};
+export type OwnerPurgeTimeline = { replay: OwnerPurgeReplay;
+  intents: readonly OwnerPurgeIntentState[] };
 
 /** A completed event is a deletion tombstone. An erasing or unmatched
  * prepared event can never re-enable an owner. An abort is valid only before
  * erasing. The caller must still compare this verdict with D1, billing and
  * identity state; `clear` alone never authorizes restore or sign-in.
  */
-export function reconcileOwnerPurgeEvents(ownerId: string,
-  events: readonly PurgeIntentEvent[]): OwnerPurgeReplay {
+export function reconcileOwnerPurgeTimeline(ownerId: string,
+  events: readonly PurgeIntentEvent[]): OwnerPurgeTimeline {
   if (!uuid.test(ownerId)) throw unavailable();
   const intents = new Map<string, Map<PurgeIntentEvent['stage'], PurgeIntentEvent>>();
   for (const event of events) {
@@ -25,7 +39,8 @@ export function reconcileOwnerPurgeEvents(ownerId: string,
     intents.set(event.intentId, stages);
   }
   let result: OwnerPurgeReplay = 'clear';
-  for (const stages of intents.values()) {
+  const states: OwnerPurgeIntentState[] = [];
+  for (const [intentId, stages] of intents) {
     const prepared = stages.get('prepared');
     const aborted = stages.get('aborted');
     const erasing = stages.get('erasing');
@@ -49,16 +64,29 @@ export function reconcileOwnerPurgeEvents(ownerId: string,
       || completed.recordedAt < erasing.recordedAt)) throw unavailable();
     if (completed) result = 'deleted';
     else if (result !== 'deleted' && !aborted) result = 'quarantined';
+    const latest = completed ?? erasing ?? aborted ?? prepared;
+    states.push({ intentId, stage: latest.stage, ownerEpoch: prepared.ownerEpoch,
+      inventoryGeneration: prepared.inventoryGeneration,
+      retentionEpisode: prepared.retentionEpisode,
+      retentionRevision: prepared.retentionRevision, dueAt: prepared.dueAt,
+      preparedAt: prepared.recordedAt, recordedAt: latest.recordedAt,
+      manifestSha256: latest.manifestSha256 });
   }
-  return result;
+  return { replay: result,
+    intents: states.sort((left, right) => left.intentId.localeCompare(right.intentId)) };
+}
+
+export function reconcileOwnerPurgeEvents(ownerId: string,
+  events: readonly PurgeIntentEvent[]): OwnerPurgeReplay {
+  return reconcileOwnerPurgeTimeline(ownerId, events).replay;
 }
 
 /** Full S3 version walk, including old versions and delete markers, before a
  * D1-loss recovery decision. Failure is not interpreted as an empty ledger.
  */
-export async function loadOwnerPurgeReplay(store: Pick<S3PurgeIntentStore,
+export async function loadOwnerPurgeTimeline(store: Pick<S3PurgeIntentStore,
   'listOwnerVersionsPage' | 'referenceForListedVersion' | 'readExact'>,
-  ownerId: string): Promise<OwnerPurgeReplay> {
+  ownerId: string): Promise<OwnerPurgeTimeline> {
   if (!uuid.test(ownerId)) throw unavailable();
   const events: PurgeIntentEvent[] = [];
   const seenVersions = new Set<string>();
@@ -78,11 +106,17 @@ export async function loadOwnerPurgeReplay(store: Pick<S3PurgeIntentStore,
         const reference = await store.referenceForListedVersion(version);
         events.push(await store.readExact(reference));
       }
-      if (!page.nextCursor) return reconcileOwnerPurgeEvents(ownerId, events);
+      if (!page.nextCursor) return reconcileOwnerPurgeTimeline(ownerId, events);
       const signature = `${page.nextCursor.keyMarker}\0${page.nextCursor.versionIdMarker ?? ''}`;
       if (seenCursors.has(signature)) throw unavailable();
       seenCursors.add(signature);
       cursor = page.nextCursor;
     }
   } catch { throw unavailable(); }
+}
+
+export async function loadOwnerPurgeReplay(store: Pick<S3PurgeIntentStore,
+  'listOwnerVersionsPage' | 'referenceForListedVersion' | 'readExact'>,
+  ownerId: string): Promise<OwnerPurgeReplay> {
+  return (await loadOwnerPurgeTimeline(store, ownerId)).replay;
 }

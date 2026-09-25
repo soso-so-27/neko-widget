@@ -76,15 +76,16 @@ ALTER TABLE pa_recovery_write_policy ADD COLUMN owner_snapshot_required INTEGER 
 CREATE TRIGGER pa_owner_recovery_policy_requires_coverage
 BEFORE UPDATE OF owner_snapshot_required ON pa_recovery_write_policy
 WHEN NEW.owner_snapshot_required=1
-BEGIN
-  SELECT CASE WHEN EXISTS(SELECT 1 FROM pa_purge_fences
+  AND EXISTS(SELECT 1 FROM pa_purge_fences
     WHERE state IN ('proposed','fenced'))
-    THEN RAISE(ABORT,'OWNER_RECOVERY_ACTIVE_PURGE_FENCE') END;
-  SELECT CASE WHEN EXISTS(SELECT 1 FROM pa_owner_recovery_generations g
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_ACTIVE_PURGE_FENCE'); END;
+CREATE TRIGGER pa_owner_recovery_policy_requires_owner_coverage
+BEFORE UPDATE OF owner_snapshot_required ON pa_recovery_write_policy
+WHEN NEW.owner_snapshot_required=1
+  AND EXISTS(SELECT 1 FROM pa_owner_recovery_generations g
     WHERE NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
       WHERE v.owner_id=g.owner_id AND v.generation=g.generation))
-    THEN RAISE(ABORT,'OWNER_RECOVERY_COVERAGE_INCOMPLETE') END;
-END;
+BEGIN SELECT RAISE(ABORT,'OWNER_RECOVERY_COVERAGE_INCOMPLETE'); END;
 
 -- Until a pre-revocation S3 intent and fenced-owner replay are implemented,
 -- D1 alone must never disable or thaw an owner while snapshots are required.

@@ -77,3 +77,17 @@ it('rejects a new unreferenced R2 photo and a changed DB generation', async () =
   await expect(snapshotFencedOwnerCloudStorage(db, archive, changingS3, another.ownerId))
     .rejects.toMatchObject({ code: 'OWNER_CLOUD_SNAPSHOT_UNAVAILABLE' });
 });
+
+it('rejects a record revision changed between passes even if counts and storage objects match', async () => {
+  const { ownerId, recordId } = await fixture();
+  let calls = 0;
+  const s3 = { listOwnerVersionsPage: async () => {
+    if (++calls === 1) {
+      await db.prepare('UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?')
+        .bind(ownerId, recordId).run();
+    }
+    return { versions: versions(ownerId, recordId, 'v1'), nextCursor: null };
+  } } as unknown as S3RecoveryCopy;
+  await expect(snapshotFencedOwnerCloudStorage(db, archive, s3, ownerId))
+    .rejects.toMatchObject({ code: 'OWNER_CLOUD_SNAPSHOT_UNAVAILABLE' });
+});
