@@ -543,6 +543,7 @@ struct MainTabView: View {
 
     private var showcaseAddScopes: [String] {
         let scopes = [""] + catProfilesPresentation.profiles.map(\.identifier)
+        guard scopes.contains(showcaseScopeID) else { return scopes }
         return [showcaseScopeID] + scopes.filter { $0 != showcaseScopeID }
     }
 
