@@ -118,6 +118,17 @@ it('recovers a crashed pre-deletion fence after its lease and invalidates notice
   expect(await recoverAbandonedPurgeFences(db, now + 12 * 60_000)).toBe(0);
 });
 
+it('requires snapshot policy OFF before selecting any lease for automatic thaw', async () => {
+  let selection = '';
+  const isolated = { prepare(sql: string) {
+    selection = sql;
+    return { bind: () => ({ all: async () => ({ results: [] }) }) };
+  } } as unknown as D1Database;
+  expect(await recoverAbandonedPurgeFences(isolated, now + 11 * 60_000)).toBe(0);
+  expect(selection).toContain('owner_snapshot_required FROM pa_recovery_write_policy');
+  expect(selection).toContain('WHERE singleton=1)=0');
+});
+
 it('does not fence after a contact change or while storage cleanup is pending', async () => {
   const changed = await fixture();
   await db.prepare('UPDATE pa_notice_contacts SET updated_at=updated_at+1 WHERE owner_id=?')

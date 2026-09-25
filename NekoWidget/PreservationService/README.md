@@ -40,6 +40,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 `0016_owner_purge_events.sql` は外部S3 intentの**参照だけ**をD1へ追記する台帳。`src/owner-purge-intent-ledger.ts` はS3同一版の読戻し後だけ参照を保存する孤立部品。prepared→abortedまたはprepared→erasing→completed以外を拒否し、登録済み参照のUPDATEを拒否する。準備時はownerの存在を要求する一方、削除完了後にidentityを含むowner行を消せるよう参照自体には外部キーを張らない。D1単独では外部objectの存在・内容・追加版を証明できないので、復元時にはS3全版の再走査が必須。現在のfence・消去実行からはまだ参照しない。35日後の識別子消去を実装する余地としてD1参照のDELETEは許容するが、そのタイミングを制御する処理も未実装。migrationを適用しても期限消去は始まらない。
 
+owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけでは自動解除しない。D1は外部S3に消去開始eventがないことを証明できないため、外部台帳を照合する経路が完成するまでdisabledのまま扱う。現行のpolicy ONのfence開始もDB triggerで拒否しており、これは可用性より誤復帰防止を優先する暫定状態である。
+
 外部KMSの実接続と実JPEG providerのprivate bridgeは未配備です。会員の二重本人リンクにはnative接続・同意/再試行画面まで本線実装がありますが、実billing binding・実Apple/購入/別端末の接続確認は未完です。実リソース・秘密設定・実装の欠如を「設定だけで稼働可能」と扱わないこと。APIは依存が不足すれば閉じたまま。暗号データ鍵のbyte bufferは成功/失敗時に上書きするが、JS文字列/ランタイム内コピー全体の確実な消去を保証しない。鍵・token・写真はログへ出さない。
 
 ## 期限切れ後の持ち出し時計（既定OFF）
