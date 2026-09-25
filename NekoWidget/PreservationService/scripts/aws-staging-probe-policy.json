@@ -12,7 +12,13 @@
       "Effect": "Allow",
       "Action": "s3:ListBucketVersions",
       "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568",
-      "Condition": { "StringLike": { "s3:prefix": "recovery/v1/*" } }
+      "Condition": { "StringLike": { "s3:prefix": ["recovery/v1/*", "purge/v1/*"] } }
+    },
+    {
+      "Sid": "OnlyPurgeLedgerRead",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568/purge/v1/*"
     },
     {
       "Sid": "OnlyStagingKmsKey",
