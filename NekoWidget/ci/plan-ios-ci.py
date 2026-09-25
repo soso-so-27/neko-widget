@@ -94,7 +94,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v13"
+PRESERVATION_SCOPE = "preservation-service-v14"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -212,27 +212,27 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v13 is a one-candidate review of the entire disabled service tree, not a
+# v14 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
-PRESERVATION_REVIEWED_TREE = "3cd907b5e3f5709888a1c4dab5d0ddff87a694c6"
+PRESERVATION_REVIEWED_TREE = "bde079eb43663d6f0baf7fc8d1fa355a7cb2bbef"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "9cbfa7f364a86dc473cf705521da2311a2fdff7de284d60cdaf1fbb335030ed5",
-        "3d0e93c6be43bc7423706b68b7e4e0b81cefe7d2b5f0104f4abe5a3f5794379f"
+        "cb8032fa18bbf5ef4c94def63dd9815972916301e9b4da798702bc01fe0c57ca"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "83df81cce67a313decd96d29cdce558d8271f5ca94ae97a976b6696827cf7aaa",
-        "d6e0f1b7437d7c2a3fe25be657a3f784ba14e02613c8dcf56717e4b7bfc6c910"
+        "6f38dd8589071f4049e6884606f8b1f7fa691a1f44727946abfc1b062ba0fac3"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "25dc7630e364b8dc7acb984cf6a0c49d76fd1fd17cb42ec11f62a1258bb7136f",
-        "7a3ea8f457d2b3ced1042ad06bf401f246da18c4d6bd71326357b693e3e25033"
+        "02a07a651e610b768bd951bc2a2bfb6a6dc9f892621f431e505f2b16d5b4d2be"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "0bfa2d52cd6675b8b3f79ecae6eb08d525fd1bb229c764d9b8b45cfd8487b322",
-        "6c05b9ca12c324481066f9527a88514dbc4f537168aa0dbefb7ee22de76bd87a"
+        "1dcec9b92ed0bf57407fa0131fee18a724c6f882e5e052a583c80db9bfaf9c82"
     ]
 }
 
