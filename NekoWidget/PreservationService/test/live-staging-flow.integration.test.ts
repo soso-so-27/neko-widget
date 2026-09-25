@@ -76,15 +76,32 @@ it('saves a synthetic photo and stages its S3 recovery in offline quarantine', a
       expectedRevision: null, consentVersion: 'managed-preservation-v1', document,
       photoBase64: photo,
     })).toEqual({ recordId, revision: 1 });
+    const edited = { ...document, text: '同じ合成写真に追記' };
+    expect(await archive.put(session.token, recordId, {
+      expectedRevision: 1, consentVersion: 'managed-preservation-v1', document: edited,
+      photoBase64: photo,
+    })).toEqual({ recordId, revision: 2 });
+    const storedCopies = await bindings.DB.prepare(`SELECT revision,photo_object_key,photo_version_id
+      FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=? ORDER BY revision`)
+      .bind(ownerId, recordId).all<{ revision: number; photo_object_key: string;
+        photo_version_id: string }>();
+    expect(storedCopies.results.map(item => item.revision)).toEqual([1, 2]);
+    expect(storedCopies.results[1]?.photo_object_key)
+      .toBe(storedCopies.results[0]?.photo_object_key);
+    expect(storedCopies.results[1]?.photo_version_id)
+      .toBe(storedCopies.results[0]?.photo_version_id);
+    const versions = await s3.listOwnerVersionsPage(ownerId);
+    expect(versions.nextCursor).toBeNull();
+    expect(versions.versions.filter(item => item.key.includes('/photo/'))).toHaveLength(1);
     const read = await archive.read(session.token, recordId);
-    expect(read.document).toEqual(document);
+    expect(read.document.text).toBe(edited.text);
     expect(read.photoBase64).toBe(photo);
     const candidate = await new OwnerArchiveRecovery(s3, ownerRecovery, recordRecovery)
       .assembleQuarantineCandidate(ownerId, now + 1);
     expect(candidate.status).toBe('ready-for-quarantine');
     if (candidate.status !== 'ready-for-quarantine') throw new Error('owner not recoverable');
     expect(candidate.verifiedRecords).toBe(1);
-    expect(candidate.owner.records[0]).toMatchObject({ recordId, revision: 1, deleted: false });
+    expect(candidate.owner.records[0]).toMatchObject({ recordId, revision: 2, deleted: false });
     const originalRow = await bindings.DB.prepare(`SELECT photo_key FROM pa_records
       WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId)
       .first<{ photo_key: string }>();
@@ -106,6 +123,9 @@ it('saves a synthetic photo and stages its S3 recovery in offline quarantine', a
       .first<{ disabled: number; photo_key: string }>();
     expect(restored?.disabled).toBe(1);
     expect(restored?.photo_key).toBe(photoKey);
+    expect((await bindings.RESTORE_DB.prepare(`SELECT count(*) AS count
+      FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=?`)
+      .bind(ownerId, recordId).first<{ count: number }>())?.count).toBe(2);
     const restoredPhoto = await bindings.ARCHIVE.get(restored!.photo_key);
     expect(restoredPhoto).not.toBeNull();
     expect(new Uint8Array(await restoredPhoto!.arrayBuffer())).toEqual(originalCiphertext);

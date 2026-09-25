@@ -142,11 +142,25 @@ function validImage(image: StoredRecordImage): void {
 export class RecordRecoveryCopy {
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy) {}
 
-  async copy(image: StoredRecordImage): Promise<CopiedRecordImage> {
+  async copy(image: StoredRecordImage, reusedPhoto?: RecoveryObject): Promise<CopiedRecordImage> {
     validImage(image);
     try {
-      const photo = image.photoCiphertext === null ? null : await this.s3.putVersioned(
-        `recovery/v1/${image.ownerId}/photo/${crypto.randomUUID()}`, image.photoCiphertext);
+      if (reusedPhoto && (image.photoCiphertext === null
+        || !validCopy(reusedPhoto, image.ownerId, 'photo'))) throw unavailable();
+      let photo: RecoveryObject | null = null;
+      if (image.photoCiphertext !== null) {
+        if (reusedPhoto) {
+          const earlier = await this.s3.getVerified(reusedPhoto);
+          if (earlier.length !== image.photoCiphertext.length
+            || earlier.some((byte, index) => byte !== image.photoCiphertext![index])) {
+            throw unavailable();
+          }
+          photo = reusedPhoto;
+        } else {
+          photo = await this.s3.putVersioned(
+            `recovery/v1/${image.ownerId}/photo/${crypto.randomUUID()}`, image.photoCiphertext);
+        }
+      }
       const payload: RecordPayload = { version: 1, ownerId: image.ownerId, recordId: image.recordId,
         revision: image.revision, initialFingerprint: image.initialFingerprint,
         initialOperation: image.initialOperation,

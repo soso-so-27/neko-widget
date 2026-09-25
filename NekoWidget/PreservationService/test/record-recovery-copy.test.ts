@@ -63,6 +63,22 @@ it('copies an encrypted record and photo as owner-bound versioned objects and re
   expect(new TextDecoder().decode(envelope)).not.toContain(original.initialFingerprint);
 });
 
+it('reuses an exact verified photo copy for a note edit and rejects changed bytes', async () => {
+  const f = await fixture();
+  const first = await f.records.copy(image());
+  const edited = { ...image(), revision: 2,
+    metadata: new Uint8Array([78, 75, 77, 49, 9]), quotaBytes: 11 };
+  const second = await f.records.copy(edited, first.photo!);
+  expect(second.photo).toEqual(first.photo);
+  expect([...f.objects.keys()].filter(key => key.includes('/photo/'))).toHaveLength(1);
+  expect(await f.records.read(ownerId, recordId, second)).toEqual(edited);
+  await expect(f.records.copy({ ...edited,
+    photoCiphertext: new Uint8Array([78, 75, 77, 49, 4, 99]) }, first.photo!))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  await expect(f.records.copy(edited, { ...first.photo!, versionId: 'missing-version' }))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+});
+
 it('copies a tombstone without resurrecting the prior photo or note', async () => {
   const f = await fixture(); const prior = await f.records.copy(image());
   const tombstone: StoredRecordImage = { ...image(), revision: 2, metadata: null,

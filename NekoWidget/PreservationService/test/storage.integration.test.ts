@@ -117,6 +117,9 @@ it('ties each acknowledged D1 revision to an exact recovery version and fails cl
       photo_object_key: string | null; photo_version_id: string | null;
       photo_sha256: string | null; photo_bytes: number | null }>();
   expect(rows.results.map(row => row.revision)).toEqual([1, 2, 3]);
+  expect(rows.results[1]?.photo_object_key).toBe(rows.results[0]?.photo_object_key);
+  expect(rows.results[1]?.photo_version_id).toBe(rows.results[0]?.photo_version_id);
+  expect(remote.references.filter(ref => ref.key.includes('/photo/'))).toHaveLength(1);
   expect(rows.results[2]?.photo_object_key).toBeNull();
   const revisionTwo = rows.results[1]!;
   const restored = await remote.recovery.read(f.session.ownerId, id, {

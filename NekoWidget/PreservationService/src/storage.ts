@@ -443,7 +443,20 @@ export class ArchiveStore {
         photoKey: existing.photo_key, photoBytes: existing.photo_bytes,
         quotaBytes: metadata.length + (encrypted?.length ?? 0), deleted: false,
         photoCiphertext: encrypted };
-      const copied = this.d.recovery ? await this.d.recovery.copy(replacement) : null;
+      const priorPhoto = this.d.recovery && encrypted !== null
+        ? await this.d.db.prepare(`SELECT photo_object_key,photo_version_id,photo_sha256,photo_bytes
+          FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=? AND revision=?`)
+          .bind(session.ownerId, id, expected)
+          .first<{ photo_object_key: string | null; photo_version_id: string | null;
+            photo_sha256: string | null; photo_bytes: number | null }>() : null;
+      if (this.d.recovery && encrypted !== null && (!priorPhoto?.photo_object_key
+        || !priorPhoto.photo_version_id || !priorPhoto.photo_sha256
+        || !priorPhoto.photo_bytes)) throw new ServiceError('RECOVERY_PENDING', 503);
+      const reusedPhoto = priorPhoto?.photo_object_key ? {
+        key: priorPhoto.photo_object_key, versionId: priorPhoto.photo_version_id!,
+        sha256: priorPhoto.photo_sha256!, bytes: priorPhoto.photo_bytes!,
+      } : undefined;
+      const copied = this.d.recovery ? await this.d.recovery.copy(replacement, reusedPhoto) : null;
       // Existing edits remain possible without membership; quota overage stops only new records.
       if (copied) {
         const results = await this.d.db.batch([
