@@ -71,7 +71,7 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
         self.assertEqual(len(planner.PRESERVATION_PATHS), 113)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v15")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v16")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -94,7 +94,7 @@ class PlanTests(unittest.TestCase):
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         # Same filenames with any different service content (including an
-        # in-place sender, Queue binding, or deletion) must not use v15.
+        # in-place sender, Queue binding, or deletion) must not use v16.
         self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
                       "NekoWidget/PreservationService/src/notice-sender.ts",
