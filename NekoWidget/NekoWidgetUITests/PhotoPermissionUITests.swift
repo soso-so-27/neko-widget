@@ -1457,6 +1457,12 @@ final class SoloMemoriesUITests: XCTestCase {
             input.tap()
             input.typeText(value)
         }
+        let done = app.buttons["lost-cat-keyboard-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )], timeout: 5), .completed)
         let preview = app.images["共有する迷子の猫の画像"]
         for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
@@ -1473,6 +1479,9 @@ final class SoloMemoriesUITests: XCTestCase {
             let close = sheet.buttons["header.closeButton"].firstMatch
             XCTAssertTrue(close.waitForExistence(timeout: 5))
             close.tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: sheet
+            )], timeout: 5), .completed)
         }
         app.terminate()
     }

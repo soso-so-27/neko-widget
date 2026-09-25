@@ -207,6 +207,8 @@ private struct LostCatSharePayload: Identifiable {
 }
 
 struct LostCatDraftView: View {
+    private enum Field: Hashable { case name, place, contact, features, collar, approach }
+
     let catName: String
     let record: CatPreparednessRecord
     @ObservedObject var store: CatPreparednessStore
@@ -234,17 +236,21 @@ struct LostCatDraftView: View {
     @State private var sharePayload: LostCatSharePayload?
     @State private var shareCleanupURL: URL?
     @State private var exportError = false
+    @FocusState private var focusedField: Field?
 
     var body: some View {
         Form {
             Section {
                 TextField("猫の名前", text: $publicCatName)
+                    .focused($focusedField, equals: .name)
                 Toggle("最後に見た日時が分かる", isOn: $knowsLastSeenAt)
                 if knowsLastSeenAt {
                     DatePicker("最後に見た日時", selection: $lastSeenAt, in: ...Date())
                 }
                 TextField("最後に見た場所（地域・目印）", text: $lastSeenNear)
+                    .focused($focusedField, equals: .place)
                 TextField("公開する連絡先", text: $contact)
+                    .focused($focusedField, equals: .contact)
                     .textInputAutocapitalization(.never)
             } header: {
                 Text("今回の情報")
@@ -262,9 +268,12 @@ struct LostCatDraftView: View {
                           ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo.badge.plus")
                 }
                 TextField("見分ける特徴", text: $features, axis: .vertical)
+                    .focused($focusedField, equals: .features)
                     .lineLimit(2...3)
                 TextField("首輪", text: $collar)
+                    .focused($focusedField, equals: .collar)
                 TextField("近づき方", text: $approachAdvice, axis: .vertical)
+                    .focused($focusedField, equals: .approach)
                     .lineLimit(2...3)
                 Text("この下書きの入力は、猫プロフィールの備えを上書きしません。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -281,9 +290,15 @@ struct LostCatDraftView: View {
                         .resizable().scaledToFit()
                         .accessibilityLabel("共有する迷子の猫の画像")
                         .accessibilityValue(publicDraft.message)
-                    Button("画像と文面を共有") { export(publicDraft, pdf: false) }
+                    Button("画像と文面を共有") {
+                        focusedField = nil
+                        export(publicDraft, pdf: false)
+                    }
                         .accessibilityIdentifier("lost-cat-share-image")
-                    Button("印刷用PDFを共有") { export(publicDraft, pdf: true) }
+                    Button("印刷用PDFを共有") {
+                        focusedField = nil
+                        export(publicDraft, pdf: true)
+                    }
                         .accessibilityIdentifier("lost-cat-share-pdf")
                 }
             } else {
@@ -302,6 +317,14 @@ struct LostCatDraftView: View {
         }
         .navigationTitle("迷子のとき")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完了") { focusedField = nil }
+                    .accessibilityIdentifier("lost-cat-keyboard-done")
+            }
+        }
         .onAppear {
             guard !hasLoadedDefaults else { return }
             publicCatName = catName.isEmpty ? record.name : catName
