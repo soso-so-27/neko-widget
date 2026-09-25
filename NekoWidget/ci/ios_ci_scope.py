@@ -179,6 +179,41 @@ APP_ONLY_VIEWS = frozenset(
     path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
     for path in (Path(__file__).resolve().parents[1] / "NekoWidget" / "Views").rglob("*.swift")
 )
+# This exact independently reviewed export candidate touches app-only sources.
+# It does not change Widget render inputs. Freeze both sides of every changed
+# file: a different export, incomplete batch, or project change runs full.
+APP_ONLY_RECORD_EXPORT_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift",
+    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift",
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+    "NekoWidget/Shared/Sharing/FamilyRecordCore.swift",
+    "NekoWidget/ci/verify-family-records.swift",
+    "NekoWidget/ci/verify-photo-memory-note-export.swift",
+})
+APP_ONLY_RECORD_EXPORT_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift": (
+        "9e0866bd19e30e6ccd04c9d2f146f84532f15791fdc713098162dffab6d97936",
+        "0243d25ac101416407515c7fc435a41b0f70f528dc5493766b3b0835802c454d"),
+    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift": (
+        "63ed488b234637f7b3dadca1cad1a127cdf3c0195627c1879814b4b91c16d556",
+        "67665040d184bfe58ed5ddec6199fb637045f31198c2a14023aa04b6d50cf41e"),
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": (
+        "6563cfef08a1553934c2eb89bb19cfd4fd33fd1b028969e623232333136eb9a5",
+        "7cb212a833b6bf056a05ad7a84950cf1c823819b17ae440c3a0fffb841e7a422"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
+        "d6ea8bebf3d9d4072ff2df1275c1b88d4133c0fd371757bc80b9801b880ed4c6",
+        "c0d15efa0af30e4c21006212dbee67ec4246f1e15668e53b6890168e848f2044"),
+    "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": (
+        "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574",
+        "7860f5a4c2964d73112790d1bab2e645bd64676844f65f45b369f1e10a175aa3"),
+    "NekoWidget/ci/verify-family-records.swift": (
+        "ca811d79911034bbf3fed32a034712ba348ded0ab8e636001b7aa20dcc2df0c6",
+        "d61a8b903af63dca60cc048a281927481a4b243f7d3d12146e8cfcd1b88b928c"),
+    "NekoWidget/ci/verify-photo-memory-note-export.swift": (
+        "98910b2dea5c12479bfdaee2ce189f9f4d56c9a3993985089e95e7ea47d353cd",
+        "d2eb7c8ac95829b6a6d4e3cf212d4b0993df259d90cfb241a63c57a177cbfd69"),
+}
 # v3 is an exact reviewed presentation pair, not permission to change shared
 # authorisation, persistence, transport or revocation implementations.
 FAMILY_PRESENTATION_PATH = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
@@ -875,7 +910,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
     "NekoWidget/ci/run-sharing-runtime-matrix.sh",
 })
 MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
-                | APP_ONLY_VIEWS | APP_VIEW_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
+                | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
 
@@ -1393,6 +1428,13 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
+def reviewed_app_record_export_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    if set(changes) != APP_ONLY_RECORD_EXPORT_PATHS or set(APP_ONLY_RECORD_EXPORT_DIGESTS) != APP_ONLY_RECORD_EXPORT_PATHS:
+        return False
+    return all(tuple(map(source_digest, changes[path])) == APP_ONLY_RECORD_EXPORT_DIGESTS[path]
+               for path in APP_ONLY_RECORD_EXPORT_PATHS)
+
+
 def evidence_maintenance_changes(changes) -> bool:
     if set(changes) != CI_EVIDENCE_PATHS or set(CI_EVIDENCE_DIGESTS) != CI_EVIDENCE_PATHS:
         return False
@@ -1535,7 +1577,7 @@ def accepts_paths(scope: str, paths) -> bool:
         # The sole reviewed UI-test file belongs only to the app UI-test
         # target. Its isolated edits need both full app UI shards, but do not
         # change the Widget gallery fixture or any shipped product source.
-        return bool(sources and sources <= APP_VIEW_PATHS | APP_ONLY_VIEWS)
+        return bool(sources and sources <= APP_VIEW_PATHS | APP_ONLY_VIEWS | APP_ONLY_RECORD_EXPORT_PATHS)
     if scope == REVIEWED_APP_SCOPE and CAT_ENTRY_SEARCH_COMPANION in sources:
         # Path prefilter only; reviewed_app_changes must first prove the exact
         # one-line content change and complete manifest before selecting scope.
@@ -1865,6 +1907,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if set(changes) <= APP_VIEW_PATHS and (set(changes) & APP_VIEW_PRODUCT_PATHS or
                                           set(changes) == {MEMORY_TEST_PATH}):
+        return APP_VIEW_SCOPE
+    if reviewed_app_record_export_changes(changes):
         return APP_VIEW_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE

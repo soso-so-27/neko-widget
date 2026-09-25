@@ -2109,6 +2109,38 @@ class PlanTests(unittest.TestCase):
                      'privacyURL = changed', 'fixtureTitle = "x"', '"--new-launch-switch"'):
             self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.APP_VIEW_SCOPE)
 
+    def test_app_only_record_export_keeps_sharing_runtime_without_widget_gallery(self):
+        change = ('let before = 1\n', 'let after = 2\n')
+        album = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
+        ui_test = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
+        changes = {path: change for path in scope.APP_ONLY_RECORD_EXPORT_PATHS}
+        self.assertIn(album, changes)
+        self.assertIn(ui_test, changes)
+        digests = {path: tuple(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        with patch.object(scope, "APP_ONLY_RECORD_EXPORT_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
+            self.assertTrue(scope.accepts_paths(scope.APP_VIEW_SCOPE, changes))
+            selected = planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)
+            self.assertEqual(selected, planner.required_jobs_from_scope(scope.APP_VIEW_SCOPE))
+            self.assertIn(scope.lane_job(scope.APP_VIEW_SCOPE, "runtime"), selected)
+            self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(scope.APP_VIEW_SCOPE))
+            for path in changes:
+                with self.subTest(missing=path):
+                    self.assertEqual(scope.select_scope({key: value for key, value in changes.items() if key != path}),
+                                     scope.FULL_SCOPE)
+                with self.subTest(tampered=path):
+                    edited = dict(changes)
+                    edited[path] = (change[0], change[1] + "unreviewed\n")
+                    self.assertEqual(scope.select_scope(edited), scope.FULL_SCOPE)
+            for unrelated in (
+                "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                "NekoWidget/Shared/Models/WidgetManifest.swift",
+                "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                "NekoWidget/NekoWidget/Services/WidgetCacheBuilder.swift",
+            ):
+                with self.subTest(unrelated=unrelated):
+                    self.assertEqual(scope.select_scope(changes | {unrelated: change}), scope.FULL_SCOPE)
+
     def test_only_literal_copy_and_known_literal_style_lines_can_use_ui_scope(self):
         home = "NekoWidget/NekoWidget/Views/HomeView.swift"
         for before, after in (
