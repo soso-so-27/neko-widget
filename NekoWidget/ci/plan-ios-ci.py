@@ -94,50 +94,130 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v6"
+PRESERVATION_SCOPE = "preservation-service-v7"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
 PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name in (
-    ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
-    "vitest.config.ts", "wrangler.jsonc", "migrations/0001_auth.sql", "migrations/0002_records.sql",
-    "src/apple.ts", "src/auth.ts", "src/contracts.ts", "src/documents.ts",
-    "src/index.ts", "src/providers.ts", "src/storage.ts", "src/key-custody.ts", "src/bounded-body.ts",
-    "test/apple.integration.test.ts", "test/auth.integration.test.ts", "test/setup.ts",
-    "test/storage.integration.test.ts", "test/key-custody.test.ts",
-    "test/recovery.integration.test.ts", "test/bounded-body.test.ts", "test/key-fixture.ts",
-    "src/billing-link-protocol.ts", "src/membership-links.ts", "src/billing-authority.ts",
-    "migrations/0003_membership_links.sql", "wrangler.billing.disabled.jsonc",
-    "test/membership-links.test.ts", "test/billing-authority.test.ts",
+    ".gitignore",
+    "README.md",
+    "migrations/0001_auth.sql",
+    "migrations/0002_records.sql",
+    "migrations/0003_membership_links.sql",
     "migrations/0004_upload_owner_index.sql",
-    "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
-    "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts",
-    "migrations/0006_notice_contacts.sql", "migrations/0007_notice_submissions.sql",
-    "src/notice-events.ts", "src/notice-submissions.ts",
-    "test/notice-events.test.ts", "test/notice-submissions.test.ts",
+    "migrations/0005_retention_ledger.sql",
+    "migrations/0006_notice_contact.sql",
+    "migrations/0007_notice_submissions.sql",
+    "migrations/0008_notice_claims.sql",
+    "migrations/0009_notice_contact_fingerprint.sql",
+    "migrations/0010_notice_evidence_version.sql",
+    "migrations/0011_expiry_review_cursor.sql",
+    "migrations/0012_owner_purge_fence.sql",
+    "migrations/0013_record_recovery_versions.sql",
+    "migrations/0014_record_commit_markers.sql",
+    "migrations/0015_owner_recovery_generations.sql",
+    "package-lock.json",
+    "package.json",
+    "scripts/aws-staging-probe-policy.json",
+    "scripts/r2-remote-probe.ts",
+    "scripts/run-live-staging-s3-probe.ps1",
+    "scripts/verify-notice-evidence-migration.mjs",
+    "scripts/verify-owner-recovery-migration.mjs",
+    "scripts/verify-purge-fence-migration.mjs",
+    "scripts/verify-record-recovery-migration.mjs",
+    "src/apple.ts",
+    "src/auth.ts",
+    "src/aws-kms-key-wrapper.ts",
+    "src/billing-authority.ts",
+    "src/billing-link-protocol.ts",
+    "src/bounded-body.ts",
+    "src/contracts.ts",
+    "src/documents.ts",
+    "src/identity-index.ts",
+    "src/index.ts",
+    "src/key-custody.ts",
+    "src/membership-links.ts",
+    "src/notice-delivery.ts",
+    "src/notice-dispatch.ts",
+    "src/notice-events.ts",
+    "src/notice-submissions.ts",
+    "src/owner-archive-recovery.ts",
+    "src/owner-cloud-inventory.ts",
+    "src/owner-cloud-snapshot.ts",
+    "src/owner-photo-inventory.ts",
+    "src/owner-primary-reconciliation.ts",
+    "src/owner-purge-fence.ts",
+    "src/owner-quarantine-restore.ts",
+    "src/owner-record-inventory.ts",
+    "src/owner-recovery-copy.ts",
+    "src/providers.ts",
+    "src/record-recovery-copy.ts",
+    "src/retention-ledger.ts",
+    "src/s3-recovery-copy.ts",
+    "src/s3-version-purge.ts",
+    "src/storage.ts",
+    "test/apple.integration.test.ts",
+    "test/auth.integration.test.ts",
+    "test/aws-kms-key-wrapper.test.ts",
+    "test/billing-authority.test.ts",
+    "test/bounded-body.test.ts",
+    "test/key-custody.test.ts",
+    "test/key-fixture.ts",
+    "test/live-staging-flow.integration.test.ts",
+    "test/live-staging-kms.integration.test.ts",
+    "test/live-staging-s3.integration.test.ts",
+    "test/membership-links.test.ts",
+    "test/notice-dispatch.test.ts",
+    "test/notice-events.test.ts",
+    "test/notice-submissions.test.ts",
+    "test/owner-cloud-inventory.test.ts",
+    "test/owner-cloud-snapshot.test.ts",
+    "test/owner-photo-inventory.test.ts",
+    "test/owner-primary-reconciliation.test.ts",
+    "test/owner-purge-fence.test.ts",
+    "test/owner-quarantine-restore.test.ts",
+    "test/owner-record-inventory.test.ts",
+    "test/owner-recovery-copy.test.ts",
+    "test/record-recovery-copy.test.ts",
+    "test/recovery.integration.test.ts",
+    "test/retention-ledger.test.ts",
+    "test/s3-recovery-copy.test.ts",
+    "test/s3-version-purge.test.ts",
+    "test/setup.ts",
+    "test/storage.integration.test.ts",
+    "tsconfig.json",
+    "vitest.config.ts",
+    "vitest.live-staging-flow.config.ts",
+    "vitest.live-staging-kms.config.ts",
+    "vitest.live-staging.config.ts",
+    "wrangler.billing.disabled.jsonc",
+    "wrangler.jsonc",
+    "wrangler.kms.disabled.jsonc",
+    "wrangler.live-staging-flow.jsonc",
+    "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v6 is a one-candidate review of the entire disabled service tree, not a
+# v7 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
-# review/profile or FULL; external Queue/sending/deletion is not certified here.
-PRESERVATION_REVIEWED_TREE = "ba57376cac80d13c3e7c87a2f53dbea57ec79333"
+# review/profile or FULL; it does not certify live data, physical purge, or iOS.
+PRESERVATION_REVIEWED_TREE = "6da01aec45a5d3394a57600f6d253f648e1374be"
 PRESERVATION_WORKFLOW_DIGEST = "c36300e55929d9b4abc56387a390c84b71c71358c42b2fa726b4cb74e23b6c6a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "2baf69841667028a03d3caef283a18ef12bedcd6b5acc26f3f136de2b61c5e44",
-        "6f7e06230eec60acd78c22bfa88a5c83ad42d6e3e6557d8cf81634d21e125859"
+        "09e6e74f6c92716d095b0ee0298c52b0eecd1abe0b4e4ab986eb41065703c975",
+        "1394a5ac51383a5624b794d58a6c456b8780f5edeede5fa2509a387fd3c48f10"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9",
-        "7e8717ec2b70095473a027b455c61c6439b853327c01dfe22e4be9f9d7bf05f5"
+        "7e8717ec2b70095473a027b455c61c6439b853327c01dfe22e4be9f9d7bf05f5",
+        "c43bd6d5a7e7328653ed17961801375b3b6b0f27de3414af9b77307f6e76871b"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946",
-        "b4e5c6ebd4808e9a6469f1c604d18707db75c23ecb4c56f1fbc7c36084bf8fa9"
+        "7cd9248380fdb19b30c7d89820ac508ceddc23b163bbd278f4e7ac6df9f3faec",
+        "bda982a9ffec2b4bc2062862167a3fd905f70d673990e78f0f9304803ca10cce"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e",
-        "9ab51f3c708b2b9bfdd61a193ba6b5247df5037c2d1bdf736d434e63bd59aea7"
+        "9ab51f3c708b2b9bfdd61a193ba6b5247df5037c2d1bdf736d434e63bd59aea7",
+        "7520ce213c22889d6df82ab4403bdba354e90eaadfb7897f9a44aae0480e5572"
     ]
 }
 

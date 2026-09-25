@@ -70,8 +70,8 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 46)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v6")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 96)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v7")
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -85,14 +85,14 @@ class PlanTests(unittest.TestCase):
                      "test/membership-links.test.ts", "test/billing-authority.test.ts",
                      "src/aws-kms-key-wrapper.ts", "test/aws-kms-key-wrapper.test.ts", "wrangler.kms.disabled.jsonc",
                      "migrations/0005_retention_ledger.sql", "src/retention-ledger.ts", "test/retention-ledger.test.ts",
-                     "migrations/0006_notice_contacts.sql", "migrations/0007_notice_submissions.sql",
+                     "migrations/0006_notice_contact.sql", "migrations/0007_notice_submissions.sql",
                      "src/notice-events.ts", "src/notice-submissions.ts",
                      "test/notice-events.test.ts", "test/notice-submissions.test.ts"):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         # Same filenames with any different service content (including an
-        # in-place sender, Queue binding, or deletion) must not use v6.
+        # in-place sender, Queue binding, or deletion) must not use v7.
         self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
                       "NekoWidget/PreservationService/src/notice-sender.ts",

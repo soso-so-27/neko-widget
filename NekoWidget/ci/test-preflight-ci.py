@@ -29,7 +29,7 @@ class PreflightTests(unittest.TestCase):
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},
             {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
             {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v6")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v7")
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
@@ -66,8 +66,8 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["unmapped_files"], [])
         self.assertFalse(result["ready"])
         self.assertTrue(result["cost_review_required"])
-        self.assertIn("no native or release evidence", result["reason"])
-        self.assertIn("owner-index migration", result["reason"])
+        self.assertIn("no native, live-cloud or release evidence", result["reason"])
+        self.assertIn("reviewed tree", result["reason"])
         runs = [{"id": 9, "path": planner.PRESERVATION_WORKFLOW, "conclusion": "failure"},
                 {"id": 10, "path": planner.JPEG_WORKFLOW, "conclusion": "success"},
                 {"id": 11, "path": ".github/workflows/other.yml", "conclusion": "success"}]
