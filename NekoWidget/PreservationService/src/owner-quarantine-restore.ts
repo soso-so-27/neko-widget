@@ -1,7 +1,9 @@
 import { ServiceError } from './contracts';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
+import { loadOwnerPurgeReplay } from './purge-intent-replay';
 import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
   type DiscoveredRecordCommit } from './record-recovery-copy';
+import type { S3PurgeIntentStore } from './s3-purge-intent';
 
 const unavailable = () => new ServiceError('OWNER_QUARANTINE_RESTORE_UNAVAILABLE', 503);
 
@@ -16,7 +18,13 @@ export class OwnerQuarantineRestore {
   constructor(private readonly archive: OwnerArchiveRecovery,
     private readonly records: RecordRecoveryCopy,
     private readonly db: D1Database,
-    private readonly bucket: R2Bucket) {}
+    private readonly bucket: R2Bucket,
+    private readonly purgeIntents: Pick<S3PurgeIntentStore,
+      'listOwnerVersionsPage' | 'referenceForListedVersion' | 'readExact'>) {}
+
+  private async requireNoPurgeIntent(ownerId: string): Promise<void> {
+    if (await loadOwnerPurgeReplay(this.purgeIntents, ownerId) !== 'clear') throw unavailable();
+  }
 
   private async requireEmptyTarget(ownerId: string): Promise<void> {
     const row = await this.db.prepare(`SELECT
@@ -59,6 +67,9 @@ export class OwnerQuarantineRestore {
   async restore(ownerId: string, now: number): Promise<
     { status: 'missing' | 'disabled' | 'quarantined' } |
     { status: 'staged-disabled'; ownerId: string; records: number; photos: number }> {
+    // A D1 bookmark can predate a physical deletion. Consult the independent
+    // full-version ledger before reading a recovery image or staging any bytes.
+    await this.requireNoPurgeIntent(ownerId);
     const candidate = await this.archive.assembleQuarantineCandidate(ownerId, now);
     if (candidate.status !== 'ready-for-quarantine') return candidate;
     const owner = candidate.owner;
@@ -68,6 +79,7 @@ export class OwnerQuarantineRestore {
       || candidate.verifiedRecords !== owner.records.length
       || candidate.recordMarkers.length !== owner.records.length) throw unavailable();
     await this.requireEmptyTarget(ownerId);
+    await this.requireNoPurgeIntent(ownerId);
     const initial = [
       this.db.prepare(`INSERT INTO pa_owners(owner_id,identity_key,epoch,disabled,created_at,
         purge_fence_id) VALUES(?,?,?,1,?,NULL)`)

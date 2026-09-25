@@ -11,6 +11,7 @@ import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { boundKeyWrapper } from '../src/providers';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { S3RecoveryCopy } from '../src/s3-recovery-copy';
+import { S3PurgeIntentStore } from '../src/s3-purge-intent';
 import { ArchiveStore } from '../src/storage';
 import { handleKeyWrapperRequest } from '../src/aws-kms-key-wrapper';
 
@@ -113,9 +114,15 @@ it('saves a synthetic photo and stages its S3 recovery in offline quarantine', a
     await bindings.ARCHIVE.delete(photoKey!);
     expect(await bindings.ARCHIVE.head(photoKey!)).toBeNull();
     await applyD1Migrations(bindings.RESTORE_DB, bindings.TEST_MIGRATIONS);
+    // The restore target remains offline. A complete independent purge-prefix
+    // replay must be clear before any recovered photo is staged into R2.
+    const purgeIntents = new S3PurgeIntentStore({ enabled: 'YES', region, bucket,
+      expectedAccountId: account,
+      accessKeyId: bindings.NEKO_PROBE_AWS_ACCESS_KEY_ID,
+      secretAccessKey: bindings.NEKO_PROBE_AWS_SECRET_ACCESS_KEY });
     const staged = await new OwnerQuarantineRestore(
       new OwnerArchiveRecovery(s3, ownerRecovery, recordRecovery), recordRecovery,
-      bindings.RESTORE_DB, bindings.ARCHIVE).restore(ownerId, now + 2);
+      bindings.RESTORE_DB, bindings.ARCHIVE, purgeIntents).restore(ownerId, now + 2);
     expect(staged).toEqual({ status: 'staged-disabled', ownerId, records: 1, photos: 1 });
     const restored = await bindings.RESTORE_DB.prepare(`SELECT o.disabled,r.photo_key
       FROM pa_owners o JOIN pa_records r ON r.owner_id=o.owner_id
