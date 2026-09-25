@@ -204,7 +204,7 @@ APP_ONLY_RECORD_EXPORT_DIGESTS = {
         "7cb212a833b6bf056a05ad7a84950cf1c823819b17ae440c3a0fffb841e7a422"),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "d6ea8bebf3d9d4072ff2df1275c1b88d4133c0fd371757bc80b9801b880ed4c6",
-        "3d30a509b49a0a612de62ef85c7ee845b6657ec3ccc50c642bfd1bacc593ccb8"),
+        "3dc473e497b955158b77651ee4defc223af6da5d29836dc2bc3c8486385cb23d"),
     "NekoWidget/Shared/Sharing/FamilyRecordCore.swift": (
         "164718ec133337776d23e90e29982bc84e036ca5db8f7248b35caef484124574",
         "b6a1dc5acf0bb7835cc2763757d0106496c87b5e4a987f9081325f7bcd324f4a"),
