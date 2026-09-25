@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
-import { recoverAbandonedPurgeFences } from '../src/owner-purge-fence';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const day = 86_400_000;
@@ -42,7 +41,6 @@ it('requires a prepared external reference before claiming either branch', async
   expect(await db.prepare(`SELECT state FROM pa_purge_execution_claims
     WHERE owner_id=? AND intent_id=?`).bind(f.ownerId, f.intentId).first())
     .toMatchObject({ state: 'aborting' });
-  expect(await recoverAbandonedPurgeFences(db, now + 11 * 60_000)).toBe(0);
   expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
     .bind(f.ownerId).first()).toMatchObject({ disabled: 1 });
   await expect(db.prepare(`UPDATE pa_purge_execution_claims
@@ -54,6 +52,15 @@ it('requires a prepared external reference before claiming either branch', async
     .bind(now + 3, f.ownerId, f.intentId).run();
   await expect(db.prepare('DELETE FROM pa_purge_execution_claims WHERE owner_id=?')
     .bind(f.ownerId).run()).rejects.toThrow();
+});
+
+it('cannot claim an old fence after its lease has expired', async () => {
+  const f = await fixture();
+  await f.append('prepared', now);
+  await expect(db.prepare(`INSERT INTO pa_purge_execution_claims(owner_id,intent_id,state,
+    owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
+    manifest_sha256,claimed_at) VALUES(?,?,'aborting',1,0,1,1,?,NULL,?)`)
+    .bind(f.ownerId, f.intentId, now - day, now + 11 * 60_000).run()).rejects.toThrow();
 });
 
 it('cannot complete an erasure claim without matching prepared, erasing and completed events', async () => {

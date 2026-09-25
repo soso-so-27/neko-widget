@@ -43,16 +43,25 @@ export class OwnerPurgeAbort {
     if (!fence || !uuid.test(fence.ownerId) || !uuid.test(fence.fenceId)
       || fence.candidate?.ownerId !== fence.ownerId) throw unavailable();
     try {
-      const prepared = requireAbortableTimeline(
+      const intent = requireAbortableTimeline(
         await loadOwnerPurgeTimeline(this.store, fence.ownerId), fence);
+      // A D1 Time Travel restore can lose the local prepared reference while
+      // the independently verified S3 event survives. Reconcile the same
+      // immutable event before attempting the claim; never invent new bytes.
+      await this.ledger.append({ version: 1, ownerId: fence.ownerId,
+        intentId: fence.fenceId, stage: 'prepared', ownerEpoch: fence.ownerEpoch,
+        inventoryGeneration: fence.inventoryGeneration,
+        retentionEpisode: fence.candidate.episode,
+        retentionRevision: fence.candidate.revision, dueAt: fence.candidate.dueAt,
+        recordedAt: intent.preparedAt, manifestSha256: null });
       const read = () => this.db.prepare(`SELECT state,owner_epoch,inventory_generation,
         retention_episode,retention_revision,due_at,claimed_at
         FROM pa_purge_execution_claims WHERE owner_id=? AND intent_id=?`)
         .bind(fence.ownerId, fence.fenceId).first<ClaimRow>();
       let claim = await read();
       if (!claim) {
-        const claimedAt = this.now();
-        if (!Number.isSafeInteger(claimedAt) || claimedAt < prepared.preparedAt) throw unavailable();
+        const claimedAt = intent.stage === 'aborted' ? intent.recordedAt : this.now();
+        if (!Number.isSafeInteger(claimedAt) || claimedAt < intent.preparedAt) throw unavailable();
         try {
           await this.db.prepare(`INSERT INTO pa_purge_execution_claims(owner_id,intent_id,state,
             owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
@@ -70,7 +79,10 @@ export class OwnerPurgeAbort {
         || claim.retention_revision !== fence.candidate.revision
         || claim.due_at !== fence.candidate.dueAt
         || !Number.isSafeInteger(claim.claimed_at)
-        || claim.claimed_at < prepared.preparedAt) throw unavailable();
+        || claim.claimed_at < intent.preparedAt
+        || (intent.stage === 'aborted' && claim.claimed_at !== intent.recordedAt)) {
+        throw unavailable();
+      }
       const event: PurgeIntentEvent = { version: 1, ownerId: fence.ownerId,
         intentId: fence.fenceId, stage: 'aborted', ownerEpoch: fence.ownerEpoch,
         inventoryGeneration: fence.inventoryGeneration,

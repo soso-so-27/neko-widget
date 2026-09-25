@@ -16,6 +16,7 @@ export type OwnerPurgeIntentState = {
   retentionRevision: number;
   dueAt: number;
   preparedAt: number;
+  recordedAt: number;
   manifestSha256: string | null;
 };
 export type OwnerPurgeTimeline = { replay: OwnerPurgeReplay;
@@ -68,7 +69,7 @@ export function reconcileOwnerPurgeTimeline(ownerId: string,
       inventoryGeneration: prepared.inventoryGeneration,
       retentionEpisode: prepared.retentionEpisode,
       retentionRevision: prepared.retentionRevision, dueAt: prepared.dueAt,
-      preparedAt: prepared.recordedAt,
+      preparedAt: prepared.recordedAt, recordedAt: latest.recordedAt,
       manifestSha256: latest.manifestSha256 });
   }
   return { replay: result,

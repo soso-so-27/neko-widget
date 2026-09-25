@@ -139,12 +139,6 @@ export class OwnerPurgeFence {
     }
     return fence;
   }
-
-  /** Only a pre-deletion fence can be undone. Future physical deletion must
-   * move to a separate state so it can never use this thaw operation. */
-  async abortBeforeDeletion(fenceId: string, ownerId: string, ownerEpoch: number): Promise<void> {
-    await abortFencedOwner(this.d.db, fenceId, ownerId, ownerEpoch, this.now(), 'unknown');
-  }
 }
 
 /** A pre-deletion abort also revokes the old notice in the same D1 batch as
@@ -202,28 +196,4 @@ async function abortFencedOwner(db: D1Database, fenceId: string, ownerId: string
         .bind(now, fenceId, ownerId, ownerEpoch, ownerId, fenceId, ownerEpoch + 1),
     ]);
     if (results.some(result => result?.results.length !== 1)) throw unavailable();
-}
-
-/** Crash recovery for a lease that was fenced but never entered deletion.
- * Future physical purge must transition out of `fenced` before its first
- * destructive action; that later state must not be recoverable here. Once
- * owner recovery snapshots are required, D1 alone cannot prove that S3 has
- * no erasing event. Leave such owners disabled for external-ledger recovery.
- */
-export async function recoverAbandonedPurgeFences(db: D1Database, now: number, limit = 20): Promise<number> {
-  if (!Number.isSafeInteger(now) || now <= 30 * day
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw unavailable();
-  const rows = await db.prepare(`SELECT f.fence_id,f.owner_id,f.owner_epoch
-    FROM pa_purge_fences f JOIN pa_owners o ON o.owner_id=f.owner_id
-    WHERE f.state='fenced' AND f.lease_expires_at<=? AND o.disabled=1
-      AND o.epoch=f.owner_epoch AND o.purge_fence_id=f.fence_id
-      AND (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=0
-      AND NOT EXISTS(SELECT 1 FROM pa_purge_execution_claims c
-        WHERE c.owner_id=f.owner_id AND c.intent_id=f.fence_id)
-    ORDER BY f.lease_expires_at,f.fence_id LIMIT ?`).bind(now, limit)
-    .all<{ fence_id: string; owner_id: string; owner_epoch: number }>();
-  for (const row of rows.results) {
-    await abortFencedOwner(db, row.fence_id, row.owner_id, row.owner_epoch, now, 'unknown');
-  }
-  return rows.results.length;
 }

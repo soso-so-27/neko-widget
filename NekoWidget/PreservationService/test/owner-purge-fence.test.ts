@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import type { DurableAuth } from '../src/auth';
 import type { NoticeSubmissions } from '../src/notice-submissions';
 import { verifyFencedPurgeEligibility } from '../src/fenced-purge-eligibility';
-import { OwnerPurgeFence, recoverAbandonedPurgeFences } from '../src/owner-purge-fence';
+import { OwnerPurgeFence } from '../src/owner-purge-fence';
 import { RetentionLedger, type ExpiryReviewCandidate, type VerifiedMembershipStatus } from '../src/retention-ledger';
 
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -102,32 +102,14 @@ it('invalidates an old notice when billing renewed before a later expiry', async
     .bind(f.ownerId).first()).toMatchObject({ disabled: 0, purge_fence_id: null });
 });
 
-it('recovers a crashed pre-deletion fence after its lease and invalidates notice', async () => {
+it('rejects an expired fence instead of reusing its old notice', async () => {
   const f = await fixture();
   const fenced = await f.fence.begin(f.ownerId);
   expect(fenced).not.toBeNull();
-  expect(await recoverAbandonedPurgeFences(db, now + 9 * 60_000)).toBe(0);
-  expect(await recoverAbandonedPurgeFences(db, now + 11 * 60_000)).toBeGreaterThanOrEqual(1);
-  expect(await db.prepare('SELECT disabled,epoch,purge_fence_id FROM pa_owners WHERE owner_id=?')
-    .bind(f.ownerId).first()).toMatchObject({ disabled: 0, epoch: 2, purge_fence_id: null });
-  expect(await db.prepare('SELECT owner_epoch FROM pa_identity_credentials WHERE owner_id=?')
-    .bind(f.ownerId).first()).toMatchObject({ owner_epoch: 2 });
-  expect(await db.prepare(`SELECT verified_status,paused_at,final_notice_receipt
-    FROM pa_retention WHERE owner_id=?`).bind(f.ownerId).first()).toMatchObject({
-    verified_status: 'unknown', paused_at: now + 11 * 60_000, final_notice_receipt: null,
-  });
-  expect(await recoverAbandonedPurgeFences(db, now + 12 * 60_000)).toBe(0);
-});
-
-it('requires snapshot policy OFF before selecting any lease for automatic thaw', async () => {
-  let selection = '';
-  const isolated = { prepare(sql: string) {
-    selection = sql;
-    return { bind: () => ({ all: async () => ({ results: [] }) }) };
-  } } as unknown as D1Database;
-  expect(await recoverAbandonedPurgeFences(isolated, now + 11 * 60_000)).toBe(0);
-  expect(selection).toContain('owner_snapshot_required FROM pa_recovery_write_policy');
-  expect(selection).toContain('WHERE singleton=1)=0');
+  expect(await verifyFencedPurgeEligibility(db, fenced!, now + 11 * 60_000,
+    async () => 'expired')).toBe(false);
+  expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+    .bind(f.ownerId).first()).toMatchObject({ disabled: 1, purge_fence_id: fenced!.fenceId });
 });
 
 it('rechecks a disabled fence against fresh billing and exact notice evidence', async () => {
@@ -167,29 +149,6 @@ it('detects changed notification evidence across the private billing check', asy
       .bind('c'.repeat(64), f.ownerId).run();
     return 'expired';
   })).toBe(false);
-});
-
-it('cannot thaw a claimed owner even when the fence is still pre-deletion', async () => {
-  const f = await fixture();
-  const fenced = await f.fence.begin(f.ownerId);
-  expect(fenced).not.toBeNull();
-  const item = fenced!;
-  await db.prepare(`INSERT INTO pa_owner_purge_events(owner_id,intent_id,stage,
-    owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
-    recorded_at,manifest_sha256,s3_object_key,s3_version_id,s3_sha256,s3_bytes)
-    VALUES(?,?,'prepared',?,?,?,?,?,?,NULL,?,?,?,1)`)
-    .bind(f.ownerId, item.fenceId, item.ownerEpoch, item.inventoryGeneration,
-      item.candidate.episode, item.candidate.revision, item.candidate.dueAt, now,
-      `purge/v1/${f.ownerId}/${item.fenceId}/prepared`, 'v1', 'a'.repeat(64)).run();
-  await db.prepare(`INSERT INTO pa_purge_execution_claims(owner_id,intent_id,state,
-    owner_epoch,inventory_generation,retention_episode,retention_revision,due_at,
-    manifest_sha256,claimed_at) VALUES(?,?,'aborting',?,?,?,?,?,NULL,?)`)
-    .bind(f.ownerId, item.fenceId, item.ownerEpoch, item.inventoryGeneration,
-      item.candidate.episode, item.candidate.revision, item.candidate.dueAt, now).run();
-  await expect(f.fence.abortBeforeDeletion(item.fenceId, f.ownerId, item.ownerEpoch))
-    .rejects.toMatchObject({ code: 'PURGE_FENCE_UNAVAILABLE' });
-  expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
-    .bind(f.ownerId).first()).toMatchObject({ disabled: 1, purge_fence_id: item.fenceId });
 });
 
 it('does not fence after a contact change or while storage cleanup is pending', async () => {

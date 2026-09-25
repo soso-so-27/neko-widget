@@ -11,7 +11,6 @@ import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions'
 import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
 import { type NoticeEventSource } from './notice-events';
 import { processDeliveredNoticeEvent } from './notice-delivery';
-import { recoverAbandonedPurgeFences } from './owner-purge-fence';
 import { S3RecoveryCopy } from './s3-recovery-copy';
 import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
@@ -319,9 +318,9 @@ export default {
       if (maintenanceFailures > 0) throw new ServiceError('PRESERVATION_UNAVAILABLE', 503);
       return;
     }
-    // Continue physical deletion even while sign-in or paid saving is disabled.
-    try { await recoverAbandonedPurgeFences(env.DB, Date.now()); }
-    catch { maintenanceFailures++; }
+    // Never thaw a fenced owner from D1 alone. Time Travel can roll back a
+    // deletion claim while the independent S3 erasing event still exists.
+    // A future release path must replay S3 before re-enabling access.
     if (env.ARCHIVE) {
       try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
       catch { maintenanceFailures++; }

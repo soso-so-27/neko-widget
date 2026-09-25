@@ -72,8 +72,9 @@ it('records an exact-version abort without re-enabling the owner and retries ide
 
 it('keeps a failed S3 abort claim disabled for retry', async () => {
   const f = await fixture();
-  const abort = new OwnerPurgeAbort(db, f.store, { append: async () => {
-    throw Error('S3 unavailable');
+  const abort = new OwnerPurgeAbort(db, f.store, { append: async event => {
+    if (event.stage === 'aborted') throw Error('S3 unavailable');
+    return f.ledger.append(event);
   } }, () => now + 1);
   await expect(abort.claimAndRecordAbort(f.fence))
     .rejects.toMatchObject({ code: 'OWNER_PURGE_ABORT_UNAVAILABLE' });
@@ -98,6 +99,24 @@ it('resumes after S3 abort is recorded but D1 claim is still aborting', async ()
     WHERE owner_id=? AND intent_id=?`).bind(f.fence.ownerId, f.fence.fenceId).first())
     .toMatchObject({ state: 'aborted' });
   expect(f.events.size).toBe(2);
+});
+
+it('reconciles an S3 abort after D1 has lost both local event and claim', async () => {
+  const f = await fixture();
+  const abortedAt = now + 1;
+  await f.ledger.append({ ...f.events.get('prepared')!, stage: 'aborted',
+    recordedAt: abortedAt });
+  await db.prepare(`DELETE FROM pa_owner_purge_events WHERE owner_id=?`)
+    .bind(f.fence.ownerId).run();
+  await new OwnerPurgeAbort(db, f.store, f.ledger, () => now + 5)
+    .claimAndRecordAbort(f.fence);
+  expect(await db.prepare(`SELECT state,claimed_at FROM pa_purge_execution_claims
+    WHERE owner_id=? AND intent_id=?`).bind(f.fence.ownerId, f.fence.fenceId).first())
+    .toMatchObject({ state: 'aborted', claimed_at: abortedAt });
+  expect(await db.prepare(`SELECT count(*) AS count FROM pa_owner_purge_events
+    WHERE owner_id=?`).bind(f.fence.ownerId).first()).toMatchObject({ count: 2 });
+  expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
+    .bind(f.fence.ownerId).first()).toMatchObject({ disabled: 1 });
 });
 
 it('refuses an externally erasing intent even when D1 has only prepared', async () => {

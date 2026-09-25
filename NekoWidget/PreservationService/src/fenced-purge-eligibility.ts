@@ -23,6 +23,7 @@ interface Evidence {
   recipient_tag: string;
   submitted_at: number;
   provider_accepted_at: number;
+  lease_expires_at: number;
 }
 
 /** Fresh private billing plus a double-read of the exact disabled owner,
@@ -49,7 +50,7 @@ export async function verifyFencedPurgeEligibility(db: D1Database, fence: PurgeF
   const read = () => db.prepare(`SELECT l.billing_account_id,o.identity_key,
       f.owner_epoch,f.inventory_generation,
       f.retention_episode,f.retention_revision,f.due_at,f.delivered_at,f.delivery_event_id,
-      f.contact_updated_at,r.checked_at,r.notice_not_before_at,
+      f.contact_updated_at,f.lease_expires_at,r.checked_at,r.notice_not_before_at,
       hex(c.sealed_email) AS sealed_email_hex,s.recipient_tag,s.submitted_at,
       s.provider_accepted_at
     FROM pa_purge_fences f JOIN pa_owners o ON o.owner_id=f.owner_id
@@ -73,7 +74,7 @@ export async function verifyFencedPurgeEligibility(db: D1Database, fence: PurgeF
       AND r.due_at=f.due_at AND r.final_notice_delivered_at=f.delivered_at
       AND r.final_notice_receipt=f.delivery_event_id
       AND r.checked_at>=f.created_at-? AND r.checked_at<=f.created_at
-      AND f.due_at<=? AND f.delivered_at<=?
+      AND f.due_at<=? AND f.delivered_at<=? AND f.lease_expires_at>?
       AND c.source='apple' AND c.updated_at=f.contact_updated_at
       AND s.evidence_version=2 AND s.episode=f.retention_episode
       AND s.retention_revision<=f.retention_revision
@@ -86,7 +87,7 @@ export async function verifyFencedPurgeEligibility(db: D1Database, fence: PurgeF
     .bind(fence.fenceId, fence.ownerId, fence.ownerEpoch, fence.inventoryGeneration,
       fence.candidate.episode, fence.candidate.revision, fence.candidate.dueAt,
       fence.candidate.deliveredAt, fence.candidate.deliveryEventId,
-      prefix, upper, day, now, Math.max(0, now - 30 * day), 30 * day).first<Evidence>();
+      prefix, upper, day, now, Math.max(0, now - 30 * day), now, 30 * day).first<Evidence>();
   try {
     const before = await read();
     if (!before || typeof before.billing_account_id !== 'string') return false;
