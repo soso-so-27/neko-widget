@@ -78,6 +78,43 @@ struct VerifyFamilyRecords {
         rejects("Foreign catalog must not become the current private window") {
             _ = try catalog.validated(spaceID: "other_space", participantID: author)
         }
+        let otherPhotoID = UUID().uuidString.lowercased()
+        let ownNote = FamilyRecordRow(id: UUID().uuidString.lowercased(), entryID: entryID,
+            kind: .words, authorID: author, revision: 1, state: .active, keyEpoch: 1,
+            ciphertext: nil, createdAt: 102, updatedAt: 103)
+        let peerNote = FamilyRecordRow(id: UUID().uuidString.lowercased(), entryID: otherPhotoID,
+            kind: .words, authorID: "other_author", revision: 1, state: .active, keyEpoch: 1,
+            ciphertext: nil, createdAt: 105, updatedAt: 105)
+        let removedNote = FamilyRecordRow(id: UUID().uuidString.lowercased(), entryID: otherPhotoID,
+            kind: .words, authorID: author, revision: 2, state: .withdrawn, keyEpoch: 1,
+            ciphertext: nil, createdAt: 104, updatedAt: 106)
+        let activePhoto = FamilyRecordRow(id: otherPhotoID, entryID: otherPhotoID, kind: .photo,
+            authorID: "other_author", revision: 1, state: .active, keyEpoch: 1,
+            ciphertext: nil, createdAt: 100, updatedAt: 100)
+        let portableRecords = [photo, activePhoto, ownNote, peerNote, removedNote]
+        let portableWords = [ownNote.id: "自分の文章", peerNote.id: "相手の文章"]
+        let withdrawnFiles = try FamilyRecordPortableFiles.files(index: 0, photo: photo,
+            records: portableRecords, words: portableWords, participantID: author, image: nil)
+        require(withdrawnFiles.map { $0.name } == ["001/memo.txt"], "Withdrawn image must not be restored")
+        let withdrawnText = String(data: withdrawnFiles[0].data, encoding: .utf8) ?? ""
+        require(withdrawnText.contains("自分の文章") && withdrawnText.contains("写真: 取り下げ済み"),
+            "Words must survive their photo's withdrawal")
+        let activeFiles = try FamilyRecordPortableFiles.files(index: 1, photo: activePhoto,
+            records: portableRecords, words: portableWords, participantID: author,
+            image: FamilyRecordPhotoContent(jpeg: Data([0xff, 0xd8, 0xff, 0xd9]), capturedAt: nil))
+        require(activeFiles.map { $0.name } == ["002/photo.jpg", "002/memo.txt"], "Photo and notes must share a folder")
+        let activeText = String(data: activeFiles[1].data, encoding: .utf8) ?? ""
+        require(activeText.contains("相手の文章") && activeText.contains("書いた人: 相手") &&
+            !activeText.contains("自分の文章") && !activeText.contains("取り下げた文章"),
+            "Only this photo's active words and author may be exported")
+        require(!(withdrawnText + activeText).contains(author) && !(withdrawnText + activeText).contains("other_author") &&
+            !(withdrawnText + activeText).contains(entryID) && !(withdrawnText + activeText).contains(otherPhotoID),
+            "Portable text must not disclose internal identifiers")
+        rejects("Missing active words must fail the complete export") {
+            _ = try FamilyRecordPortableFiles.files(index: 1, photo: activePhoto,
+                records: portableRecords, words: [:], participantID: author,
+                image: FamilyRecordPhotoContent(jpeg: Data([0xff, 0xd8]), capturedAt: nil))
+        }
         print("Family record text, authenticated context, withdrawal and catalog boundaries passed.")
     }
 }

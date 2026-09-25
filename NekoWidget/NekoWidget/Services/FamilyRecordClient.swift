@@ -37,6 +37,7 @@ struct FamilyRecordMutation: Sendable {
 protocol FamilyRecordServing: Sendable {
     func load() async throws -> FamilyRecordSnapshot
     func photo(_ row: FamilyRecordRow) async throws -> Data
+    func photoContent(_ row: FamilyRecordRow) async throws -> FamilyRecordPhotoContent
     func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) async throws -> FamilyRecordMutation
     func prepareWords(_ text: String, entryID: String, replacing row: FamilyRecordRow?) async throws -> FamilyRecordMutation
     func prepareWithdrawal(_ row: FamilyRecordRow) async throws -> FamilyRecordMutation
@@ -44,6 +45,9 @@ protocol FamilyRecordServing: Sendable {
 }
 
 extension FamilyRecordServing {
+    func photoContent(_ row: FamilyRecordRow) async throws -> FamilyRecordPhotoContent {
+        FamilyRecordPhotoContent(jpeg: try await photo(row), capturedAt: nil)
+    }
     func preparePhoto(_ photo: MomentShareIngressPhoto) async throws -> FamilyRecordMutation {
         try await preparePhoto(photo, sourceMomentID: nil)
     }
@@ -115,14 +119,17 @@ actor FamilyRecordClient: FamilyRecordServing {
         } catch { return false }
     }
     func photo(_ row: FamilyRecordRow) async throws -> Data {
+        try await photoContent(row).jpeg
+    }
+    func photoContent(_ row: FamilyRecordRow) async throws -> FamilyRecordPhotoContent {
         let auth = try authorization()
         let data = try await request("/v2/family-records/\(row.id)/photo", auth: auth)
         guard let roomKey = auth.credential.roomKey,
-              let jpeg = try FamilyRecordCrypto.open(data, row: row, roomKey: roomKey,
-                  spaceID: expectedSpaceID).jpeg else { throw FamilyRecordError.invalid }
+              let content = try? FamilyRecordCrypto.open(data, row: row, roomKey: roomKey,
+                  spaceID: expectedSpaceID), let jpeg = content.jpeg else { throw FamilyRecordError.invalid }
         try await requireSafe(jpeg)
         try validate(auth)
-        return jpeg
+        return FamilyRecordPhotoContent(jpeg: jpeg, capturedAt: content.capturedAt)
     }
     func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) async throws -> FamilyRecordMutation {
         let auth = try authorization()
@@ -181,5 +188,55 @@ actor FamilyRecordClient: FamilyRecordServing {
         try jpeg.write(to: url, options: [.atomic, .completeFileProtection])
         defer { try? FileManager.default.removeItem(at: url) }
         try await MomentModerationService().requireSafeImage(at: url)
+    }
+}
+
+/// Exports a fresh, complete catalog. Withdrawn photos stay absent even when
+/// their still-active words are exported beside an explicit missing-photo note.
+enum FamilyRecordExporter {
+    static func verify(_ original: FamilyRecordSnapshot, client: any FamilyRecordServing) async throws {
+        let current = try await client.load()
+        guard current.catalog.spaceID == original.catalog.spaceID,
+              current.catalog.participantID == original.catalog.participantID,
+              current.catalog.records == original.catalog.records,
+              current.words == original.words else { throw FamilyRecordError.changed }
+    }
+
+    static func create(client: any FamilyRecordServing, snapshot: FamilyRecordSnapshot,
+                       temporaryDirectory: URL = FileManager.default.temporaryDirectory) async throws -> PhotoMemoryNoteExportPayload {
+        try await verify(snapshot, client: client)
+        let records = snapshot.catalog.records
+        let photos = records.filter { row in
+            row.kind == .photo && (row.state == .active || records.contains {
+                $0.kind == .words && $0.entryID == row.id && $0.state == .active
+            })
+        }.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+        let introduction = """
+        ねこのまど　共有アルバムの書き出し
+
+        このZIPは、書き出した時点で閲覧できた一つのまどの共有写真とメモのコピーです。
+        写真は共有に保存された鑑賞用コピーで、写真アプリの原本ではありません。
+        各番号のフォルダに写真と対応するメモを入れました。写真を取り下げた記録はメモだけが残ります。
+        各フォルダの photo.jpg が写真、memo.txt がメモです。
+        「自分」は書き出した人、「相手」は同じまどのもう一人です。
+        撮影日・追加日・更新日はそれぞれ別の意味です。値がない日は記載しません。
+        外へ保存したコピーは、後から共有を解除しても回収できません。
+        """
+        let result = try await PhotoMemoryNoteExporter.createPortableArchive(
+            itemCount: photos.count, fileName: "ねこのまど_書き出し.zip",
+            introduction: introduction, fetch: { index in
+                let photo = photos[index]
+                let image: FamilyRecordPhotoContent?
+                if photo.state == .active { image = try await client.photoContent(photo) }
+                else { image = nil }
+                return try FamilyRecordPortableFiles.files(index: index, photo: photo, records: records,
+                    words: snapshot.words, participantID: snapshot.catalog.participantID, image: image)
+            }, temporaryDirectory: temporaryDirectory)
+        do { try await verify(snapshot, client: client); return result }
+        catch {
+            do { try result.cleanup() }
+            catch { throw PhotoMemoryNoteExportCleanupPending(payload: result) }
+            throw error
+        }
     }
 }

@@ -110,6 +110,47 @@ struct FamilyRecordPayload: Codable, Sendable {
     }
 }
 
+struct FamilyRecordPhotoContent: Sendable {
+    let jpeg: Data
+    let capturedAt: Date?
+}
+
+enum FamilyRecordPortableFiles {
+    static func files(index: Int, photo: FamilyRecordRow, records: [FamilyRecordRow],
+                      words: [String: String], participantID: String,
+                      image: FamilyRecordPhotoContent?) throws -> [(name: String, data: Data)] {
+        guard photo.kind == .photo, (photo.state == .active) == (image != nil), index >= 0 else {
+            throw FamilyRecordError.invalid
+        }
+        // ASCII member names work with older ZIP readers; the text remains Japanese.
+        let prefix = String(format: "%03d/", index + 1)
+        let date = ISO8601DateFormatter()
+        date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func stamp(_ seconds: Double) -> String { date.string(from: Date(timeIntervalSince1970: seconds)) }
+        var lines = ["写真 \(index + 1)"]
+        lines.append("写真の追加者: \(photo.authorID == participantID ? "自分" : "相手")")
+        lines.append("写真の追加日: \(stamp(photo.createdAt))")
+        if photo.updatedAt > photo.createdAt { lines.append("写真の更新日: \(stamp(photo.updatedAt))") }
+        var files: [(name: String, data: Data)] = []
+        if let image {
+            if let capturedAt = image.capturedAt { lines.append("撮影日: \(date.string(from: capturedAt))") }
+            files.append((prefix + "photo.jpg", image.jpeg))
+        } else { lines.append("写真: 取り下げ済み（画像は含まれません）") }
+        let notes = records.filter { $0.kind == .words && $0.entryID == photo.id && $0.state == .active }
+            .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+        for (number, note) in notes.enumerated() {
+            guard let text = words[note.id] else { throw FamilyRecordError.invalid }
+            lines.append("\nメモ \(number + 1)")
+            lines.append("書いた人: \(note.authorID == participantID ? "自分" : "相手")")
+            lines.append("記入日: \(stamp(note.createdAt))")
+            if note.updatedAt > note.createdAt { lines.append("更新日: \(stamp(note.updatedAt))") }
+            lines.append(text)
+        }
+        files.append((prefix + "memo.txt", Data((lines.joined(separator: "\n") + "\n").utf8)))
+        return files
+    }
+}
+
 enum FamilyRecordCrypto {
     private static func key(roomKey: Data, spaceID: String) throws -> SymmetricKey {
         guard roomKey.count == 32, PairingValidation.isOpaqueIdentifier(spaceID) else { throw FamilyRecordError.invalid }
