@@ -1,5 +1,9 @@
 # 現在のタスクと優先順位
 
+## 2026-09-25 個人保管：候補v16の本線反映
+
+並行TestFlight作業からmain更新の保留解除を受け、候補v16を最新mainに競合なく統合し、`d7d08be`をmainへ早送り反映した。候補SHAで保管Node job `36142363735`、mainの同SHAで保管Node job `36142552535`とiOS選択job `36142552582`が成功。後二者は本線反映の証拠であり、Mac実機・実Apple・公開Worker・物理消去の検証ではない。公開保管、課金、期限消去は引き続きOFF。次の製品残件は外部prepared intentを先行させたpolicy ONのowner fence、安全な中止・復帰、S3/R2/D1全版消去と再一覧、35日以内の最小識別子掃除、実端末と費用の受入検証。以下の「本線反映待ち」は各候補作成時の履歴であり、現在の保留ではない。
+
 ## 2026-09-25 個人保管：現在の公開境界と次の作業
 
 main `d254bda` には外部S3の消去intentを参照するD1台帳と、隔離復元での全版replayが入った。ただし保管サービスは未配備・既定OFFで、実利用者の写真は保存していない。空の専用staging D1へ0013–0016を適用済み（owner/record/消去eventは0）。遠隔D1がtrigger中の`SELECT CASE`を受理しなかったため、同等の`WHEN ... BEGIN SELECT RAISE ... END`へ直した候補は `codex/preservation-fence-bridge-20260925` 上であり、まだmain未反映。写真・メモの物理消去は行っていない。
