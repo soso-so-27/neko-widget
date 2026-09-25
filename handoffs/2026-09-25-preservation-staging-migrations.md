@@ -22,3 +22,7 @@ Time Travel bookmark は0013前が
 `delete_intent_required=0`、`owner_snapshot_required=0`、purge event triggerは7件。
 サービスの提供・写真保管・削除は依然として**OFF**。このmigration成功は実S3 intent、
 実削除、復元、販売容量、12か月保持の完了証拠ではない。
+
+## 候補CIの事前記録
+
+最初の候補commitは9月25日18:01 JST（`ac60fce`）。後続候補では、snapshot policy ON時の期限切れfence自動解除を禁止し、D1の記録版変更を二巡の一覧で検出し、fence後に会員状態・通知・owner世代を再読する**読み取り専用**部品を追加した。staging migration実適用、保管サービス208件、型検査、対象のfence/一覧試験が直接証拠。未解決はR2 OAuth権限、実R2保存、実S3全版との統合、物理消去・35日識別子掃除、実iPhone/課金/通知であり、Node CIはそれらを証明しない。現在の候補`a9fc7ec`のpreflightは`preservation-service-v11`、必須Node job一つ、ジョブtimeoutは5分（待ち時間込みの実測保証ではない）。full-v1の過去実績64–98分をこの候補の最初の検査に使わない。
