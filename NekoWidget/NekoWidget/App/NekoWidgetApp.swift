@@ -71,6 +71,8 @@ struct NekoWidgetApp: App {
                 MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
                 PersonalArchiveUIFixture()
+            } else if CommandLine.arguments.contains("--lost-cat-draft-ui-fixture") {
+                LostCatDraftFixtureView()
             } else if CommandLine.arguments.contains("--family-record-ui-fixture") {
                 FamilyRecordUIFixture()
             } else if CommandLine.arguments.contains("--widget-photo-opening-ui-fixture") {

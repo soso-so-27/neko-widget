@@ -917,6 +917,7 @@ private struct SoloMemoriesFixtureView: View {
             albumScan: scenario == "solo-memories-seasonal-large" || usesHighlightPhotos ? albumScan : nil,
             albumProfiles: fixtureProfiles,
             albumScope: .constant(scope),
+            openShowcase: {},
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
             referenceDate: referenceDate,

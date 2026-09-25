@@ -1442,6 +1442,66 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertFalse(app.buttons["lost-cat-share-image"].exists)
+        for (field, value) in [("猫の名前", "むぎ"),
+                               ("最後に見た場所（地域・目印）", "駅の近く"),
+                               ("公開する連絡先", "08000000000")] {
+            let input = app.textFields[field]
+            XCTAssertTrue(input.waitForExistence(timeout: 5), field)
+            input.tap()
+            input.typeText(value)
+        }
+        let done = app.buttons["lost-cat-keyboard-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )], timeout: 5), .completed)
+        let preview = app.images["共有する迷子の猫の画像"]
+        for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue((preview.value as? String ?? "").contains("日時: 不明"))
+        capture("lost-cat-unprepared-preview")
+        for action in ["lost-cat-share-image", "lost-cat-share-pdf"] {
+            let button = app.buttons[action]
+            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
+            XCTAssertTrue(button.isHittable, action)
+            button.tap()
+            let sheet = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
+            XCTAssertTrue(sheet.waitForExistence(timeout: 10), action)
+            capture("lost-cat-unprepared-\(action)")
+            let close = sheet.buttons["header.closeButton"].firstMatch
+            XCTAssertTrue(close.waitForExistence(timeout: 5))
+            close.tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: sheet
+            )], timeout: 5), .completed)
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    func testShowcaseAlbumEntryRendersBeforeAlbumsAtStandardAndLargeText() {
+        for scenario in ["saved", "seasonal-large"] {
+            let app = launch(scenario)
+            let row = app.buttons["albums-showcase-open"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertTrue(row.isHittable)
+            XCTAssertTrue(row.label.contains("見せるアルバム"))
+            XCTAssertTrue(row.label.contains("写真を選ぶ"))
+            XCTAssertGreaterThanOrEqual(row.frame.height, 64)
+            capture("showcase-entry-\(scenario)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testManagedPreservationMembershipLinkConsentAndRetry() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -3358,7 +3418,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["photos-section-all"].tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "An empty library remains a Photos section.")
         entry.tap()
-        app.buttons["memory-notes-menu"].tap()
+        XCTAssertFalse(app.buttons["memory-notes-menu"].exists,
+                       "The embedded notes section must not add a second Photos menu.")
+        app.buttons["photos-more"].tap()
         XCTAssertTrue(app.buttons["iCloudから読み込む"].waitForExistence(timeout: 5),
                       "An empty library must still offer explicit cloud restoration.")
         app.terminate()
@@ -3508,7 +3570,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["family-record-back-to-album"].waitForExistence(timeout: 5))
         app.buttons["family-record-fixture-peer"].tap()
         let peerWords = app.staticTexts["相手が添えた言葉"]
-        for _ in 0..<4 where !peerWords.isHittable { app.swipeUp() }
+        for _ in 0..<4 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["相手のメモ"].exists)
         let ownWordsMenu = app.buttons["family-record-words-menu"]
@@ -3531,9 +3593,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: input)], timeout: 10), .completed)
         let editedWords = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "また一緒に遊ぼう")).firstMatch
-        for _ in 0..<3 where !editedWords.isHittable { app.swipeUp() }
+        for _ in 0..<3 where !editedWords.exists { app.swipeUp() }
         XCTAssertTrue(editedWords.waitForExistence(timeout: 5))
-        for _ in 0..<3 where !peerWords.isHittable { app.swipeUp() }
+        for _ in 0..<3 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Editing my words must leave the other author's words unchanged.")
         attach(app, name: "family-record-authors-and-edited-words")
         let photoMenu = app.buttons["family-record-photo-menu"]

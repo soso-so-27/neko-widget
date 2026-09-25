@@ -122,17 +122,21 @@ struct LostCatPublicDraft {
     let name: String
     let features: String
     let approachAdvice: String
-    let lastSeenAt: Date
+    let lastSeenAt: Date?
     let lastSeenNear: String
     let contact: String
     let faceImage: UIImage
     let bodyImage: UIImage?
 
+    var lastSeenDescription: String {
+        lastSeenAt?.formatted(date: .abbreviated, time: .shortened) ?? "不明"
+    }
+
     var message: String {
         var parts = ["猫を探しています。", name]
         if !features.isEmpty { parts.append("特徴: \(features)") }
         parts.append("最後に見た場所: \(lastSeenNear)")
-        parts.append("日時: \(lastSeenAt.formatted(date: .abbreviated, time: .shortened))")
+        parts.append("日時: \(lastSeenDescription)")
         if !approachAdvice.isEmpty { parts.append(approachAdvice) }
         parts.append("連絡先: \(contact)")
         return parts.joined(separator: "\n")
@@ -209,7 +213,7 @@ enum LostCatFlyerRenderer {
         }
         text("最後に見た場所  \(draft.lastSeenNear)",
              CGRect(x: 54, y: 1040, width: 1092, height: 122), size: 46, weight: .bold)
-        text("日時  \(draft.lastSeenAt.formatted(date: .abbreviated, time: .shortened))",
+        text("日時  \(draft.lastSeenDescription)",
              CGRect(x: 54, y: 1172, width: 1092, height: 70), size: 42, weight: .regular)
         if !draft.features.isEmpty {
             text("特徴  \(draft.features)", CGRect(x: 54, y: 1252, width: 1092, height: 126),

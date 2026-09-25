@@ -27,13 +27,7 @@ final class ShowcasePhotoStore: ObservableObject {
         if let data = try? Data(contentsOf: manifest),
            let saved = try? JSONDecoder().decode([Entry].self, from: data) {
             var seen = Set<String>()
-            entries = saved.filter { entry in
-                guard Self.isValid(entry), seen.insert(entry.id).inserted else {
-                    return false
-                }
-                return FileManager.default.fileExists(atPath: base
-                    .appendingPathComponent(entry.imageFileName).path)
-            }
+            entries = saved.filter { Self.isValid($0) && seen.insert($0.id).inserted }
         }
     }
 
@@ -49,7 +43,9 @@ final class ShowcasePhotoStore: ObservableObject {
         )
         var accessible = Set<String>()
         result.enumerateObjects { asset, _, _ in accessible.insert(asset.localIdentifier) }
-        return entries.filter { accessible.contains($0.photoIdentifier) }
+        return entries.filter { accessible.contains($0.photoIdentifier)
+            && FileManager.default.fileExists(atPath: directory
+                .appendingPathComponent($0.imageFileName).path) }
     }
 
     func availableEntries(in scopeID: String) -> [Entry] {
@@ -59,11 +55,12 @@ final class ShowcasePhotoStore: ObservableObject {
     func imageURL(for entry: Entry) -> URL? {
         guard Self.isValid(entry),
               availableEntries.contains(where: { $0 == entry }) else { return nil }
-        return directory.appendingPathComponent(entry.imageFileName)
+        let url = directory.appendingPathComponent(entry.imageFileName)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     func add(photoIdentifier: String, to scopeID: String) async throws {
-        guard !entries.contains(where: {
+        guard !availableEntries.contains(where: {
             $0.photoIdentifier == photoIdentifier && $0.scopeID == scopeID
         }) else { return }
         let image = try await PhotoLibraryJPEGExporter().export(localIdentifier: photoIdentifier)
@@ -75,7 +72,9 @@ final class ShowcasePhotoStore: ObservableObject {
         let destination = directory.appendingPathComponent(fileName)
         try image.jpeg.write(to: destination, options: .atomic)
         do {
-            try save(entries + [Entry(scopeID: scopeID, photoIdentifier: photoIdentifier,
+            try save(entries.filter {
+                $0.photoIdentifier != photoIdentifier || $0.scopeID != scopeID
+            } + [Entry(scopeID: scopeID, photoIdentifier: photoIdentifier,
                                       imageFileName: fileName)])
         } catch {
             try? FileManager.default.removeItem(at: destination)

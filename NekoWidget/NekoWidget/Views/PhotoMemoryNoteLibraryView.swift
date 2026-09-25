@@ -170,6 +170,7 @@ struct PhotoMemoryNotesListView: View {
     let archiveStore: PersonalArchiveStore
     private let archiveEnabled: Bool
     let isEmbedded: Bool
+    let openCatPreparedness: (() -> Void)?
     let openPhotos: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -184,6 +185,7 @@ struct PhotoMemoryNotesListView: View {
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          archiveStore: PersonalArchiveStore? = nil,
          isEmbedded: Bool = false,
+         openCatPreparedness: (() -> Void)? = nil,
          openPhotos: @escaping () -> Void) {
         self.photos = photos
         let enabled = archiveStore != nil || PersonalArchiveStore.isConfigured
@@ -191,6 +193,7 @@ struct PhotoMemoryNotesListView: View {
         self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
         self.isEmbedded = isEmbedded
+        self.openCatPreparedness = openCatPreparedness
         _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store,
             archiveStore: enabled ? (archiveStore ?? .shared) : nil))
     }
@@ -367,18 +370,24 @@ struct PhotoMemoryNotesListView: View {
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
+        if archiveEnabled || openCatPreparedness != nil {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if archiveEnabled {
-                    Menu {
+                Menu {
+                    if archiveEnabled {
                         Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
                             Task { await library.refreshFromCloud() }
                         }.disabled(library.isRefreshingCloud)
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("保管の操作")
-                    .accessibilityIdentifier("memory-notes-menu")
-                }
+                    }
+                    if let openCatPreparedness {
+                        if archiveEnabled { Divider() }
+                        Button("迷子のとき", systemImage: "magnifyingglass", action: openCatPreparedness)
+                    }
+                } label: { Image(systemName: "ellipsis") }
+                .accessibilityLabel(isEmbedded ? "写真のその他の操作" : "保管の操作")
+                .accessibilityIdentifier(isEmbedded ? "photos-more" : "memory-notes-menu")
             }
         }
+    }
 
     @ViewBuilder private var archiveDestination: some View {
             if let selectedArchive, let selectedArchiveAccount {

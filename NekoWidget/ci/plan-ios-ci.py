@@ -16,7 +16,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (FULL_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
+from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -258,7 +258,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
 def smoke_job(scope: str) -> str:
     if scope not in SCOPES:
         raise ValueError("Unknown iOS runtime scope")
-    return SMOKE if scope == FULL_SCOPE else BOOTSTRAP_SMOKE
+    return SMOKE if scope in (FULL_SCOPE, APP_VIEW_SCOPE) else BOOTSTRAP_SMOKE
 
 
 def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
