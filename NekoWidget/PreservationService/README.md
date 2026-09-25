@@ -42,6 +42,8 @@ AWS KMS候補の非公開鍵Workerは `src/aws-kms-key-wrapper.ts` と既定OFF�
 
 `RETENTION_TRACKING_ENABLED=YES` のときに限り、本人の保管sessionで `GET /v1/retention` を使えます。未リンクなら `status: "unlinked"`、リンク済みなら検証した `active` / `grace` / `expired` / `unknown`、予定日 `dueAt`（Unixミリ秒またはnull）、`paused`、最終通知の配達時刻を返します。請求照会失敗は `unknown` として時計を停止し、別のownerの指定や照会は受け付けません。`PRESERVATION_ENABLED` も必要で、通常運用は両方OFFです。
 
+同一の会員状態を1時間以内に再確認した場合、期限台帳の時刻・改訂は更新せず、owner復旧コピーの新しい版を毎回作らない。状態の変化（期限切れ、復帰、請求不明）はすぐ記録する。各呼出しで非公開の会員照会と既存ownerコピーの照合は引き続き行うため、S3読取要求の請求上限ではない。
+
 これは、会員期限切れ後12か月の閲覧・持ち出しと事前通知後の消去という決定に向けた、時計と本人向け状態照会の土台です。通知先、実配送、一次/復旧コピーの最終消去、別端末復元は未実装・未実証であり、このAPIの存在をもって消去予定やバックアップを利用者へ約束しません。[安全条件](../../handoffs/2026-09-23-preservation-retention-ledger.md)を参照してください。
 
 ## 使用量の確認

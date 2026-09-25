@@ -5,6 +5,10 @@ const yearInMonths = 12;
 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
 const finalNoticeWindow = 60 * 24 * 60 * 60 * 1000;
 const noticeReviewObservationAge = 24 * 60 * 60 * 1000;
+// A repeated read of an unchanged, already backed billing state must not
+// create a new owner snapshot on every tap. Status transitions still commit
+// immediately; deletion and notice paths make a fresh private billing call.
+const unchangedObservationInterval = 60 * 60 * 1000;
 export const NOTICE_SUBMISSION_RETRY_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
 export const NOTICE_DELIVERY_EVIDENCE_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -184,6 +188,20 @@ export class RetentionLedger {
       if (observedAt < current.checked_at || (observedAt === current.checked_at
           && status !== current.verified_status)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (observedAt === current.checked_at) return this.acknowledge(ownerId, current);
+      const stable = status === current.verified_status
+        && (status === 'expired'
+          ? current.expired_at !== null && current.due_at !== null && current.paused_at === null
+          : status === 'unknown'
+            ? current.final_notice_delivered_at === null && current.final_notice_receipt === null
+              && (current.expired_at === null
+                ? current.due_at === null && current.paused_at === null
+                : current.due_at !== null && current.paused_at !== null)
+            : current.expired_at === null && current.due_at === null && current.paused_at === null
+              && current.final_notice_delivered_at === null && current.final_notice_receipt === null)
+        && ((current.final_notice_delivered_at === null) === (current.final_notice_receipt === null));
+      if (stable && observedAt - current.checked_at < unchangedObservationInterval) {
+        return this.acknowledge(ownerId, current);
+      }
       let episode = current.episode;
       let expiredAt = current.expired_at;
       let dueAt = current.due_at;

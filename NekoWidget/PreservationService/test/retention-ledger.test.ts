@@ -16,6 +16,35 @@ async function fixture(start = Date.UTC(2026, 8, 23, 12)) {
 const day = 24 * 60 * 60 * 1000;
 
 describe('twelve-month preservation export period', () => {
+  it('coalesces repeated unchanged observations without delaying a changed billing state', async () => {
+    const f = await fixture();
+    const first = await f.ledger.observe(f.ownerId, 'expired');
+    const generation = await db.prepare(`SELECT generation FROM pa_owner_recovery_generations
+      WHERE owner_id=?`).bind(f.ownerId).first<{ generation: number }>();
+    f.later(1);
+    const repeated = await f.ledger.observe(f.ownerId, 'expired');
+    expect(repeated.revision).toBe(first.revision);
+    expect(repeated.checkedAt).toBe(first.checkedAt);
+    expect(await db.prepare('SELECT generation FROM pa_owner_recovery_generations WHERE owner_id=?')
+      .bind(f.ownerId).first()).toEqual(generation);
+    f.later(60 * 60 * 1000);
+    const refreshed = await f.ledger.observe(f.ownerId, 'expired');
+    expect(refreshed.revision).toBe(first.revision + 1);
+    expect(refreshed.checkedAt).toBe(f.now());
+    f.later(1);
+    const paused = await f.ledger.observe(f.ownerId, 'unknown');
+    expect(paused.status).toBe('unknown');
+    expect(paused.pausedAt).toBe(f.now());
+    expect(paused.revision).toBe(refreshed.revision + 1);
+    f.later(1);
+    const stillPaused = await f.ledger.observe(f.ownerId, 'unknown');
+    expect(stillPaused.revision).toBe(paused.revision);
+    expect(stillPaused.pausedAt).toBe(paused.pausedAt);
+    f.later(1);
+    const renewed = await f.ledger.observe(f.ownerId, 'active');
+    expect(renewed.revision).toBe(paused.revision + 1);
+    expect(renewed.dueAt).toBeNull();
+  });
   it('rotates advisory expiry review past ineligible owners without granting deletion', async () => {
     const f = await fixture();
     const g = await fixture();
