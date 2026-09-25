@@ -2118,12 +2118,16 @@ class PlanTests(unittest.TestCase):
         self.assertIn(ui_test, changes)
         digests = {path: tuple(map(scope.source_digest, pair)) for path, pair in changes.items()}
         with patch.object(scope, "APP_ONLY_RECORD_EXPORT_DIGESTS", digests):
-            self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
-            self.assertTrue(scope.accepts_paths(scope.APP_VIEW_SCOPE, changes))
-            selected = planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)
-            self.assertEqual(selected, planner.required_jobs_from_scope(scope.APP_VIEW_SCOPE))
-            self.assertIn(scope.lane_job(scope.APP_VIEW_SCOPE, "runtime"), selected)
-            self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(scope.APP_VIEW_SCOPE))
+            self.assertEqual(scope.select_scope(changes), scope.REVIEWED_FAMILY_EXPORT_SCOPE)
+            self.assertTrue(scope.accepts_paths(scope.REVIEWED_FAMILY_EXPORT_SCOPE, changes))
+            selected = planner.required_jobs(list(changes), scope.REVIEWED_FAMILY_EXPORT_SCOPE)
+            self.assertEqual(selected, planner.required_jobs_from_scope(scope.REVIEWED_FAMILY_EXPORT_SCOPE))
+            self.assertEqual(scope.lanes(scope.REVIEWED_FAMILY_EXPORT_SCOPE), ("runtime", "app-ui"))
+            self.assertIn(scope.lane_job(scope.REVIEWED_FAMILY_EXPORT_SCOPE, "runtime"), selected)
+            self.assertEqual(len(scope.native_tests(scope.REVIEWED_FAMILY_EXPORT_SCOPE)), 1)
+            self.assertIn("testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+                          scope.native_tests(scope.REVIEWED_FAMILY_EXPORT_SCOPE)[0])
+            self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(scope.REVIEWED_FAMILY_EXPORT_SCOPE))
             for path in changes:
                 with self.subTest(missing=path):
                     self.assertEqual(scope.select_scope({key: value for key, value in changes.items() if key != path}),

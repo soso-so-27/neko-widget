@@ -23,6 +23,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
+REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
 # Deliberately absent from SCOPES and native/release scope lookup.
 CI_EVIDENCE_SCOPE = "ci-evidence-maintenance-v1"
@@ -61,7 +62,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE,
+          APP_VIEW_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1573,6 +1574,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
+        return bool(sources and sources <= APP_ONLY_RECORD_EXPORT_PATHS)
     if scope == APP_VIEW_SCOPE:
         # The sole reviewed UI-test file belongs only to the app UI-test
         # target. Its isolated edits need both full app UI shards, but do not
@@ -1715,6 +1718,9 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
+        return ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
+                "testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",)
     if scope == REVIEWED_MANAGED_PRESERVATION_SCOPE:
         return REVIEWED_MANAGED_PRESERVATION_TESTS
     if scope == REVIEWED_RECORD_PORTABILITY_SCOPE:
@@ -1909,7 +1915,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
                                           set(changes) == {MEMORY_TEST_PATH}):
         return APP_VIEW_SCOPE
     if reviewed_app_record_export_changes(changes):
-        return APP_VIEW_SCOPE
+        return REVIEWED_FAMILY_EXPORT_SCOPE
     if archive_picker_changes(changes):
         return ARCHIVE_PICKER_SCOPE
     if reviewed_delivery_membership_changes(changes, managed=True):
