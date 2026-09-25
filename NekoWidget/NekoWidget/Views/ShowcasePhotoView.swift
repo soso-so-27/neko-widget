@@ -93,12 +93,14 @@ struct ShowcasePhotoView: View {
     @State private var index = 0
     @State private var isAuthorizing = false
     @State private var authUnavailable = false
+    @State private var accessRevision = 0
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             if items.indices.contains(index) {
                 image(for: items[index])
+                    .id(accessRevision)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 35).onEnded { value in
@@ -164,12 +166,7 @@ struct ShowcasePhotoView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, items.contains(where: { item in
-                guard case let .prepared(entry, _) = item else { return false }
-                return !store.availableEntries.contains(entry)
-            }) {
-                onClose()
-            }
+            if phase == .active { accessRevision &+= 1 }
         }
         .onAppear { ShowcaseSessionGuard.begin() }
         .statusBarHidden()
@@ -179,8 +176,9 @@ struct ShowcasePhotoView: View {
     @ViewBuilder
     private func image(for item: Item) -> some View {
         switch item {
-        case let .prepared(_, url):
-            if let image = UIImage(contentsOfFile: url.path) {
+        case let .prepared(entry, url):
+            if store.availableEntries.contains(entry),
+               let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel("見せる写真")
             } else {
