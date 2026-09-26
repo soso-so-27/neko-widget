@@ -63,6 +63,8 @@ node test/test-adapter.mjs --source <PreservationService/src の絶対パス>
 
 非公開のContainer接続候補を `Dockerfile`、`src/http-server.ts`、`src/container-worker.mjs`、`wrangler.container.disabled.jsonc` に用意しました。既定 `JPEG_VALIDATOR_ENABLED=NO`、公開default routeは404、Workers URLもOFFです。HTTP bridgeは十分長い共有secretがないと起動・処理せず、許可された写真検証リクエストだけを既存の厳格デコーダーへ渡します。コンテナからの外部通信はOFFです。**まだCloudflareへ配備しておらず、実service binding・Container cold start・1 GiB環境の最大画像メモリを確認した証拠ではありません。** `fetch(Request)` の単体試験成功を実配備成功として扱いません。
 
+検証枠の費用抑制候補として、固定名のContainer Durable Objectで月300回まで2分の稼働枠を開始前に永続予約します（合計10時間）。起動失敗・早期停止でも予約を返さず、期限を `schedule()` に登録して `destroy()` で停止します。期限はUTC翌月0時でも切り、新着リクエストは延長しません。時計逆行・永続値破損・未知の稼働は新規処理を閉じます。応答は4 KiBまで読み切ります。画像を処理するのは固定名の非公開service入口だけです。**これは請求上限ではありません。** Cloudflareのalarm遅延・停止反映時間、別名Containerの手動起動・共有アカウントの別用途は制御できません。実配備での継続トラフィック・中断・月境界・再起動の検証と課金観測が必要です。
+
 専用CIはNodeでの全デコード試験、非配備のWorker bundle、Linux/amd64 Docker build、人工画像でのコンテナ内検証を行います。ローカルDockerが停止している場合はbundleのみ `npx wrangler deploy --dry-run --containers-rollout=none --config wrangler.container.disabled.jsonc` で確認できます。実配備にはWorkers Paid、Docker実行環境、Container権限、保管Workerからの名前付き `JPEGValidationService` service binding、環境ごとの共有secretが必要です。Workers PaidやContainerの費用契約をこのコードだけで開始しません。
 
 1. Workers PaidとContainer権限を確認し、非公開named service bindingとsecretを実環境で接続する。Containerが利用できなければ別の厳格デコード実行環境を選ぶ。
