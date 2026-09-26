@@ -983,7 +983,8 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertIn('"Accepted photo local cleanup failed"', retry)
         send = section(coordinator, "    private func sendOutbox(", "    private func sendPawOutbox(")
         for phase, stage in (("reserved", "readCiphertext"), ("uploaded", "beginCommit"), ("committing", "commit")):
-            branch = section(send, f"if item.phase == .{phase} {{", "guard let momentID")
+            end = "if item.phase == .committing {" if phase == "uploaded" else "guard let momentID"
+            branch = section(send, f"if item.phase == .{phase} {{", end)
             self.assertIn(f"stage = .{stage}", branch)
         recovery = section(send, "if Self.isExpiredReservation(error) {", "if Self.isNonterminalAuthenticationFailure(error)")
         self.assertIn("try? currentOutboxItem(candidate.id)", recovery)

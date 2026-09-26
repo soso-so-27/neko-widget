@@ -4,7 +4,7 @@ import { route } from "../src/index";
 import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import { signedRequestTranscript } from "../src/protocol";
 import type { Env } from "../src/env";
-import { runFamilyRecordCleanup } from "../src/family-records";
+import { momentSharedPhotoID, runFamilyRecordCleanup } from "../src/family-records";
 
 const enabled = { ...env, FAMILY_RECORD_RUNTIME_ENABLED: "YES" } as Env;
 const random = (length = 16): string => base64urlEncode(crypto.getRandomValues(new Uint8Array(length)));
@@ -44,6 +44,10 @@ function mutation(entryID: string, kind: "photo" | "words", expectedRevision = 0
 type Catalog = { records: { id: string; authorID: string; state: string; ciphertext: string | null; revision: number }[] };
 
 describe("independent family record catalog", () => {
+  it("derives the same linked photo ID as the iPhone client", async () => {
+    expect(await momentSharedPhotoID("fixture_record_space", "fixture_delivered_moment"))
+      .toBe("bd99f15a-8c3e-4b0c-b51b-e241d680120c");
+  });
   it("requires the exact independent gate before authentication", async () => {
     for (const value of [undefined, "NO", "true", "yes"]) {
       const disabled = { ...enabled };

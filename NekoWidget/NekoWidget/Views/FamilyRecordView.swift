@@ -124,7 +124,7 @@ struct FamilyRecordEntryButton: View {
     }
 }
 
-// One collection owns the reading surface; retaining a copy is still explicit.
+// One photo collection: newly sent photos are committed with their shared record.
 // Never infer identity from image contents or dates, or repopulate a tombstone.
 struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     let spaceID: String
@@ -144,9 +144,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private enum Destination: Identifiable {
-        case add, record(String)
+        case record(String)
         var id: String {
-            switch self { case .add: "add"; case let .record(id): "record-\(id)" }
+            switch self { case let .record(id): "record-\(id)" }
         }
     }
 
@@ -197,7 +197,6 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     private var projection: Projection {
         let snapshot = self.snapshot
-        let linkedIDs = Set(photos.compactMap { linkedRecord($0, in: snapshot)?.id })
         let visibleDeliveries = photos.filter { photo in
             guard canShowRecords, scenePhase == .active, catalogResolved || snapshot != nil else { return false }
             let row = linkedRecord(photo, in: snapshot)
@@ -205,10 +204,20 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             switch photo { case let .received(item): momentID = item.id
                            case let .sent(record): momentID = record.momentID }
             let recordID = momentID.flatMap { try? FamilyRecordSourceIdentity.recordID(spaceID: spaceID, momentID: $0) }
-            return row?.state != .withdrawn && !(recordID.map { withdrawnIDs.contains($0) } ?? false)
+            // While the delivered photo is available, keep its full-screen
+            // zoom, Save and heart actions. A retained record takes its place
+            // only after that delivery photo leaves local history.
+            return row?.state != .withdrawn
+                && !(recordID.map { withdrawnIDs.contains($0) } ?? false)
         }
         let records = snapshot?.catalog.records ?? []
-        let retained = records.filter { $0.kind == .photo && $0.state == .active && !linkedIDs.contains($0.id) }
+        let displayedRecordIDs = Set(visibleDeliveries.compactMap { photo in
+            let row = linkedRecord(photo, in: snapshot)
+            return row?.state == .active ? row?.id : nil
+        })
+        let retained = records.filter {
+            $0.kind == .photo && $0.state == .active && !displayedRecordIDs.contains($0.id)
+        }
             .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt }
         let withdrawn = records.filter { photo in
             photo.kind == .photo && photo.state == .withdrawn && records.contains {
@@ -230,12 +239,8 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 MomentSharedAlbumHeading()
                 Spacer()
                 Menu {
-                    if value.snapshot != nil {
-                        Button("アルバムに写真を追加", systemImage: "photo.badge.plus") { destination = .add }
-                            .accessibilityIdentifier("family-collection-add")
-                    }
                     if value.exportable, let snapshot = value.snapshot {
-                        Button("アルバムの写真とメモを書き出す", systemImage: "square.and.arrow.up") {
+                        Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
                             let client = model.client
                             exporter.prepare(build: {
                                 try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
@@ -273,9 +278,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     }.accessibilityIdentifier("family-collection-withdrawn-\(row.id)")
                 }
             }
-            if model.loading { ProgressView("アルバムを確認中").font(.footnote) }
+            if model.loading { ProgressView("写真を確認中").font(.footnote) }
             if model.error != nil, canShowRecords {
-                Button("アルバムの写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
+                Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
                     .font(.subheadline).frame(minHeight: 44)
             }
             if exporter.preparing {
@@ -311,9 +316,6 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }
         .sheet(item: $destination, onDismiss: { Task { await reload() } }) { destination in
             switch destination {
-            case .add:
-                FamilyRecordEditor(client: model.client, target: nil, fixturePhoto: fixturePhoto,
-                    windowName: windowName, saved: { Task { await reload() } })
             case let .record(id):
                 FamilyRecordView(client: model.client, focusedEntryID: id, windowName: windowName)
             }
@@ -326,27 +328,23 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         .onDisappear { model.clear(); exporter.cancelPreparation() }
     }
 
-    private var albumBadge: some View {
-        Label("アルバム", systemImage: "photo.on.rectangle")
-            .font(.caption).foregroundStyle(.secondary)
-    }
-
     @ViewBuilder private func collectionCard(_ item: Item, snapshot: FamilyRecordSnapshot?) -> some View {
         switch item {
         case let .delivery(photo, retained):
             VStack(alignment: .leading, spacing: 4) {
                 deliveryCard(photo)
-                if retained { albumBadge }
+                if !retained { Text("以前の写真").font(.caption).foregroundStyle(.secondary) }
             }
         case let .record(row):
             Button { destination = .record(row.id) } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     FamilyRecordPhoto(client: model.client, row: row, thumbnail: true)
-                    albumBadge
+                    Text(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("アルバムの写真。\(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")が追加")
+            .accessibilityLabel("\(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")が追加した写真。写真とメモを開きます")
             .accessibilityIdentifier("family-collection-record-\(row.id)")
         }
     }
@@ -461,7 +459,16 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
         // The model, destination and sheet belong to the whole photo screen.
         // Footer layout changes (including keyboard insets) must not recreate
         // an editor or its draft inside a ViewThatFits candidate.
-        content(AnyView(memoContent))
+        Group {
+            if let source, let snapshot = model.snapshot,
+               let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID),
+               photo.state == .withdrawn {
+                VStack {
+                    ContentUnavailableView("写真は取り下げられました", systemImage: "photo")
+                    memoContent
+                }
+            } else { content(AnyView(memoContent)) }
+        }
         .task(id: source?.momentID) { await reload() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { clearPresentation() }
@@ -496,7 +503,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     private var memoContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                if let caption, !caption.isEmpty {
+                if let caption, !caption.isEmpty, !hasStoredDeliveryMemo {
                     memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
                 } else { Spacer(minLength: 0) }
                 if model.snapshot != nil {
@@ -540,6 +547,15 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 4)
+    }
+
+    private var hasStoredDeliveryMemo: Bool {
+        guard let source, let snapshot = model.snapshot,
+              let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID),
+              let wordsID = try? FamilyRecordCommitPayload.captionID(spaceID: snapshot.catalog.spaceID, photoID: photo.id)
+        else { return false }
+        // A withdrawn initial memo must not reappear as the delivery caption.
+        return snapshot.catalog.records.contains { $0.id == wordsID && $0.kind == .words }
     }
 
     private func reload() async {
@@ -656,12 +672,12 @@ struct FamilyRecordView: View {
                 }
                 if let error = exporter.error { Section { Text(error) } }
             }
-            .navigationTitle(currentEntryID == nil ? "このまどのアルバム" : windowName)
+            .navigationTitle(currentEntryID == nil ? "このまどの写真" : windowName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if focusedEntryID == nil && selectedEntryID != nil {
-                        Button("アルバム", systemImage: "chevron.left") { selectedEntryID = nil }
+                        Button("写真", systemImage: "chevron.left") { selectedEntryID = nil }
                             .accessibilityIdentifier("family-record-back-to-album")
                             .disabled(saving)
                     } else {
@@ -689,12 +705,12 @@ struct FamilyRecordView: View {
                                 .disabled(exporter.preparing || exporter.payload != nil)
                                 .accessibilityIdentifier("family-record-export")
                             }
-                            Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                            Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
                                 .accessibilityIdentifier("family-record-information")
-                        } label: { Label("アルバムの操作", systemImage: "ellipsis") }
+                        } label: { Label("写真の操作", systemImage: "ellipsis") }
                             .accessibilityIdentifier("family-record-menu")
                     } else {
-                        Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                        Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
                             .accessibilityIdentifier("family-record-information")
                     }
                 }
@@ -765,7 +781,7 @@ struct FamilyRecordView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("まだ写真がありません", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("二人で残したい写真を追加できます。まどで送り合った写真は、自動では入りません。")
+                        Text("まどに写真を追加すると、ここで二人で見返せます。")
                             .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
@@ -935,14 +951,14 @@ struct FamilyRecordView: View {
                     Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
                 }
                 Section("写真の保管と引き継ぎ") {
-                    Text("ここに追加した鑑賞用の写真コピーとメモを、まどごとにまとめています。一覧の日付は、このアルバムへ追加した日です。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
+                    Text("新しくまどに追加した写真とメモを、一緒に保管します。一覧の日付は、まどへ追加した日です。鑑賞用の写真コピーなので、写真アプリの原本はそのままにしてください。")
                     Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
                 }
                 Section("内部テストで使える範囲") {
                     Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
                 }
             }
-            .navigationTitle("このアルバムについて")
+            .navigationTitle("写真の共有について")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1086,7 +1102,7 @@ private struct FamilyRecordEditor: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if sourcePhoto != nil {
-                    Text("この写真とメモを二人のアルバムに追加します。相手もあとから見返せます。")
+                        Text("この写真とメモをまどに残します。相手もあとから見返せます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if photoAdded { Text("写真は追加済みです。メモの追加を確認しています。") }

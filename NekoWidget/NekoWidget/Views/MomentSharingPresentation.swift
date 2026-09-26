@@ -386,6 +386,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
     let isOutboxCapacityBlocked: Bool
     let hasOtherRetryReason: Bool
     var quotaResetAt: Date? = nil
+    var isSharedPhotoCapacityBlocked = false
 
     var id: MomentOutgoingStatusKind { kind }
 
@@ -466,6 +467,9 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .resultUnknown:
             return "サーバーが配信を受け付けた可能性がありますが、結果を確認できませんでした。相手に届かなかったとは断定できません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
         case .failed:
+            if isSharedPhotoCapacityBlocked {
+                return "このまどに残せる写真・メモの上限に達しました。今回の写真は送信していません。これまでの写真は残っています。"
+            }
             return "送信は完了していません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
         }
     }
@@ -760,7 +764,8 @@ enum MomentSharingPresentationPolicy {
                             && $0 != "moment-runtime-disabled"
                             && $0 != "daily-quota-exceeded"
                     }),
-                    quotaResetAt: value.quotaResetAt
+                    quotaResetAt: value.quotaResetAt,
+                    isSharedPhotoCapacityBlocked: value.errorCodes.contains("shared-photo-capacity")
                 )
             }
 

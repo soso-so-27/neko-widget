@@ -30,6 +30,7 @@ enum DiagnosticLogPrivacy {
     private static let maximumMetadataFieldCount = 64
 
     private static let allowedMomentOutboxErrorCodes: Set<String> = [
+        "shared-photo-capacity",
         "commit-result-expired",
         "consent-required",
         "daily-quota-exceeded",

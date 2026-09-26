@@ -215,7 +215,8 @@ protocol MomentSharingAPIClientProtocol: Sendable {
         momentID: String,
         clientRequestID: UUID,
         pairingState: PairingState,
-        credential: PairingCredential
+        credential: PairingCredential,
+        sharedRecord: FamilyRecordCommitPayload?
     ) async throws -> MomentCommitResult
 
     func changes(
@@ -648,14 +649,29 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         momentID: String,
         clientRequestID: UUID,
         pairingState: PairingState,
-        credential: PairingCredential
+        credential: PairingCredential,
+        sharedRecord: FamilyRecordCommitPayload? = nil
     ) async throws -> MomentCommitResult {
+        struct CommitRequest: Encodable {
+            let protocolVersion: Int
+            let clientRequestId: String
+            let sharedRecord: FamilyRecordCommitPayload?
+
+            enum CodingKeys: String, CodingKey { case protocolVersion, clientRequestId, sharedRecord }
+            func encode(to encoder: Encoder) throws {
+                var values = encoder.container(keyedBy: CodingKeys.self)
+                try values.encode(protocolVersion, forKey: .protocolVersion)
+                try values.encode(clientRequestId, forKey: .clientRequestId)
+                if let sharedRecord { try values.encode(sharedRecord, forKey: .sharedRecord) }
+            }
+        }
         let response: CommitResponse = try await sendJSON(
             path: "/v2/moments/\(try safePath(momentID))/commit",
             method: "POST",
-            body: OperationRequest(
+            body: CommitRequest(
                 protocolVersion: MomentSharingProtocol.version,
-                clientRequestId: clientRequestID.uuidString.lowercased()
+                clientRequestId: clientRequestID.uuidString.lowercased(),
+                sharedRecord: sharedRecord
             ),
             pairingState: pairingState,
             credential: credential
@@ -666,6 +682,9 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
               response.recipientCount >= 1,
               !response.changeCursor.isEmpty
         else { throw MomentSharingError.invalidPayload }
+        if let sharedRecord, response.sharedRecordID != sharedRecord.photoID {
+            throw MomentSharingError.invalidPayload
+        }
         return MomentCommitResult(
             momentID: momentID,
             committedAt: Date(timeIntervalSince1970: TimeInterval(response.moment.committedAt)),
@@ -1318,6 +1337,7 @@ private struct WindowNameResponse: Decodable {
 }
 
 private struct CommitResponse: Decodable {
+    let sharedRecordID: String?
     struct Moment: Decodable {
         let id: String
         let state: String

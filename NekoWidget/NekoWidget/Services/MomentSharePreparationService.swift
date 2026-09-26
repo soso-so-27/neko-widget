@@ -2,7 +2,7 @@ import Foundation
 import SensitiveContentAnalysis
 
 enum MomentSenderPolicy {
-    static let currentVersion = 1
+    static let currentVersion = 2
 }
 
 /// Keeps inbound moderation fail-closed without turning a missing or

@@ -127,6 +127,9 @@ struct MomentDeliveryComposer: View {
                             .accessibilityIdentifier("photo-window-change-destination")
                         }
                     }
+                    Text("写真とメモがこのまどに残り、相手と見返せます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if isEditingCaption {
                         Button {
                             finishCaptionEditing()
@@ -194,7 +197,7 @@ struct MomentDeliveryComposer: View {
             .alert("写真の共有について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除いて共有します。この画面で添えたメモだけを相手に送ります。メモなしでも送れます。")
+                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどに保管します。Widgetにも届きます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
             }
             .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
                 Button("破棄してやめる", role: .destructive, action: onCancel)
