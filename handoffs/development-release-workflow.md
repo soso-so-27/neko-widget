@@ -15,7 +15,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - 制御用Python、対応する単体テスト、workflowの起動条件・配布SHA固定だけの変更は `ci-orchestration-v1`。Ubuntuのplan jobで検証し、Mac・Simulator・Widget画面検証は起動しない。native build/test/upload本体の変更や製品変更との混在はこの範囲に含めない。この成功はiOS製品・配布の検証証拠に使えない。
 - 既存のアプリViews内だけの動作変更は `app-view-ui-v1`。アプリ操作・Photos・runtime・buildを確認し、Widget galleryは起動しない。共有モデル・Widget・project・fixtureの変更を含む場合は別途判定する。既存の文字・余白だけの限定判定は維持する。
-- `family-window-ui-v1` は既存FamilyWindowView・FamilyRecordView内の変更。変更されたUIテストはMomentDeliveryComposerUITestsクラスの内部だけと確認する。クラス全体とWidget URLから写真を開く3操作、build・Photos権限・実写真scan・両OS runtimeを実行し、Widget galleryは起動しない。未知・共有モデル・Widget実装・project・workflowの混在はこの範囲に含めない。
+- `family-window-ui-v2` は既存FamilyWindowView・FamilyRecordView内の変更。共有写真の配置、選択中写真への操作、送受信一覧、共同記録の取り下げ・権限・書き出しの5テストとWidget URLから写真を開く3操作、build・Photos権限・実写真scan・両OS runtimeを実行する。Widget galleryは起動しない。UIテスト差分は選択された5メソッドの本文と、そこからのみ呼ぶ新規private helperに限定する。未選択テスト・既存helper・他class・importsは不変と確認し、未知・共有モデル・Widget実装・project・workflowの混在は対象外とする。v1のクラス全件所要時間をv2の実測値にしない。
 - 同一リポジトリのPRはpush CIを使い、PR側ではMac jobを重複起動しない。fork PRは従来通り検証する。main pushは一致する候補の成功証拠を再利用し、一致する候補がない場合はplanで終了する。無条件に広い検証へ戻さず、配布済みでない固定候補を使うか、必要な統合候補を作る。
 
 - `preservation-service-v3` はv2の既知33ファイルへ、予約のowner indexを追加する `migrations/0004_upload_owner_index.sql` だけを加えた34ファイル。専用workflow・必須Node job・通常mode・未知/native/Sharing混在時のfull fallbackを維持し、4 companionのbefore/afterを独立レビューして固定する。v3は初回計測し、v1/v2の時間をv3実績にしない。iOS planの成功と同SHA専用Node jobの成功を別々に確認し、Mac/配布の証拠として流用しない。
