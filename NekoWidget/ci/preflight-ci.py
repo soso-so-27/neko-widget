@@ -286,6 +286,8 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
                     "includes_future_rework": False,
                     "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
+        # Each exact service-tree profile (including v17's codec) measures its
+        # own first run; earlier backend timings are not reused as evidence.
         if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
                        else planner.PRESERVATION_JOB_TIMEOUT_MINUTES)
