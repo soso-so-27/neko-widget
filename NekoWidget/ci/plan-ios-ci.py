@@ -61,13 +61,14 @@ ORCHESTRATION_PATHS = DEVELOPMENT_PATHS | frozenset("NekoWidget/ci/" + name for 
 
 # A separate Node/Container-only service, never iOS or release evidence.
 # Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
-JPEG_SCOPE = "preservation-image-validator-v2"
+JPEG_SCOPE = "preservation-image-validator-v3"
 JPEG_JOB = "Validate preservation JPEG provider"
 JPEG_WORKFLOW = ".github/workflows/preservation-image-validator.yml"
 JPEG_JOB_TIMEOUT_MINUTES = 10
 JPEG_PATHS = frozenset("NekoWidget/PreservationImageValidator/" + name for name in (
     ".gitignore", "README.md", "package.json", "package-lock.json", "tsconfig.json",
     "Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
+    "src/runtime-budget.mjs", "test/runtime-budget.test.mjs",
     "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs", "test/container-probe.mjs",
     "src/decode-child.ts", "src/decode-error.ts", "src/decoder.ts",
     "src/jpeg-envelope.ts", "src/limits.ts", "src/provider.ts",
@@ -82,20 +83,20 @@ JPEG_COMPANION_PATHS = frozenset("NekoWidget/ci/" + name for name in (
 JPEG_WORKFLOW_DIGEST = "0b3629c90adac5ce8d04e70983fed85c9805ace05ef94f6b8ba89984e3820e51"
 JPEG_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "5f93474b5a05051b353bf9df584858f9c339be73eafb48a3e7c54f48d6229b53",
-        "5553c5888f600b99e8283d32111029391c07e2e60b3fac0bad0ae61884a37bb8"
+        "71cf98a55486affa793f119d7ed9443b9d7d38924528e941d861dbc98fc538f8",
+        "d42ebd16f848a73386f32e09ab445f213a3c889b3813a9d299c604e5a110f3f7"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "afb6c3e9fe0e497377d90f9d47fc38293664ca63f87c1007b6ef1744c94c13c3",
-        "229a5e4abc2fc08ad3938565eec54b4c308eb7ecb296c16fd340b07d671b6fd9"
+        "b963a1a84a4178f1d114678e35dc7d3a20123930684fa9238a2a4033041ccb3e",
+        "5a373da0411c4f85f16cf6b89011979e585210ce6a3195b5501be89ed62c7557"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "8b688511c2ac032c7e78238fc1c1b4244a64ea9cb1e71a1aa1200542f9eaff71",
-        "213dd7627e764ea1753682ad0b530d0db128de3dbddb800ed198dd75f414b946"
+        "3e4fcf95e7b5c032ee40dfbbbd412830880679e3d2b05112719d1425cf67cd84",
+        "e40c6c4607b622244993f075b4053ca5fe080313c61cd7430b80f1f7f35623c6"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "30e0a535ba76cc3ddff3050ea4c6e9ead2fe990e5b668277b3bd0c3708cfc019",
-        "951c4f6bd1d6fa51c059c0751fb8c9153f2814170f523ca9b14b40c395d21a0e"
+        "9a3e9d6a367f29e55d51180e6ec294d35f2f7e42294c2d93c6e6375681466e2c",
+        "3b4bb724308039bf25630d9923b2d81fc735f90e2ac9e9b7103625b622d4a746"
     ]
 }
 

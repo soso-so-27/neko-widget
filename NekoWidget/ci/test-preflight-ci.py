@@ -128,6 +128,7 @@ class PreflightTests(unittest.TestCase):
             result = preflight.candidate_plan("origin/main", 5, False, self.history)
         self.assertEqual(result["required_jobs"], [planner.JPEG_JOB])
         self.assertIn("Container", result["reason"])
+        self.assertIn("persistent runtime admission budget", result["reason"])
         self.assertEqual(result["unmapped_files"], [])
         self.assertFalse(result["ready"])
         self.assertTrue(result["cost_review_required"])

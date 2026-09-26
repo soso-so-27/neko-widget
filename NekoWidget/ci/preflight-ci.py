@@ -336,7 +336,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     if required == (planner.BUILD,) and selected != "app-icon-v1":
         selected = "movie-screen-only"
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Private JPEG Container gateway and frozen Node/Docker workflow; no deployment or release evidence"
+    reason = ("Private JPEG Container gateway with persistent runtime admission budget and frozen Node/Docker workflow; no deployment or release evidence"
               if selected == planner.JPEG_SCOPE else
               "Disabled preservation backend at one reviewed tree with frozen Node workflow; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_SCOPE else

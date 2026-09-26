@@ -194,9 +194,9 @@ class PlanTests(unittest.TestCase):
             self.assertIn(planner.PRESERVATION_WORKFLOW, (root / "summary").read_text())
 
     def test_jpeg_backend_requires_exact_paths_modes_workflow_and_frozen_companions(self):
-        self.assertEqual(planner.JPEG_SCOPE, "preservation-image-validator-v2")
+        self.assertEqual(planner.JPEG_SCOPE, "preservation-image-validator-v3")
         self.assertEqual(planner.JPEG_JOB_TIMEOUT_MINUTES, 10)
-        self.assertEqual(len(planner.JPEG_PATHS), 23)
+        self.assertEqual(len(planner.JPEG_PATHS), 25)
         original, bindings = self.jpeg_changes()
         workflow_digest = scope.source_digest(original[planner.JPEG_WORKFLOW][1])
         def select(changes, altered_raw=None, ancestor=True, base="b" * 40):
@@ -224,7 +224,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(select(plain), planner.JPEG_SCOPE)
         for name in ("Dockerfile", "wrangler.container.disabled.jsonc", "src/container-worker.mjs",
                      "src/http-server.ts", "src/start-server.ts", "test/http-server.test.mjs",
-                     "test/container-probe.mjs"):
+                     "test/container-probe.mjs", "src/runtime-budget.mjs", "test/runtime-budget.test.mjs"):
             addition = "NekoWidget/PreservationImageValidator/" + name
             self.assertEqual(select({**plain, addition: ("", "reviewed container addition")}), planner.JPEG_SCOPE)
         self.assertEqual(select({**plain, "handoffs/jpeg.md": ("", "read-only notes")}), planner.JPEG_SCOPE)
