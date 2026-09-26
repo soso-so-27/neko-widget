@@ -8,13 +8,14 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - 開始時に現在のmain、対象差分、完了条件を一度決め、機能変更とCI試作を別の候補にする。検証待ちの間に同じ候補へ追加変更を積まない。
 - 候補をcommitした後、push前に `python NekoWidget/ci/check-development-flow.py` を実行する。既存の安価な検証に加え、実CIと同じ選択器でbranch全差分・必要job・全件になる理由・過去の所要時間を表示する。配布予定なら `--include-upload`。作業中の単体確認だけなら `--checks-only` とし、push前確認の代用にはしない。
 - `--decision` は記録用であり、時間超過・失敗を通過させない。preflightは同じ作業名の `codex/<task>` と `diagnostic/<task>` のCI履歴を取得し、初回CIからの累計経過時間＋次のCI（配布予定ならuploadも）の実測上限を表示する。稼働中CIがあれば重複起動を止める。既定30分を超える場合は方法を変えるか、実測に基づく計画へ明示的に組み直す。`--target-minutes` を変えた場合は当初目標内に収まったと報告しない。成功済みの単体検証は繰り返さず **preflight-ci.pyだけ** 再実行する。
-- 未計測scopeの初回計測だけは `preflight-ci.py --measure-baseline`。同じ作業にCI履歴があれば再利用できない。計測後は失敗分も含めtiming baselineへ反映する。未計測を短時間の約束にしない。この計画変更は主担当の責任で行い、ユーザーへの確認を毎回増やさない。
+- 未計測scopeの初回計測だけは `preflight-ci.py --measure-baseline`。同じ作業に通常candidate CI履歴があれば再利用できない。focused diagnosticだけを先行した場合は、失敗・稼働中・累積時間の判定を維持して初回計測できる。計測後は失敗分も含めtiming baselineへ反映する。未計測を短時間の約束にしない。この計画変更は主担当の責任で行い、ユーザーへの確認を毎回増やさない。
 - 必要なprivacy、署名、migration、fail-closed確認は省略しない。
 
 ## CIの対象選択・監視・失敗対応
 
 - 制御用Python、対応する単体テスト、workflowの起動条件・配布SHA固定だけの変更は `ci-orchestration-v1`。Ubuntuのplan jobで検証し、Mac・Simulator・Widget画面検証は起動しない。native build/test/upload本体の変更や製品変更との混在はこの範囲に含めない。この成功はiOS製品・配布の検証証拠に使えない。
 - 既存のアプリViews内だけの動作変更は `app-view-ui-v1`。アプリ操作・Photos・runtime・buildを確認し、Widget galleryは起動しない。共有モデル・Widget・project・fixtureの変更を含む場合は別途判定する。既存の文字・余白だけの限定判定は維持する。
+- `family-window-ui-v1` は既存FamilyWindowView・FamilyRecordView内の変更。変更されたUIテストはMomentDeliveryComposerUITestsクラスの内部だけと確認する。クラス全体とWidget URLから写真を開く3操作、build・Photos権限・実写真scan・両OS runtimeを実行し、Widget galleryは起動しない。未知・共有モデル・Widget実装・project・workflowの混在はこの範囲に含めない。
 - 同一リポジトリのPRはpush CIを使い、PR側ではMac jobを重複起動しない。fork PRは従来通り検証する。main pushは一致する候補の成功証拠を再利用し、一致する候補がない場合はplanで終了する。無条件に広い検証へ戻さず、配布済みでない固定候補を使うか、必要な統合候補を作る。
 
 - `preservation-service-v3` はv2の既知33ファイルへ、予約のowner indexを追加する `migrations/0004_upload_owner_index.sql` だけを加えた34ファイル。専用workflow・必須Node job・通常mode・未知/native/Sharing混在時のfull fallbackを維持し、4 companionのbefore/afterを独立レビューして固定する。v3は初回計測し、v1/v2の時間をv3実績にしない。iOS planの成功と同SHA専用Node jobの成功を別々に確認し、Mac/配布の証拠として流用しない。
