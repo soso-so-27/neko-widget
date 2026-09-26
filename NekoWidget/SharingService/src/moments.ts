@@ -1397,9 +1397,15 @@ export async function commitMoment(
       ),
       env.DB.prepare("DELETE FROM moment_commit_events WHERE id = ?").bind(commitEventID),
       ...(sharedWrite?.statements ?? []),
-      ...(sharedRecord === null ? [] : [env.DB.prepare(
-        "INSERT INTO family_record_moments(space_id,photo_id,moment_id) VALUES (?,?,?)",
-      ).bind(member.spaceId, sharedRecord.photoID, momentID)]),
+      ...(sharedRecord === null ? [] : [
+        env.DB.prepare("INSERT INTO family_record_moments(space_id,photo_id,moment_id) VALUES (?,?,?)")
+          .bind(member.spaceId, sharedRecord.photoID, momentID),
+        env.DB.prepare("INSERT INTO family_record_moment_readers(space_id,photo_id,participant_id) VALUES (?,?,?)")
+          .bind(member.spaceId, sharedRecord.photoID, context.participant_id),
+        env.DB.prepare(`INSERT INTO family_record_moment_readers(space_id,photo_id,participant_id)
+          SELECT ?,?,recipient_participant_id FROM moment_deliveries WHERE moment_id=?`)
+          .bind(member.spaceId, sharedRecord.photoID, momentID),
+      ]),
       idempotencyStatement(
         env,
         "commit-moment",
