@@ -3518,7 +3518,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
                                "--family-collection-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-        app.activate()
+        // A preceding UI case can leave another fixture running. Relaunch so
+        // this case's arguments select the collection before querying it.
+        app.launch()
         let menu = app.buttons["family-collection-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 15))
         let delivery = app.descendants(matching: .any)["family-collection-delivery"].firstMatch
