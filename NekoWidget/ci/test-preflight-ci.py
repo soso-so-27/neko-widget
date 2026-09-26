@@ -188,7 +188,7 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["cost"]["status"], "unmeasured")
 
     def test_unmeasured_reviewed_profiles_can_reference_full_maximum_without_claiming_observation(self):
-        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE,
+        for selected in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE,
                          scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                          scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
             cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)
@@ -227,7 +227,7 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(reference['scope_unmeasured'])
 
     def test_full_reference_keeps_cumulative_budget_active_and_failed_test_gates(self):
-        for selected in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE,
+        for selected in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE,
                          scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                          scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
             cost = preflight.observe_cost(selected, self.history, True, use_full_baseline=True)

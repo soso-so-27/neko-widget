@@ -259,9 +259,9 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # failed/retried candidates: the last green job alone hides feedback cost.
     if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
-    if use_full_baseline and selected not in (scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
+    if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
-        raise ValueError("Full baseline reference is limited to reviewed memory-v3, family export, membership-access and managed-preservation-v2 profiles")
+        raise ValueError("Full baseline reference is limited to the reviewed app UI profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
     # A new backend allowlist (including preservation v14) is unmeasured even when its unchanged
     # job has observations under an older scope (for example service v1/v2).
@@ -365,7 +365,7 @@ def main(argv=None):
     parser.add_argument("--measure-baseline", action="store_true",
                         help="One first measurement for an unmeasured scope; no delivery-time promise or retries")
     parser.add_argument("--use-full-baseline", action="store_true",
-                        help="For reviewed memory-v3, family export, membership-access or managed-preservation-v2 only, use the full-route maximum as an unmeasured cost reference; keep all gates")
+                        help="For reviewed app UI profiles only, use the full-route maximum as an unmeasured cost reference; keep all gates")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:

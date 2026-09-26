@@ -2114,15 +2114,34 @@ class PlanTests(unittest.TestCase):
     def test_family_window_scope_keeps_owning_class_and_photo_links_without_widget_rendering(self):
         window = "NekoWidget/NekoWidget/Views/FamilyWindowView.swift"
         record = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
+        owned = sorted(scope.FAMILY_WINDOW_TEST_NAMES)
         source = ('import XCTest\n'
                   'final class OtherTests: XCTestCase {\n    func testOther() {}\n}\n'
                   'final class MomentDeliveryComposerUITests: XCTestCase {\n'
-                  '    func testPhoto() { print("before") }\n}\n')
+                  + ''.join(f'    func {name}() {{ print("before") }}\n' for name in owned)
+                  + '    func testUnrelated() { print("unchanged") }\n}\n')
         changes = {window: ('let x = 1', 'let x = 2'),
                    record: ('#if DEBUG\nlet x = 1\n#endif', '#if DEBUG\nlet x = 2\n#endif'),
                    scope.MEMORY_TEST_PATH: (source, source.replace('"before"', '"after"')),
                    'handoffs/design.md': ('a', 'b')}
         self.assertEqual(scope.select_scope(changes), scope.FAMILY_WINDOW_UI_SCOPE)
+        added_helper = (source.replace('    func ' + owned[0],
+            '    @MainActor\n    private func exerciseCollection() { print("collection") }\n'
+            '    func ' + owned[0], 1).replace('print("before")', 'exerciseCollection()', 1))
+        self.assertEqual(scope.select_scope(dict(changes, **{
+            scope.MEMORY_TEST_PATH: (source, added_helper)})), scope.FAMILY_WINDOW_UI_SCOPE)
+        shadowed = source.replace('print("unchanged")', 'exerciseCollection()')
+        shadowed_after = shadowed.replace('    func ' + owned[0],
+            '    @MainActor\n    private func exerciseCollection() { print("collection") }\n'
+            '    func ' + owned[0], 1).replace('print("before")', 'exerciseCollection()', 1)
+        self.assertNotEqual(scope.select_scope(dict(changes, **{
+            scope.MEMORY_TEST_PATH: (shadowed, shadowed_after)})), scope.FAMILY_WINDOW_UI_SCOPE)
+        for invalid in (source.replace('print("unchanged")', 'print("changed")'),
+                        source.replace('testUnrelated()', 'testRenamed()'),
+                        source.replace('import XCTest', 'import UIKit'),
+                        source + '\nprivate func outsideHelper() {}'):
+            self.assertNotEqual(scope.select_scope(dict(changes, **{
+                scope.MEMORY_TEST_PATH: (source, invalid)})), scope.FAMILY_WINDOW_UI_SCOPE)
         contract = ('import unittest\nclass Contract(unittest.TestCase):\n'
                     '    def test_family_window_combines_photos_without_exposing_report_only_sends(self) -> None:\n'
                     '        self.assertIn("old view", "view")\n\n'
@@ -2147,7 +2166,8 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(scope.accepts_paths(scope.FAMILY_WINDOW_UI_SCOPE, changes))
         self.assertEqual(scope.lanes(scope.FAMILY_WINDOW_UI_SCOPE), ('runtime', 'app-ui'))
         tests = scope.native_tests(scope.FAMILY_WINDOW_UI_SCOPE)
-        self.assertIn('NekoWidgetUITests/MomentDeliveryComposerUITests', tests)
+        self.assertEqual(tests[:len(owned)], scope.FAMILY_WINDOW_NATIVE_TESTS)
+        self.assertNotIn('NekoWidgetUITests/MomentDeliveryComposerUITests', tests)
         self.assertEqual(sum('OfficialWindowUITests/testWidgetURLs' in name for name in tests), 3)
         self.assertNotIn(scope.GALLERY_TEST, tests)
         self.assertEqual(scope.smoke_tests(scope.FAMILY_WINDOW_UI_SCOPE),
