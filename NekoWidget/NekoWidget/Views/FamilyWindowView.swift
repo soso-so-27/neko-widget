@@ -932,16 +932,6 @@ struct FamilyWindowView: View {
                         sharingErrorCard(message)
                     }
 
-                    HStack {
-                        MomentSharedAlbumHeading()
-                        Spacer()
-                        Button("共有写真について", systemImage: "info.circle") {
-                            showsSharedPhotoInformation = true
-                        }
-                        .labelStyle(.iconOnly)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .accessibilityIdentifier("family-window-shared-photo-info")
-                    }
                     if let photoSelectionMessage {
                         Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
                             .font(.caption)
@@ -958,9 +948,6 @@ struct FamilyWindowView: View {
 
                 if !model.isReportOnly {
                     manualRefreshResult
-                    if let spaceID = model.pairingState?.spaceID {
-                        FamilyRecordEntryButton(spaceID: spaceID, windowName: model.windowDisplayName).id(spaceID)
-                    }
                 }
             }
             .padding(16)
@@ -993,16 +980,10 @@ struct FamilyWindowView: View {
             received: model.receivedMoments,
             sent: model.outgoingPresentation.sentRecords
         )
-        if photos.isEmpty {
-            ContentUnavailableView(
-                "お互いの写真を、このまどに。",
-                systemImage: "photo.on.rectangle.angled",
-                description: Text("右上の写真ボタンから追加できます。")
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-        } else {
-            MomentSharedPhotoGrid(photos: photos) { photo in
+        if let spaceID = model.pairingState?.spaceID {
+            FamilyWindowPhotoCollection(spaceID: spaceID, windowName: model.windowDisplayName,
+                photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
+                showInformation: { showsSharedPhotoInformation = true }) { photo in
                 switch photo {
                 case let .received(item):
                     compactMomentCard(item)
@@ -1013,7 +994,7 @@ struct FamilyWindowView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .accessibilityIdentifier("family-window-shared-photos")
+            .id(spaceID)
         }
 
         if !model.safetyHiddenMoments.isEmpty {
@@ -1058,9 +1039,15 @@ struct FamilyWindowView: View {
                     Text("写真は自動では共有されません。追加する1枚を選んで確認します。")
                 }
                 Section("写真の保存") {
+                    Text("送り合った写真と、二人のアルバムに追加した写真を、この画面で一緒に見られます。アルバムの写真には「アルバム」と表示します。")
                     Text("届いた写真は最長90日です。自分のお気に入りに追加すると、写真アプリにもコピーします。相手には通知しません。")
                     Text("自分が追加した写真の控えは、このiPhoneに最長30日保存します。")
-                    Text("この一覧は長期保管用ではありません。端末や追加した時期により、見られる写真は異なります。機種変更や再インストール後に、過去の全写真を復元する機能はありません。")
+                    Text("送り合った履歴は長期保管用ではありません。端末や追加した時期により、見られる写真は異なります。機種変更や再インストール後に、過去の全写真を復元する機能はありません。")
+                }
+                Section("二人のアルバム") {
+                    Text("写真のメモを追加するとき、または「アルバムに写真を追加」から、選んだ写真を二人のアルバムに残せます。見るだけで自動追加されることはありません。")
+                    Text("書き出せるのは、アルバムに追加した写真とメモです。送り合った写真の履歴全体は含みません。")
+                    Text("共有を終了すると、アルバムも開けなくなります。必要な写真とメモは、共有を終了する前に書き出してください。無期限の保管や全端末を失った場合の復元には対応していません。")
                 }
             }
             .navigationTitle("共有の写真")

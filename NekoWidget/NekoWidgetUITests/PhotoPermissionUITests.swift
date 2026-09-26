@@ -3514,7 +3514,68 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    private func exerciseWindowCollectionRetentionAndRoomBoundaries() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
+                               "--family-collection-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.activate()
+        let menu = app.buttons["family-collection-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        let delivery = app.descendants(matching: .any)["family-collection-delivery"].firstMatch
+        XCTAssertTrue(delivery.waitForExistence(timeout: 5))
+        menu.tap()
+        XCTAssertTrue(app.buttons["family-collection-add"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["family-record-export"].exists,
+                       "Delivery history alone is not represented as an exportable album.")
+        app.buttons["family-window-shared-photo-info"].tap()
+        attach(app, name: "family-collection-delivery-with-empty-album")
+        app.buttons["family-collection-fixture-retain"].tap()
+        XCTAssertTrue(app.staticTexts["アルバム"].waitForExistence(timeout: 10))
+        let retained = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "family-collection-record-"))
+        XCTAssertEqual(retained.count, 0, "The explicitly linked photo must not get a duplicate tile.")
+        XCTAssertTrue(delivery.exists)
+        menu.tap()
+        app.buttons["family-record-export"].tap()
+        let share = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 30))
+        share.buttons["header.closeButton"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: share)], timeout: 5), .completed)
+        app.buttons["family-collection-fixture-expire"].tap()
+        XCTAssertTrue(retained.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(delivery.exists)
+        attach(app, name: "family-collection-retained-photo-after-delivery-expiry")
+        retained.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["相手が添えた言葉"].waitForExistence(timeout: 10))
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        app.buttons["family-collection-fixture-expire"].tap()
+        XCTAssertTrue(delivery.waitForExistence(timeout: 10))
+        app.buttons["family-collection-fixture-withdraw"].tap()
+        let withdrawn = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "family-collection-withdrawn-"))
+        XCTAssertTrue(withdrawn.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(delivery.exists, "A delivery copy must not resurrect a withdrawn album photo.")
+        XCTAssertEqual(retained.count, 0)
+        app.buttons["family-collection-fixture-restrict"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 0"), object: withdrawn)], timeout: 10), .completed)
+        XCTAssertEqual(retained.count, 0)
+        app.buttons["family-collection-fixture-switch"].tap()
+        app.buttons["family-collection-fixture-restrict"].tap()
+        XCTAssertFalse(delivery.exists)
+        XCTAssertEqual(retained.count, 0)
+        XCTAssertEqual(withdrawn.count, 0, "A catalog from another window cannot populate this collection.")
+        app.terminate()
+    }
+
+    @MainActor
     func testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess() {
+        exerciseWindowCollectionRetentionAndRoomBoundaries()
+        exerciseSharedRecordEditingAndWithdrawal()
+    }
+
+    @MainActor
+    private func exerciseSharedRecordEditingAndWithdrawal() {
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
