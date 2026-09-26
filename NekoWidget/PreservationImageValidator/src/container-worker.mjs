@@ -18,7 +18,7 @@ export class JPEGValidatorContainer extends Container {
   async #change(transition) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get(budgetKey);
-      const decision = transition(previous);
+      const decision = await transition(previous);
       if (decision.state) await this.ctx.storage.put(budgetKey, decision.state);
       return decision;
     });
@@ -48,8 +48,12 @@ export class JPEGValidatorContainer extends Container {
     try {
       // The physical state is checked before every forwarding decision: a
       // crashed/slept container needs a fresh reserved lease before restart.
-      const physical = await this.getState();
-      const decision = await this.#change(state => admitBudget(state, Date.now(), physical.status));
+      const decision = await this.#change(async state => {
+        // Keep the physical observation and budget transition in one DO turn.
+        // A deadline must not destroy -> idle between these two reads.
+        const physical = await this.getState();
+        return admitBudget(state, Date.now(), physical.status);
+      });
       if (decision.stop) {
         if (validBudget(decision.state) && decision.state.phase === 'blocked')
           await this.#killLease(decision.state.generation);
@@ -85,7 +89,10 @@ export class JPEGValidatorContainer extends Container {
       if (beforeForward.action !== 'forward') return unavailable();
       this.renewActivityTimeout();
       // This low-level port never auto-starts a container after an expiry race.
-      const response = await this.ctx.container.getTcpPort(this.defaultPort).fetch(request);
+      // The pinned Container.containerFetch forwards with an HTTP URL and the
+      // original Request; low-level TcpPort.fetch avoids its auto-start path.
+      const containerUrl = request.url.replace('https:', 'http:');
+      const response = await this.ctx.container.getTcpPort(this.defaultPort).fetch(containerUrl, request);
       // Fully consume the tiny JSON reply; do not proxy an abandoned body.
       const bytes = await readSmallResponse(response);
       const confirmed = await this.#change(state => confirmBudget(state, token, Date.now()));

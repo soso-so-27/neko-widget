@@ -12,8 +12,10 @@
 - 古い世代のtimerは新しい稼働を止めない。応答は4 KiBまで読み切り、未消費bodyを残さない。
 - 公開入口404、private named entrypoint、既定OFF、固定DO名、max_instances=1は維持。
 
-局所9件は純粋な状態遷移に加え、Cloudflare境界だけをmockした製品Workerクラスの
+局所10件は純粋な状態遷移に加え、Cloudflare境界だけをmockした製品Workerクラスの
 予約→schedule→起動順序、二重start拒否、startup中のabort/destroy、古いtimerを確認。
+独立レビューで、旧healthy観測の直後にalarmがidleへ戻すと永続blockになるP2を発見。
+physical観測と永続遷移を同じblockConcurrencyWhile内へ移し、競合再現試験を追加した。
 実Cloudflareのalarm遅延・destroy反映時間・cold startを確認したものではない。
 したがって「10時間分の起動許可枠」であり、実稼働時間や請求金額のハード上限とは呼ばない。
 
@@ -25,8 +27,13 @@
   workflow digest・通常mode・未知/他製品混在時FULL・Node/Docker必須jobを維持する。
 - 直近の同workflow成功は47〜51秒。ただしv3は未計測。10分job timeoutを予測時間としない。
 - 必須は開発フロー検査、同SHAのiOS planとJPEG専用Node/Docker job。Mac/TestFlightは起動しない。
+- 開発フロー12検査は85.3秒で成功。後続修正はJPEG製品/局所testと資料のみで、
+  その12検査の入力に差分はない。成功を保持し、commit後のpreflightだけ再実行する。
+- disabled gatewayのdry-run bundleは64.98 KiB。実配備はまだしていない。
 - Docker Desktopはプロセス存在・context一覧取得可だが、desktop-linux/default両方のinfoが応答せず。
-  他のコンテナへの影響不明のため再起動は利用者判断待ち。CIのDocker確認と実配備準備を分ける。
+  利用者がDockerのみの再起動を許可。通常restartが90秒を超えて応答せず、CLIのforce stop成功後、
+  Docker Desktopを非表示起動した。PC再起動・データ削除は行っていない。Engine応答は確認中。
+  CIのDocker確認と実配備準備を分ける。
 
 ## 実設定と残るゲート
 
@@ -47,4 +54,3 @@ Paidが必要な実確認をPaid化の前提に置く循環した手順にはし
 - https://developers.cloudflare.com/containers/reference/container-class/
 - https://developers.cloudflare.com/durable-objects/api/container/
 - https://github.com/cloudflare/containers/issues/242
-

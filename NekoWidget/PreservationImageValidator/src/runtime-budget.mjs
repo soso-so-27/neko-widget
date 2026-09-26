@@ -11,18 +11,26 @@ const nextMonth = now => {
 };
 
 export function validBudget(state) {
-  return state && state.version === 1 && /^\d{4}-(0[1-9]|1[0-2])$/u.test(state.month)
+  return state && state.version === 1 && typeof state.month === 'string'
+    && /^\d{4}-(0[1-9]|1[0-2])$/u.test(state.month)
     && phases.has(state.phase) && Number.isSafeInteger(state.usedMs)
     && state.usedMs >= 0 && state.usedMs <= MONTHLY_MS && state.usedMs % LEASE_MS === 0
     && Number.isSafeInteger(state.generation) && state.generation >= 0
-    && Number.isSafeInteger(state.lastNowMs) && state.lastNowMs >= 0
-    && Number.isSafeInteger(state.deadlineMs) && state.deadlineMs >= 0
+    && Number.isSafeInteger(state.lastNowMs) && state.lastNowMs >= 0 && state.lastNowMs <= 8.64e15
+    && Number.isSafeInteger(state.deadlineMs) && state.deadlineMs >= 0 && state.deadlineMs <= 8.64e15
     && (state.phase === 'idle' || state.phase === 'blocked'
-      ? state.deadlineMs === 0 : state.deadlineMs > 0);
+      ? state.deadlineMs === 0 : state.deadlineMs > 0)
+    && (state.phase === 'preparing' || state.phase === 'active'
+      ? state.usedMs >= LEASE_MS && state.generation > 0
+        && state.month === month(state.lastNowMs)
+        && state.deadlineMs > state.lastNowMs
+        && state.deadlineMs - state.lastNowMs <= LEASE_MS
+        && state.deadlineMs <= nextMonth(state.lastNowMs)
+      : true);
 }
 
 export function admitBudget(previous, now, status) {
-  if (!Number.isSafeInteger(now) || now < 0 || typeof status !== 'string')
+  if (!Number.isSafeInteger(now) || now < 0 || now > 8.64e15 || typeof status !== 'string')
     return { action: 'deny' };
   if (previous !== undefined && !validBudget(previous)) return { action: 'deny', stop: !stopped(status) };
   let state = previous || { version: 1, month: month(now), usedMs: 0,
@@ -77,8 +85,10 @@ export function expireBudget(previous, token) {
   if (previous.phase === 'idle')
     return { action: 'stop', state: { ...previous, phase: 'stopping',
       deadlineMs: Math.max(previous.lastNowMs, 1) } };
+  if (previous.phase === 'blocked')
+    return { action: 'stop', state: previous }; // Destroy, but never clear a clock/storage block.
   if (previous.phase === 'preparing' || previous.phase === 'active'
-      || previous.phase === 'stopping' || previous.phase === 'blocked')
+      || previous.phase === 'stopping')
     return { action: 'stop', state: { ...previous, phase: 'stopping' } };
   return { action: 'deny' }; // A late timer cannot kill a newer lease.
 }

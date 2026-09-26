@@ -10,7 +10,15 @@ const finish = (state, token) => stoppedBudget(expireBudget(state, token).state,
 // Import the real Worker class; only Cloudflare's unavailable Node imports are mocked.
 class MockContainer {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
-  async getState() { return { status: this.ctx.physical }; }
+  async getState() {
+    const status = this.ctx.physical;
+    if (this.ctx.holdGetState) {
+      this.ctx.holdGetState = false;
+      this.ctx.signalGetState();
+      await new Promise(resolve => { this.ctx.releaseGetState = resolve; });
+    }
+    return { status };
+  }
   async schedule(when, callback, payload) {
     this.ctx.schedules.push({ when, callback, payload });
     return { taskId: String(this.ctx.schedules.length) };
@@ -54,9 +62,12 @@ function mockWorker({ holdStart = false } = {}) {
   const values = new Map();
   let releaseGate = Promise.resolve();
   let signalStart;
+  let signalGetState;
   const ctx = { physical: 'stopped', starts: 0, destroys: 0, renewals: 0,
     schedules: [], holdStart, startEntered: new Promise(resolve => { signalStart = resolve; }),
     signalStart: () => signalStart(),
+    holdGetState: false, getStateEntered: new Promise(resolve => { signalGetState = resolve; }),
+    signalGetState: () => signalGetState(),
     storage: {
       async get(key) { return structuredClone(values.get(key)); },
       async put(key, value) { values.set(key, structuredClone(value)); },
@@ -68,7 +79,10 @@ function mockWorker({ holdStart = false } = {}) {
       await previous;
       try { return await callback(); } finally { release(); }
     },
-    container: { getTcpPort() { return { async fetch() {
+    container: { getTcpPort() { return { async fetch(url, request) {
+      assert.equal(new URL(url).protocol, 'http:');
+      assert.equal(new URL(url).pathname, '/images/validate-jpeg');
+      assert.equal(request.method, 'POST');
       ctx.forwards = (ctx.forwards || 0) + 1;
       return Response.json({ valid: true, mediaType: 'image/jpeg', frames: 1 });
     } }; } },
@@ -122,13 +136,19 @@ test('rollback, corrupt state and unmetered physical starts fail closed', () => 
   assert.equal(rollback.stop, true);
   assert.equal(rollback.state.phase, 'blocked');
   assert.equal(admitBudget(rollback.state, start + LEASE_MS, 'stopped').action, 'deny');
-  assert.equal(expireBudget(rollback.state, first.token).action, 'stop');
+  const blockedStop = expireBudget(rollback.state, first.token);
+  assert.equal(blockedStop.action, 'stop');
+  assert.equal(blockedStop.state.phase, 'blocked');
+  assert.equal(stoppedBudget(blockedStop.state, first.token).action, 'deny');
   const corrupt = { ...first.state, usedMs: -1 };
   assert.equal(admitBudget(corrupt, start, 'stopped').action, 'deny');
   assert.equal(confirmBudget(corrupt, first.token, start).stopUnmetered, true);
   assert.equal(expireBudget(corrupt, first.token).stopUnmetered, true);
   assert.equal(admitBudget(undefined, start, 'healthy').stop, true);
   assert.equal(validBudget(first.state), true);
+  assert.equal(validBudget({ ...first.state, deadlineMs: first.state.deadlineMs + LEASE_MS }), false);
+  assert.equal(validBudget({ ...first.state, month: null }), false);
+  assert.equal(validBudget({ ...first.state, lastNowMs: Number.MAX_SAFE_INTEGER }), false);
 });
 
 test('a late deadline cannot stop a newer activation after an early exit', () => {
@@ -192,4 +212,23 @@ test('real Worker ignores an old alarm after a newer lease starts', async () => 
   assert.equal(ctx.destroys, 1);
   assert.equal(ctx.physical, 'healthy');
   assert.equal((await ctx.storage.get('neko-validator-runtime-budget-v1')).usedMs, 2 * LEASE_MS);
+});
+
+test('real Worker delayed getState cannot mistake an expired lease for an unmetered start', async () => {
+  const { ctx, worker, request } = mockWorker();
+  assert.equal((await worker.fetch(request())).status, 200);
+  const oldAlarm = ctx.schedules[0].payload;
+  ctx.holdGetState = true;
+  const delayed = worker.fetch(request());
+  await ctx.getStateEntered; // Snapshot of healthy has been taken but not returned.
+  const deadline = worker.expireLease(oldAlarm);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ctx.destroys, 0, 'deadline cannot overtake the held physical observation');
+  ctx.releaseGetState();
+  await Promise.all([delayed, deadline]);
+  const after = await ctx.storage.get('neko-validator-runtime-budget-v1');
+  assert.equal(after.phase, 'idle');
+  assert.equal(ctx.physical, 'stopped');
+  assert.equal((await worker.fetch(request())).status, 200);
+  assert.equal(ctx.starts, 2);
 });
