@@ -14,6 +14,7 @@ import { processDeliveredNoticeEvent } from './notice-delivery';
 import { S3RecoveryCopy } from './s3-recovery-copy';
 import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
+import { IntakeControl } from './intake-control';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
@@ -196,6 +197,7 @@ function configuredServices(env: Env): Services {
     ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
     requireGlobalAdmissionLimit: true,
+    intakeControl: new IntakeControl(env.DB, now), requireIntakeControl: true,
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery

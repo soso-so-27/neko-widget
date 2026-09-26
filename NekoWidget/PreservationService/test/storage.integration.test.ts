@@ -536,6 +536,52 @@ it('deleted IDs prevent replay without consuming a new active record slot', asyn
     .toMatchObject([{ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } }]);
 });
 
+it('pauses only new intake before decoding and preserves retry/read/edit/delete', async () => {
+  const f = await fixture();
+  const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  let admissions = 0; let decodes = 0;
+  const paused = new ArchiveStore({ ...f.options, requireIntakeControl: true,
+    intakeControl: { async admit() { admissions++; throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503); } },
+    photos: { async validateJPEG() { decodes++; return true; } } });
+  await expect(paused.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED', status: 503 });
+  expect(decodes).toBe(0);
+  expect(await paused.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  expect((await paused.read(f.session.token, id)).document.text).toBe(document.text);
+  expect((await paused.usage(f.session.token)).records.saved).toBe(1);
+  await paused.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: '新規停止中も既存メモは残す' } }));
+  await paused.remove(f.session.token, id, 2);
+  expect(admissions).toBe(1);
+  const missing = new ArchiveStore({ ...f.options, requireIntakeControl: true });
+  await expect(missing.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED' });
+});
+
+it('reserves new intake before recovery, key use or malformed photo/document parsing', async () => {
+  const f = await fixture();
+  let work = 0; const unavailable = async (): Promise<never> => { work++; throw new Error('must not run'); };
+  const amounts: number[] = [];
+  const archive = new ArchiveStore({ ...f.options, requireIntakeControl: true, requireOwnerRecovery: true,
+    ownerRecovery: { copyCurrent: unavailable } as unknown as OwnerRecoveryCopy,
+    keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable },
+    intakeControl: { async admit(amount) {
+      amounts.push(amount); throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503);
+    } } });
+  for (const input of [f.request(), f.request({ document: null }),
+    f.request({ photoBase64: '!'.repeat(1_000_000) }), f.request({ expectedRevision: 1 }), null]) {
+    await expect(archive.put(f.session.token, crypto.randomUUID(), input))
+      .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED' });
+  }
+  expect(work).toBe(0); expect(amounts).toHaveLength(5);
+  expect(amounts[2]).toBe(750_000 + 512 * 1024 + 8192);
+  f.setState('expired');
+  await expect(archive.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'NEW_SAVE_REQUIRES_MEMBERSHIP' });
+  expect(amounts).toHaveLength(5);
+});
+
 it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {
   const f = await fixture({ maximumRecords: 1 });
   let release!: () => void; let entered!: () => void;
