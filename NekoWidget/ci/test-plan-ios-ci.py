@@ -2123,6 +2123,22 @@ class PlanTests(unittest.TestCase):
                    scope.MEMORY_TEST_PATH: (source, source.replace('"before"', '"after"')),
                    'handoffs/design.md': ('a', 'b')}
         self.assertEqual(scope.select_scope(changes), scope.FAMILY_WINDOW_UI_SCOPE)
+        contract = ('import unittest\nclass Contract(unittest.TestCase):\n'
+                    '    def test_family_window_combines_photos_without_exposing_report_only_sends(self) -> None:\n'
+                    '        self.assertIn("old view", "view")\n\n'
+                    '    def test_widget_boundary(self):\n        self.assertTrue(True)\n')
+        revised = contract.replace('"old view"', '"new view"')
+        companion = dict(changes, **{scope.FAMILY_WINDOW_CONTRACT_TEST: (contract, revised)})
+        self.assertEqual(scope.select_scope(companion), scope.FAMILY_WINDOW_UI_SCOPE)
+        self.assertTrue(scope.accepts_paths(scope.FAMILY_WINDOW_UI_SCOPE, companion))
+        for invalid in (revised.replace('import unittest', 'import os'),
+                        revised.replace('self.assertTrue(True)', 'pass'),
+                        revised.replace('    def test_widget_boundary', '    @unittest.skip("no")\n    def test_widget_boundary'),
+                        revised.replace('    def test_widget_boundary', '    skip = True\n    def test_widget_boundary'),
+                        revised + '\nhelper = 1\n',
+                        revised.replace('test_family_window_combines_photos_without_exposing_report_only_sends', 'test_other')):
+            companion[scope.FAMILY_WINDOW_CONTRACT_TEST] = (contract, invalid)
+            self.assertNotEqual(scope.select_scope(companion), scope.FAMILY_WINDOW_UI_SCOPE)
         for broken in ('#if DEBUG\n#else\n#else\n#endif',
                        '#if DEBUG\n#else\n#elseif MORE\n#endif', '#if\n#endif'):
             modified = dict(changes)
