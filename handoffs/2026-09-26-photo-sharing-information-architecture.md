@@ -44,6 +44,9 @@ WindowsにXcodeはない。最初の描画確認は既存focused UI diagnostic�
 - 修正32b2d0aの診断36206533682は11分14秒で成功。統合一覧・明示保存・重複除外・ZIP共有・履歴期限後の閲覧・取り下げ後のメモ・閲覧制限・別まどの境界を実行した。
 - CI選択は独立PR #54で一般化したfamily-window-ui-v1。制御用CIは22秒で成功。製品のビルド・権限・写真スキャン・runtime・共有画面クラス・写真リンクの3経路を維持し、無関係なWidget galleryを外した。
 - 新scopeの通常候補CIは未計測。初回計測では診断時間・失敗も累積に残し、20〜30分以内の配布は約束しない。画面診断をrelease evidenceとして流用しない。
+- 通常候補36207398852は、旧pairedContent内の見出し・gridを文字列で探す静的assertでbuild jobが停止。共有制限・送信抑止を維持したまま検証対象を子のcollectionへ移し、空間ID・取り下げ・export再確認のassertを追加。Windowsでは62成功・既存のmacOS固有確認1skipで、skipを成功扱いしない。
+- 写真がない状態と接続を確認できない状態を別表示にした。後者の追加表示は最終候補のnativeテストで確認する。最初の診断の描画証拠は、統合gridの通常表示・履歴期限後の2画面。
+- 最初のfamily-window-ui-v1は全MomentDeliveryComposerUITestsを実行し、対象外の個人メモ・利用再開を含むためapp-uiが長時間化した。Widget galleryを外しただけでは十分な短縮になっていない。次の候補ではview所有の操作とUIテスト差分から範囲を見直し、未実行テストの変更を黙って通さない。
 
 ## 設計の参照
 
