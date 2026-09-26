@@ -26,7 +26,7 @@ const image = (): OwnerRecoveryImage => ({ ownerId, generation: 7, identityKey: 
     finalNoticeDeliveredAt: null, finalNoticeReceipt: null },
 });
 
-async function fixture() {
+async function fixture(compressWrites = false) {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const identityIndexSecret = randomToken();
@@ -81,7 +81,7 @@ async function fixture() {
       return found;
     },
   } as S3RecoveryCopy;
-  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret), objects, keys, s3,
+  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret, { compressWrites }), objects, keys, s3,
     identityIndexSecret,
     omitFromListing(key: string) { omittedFromListing.add(key); },
     setPageSize(value: number) { pageSize = value; },
@@ -164,6 +164,41 @@ it('stores and verifies an encrypted owner bootstrap image without exposing the 
   const raw = new TextDecoder().decode(f.objects.get(ref.key)!);
   expect(raw).not.toContain(original.identityKey);
   expect(raw).not.toContain(accountId);
+});
+
+it('reads legacy and compressed inventories with either write gate, without changing owner binding', async () => {
+  const f = await fixture();
+  const original = image();
+  original.inventoryGeneration = 1000;
+  original.records = Array.from({ length: 1000 }, (_, i) => ({
+    recordId: crypto.randomUUID(),
+    revision: 1, deleted: i % 3 === 0,
+    marker: { key: `recovery/v1/${ownerId}/manifest/${crypto.randomUUID()}`,
+      versionId: randomToken(), sha256: Array.from(crypto.getRandomValues(new Uint8Array(32)),
+        byte => byte.toString(16).padStart(2, '0')).join(''), bytes: 400 },
+  })).sort((left, right) => left.recordId.localeCompare(right.recordId));
+  const compressedWriter = new OwnerRecoveryCopy(f.keys, f.s3, f.identityIndexSecret,
+    { compressWrites: true });
+  const legacyRef = await f.copy.copy(original);
+  const compressedRef = await compressedWriter.copy(original);
+  expect(compressedRef.bytes).toBeLessThan(legacyRef.bytes / 2);
+  console.log('synthetic 1000-record encrypted snapshot bytes', {
+    legacy: legacyRef.bytes, compressed: compressedRef.bytes,
+    reductionPercent: Math.round((1 - compressedRef.bytes / legacyRef.bytes) * 100),
+  });
+  const opened = await f.keys.open(f.objects.get(compressedRef.key)!, { ownerId, purpose: 'recovery' });
+  expect(new TextDecoder().decode(opened.subarray(0, 4))).toBe('NKZ1');
+  for (const reader of [f.copy, compressedWriter]) {
+    expect(await reader.read(ownerId, legacyRef)).toEqual(original);
+    expect(await reader.read(ownerId, compressedRef)).toEqual(original);
+    await expect(reader.read(otherOwnerId, compressedRef))
+      .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+  }
+  // Relabelling an object and recomputing its storage hash cannot bypass AES owner binding.
+  const relabelled = await f.s3.putVersioned(compressedRef.key.replace(ownerId, otherOwnerId),
+    f.objects.get(compressedRef.key)!);
+  await expect(f.copy.read(otherOwnerId, relabelled))
+    .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
 });
 
 it('quarantines a committed record absent from the owner-wide inventory', async () => {
