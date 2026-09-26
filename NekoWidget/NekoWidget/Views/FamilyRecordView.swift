@@ -1193,7 +1193,9 @@ struct FamilyRecordUIFixture: View {
             UIColor.systemOrange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 240, height: 180))
             UIImage(systemName: "cat.fill")?.draw(in: CGRect(x: 70, y: 40, width: 100, height: 100))
         }
-        let jpeg = image.jpegData(compressionQuality: 0.8) ?? Data()
+        let preview = CommandLine.arguments.contains("--family-collection-ui-fixture")
+            ? MomentExperiencePhotoFixture.image(index: 1) : image
+        let jpeg = preview.jpegData(compressionQuality: 0.8) ?? Data()
         photo = MomentShareIngressPhoto(canonicalJPEG: jpeg, capturedAt: nil, pixelWidth: 240, pixelHeight: 180)
         client = FamilyRecordFixtureClient(jpeg: jpeg)
     }
