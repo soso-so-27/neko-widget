@@ -26,6 +26,7 @@ interface Dependencies {
   requireGlobalAdmissionLimit?: boolean;
   intakeControl?: { admit(plannedBytes: number): Promise<void> };
   requireIntakeControl?: boolean;
+  mutationAdmission?: { admitMutation(ownerId: string): Promise<void> };
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
@@ -395,6 +396,7 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
+    await this.d.mutationAdmission?.admitMutation(session.ownerId);
     const existing = await this.row(session.ownerId, id);
     if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
     if (!existing && (this.d.requireIntakeControl || this.d.intakeControl)) {

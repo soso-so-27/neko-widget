@@ -15,9 +15,11 @@ import { S3RecoveryCopy } from './s3-recovery-copy';
 import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { IntakeControl } from './intake-control';
+import { PilotControl } from './pilot-control';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
+  ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
@@ -162,7 +164,7 @@ export async function route(request: Request, services: Services): Promise<Respo
   throw new ServiceError('NOT_FOUND', 404);
 }
 
-function configuredServices(env: Env): Services {
+export function configuredServices(env: Env): Services {
   if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.MEMBERSHIP_AUTHORITY
     || !env.PHOTO_VALIDATOR || !env.IDENTITY_INDEX_SECRET
     || !env.APPLE_CREDENTIALS_JSON || !env.PRESERVATION_LINK_AUDIENCE || !env.REQUEST_LIMITER || !env.DB || !env.ARCHIVE) {
@@ -172,6 +174,9 @@ function configuredServices(env: Env): Services {
   try { credentials = JSON.parse(env.APPLE_CREDENTIALS_JSON) as typeof credentials; }
   catch { throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503); }
   const now = () => Date.now();
+  // No deployment may drop the pilot gate by losing its mode/environment/secret.
+  // The gate is checked only on creation/writes, never on reads or exports.
+  const pilot = new PilotControl(env.DB, now, env.PILOT_MODE, env.PILOT_IDENTITY_KEYS_JSON);
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   let recovery: RecordRecoveryCopy | undefined;
@@ -185,6 +190,7 @@ function configuredServices(env: Env): Services {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now,
+    ownerAdmission: pilot,
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
@@ -198,6 +204,7 @@ function configuredServices(env: Env): Services {
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
     requireGlobalAdmissionLimit: true,
     intakeControl: new IntakeControl(env.DB, now), requireIntakeControl: true,
+    mutationAdmission: pilot,
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
@@ -269,6 +276,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
+      const ip = request.headers.get('CF-Connecting-IP');
+      if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);
+      if (!env.REQUEST_LIMITER) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+      const permitted = await env.REQUEST_LIMITER.limit({ key: await sha256(`preservation:${ip}`) });
+      if (!permitted.success) throw new ServiceError('RATE_LIMITED', 429);
       const policy = await env.DB?.prepare(`SELECT delete_intent_required,owner_snapshot_required
         FROM pa_recovery_write_policy WHERE singleton=1`)
         .first<{ delete_intent_required: number; owner_snapshot_required: number }>();
@@ -276,10 +288,6 @@ export default {
         throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
       }
       const services = configuredServices(env);
-      const ip = request.headers.get('CF-Connecting-IP');
-      if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);
-      const permitted = await env.REQUEST_LIMITER!.limit({ key: await sha256(`preservation:${ip}`) });
-      if (!permitted.success) throw new ServiceError('RATE_LIMITED', 429);
       return await route(request, services);
     } catch (error) {
       return error instanceof ServiceError ? response({ error: { code: error.code } }, error.status)

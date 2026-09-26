@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "status": "local-plan-not-applied",
+  "status": "local-controls-tested-not-remotely-applied",
   "trialDays": 7,
   "maximumParticipants": 3,
   "currency": {
@@ -53,7 +53,7 @@
   },
   "excludedFromEnforcedCap": [
     "Worker invocations and D1 checks before a request is rejected",
-    "Existing-record edits and retries: proposed mutation limit is not implemented yet; reads, repair and historical versions also remain outside the new-intake cap",
+    "Reads, repair, historical versions and login work are outside the new-intake and PUT-mutation caps",
     "Background tasks, queues, notification provider and cloud control-plane calls",
     "Credential compromise, other applications in shared cloud accounts",
     "Exchange-rate, tax or unit-price changes; provider billing delay"

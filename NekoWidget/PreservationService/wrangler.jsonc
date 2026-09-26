@@ -15,6 +15,10 @@
       "workers_dev": false,
       "vars": {
         "PRESERVATION_ENABLED": "NO",
+        "PILOT_MODE": "YES",
+        "OWNER_QUOTA_BYTES": "1073741824",
+        "MAXIMUM_RECORDS": "200",
+        "GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES": "3221225472",
         "CLEANUP_ENABLED": "NO",
         "RECOVERY_BACKFILL_ENABLED": "NO",
         "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO",

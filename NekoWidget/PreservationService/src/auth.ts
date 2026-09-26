@@ -75,7 +75,12 @@ export class DurableAuth {
       const identityKey = await indexedOwnerIdentity(await this.indexKey,
         identity.issuer, identity.subject);
       const db = this.dependencies.db;
-      await db.prepare(
+      if (this.dependencies.ownerAdmission) {
+        const known = await db.prepare('SELECT 1 FROM pa_owners WHERE identity_key=?')
+          .bind(identityKey).first();
+        // A paused pilot must not prevent an existing owner signing in to export.
+        if (!known) await this.dependencies.ownerAdmission.createOwner(crypto.randomUUID(), identityKey, this.now());
+      } else await db.prepare(
         `INSERT INTO pa_owners(owner_id, identity_key, epoch, disabled, created_at)
          VALUES (?, ?, 0, 0, ?) ON CONFLICT(identity_key) DO NOTHING`,
       ).bind(crypto.randomUUID(), identityKey, this.now()).run();

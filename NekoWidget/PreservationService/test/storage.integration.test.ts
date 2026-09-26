@@ -470,11 +470,12 @@ it('listing is paged and carries a mutation generation without downloading image
 });
 
 it('HTTP stays disabled until both the environment gate and recovery policy are active', async () => {
-  const request = new Request('https://preservation.test/v1/records');
+  const request = new Request('https://preservation.test/v1/records', { headers: { 'CF-Connecting-IP': '192.0.2.1' } });
   const closed = await worker.fetch(request, binding as Env);
   expect(closed.status).toBe(503); expect(closed.headers.get('cache-control')).toBe('no-store');
   expect(await closed.json()).toEqual({ error: { code: 'PRESERVATION_DISABLED' } });
-  const missing = await worker.fetch(request, { ...binding, PRESERVATION_ENABLED: 'YES' });
+  const missing = await worker.fetch(request, { ...binding, PRESERVATION_ENABLED: 'YES',
+    REQUEST_LIMITER: { limit: async () => ({ success: true }) } });
   expect(await missing.json()).toEqual({ error: { code: 'RECOVERY_POLICY_INACTIVE' } });
 });
 
@@ -580,6 +581,26 @@ it('reserves new intake before recovery, key use or malformed photo/document par
   await expect(archive.put(f.session.token, crypto.randomUUID(), f.request()))
     .rejects.toMatchObject({ code: 'NEW_SAVE_REQUIRES_MEMBERSHIP' });
   expect(amounts).toHaveLength(5);
+});
+
+it('pilot mutation stop covers edit and retry without stopping existing read/list/delete', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  let attempts = 0;
+  const archive = new ArchiveStore({ ...f.options, mutationAdmission: {
+    async admitMutation(ownerId) {
+      expect(ownerId).toBe(f.session.ownerId); attempts++;
+      throw new ServiceError('PILOT_WRITES_PAUSED', 503);
+    },
+  } });
+  for (const request of [f.request(), f.request({ expectedRevision: 1 }), f.request({ document: null })]) {
+    await expect(archive.put(f.session.token, id, request)).rejects.toMatchObject({ code: 'PILOT_WRITES_PAUSED' });
+  }
+  expect(attempts).toBe(3);
+  expect((await archive.read(f.session.token, id)).document).toEqual(document);
+  expect((await archive.list(f.session.token)).items).toHaveLength(1);
+  await archive.remove(f.session.token, id, 1);
+  expect(attempts).toBe(3);
 });
 
 it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {
