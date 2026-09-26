@@ -39,4 +39,29 @@ assert.throws(() => db.prepare(`UPDATE pa_owner_purge_events SET s3_version_id='
   .run(ownerId), /PURGE_EVENT_IMMUTABLE/u);
 assert.deepEqual(db.prepare('SELECT owner_id,identity_key,epoch,disabled FROM pa_owners WHERE owner_id=?')
   .get(ownerId), before);
-console.log('PASS: purge-intent migration preserves existing owner and rejects invalid transitions');
+for (const name of files.filter(name => name >= '0017_' && name < '0025_')) {
+  db.exec(readFileSync(join(directory, name), 'utf8'));
+}
+assert.deepEqual(db.prepare('SELECT owner_id,identity_key,epoch,disabled FROM pa_owners WHERE owner_id=?')
+  .get(ownerId), before);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_owner_purge_events').get().n, 2);
+assert.throws(() => db.prepare('DELETE FROM pa_owner_purge_events WHERE owner_id=?')
+  .run(ownerId), /PURGE_EVENT_CLEANUP_NOT_CONFIGURED/u);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_purge_manifests').get().n, 0);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_purge_manifest_chunks').get().n, 0);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_purge_manifest_remote_refs').get().n, 0);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_purge_manifest_remote_seals').get().n, 0);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_recovery_write_leases').get().n, 0);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pa_purge_d1_erasing_authority').get().n, 0);
+const generation = db.prepare('SELECT generation FROM pa_owner_recovery_generations WHERE owner_id=?')
+  .get(ownerId).generation;
+db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,object_key,
+  version_id,sha256,bytes,confirmed_at) VALUES(?,?,?,?,?,?,?)`)
+  .run(ownerId, generation, `recovery/v1/${ownerId}/owner/${generation}`,
+    'synthetic-v1', 'a'.repeat(64), 100, 300);
+db.prepare('UPDATE pa_recovery_write_policy SET owner_snapshot_required=1 WHERE singleton=1').run();
+assert.throws(() => db.prepare('UPDATE pa_owners SET disabled=1,purge_fence_id=? WHERE owner_id=?')
+  .run(crypto.randomUUID(), ownerId), /OWNER_RECOVERY_FENCE_INTENT_REQUIRED/u);
+assert.deepEqual(db.prepare('SELECT owner_id,identity_key,epoch,disabled FROM pa_owners WHERE owner_id=?')
+  .get(ownerId), before);
+console.log('PASS: purge-intent migrations preserve existing owner and require prepared evidence');

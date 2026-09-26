@@ -258,6 +258,11 @@ export class OwnerRecoveryCopy {
   async copyCurrent(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
     if (!safeInteger(now, 1)) throw unavailable();
     const image = await this.capture(db, ownerId);
+    // A fenced owner is already covered by the independent purge intent.
+    // Never create another owner recovery version while erasure is pending.
+    // In-flight copies can still race the fence; the purge executor must
+    // independently re-list every S3 version before claiming completion.
+    if (image.purgeFenceId !== null) throw unavailable();
     try {
       await this.verifyInnerIdentity(image);
       const current = async (): Promise<RecoveryObject | null> => {
@@ -298,13 +303,15 @@ export class OwnerRecoveryCopy {
       if (!cursor || (cursor.last_owner_id !== '' && !ownerPattern.test(cursor.last_owner_id))) {
         throw unavailable();
       }
-      const pending = `NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
+      const pending = `o.purge_fence_id IS NULL AND NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
         WHERE v.owner_id=g.owner_id AND v.generation=g.generation)`;
       const after = await db.prepare(`SELECT g.owner_id FROM pa_owner_recovery_generations g
+        JOIN pa_owners o ON o.owner_id=g.owner_id
         WHERE ${pending} AND g.owner_id>? ORDER BY g.owner_id LIMIT ?`)
         .bind(cursor.last_owner_id, limit).all<{ owner_id: string }>();
       const rows = after.results.length ? after.results
         : (await db.prepare(`SELECT g.owner_id FROM pa_owner_recovery_generations g
+          JOIN pa_owners o ON o.owner_id=g.owner_id
           WHERE ${pending} ORDER BY g.owner_id LIMIT ?`)
           .bind(limit).all<{ owner_id: string }>()).results;
       let failed = 0;

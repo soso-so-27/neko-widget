@@ -2,6 +2,7 @@ import { AwsV4Signer } from 'aws4fetch';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { readBoundedBody } from './bounded-body';
 import { ServiceError } from './contracts';
+import type { RecoveryWriteLease } from './recovery-write-lease';
 
 /** Opaque, already-encrypted recovery objects. Versioning is not WORM:
  * an administrator, deletion role or lifecycle rule can still erase versions.
@@ -30,7 +31,7 @@ const regionPattern = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u;
 const bucketPattern = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
-const recoveryKeyPattern = new RegExp(`^recovery/v1/${uuid}/(?:photo|record|manifest|owner)/${uuid}$`, 'u');
+const recoveryKeyPattern = new RegExp(`^recovery/v1/(${uuid})/(?:photo|record|manifest|owner)/${uuid}$`, 'u');
 const hexPattern = /^[0-9a-f]{64}$/u;
 const versionPattern = /^[\x21-\x7e]{1,1024}$/u;
 const unavailable = () => new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
@@ -81,7 +82,8 @@ function version(response: Response): string {
  */
 export class S3RecoveryCopy {
   private readonly config: BoundConfig;
-  constructor(config: S3RecoveryConfig, private readonly fetcher: Fetcher = fetch) {
+  constructor(config: S3RecoveryConfig, private readonly fetcher: Fetcher = fetch,
+    private readonly writeLease?: Pick<RecoveryWriteLease, 'withOwnerWrite'>) {
     this.config = configured(config);
   }
 
@@ -111,23 +113,27 @@ export class S3RecoveryCopy {
   }
 
   async putVersioned(key: string, ciphertext: Uint8Array): Promise<RecoveryObject> {
-    if (!recoveryKeyPattern.test(key) || ciphertext.length < 1 || ciphertext.length > maxObjectBytes) {
+    const ownerId = recoveryKeyPattern.exec(key)?.[1];
+    if (!ownerId || ciphertext.length < 1 || ciphertext.length > maxObjectBytes) {
       throw unavailable();
     }
-    const expected = await checksum(ciphertext);
     try {
-      const reply = await this.request('PUT', key, {
-        'content-type': 'application/octet-stream', 'if-none-match': '*',
-        'x-amz-checksum-sha256': expected.base64,
-      }, ciphertext);
-      if (reply.status !== 200 && reply.status !== 412) throw unavailable();
-      if (reply.status === 200 && reply.headers.get('x-amz-checksum-sha256') !== expected.base64) {
-        throw unavailable();
-      }
-      const committedVersion = reply.status === 200 ? version(reply) : undefined;
-      // A retry may find an identical current version. A different object at
-      // the same key is never accepted as success.
-      return await this.head(key, expected, ciphertext.length, committedVersion);
+      const write = async () => {
+        const expected = await checksum(ciphertext);
+        const reply = await this.request('PUT', key, {
+          'content-type': 'application/octet-stream', 'if-none-match': '*',
+          'x-amz-checksum-sha256': expected.base64,
+        }, ciphertext);
+        if (reply.status !== 200 && reply.status !== 412) throw unavailable();
+        if (reply.status === 200 && reply.headers.get('x-amz-checksum-sha256') !== expected.base64) {
+          throw unavailable();
+        }
+        const committedVersion = reply.status === 200 ? version(reply) : undefined;
+        // A retry may find an identical current version. A different object at
+        // the same key is never accepted as success.
+        return this.head(key, expected, ciphertext.length, committedVersion);
+      };
+      return this.writeLease ? await this.writeLease.withOwnerWrite(ownerId, write) : await write();
     } catch { throw unavailable(); }
   }
 

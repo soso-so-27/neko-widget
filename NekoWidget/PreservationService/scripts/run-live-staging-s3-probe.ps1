@@ -1,6 +1,6 @@
-param([switch]$KmsOnly, [switch]$FlowOnly, [switch]$PurgeOnly)
+param([switch]$KmsOnly, [switch]$FlowOnly, [switch]$PurgeOnly, [switch]$PlanOnly)
 $ErrorActionPreference = 'Stop'
-$chosenModes = @($KmsOnly, $FlowOnly, $PurgeOnly) | Where-Object { $_ }
+$chosenModes = @($KmsOnly, $FlowOnly, $PurgeOnly, $PlanOnly) | Where-Object { $_ }
 if (@($chosenModes).Count -gt 1) {
   throw 'Choose only one probe mode'
 }
@@ -27,7 +27,28 @@ try {
   $null = & $aws iam create-user --user-name $userName --profile $profile --output json
   if ($LASTEXITCODE -ne 0) { throw 'IAM user creation failed' }
   $created = $true
-  if ($PurgeOnly) {
+  if ($PlanOnly) {
+    $planPrefix = "purge-plan/v1/$ownerId/$recordId/"
+    $policyDocument = @{
+      Version = '2012-10-17'
+      Statement = @(
+        @{
+          Sid = 'OnlySyntheticPlanObjects'
+          Effect = 'Allow'
+          Action = @('s3:PutObject', 's3:GetObject', 's3:GetObjectVersion')
+          Resource = "arn:aws:s3:::$bucket/$planPrefix*"
+        },
+        @{
+          Sid = 'OnlySyntheticPlanInventory'
+          Effect = 'Allow'
+          Action = 's3:ListBucketVersions'
+          Resource = "arn:aws:s3:::$bucket"
+          Condition = @{ StringLike = @{ 's3:prefix' = "$planPrefix*" } }
+        }
+      )
+    } | ConvertTo-Json -Depth 8 -Compress
+    $null = & $aws iam put-user-policy --user-name $userName --policy-name SyntheticProbeOnly --policy-document $policyDocument --profile $profile
+  } elseif ($PurgeOnly) {
     # The destructive probe can touch only this invocation's random object.
     $policyDocument = @{
       Version = '2012-10-17'
@@ -81,7 +102,11 @@ try {
   }
   if (-not $propagated) { throw 'Temporary IAM key did not propagate' }
   Write-Output 'TEMP_IAM_KEY_READY'
-  if ($PurgeOnly) {
+  if ($PlanOnly) {
+    & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-plan.config.ts
+    if ($LASTEXITCODE -ne 0) { throw 'Live staging S3 purge plan test failed' }
+    Write-Output 'APP_S3_PURGE_PLAN_LIVE_STAGING_PASS'
+  } elseif ($PurgeOnly) {
     & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-purge.config.ts
     if ($LASTEXITCODE -ne 0) { throw 'Live staging exact-version purge test failed' }
     Write-Output 'APP_S3_VERSION_PURGE_LIVE_STAGING_PASS'
@@ -90,7 +115,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Live staging app S3 test failed' }
     Write-Output 'APP_S3_LIVE_STAGING_PASS'
   }
-  if ($PurgeOnly) {
+  if ($PlanOnly -or $PurgeOnly) {
     # The exact-version probe has no KMS or full-flow dependency.
   } elseif (-not $FlowOnly) {
     & .\node_modules\.bin\vitest.cmd run --config vitest.live-staging-kms.config.ts
@@ -172,7 +197,8 @@ try {
       Write-Output 'TEMP_USER_REMOVED'
     }
   }
-  $cleanupPrefix = if ($FlowOnly) { "recovery/v1/$ownerId/" } else { $objectKey }
+  $cleanupPrefix = if ($PlanOnly) { "purge-plan/v1/$ownerId/$recordId/" }
+    elseif ($FlowOnly) { "recovery/v1/$ownerId/" } else { $objectKey }
   $listingResult = Invoke-AwsCleanup -Arguments @('s3api', 'list-object-versions', '--bucket',
     $bucket, '--prefix', $cleanupPrefix, '--profile', $profile, '--output', 'json')
   if ($listingResult.Succeeded) {
@@ -189,7 +215,7 @@ try {
   } else {
     $cleanupFailures += "synthetic version listing failed under $cleanupPrefix"
   }
-  if ($PurgeOnly) {
+  if ($PurgeOnly -or $PlanOnly) {
     $remainingResult = Invoke-AwsCleanup -Arguments @('s3api', 'list-object-versions',
       '--bucket', $bucket, '--prefix', $cleanupPrefix, '--profile', $profile, '--output', 'json')
     if (-not $remainingResult.Succeeded) {

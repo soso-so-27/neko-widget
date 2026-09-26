@@ -371,4 +371,20 @@ it('does not acknowledge sign-in while S3 is down and repairs independent owner 
   expect((await f.copy.ledgerCoverage(db)).pending).toBe(0);
   expect(await db.prepare('SELECT owner_id FROM pa_owner_recovery_repair_failures WHERE owner_id=?')
     .bind(ids[0]).first()).toBeNull();
+  const fencedOwner = ids[0]!;
+  const fenceId = crypto.randomUUID();
+  await db.prepare(`INSERT INTO pa_purge_fences(fence_id,owner_id,state,owner_epoch,
+    inventory_generation,retention_episode,retention_revision,due_at,delivered_at,
+    delivery_event_id,contact_updated_at,created_at,updated_at,lease_expires_at)
+    VALUES(?,?,'fenced',1,0,1,1,?,?,?,?,?,?,?)`)
+    .bind(fenceId, fencedOwner, now - 1, now - 31 * 86_400_000,
+      `delivery-${crypto.randomUUID()}`, now - 32 * 86_400_000,
+      now, now, now + 600_000).run();
+  await db.prepare(`UPDATE pa_owners SET disabled=1,epoch=epoch+1,purge_fence_id=?
+    WHERE owner_id=?`).bind(fenceId, fencedOwner).run();
+  expect((await f.copy.ledgerCoverage(db)).pending).toBe(1);
+  expect(await f.copy.repairBatch(db, now + 3, 2)).toEqual({ processed: 0, failed: 0 });
+  await expect(f.copy.copyCurrent(db, fencedOwner, now + 3))
+    .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+  expect((await f.copy.ledgerCoverage(db)).pending).toBe(1);
 });

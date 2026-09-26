@@ -101,13 +101,11 @@ it('resumes after S3 abort is recorded but D1 claim is still aborting', async ()
   expect(f.events.size).toBe(2);
 });
 
-it('reconciles an S3 abort after D1 has lost both local event and claim', async () => {
+it('reconciles an S3 abort after the D1 event insert failed', async () => {
   const f = await fixture();
   const abortedAt = now + 1;
-  await f.ledger.append({ ...f.events.get('prepared')!, stage: 'aborted',
+  await f.store.putOnce({ ...f.events.get('prepared')!, stage: 'aborted',
     recordedAt: abortedAt });
-  await db.prepare(`DELETE FROM pa_owner_purge_events WHERE owner_id=?`)
-    .bind(f.fence.ownerId).run();
   await new OwnerPurgeAbort(db, f.store, f.ledger, () => now + 5)
     .claimAndRecordAbort(f.fence);
   expect(await db.prepare(`SELECT state,claimed_at FROM pa_purge_execution_claims

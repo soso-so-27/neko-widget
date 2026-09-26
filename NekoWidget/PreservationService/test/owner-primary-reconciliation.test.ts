@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
-import { reconcileFencedPrimaryInventory } from '../src/owner-primary-reconciliation';
+import { reconcileFencedPrimaryInventory,
+  reconcileFencedPurgePrimaryInventory } from '../src/owner-primary-reconciliation';
 
 const { DB: db, ARCHIVE: archive } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 
@@ -36,6 +37,14 @@ it('rejects a missing photo and an unreferenced R2 object', async () => {
   const orphan = `personal/${ownerId}/${recordId}/${crypto.randomUUID()}`;
   await archive.put(orphan, new Uint8Array([2]));
   await expect(reconcileFencedPrimaryInventory(db, archive, ownerId))
+    .rejects.toMatchObject({ code: 'PRIMARY_INVENTORY_UNAVAILABLE' });
+  expect((await reconcileFencedPurgePrimaryInventory(db, archive, ownerId)).photoKeys)
+    .toEqual([orphan, photoKey].sort());
+});
+
+it('does not treat a missing referenced photo as an acceptable purge orphan', async () => {
+  const { ownerId } = await fixture();
+  await expect(reconcileFencedPurgePrimaryInventory(db, archive, ownerId))
     .rejects.toMatchObject({ code: 'PRIMARY_INVENTORY_UNAVAILABLE' });
 });
 

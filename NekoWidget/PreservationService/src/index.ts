@@ -16,6 +16,7 @@ import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { IntakeControl } from './intake-control';
 import { PilotControl } from './pilot-control';
+import { RecoveryWriteLease } from './recovery-write-lease';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
@@ -71,13 +72,14 @@ const bearer = (request: Request) => {
 };
 
 function configuredS3(env: Env): S3RecoveryCopy {
+  if (!env.DB) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   return new S3RecoveryCopy({ enabled: env.RECOVERY_COPY_ENABLED ?? '',
     region: env.RECOVERY_S3_REGION ?? '', bucket: env.RECOVERY_S3_BUCKET ?? '',
     expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
     accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '',
     secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '',
     ...(env.RECOVERY_S3_SESSION_TOKEN ? { sessionToken: env.RECOVERY_S3_SESSION_TOKEN } : {}),
-  });
+  }, fetch, new RecoveryWriteLease(env.DB, () => Date.now()));
 }
 
 // Local tests inject dependencies. The public Worker always checks the gate.
