@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
 import hashlib
 import json
@@ -178,6 +179,7 @@ FAMILY_WINDOW_UI_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
 })
+FAMILY_WINDOW_CONTRACT_TEST = "NekoWidget/ci/test-family-window-widget-boundaries.py"
 # App-only view sources have no Widget compilation membership. Project/shared
 # model/fixture changes still select their own checks or the full suite. The
 # planner also checks the entire diff and regular file modes before using this.
@@ -1440,8 +1442,29 @@ def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
     No per-candidate hashes: run the entire owning class and photo-link smoke.
     Imports, other classes and shared test helpers must remain byte-identical.
     """
-    if not set(changes) & FAMILY_WINDOW_UI_PATHS or not set(changes) <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH}:
+    if not set(changes) & FAMILY_WINDOW_UI_PATHS or not set(changes) <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST}:
         return False
+    if FAMILY_WINDOW_CONTRACT_TEST in changes:
+        # Only the existing collection UI contract may evolve with these views.
+        # Widget/runtime/privacy tests and all helpers/imports stay identical.
+        surrounding = []
+        for source in changes[FAMILY_WINDOW_CONTRACT_TEST]:
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                return False
+            methods = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                       and node.name == "test_family_window_combines_photos_without_exposing_report_only_sends"]
+            if len(methods) != 1:
+                return False
+            method = methods[0]
+            lines = source.splitlines(keepends=True)
+            # Keep the signature, own decorators, next test's decorators and
+            # class-level statements outside the editable body.
+            start = method.body[0].lineno - 1
+            surrounding.append("".join(lines[:start] + lines[method.end_lineno:]))
+        if surrounding[0] != surrounding[1]:
+            return False
     if any(conditional_blocks(text) is None for pair in changes.values() for text in pair):
         return False
     if MEMORY_TEST_PATH not in changes:
@@ -1607,7 +1630,7 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == FAMILY_WINDOW_UI_SCOPE:
-        return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH})
+        return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
         return bool(sources and sources <= APP_ONLY_RECORD_EXPORT_PATHS)
     if scope == APP_VIEW_SCOPE:
