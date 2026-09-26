@@ -39,6 +39,14 @@
         "binding": "PHOTO_VALIDATOR",
         "service": "neko-preservation-jpeg-disabled",
         "entrypoint": "JPEGValidationService"
+      }, {
+        "binding": "KEY_WRAPPER",
+        "service": "neko-preservation-kms-staging-disabled",
+        "entrypoint": "PreservationKeyWrapper"
+      }, {
+        "binding": "MEMBERSHIP_AUTHORITY",
+        "service": "neko-preservation-billing-staging-disabled",
+        "entrypoint": "BillingAuthority"
       }]
     }
   }
