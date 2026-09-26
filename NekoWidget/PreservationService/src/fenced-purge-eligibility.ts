@@ -67,6 +67,7 @@ export async function verifyFencedPurgeEligibility(db: D1Database, fence: PurgeF
       AND o.disabled=1 AND o.epoch=f.owner_epoch AND o.purge_fence_id=f.fence_id
       AND i.generation=f.inventory_generation AND i.reserved_bytes=0
       AND NOT EXISTS(SELECT 1 FROM pa_uploads u WHERE u.owner_id=f.owner_id)
+      AND NOT EXISTS(SELECT 1 FROM pa_recovery_write_leases w WHERE w.owner_id=f.owner_id)
       AND NOT EXISTS(SELECT 1 FROM pa_pending_deletes p
         WHERE p.object_key>=? AND p.object_key<?)
       AND r.episode=f.retention_episode AND r.revision=f.retention_revision

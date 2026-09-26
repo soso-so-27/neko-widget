@@ -22,8 +22,8 @@ export type PrimaryInventory = {
  * owner fence, S3 versions, a durable deletion ledger and a second fresh
  * inventory must all be established separately before any removal.
  */
-export async function reconcileFencedPrimaryInventory(db: D1Database,
-  bucket: R2Bucket, ownerId: string): Promise<PrimaryInventory> {
+async function reconcile(db: D1Database, bucket: R2Bucket, ownerId: string,
+  allowUnreferencedObjects: boolean): Promise<PrimaryInventory> {
   try {
     const references = new Set<string>();
     const recordTuples: [string, number, boolean, string | null][] = [];
@@ -60,7 +60,7 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
       const page = await listOwnerPhotoPage(bucket, ownerId, photoCursor ?? undefined);
       for (const item of page.objects) {
         if (objects.size >= maximumItems || objects.has(item.key)
-          || !references.has(item.key)) throw unavailable();
+          || (!allowUnreferencedObjects && !references.has(item.key))) throw unavailable();
         objects.add(item.key);
       }
       photoCursor = page.nextCursor;
@@ -68,7 +68,8 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
         || seenPhotoCursors.size >= 2_000)) throw unavailable();
       if (photoCursor) seenPhotoCursors.add(photoCursor.token);
     } while (photoCursor);
-    if (objects.size !== references.size) throw unavailable();
+    if (references.size > objects.size || [...references].some(key => !objects.has(key))
+      || (!allowUnreferencedObjects && objects.size !== references.size)) throw unavailable();
 
     // A changed DB generation while R2 was listed invalidates this snapshot.
     const final = await listFencedRecordReferencesPage(db, ownerId, undefined, 1);
@@ -79,4 +80,19 @@ export async function reconcileFencedPrimaryInventory(db: D1Database,
     return { ownerId, epoch: epoch!, generation: generation!, records,
       photos: objects.size, recordDigest, photoKeys: [...objects].sort() };
   } catch { throw unavailable(); }
+}
+
+/** Pre-release reconciliation rejects any unreferenced R2 object. */
+export async function reconcileFencedPrimaryInventory(db: D1Database,
+  bucket: R2Bucket, ownerId: string): Promise<PrimaryInventory> {
+  return reconcile(db, bucket, ownerId, false);
+}
+
+/** Erasure must include even an orphan left by a failed upload. Every live DB
+ * photo reference must still exist, but extra owner-scoped R2 objects are
+ * included in the deletion plan rather than silently abandoned.
+ */
+export async function reconcileFencedPurgePrimaryInventory(db: D1Database,
+  bucket: R2Bucket, ownerId: string): Promise<PrimaryInventory> {
+  return reconcile(db, bucket, ownerId, true);
 }

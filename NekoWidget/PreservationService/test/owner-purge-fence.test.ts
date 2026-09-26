@@ -1,10 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
-import type { DurableAuth } from '../src/auth';
+import { DurableAuth } from '../src/auth';
+import { sha256 } from '../src/contracts';
 import type { NoticeSubmissions } from '../src/notice-submissions';
 import { verifyFencedPurgeEligibility } from '../src/fenced-purge-eligibility';
 import { OwnerPurgeFence } from '../src/owner-purge-fence';
+import { OwnerPurgeAbort } from '../src/owner-purge-abort';
+import { OwnerPurgeIntentLedger } from '../src/owner-purge-intent-ledger';
+import { OwnerPurgeRelease } from '../src/owner-purge-release';
 import { RetentionLedger, type ExpiryReviewCandidate, type VerifiedMembershipStatus } from '../src/retention-ledger';
+import type { PurgeIntentEvent, PurgeIntentReference } from '../src/s3-purge-intent';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const day = 86_400_000;
@@ -14,7 +19,8 @@ const dueAt = now - day;
 const tag = 'a'.repeat(64);
 
 async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expired'],
-  beforeStatusReturn?: (call: number, ownerId: string) => Promise<void>) {
+  beforeStatusReturn?: (call: number, ownerId: string) => Promise<void>,
+  withExternal = false, afterFirstPreparedRead?: (ownerId: string) => Promise<void>) {
   const ownerId = crypto.randomUUID();
   const billingAccount = crypto.randomUUID();
   const deliveryEventId = `delivery-${crypto.randomUUID()}`;
@@ -43,8 +49,36 @@ async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expir
     .bind(`message-${crypto.randomUUID()}`, ownerId, dueAt, now - 40 * day, tag,
       'account', 'zone', 'subscription', 'example.test', 'sender@example.test',
       deliveredAt - 1_000, deliveredAt, deliveryEventId, deliveredAt - 1_000).run();
+  const events = new Map<string, PurgeIntentEvent>();
+  let failPut = false;
+  let preparedRead = false;
+  const store = {
+    putOnce: async (event: PurgeIntentEvent): Promise<PurgeIntentReference> => {
+      if (failPut) throw Error('S3 unavailable');
+      const key = `purge/v1/${event.ownerId}/${event.intentId}/${event.stage}`;
+      const existing = events.get(key);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(event)) throw Error('changed event');
+      events.set(key, event);
+      return { key, versionId: `v-${event.stage}`, sha256: 'a'.repeat(64), bytes: 10 };
+    },
+    listOwnerVersionsPage: async () => ({ versions: [...events.entries()].map(([key, event]) => ({
+      key, versionId: `v-${event.stage}`, deleteMarker: false, bytes: 10 })), nextCursor: null }),
+    referenceForListedVersion: async (item: { key: string; versionId: string }) => ({
+      ...item, sha256: 'a'.repeat(64), bytes: 10 }),
+    readExact: async (ref: { key: string }) => {
+      const event = events.get(ref.key);
+      if (!event) throw Error('missing event');
+      if (event.stage === 'prepared' && !preparedRead) {
+        preparedRead = true;
+        await afterFirstPreparedRead?.(ownerId);
+      }
+      return event;
+    },
+  };
+  const ledger = new OwnerPurgeIntentLedger(db, store);
   let calls = 0;
   const fence = new OwnerPurgeFence({ db, now: () => now,
+    ...(withExternal ? { purgeIntentStore: store, purgeIntentLedger: ledger } : {}),
     statusForBillingAccount: async account => {
       expect(account).toBe(billingAccount);
       const call = calls++;
@@ -59,8 +93,131 @@ async function fixture(statuses: VerifiedMembershipStatus[] = ['expired', 'expir
     notices: { verifiedFinalNoticeEvidenceForExpiry: async () =>
       ({ recipientTag: tag, contactUpdatedAt: now - 40 * day }) } as unknown as NoticeSubmissions,
   });
-  return { fence, candidate, ownerId, billingAccount, get calls() { return calls; } };
+  return { fence, candidate, ownerId, billingAccount, events, store, ledger,
+    setPutFailure(value: boolean) { failPut = value; }, get calls() { return calls; } };
 }
+
+async function recordSnapshot(ownerId: string): Promise<void> {
+  const current = await db.prepare(`SELECT generation FROM pa_owner_recovery_generations
+    WHERE owner_id=?`).bind(ownerId).first<{ generation: number }>();
+  expect(current?.generation).toBeGreaterThan(0);
+  await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,
+    object_key,version_id,sha256,bytes,confirmed_at) VALUES(?,?,?,?,?,?,?)`)
+    .bind(ownerId, current!.generation, `recovery/v1/${ownerId}/owner/${current!.generation}`,
+      'synthetic-version', 'a'.repeat(64), 10, now).run();
+}
+
+it('policy ON requires external preparation and never thaws without S3-aware release', async () => {
+  const missing = await fixture();
+  await recordSnapshot(missing.ownerId);
+  await db.prepare(`UPDATE pa_recovery_write_policy SET owner_snapshot_required=1
+    WHERE singleton=1`).run();
+  try {
+    await expect(missing.fence.begin(missing.ownerId)).rejects.toThrow();
+    expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
+      .bind(missing.ownerId).first()).toMatchObject({ disabled: 0 });
+    await expect(db.prepare(`UPDATE pa_owners SET disabled=1,purge_fence_id=?
+      WHERE owner_id=?`).bind(crypto.randomUUID(), missing.ownerId).run()).rejects.toThrow();
+
+    const failed = await fixture(['expired', 'expired'], undefined, true);
+    await recordSnapshot(failed.ownerId);
+    failed.setPutFailure(true);
+    await expect(failed.fence.begin(failed.ownerId)).rejects.toThrow();
+    expect(failed.events.size).toBe(0);
+    expect(await db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?')
+      .bind(failed.ownerId).first()).toMatchObject({ disabled: 0 });
+
+    const staleSnapshot = await fixture(['expired', 'expired'], undefined, true,
+      async ownerId => { await db.prepare(`UPDATE pa_identity_credentials
+        SET updated_at=updated_at+1 WHERE owner_id=?`).bind(ownerId).run(); });
+    await recordSnapshot(staleSnapshot.ownerId);
+    await expect(staleSnapshot.fence.begin(staleSnapshot.ownerId)).rejects.toThrow();
+    expect([...staleSnapshot.events.values()].map(event => event.stage).sort())
+      .toEqual(['aborted', 'prepared']);
+    expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(staleSnapshot.ownerId).first()).toMatchObject({ disabled: 0,
+        purge_fence_id: null });
+
+    const racing = await fixture(['expired', 'expired'], async (call, ownerId) => {
+      if (call !== 0) return;
+      await db.prepare('INSERT INTO pa_pending_deletes(object_key,created_at) VALUES(?,?)')
+        .bind(`personal/${ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`, now).run();
+    }, true);
+    await recordSnapshot(racing.ownerId);
+    expect(await racing.fence.begin(racing.ownerId)).toBeNull();
+    expect([...racing.events.values()].map(event => event.stage).sort())
+      .toEqual(['aborted', 'prepared']);
+    expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(racing.ownerId).first()).toMatchObject({ disabled: 0, purge_fence_id: null });
+    expect(await db.prepare('SELECT state FROM pa_purge_fences WHERE owner_id=?')
+      .bind(racing.ownerId).first()).toMatchObject({ state: 'aborted' });
+
+    const prepared = await fixture(['expired', 'expired'], undefined, true);
+    await recordSnapshot(prepared.ownerId);
+    const result = await prepared.fence.begin(prepared.ownerId);
+    expect(result).not.toBeNull();
+    expect([...prepared.events.values()]).toMatchObject([{ stage: 'prepared',
+      intentId: result!.fenceId, ownerEpoch: 1 }]);
+    expect(await db.prepare(`SELECT stage,s3_version_id FROM pa_owner_purge_events
+      WHERE owner_id=? AND intent_id=?`).bind(prepared.ownerId, result!.fenceId).first())
+      .toMatchObject({ stage: 'prepared', s3_version_id: 'v-prepared' });
+    expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(prepared.ownerId).first()).toMatchObject({ disabled: 1,
+        purge_fence_id: result!.fenceId });
+
+    const renewed = await fixture(['expired', 'active'], undefined, true);
+    await recordSnapshot(renewed.ownerId);
+    await expect(renewed.fence.begin(renewed.ownerId)).rejects.toThrow();
+    expect([...renewed.events.values()].map(event => event.stage).sort())
+      .toEqual(['aborted', 'prepared']);
+    expect(await db.prepare('SELECT disabled,purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(renewed.ownerId).first()).toMatchObject({ disabled: 1,
+        purge_fence_id: expect.any(String) });
+    expect(await db.prepare('SELECT state FROM pa_purge_execution_claims WHERE owner_id=?')
+      .bind(renewed.ownerId).first()).toMatchObject({ state: 'aborted' });
+    await expect(db.prepare(`UPDATE pa_owners SET disabled=0,epoch=epoch+1,
+      purge_fence_id=NULL WHERE owner_id=?`).bind(renewed.ownerId).run()).rejects.toThrow();
+    const held = await db.prepare('SELECT purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(renewed.ownerId).first<{ purge_fence_id: string }>();
+    const release = new OwnerPurgeRelease(db, { list: async () => ({
+      objects: [], truncated: false, delimitedPrefixes: [],
+    }) } as unknown as R2Bucket, renewed.store,
+    new OwnerPurgeAbort(db, renewed.store, renewed.ledger, () => now + 1),
+    { copyCurrent: async (_db, ownerId, at) => {
+      expect(ownerId).toBe(renewed.ownerId);
+      expect(at).toBe(now + 2);
+      await recordSnapshot(ownerId);
+      return { key: '', versionId: '', sha256: '', bytes: 0 };
+    } },
+    () => now + 2, async account => account === renewed.billingAccount ? 'active' : 'unknown');
+    await release.release({ fenceId: held!.purge_fence_id, ownerId: renewed.ownerId,
+      ownerEpoch: 1, inventoryGeneration: 0, candidate: renewed.candidate });
+    expect(await db.prepare('SELECT disabled,epoch,purge_fence_id FROM pa_owners WHERE owner_id=?')
+      .bind(renewed.ownerId).first()).toMatchObject({ disabled: 0, epoch: 2,
+        purge_fence_id: null });
+    expect(await db.prepare('SELECT state FROM pa_purge_fences WHERE owner_id=?')
+      .bind(renewed.ownerId).first()).toMatchObject({ state: 'aborted' });
+    const token = 's'.repeat(43);
+    await db.prepare(`INSERT INTO pa_sessions(session_hash,owner_id,owner_epoch,created_at,expires_at)
+      VALUES(?,?,?,?,?)`).bind(await sha256(token), renewed.ownerId, 2, now, now + day).run();
+    const auth = new DurableAuth({ db, now: () => now + 2,
+      identityIndexSecret: btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
+        .replace(/=+$/, ''),
+      keys: { seal: async () => { throw Error('unused'); },
+        open: async () => { throw Error('unused'); } } });
+    expect((await auth.requireSession(token)).ownerId).toBe(renewed.ownerId);
+    // A subsequent owner-state mutation creates a new generation. Until its
+    // S3 copy is acknowledged, even a valid session cannot read the archive.
+    await db.prepare('UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?')
+      .bind(renewed.ownerId).run();
+    await expect(auth.requireSession(token)).rejects.toMatchObject({ code: 'unauthorized' });
+    await recordSnapshot(renewed.ownerId);
+    expect((await auth.requireSession(token)).ownerId).toBe(renewed.ownerId);
+  } finally {
+    await db.prepare(`UPDATE pa_recovery_write_policy SET owner_snapshot_required=0
+      WHERE singleton=1`).run();
+  }
+});
 
 it('fences an exact expired owner and keeps every record untouched', async () => {
   const f = await fixture();

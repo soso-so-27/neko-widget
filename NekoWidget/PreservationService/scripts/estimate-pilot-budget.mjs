@@ -10,7 +10,8 @@ for (const [name, value] of Object.entries(c)) {
   if (name === 'description') continue;
   assert(Number.isFinite(value) && value >= 0, `Invalid cost input: ${name}`);
 }
-assert(plan.status === 'local-plan-not-applied');
+assert.equal(plan.version, 1);
+assert(typeof plan.status === 'string' && plan.status.length > 0);
 assert(money.warningForecastYen < money.pauseNewIntakeForecastYen);
 assert(money.pauseNewIntakeForecastYen < money.monthlyTargetYen);
 assert.equal(plan.archive.ownerQuotaBytes * plan.maximumParticipants, plan.archive.globalActiveBytesLimit);

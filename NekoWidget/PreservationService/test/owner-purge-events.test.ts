@@ -61,9 +61,10 @@ it('allows pre-erasure abort but never an erasing event afterward', async () => 
   await db.prepare('DELETE FROM pa_owners WHERE owner_id=?').bind(ownerId).run();
   expect((await db.prepare('SELECT count(*) AS n FROM pa_owner_purge_events WHERE owner_id=?')
     .bind(ownerId).first<{ n: number }>())?.n).toBe(2);
-  // The future 35-day cleanup may remove local references. Independent S3
-  // replay, not this D1 table, must remain the authority during restoration.
-  await db.prepare('DELETE FROM pa_owner_purge_events WHERE owner_id=?').bind(ownerId).run();
+  // Cleanup requires a separately reviewed age-gated path; direct DELETE
+  // must not silently discard this anti-resurrection reference.
+  await expect(db.prepare('DELETE FROM pa_owner_purge_events WHERE owner_id=?')
+    .bind(ownerId).run()).rejects.toThrow();
   expect((await db.prepare('SELECT count(*) AS n FROM pa_owner_purge_events WHERE owner_id=?')
-    .bind(ownerId).first<{ n: number }>())?.n).toBe(0);
+    .bind(ownerId).first<{ n: number }>())?.n).toBe(2);
 });

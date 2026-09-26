@@ -218,12 +218,16 @@ export class ArchiveStore {
         OR ${exactLegacy})
       AND NOT EXISTS(SELECT 1 FROM pa_record_commit_markers m
         WHERE m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision)`;
-    const after = await this.d.db.prepare(`SELECT r.* FROM pa_records r WHERE ${pending}
+    const after = await this.d.db.prepare(`SELECT r.* FROM pa_records r
+      JOIN pa_owners o ON o.owner_id=r.owner_id
+      WHERE o.purge_fence_id IS NULL AND ${pending}
       AND (r.owner_id>? OR (r.owner_id=? AND r.record_id>?))
       ORDER BY r.owner_id,r.record_id LIMIT ?`)
       .bind(cursor.last_owner_id, cursor.last_owner_id, cursor.last_record_id, limit).all<Row>();
     const rows = after.results.length ? after.results : (await this.d.db.prepare(`SELECT r.*
-      FROM pa_records r WHERE ${pending} ORDER BY r.owner_id,r.record_id LIMIT ?`)
+      FROM pa_records r JOIN pa_owners o ON o.owner_id=r.owner_id
+      WHERE o.purge_fence_id IS NULL AND ${pending}
+      ORDER BY r.owner_id,r.record_id LIMIT ?`)
       .bind(limit).all<Row>()).results;
     let failed = 0;
     for (const row of rows) {

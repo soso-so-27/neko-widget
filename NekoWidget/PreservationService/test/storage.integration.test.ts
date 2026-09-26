@@ -245,6 +245,37 @@ it('repairs all legacy owners in bounded batches without one damaged photo starv
     confirmed: before.confirmed + 2, legacyUnbacked: 0 });
 });
 
+it('does not create a new record recovery version for a fenced owner during maintenance', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  await binding.DB.prepare(`INSERT INTO pa_record_legacy_baseline(owner_id,record_id,revision,
+    initial_operation,initial_fingerprint,photo_key,photo_bytes,quota_bytes,deleted)
+    SELECT owner_id,record_id,revision,initial_operation,initial_fingerprint,
+      photo_key,photo_bytes,quota_bytes,deleted FROM pa_records
+    WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, id).run();
+  const fenceId = crypto.randomUUID();
+  const at = 1_790_035_200_000;
+  await binding.DB.prepare(`INSERT INTO pa_purge_fences(fence_id,owner_id,state,owner_epoch,
+    inventory_generation,retention_episode,retention_revision,due_at,delivered_at,
+    delivery_event_id,contact_updated_at,created_at,updated_at,lease_expires_at)
+    VALUES(?,?,'fenced',1,1,1,1,?,?,?,?,?,?,?)`)
+    .bind(fenceId, f.session.ownerId, at - 1, at - 31 * 86_400_000,
+      `delivery-${crypto.randomUUID()}`, at - 32 * 86_400_000,
+      at, at, at + 600_000).run();
+  await binding.DB.prepare(`UPDATE pa_owners SET disabled=1,epoch=epoch+1,
+    purge_fence_id=? WHERE owner_id=?`).bind(fenceId, f.session.ownerId).run();
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  expect(await archive.repairRecoveryBatch(2)).toEqual({ processed: 0, failed: 0 });
+  expect(remote.references).toHaveLength(0);
+  // Leave this shared-file fixture eligible for later write-policy tests.
+  await binding.DB.prepare(`UPDATE pa_owners SET disabled=0,epoch=epoch+1,
+    purge_fence_id=NULL WHERE owner_id=?`).bind(f.session.ownerId).run();
+  await binding.DB.prepare(`UPDATE pa_purge_fences SET state='aborted'
+    WHERE fence_id=?`).bind(fenceId).run();
+  expect(await archive.repairRecoveryBatch(2)).toEqual({ processed: 1, failed: 0 });
+});
+
 it('does not acknowledge a D1 commit until the independent S3 marker exists; retries finish it', async () => {
   const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
   await enableRecoveryWritePolicy();

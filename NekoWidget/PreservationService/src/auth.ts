@@ -157,7 +157,13 @@ export class DurableAuth {
         `SELECT session.owner_id, session.session_hash, session.expires_at FROM pa_sessions AS session
          JOIN pa_owners AS owner ON owner.owner_id = session.owner_id
           WHERE session.session_hash = ? AND session.expires_at > ?
-            AND owner.disabled = 0 AND owner.epoch = session.owner_epoch`,
+            AND owner.disabled = 0 AND owner.epoch = session.owner_epoch
+            AND ((SELECT owner_snapshot_required FROM pa_recovery_write_policy
+              WHERE singleton=1)=0 OR EXISTS(
+                SELECT 1 FROM pa_owner_recovery_generations g
+                JOIN pa_owner_recovery_versions v ON v.owner_id=g.owner_id
+                  AND v.generation=g.generation
+                WHERE g.owner_id=owner.owner_id))`,
       ).bind(await sha256(token), this.now()).first<SessionRow>();
       if (!row) throw denied();
       return { ownerId: row.owner_id, sessionHash: row.session_hash, expiresAt: row.expires_at };
