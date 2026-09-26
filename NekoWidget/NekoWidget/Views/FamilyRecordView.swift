@@ -430,15 +430,17 @@ struct FamilyRecordView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if currentEntryID == nil {
                         Menu {
-                            Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
-                                let client = model.client
-                                guard let snapshot = model.snapshot else { return }
-                                exporter.prepare(build: {
-                                    try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
-                                }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
+                            if hasExportableRecords {
+                                Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
+                                    let client = model.client
+                                    guard let snapshot = model.snapshot else { return }
+                                    exporter.prepare(build: {
+                                        try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
+                                    }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
+                                }
+                                .disabled(exporter.preparing || exporter.payload != nil)
+                                .accessibilityIdentifier("family-record-export")
                             }
-                            .disabled(!hasExportableRecords || exporter.preparing || exporter.payload != nil)
-                            .accessibilityIdentifier("family-record-export")
                             Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
                                 .accessibilityIdentifier("family-record-information")
                         } label: { Label("アルバムの操作", systemImage: "ellipsis") }
@@ -513,9 +515,9 @@ struct FamilyRecordView: View {
             } else if photos.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("まずは、写真を一枚", systemImage: "photo.on.rectangle")
+                        Label("まだ写真がありません", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("二人で見返したい写真を選んで追加します。まどに届いた写真が、自動で入ることはありません。")
+                        Text("二人で残したい写真を追加できます。まどで送り合った写真は、自動では入りません。")
                             .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
