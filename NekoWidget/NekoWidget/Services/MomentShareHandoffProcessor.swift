@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// the final safety analysis, and promotes the image into the encrypted
 /// network outbox.
 struct MomentShareHandoffProcessor: Sendable {
-    private static let senderPolicyVersion = 1
+    private static let senderPolicyVersion = 2
     private static let retryDelay: TimeInterval = 5 * 60
 
     private let moderation: any MomentModerating
@@ -255,7 +255,7 @@ struct MomentShareHandoffProcessor: Sendable {
                       claim.record.requiresHostModeration,
                       claim.record.requiredHostModerationVersion
                         == MomentSharingProtocol.moderationVersion,
-                      claim.record.senderPolicyVersion == Self.senderPolicyVersion,
+                      (1...Self.senderPolicyVersion).contains(claim.record.senderPolicyVersion),
                       claim.record.captureDateIsMissing
                         == (claim.record.capturedAt == nil)
                 else { throw MomentSharingError.invalidPayload }

@@ -16,6 +16,29 @@ struct VerifyFamilyRecords {
         let space = "fixture_record_space", author = "fixture_record_author"
         let moment = "fixture_delivered_moment"
         let deliveredID = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: moment)
+        require(deliveredID == "bd99f15a-8c3e-4b0c-b51b-e241d680120c",
+                "Swift and relay must derive the same photo identity from canonical UTF-8 fields")
+        let shared = try FamilyRecordCommitPayload.prepare(jpeg: Data([0xff, 0xd8, 0xff, 0xd9]),
+            capturedAt: nil, caption: "初めてのお風呂", spaceID: space,
+            momentID: moment, authorID: author, roomKey: key)
+        require(shared.photoID == deliveredID, "A send and its stored photo must have the same identity")
+        let replayShared = try JSONDecoder().decode(FamilyRecordCommitPayload.self, from: JSONEncoder().encode(shared))
+        require(replayShared == shared, "Retry must preserve exact prepared ciphertext")
+        let photoRow = FamilyRecordRow(id: shared.photoID, entryID: shared.photoID, kind: .photo,
+            authorID: author, revision: 1, state: .active, keyEpoch: 1, ciphertext: nil, createdAt: 1, updatedAt: 1)
+        let openedPhoto = try FamilyRecordCrypto.open(Data(base64URLString: shared.photoCiphertext)!,
+            row: photoRow, roomKey: key, spaceID: space)
+        require(openedPhoto.jpeg == Data([0xff, 0xd8, 0xff, 0xd9]), "A committed shared photo must be readable by the existing record client")
+        let initialWordsID = try FamilyRecordCommitPayload.captionID(spaceID: space, photoID: deliveredID)
+        require(shared.wordsID == initialWordsID, "Delivery text must become a single editable memo")
+        let wordsRow = FamilyRecordRow(id: initialWordsID, entryID: deliveredID, kind: .words,
+            authorID: author, revision: 1, state: .active, keyEpoch: 1, ciphertext: shared.wordsCiphertext, createdAt: 1, updatedAt: 1)
+        let openedWords = try FamilyRecordCrypto.open(Data(base64URLString: shared.wordsCiphertext!)!,
+            row: wordsRow, roomKey: key, spaceID: space)
+        require(openedWords.text == "初めてのお風呂", "The delivery memo can be edited/exported without retyping")
+        let photoOnly = try FamilyRecordCommitPayload.prepare(jpeg: Data([0xff, 0xd8, 0xff, 0xd9]),
+            capturedAt: nil, caption: nil, spaceID: space, momentID: moment, authorID: author, roomKey: key)
+        require(photoOnly.wordsID == nil && photoOnly.wordsCiphertext == nil, "Sending without a memo does not create blank words")
         let receivedID = try FamilyRecordSourceIdentity.recordID(spaceID: space, momentID: moment)
         require(deliveredID == receivedID, "Sender and receiver must use the same photo entry without a new upload")
         require(deliveredID.range(of: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",

@@ -421,6 +421,8 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             "通信が完了しませんでした。あとで再試行します。"
         case let .requestRejected(status, code, _):
             switch code {
+            case "family_record_capacity":
+                "このまどに残せる写真・メモの上限に達しました。今回の写真は送信していません。これまでの写真は残っています。"
             case "window_support_required" where status == 403:
                 "このまどへの送信はお休み中です。届いている写真は引き続き見られます。"
             case "window_support_unavailable" where status == 503:

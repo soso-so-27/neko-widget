@@ -3455,7 +3455,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentSharedAlbumHeading()", collection)
         self.assertIn("value.catalog.spaceID == spaceID", collection)
         self.assertIn("canShowRecords, scenePhase == .active", collection)
+        # Keep the delivery detail's photo actions, then replace it with the
+        # retained record after local delivery history expires.
         self.assertIn("row?.state != .withdrawn", collection)
+        self.assertIn("displayedRecordIDs.contains($0.id)", collection)
         self.assertIn("withdrawnIDs.contains", collection)
         self.assertIn("FamilyRecordSourceIdentity.existingPhoto", collection)
         self.assertIn("FamilyRecordExporter.verify", collection)

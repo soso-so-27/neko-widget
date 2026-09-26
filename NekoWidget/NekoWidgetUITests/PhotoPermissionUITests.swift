@@ -3526,16 +3526,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let delivery = app.descendants(matching: .any)["family-collection-delivery"].firstMatch
         XCTAssertTrue(delivery.waitForExistence(timeout: 5))
         menu.tap()
-        XCTAssertTrue(app.buttons["family-collection-add"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["family-window-shared-photo-info"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["family-collection-add"].exists, "Adding a photo has one route, not a second album action.")
         XCTAssertFalse(app.buttons["family-record-export"].exists,
                        "Delivery history alone is not represented as an exportable album.")
         app.buttons["family-window-shared-photo-info"].tap()
         attach(app, name: "family-collection-delivery-with-empty-album")
         app.buttons["family-collection-fixture-retain"].tap()
-        XCTAssertTrue(app.staticTexts["アルバム"].waitForExistence(timeout: 10))
         let retained = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "family-collection-record-"))
-        XCTAssertEqual(retained.count, 0, "The explicitly linked photo must not get a duplicate tile.")
-        XCTAssertTrue(delivery.exists)
+        XCTAssertTrue(delivery.waitForExistence(timeout: 10),
+                      "The delivered photo keeps its familiar zoom and actions while available.")
+        XCTAssertEqual(retained.count, 0, "The stored photo must not add a second tile.")
         menu.tap()
         app.buttons["family-record-export"].tap()
         let share = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
@@ -3553,6 +3554,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
         app.buttons["family-collection-fixture-expire"].tap()
         XCTAssertTrue(delivery.waitForExistence(timeout: 10))
+        XCTAssertEqual(retained.count, 0, "Restoring the delivery does not create a second version of the photo.")
         app.buttons["family-collection-fixture-withdraw"].tap()
         let withdrawn = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "family-collection-withdrawn-"))
         XCTAssertTrue(withdrawn.firstMatch.waitForExistence(timeout: 10))

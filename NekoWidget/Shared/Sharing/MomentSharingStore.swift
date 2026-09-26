@@ -66,6 +66,8 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var localCaption: String? = nil
     /// Optional normalized photo for opened detail, never embedded in JSON.
     var localDetail: MomentLocalDetailReference? = nil
+    /// Protected ciphertext sidecar, kept out of the frequently rewritten state.
+    var sharedRecordCommit: MomentLocalDetailReference? = nil
     /// Decode-only compatibility for the short-lived Build 92 inline format.
     /// `encode(to:)` deliberately omits it; `loadWhileLocked()` migrates it to
     /// the protected file before returning state to callers.
@@ -98,6 +100,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         case localThumbnailFileName
         case localCaption
         case localDetail
+        case sharedRecordCommit
         case localThumbnailJPEG
     }
 
@@ -201,6 +204,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         )
         localCaption = try container.decodeIfPresent(String.self, forKey: .localCaption)
         localDetail = try container.decodeIfPresent(MomentLocalDetailReference.self, forKey: .localDetail)
+        sharedRecordCommit = try container.decodeIfPresent(MomentLocalDetailReference.self, forKey: .sharedRecordCommit)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -234,6 +238,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encodeIfPresent(localThumbnailFileName, forKey: .localThumbnailFileName)
         try container.encodeIfPresent(localCaption, forKey: .localCaption)
         try container.encodeIfPresent(localDetail, forKey: .localDetail)
+        try container.encodeIfPresent(sharedRecordCommit, forKey: .sharedRecordCommit)
         // Never re-encode legacyInlineLocalThumbnailJPEG.
     }
 
@@ -251,6 +256,11 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
 
     func validated() throws -> Self {
         _ = try context.validated()
+        if let sharedRecordCommit {
+            guard senderPolicyVersion == 2, serverMomentID != nil,
+                  sharedRecordCommit.fileName == "shared-record-\(id.uuidString.lowercased()).ciphertext",
+                  sharedRecordCommit.sha256.count == 32 else { throw MomentSharingError.stateUnavailable }
+        }
         guard try MomentCaption.normalized(localCaption) == localCaption else {
             throw MomentSharingError.stateUnavailable
         }
@@ -2096,6 +2106,44 @@ enum MomentSharingStateStore {
         return data
     }
 
+    static func saveSharedRecordCommit(_ data: Data, for item: MomentOutboxItem,
+                                      validating token: SharingLifecycleGate.Token) throws -> MomentOutboxItem {
+        let state = try mutate(validating: token) { state in
+            guard state.reportOnlyUntil == nil,
+                  let index = state.outbox.firstIndex(where: { $0.id == item.id }),
+                  state.outbox[index].context == item.context,
+                  state.outbox[index].serverMomentID == item.serverMomentID,
+                  state.outbox[index].senderPolicyVersion == 2,
+                  state.outbox[index].phase == .uploaded,
+                  state.outbox[index].sharedRecordCommit == nil,
+                  (1...3 * 1024 * 1024).contains(data.count),
+                  let directory = SharedContainer.momentSharingCiphertextDirectoryURL
+            else { throw MomentSharingError.stateUnavailable }
+            let name = "shared-record-\(item.id.uuidString.lowercased()).ciphertext"
+            try SharingSecureFile.write(data, to: directory.appendingPathComponent(name))
+            state.outbox[index].sharedRecordCommit = .init(fileName: name, sha256: PairingCrypto.sha256(data))
+        }
+        guard let saved = state.outbox.first(where: { $0.id == item.id }) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        return saved
+    }
+
+    static func readSharedRecordCommit(for item: MomentOutboxItem) throws -> Data {
+        _ = try item.validated()
+        guard let reference = item.sharedRecordCommit,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let url = directory.appendingPathComponent(reference.fileName)
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url),
+              let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              (1...3 * 1024 * 1024).contains(size) else { throw MomentSharingError.stateUnavailable }
+        let data = try Data(contentsOf: url)
+        guard PairingCrypto.sha256(data) == reference.sha256 else { throw MomentSharingError.stateUnavailable }
+        return data
+    }
+
     static func enqueueReport(
         momentID: String,
         reason: MomentReportReason,
@@ -2210,6 +2258,12 @@ enum MomentSharingStateStore {
         let url = directory.appendingPathComponent(item.ciphertextFileName)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
+        }
+        if let reference = item.sharedRecordCommit {
+            let sharedURL = directory.appendingPathComponent(reference.fileName)
+            if FileManager.default.fileExists(atPath: sharedURL.path) {
+                try FileManager.default.removeItem(at: sharedURL)
+            }
         }
     }
 
@@ -2521,6 +2575,7 @@ enum MomentSharingStateStore {
             else { return }
             state.outbox[index].phase = .prepared
             state.outbox[index].serverMomentID = nil
+            state.outbox[index].sharedRecordCommit = nil
             state.outbox[index].uploadExpiresAt = nil
             state.outbox[index].commitStartedAt = nil
             state.outbox[index].attemptCount += 1
@@ -2595,6 +2650,25 @@ enum MomentSharingStateStore {
         state.storageRevision += 1
         try writeWhileLocked(try state.validated())
         return discarded
+    }
+
+    /// Only the atomic shared-record capacity rejection, returned after replay
+    /// reconciliation, proves that a commit attempt did not publish anything.
+    static func markSharedPhotoCapacityRejected(itemID: UUID,
+        validating token: SharingLifecycleGate.Token) throws {
+        var rejected: MomentOutboxItem?
+        _ = try mutate(validating: token) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == itemID }),
+                  state.outbox[index].senderPolicyVersion == 2,
+                  state.outbox[index].phase == .committing else { throw MomentSharingError.stateUnavailable }
+            state.outbox[index].phase = .failed
+            state.outbox[index].commitStartedAt = nil
+            state.outbox[index].nextRetryAt = nil
+            state.outbox[index].lastErrorCode = "shared-photo-capacity"
+            state.outbox[index].updatedAt = .now
+            rejected = state.outbox[index]
+        }
+        if let rejected { try? removeCiphertext(for: rejected) }
     }
 
     static func markOutboxFailed(
@@ -2946,6 +3020,7 @@ enum MomentSharingStateStore {
                     item.phase == .prepared || item.phase == .reserved
                         || item.phase == .uploaded || item.phase == .committing {
                     retainedNames.insert(item.ciphertextFileName)
+                    if let reference = item.sharedRecordCommit { retainedNames.insert(reference.fileName) }
                 }
                 for item in state.reportOutbox where
                     item.phase == .prepared || item.phase == .reserved
