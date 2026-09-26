@@ -24,7 +24,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
-FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v1"
+FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
 # Deliberately absent from SCOPES and native/release scope lookup.
@@ -180,6 +180,16 @@ FAMILY_WINDOW_UI_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
 })
 FAMILY_WINDOW_CONTRACT_TEST = "NekoWidget/ci/test-family-window-widget-boundaries.py"
+FAMILY_WINDOW_NATIVE_TESTS = tuple(
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/" + name for name in (
+        "testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+        "testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes",
+        "testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
+        "testSharedAlbumMixesBothSidesAndOpensTheSelectedPhoto",
+        "testSentHistoryKeepsPhotosVisibleAndMissingPhotosCompact",
+    )
+)
+FAMILY_WINDOW_TEST_NAMES = frozenset(test.rsplit("/", 1)[1] for test in FAMILY_WINDOW_NATIVE_TESTS)
 # App-only view sources have no Widget compilation membership. Project/shared
 # model/fixture changes still select their own checks or the full suite. The
 # planner also checks the entire diff and regular file modes before using this.
@@ -1436,11 +1446,88 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
-def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
-    """Window views and edits confined to their whole XCTest class.
+def family_window_test_methods(source: str):
+    """Return direct XCTest methods and brace-bounded bodies, or fail closed."""
+    masked = swift_declaration_source(source)
+    if masked is None:
+        return None
+    classes = list(re.finditer(r"(?ms)^final class MomentDeliveryComposerUITests: XCTestCase \{\n.*?^\}", masked))
+    if len(classes) != 1:
+        return None
+    owner = classes[0]
+    methods = {}
+    pattern = re.compile(r"(?m)^    (?:(?:private|fileprivate|nonisolated|static) )*func (\w+)\([^\n]*\)"
+                         r"(?: async)?(?: throws)?(?: -> [^{\n]+)? \{")
+    for match in pattern.finditer(masked, owner.start(), owner.end()):
+        name = match.group(1)
+        if name in methods:
+            return None
+        opening = match.end() - 1
+        depth = 0
+        closing = None
+        for index in range(opening, owner.end()):
+            if masked[index] == "{":
+                depth += 1
+            elif masked[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    closing = index
+                    break
+        if closing is None:
+            return None
+        start = match.start()
+        # New private helpers may carry ordinary actor isolation, but no test
+        # annotation or neighboring method decorator becomes editable.
+        previous = source.rfind("\n", 0, start - 1) + 1
+        if source[previous:start].strip() == "@MainActor":
+            start = previous
+        methods[name] = (start, match.start(), opening + 1, closing, closing + 1,
+                         "private func " in match.group() or "private nonisolated" in match.group())
+    if not FAMILY_WINDOW_TEST_NAMES <= methods.keys():
+        return None
+    return methods
 
-    No per-candidate hashes: run the entire owning class and photo-link smoke.
-    Imports, other classes and shared test helpers must remain byte-identical.
+
+def family_window_test_changes(before: str, after: str) -> bool:
+    old = family_window_test_methods(before)
+    new = family_window_test_methods(after)
+    if old is None or new is None or not old.keys() <= new.keys():
+        return False
+    added = new.keys() - old.keys()
+    if any(not new[name][5] or name.startswith("test") for name in added):
+        return False
+    if any(re.search(rf"\b{re.escape(name)}\s*\(", after[new[other][2]:new[other][3]])
+           for name in added for other in new.keys() - FAMILY_WINDOW_TEST_NAMES - added):
+        return False
+    # New helpers must be reachable from a selected test. An unchanged test
+    # outside this set cannot begin using one, because its body is compared.
+    reachable = set(FAMILY_WINDOW_TEST_NAMES)
+    while True:
+        found = {name for name in added - reachable if any(
+            re.search(rf"\b{re.escape(name)}\s*\(", after[new[caller][2]:new[caller][3]])
+            for caller in reachable)}
+        if not found:
+            break
+        reachable |= found
+    if not added <= reachable:
+        return False
+
+    def fixed(source, methods, remove_helpers):
+        spans = [(methods[name][2], methods[name][3]) for name in FAMILY_WINDOW_TEST_NAMES]
+        spans += [(methods[name][0], methods[name][4]) for name in remove_helpers]
+        result = source
+        for start, end in sorted(spans, reverse=True):
+            result = result[:start] + result[end:]
+        return "\n".join(line for line in result.splitlines() if line.strip())
+
+    return fixed(before, old, ()) == fixed(after, new, added)
+
+
+def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Window views with edits confined to selected XCTest operations.
+
+    No per-candidate hashes: run the owned operations and photo-link smoke.
+    Imports, other classes, unselected tests and existing helpers stay fixed.
     """
     if not set(changes) & FAMILY_WINDOW_UI_PATHS or not set(changes) <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST}:
         return False
@@ -1467,21 +1554,7 @@ def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
             return False
     if any(conditional_blocks(text) is None for pair in changes.values() for text in pair):
         return False
-    if MEMORY_TEST_PATH not in changes:
-        return True
-    surrounding = []
-    for source in changes[MEMORY_TEST_PATH]:
-        masked = swift_declaration_source(source)
-        if masked is None:
-            return False
-        matches = list(re.finditer(r"(?ms)^final class MomentDeliveryComposerUITests: XCTestCase \{\n.*?^\}", masked))
-        if len(matches) != 1:
-            return False
-        match = matches[0]
-        if not re.search(r"(?m)^    func test\w+\(", match.group()):
-            return False
-        surrounding.append(source[:match.start()] + source[match.end():])
-    return surrounding[0] == surrounding[1]
+    return MEMORY_TEST_PATH not in changes or family_window_test_changes(*changes[MEMORY_TEST_PATH])
 
 
 def reviewed_app_record_export_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -1776,7 +1849,7 @@ def sharing_job(scope: str) -> str:
 
 def native_tests(scope: str) -> tuple[str, ...]:
     if scope == FAMILY_WINDOW_UI_SCOPE:
-        return ("NekoWidgetUITests/MomentDeliveryComposerUITests",
+        return FAMILY_WINDOW_NATIVE_TESTS + (
                 "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
                 "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations",
                 "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto")
