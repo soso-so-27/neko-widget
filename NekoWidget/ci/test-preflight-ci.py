@@ -45,7 +45,7 @@ class PreflightTests(unittest.TestCase):
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},
             {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
             {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v16")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v17")
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
@@ -338,6 +338,20 @@ class PreflightTests(unittest.TestCase):
         run = {"id": 1, "created_at": "2026-09-20T11:00:00Z", "status": "completed",
                "conclusion": "failure", "path": ".github/workflows/ios-build.yml"}
         self.assertFalse(preflight.apply_task_gate(dict(plan), [run], measure_baseline=True)["ready"])
+
+        now = dt.datetime(2026, 9, 20, 11, 15, tzinfo=dt.timezone.utc)
+        diagnostic = {**run, "path": preflight.DIAGNOSTIC_WORKFLOW, "conclusion": "success"}
+        measured = preflight.apply_task_gate(dict(plan), [diagnostic], now, measure_baseline=True)
+        self.assertTrue(measured["ready"])
+        self.assertEqual(measured["task"]["minutes_since_first_ci"], 15)
+        self.assertIsNone(measured["task"]["projected_total_minutes"])
+        for blocked in (
+            {**diagnostic, "status": "in_progress", "conclusion": None},
+            {**diagnostic, "conclusion": "failure", "failed_tests": ["testNavigation"]},
+            {**diagnostic, "conclusion": "failure", "unsupported_failed_tests": ["Other/testNavigation"]},
+        ):
+            self.assertFalse(preflight.apply_task_gate(dict(plan), [blocked], now, measure_baseline=True)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [diagnostic, run], now, measure_baseline=True)["ready"])
 
     def test_history_queries_both_branch_routes_and_extracts_only_failed_methods(self):
         run = {"id": 1, "path": ".github/workflows/ios-build.yml", "conclusion": "failure"}

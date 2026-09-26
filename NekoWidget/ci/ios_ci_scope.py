@@ -23,6 +23,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
+FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v1"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
 # Deliberately absent from SCOPES and native/release scope lookup.
@@ -62,7 +63,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -173,6 +174,10 @@ APP_VIEW_PATHS = frozenset({
     MEMORY_TEST_PATH,
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
+FAMILY_WINDOW_UI_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
+})
 # App-only view sources have no Widget compilation membership. Project/shared
 # model/fixture changes still select their own checks or the full suite. The
 # planner also checks the entire diff and regular file modes before using this.
@@ -1429,6 +1434,33 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
+def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    """Window views and edits confined to their whole XCTest class.
+
+    No per-candidate hashes: run the entire owning class and photo-link smoke.
+    Imports, other classes and shared test helpers must remain byte-identical.
+    """
+    if not set(changes) & FAMILY_WINDOW_UI_PATHS or not set(changes) <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH}:
+        return False
+    if any(conditional_blocks(text) is None for pair in changes.values() for text in pair):
+        return False
+    if MEMORY_TEST_PATH not in changes:
+        return True
+    surrounding = []
+    for source in changes[MEMORY_TEST_PATH]:
+        masked = swift_declaration_source(source)
+        if masked is None:
+            return False
+        matches = list(re.finditer(r"(?ms)^final class MomentDeliveryComposerUITests: XCTestCase \{\n.*?^\}", masked))
+        if len(matches) != 1:
+            return False
+        match = matches[0]
+        if not re.search(r"(?m)^    func test\w+\(", match.group()):
+            return False
+        surrounding.append(source[:match.start()] + source[match.end():])
+    return surrounding[0] == surrounding[1]
+
+
 def reviewed_app_record_export_changes(changes: dict[str, tuple[str, str]]) -> bool:
     if set(changes) != APP_ONLY_RECORD_EXPORT_PATHS or set(APP_ONLY_RECORD_EXPORT_DIGESTS) != APP_ONLY_RECORD_EXPORT_PATHS:
         return False
@@ -1574,6 +1606,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == FAMILY_WINDOW_UI_SCOPE:
+        return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
         return bool(sources and sources <= APP_ONLY_RECORD_EXPORT_PATHS)
     if scope == APP_VIEW_SCOPE:
@@ -1718,6 +1752,11 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == FAMILY_WINDOW_UI_SCOPE:
+        return ("NekoWidgetUITests/MomentDeliveryComposerUITests",
+                "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
+                "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations",
+                "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto")
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
         return ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
                 "testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",)
@@ -1830,17 +1869,27 @@ def conditional_blocks(source: str) -> tuple[str, ...] | None:
     blocks: list[str] = []
     current: list[str] = []
     depth = 0
+    has_else: list[bool] = []
     for line in source.splitlines(keepends=True):
         directive = re.match(r"\s*#(if|elseif|else|endif)\b", line)
         word = directive.group(1) if directive else None
         if word == "if":
+            if not line[directive.end():].strip():
+                return None
             depth += 1
+            has_else.append(False)
         elif word in ("elseif", "else", "endif") and depth == 0:
             return None
+        elif word in ("elseif", "else"):
+            if has_else[-1] or (word == "elseif" and not line[directive.end():].strip()):
+                return None
+            if word == "else":
+                has_else[-1] = True
         if depth:
             current.append(line)
         if word == "endif":
             depth -= 1
+            has_else.pop()
             if depth == 0:
                 blocks.append("".join(current))
                 current = []
@@ -1911,6 +1960,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if family_window_ui_changes(changes):
+        return FAMILY_WINDOW_UI_SCOPE
     if set(changes) <= APP_VIEW_PATHS and (set(changes) & APP_VIEW_PRODUCT_PATHS or
                                           set(changes) == {MEMORY_TEST_PATH}):
         return APP_VIEW_SCOPE
@@ -1977,8 +2028,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return WIDGET_LAYOUT_SCOPE if set(changes) & WIDGET_LAYOUT_PATHS else WIDGET_BEHAVIOR_SCOPE
     if set(changes) <= APP_ONLY_VIEWS | APP_VIEW_PATHS and not (
             set(changes) <= MAPPED_VIEWS and presentation_only(changes)):
-        if any(conditional_blocks(before) is None or
-               conditional_blocks(before) != conditional_blocks(after)
+        if any(conditional_blocks(before) is None or conditional_blocks(after) is None
                for before, after in changes.values()):
             return FULL_SCOPE
         return APP_VIEW_SCOPE

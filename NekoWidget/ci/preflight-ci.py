@@ -231,7 +231,12 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
     if missing:
         blockers.append("failed_task_requires_successful_diagnosis_at_candidate_sha")
-    first_measurement = measure_baseline and not runs and cost["status"] == "unmeasured"
+    # A focused diagnostic is the prerequisite for deciding on a candidate,
+    # not a measurement of its full required job graph. Keep its failures,
+    # active status and elapsed time above; only a prior candidate CI consumes
+    # the one first-measurement attempt.
+    candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW]
+    first_measurement = measure_baseline and not candidate_runs and cost["status"] == "unmeasured"
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
         blockers.append("cumulative_cost_requires_replanning")
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
@@ -286,6 +291,8 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
                     "includes_future_rework": False,
                     "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
+        # Each exact service-tree profile (including v17's codec) measures its
+        # own first run; earlier backend timings are not reused as evidence.
         if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
                        else planner.PRESERVATION_JOB_TIMEOUT_MINUTES)
