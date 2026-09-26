@@ -188,7 +188,14 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         return try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: momentID)
     }
 
-    var body: some View {
+    private struct Projection {
+        let snapshot: FamilyRecordSnapshot?
+        let items: [Item]
+        let withdrawn: [FamilyRecordRow]
+        let exportable: Bool
+    }
+
+    private var projection: Projection {
         let snapshot = self.snapshot
         let linkedIDs = Set(photos.compactMap { linkedRecord($0, in: snapshot)?.id })
         let visibleDeliveries = photos.filter { photo in
@@ -209,18 +216,25 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }
         }
         let exportable = records.contains { $0.kind == .photo && $0.state == .active } || !withdrawn.isEmpty
-        let items = (visibleDeliveries.map { Item.delivery($0, retained: linkedRecord($0, in: snapshot)?.state == .active) }
-            + retained.map(Item.record)).sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
+        var items: [Item] = visibleDeliveries.map {
+            Item.delivery($0, retained: linkedRecord($0, in: snapshot)?.state == .active)
+        }
+        items.append(contentsOf: retained.map { Item.record($0) })
+        items.sort { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
+        return Projection(snapshot: snapshot, items: items, withdrawn: withdrawn, exportable: exportable)
+    }
+
+    private func collectionContent(_ value: Projection) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 MomentSharedAlbumHeading()
                 Spacer()
                 Menu {
-                    if snapshot != nil {
+                    if value.snapshot != nil {
                         Button("アルバムに写真を追加", systemImage: "photo.badge.plus") { destination = .add }
                             .accessibilityIdentifier("family-collection-add")
                     }
-                    if exportable, let snapshot {
+                    if value.exportable, let snapshot = value.snapshot {
                         Button("アルバムの写真とメモを書き出す", systemImage: "square.and.arrow.up") {
                             let client = model.client
                             exporter.prepare(build: {
@@ -236,16 +250,16 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     .accessibilityLabel("このまどの写真の操作")
                     .accessibilityIdentifier("family-collection-menu")
             }
-            if visibleDeliveries.isEmpty && retained.isEmpty && withdrawn.isEmpty && !model.loading && model.error == nil {
+            if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
                 ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
                     description: Text("右上の写真ボタンから、相手に一枚届けられます。"))
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
                     count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), alignment: .leading, spacing: 16) {
-                    ForEach(items) { item in collectionCard(item, snapshot: snapshot) }
+                    ForEach(value.items) { item in collectionCard(item, snapshot: value.snapshot) }
                 }
                 .accessibilityIdentifier("family-window-shared-photos")
-                ForEach(withdrawn) { row in
+                ForEach(value.withdrawn) { row in
                     Button { destination = .record(row.id) } label: {
                         Label("写真を取り下げたメモ", systemImage: "text.bubble")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -266,6 +280,10 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }
             if let error = exporter.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
         }
+    }
+
+    var body: some View {
+        collectionContent(projection)
         .task(id: canShowRecords) { await reload() }
         .onChange(of: snapshot?.catalog.records) { _, rows in
             // Tombstones are irreversible. Keep only their opaque IDs while
