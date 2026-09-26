@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, expect, it } from 'vitest';
 import { IntakeControl } from '../src/intake-control';
+import pilot from '../operations/pilot-plan.json';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const base = Date.parse('2026-09-26T00:00:00Z');
@@ -69,4 +70,23 @@ it('rejects oversized/invalid requests without consuming allowance and allows an
   await expect(control.admit(10)).rejects.toMatchObject(failure);
   expect(await db.prepare('SELECT monthly_attempts FROM pa_intake_control').first())
     .toEqual({ monthly_attempts: 1 });
+});
+
+it('enforces the proposed pilot limits at concurrent daily/monthly/byte boundaries', async () => {
+  const p = pilot.archive;
+  await db.prepare(`UPDATE pa_intake_control SET enabled=1,reviewed_at=?,valid_until=?,
+    daily_attempt_limit=?,monthly_attempt_limit=?,monthly_bytes_limit=?,
+    day='2026-09-26',month='2026-09',daily_attempts=?,monthly_attempts=?,monthly_bytes=0`)
+    .bind(base, base + p.reviewLifetimeHours * 3_600_000, p.dailyNewIntakeAttempts,
+      p.monthlyNewIntakeAttempts, p.monthlyNewIntakeBytes,
+      p.dailyNewIntakeAttempts - 1, p.monthlyNewIntakeAttempts - 1).run();
+  const control = new IntakeControl(db, () => base);
+  const replies = await Promise.allSettled([control.admit(1024), control.admit(1024)]);
+  expect(replies.filter(reply => reply.status === 'fulfilled')).toHaveLength(1);
+  await db.prepare(`UPDATE pa_intake_control SET daily_attempts=0,monthly_attempts=0,
+    monthly_bytes=?`).bind(p.monthlyNewIntakeBytes - 1024).run();
+  await control.admit(1024);
+  await expect(control.admit(1)).rejects.toMatchObject(failure);
+  await db.prepare('UPDATE pa_intake_control SET enabled=0').run();
+  await expect(control.admit(1)).rejects.toMatchObject(failure);
 });

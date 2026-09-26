@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "status": "local-plan-not-applied",
+  "trialDays": 7,
+  "maximumParticipants": 3,
+  "currency": {
+    "yenPerUsdAssumption": 180,
+    "taxAllowanceMultiplier": 1.1,
+    "monthlyTargetYen": 3000,
+    "warningForecastYen": 1800,
+    "pauseNewIntakeForecastYen": 2200
+  },
+  "archive": {
+    "ownerQuotaBytes": 1073741824,
+    "globalActiveBytesLimit": 3221225472,
+    "maximumRecordsPerOwner": 200,
+    "dailyNewIntakeAttempts": 50,
+    "monthlyNewIntakeAttempts": 300,
+    "monthlyNewIntakeBytes": 3221225472,
+    "reviewLifetimeHours": 24
+  },
+  "additionalControlsRequired": {
+    "verifiedParticipantAllowlist": true,
+    "dailyMutationAttemptsIncludingEditsAndRetries": 100,
+    "monthlyMutationAttemptsIncludingEditsAndRetries": 500,
+    "perParticipantRequestsPerMinute": 30,
+    "automaticMutationRetries": 0,
+    "containerMonthlyRuntimeReviewHours": 10,
+    "stopOnMissingOrStaleCostEvidence": true
+  },
+  "costScenario": {
+    "description": "One full month of fixed fees; full storage for the month; no free credits or usage allowances deducted. Not a bill cap or measured usage forecast.",
+    "workersMonthlyUsd": 5,
+    "kmsKeyCount": 1,
+    "kmsMonthlyUsdPerKey": 1,
+    "r2StoredBytes": 3221225472,
+    "r2UsdPerDecimalGbMonth": 0.015,
+    "r2ClassARequests": 10000,
+    "r2ClassBRequests": 50000,
+    "r2UsdPerMillionClassA": 4.5,
+    "r2UsdPerMillionClassB": 0.36,
+    "s3StoredBytes": 3758096384,
+    "s3UsdPerGibMonth": 0.025,
+    "containerHours": 10,
+    "containerInstances": 1,
+    "containerVcpu": 0.25,
+    "containerMemoryGib": 1,
+    "containerDiskGb": 4,
+    "containerUsdPerVcpuSecond": 0.000020,
+    "containerUsdPerGibSecond": 0.0000025,
+    "containerUsdPerGbDiskSecond": 0.00000007,
+    "otherOperationsTransferAndNoticeReserveYen": 500
+  },
+  "excludedFromEnforcedCap": [
+    "Worker invocations and D1 checks before a request is rejected",
+    "Existing-record edits and retries: proposed mutation limit is not implemented yet; reads, repair and historical versions also remain outside the new-intake cap",
+    "Background tasks, queues, notification provider and cloud control-plane calls",
+    "Credential compromise, other applications in shared cloud accounts",
+    "Exchange-rate, tax or unit-price changes; provider billing delay"
+  ],
+  "sources": [
+    "https://developers.cloudflare.com/workers/platform/pricing/",
+    "https://developers.cloudflare.com/containers/platform/pricing/",
+    "https://developers.cloudflare.com/r2/pricing/",
+    "https://aws.amazon.com/kms/pricing/",
+    "https://aws.amazon.com/s3/pricing/",
+    "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/ap-northeast-1/index.json",
+    "https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/"
+  ]
+}
