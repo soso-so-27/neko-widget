@@ -51,3 +51,7 @@
 途中開始されたfull npm testは中断済みで、全件成功と扱わない。固定候補CIで全件を確認する。
 CI選択の局所74件（50.580秒）、preflight31件（5.801秒）が成功。
 費用計算scriptは終了0、R2共通操作無料枠あり1,773円/なし2,735円、hard cap falseを維持。
+独立レビューでD1最終batchと修正後leaseの新規P1/P2なしを確認。
+製品commit `e8db021`、Service tree `8b9eaf06a85e48d5fe1ccfd4298b0ec47ea5671d`。
+CI設定は別commit `ab50890` でv19/162pathsへ固定。候補CIと本線反映の最終結果は
+このbranchのPR/checksで記録し、未実施の段階で成功とは記載しない。
