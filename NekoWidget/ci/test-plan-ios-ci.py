@@ -2102,12 +2102,52 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(scope.select_scope({home: (protected + change[0], protected + change[1])}), scope.PHOTO_SCOPE)
         for after in (protected.replace('"fixture"', '"changed"'),
                       protected.replace('"shipping"', '"changed"'),
-                      protected.replace("#if DEBUG", "#if NEW"), protected + "#if DEBUG\n",
-                      protected + "#endif\n"):
+                      protected.replace("#if DEBUG", "#if NEW")):
+            self.assertEqual(scope.select_scope({home: (protected, after)}), scope.APP_VIEW_SCOPE)
+        for after in (protected + "#if DEBUG\n", protected + "#endif\n"):
             self.assertEqual(scope.select_scope({home: (protected, after)}), scope.FULL_SCOPE)
         for text in ('requestAuthorization()', 'hasPhotoPermission = true', 'consent = nil',
                      'privacyURL = changed', 'fixtureTitle = "x"', '"--new-launch-switch"'):
             self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.APP_VIEW_SCOPE)
+
+    def test_family_window_scope_keeps_owning_class_and_photo_links_without_widget_rendering(self):
+        window = "NekoWidget/NekoWidget/Views/FamilyWindowView.swift"
+        record = "NekoWidget/NekoWidget/Views/FamilyRecordView.swift"
+        source = ('import XCTest\n'
+                  'final class OtherTests: XCTestCase {\n    func testOther() {}\n}\n'
+                  'final class MomentDeliveryComposerUITests: XCTestCase {\n'
+                  '    func testPhoto() { print("before") }\n}\n')
+        changes = {window: ('let x = 1', 'let x = 2'),
+                   record: ('#if DEBUG\nlet x = 1\n#endif', '#if DEBUG\nlet x = 2\n#endif'),
+                   scope.MEMORY_TEST_PATH: (source, source.replace('"before"', '"after"')),
+                   'handoffs/design.md': ('a', 'b')}
+        self.assertEqual(scope.select_scope(changes), scope.FAMILY_WINDOW_UI_SCOPE)
+        for broken in ('#if DEBUG\n#else\n#else\n#endif',
+                       '#if DEBUG\n#else\n#elseif MORE\n#endif', '#if\n#endif'):
+            modified = dict(changes)
+            modified[record] = ('let x = 1', broken)
+            self.assertNotEqual(scope.select_scope(modified), scope.FAMILY_WINDOW_UI_SCOPE)
+        self.assertTrue(scope.accepts_paths(scope.FAMILY_WINDOW_UI_SCOPE, changes))
+        self.assertEqual(scope.lanes(scope.FAMILY_WINDOW_UI_SCOPE), ('runtime', 'app-ui'))
+        tests = scope.native_tests(scope.FAMILY_WINDOW_UI_SCOPE)
+        self.assertIn('NekoWidgetUITests/MomentDeliveryComposerUITests', tests)
+        self.assertEqual(sum('OfficialWindowUITests/testWidgetURLs' in name for name in tests), 3)
+        self.assertNotIn(scope.GALLERY_TEST, tests)
+        self.assertEqual(scope.smoke_tests(scope.FAMILY_WINDOW_UI_SCOPE),
+                         ('NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess',))
+        for path in ('NekoWidget/Shared/Models/WidgetManifest.swift',
+                     'NekoWidget/NekoWidgetWidget/NekoWidgetView.swift',
+                     'NekoWidget/NekoWidget.xcodeproj/project.pbxproj',
+                     '.github/workflows/ios-build.yml'):
+            self.assertEqual(scope.select_scope(dict(changes, **{path: ('before', 'after')})), scope.FULL_SCOPE)
+        for after in (source.replace('import XCTest', 'import UIKit'),
+                      source.replace('testOther()', 'testOtherChanged()'),
+                      source + '\nprivate func outsideHelper() {}',
+                      source.replace('MomentDeliveryComposerUITests', 'DifferentTests'),
+                      source + '#if DEBUG\n'):
+            modified = dict(changes)
+            modified[scope.MEMORY_TEST_PATH] = (source, after)
+            self.assertNotEqual(scope.select_scope(modified), scope.FAMILY_WINDOW_UI_SCOPE)
 
     def test_app_only_record_export_keeps_sharing_runtime_without_widget_gallery(self):
         change = ('let before = 1\n', 'let after = 2\n')
