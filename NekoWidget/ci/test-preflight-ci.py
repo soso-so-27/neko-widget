@@ -339,6 +339,20 @@ class PreflightTests(unittest.TestCase):
                "conclusion": "failure", "path": ".github/workflows/ios-build.yml"}
         self.assertFalse(preflight.apply_task_gate(dict(plan), [run], measure_baseline=True)["ready"])
 
+        now = dt.datetime(2026, 9, 20, 11, 15, tzinfo=dt.timezone.utc)
+        diagnostic = {**run, "path": preflight.DIAGNOSTIC_WORKFLOW, "conclusion": "success"}
+        measured = preflight.apply_task_gate(dict(plan), [diagnostic], now, measure_baseline=True)
+        self.assertTrue(measured["ready"])
+        self.assertEqual(measured["task"]["minutes_since_first_ci"], 15)
+        self.assertIsNone(measured["task"]["projected_total_minutes"])
+        for blocked in (
+            {**diagnostic, "status": "in_progress", "conclusion": None},
+            {**diagnostic, "conclusion": "failure", "failed_tests": ["testNavigation"]},
+            {**diagnostic, "conclusion": "failure", "unsupported_failed_tests": ["Other/testNavigation"]},
+        ):
+            self.assertFalse(preflight.apply_task_gate(dict(plan), [blocked], now, measure_baseline=True)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [diagnostic, run], now, measure_baseline=True)["ready"])
+
     def test_history_queries_both_branch_routes_and_extracts_only_failed_methods(self):
         run = {"id": 1, "path": ".github/workflows/ios-build.yml", "conclusion": "failure"}
         page = {"total_count": 1, "workflow_runs": [run]}

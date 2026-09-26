@@ -231,7 +231,12 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
     if missing:
         blockers.append("failed_task_requires_successful_diagnosis_at_candidate_sha")
-    first_measurement = measure_baseline and not runs and cost["status"] == "unmeasured"
+    # A focused diagnostic is the prerequisite for deciding on a candidate,
+    # not a measurement of its full required job graph. Keep its failures,
+    # active status and elapsed time above; only a prior candidate CI consumes
+    # the one first-measurement attempt.
+    candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW]
+    first_measurement = measure_baseline and not candidate_runs and cost["status"] == "unmeasured"
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
         blockers.append("cumulative_cost_requires_replanning")
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
