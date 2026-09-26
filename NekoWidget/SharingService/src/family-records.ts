@@ -90,9 +90,22 @@ function presentation(row: RecordRow): Record<string, unknown> {
     revision: row.revision, state: row.state, keyEpoch: row.key_epoch,
     ciphertext: row.ciphertext, createdAt: row.created_at, updatedAt: row.updated_at };
 }
+// Only the linked records created by a v2 moment have a fixed audience.
+// The older independent catalog remains room-wide. Apply this to the entry ID
+// so a linked photo's words cannot leak through the catalog or a direct URL.
+const visibleEntry = (space: string, entry: string) => `(
+  NOT EXISTS (SELECT 1 FROM family_record_moments link
+    WHERE link.space_id=${space} AND link.photo_id=${entry})
+  OR EXISTS (SELECT 1 FROM family_record_moment_readers reader
+    WHERE reader.space_id=${space} AND reader.photo_id=${entry}
+      AND reader.participant_id=?)
+)`;
+
 async function current(env: Env, m: AuthenticatedMember, id: string): Promise<RecordRow | null> {
-  return env.DB.prepare("SELECT * FROM family_records WHERE space_id=? AND id=?")
-    .bind(m.spaceId, id).first<RecordRow>();
+  return env.DB.prepare(`SELECT record.* FROM family_records record
+    WHERE record.space_id=? AND record.id=?
+      AND ${visibleEntry("record.space_id", "record.entry_id")}`)
+    .bind(m.spaceId, id, m.momentParticipantId).first<RecordRow>();
 }
 
 export async function momentSharedRecordCapacityReached(env: Env, spaceID: string, withWords: boolean): Promise<boolean> {
@@ -169,8 +182,10 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
   if (request.method === "GET") {
     requireEmptyBody(body);
     if (id === undefined) {
-      const rows = await env.DB.prepare("SELECT * FROM family_records WHERE space_id=? ORDER BY created_at DESC,id")
-        .bind(m.spaceId).all<RecordRow>();
+      const rows = await env.DB.prepare(`SELECT record.* FROM family_records record
+        WHERE record.space_id=? AND ${visibleEntry("record.space_id", "record.entry_id")}
+        ORDER BY record.created_at DESC,record.id`)
+        .bind(m.spaceId, m.momentParticipantId).all<RecordRow>();
       await assertAuthorized(env, m);
       await consumeNonceAndTouch(env, m);
       return jsonResponse({ schemaVersion: 1, spaceID: m.spaceId, participantID: m.id,
@@ -245,14 +260,17 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     const mutation = prior === null
       ? env.DB.prepare(`INSERT INTO family_records SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
           WHERE ${authorized} AND (SELECT COUNT(*) FROM family_records WHERE space_id=? AND kind=?) < ?
-          AND ${support.sql}
+          AND ${support.sql} AND ${visibleEntry("?", "?")}
           ON CONFLICT(space_id,id) DO NOTHING`).bind(...Object.values(row), ...authBindings(m), m.spaceId, kind,
-          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS, ...support.bindings)
+          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS, ...support.bindings,
+          m.spaceId, entryID, m.spaceId, entryID, m.momentParticipantId)
       : env.DB.prepare(`UPDATE family_records SET revision=?,state=?,ciphertext=?,object_key=?,ciphertext_size=?,
           payload_hash=?,last_operation_id=?,updated_at=? WHERE space_id=? AND id=? AND revision=?
-          AND author_member_id=? AND state='active' AND ${authorized}`)
+          AND author_member_id=? AND state='active' AND ${authorized}
+          AND ${visibleEntry("?", "?")}`)
         .bind(row.revision, row.state, row.ciphertext, row.object_key, row.ciphertext_size,
-          row.payload_hash, row.last_operation_id, row.updated_at, m.spaceId, id, expected, m.id, ...authBindings(m));
+          row.payload_hash, row.last_operation_id, row.updated_at, m.spaceId, id, expected, m.id,
+          ...authBindings(m), m.spaceId, entryID, m.spaceId, entryID, m.momentParticipantId);
     const deletion = prior?.object_key ? [env.DB.prepare(
       `INSERT OR IGNORE INTO family_record_object_deletions SELECT ?,?
        WHERE EXISTS (SELECT 1 FROM family_records WHERE space_id=? AND id=?

@@ -735,6 +735,29 @@ async function remapOwnerToDistinctMomentParticipant(space: TestSpace): Promise<
   return participantID;
 }
 
+async function replaceInviteeParticipantForRecordTest(space: TestSpace): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const previous = await testEnv.DB.prepare(`SELECT participant.id,device.agreement_public_key,device.signing_public_key
+    FROM moment_participants participant JOIN moment_devices device ON device.participant_id=participant.id
+    WHERE participant.legacy_member_id=? AND device.legacy_member_id=?`)
+    .bind(space.invitee.id, space.invitee.id)
+    .first<{ id: string; agreement_public_key: string; signing_public_key: string }>();
+  if (!previous) throw new Error("invitee fixture is missing");
+  const nextParticipant = randomValue(16);
+  await testEnv.DB.batch([
+    testEnv.DB.prepare("UPDATE moment_devices SET legacy_member_id=NULL,state='revoked' WHERE participant_id=?")
+      .bind(previous.id),
+    testEnv.DB.prepare("UPDATE moment_participants SET legacy_member_id=NULL,state='revoked' WHERE id=?")
+      .bind(previous.id),
+    testEnv.DB.prepare(`INSERT INTO moment_participants(id,space_id,legacy_member_id,role,state,created_at,activated_at)
+      VALUES (?,?,?,'member','active',?,?)`).bind(nextParticipant, space.id, space.invitee.id, now, now),
+    testEnv.DB.prepare(`INSERT INTO moment_devices(id,participant_id,legacy_member_id,agreement_public_key,
+      signing_public_key,state,created_at,activated_at) VALUES (?,?,?,?,?,'active',?,?)`)
+      .bind(randomValue(16), nextParticipant, space.invitee.id,
+        previous.agreement_public_key, previous.signing_public_key, now, now),
+  ]);
+}
+
 describe("encrypted private window name", () => {
   it("lets the owner publish opaque ciphertext and both active participants read it", async () => {
     const space = await seedActiveSpace();
@@ -1093,6 +1116,17 @@ describe("append-only encrypted moments", () => {
     expect(rows.results.find(row => row.id === wordsID)?.ciphertext).toBe(wordsCiphertext);
     expect(await testEnv.DB.prepare("SELECT moment_id FROM family_record_moments WHERE photo_id=?")
       .bind(photoID).first<{ moment_id: string }>()).toEqual({ moment_id: momentID });
+    const recipientBefore = await route(await signedRequest("/v2/family-records", "GET", space.invitee), enabled);
+    expect((await recipientBefore.json<{ records: unknown[] }>()).records).toHaveLength(2);
+    await replaceInviteeParticipantForRecordTest(space);
+    const recipientAfter = await route(await signedRequest("/v2/family-records", "GET", space.invitee), enabled);
+    expect((await recipientAfter.json<{ records: unknown[] }>()).records).toHaveLength(0);
+    await expect(route(await signedRequest(`/v2/family-records/${photoID}/photo`, "GET", space.invitee), enabled))
+      .rejects.toMatchObject({ status: 404 });
+    await expect(route(await signedRequest(`/v2/family-records/${crypto.randomUUID()}`, "PUT", space.invitee,
+      { entryID: photoID, kind: "words", expectedRevision: 0,
+        operationID: crypto.randomUUID(), ciphertext: wordsCiphertext }), enabled))
+      .rejects.toMatchObject({ status: 404 });
     const withdraw = { entryID: photoID, kind: "photo", expectedRevision: 1,
       operationID: crypto.randomUUID().toLowerCase(), ciphertext: null };
     const withdrawal = async () => route(await signedRequest(`/v2/family-records/${photoID}`, "PUT", space.owner, withdraw), enabled);
