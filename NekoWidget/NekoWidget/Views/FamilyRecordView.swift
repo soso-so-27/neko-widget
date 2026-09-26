@@ -258,9 +258,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
                     description: Text("右上の写真ボタンから、相手に一枚届けられます。"))
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
                     count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), alignment: .leading, spacing: 16) {
-                    ForEach(value.items) { item in collectionCard(item, snapshot: value.snapshot) }
+                    ForEach(value.items) { item in
+                        collectionCard(item, snapshot: value.snapshot)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                 }
                 .accessibilityIdentifier("family-window-shared-photos")
                 ForEach(value.withdrawn) { row in
