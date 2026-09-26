@@ -3557,6 +3557,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertFalse(delivery.exists, "A delivery copy must not resurrect a withdrawn album photo.")
         XCTAssertEqual(retained.count, 0)
         app.buttons["family-collection-fixture-restrict"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["family-collection-unavailable"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "count == 0"), object: withdrawn)], timeout: 10), .completed)
         XCTAssertEqual(retained.count, 0)

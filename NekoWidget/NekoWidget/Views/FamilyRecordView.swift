@@ -250,7 +250,11 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     .accessibilityLabel("このまどの写真の操作")
                     .accessibilityIdentifier("family-collection-menu")
             }
-            if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
+            if !canShowRecords {
+                Label("接続を確認できません", systemImage: "wifi.exclamationmark")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("family-collection-unavailable")
+            } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
                 ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
                     description: Text("右上の写真ボタンから、相手に一枚届けられます。"))
             } else {
