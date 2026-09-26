@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-23",
+  "as_of": "2026-09-26",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.1,
   "upload_run": 35607517485,
@@ -31,9 +31,35 @@
     {
       "run_id": 35673315212,
       "minutes": 8.05
+    },
+    {
+      "run_id": 36212918572,
+      "minutes": 8.283
     }
   ],
   "observations": [
+    {
+      "scope": "family-window-ui-v1",
+      "candidate_minutes": 42.0,
+      "run_id": 36207398852,
+      "outcome": "failure",
+      "runner_minutes_all_attempts": 66.667,
+      "note": "Initial window collection candidate: obsolete source-owner assertion failed Build; a fixture used activate instead of launch after another UI case, so new arguments were not applied. Whole composer class ran17 tests plus3 photo links. Kept failure cost; replaced this execution profile with operation-scoped v2."
+    },
+    {
+      "scope": "family-window-ui-v2",
+      "candidate_minutes": 40.517,
+      "run_id": 36210691944,
+      "outcome": "success-after-retry",
+      "first_attempt_minutes": 28.0,
+      "runner_minutes_all_attempts": 91.7,
+      "candidate_commit_to_ci_minutes": 120.517,
+      "candidate_commit_to_apple_upload_minutes": 130.683,
+      "upload_run_id": 36212918572,
+      "diagnostic_run_id": 36209902319,
+      "diagnostic_minutes": 12.883,
+      "note": "First v2 observation. Five owning collection/received/sent cases plus3 photo links all passed; Build and both-OS runtime passed. Unchanged Photos bootstrap failed an XCTest snapshot timeout after TCC recorded full access. Same-SHA retry of only that job passed; successful sibling results were retained.40.517m includes retry and waiting, not just the28m first attempt. Earlier v1 failure, type-inference probe and fixture relaunch diagnostic remain task cost.20-30m target missed. No claim that narrowing alone achieves that target. Runner minutes are not billed money or Codex tokens."
+    },
     {
       "scope": "preservation-service-v5",
       "candidate_minutes": 0.6,
