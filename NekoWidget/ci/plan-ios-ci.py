@@ -100,7 +100,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v17"
+PRESERVATION_SCOPE = "preservation-service-v18"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -125,9 +125,13 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "migrations/0016_owner_purge_events.sql",
     "migrations/0017_purge_execution_claims.sql",
     "migrations/0018_purge_claim_lease.sql",
+    "migrations/0025_intake_control.sql",
+    "migrations/0026_pilot_control.sql",
+    "operations/pilot-plan.json",
     "package-lock.json",
     "package.json",
     "scripts/aws-staging-probe-policy.json",
+    "scripts/estimate-pilot-budget.mjs",
     "scripts/r2-remote-probe.ts",
     "scripts/run-live-staging-s3-probe.ps1",
     "scripts/verify-notice-evidence-migration.mjs",
@@ -146,6 +150,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "src/fenced-purge-eligibility.ts",
     "src/identity-index.ts",
     "src/index.ts",
+    "src/intake-control.ts",
     "src/key-custody.ts",
     "src/membership-links.ts",
     "src/notice-delivery.ts",
@@ -161,6 +166,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "src/owner-purge-abort.ts",
     "src/owner-purge-intent-ledger.ts",
     "src/purge-intent-replay.ts",
+    "src/pilot-control.ts",
     "src/owner-quarantine-restore.ts",
     "src/owner-record-inventory.ts",
     "src/owner-recovery-copy.ts",
@@ -177,6 +183,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/aws-kms-key-wrapper.test.ts",
     "test/billing-authority.test.ts",
     "test/bounded-body.test.ts",
+    "test/intake-control.test.ts",
     "test/key-custody.test.ts",
     "test/key-fixture.ts",
     "test/live-staging-flow.integration.test.ts",
@@ -201,6 +208,8 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/owner-record-inventory.test.ts",
     "test/owner-recovery-copy.test.ts",
     "test/owner-snapshot-codec.test.ts",
+    "test/pilot-control.test.ts",
+    "test/pilot-wiring.test.ts",
     "test/record-recovery-copy.test.ts",
     "test/recovery.integration.test.ts",
     "test/retention-ledger.test.ts",
@@ -222,27 +231,27 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v17 is a one-candidate review of the entire disabled service tree, not a
+# v18 is a one-candidate review of the entire disabled service tree, not a
 # reusable semantic claim about paths. Any later service edit requires a new
 # review/profile or FULL; it does not certify live data, physical purge, or iOS.
-PRESERVATION_REVIEWED_TREE = "e811a27b2efed005f71bd4ce358d569d7c994bc5"
+PRESERVATION_REVIEWED_TREE = "88c7b14e90d732c993b984bfdc60cbb00be40f1a"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "eae7446e22680de658b4b67f519b08dfd4e62657ae62a51e83afd813ab158d42",
-        "d78a9c1876421fb73caba61e09091b939785412b3512e32fa0d2daacee811607"
+        "11a75010127befc120d769829552f3ba4c05ea486f4ee351ea59cef38fd2d6ef",
+        "2fbf69194b1257b68000013b7e2980f03676c2b4a1190b60fb6ff6191c7f1d42"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "8bc7718ad9e053aeb8f2cea2faefa3acb237ea7667eff7282bf20bf28f4f0323",
-        "f481898e3d8d190497c1df1db060f501d0fae8484a8c06186164df248f95ad0d"
+        "01114c4ae28c2bd48ca3707816408e1226183ea94120f04978fd14ff6d5ee72e",
+        "ec5f7ef65d7c7de360b07cc8fb028d23d8b19b0f100041e55655dd72f72aacde"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "288cb86d5ef8e57363fa2555ef7d0632849d9a405c393de536b9bf94ce3165a7",
-        "ecd490886c83999a2add71b2d7302c0ee6dad368a20f3109e57f370b613e2764"
+        "a1a64fe603916ab5e4a0b8764cde28f5094a861d52b1b4d9968865c05c95599b",
+        "f2fe75388f95214eaaca9c7b4572041e193525b23a6de4225a13fdbd10a62c5a"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "3c517b0d679d575746b181853988ba8b95ef79b74eac3858f633c58300bae2ae",
-        "fad24592b365463021eb439675f2a21154c5d919e27186dc3f17234127e3f5d3"
+        "9fb9b046f22f987a2291cb1c93d1f4f0e5e6e6a18e65997375098ad59e6a2cb1",
+        "744a53469e115ab578d1cfc87e83865f87031b1b708c11507c168a7507efcb38"
     ]
 }
 
