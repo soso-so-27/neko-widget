@@ -70,8 +70,16 @@ class PlanTests(unittest.TestCase):
                     patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", workflow_digest), \
                     patch.object(planner, "PRESERVATION_COMPANION_DIGESTS", bindings):
                 return planner.runtime_scope(sorted(changes), {}, self.env)
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 115)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v17")
+        pilot_new_paths = (
+            "migrations/0025_intake_control.sql", "migrations/0026_pilot_control.sql",
+            "operations/pilot-plan.json", "scripts/estimate-pilot-budget.mjs",
+            "src/intake-control.ts", "src/pilot-control.ts",
+            "test/intake-control.test.ts", "test/pilot-control.test.ts", "test/pilot-wiring.test.ts",
+        )
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 124)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v18")
+        self.assertTrue(all("NekoWidget/PreservationService/" + path in planner.PRESERVATION_PATHS
+                            for path in pilot_new_paths))
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
         plain, _ = self.jpeg_changes(companions=False, profile="PRESERVATION")
         self.assertEqual(select({migration: original[migration],
@@ -93,9 +101,14 @@ class PlanTests(unittest.TestCase):
                      "src/owner-snapshot-codec.ts", "test/owner-snapshot-codec.test.ts"):
             self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
                              planner.PRESERVATION_SCOPE)
+        for path in pilot_new_paths:
+            self.assertEqual(select({**plain, "NekoWidget/PreservationService/" + path: ("", "reviewed addition")}),
+                             planner.PRESERVATION_SCOPE)
+        self.assertEqual(select({**plain, **{"NekoWidget/PreservationService/" + path: ("", "reviewed addition")
+                                            for path in pilot_new_paths}}), planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         # Same filenames with any different service content (including an
-        # in-place sender, Queue binding, or deletion) must not use v17.
+        # in-place sender, Queue binding, or deletion) must not use v18.
         self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
                       "NekoWidget/PreservationService/src/notice-sender.ts",

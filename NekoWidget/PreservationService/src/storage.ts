@@ -1,6 +1,6 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
-import { decodePhoto, encodePhoto, recordId, validateDocument } from './documents';
+import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument } from './documents';
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
@@ -24,6 +24,9 @@ interface Dependencies {
   /** Operational admission cap across all owners. This does not cap S3 history or request charges. */
   globalActiveBytesLimit?: number;
   requireGlobalAdmissionLimit?: boolean;
+  intakeControl?: { admit(plannedBytes: number): Promise<void> };
+  requireIntakeControl?: boolean;
+  mutationAdmission?: { admitMutation(ownerId: string): Promise<void> };
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
@@ -393,6 +396,22 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
+    await this.d.mutationAdmission?.admitMutation(session.ownerId);
+    const existing = await this.row(session.ownerId, id);
+    if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
+    if (!existing && (this.d.requireIntakeControl || this.d.intakeControl)) {
+      if (!this.d.intakeControl) throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503);
+      // Authenticate membership before spending the shared allowance. Classify
+      // by the server-owned row, never by caller-supplied expectedRevision.
+      await this.paid(session.ownerId);
+      const encoded = input && typeof input === 'object'
+        ? (input as Record<string, unknown>).photoBase64 : undefined;
+      // O(1) conservative estimate; no base64 decoding or hashing before admission.
+      // Malformed input still consumes an attempt, but never exceeds the photo cap.
+      const plannedPhoto = typeof encoded === 'string'
+        ? Math.min(MAX_PHOTO_BYTES, Math.ceil(encoded.length / 4) * 3) : 0;
+      await this.d.intakeControl.admit(plannedPhoto + 512 * 1024 + 8192);
+    }
     if (this.d.requireOwnerRecovery) {
       await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
     }
@@ -406,8 +425,6 @@ export class ArchiveStore {
     if ((photo === null) !== (document.photoFile === null)) throw new ServiceError('INVALID_RECORD');
     const photoSHA256 = photo === null ? null : await sha256(photo);
     const initialFingerprint = await sha256(JSON.stringify({ document, photoSHA256 }));
-    const existing = await this.row(session.ownerId, id);
-    if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.

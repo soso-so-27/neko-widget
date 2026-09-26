@@ -470,11 +470,12 @@ it('listing is paged and carries a mutation generation without downloading image
 });
 
 it('HTTP stays disabled until both the environment gate and recovery policy are active', async () => {
-  const request = new Request('https://preservation.test/v1/records');
+  const request = new Request('https://preservation.test/v1/records', { headers: { 'CF-Connecting-IP': '192.0.2.1' } });
   const closed = await worker.fetch(request, binding as Env);
   expect(closed.status).toBe(503); expect(closed.headers.get('cache-control')).toBe('no-store');
   expect(await closed.json()).toEqual({ error: { code: 'PRESERVATION_DISABLED' } });
-  const missing = await worker.fetch(request, { ...binding, PRESERVATION_ENABLED: 'YES' });
+  const missing = await worker.fetch(request, { ...binding, PRESERVATION_ENABLED: 'YES',
+    REQUEST_LIMITER: { limit: async () => ({ success: true }) } });
   expect(await missing.json()).toEqual({ error: { code: 'RECOVERY_POLICY_INACTIVE' } });
 });
 
@@ -534,6 +535,72 @@ it('deleted IDs prevent replay without consuming a new active record slot', asyn
   expect(concurrent.filter(result => result.status === 'fulfilled')).toHaveLength(1);
   expect(concurrent.filter(result => result.status === 'rejected'))
     .toMatchObject([{ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } }]);
+});
+
+it('pauses only new intake before decoding and preserves retry/read/edit/delete', async () => {
+  const f = await fixture();
+  const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  let admissions = 0; let decodes = 0;
+  const paused = new ArchiveStore({ ...f.options, requireIntakeControl: true,
+    intakeControl: { async admit() { admissions++; throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503); } },
+    photos: { async validateJPEG() { decodes++; return true; } } });
+  await expect(paused.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED', status: 503 });
+  expect(decodes).toBe(0);
+  expect(await paused.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  expect((await paused.read(f.session.token, id)).document.text).toBe(document.text);
+  expect((await paused.usage(f.session.token)).records.saved).toBe(1);
+  await paused.put(f.session.token, id, f.request({ expectedRevision: 1,
+    document: { ...document, text: '新規停止中も既存メモは残す' } }));
+  await paused.remove(f.session.token, id, 2);
+  expect(admissions).toBe(1);
+  const missing = new ArchiveStore({ ...f.options, requireIntakeControl: true });
+  await expect(missing.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED' });
+});
+
+it('reserves new intake before recovery, key use or malformed photo/document parsing', async () => {
+  const f = await fixture();
+  let work = 0; const unavailable = async (): Promise<never> => { work++; throw new Error('must not run'); };
+  const amounts: number[] = [];
+  const archive = new ArchiveStore({ ...f.options, requireIntakeControl: true, requireOwnerRecovery: true,
+    ownerRecovery: { copyCurrent: unavailable } as unknown as OwnerRecoveryCopy,
+    keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable },
+    intakeControl: { async admit(amount) {
+      amounts.push(amount); throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503);
+    } } });
+  for (const input of [f.request(), f.request({ document: null }),
+    f.request({ photoBase64: '!'.repeat(1_000_000) }), f.request({ expectedRevision: 1 }), null]) {
+    await expect(archive.put(f.session.token, crypto.randomUUID(), input))
+      .rejects.toMatchObject({ code: 'PRESERVATION_INTAKE_PAUSED' });
+  }
+  expect(work).toBe(0); expect(amounts).toHaveLength(5);
+  expect(amounts[2]).toBe(750_000 + 512 * 1024 + 8192);
+  f.setState('expired');
+  await expect(archive.put(f.session.token, crypto.randomUUID(), f.request()))
+    .rejects.toMatchObject({ code: 'NEW_SAVE_REQUIRES_MEMBERSHIP' });
+  expect(amounts).toHaveLength(5);
+});
+
+it('pilot mutation stop covers edit and retry without stopping existing read/list/delete', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  let attempts = 0;
+  const archive = new ArchiveStore({ ...f.options, mutationAdmission: {
+    async admitMutation(ownerId) {
+      expect(ownerId).toBe(f.session.ownerId); attempts++;
+      throw new ServiceError('PILOT_WRITES_PAUSED', 503);
+    },
+  } });
+  for (const request of [f.request(), f.request({ expectedRevision: 1 }), f.request({ document: null })]) {
+    await expect(archive.put(f.session.token, id, request)).rejects.toMatchObject({ code: 'PILOT_WRITES_PAUSED' });
+  }
+  expect(attempts).toBe(3);
+  expect((await archive.read(f.session.token, id)).document).toEqual(document);
+  expect((await archive.list(f.session.token)).items).toHaveLength(1);
+  await archive.remove(f.session.token, id, 1);
+  expect(attempts).toBe(3);
 });
 
 it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {

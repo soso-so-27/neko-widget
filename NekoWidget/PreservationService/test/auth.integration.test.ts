@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
-import { type AuthDependencies, type KeyCustody, type VerifiedIdentity, sha256 } from '../src/contracts';
+import { type AuthDependencies, type KeyCustody, type VerifiedIdentity, ServiceError, sha256 } from '../src/contracts';
 import { RetentionLedger } from '../src/retention-ledger';
 
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -34,6 +34,23 @@ async function fixture() {
 }
 
 describe('durable private preservation authentication', () => {
+  it('checks pilot admission before new identity storage, but preserves existing-owner login after stop', async () => {
+    const f = await fixture();
+    const first = await f.auth.establish(f.identity);
+    let attempts = 0;
+    const paused = new DurableAuth({ ...f.dependencies, ownerAdmission: {
+      async createOwner() { attempts++; throw new ServiceError('PILOT_WRITES_PAUSED', 503); },
+    } });
+    const returning = await paused.establish(f.identity);
+    expect(returning.ownerId).toBe(first.ownerId); expect(attempts).toBe(0);
+    let cryptoCalls = 0;
+    const closed = new DurableAuth({ ...f.dependencies, ownerAdmission: {
+      async createOwner() { throw new ServiceError('PILOT_WRITES_PAUSED', 503); },
+    }, keys: { ...f.keys, async seal() { cryptoCalls++; throw new Error('not reached'); } } });
+    await expect(closed.establish({ ...f.identity, subject: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: 'PILOT_WRITES_PAUSED' });
+    expect(cryptoCalls).toBe(0);
+  });
   it('takes a proof-bound challenge exactly once across verifier restarts and races', async () => {
     const f = await fixture();
     const challenge = await f.auth.issueChallenge();
