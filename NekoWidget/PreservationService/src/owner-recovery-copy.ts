@@ -1,6 +1,7 @@
 import { ServiceError, contactEmailValid, type KeyCustody } from './contracts';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
 import { S3RecoveryCopy, type RecoveryObject } from './s3-recovery-copy';
+import { compressOwnerSnapshot, openOwnerSnapshot } from './owner-snapshot-codec';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
@@ -148,7 +149,7 @@ export class OwnerRecoveryCopy {
   private readonly indexKey: Promise<CryptoKey>;
 
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy,
-    identityIndexSecret: string) {
+    identityIndexSecret: string, private readonly options: { compressWrites?: boolean } = {}) {
     this.indexKey = identityIndexKey(identityIndexSecret);
   }
 
@@ -466,7 +467,9 @@ export class OwnerRecoveryCopy {
         updatedAt: image.contact.updatedAt },
     };
     try {
-      const sealed = await this.keys.seal(new TextEncoder().encode(JSON.stringify(payload)),
+      const json = new TextEncoder().encode(JSON.stringify(payload));
+      const plaintext = this.options.compressWrites ? await compressOwnerSnapshot(json) : json;
+      const sealed = await this.keys.seal(plaintext,
         { ownerId: image.ownerId, purpose: 'recovery' });
       return await this.s3.putVersioned(
         `recovery/v1/${image.ownerId}/owner/${crypto.randomUUID()}`, sealed);
@@ -481,7 +484,8 @@ export class OwnerRecoveryCopy {
     try {
       const sealed = await this.s3.getVerified(reference);
       const opened = await this.keys.open(sealed, { ownerId, purpose: 'recovery' });
-      const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened));
+      const json = await openOwnerSnapshot(opened);
+      const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(json));
       if (!exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,inventoryGeneration,ownerId,purgeFenceId,records,retention,version')
         || payload.version !== 2 || payload.ownerId !== ownerId
         || !exact(payload.credential, 'ownerEpoch,sealedCredentialsBase64,updatedAt')

@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "observability": { "enabled": false },
-  "vars": { "PRESERVATION_ENABLED": "NO", "ENVIRONMENT": "local" },
+  "vars": { "PRESERVATION_ENABLED": "NO", "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO", "ENVIRONMENT": "local" },
   "d1_databases": [{ "binding": "DB", "database_name": "neko-preservation-local", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "neko-preservation-local-private" }],
   "env": {
@@ -17,6 +17,7 @@
         "PRESERVATION_ENABLED": "NO",
         "CLEANUP_ENABLED": "NO",
         "RECOVERY_BACKFILL_ENABLED": "NO",
+        "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO",
         "RETENTION_TRACKING_ENABLED": "NO",
         "ENVIRONMENT": "staging"
       },

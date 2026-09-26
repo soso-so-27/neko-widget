@@ -26,6 +26,18 @@ it('abort wakes a stalled read, releases the reader, and does not wait for a hos
   abort.abort(); await rejected; expect(cancelled).toBe(true); expect(body.locked).toBe(false);
   await expect(readBoundedBody(new Response('x').body, 1, error, abort.signal)).rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
 });
+it('keeps a bounded chunk override for native codecs without changing the network default', async () => {
+  const chunks = () => new ReadableStream<Uint8Array>({ start(controller) {
+    for (let i = 0; i < 4100; i++) controller.enqueue(new Uint8Array([1]));
+    controller.close();
+  } });
+  await expect(readBoundedBody(chunks(), 4100, error)).rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
+  expect((await readBoundedBody(chunks(), 4100, error, undefined, error, 8192)).length).toBe(4100);
+  for (const invalid of [0, -1, 1.5, 16_385, Infinity]) {
+    await expect(readBoundedBody(new Response('x').body, 1, error, undefined, error, invalid))
+      .rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
+  }
+});
 it('a never-ending stalled provider body is rejected by the real wall deadline', async () => {
   const body = new ReadableStream<Uint8Array>();
   await expect(readBoundedBody(body, 1, error)).rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
