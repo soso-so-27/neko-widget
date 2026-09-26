@@ -3695,7 +3695,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["family-record-fixture-leave"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: peerWords)], timeout: 10), .completed)
-        XCTAssertTrue(app.staticTexts["共有メモを確認できませんでした。接続を確認して、もう一度読み込んでください。"].exists)
+        XCTAssertTrue(app.staticTexts["写真とメモを読み込めませんでした。接続を確認して、もう一度お試しください。"].exists)
         app.buttons["family-record-back-to-album"].tap()
         XCTAssertFalse(albumPhoto.exists)
         XCTAssertFalse(withdrawnEntry.exists, "Returning to the album must not restore revoked content.")
