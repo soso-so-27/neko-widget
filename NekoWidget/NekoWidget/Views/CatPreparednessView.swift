@@ -70,7 +70,8 @@ struct CatPreparednessView: View {
 
             Section {
                 NavigationLink {
-                    LostCatDraftView(catName: catName, record: draft, store: store)
+                    LostCatDraftView(catName: catName, record: draft, store: store,
+                                     candidatePhotos: candidatePhotos)
                 } label: {
                     Label("迷子のとき", systemImage: "magnifyingglass")
                 }
@@ -192,7 +193,8 @@ struct LostCatEmergencyEntryView: View {
     private func draftView(for profile: CatProfilePresentation) -> LostCatDraftView {
         LostCatDraftView(catName: profile.displayName,
                          record: CatPreparednessStore.shared.record(for: profile.identifier),
-                         store: .shared)
+                         store: .shared,
+                         candidatePhotos: profile.confirmedPhotos)
     }
 
     private var unregisteredDraft: LostCatDraftView {
@@ -214,13 +216,18 @@ struct LostCatDraftView: View {
     let catName: String
     let record: CatPreparednessRecord
     @ObservedObject var store: CatPreparednessStore
+    let candidatePhotos: [CatProfilePhotoPresentation]
 
     init(catName: String, record: CatPreparednessRecord, store: CatPreparednessStore,
+         candidatePhotos: [CatProfilePhotoPresentation] = [],
          initialPhotoImage: UIImage? = nil) {
         self.catName = catName
         self.record = record
         self.store = store
+        self.candidatePhotos = candidatePhotos
         _selectedPhotoImage = State(initialValue: initialPhotoImage)
+        _selectedCatPhotoIdentifier = State(initialValue:
+            record.face?.localIdentifier ?? record.body?.localIdentifier)
     }
 
     @State private var lastSeenAt = Date()
@@ -233,6 +240,9 @@ struct LostCatDraftView: View {
     @State private var approachAdvice = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedPhotoImage: UIImage?
+    @State private var selectedCatPhotoIdentifier: String?
+    @State private var showsCatPhotoPicker = false
+    @State private var photoChoiceGeneration = UUID()
     @State private var photoLoadError = false
     @State private var hasLoadedDefaults = false
     @State private var sharePayload: LostCatSharePayload?
@@ -265,9 +275,15 @@ struct LostCatDraftView: View {
                     Image(uiImage: image).resizable().scaledToFit()
                         .frame(maxHeight: 220)
                 }
+                if !candidatePhotos.isEmpty {
+                    Button("この子の写真から選ぶ", systemImage: "cat") {
+                        showsCatPhotoPicker = true
+                    }
+                    .accessibilityIdentifier("lost-cat-choose-profile-photo")
+                }
                 PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                    Label(selectedPhotoImage == nil && preparedFaceImage == nil
-                          ? "写真を選ぶ" : "写真を選び直す", systemImage: "photo.badge.plus")
+                    Label(candidatePhotos.isEmpty ? "写真を選ぶ" : "写真アプリから選ぶ",
+                          systemImage: "photo.badge.plus")
                 }
                 TextField("見分ける特徴", text: $features, axis: .vertical)
                     .focused($focusedField, equals: .features)
@@ -337,6 +353,8 @@ struct LostCatDraftView: View {
             hasLoadedDefaults = true
         }
         .onChange(of: selectedPhotoItem) { _, item in
+            let generation = UUID()
+            photoChoiceGeneration = generation
             Task {
                 guard let item,
                       let data = try? await item.loadTransferable(type: Data.self) else {
@@ -351,12 +369,41 @@ struct LostCatDraftView: View {
                           ] as CFDictionary) else { return nil }
                     return UIImage(cgImage: thumbnail)
                 }.value
+                guard photoChoiceGeneration == generation else { return }
                 guard let image else {
                     photoLoadError = true
                     return
                 }
                 selectedPhotoImage = image
+                selectedCatPhotoIdentifier = nil
                 photoLoadError = false
+            }
+        }
+        .sheet(isPresented: $showsCatPhotoPicker) {
+            NavigationStack {
+                CatProfilePhotoPicker(
+                    photos: candidatePhotos,
+                    selectedIdentifier: selectedCatPhotoIdentifier,
+                    choose: { identifier in
+                        let generation = UUID()
+                        photoChoiceGeneration = generation
+                        do {
+                            let photo = try await PhotoLibraryJPEGExporter()
+                                .export(localIdentifier: identifier)
+                            guard photoChoiceGeneration == generation else { return false }
+                            guard let image = UIImage(data: photo.jpeg) else { return false }
+                            selectedPhotoImage = image
+                            selectedCatPhotoIdentifier = identifier
+                            photoLoadError = false
+                            return true
+                        } catch {
+                            if photoChoiceGeneration == generation { photoLoadError = true }
+                            return false
+                        }
+                    },
+                    progressTitle: "写真を読み込み中…",
+                    failureMessage: "写真を読み込めませんでした。もう一度お試しください。"
+                )
             }
         }
         .sheet(item: $sharePayload, onDismiss: {
@@ -424,6 +471,13 @@ private struct LostCatActivitySheet: UIViewControllerRepresentable {
 /// Isolated unprepared incident: the injected image represents one explicit
 /// PhotosPicker selection without writing a profile or invoking photo access.
 struct LostCatDraftFixtureView: View {
+    private var candidatePhotos: [CatProfilePhotoPresentation] {
+        guard ProcessInfo.processInfo.environment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] == "1",
+              let photo = AppStoreScreenshotFixture.photos.first else { return [] }
+        return [CatProfilePhotoPresentation(localIdentifier: photo.localIdentifier,
+                                             creationDate: photo.creationDate,
+                                             catBoundingBox: photo.catBoundingBox)]
+    }
     private let image = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 900))
         .image { context in
             UIColor.systemOrange.setFill()
@@ -433,7 +487,8 @@ struct LostCatDraftFixtureView: View {
     var body: some View {
         NavigationStack {
             LostCatDraftView(catName: "", record: CatPreparednessRecord(),
-                             store: .shared, initialPhotoImage: image)
+                             store: .shared, candidatePhotos: candidatePhotos,
+                             initialPhotoImage: image)
         }
     }
 }

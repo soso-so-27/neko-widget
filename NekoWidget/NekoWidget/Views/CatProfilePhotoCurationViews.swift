@@ -1074,6 +1074,8 @@ struct CatProfilePhotoPicker: View {
     let photos: [CatProfilePhotoPresentation]
     let selectedIdentifier: String?
     let choose: (String) async -> Bool
+    var progressTitle = "保存中…"
+    var failureMessage = "選択を保存できませんでした。もう一度お試しください。"
 
     @Environment(\.dismiss) private var dismiss
     @State private var savingIdentifier: String?
@@ -1108,9 +1110,9 @@ struct CatProfilePhotoPicker: View {
             if savingIdentifier != nil || saveFailed {
                 VStack {
                     if savingIdentifier != nil {
-                        ProgressView("保存中…")
+                        ProgressView(progressTitle)
                     } else {
-                        Text("選択を保存できませんでした。もう一度お試しください。")
+                        Text(failureMessage)
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }

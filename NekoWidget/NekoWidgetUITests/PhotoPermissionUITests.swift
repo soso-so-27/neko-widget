@@ -1486,6 +1486,22 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] = "1"
+        app.launch()
+        let choose = app.buttons["lost-cat-choose-profile-photo"]
+        for _ in 0..<5 where !choose.isHittable { app.swipeUp() }
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        choose.tap()
+        XCTAssertTrue(app.scrollViews["cat-profile-photo-grid"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        capture("lost-cat-confirmed-photo-picker")
+    }
+
+    @MainActor
     func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
         for largeText in [false, true] {
             let app = XCUIApplication()
