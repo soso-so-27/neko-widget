@@ -354,6 +354,17 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(preflight.apply_task_gate(dict(plan), [blocked], now, measure_baseline=True)["ready"])
         self.assertFalse(preflight.apply_task_gate(dict(plan), [diagnostic, run], now, measure_baseline=True)["ready"])
 
+    def test_skipped_same_repo_pr_does_not_consume_first_baseline_attempt(self):
+        plan = {"ready": False, "head": "a" * 40, "target_minutes": 30,
+                "cost": {"status": "unmeasured"}}
+        skipped_pr = {"id": 2, "created_at": "2026-09-20T11:00:00Z",
+                      "status": "completed", "conclusion": "skipped",
+                      "event": "pull_request", "path": ".github/workflows/ios-build.yml"}
+        result = preflight.apply_task_gate(dict(plan), [skipped_pr], measure_baseline=True)
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["task"]["first_baseline_measurement"])
+        self.assertEqual(result["task"]["failed_runs"], [])
+
     def test_history_queries_both_branch_routes_and_extracts_only_failed_methods(self):
         run = {"id": 1, "path": ".github/workflows/ios-build.yml", "conclusion": "failure"}
         page = {"total_count": 1, "workflow_runs": [run]}
