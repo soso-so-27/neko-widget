@@ -136,3 +136,25 @@ it('pages the exact owner plan prefix and surfaces every version and marker', as
     .rejects.toMatchObject({ code: 'PURGE_MANIFEST_COPY_UNAVAILABLE' });
   expect(calls).toBe(2);
 });
+
+it('lists all owner plan intents and rejects a cross-owner key', async () => {
+  const prefix = `purge-plan/v1/${ownerId}/`;
+  const otherIntent = '00000000-0000-4000-8000-000000000006';
+  let badKey = false;
+  const store = new S3PurgeManifestStore(config, async input => {
+    expect(new URL(String(input)).searchParams.get('prefix')).toBe(prefix);
+    const key = badKey
+      ? `purge-plan/v1/00000000-0000-4000-8000-000000000099/${intentId}/header`
+      : `purge-plan/v1/${ownerId}/${otherIntent}/header`;
+    return new Response(`<ListVersionsResult><Name>${config.bucket}</Name>`
+      + `<Prefix>${prefix}</Prefix><MaxKeys>1000</MaxKeys><EncodingType>url</EncodingType>`
+      + `<IsTruncated>false</IsTruncated><Version><Key>${key}</Key>`
+      + `<VersionId>v1</VersionId><Size>17</Size></Version></ListVersionsResult>`,
+    { status: 200 });
+  });
+  expect((await store.listOwnerEvidenceVersionsPage(ownerId)).versions)
+    .toMatchObject([{ key: `purge-plan/v1/${ownerId}/${otherIntent}/header` }]);
+  badKey = true;
+  await expect(store.listOwnerEvidenceVersionsPage(ownerId))
+    .rejects.toMatchObject({ code: 'PURGE_MANIFEST_COPY_UNAVAILABLE' });
+});

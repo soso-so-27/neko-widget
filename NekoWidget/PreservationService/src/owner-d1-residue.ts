@@ -18,6 +18,7 @@ export const ownerContentTables = [
 ] as const;
 export const purgeWorkTables = [
   'pa_owner_purge_events', 'pa_purge_execution_claims', 'pa_purge_fences',
+  'pa_purge_evidence_cleanup_permits',
   'pa_purge_manifest_chunks', 'pa_purge_manifest_remote_refs',
   'pa_purge_manifest_remote_seals', 'pa_purge_manifests',
 ] as const;
