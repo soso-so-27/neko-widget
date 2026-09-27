@@ -1488,10 +1488,15 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
-        for scenario in ["saved", "seasonal-large"] {
-            let app = launch(scenario)
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                + (largeText ? ["--ux-large-text"] : [])
+            app.launch()
             XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
-            let tab = app.buttons["main-tab-tools"]
+            let identified = app.buttons["main-tab-tools"]
+            let tab = identified.exists ? identified : app.tabBars.buttons["ツール"]
             XCTAssertTrue(tab.waitForExistence(timeout: 10))
             tab.tap()
             let showcase = app.buttons["tools-showcase-open"]
@@ -1507,7 +1512,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertTrue(tile.label.contains("準備中"), identifier)
                 XCTAssertFalse(app.buttons[identifier].exists, identifier)
             }
-            capture("tools-entry-\(scenario)")
+            capture("tools-entry-\(largeText ? "large" : "standard")")
             app.terminate()
         }
     }
