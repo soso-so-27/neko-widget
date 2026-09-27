@@ -166,12 +166,14 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
     "NekoWidget/ci/test-app-store-screenshot-workflow.py",
     MEMORY_TEST_PATH,
 }) | MEMORY_PROJECTION_PATHS
-# These are app-target views and their UI fixture, not Widget extension or
-# shared-model sources. Keep all app UI suites for arbitrary behavior changes
-# here, but do not run Widget rendering/Gallery variants with no Widget input.
+# These are app-target sources and their UI fixture, not Widget extension or
+# shared-model sources. A service enters this list only after its target
+# membership and consumers have been checked. Keep all app UI suites for
+# behavior changes, but do not run Widget Gallery with no Widget input.
 APP_VIEW_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/MainTabView.swift",
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
+    "NekoWidget/NekoWidget/Services/ShowcasePhotoStore.swift",
     MEMORY_TEST_PATH,
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
