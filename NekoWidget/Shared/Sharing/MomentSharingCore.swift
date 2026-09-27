@@ -655,12 +655,15 @@ struct MomentEncryptedManifest: Codable, Equatable, Sendable {
     let pixelHeight: Int
     let plaintextSHA256: Data
     var caption: String? = nil
+    /// Missing on older encrypted sends, which used sender policy 1.
+    var senderPolicyVersion: Int? = nil
 
     func validated() throws -> Self {
         guard try MomentCaption.normalized(caption) == caption else {
             throw MomentSharingError.invalidPayload
         }
         guard protocolVersion == MomentSharingProtocol.version,
+              senderPolicyVersion.map({ $0 == 1 || $0 == 2 }) ?? true,
               captureDateIsMissing == (capturedAt == nil),
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(pixelWidth),
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(pixelHeight),
@@ -764,10 +767,12 @@ enum MomentCrypto {
         context: MomentRequestContext,
         spaceGenerationKey: Data,
         moderationVersion: Int = MomentSharingProtocol.moderationVersion,
-        caption: String? = nil
+        caption: String? = nil,
+        senderPolicyVersion: Int = 1
     ) throws -> MomentPreparedPayload {
         _ = try context.validated()
         guard !canonicalJPEG.isEmpty,
+              (senderPolicyVersion == 1 || senderPolicyVersion == 2),
               canonicalJPEG.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
               spaceGenerationKey.count == 32,
               moderationVersion == MomentSharingProtocol.moderationVersion
@@ -787,7 +792,8 @@ enum MomentCrypto {
             pixelWidth: pixelWidth,
             pixelHeight: pixelHeight,
             plaintextSHA256: Data(SHA256.hash(data: canonicalJPEG)),
-            caption: try MomentCaption.normalized(caption)
+            caption: try MomentCaption.normalized(caption),
+            senderPolicyVersion: senderPolicyVersion == 1 ? nil : senderPolicyVersion
         )
         let manifestCiphertext = try seal(
             try manifest.encoded(),

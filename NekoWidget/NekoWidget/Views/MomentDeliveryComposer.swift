@@ -311,6 +311,13 @@ enum MomentSharedPhoto: Identifiable {
         }
     }
 
+    var senderPolicyVersion: Int {
+        switch self {
+        case let .received(item): item.senderPolicyVersion ?? 1
+        case let .sent(record): record.senderPolicyVersion
+        }
+    }
+
     static func ordered(
         received: [MomentInboxItem], sent: [MomentSentRecordPresentation]
     ) -> [Self] {

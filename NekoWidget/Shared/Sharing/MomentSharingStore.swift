@@ -523,9 +523,12 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
     var acknowledgedAt: Date? = nil
     var accessExpiresAt: Date
     var caption: String? = nil
+    /// Missing on receipts written before policy 2; those are policy 1.
+    var senderPolicyVersion: Int? = nil
 
     func validated() throws -> Self {
         guard try MomentCaption.normalized(caption) == caption,
+              senderPolicyVersion.map({ $0 == 1 || $0 == 2 }) ?? true,
               (state != .revoked && state != .blocked) || caption == nil
         else { throw MomentSharingError.stateUnavailable }
         guard schemaVersion == Self.schemaVersion,

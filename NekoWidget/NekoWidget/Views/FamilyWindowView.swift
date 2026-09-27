@@ -837,7 +837,8 @@ struct FamilyWindowView: View {
                    !model.isShowingLastKnownState {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
                         source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
-                        caption: model.isReportOnly ? nil : model.caption(for: item), captionIsOwn: false,
+                        caption: model.caption(for: item), captionIsOwn: false,
+                        allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
                         captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(
                         imageURL: widgetPhotoRequest == nil
@@ -995,9 +996,9 @@ struct FamilyWindowView: View {
                 }
                 switch photo {
                 case let .received(item):
-                    AnyView(compactMomentCard(item, caption: caption))
+                    return AnyView(compactMomentCard(item, caption: caption))
                 case let .sent(record):
-                    AnyView(Button { selectedSentRecord = record } label: {
+                    return AnyView(Button { selectedSentRecord = record } label: {
                         sentRecordCard(record, caption: caption)
                     }
                     .buttonStyle(.plain))
@@ -1024,7 +1025,7 @@ struct FamilyWindowView: View {
                 VStack(spacing: 10) {
                     ForEach(unavailable.prefix(sentRecordDisplayLimit)) { record in
                         Button { selectedSentRecord = record } label: {
-                            sentRecordCard(record)
+                            sentRecordCard(record, caption: record.senderPolicyVersion == 1 ? record.localCaption : nil)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1094,7 +1095,8 @@ struct FamilyWindowView: View {
                 spacing: 10
             ) {
                 ForEach(orderedReceivedMoments.dropFirst()) { item in
-                    compactMomentCard(item)
+                    compactMomentCard(item, caption: (item.senderPolicyVersion ?? 1) == 1
+                        ? model.caption(for: item) : nil)
                 }
             }
         }
@@ -2185,6 +2187,14 @@ struct FamilyWindowView: View {
                     receivesNotificationFocus: receivesNotificationFocus,
                     contentMode: .fit
                 )
+                if (item.senderPolicyVersion ?? 1) == 1, let caption = model.caption(for: item) {
+                    Text(verbatim: caption)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(13)
+                        .accessibilityIdentifier("family-window-received-caption-full")
+                }
             }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -2291,7 +2301,7 @@ struct FamilyWindowView: View {
     ) -> some View {
         let photo = MomentReceivedPhotoHeader(
             url: model.imageURL(for: item),
-            caption: nil,
+            caption: (item.senderPolicyVersion ?? 1) == 1 ? model.caption(for: item) : nil,
             contentMode: contentMode
         )
         .accessibilityLabel("届いた写真。\(captureLabel(item))")
@@ -3237,6 +3247,7 @@ private struct MomentSentPhotoDetail: View {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
                         source: record.momentID != nil ? (model.pairingState?.spaceID).map { sharedMemoSource(record, spaceID: $0) } : nil,
                         caption: record.localCaption, captionIsOwn: true,
+                        allowsLegacyCaptionWithoutCatalog: record.senderPolicyVersion == 1,
                         captionIdentifier: "family-window-sent-caption", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(imageURL: displayedDetailURL,
                         legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },

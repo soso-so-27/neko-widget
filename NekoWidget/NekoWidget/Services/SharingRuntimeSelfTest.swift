@@ -5777,6 +5777,22 @@ actor SharingRuntimeSelfTestRunner {
         guard decoded.senderPolicyVersion == 1, decoded.sharedRecordCommit == nil else {
             throw MomentSharingError.stateUnavailable
         }
+        let receivedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let oldInbox = MomentInboxItem(id: "legacy_caption_fixture",
+            senderParticipantID: "member_legacy_caption", kind: .live, keyEpoch: 1,
+            localJPEGFileName: "legacy_caption_fixture.jpg", capturedAt: nil,
+            captureDateIsMissing: true, committedAt: receivedAt, receivedAt: receivedAt,
+            state: .available, accessExpiresAt: receivedAt.addingTimeInterval(3_600),
+            caption: "前から届いたひとこと")
+        let oldReceipt = try JSONDecoder().decode(MomentInboxItem.self,
+            from: JSONEncoder().encode(oldInbox)).validated()
+        guard oldReceipt.senderPolicyVersion == nil,
+              oldReceipt.caption == oldInbox.caption else { throw MomentSharingError.stateUnavailable }
+        var newInbox = oldInbox
+        newInbox.senderPolicyVersion = 2
+        let newReceipt = try JSONDecoder().decode(MomentInboxItem.self,
+            from: JSONEncoder().encode(newInbox)).validated()
+        guard newReceipt.senderPolicyVersion == 2 else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func testMomentOutboxBoundsAndExpiry() throws {
