@@ -127,12 +127,15 @@ struct FamilyRecordEntryButton: View {
 // One photo collection: newly sent photos are committed with their shared record.
 // Never infer identity from image contents or dates, or repopulate a tombstone.
 struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
+    enum CaptionSource {
+        case legacy, record(String?), unresolved
+    }
     let spaceID: String
     let windowName: String
     let photos: [MomentSharedPhoto]
     let canShowRecords: Bool
     let showInformation: () -> Void
-    let deliveryCard: (MomentSharedPhoto) -> DeliveryCard
+    let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
     private let fixturePhoto: MomentShareIngressPhoto?
     @StateObject private var model: FamilyRecordViewModel
     @StateObject private var exporter = RecordExportController()
@@ -165,7 +168,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
          showInformation: @escaping () -> Void,
-         @ViewBuilder deliveryCard: @escaping (MomentSharedPhoto) -> DeliveryCard) {
+         @ViewBuilder deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.showInformation = showInformation
         self.deliveryCard = deliveryCard
@@ -186,6 +189,15 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                        case let .sent(record): momentID = record.momentID }
         guard let snapshot, let momentID else { return nil }
         return try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: momentID)
+    }
+
+    private func captionSource(for photo: MomentSharedPhoto, in snapshot: FamilyRecordSnapshot?) -> CaptionSource {
+        guard let snapshot else { return .unresolved }
+        guard let row = linkedRecord(photo, in: snapshot) else { return .legacy }
+        guard let wordsID = try? FamilyRecordCommitPayload.captionID(spaceID: spaceID, photoID: row.id),
+              let words = snapshot.catalog.records.first(where: { $0.id == wordsID && $0.kind == .words })
+        else { return .legacy }
+        return .record(words.state == .active ? snapshot.words[wordsID] : nil)
     }
 
     private struct Projection {
@@ -332,7 +344,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         switch item {
         case let .delivery(photo, retained):
             VStack(alignment: .leading, spacing: 4) {
-                deliveryCard(photo)
+                deliveryCard(photo, captionSource(for: photo, in: snapshot))
                 if !retained { Text("以前の写真").font(.caption).foregroundStyle(.secondary) }
             }
         case let .record(row):
@@ -503,7 +515,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     private var memoContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                if let caption, !caption.isEmpty, !hasStoredDeliveryMemo {
+                if let caption, !caption.isEmpty, shouldShowLegacyCaption {
                     memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
                 } else { Spacer(minLength: 0) }
                 if model.snapshot != nil {
@@ -549,13 +561,17 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
         .padding(.horizontal, 16).padding(.vertical, 4)
     }
 
-    private var hasStoredDeliveryMemo: Bool {
-        guard let source, let snapshot = model.snapshot,
-              let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID),
-              let wordsID = try? FamilyRecordCommitPayload.captionID(spaceID: snapshot.catalog.spaceID, photoID: photo.id)
-        else { return false }
-        // A withdrawn initial memo must not reappear as the delivery caption.
-        return snapshot.catalog.records.contains { $0.id == wordsID && $0.kind == .words }
+    private var shouldShowLegacyCaption: Bool {
+        guard let source else { return true }
+        // An unresolved catalog cannot establish whether the delivery text
+        // was withdrawn. Never use the older delivery copy as a fallback.
+        guard let snapshot = model.snapshot else { return false }
+        guard let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog,
+            momentID: source.momentID),
+              let wordsID = try? FamilyRecordCommitPayload.captionID(
+                spaceID: snapshot.catalog.spaceID, photoID: photo.id)
+        else { return true }
+        return !snapshot.catalog.records.contains { $0.id == wordsID && $0.kind == .words }
     }
 
     private func reload() async {
@@ -1249,9 +1265,14 @@ struct FamilyRecordUIFixture: View {
                             spaceID: otherSpace ? "another_family_space" : "fixture_family_space",
                             windowName: "マイファミリー", photos: collectionPhotos,
                             canShowRecords: canReadCollection, client: client, fixturePhoto: photo,
-                            showInformation: {}) { item in
+                            showInformation: {}) { item, captionSource in
                                 if case let .sent(record) = item {
-                                    MomentSentRecordCard(record: record)
+                                    let caption: String? = switch captionSource {
+                                    case .legacy: record.localCaption
+                                    case let .record(text): text
+                                    case .unresolved: nil
+                                    }
+                                    MomentSentRecordCard(record: record, caption: caption)
                                         .accessibilityIdentifier("family-collection-delivery")
                                 }
                             }
@@ -1274,6 +1295,14 @@ struct FamilyRecordUIFixture: View {
                         } }.accessibilityIdentifier("family-collection-fixture-retain")
                         Button("期限") { showDelivery.toggle() }
                             .accessibilityIdentifier("family-collection-fixture-expire")
+                        Menu("メモ") {
+                            Button("初回メモ") { Task {
+                                try? await client.addInitialDeliveryWords(); refresh()
+                            } }.accessibilityIdentifier("family-collection-fixture-initial-words")
+                            Button("初回メモを取り下げ") { Task {
+                                try? await client.withdrawInitialDeliveryWords(); refresh()
+                            } }.accessibilityIdentifier("family-collection-fixture-withdraw-initial-words")
+                        }
                         Button("撤回") { Task {
                             if let row = try? await client.load().catalog.records.first(where: { $0.kind == .photo }),
                                let operation = try? await client.prepareWithdrawal(row) {
@@ -1371,6 +1400,28 @@ actor FamilyRecordFixtureClient: FamilyRecordServing {
         rows.append(FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: peer,
             revision: 1, state: .active, keyEpoch: 1, ciphertext: nil, createdAt: now, updatedAt: now))
         words[id] = "相手が添えた言葉"
+    }
+    func addInitialDeliveryWords() throws {
+        try requireActive()
+        guard let photo = rows.first(where: { $0.kind == .photo }) else { throw FamilyRecordError.changed }
+        let id = try FamilyRecordCommitPayload.captionID(spaceID: space, photoID: photo.id)
+        guard !rows.contains(where: { $0.id == id }) else { throw FamilyRecordError.changed }
+        let now = Date().timeIntervalSince1970
+        rows.append(FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: author,
+            revision: 1, state: .active, keyEpoch: 1, ciphertext: nil, createdAt: now, updatedAt: now))
+        words[id] = "はじめてのおふろ"
+    }
+    func withdrawInitialDeliveryWords() throws {
+        try requireActive()
+        guard let photo = rows.first(where: { $0.kind == .photo }),
+              let id = try? FamilyRecordCommitPayload.captionID(spaceID: space, photoID: photo.id),
+              let index = rows.firstIndex(where: { $0.id == id && $0.state == .active })
+        else { throw FamilyRecordError.changed }
+        let prior = rows[index]
+        rows[index] = FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: author,
+            revision: prior.revision + 1, state: .withdrawn, keyEpoch: 1, ciphertext: nil,
+            createdAt: prior.createdAt, updatedAt: Date().timeIntervalSince1970)
+        words[id] = nil
     }
     func leave() { active = false }
 }

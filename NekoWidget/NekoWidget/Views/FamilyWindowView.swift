@@ -837,7 +837,7 @@ struct FamilyWindowView: View {
                    !model.isShowingLastKnownState {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
                         source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
-                        caption: model.caption(for: item), captionIsOwn: false,
+                        caption: model.isReportOnly ? nil : model.caption(for: item), captionIsOwn: false,
                         captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(
                         imageURL: widgetPhotoRequest == nil
@@ -983,13 +983,22 @@ struct FamilyWindowView: View {
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
-                showInformation: { showsSharedPhotoInformation = true }) { photo in
+                showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
+                let caption: String? = switch captionSource {
+                case .legacy:
+                    switch photo {
+                    case let .received(item): model.caption(for: item)
+                    case let .sent(record): record.localCaption
+                    }
+                case let .record(text): text
+                case .unresolved: nil
+                }
                 switch photo {
                 case let .received(item):
-                    compactMomentCard(item)
+                    compactMomentCard(item, caption: caption)
                 case let .sent(record):
                     Button { selectedSentRecord = record } label: {
-                        sentRecordCard(record)
+                        sentRecordCard(record, caption: caption)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1364,13 +1373,13 @@ struct FamilyWindowView: View {
         }
     }
 
-    private func compactMomentCard(_ item: MomentInboxItem) -> some View {
+    private func compactMomentCard(_ item: MomentInboxItem, caption: String? = nil) -> some View {
         Button {
             selectedMomentForDetail = item
         } label: {
             MomentReceivedPhotoThumbnail(
                 url: model.imageURL(for: item),
-                caption: model.caption(for: item),
+                caption: caption,
                 receivedAt: item.receivedAt,
                 isSaved: model.isSavedMemory(item),
                 hasSentHeart: model.heartOutboxItem(for: item)?.phase == .sent
@@ -1378,18 +1387,18 @@ struct FamilyWindowView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(compactMomentAccessibilityLabel(item))
+        .accessibilityLabel(compactMomentAccessibilityLabel(item, caption: caption))
         .accessibilityHint("写真を大きく表示して操作します")
         .accessibilityIdentifier("family-window-photo-thumbnail-\(item.id)")
     }
 
-    private func compactMomentAccessibilityLabel(_ item: MomentInboxItem) -> String {
+    private func compactMomentAccessibilityLabel(_ item: MomentInboxItem, caption: String?) -> String {
         var parts = [
             "届いた写真",
             captureLabel(item),
             "届いた日 \(item.receivedAt.formatted(.dateTime.month().day()))"
         ]
-        if let caption = model.caption(for: item) {
+        if let caption {
             parts.append("メモ。\(caption)")
         }
         if model.isSavedMemory(item) {
@@ -1952,13 +1961,13 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-outgoing-management")
     }
 
-    private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
+    private func sentRecordCard(_ record: MomentSentRecordPresentation, caption: String? = nil) -> some View {
         let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
 
-        return MomentSentRecordCard(record: record)
+        return MomentSentRecordCard(record: record, caption: caption)
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
@@ -1969,7 +1978,7 @@ struct FamilyWindowView: View {
                 )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(sentRecordAccessibilityLabel(record))
+        .accessibilityLabel(sentRecordAccessibilityLabel(record, caption: caption))
         .accessibilityHint(
             isNotificationTarget
                 ? "選んだ写真です"
@@ -1989,7 +1998,7 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordAccessibilityLabel(
-        _ record: MomentSentRecordPresentation
+        _ record: MomentSentRecordPresentation, caption: String?
     ) -> String {
         var parts = [
             "送った写真",
@@ -1998,7 +2007,7 @@ struct FamilyWindowView: View {
         if record.hasReceivedHeart {
             parts.append("ハートが届いています")
         }
-        if let caption = record.localCaption {
+        if let caption {
             parts.append("メモ。\(caption)")
         }
         if sentRecordThumbnail(record) == nil {
@@ -2176,14 +2185,6 @@ struct FamilyWindowView: View {
                     receivesNotificationFocus: receivesNotificationFocus,
                     contentMode: .fit
                 )
-                if let caption = model.caption(for: item) {
-                    Text(verbatim: caption)
-                        .font(.body)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(13)
-                        .accessibilityIdentifier("family-window-received-caption-full")
-                }
             }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -2290,7 +2291,7 @@ struct FamilyWindowView: View {
     ) -> some View {
         let photo = MomentReceivedPhotoHeader(
             url: model.imageURL(for: item),
-            caption: model.caption(for: item),
+            caption: nil,
             contentMode: contentMode
         )
         .accessibilityLabel("届いた写真。\(captureLabel(item))")

@@ -3067,7 +3067,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("到着は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
-        self.assertIn("MomentSentRecordCard(record: record)", family)
+        self.assertIn("MomentSentRecordCard(record: record, caption: caption)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
@@ -3462,7 +3462,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("withdrawnIDs.contains", collection)
         self.assertIn("FamilyRecordSourceIdentity.existingPhoto", collection)
         self.assertIn("FamilyRecordExporter.verify", collection)
-        self.assertIn("compactMomentCard(item)", gallery)
+        self.assertIn("compactMomentCard(item, caption: caption)", gallery)
+        self.assertIn("case .unresolved: nil", gallery)
+        self.assertIn("captionSource(for: photo, in: snapshot)", collection)
         self.assertIn("selectedSentRecord = record", gallery)
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
@@ -3538,7 +3540,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentReceivedPhotoHeader(", primary)
         self.assertIn("contentMode: .fit", primary)
         self.assertIn("contentMode: .fill", primary)
-        self.assertIn("family-window-received-caption-full", primary)
+        self.assertNotIn("model.caption(for: item)", primary,
+            "Report-only cards must not resurrect a withdrawn delivery caption.")
         self.assertNotIn(".frame(height: 280)", primary)
         self.assertNotIn("maxHeight: 520", primary)
 
@@ -3602,9 +3605,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         # Geometry is exercised by MomentDeliveryComposerUITests on iOS,
         # rather than pinning the old overlay implementation here.
-        self.assertIn("MomentSentRecordCard(record: record)", sent)
+        self.assertIn("MomentSentRecordCard(record: record, caption: caption)", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
-        self.assertIn("sentRecordAccessibilityLabel(record)", sent)
+        self.assertIn("sentRecordAccessibilityLabel(record, caption: caption)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)
 
         actions = section(

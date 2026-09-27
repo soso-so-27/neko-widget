@@ -665,17 +665,30 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
                 if let sharedRecord { try values.encode(sharedRecord, forKey: .sharedRecord) }
             }
         }
-        let response: CommitResponse = try await sendJSON(
-            path: "/v2/moments/\(try safePath(momentID))/commit",
-            method: "POST",
-            body: CommitRequest(
-                protocolVersion: MomentSharingProtocol.version,
-                clientRequestId: clientRequestID.uuidString.lowercased(),
-                sharedRecord: sharedRecord
-            ),
-            pairingState: pairingState,
-            credential: credential
+        let request = CommitRequest(
+            protocolVersion: MomentSharingProtocol.version,
+            clientRequestId: clientRequestID.uuidString.lowercased(),
+            sharedRecord: sharedRecord
         )
+        let path = "/v2/moments/\(try safePath(momentID))/commit"
+        let response: CommitResponse
+        if sharedRecord != nil {
+            // The relay hashes the exact request bytes for idempotency. Keep
+            // policy-2 retries stable across process launches and encoders.
+            // Policy-1 retains its original encoding for in-flight retries.
+            let stableEncoder = JSONEncoder()
+            stableEncoder.outputFormatting = .sortedKeys
+            response = try await send(
+                path: path, method: "POST", body: stableEncoder.encode(request),
+                contentType: "application/json", maximumResponseBytes: 256 * 1_024,
+                pairingState: pairingState, credential: credential
+            )
+        } else {
+            response = try await sendJSON(
+                path: path, method: "POST", body: request,
+                pairingState: pairingState, credential: credential
+            )
+        }
         guard response.protocolVersion == MomentSharingProtocol.version,
               response.moment.id == momentID,
               response.moment.state == "committed",
