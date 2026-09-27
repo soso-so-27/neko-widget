@@ -1504,14 +1504,19 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("写真を見せる"))
-            XCTAssertTrue(lost.exists)
-            for identifier in ["tools-care-unavailable", "tools-vet-unavailable",
-                               "tools-evacuation-unavailable"] {
+            for identifier in ["tools-care-unavailable", "tools-vet-unavailable"] {
                 let tile = app.descendants(matching: .any)[identifier]
                 XCTAssertTrue(tile.exists, identifier)
                 XCTAssertTrue(tile.label.contains("準備中"), identifier)
                 XCTAssertFalse(app.buttons[identifier].exists, identifier)
             }
+            for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
+            XCTAssertTrue(lost.isHittable)
+            let evacuation = app.descendants(matching: .any)["tools-evacuation-unavailable"]
+            for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
+            XCTAssertTrue(evacuation.isHittable)
+            XCTAssertTrue(evacuation.label.contains("準備中"))
+            XCTAssertFalse(app.buttons["tools-evacuation-unavailable"].exists)
             capture("tools-entry-\(largeText ? "large" : "standard")")
             app.terminate()
         }
