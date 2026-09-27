@@ -88,3 +88,47 @@ stagingを先行している状態なので、migration番号を上書き・手�
 4項目すべてtrue、既定SSE-S3(AES256)、lifecycle未設定。
 版を残す復旧には適合するが、非現行版を含む容量・費用が自動で止まる設定ではない。
 復旧期間を壊す一律のlifecycleは追加していない。
+
+## 9/27 10:11 JST 個人識別HMAC鍵の非公開登録
+
+`scripts/provision-staging-identity-secret.mjs` を専用commit `75a9195` で追加。
+AWS STSのアカウント、Cloudflareのアカウント・対象Worker、配備中の最新100%版の
+`PRESERVATION_ENABLED=NO` / `CLEANUP_ENABLED=NO` を読み取り照合してから、
+32バイト乱数を東京リージョンの既存KMS鍵によるSSM SecureStringとして
+`/neko/preservation/staging/identity-index-v1` に非上書き保存し、
+同値を非公開staging Workerの `IDENTITY_INDEX_SECRET` に登録した。
+鍵の値はチャット・ファイル・CLI引数・ログに出していない。
+事後のSSM存在確認、Worker secret名の確認、遠隔OFF再照合は成功。
+`--recover` はSSMからWorker secretを再登録する手段で、鍵を再生成しない。
+
+独立レビューは、初回の相対config/暗黙アカウントと、次のローカルOFFだけを
+信じる欠陥を指摘。両方直して再レビューし、具体的P1/P2なし。
+検証と本番の同時操作競合は運用上なお避ける。鍵登録は本人認証の成立、
+写真保存の有効化、課金照合、別端末復元、公開・販売の証拠ではない。
+
+## 9/27 12:20 JST 非公開 KMS Service Binding の合成試験
+
+AWS一時ログインの対象アカウントと東京KMS鍵を再照合。共有staging D1の
+課金migration整合は[別記録](2026-09-27-preservation-staging-billing-migrations.md)。
+SSM SecureString `/neko/preservation/staging/kms-caller-v1` に共有呼出しtokenを
+非上書き登録し、公開受付OFFの保管Workerと非公開KMS Workerのsecretに同値登録。
+token・KMS鍵材・AWS認証情報はファイルやログに出していない。
+
+ローカルloopbackから、配備済み非公開Workerへのremote Service Bindingを使用。
+IAM専用鍵と非公開KMS gateを一時的に有効にして、合成32バイト鍵の
+wrap/unwrap往復と、誤token・誤context・誤key IDの拒否を確認した。
+最初の2回は旧ローカルbindingの参照と診断プロセス識別で失敗したが、
+どちらもfinallyで無効化。配備後に新しく起動した診断プロセスで3回目は成功。
+試験後、別コマンドでもIAM鍵Inactive、KMS gate NO、保管受付NO、cleanup NO、
+診断port閉鎖を確認。実写真や実利用者データは使用・変更していない。
+
+追加した診断設定はローカル専用で、Workerとして配備しない。鍵を通常時Inactiveに
+しているので、これは常時運用状態での写真保管成功を意味しない。課金照会、
+実端末の暗号化保存と別端末復元、退会後の持ち出し・削除の実環境試験は未完了。
+公開受付・cleanup・課金判定はいずれもOFFを維持する。
+
+この候補の変更はstaging secret配布、KMS診断、共有staging migration操作設定と記録。
+直接証拠は上記の合成試験、DB quick/foreign-key check、Node構文・型検査、
+PowerShell構文検査。実写真と課金購入は未検証。CIは共有設定との混在により
+full-v1想定で、過去実測64.43〜97.92分。候補の初回08:40 JSTからの累計時間を
+最終結果に含める。候補固定後は開発フロー検査と必須CIを1回実行する。

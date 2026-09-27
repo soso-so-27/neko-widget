@@ -1,0 +1,14 @@
+{
+  // Migration CLI only. Never deploy this minimal config as a Worker.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-window-sharing-staging-migrations-only",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": false,
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "neko-window-sharing-staging",
+    "database_id": "cb3b2386-3a6f-4253-b918-8aafed9ff735",
+    "migrations_dir": "migrations"
+  }]
+}
