@@ -770,6 +770,7 @@ struct MainTabView: View {
 
     private func prepareShowcaseIfNeeded(openAfter: Bool) {
         let scopeID = effectiveShowcaseScopeID
+        // A saved set opens as-is; recommendation runs only before this scope's first set.
         if !showcaseStore.availableEntries(in: scopeID).isEmpty {
             if openAfter {
                 showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
