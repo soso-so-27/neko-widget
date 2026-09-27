@@ -52,6 +52,10 @@ AWS側でInactiveにした。secret値はファイルや記録に残していな
 両Workerの共有呼出しsecretを別々のWorker secretとして同値登録した。
 非公開KMS Workerを東京リージョン・対象ARN・既定OFFで再配備し、
 本体Workerも3つの名前付きService Binding・受付OFF・cleanup OFFで再配備した。
+9/27、起動時に必須だが設定が欠けていた`REQUEST_LIMITER`をstagingへ追加。
+CloudflareのRate Limiting binding（120回/60秒/拠点/同一IPキー）をdry-runで確認し、
+本体Workerを引き続き受付OFF・routeなしで再配備した。これはIP単位の濫用緩和で、
+アカウント全体の請求上限や本人単位の厳密な受付上限ではない。
 いずれも公開routeなし。実Worker間の署名付きKMS通信は未検証。
 候補差分の独立レビューは完了。
 AWS Access Analyzerのidentity policy検証はfindings 0。

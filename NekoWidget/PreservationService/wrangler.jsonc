@@ -35,6 +35,11 @@
         "binding": "ARCHIVE",
         "bucket_name": "neko-preservation-staging-private"
       }],
+      "ratelimits": [{
+        "name": "REQUEST_LIMITER",
+        "namespace_id": "170927401",
+        "simple": { "limit": 120, "period": 60 }
+      }],
       "services": [{
         "binding": "PHOTO_VALIDATOR",
         "service": "neko-preservation-jpeg-disabled",
