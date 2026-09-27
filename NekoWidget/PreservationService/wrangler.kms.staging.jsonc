@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-kms-staging-disabled",
+  "main": "src/aws-kms-key-wrapper.ts",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "PRESERVATION_KMS_ENABLED": "NO",
+    "KMS_REGION": "ap-northeast-1",
+    "KMS_KEY_ARN": "arn:aws:kms:ap-northeast-1:164892691568:key/339319dc-388b-4bd7-adb8-29d37d836d72"
+  }
+}
