@@ -794,7 +794,11 @@ struct UnassignedCatPhotosView: View {
                     systemImage: "checkmark.circle"
                 )
             } else {
-                CatSelectablePhotoGrid(photos: photos, selection: $selection)
+                CatSelectablePhotoGrid(
+                    photos: photos,
+                    selection: $selection,
+                    gridAccessibilityIdentifier: "cat-profile-add-picker"
+                )
             }
         }
         .disabled(isSaving)
@@ -1131,6 +1135,7 @@ struct CatProfilePhotoPicker: View {
 private struct CatSelectablePhotoGrid: View {
     let photos: [CatProfilePhotoPresentation]
     @Binding var selection: Set<String>
+    var gridAccessibilityIdentifier = "cat-profile-photo-grid"
     var onChoose: ((String) -> Void)? = nil
     var showsSelectionMarks = true
 
@@ -1186,6 +1191,7 @@ private struct CatSelectablePhotoGrid: View {
             }
             .padding(3)
         }
+        .accessibilityIdentifier(gridAccessibilityIdentifier)
         .background(Color(.systemGroupedBackground))
     }
 
