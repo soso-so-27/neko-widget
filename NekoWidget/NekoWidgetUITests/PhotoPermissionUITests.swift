@@ -1007,7 +1007,7 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.tap()
         XCTAssertTrue(app.staticTexts["追加できませんでした。選択は残っています。もう一度お試しください。"].waitForExistence(timeout: 5))
-        XCTAssertEqual(add.label, "1枚を追加", "A failed save lost the explicit selection.")
+        XCTAssertEqual(add.label, "テスト猫Bに1枚追加", "A failed save lost the explicit selection or destination.")
         add.tap()
         XCTAssertTrue(app.navigationBars["テスト猫Bの写真"].waitForExistence(timeout: 5))
         XCTAssertEqual(visiblePhotos(app).count, 2)
@@ -3624,7 +3624,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["相手が添えた言葉"].waitForExistence(timeout: 10))
         app.buttons["閉じる"].tap()
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        app.buttons["family-collection-fixture-expire"].tap()
+        // After closing the detail overlay, XCTest can report a visible fixture
+        // button as offscreen while it auto-scrolls. Tap its actual centre.
+        app.buttons["family-collection-fixture-expire"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(delivery.waitForExistence(timeout: 10))
         XCTAssertEqual(retained.count, 0, "Restoring the delivery does not create a second version of the photo.")
         app.buttons["family-collection-fixture-withdraw"].tap()
