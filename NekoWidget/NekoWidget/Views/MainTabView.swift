@@ -553,9 +553,32 @@ struct MainTabView: View {
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
+        // The library contains every accessible photo, including people and scenery.
+        // Only cat candidates and photos explicitly confirmed for a cat belong here.
+        let knownPhotos = Dictionary(
+            (libraryPhotos + likedPhotos + catPhotos).map { ($0.localIdentifier, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let confirmedPhotos = catProfilesPresentation.profiles.flatMap(\.confirmedPhotos).map { photo in
+            knownPhotos[photo.localIdentifier] ?? PhotoPresentation(
+                localIdentifier: photo.localIdentifier,
+                creationDate: photo.creationDate,
+                catBoundingBox: photo.catBoundingBox,
+                detectedCatCount: photo.detectedCatCount
+            )
+        }
         var seen = Set<String>()
-        return (libraryPhotos + likedPhotos + catPhotos).filter {
-            seen.insert($0.localIdentifier).inserted
+        return (catPhotos + confirmedPhotos).filter {
+            !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
+                && seen.insert($0.localIdentifier).inserted
+        }.sorted { first, second in
+            let firstFavorite = first.isLiked || first.isPhotoLibraryFavorite
+            let secondFavorite = second.isLiked || second.isPhotoLibraryFavorite
+            if firstFavorite != secondFavorite { return firstFavorite }
+            if first.creationDate != second.creationDate {
+                return (first.creationDate ?? .distantPast) > (second.creationDate ?? .distantPast)
+            }
+            return first.localIdentifier < second.localIdentifier
         }
     }
 
@@ -665,7 +688,7 @@ struct MainTabView: View {
 
     private func showcaseScopeTitle(_ scopeID: String) -> String {
         catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "選んだ写真" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {
