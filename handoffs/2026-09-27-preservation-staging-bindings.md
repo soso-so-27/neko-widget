@@ -77,4 +77,7 @@ context欠落・余分なkey・別の鍵・鍵削除はimplicitDenyを確認。
 ただしD1の`sqlite_master`と移行履歴を読んだ結果、共有staging DBには
 `billing_account_keys`/`billing_runtime_gate`等の課金表がまだない。
 0019〜0025課金migrationは未適用で、0026以降の他機能移行だけが適用済み。
-共有アプリへの影響と移行順序を検証するまで課金照合はONにしない。
+さらに遠隔履歴の`0028_family_record_moments.sql`はこのmain checkoutの
+`0028_window_support_requests.sql`と同じ番号で別内容。並行中の共有機能作業が
+stagingを先行している状態なので、migration番号を上書き・手動補完しない。
+共有アプリへの影響と移行順序を本線担当と整合するまで課金照合はONにしない。
