@@ -310,6 +310,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         }
     }
 
+    // The photo picker lives with this collection; the window toolbar only opens settings.
     private func collectionActions(_ value: Projection) -> some View {
         HStack(spacing: 0) {
             if let addPhotoAction { addPhotoAction }
