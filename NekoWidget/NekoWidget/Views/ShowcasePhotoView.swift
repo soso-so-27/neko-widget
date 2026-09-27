@@ -255,7 +255,7 @@ struct ShowcasePreparationView: View {
                     }
                     if !preparedEntries.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("見せるアルバムの写真").font(.headline)
+                            Text("選んだ写真").font(.headline)
                             ForEach(preparedEntries) { entry in
                                 HStack {
                                     if let url = store.imageURL(for: entry),
@@ -322,7 +322,7 @@ struct ShowcasePreparationView: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("見せるアルバム")
+            .navigationTitle("見せる写真")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

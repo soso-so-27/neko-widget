@@ -133,6 +133,34 @@ private struct ShowcaseSession: Identifiable {
     let scopeID: String
 }
 
+private struct ToolTile: View {
+    let title: String
+    let systemImage: String
+    let subtitle: String
+    var isUnavailable = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(isUnavailable ? Color.secondary : Color.accentColor)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(isUnavailable ? "\(title)、準備中、利用不可" : "\(title)、\(subtitle)")
+    }
+}
+
 enum MemoriesRoute: Hashable {
     case favorites
     case memoryNotes
@@ -185,6 +213,7 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
 
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.photoMemoStore) private var memoStore
 
     let currentPhoto: PhotoPresentation?
@@ -322,6 +351,15 @@ struct MainTabView: View {
                 }
                 .tag(AppTab.windows)
             }
+
+            NavigationStack {
+                toolsView
+            }
+            .tabItem {
+                Label("ツール", systemImage: "wrench.and.screwdriver")
+                    .accessibilityIdentifier("main-tab-tools")
+            }
+            .tag(AppTab.tools)
         }
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -345,7 +383,7 @@ struct MainTabView: View {
                 }
             }
         } message: {
-            Text("選んだ写真だけを見せるアルバムに追加します。")
+            Text("この写真を「見せる写真」に追加します。")
         }
         .alert("写真を追加できませんでした", isPresented: $showcaseAddError) {
             Button("閉じる", role: .cancel) {}
@@ -521,6 +559,80 @@ struct MainTabView: View {
         }
     }
 
+    private var toolsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                toolSection("日常で使う") {
+                    Button {
+                        if hasPhotoAccess {
+                            openPreparedShowcase()
+                        } else {
+                            selectedTab = .photos
+                            requestPhotoAccess()
+                        }
+                    } label: {
+                        ToolTile(title: "写真を見せる", systemImage: "photo.on.rectangle.angled",
+                                 subtitle: showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty
+                                    ? "選んだ写真だけを表示"
+                                    : "\(showcaseScopeTitle(effectiveShowcaseScopeID))・\(showcaseStore.availableEntries(in: effectiveShowcaseScopeID).count)枚")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("tools-showcase-open")
+
+                    ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
+                             subtitle: "準備中", isUnavailable: true)
+                        .accessibilityIdentifier("tools-care-unavailable")
+
+                    ToolTile(title: "病院で見せる", systemImage: "cross.case",
+                             subtitle: "準備中", isUnavailable: true)
+                        .accessibilityIdentifier("tools-vet-unavailable")
+                }
+
+                toolSection("もしものとき") {
+                    NavigationLink {
+                        LostCatEmergencyEntryView(
+                            profiles: catProfilesPresentation.profiles,
+                            unregisteredPhotos: unregisteredCatPhotos
+                        )
+                    } label: {
+                        ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
+                                 subtitle: "画像・チラシを作る")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("tools-lost-cat-open")
+
+                    ToolTile(title: "避難に備える", systemImage: "backpack",
+                             subtitle: "準備中", isUnavailable: true)
+                        .accessibilityIdentifier("tools-evacuation-unavailable")
+                }
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("ツール")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { showsSettings = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("設定")
+                    .accessibilityIdentifier("tools-settings-button")
+            }
+        }
+    }
+
+    private func toolSection<Content: View>(_ title: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
+                        ? [GridItem(.flexible())]
+                        : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                      spacing: 12, content: content)
+        }
+    }
+
     private func consumeShowcaseLaunchRequest() {
         guard ShowcaseLaunchRequest.hasPending else { return }
         guard hasPhotoAccess else {
@@ -528,7 +640,11 @@ struct MainTabView: View {
             return
         }
         guard ShowcaseLaunchRequest.consume() else { return }
-        selectedTab = .memories
+        selectedTab = .tools
+        openPreparedShowcase()
+    }
+
+    private func openPreparedShowcase() {
         if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
             showsShowcasePreparation = true
         } else {
@@ -630,8 +746,7 @@ struct MainTabView: View {
                     replaysWidgetGuideAfterSettingsDismiss = true
                     showsSettings = false
                 },
-                personalArchiveStore: personalArchiveStore,
-                unregisteredCatPhotos: unregisteredCatPhotos
+                personalArchiveStore: personalArchiveStore
             )
         }
     }
@@ -941,18 +1056,6 @@ struct MainTabView: View {
             albumProfileActions: catProfilesActions,
             albumScope: .constant(scope),
             showSettings: { showsSettings = true },
-            openShowcase: {
-                if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
-                    showsShowcasePreparation = true
-                } else {
-                    showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
-                                                      scopeID: effectiveShowcaseScopeID)
-                }
-            },
-            showcaseEntries: showcaseStore.availableEntries(in: effectiveShowcaseScopeID),
-            showcaseCoverURL: showcaseStore.availableEntries(in: effectiveShowcaseScopeID).first
-                .flatMap { showcaseStore.imageURL(for: $0) },
-            showcaseScopeTitle: showcaseScopeTitle(effectiveShowcaseScopeID),
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
             referenceDate: albumHighlightsReferenceDate,

@@ -1486,16 +1486,39 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testShowcaseAlbumEntryRendersBeforeAlbumsAtStandardAndLargeText() {
-        for scenario in ["saved", "seasonal-large"] {
-            let app = launch(scenario)
-            let row = app.buttons["albums-showcase-open"]
-            XCTAssertTrue(row.waitForExistence(timeout: 10))
-            XCTAssertTrue(row.isHittable)
-            XCTAssertTrue(row.label.contains("見せるアルバム"))
-            XCTAssertTrue(row.label.contains("写真を選ぶ"))
-            XCTAssertGreaterThanOrEqual(row.frame.height, 64)
-            capture("showcase-entry-\(scenario)")
+    func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            // Acceptance scenarios use a separate two-tab harness; this opens MainTabView.
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                + (largeText ? ["--ux-large-text"] : [])
+            app.launch()
+            XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
+            let identified = app.buttons["main-tab-tools"]
+            let tab = identified.exists ? identified : app.tabBars.buttons["ツール"]
+            XCTAssertTrue(tab.waitForExistence(timeout: 10))
+            tab.tap()
+            let showcase = app.buttons["tools-showcase-open"]
+            let lost = app.buttons["tools-lost-cat-open"]
+            XCTAssertTrue(showcase.waitForExistence(timeout: 5))
+            XCTAssertTrue(showcase.isHittable)
+            XCTAssertTrue(showcase.label.contains("写真を見せる"))
+            for identifier in ["tools-care-unavailable", "tools-vet-unavailable"] {
+                let tile = app.descendants(matching: .any)[identifier]
+                XCTAssertTrue(tile.exists, identifier)
+                XCTAssertTrue(tile.label.contains("準備中"), identifier)
+                XCTAssertFalse(app.buttons[identifier].exists, identifier)
+            }
+            // The lower row is intentionally offscreen in the largest text size.
+            for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
+            XCTAssertTrue(lost.isHittable)
+            let evacuation = app.descendants(matching: .any)["tools-evacuation-unavailable"]
+            for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
+            XCTAssertTrue(evacuation.isHittable)
+            XCTAssertTrue(evacuation.label.contains("準備中"))
+            XCTAssertFalse(app.buttons["tools-evacuation-unavailable"].exists)
+            capture("tools-entry-\(largeText ? "large" : "standard")")
             app.terminate()
         }
     }
