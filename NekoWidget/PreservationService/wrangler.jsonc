@@ -23,6 +23,7 @@
         "RECOVERY_BACKFILL_ENABLED": "NO",
         "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO",
         "RETENTION_TRACKING_ENABLED": "NO",
+        "PRESERVATION_LINK_AUDIENCE": "neko-preservation-staging",
         "ENVIRONMENT": "staging"
       },
       "d1_databases": [{

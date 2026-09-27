@@ -34,10 +34,9 @@ AWS account/KMS状態、IAM Access Analyzerと許可/拒否シミュレーショ
 初候補08:40 JSTからの累計時間で評価し、最後のCI時間だけを所要時間としない。
 dry-runは実配備や接続成功を意味しない。
 
-未解決：固定候補CI、鍵Workerの正しいAWSアカウントへの
-接続、課金Workerの署名付き照会、実写真の暗号化保存と復元、費用測定。
-今回の設定だけでは保管サービスを開始できない。変更後の本体Workerを遠隔配備する前に、
-結線先の現行version/flagを再確認し、実権限・通信を検証する。
+未解決：固定候補CI、配備済み鍵Workerのsecretを使う実通信、
+課金Workerの署名付き照会、実写真の暗号化保存と復元、費用測定。
+今回の設定だけでは保管サービスを開始できない。
 
 AWS CLIの一時ログインを個人のブラウザで更新し、STS account
 `164892691568` とKMSの東京リージョン対称鍵がEnabledであることを読取確認。
@@ -69,3 +68,13 @@ context欠落・余分なkey・別の鍵・鍵削除はimplicitDenyを確認。
 合成32バイト鍵の実KMS wrap/unwrap 1件が成功した。試験鍵を削除し、
 残る鍵はInactiveと再照合した。これは製品コードの実AWS通信の証拠だが、
 配備済み非公開Workerのsecret・Service Binding連携や障害復旧の証拠ではない。
+
+## 非公開の課金照合先
+
+9/27、Cloudflare上の`neko-window-sharing-staging` D1 IDを照合し、
+課金WorkerをこのDB・audience`neko-preservation-staging`・両機能OFF・routeなしで再配備。
+本体Workerも同じaudienceと受付OFFで再配備した。既存共有Workerは変更していない。
+ただしD1の`sqlite_master`と移行履歴を読んだ結果、共有staging DBには
+`billing_account_keys`/`billing_runtime_gate`等の課金表がまだない。
+0019〜0025課金migrationは未適用で、0026以降の他機能移行だけが適用済み。
+共有アプリへの影響と移行順序を検証するまで課金照合はONにしない。
