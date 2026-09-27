@@ -21,13 +21,16 @@ KMS/課金とも期待通り503（既定OFF）、default entrypointの404では�
 
 ## 固定候補の検証計画
 
-変更はstaging Service Bindingと未適用のIAMポリシー候補、記録だけ。
+変更はstaging Service Binding、専用IAMポリシー、非公開KMS Workerの
+既定OFF設定、記録だけ。
 直接確認済みはdry-run、非公開Service Bindingの実呼出し（両方503）、
 AWS account/KMS状態、IAM Access Analyzerと許可/拒否シミュレーション。
 残る不確実性は実際のKMS署名通信と課金照会、資格情報の運用、提供開始条件。
-本線前に開発フロー検査・対象選択・必要CIを行う。直近の同系統Node CIは約1分、
-開発フロー検査は約2分だったが、この新しいポリシーファイルがfull CIを選ぶ
-可能性は未判定。fullなら1時間以上を想定して方法と時間を再評価する。
+本線前に開発フロー検査・対象選択・必要CIを行う。開発フロー検査の局所検査は
+85.1秒で成功したが、新しいポリシーとstaging設定は厳密な保管scopeの
+対象外で、full-v1（実測64.43〜97.92分）を選び、30分目標で停止した。
+設定だけを先にpushして後続の接続実装でfullを重ねず、機能候補を統合して
+直接境界検証後に固定候補の必須CIを1回実行する。CI成功と本線反映は未了。
 初候補08:40 JSTからの累計時間で評価し、最後のCI時間だけを所要時間としない。
 dry-runは実配備や接続成功を意味しない。
 
@@ -38,13 +41,24 @@ dry-runは実配備や接続成功を意味しない。
 
 AWS CLIの一時ログインを個人のブラウザで更新し、STS account
 `164892691568` とKMSの東京リージョン対称鍵がEnabledであることを読取確認。
-現行鍵policyはアカウントrootへの管理許可だけで、専用実行主体はまだ存在しない。
+現行鍵policyはアカウントrootへの管理許可だけ。
 AWS予算は月3 USD、実費1.5/3 USDと予測3 USDの通知（請求停止ではない）。
 専用staging IAM方針の候補は
 `scripts/aws-kms-staging-worker-policy.json`。同一鍵のEncrypt/Decryptと
-唯一の暗号化コンテキストキーに絞る。IAMユーザーやアクセスキーは
-作成していない。候補差分の独立レビューは完了したが、実権限は未検証。
+唯一の暗号化コンテキストキーに絞る。9/27、専用IAMユーザー
+`neko-preservation-staging-kms-worker`と限定policyを作成・関連付けた。
+アクセスキーを1本発行してCloudflareの非公開KMS Workerのsecretに登録した後、
+AWS側でInactiveにした。secret値はファイルや記録に残していない。
+両Workerの共有呼出しsecretを別々のWorker secretとして同値登録した。
+非公開KMS Workerを東京リージョン・対象ARN・既定OFFで再配備し、
+本体Workerも3つの名前付きService Binding・受付OFF・cleanup OFFで再配備した。
+いずれも公開routeなし。実Worker間の署名付きKMS通信は未検証。
+候補差分の独立レビューは完了。
 AWS Access Analyzerのidentity policy検証はfindings 0。
 IAM Simulatorは正しい鍵＋唯一のcontext keyでEncrypt/Decryptを許可、
 context欠落・余分なkey・別の鍵・鍵削除はimplicitDenyを確認。
-これは静的IAM判定であり、実行鍵の作成・KMS Workerの実通信・鍵の安全運用の証拠ではない。
+新規発行直後の一時鍵による初回Encryptは`UnrecognizedClientException`で失敗。
+その鍵は削除。次に12秒待ってSTSで専用主体を確認し、さらに別の一時鍵で
+合成32バイトのKMS Encrypt/Decrypt往復に成功した。試験用鍵は両方削除し、
+残る1本はInactive。初回失敗はIAM反映遅延が疑われるが断定しない。
+CLIの実KMS成功はWorkerの実通信・運用時のsecret使用・障害復旧の証拠ではない。
