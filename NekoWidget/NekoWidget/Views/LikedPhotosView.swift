@@ -932,6 +932,7 @@ struct LikedPhotosView: View {
         albumProfileActions: CatProfilesViewActions = .noOp,
         albumScope: Binding<CatProfileScopePresentation> = .constant(.everyone),
         showSettings: (() -> Void)? = nil,
+        openShowcase: (() -> Void)? = nil,
         showsReflectionArchive: Bool = false, showsHighlightArchive: Bool = false,
         referenceDate: Date = Date(),
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
