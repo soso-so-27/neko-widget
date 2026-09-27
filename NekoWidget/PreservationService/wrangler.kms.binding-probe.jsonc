@@ -1,0 +1,15 @@
+{
+  // Local wrangler dev only. Never deploy this diagnostic Worker.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-kms-local-binding-probe",
+  "main": "scripts/staging-kms-binding-probe.ts",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": false,
+  "observability": { "enabled": false },
+  "services": [{
+    "binding": "KEY_WRAPPER",
+    "service": "neko-preservation-kms-staging-disabled",
+    "entrypoint": "PreservationKeyWrapper",
+    "remote": true
+  }]
+}

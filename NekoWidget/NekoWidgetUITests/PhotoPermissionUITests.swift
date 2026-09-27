@@ -998,11 +998,10 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         createCat("テスト猫B", photoIndex: 1, app: app)
         app.buttons["cat-profile-more"].tap()
         app.buttons["cat-profile-add-photos"].tap()
-        XCTAssertTrue(app.buttons.matching(identifier: "cat-profile-photo").firstMatch.waitForExistence(timeout: 5))
-        guard let firstChoice = visiblePhotos(app).first else {
-            XCTFail("No explicit photo choices appeared.")
-            return
-        }
+        let picker = app.scrollViews["cat-profile-add-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        let firstChoice = picker.buttons.matching(identifier: "cat-profile-photo").firstMatch
+        XCTAssertTrue(firstChoice.waitForExistence(timeout: 5))
         firstChoice.tap()
         let add = app.buttons["cat-profile-confirm-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
