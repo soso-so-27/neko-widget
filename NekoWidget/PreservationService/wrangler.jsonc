@@ -23,6 +23,7 @@
         "RECOVERY_BACKFILL_ENABLED": "NO",
         "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO",
         "RETENTION_TRACKING_ENABLED": "NO",
+        "PRESERVATION_LINK_AUDIENCE": "neko-preservation-staging",
         "ENVIRONMENT": "staging"
       },
       "d1_databases": [{
@@ -35,10 +36,23 @@
         "binding": "ARCHIVE",
         "bucket_name": "neko-preservation-staging-private"
       }],
+      "ratelimits": [{
+        "name": "REQUEST_LIMITER",
+        "namespace_id": "170927401",
+        "simple": { "limit": 120, "period": 60 }
+      }],
       "services": [{
         "binding": "PHOTO_VALIDATOR",
         "service": "neko-preservation-jpeg-disabled",
         "entrypoint": "JPEGValidationService"
+      }, {
+        "binding": "KEY_WRAPPER",
+        "service": "neko-preservation-kms-staging-disabled",
+        "entrypoint": "PreservationKeyWrapper"
+      }, {
+        "binding": "MEMBERSHIP_AUTHORITY",
+        "service": "neko-preservation-billing-staging-disabled",
+        "entrypoint": "BillingAuthority"
       }]
     }
   }
