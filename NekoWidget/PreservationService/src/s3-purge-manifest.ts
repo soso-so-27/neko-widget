@@ -191,8 +191,23 @@ export class S3PurgeManifestStore {
    */
   async listOwnerVersionsPage(ownerId: string, intentId: string,
     cursor?: PurgeManifestCopyCursor): Promise<PurgeManifestCopyPage> {
-    if (!uuidPattern.test(ownerId) || !uuidPattern.test(intentId)) throw unavailable();
-    const prefix = `purge-plan/v1/${ownerId}/${intentId}/`;
+    return this.listVersionsPage(ownerId, intentId, cursor);
+  }
+
+  /** Owner-wide listing is needed to prove no orphan plan version remains
+   * after the last deletion event is removed. It does not authorize deletion.
+   */
+  async listOwnerEvidenceVersionsPage(ownerId: string,
+    cursor?: PurgeManifestCopyCursor): Promise<PurgeManifestCopyPage> {
+    return this.listVersionsPage(ownerId, undefined, cursor);
+  }
+
+  private async listVersionsPage(ownerId: string, intentId?: string,
+    cursor?: PurgeManifestCopyCursor): Promise<PurgeManifestCopyPage> {
+    if (!uuidPattern.test(ownerId) || (intentId !== undefined && !uuidPattern.test(intentId))) {
+      throw unavailable();
+    }
+    const prefix = `purge-plan/v1/${ownerId}/${intentId ? `${intentId}/` : ''}`;
     if (cursor && (!keyPattern.test(cursor.keyMarker)
       || !cursor.keyMarker.startsWith(prefix)
       || (cursor.versionIdMarker !== undefined
