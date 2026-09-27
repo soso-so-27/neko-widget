@@ -1,11 +1,12 @@
 import { activityStatement, authenticateSignedRequest, consumeNonceAndTouch,
   nonceStatements, requireLiveSpace, type AuthenticatedMember } from "./auth";
-import { base64urlDecode, sha256Base64url } from "./encoding";
+import { base64urlDecode, sha256, sha256Base64url } from "./encoding";
 import type { Env } from "./env";
 import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "./window-delivery-membership";
 import { ApiError, jsonResponse } from "./errors";
 import { enforceRateLimit, parseJsonBody, readBody, requireEmptyBody, transientNetworkKey } from "./http";
-import { exactKeys, integerField, stringField, uuidField } from "./validation";
+import { encodeCanonicalFields } from "./protocol";
+import { asObject, exactKeys, integerField, stringField, uuidField } from "./validation";
 
 // Bounded internal pilot. Reaching capacity rejects additions, never evicts.
 export const FAMILY_RECORD_MAXIMUM_PHOTOS = 100;
@@ -13,6 +14,51 @@ export const FAMILY_RECORD_MAXIMUM_WORDS = 1000;
 export const FAMILY_RECORD_MAXIMUM_PHOTO_BYTES = 2 * 1024 * 1024;
 const maximumWordsBytes = 32 * 1024;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+export interface MomentSharedRecord {
+  photoID: string;
+  photoCiphertext: string;
+  photoBytes: Uint8Array;
+  wordsID: string | null;
+  wordsCiphertext: string | null;
+  wordsSize: number;
+}
+
+/** Match FamilyRecordSourceIdentity.recordID's canonical transcript and UUID spelling. */
+export async function momentSharedPhotoID(spaceID: string, momentID: string): Promise<string> {
+  const bytes = (await sha256(encodeCanonicalFields(["NW.FAMILY-RECORD.MOMENT.1", spaceID, momentID]))).slice(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export async function parseMomentSharedRecord(value: unknown, spaceID: string, momentID: string): Promise<MomentSharedRecord> {
+  const object = asObject(value);
+  const hasWords = Object.hasOwn(object, "wordsID") || Object.hasOwn(object, "wordsCiphertext");
+  exactKeys(object, hasWords
+    ? ["photoID", "photoCiphertext", "wordsID", "wordsCiphertext"]
+    : ["photoID", "photoCiphertext"]);
+  const photoID = uuidField(object, "photoID");
+  if (photoID !== await momentSharedPhotoID(spaceID, momentID)) {
+    throw new ApiError(400, "family_record_photo_id_mismatch", "Shared photo does not match this moment.");
+  }
+  const photoCiphertext = stringField(object, "photoCiphertext");
+  const photoBytes = base64urlDecode(photoCiphertext);
+  if (photoBytes.length < 29 || photoBytes.length > FAMILY_RECORD_MAXIMUM_PHOTO_BYTES) {
+    throw new ApiError(413, "family_record_too_large", "Photo record exceeds the size limit.");
+  }
+  const wordsID = hasWords ? uuidField(object, "wordsID") : null;
+  if (wordsID !== null && wordsID !== await momentSharedPhotoID(spaceID, `memo-${photoID}`)) {
+    throw new ApiError(400, "family_record_words_id_mismatch", "Shared memo does not match this photo.");
+  }
+  const wordsCiphertext = hasWords ? stringField(object, "wordsCiphertext") : null;
+  const wordsSize = wordsCiphertext === null ? 0 : base64urlDecode(wordsCiphertext).length;
+  if (hasWords && (wordsSize < 29 || wordsSize > maximumWordsBytes)) {
+    throw new ApiError(413, "family_record_too_large", "Memo record exceeds the size limit.");
+  }
+  return { photoID, photoCiphertext, photoBytes, wordsID, wordsCiphertext, wordsSize };
+}
 
 interface RecordRow {
   space_id: string; id: string; entry_id: string; kind: "photo" | "words";
@@ -44,9 +90,82 @@ function presentation(row: RecordRow): Record<string, unknown> {
     revision: row.revision, state: row.state, keyEpoch: row.key_epoch,
     ciphertext: row.ciphertext, createdAt: row.created_at, updatedAt: row.updated_at };
 }
+// Only the linked records created by a v2 moment have a fixed audience.
+// The older independent catalog remains room-wide. Apply this to the entry ID
+// so a linked photo's words cannot leak through the catalog or a direct URL.
+const visibleEntry = (space: string, entry: string) => `(
+  NOT EXISTS (SELECT 1 FROM family_record_moments link
+    WHERE link.space_id=${space} AND link.photo_id=${entry})
+  OR EXISTS (SELECT 1 FROM family_record_moment_readers reader
+    WHERE reader.space_id=${space} AND reader.photo_id=${entry}
+      AND reader.participant_id=?)
+)`;
+
 async function current(env: Env, m: AuthenticatedMember, id: string): Promise<RecordRow | null> {
-  return env.DB.prepare("SELECT * FROM family_records WHERE space_id=? AND id=?")
-    .bind(m.spaceId, id).first<RecordRow>();
+  return env.DB.prepare(`SELECT record.* FROM family_records record
+    WHERE record.space_id=? AND record.id=?
+      AND ${visibleEntry("record.space_id", "record.entry_id")}`)
+    .bind(m.spaceId, id, m.momentParticipantId).first<RecordRow>();
+}
+
+export async function momentSharedRecordCapacityReached(env: Env, spaceID: string, withWords: boolean): Promise<boolean> {
+  const photoCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM family_records WHERE space_id=? AND kind='photo'")
+    .bind(spaceID).first<{ count: number }>();
+  const wordsCount = withWords ? await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM family_records WHERE space_id=? AND kind='words'",
+  ).bind(spaceID).first<{ count: number }>() : null;
+  return photoCount !== null && photoCount.count >= FAMILY_RECORD_MAXIMUM_PHOTOS
+    || withWords && wordsCount !== null && wordsCount.count >= FAMILY_RECORD_MAXIMUM_WORDS;
+}
+
+/** Stage ciphertext privately; the caller inserts these rows in the moment commit batch. */
+export async function prepareMomentSharedRecordCommit(
+  env: Env, m: AuthenticatedMember, record: MomentSharedRecord,
+  clientRequestID: string, requestHash: string,
+): Promise<{ statements: D1PreparedStatement[] }> {
+  if (env.FAMILY_RECORD_RUNTIME_ENABLED !== "YES") {
+    throw new ApiError(503, "family_record_runtime_disabled", "Shared records are unavailable.");
+  }
+  await assertAuthorized(env, m);
+  await requireWindowDeliverySupport(env, m.spaceId);
+  if (await current(env, m, record.photoID) !== null) {
+    // A withdrawn record is a tombstone, never a slot for another upload.
+    throw new ApiError(409, "family_record_conflict", "This photo record already exists.");
+  }
+  if (await momentSharedRecordCapacityReached(env, m.spaceId, record.wordsID !== null)) {
+    throw new ApiError(409, "family_record_capacity", "Shared record capacity reached; nothing was sent.");
+  }
+  if (!env.MEDIA) throw new ApiError(503, "family_record_storage_unavailable", "Record storage unavailable.");
+  const objectKey = `family-records/v1/${m.spaceId}/${record.photoID}/${crypto.randomUUID()}`;
+  await env.DB.prepare(`INSERT INTO family_record_staged_objects(object_key,space_id,photo_id,created_at)
+    VALUES (?,?,?,?)`).bind(objectKey, m.spaceId, record.photoID, m.now).run();
+  await env.MEDIA.put(objectKey, record.photoBytes);
+  const support = windowDeliverySupportGuard(env, m.spaceId);
+  const guard = `${authorized} AND ${support.sql}`;
+  const guardBindings = [...authBindings(m), ...support.bindings];
+  const photo = env.DB.prepare(`INSERT INTO family_records VALUES (
+      ?,?,?,'photo',?,1,'active',1,NULL,?, ?,
+      CASE WHEN (SELECT COUNT(*) FROM family_records WHERE space_id=? AND kind='photo') < ?
+        AND ${guard} THEN ? ELSE NULL END,
+      ?,?,?)`).bind(
+    m.spaceId, record.photoID, record.photoID, m.id, objectKey, record.photoBytes.length,
+    m.spaceId, FAMILY_RECORD_MAXIMUM_PHOTOS, ...guardBindings, requestHash,
+    clientRequestID, m.now, m.now,
+  );
+  const statements = [photo];
+  if (record.wordsID !== null && record.wordsCiphertext !== null) {
+    statements.push(env.DB.prepare(`INSERT INTO family_records VALUES (
+        ?,?,?,'words',?,1,'active',1,?,NULL,?,
+        CASE WHEN (SELECT COUNT(*) FROM family_records WHERE space_id=? AND kind='words') < ?
+          AND ${guard} THEN ? ELSE NULL END,
+        ?,?,?)`).bind(
+      m.spaceId, record.wordsID, record.photoID, m.id, record.wordsCiphertext, record.wordsSize,
+      m.spaceId, FAMILY_RECORD_MAXIMUM_WORDS, ...guardBindings, requestHash,
+      clientRequestID, m.now, m.now,
+    ));
+  }
+  statements.push(env.DB.prepare("DELETE FROM family_record_staged_objects WHERE object_key=?").bind(objectKey));
+  return { statements };
 }
 
 export async function familyRecords(request: Request, env: Env, id?: string, photo = false): Promise<Response> {
@@ -63,8 +182,10 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
   if (request.method === "GET") {
     requireEmptyBody(body);
     if (id === undefined) {
-      const rows = await env.DB.prepare("SELECT * FROM family_records WHERE space_id=? ORDER BY created_at DESC,id")
-        .bind(m.spaceId).all<RecordRow>();
+      const rows = await env.DB.prepare(`SELECT record.* FROM family_records record
+        WHERE record.space_id=? AND ${visibleEntry("record.space_id", "record.entry_id")}
+        ORDER BY record.created_at DESC,record.id`)
+        .bind(m.spaceId, m.momentParticipantId).all<RecordRow>();
       await assertAuthorized(env, m);
       await consumeNonceAndTouch(env, m);
       return jsonResponse({ schemaVersion: 1, spaceID: m.spaceId, participantID: m.id,
@@ -139,20 +260,44 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     const mutation = prior === null
       ? env.DB.prepare(`INSERT INTO family_records SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
           WHERE ${authorized} AND (SELECT COUNT(*) FROM family_records WHERE space_id=? AND kind=?) < ?
-          AND ${support.sql}
+          AND ${support.sql} AND ${visibleEntry("?", "?")}
           ON CONFLICT(space_id,id) DO NOTHING`).bind(...Object.values(row), ...authBindings(m), m.spaceId, kind,
-          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS, ...support.bindings)
+          kind === "photo" ? FAMILY_RECORD_MAXIMUM_PHOTOS : FAMILY_RECORD_MAXIMUM_WORDS, ...support.bindings,
+          m.spaceId, entryID, m.spaceId, entryID, m.momentParticipantId)
       : env.DB.prepare(`UPDATE family_records SET revision=?,state=?,ciphertext=?,object_key=?,ciphertext_size=?,
           payload_hash=?,last_operation_id=?,updated_at=? WHERE space_id=? AND id=? AND revision=?
-          AND author_member_id=? AND state='active' AND ${authorized}`)
+          AND author_member_id=? AND state='active' AND ${authorized}
+          AND ${visibleEntry("?", "?")}`)
         .bind(row.revision, row.state, row.ciphertext, row.object_key, row.ciphertext_size,
-          row.payload_hash, row.last_operation_id, row.updated_at, m.spaceId, id, expected, m.id, ...authBindings(m));
+          row.payload_hash, row.last_operation_id, row.updated_at, m.spaceId, id, expected, m.id,
+          ...authBindings(m), m.spaceId, entryID, m.spaceId, entryID, m.momentParticipantId);
     const deletion = prior?.object_key ? [env.DB.prepare(
       `INSERT OR IGNORE INTO family_record_object_deletions SELECT ?,?
        WHERE EXISTS (SELECT 1 FROM family_records WHERE space_id=? AND id=?
          AND state='withdrawn' AND last_operation_id=?)`)
       .bind(prior.object_key, m.now, m.spaceId, id, operationID)] : [];
-    const result = await env.DB.batch([...nonceStatements(env, m), mutation, ...deletion, activityStatement(env, m)]);
+    const linkedRevocation = kind === "photo" && withdrawing ? [
+      // The current photo mutation is the authority. Existing old/random-ID
+      // records have no mapping and do not affect any delivery.
+      env.DB.prepare(`INSERT INTO moment_changes(cursor,participant_id,change_type,moment_id,created_at)
+        SELECT lower(hex(randomblob(16))),delivery.recipient_participant_id,
+               'delivery_revoked',delivery.moment_id,?
+          FROM family_record_moments AS link
+          JOIN family_records AS record ON record.space_id=link.space_id AND record.id=link.photo_id
+          JOIN moment_deliveries AS delivery ON delivery.moment_id=link.moment_id
+         WHERE link.space_id=? AND link.photo_id=? AND record.state='withdrawn'
+           AND record.last_operation_id=? AND delivery.state IN ('pending','acknowledged')`)
+        .bind(m.now, m.spaceId, id, operationID),
+      env.DB.prepare(`UPDATE moment_deliveries SET state='revoked',revoked_at=?
+        WHERE moment_id=(SELECT link.moment_id FROM family_record_moments AS link
+          JOIN family_records AS record ON record.space_id=link.space_id AND record.id=link.photo_id
+          WHERE link.space_id=? AND link.photo_id=? AND record.state='withdrawn'
+            AND record.last_operation_id=?) AND state IN ('pending','acknowledged')`)
+        .bind(m.now, m.spaceId, id, operationID),
+    ] : [];
+    const result = await env.DB.batch([
+      ...nonceStatements(env, m), mutation, ...linkedRevocation, ...deletion, activityStatement(env, m),
+    ]);
     committed = result[2]?.meta.changes === 1;
     const saved = await current(env, m, id);
     await assertAuthorized(env, m);
@@ -173,7 +318,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
   }
 }
 
-export async function runFamilyRecordCleanup(env: Env): Promise<void> {
+export async function runFamilyRecordCleanup(env: Env, now = Math.floor(Date.now() / 1000)): Promise<void> {
   if (!env.MEDIA) return;
   const rows = await env.DB.prepare("SELECT object_key FROM family_record_object_deletions ORDER BY created_at LIMIT 20")
     .all<{ object_key: string }>();
@@ -181,5 +326,20 @@ export async function runFamilyRecordCleanup(env: Env): Promise<void> {
     if (!row.object_key.startsWith("family-records/v1/")) throw new Error("Invalid family record deletion scope");
     await env.MEDIA.delete(row.object_key);
     await env.DB.prepare("DELETE FROM family_record_object_deletions WHERE object_key=?").bind(row.object_key).run();
+  }
+  // Beyond the two-day commit replay lease, an orphan cannot still be a live
+  // pending commit. Keep any ciphertext that the catalog actually references.
+  const staged = await env.DB.prepare(`SELECT object_key,space_id,photo_id
+    FROM family_record_staged_objects WHERE created_at <= ? ORDER BY created_at LIMIT 20`)
+    .bind(now - 3 * 24 * 60 * 60)
+    .all<{ object_key: string; space_id: string; photo_id: string }>();
+  for (const row of staged.results) {
+    if (!row.object_key.startsWith(`family-records/v1/${row.space_id}/${row.photo_id}/`)) {
+      throw new Error("Invalid staged family record deletion scope");
+    }
+    const current = await env.DB.prepare("SELECT object_key FROM family_records WHERE space_id=? AND id=?")
+      .bind(row.space_id, row.photo_id).first<{ object_key: string | null }>();
+    if (current?.object_key !== row.object_key) await env.MEDIA.delete(row.object_key);
+    await env.DB.prepare("DELETE FROM family_record_staged_objects WHERE object_key=?").bind(row.object_key).run();
   }
 }

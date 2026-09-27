@@ -838,6 +838,7 @@ struct FamilyWindowView: View {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
                         source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
                         caption: model.caption(for: item), captionIsOwn: false,
+                        allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
                         captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(
                         imageURL: widgetPhotoRequest == nil
@@ -981,17 +982,26 @@ struct FamilyWindowView: View {
             sent: model.outgoingPresentation.sentRecords
         )
         if let spaceID = model.pairingState?.spaceID {
-            FamilyWindowPhotoCollection(spaceID: spaceID, windowName: model.windowDisplayName,
+            FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
-                showInformation: { showsSharedPhotoInformation = true }) { photo in
+                showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
+                let caption: String? = switch captionSource {
+                case .legacy:
+                    switch photo {
+                    case let .received(item): model.caption(for: item)
+                    case let .sent(record): record.localCaption
+                    }
+                case let .record(text): text
+                case .unresolved: nil
+                }
                 switch photo {
                 case let .received(item):
-                    compactMomentCard(item)
+                    return AnyView(compactMomentCard(item, caption: caption))
                 case let .sent(record):
-                    Button { selectedSentRecord = record } label: {
-                        sentRecordCard(record)
+                    return AnyView(Button { selectedSentRecord = record } label: {
+                        sentRecordCard(record, caption: caption)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plain))
                 }
             }
             .id(spaceID)
@@ -1015,7 +1025,7 @@ struct FamilyWindowView: View {
                 VStack(spacing: 10) {
                     ForEach(unavailable.prefix(sentRecordDisplayLimit)) { record in
                         Button { selectedSentRecord = record } label: {
-                            sentRecordCard(record)
+                            sentRecordCard(record, caption: record.senderPolicyVersion == 1 ? record.localCaption : nil)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1039,15 +1049,13 @@ struct FamilyWindowView: View {
                     Text("写真は自動では共有されません。追加する1枚を選んで確認します。")
                 }
                 Section("写真の保存") {
-                    Text("送り合った写真と、二人のアルバムに追加した写真を、この画面で一緒に見られます。アルバムの写真には「アルバム」と表示します。")
-                    Text("届いた写真は最長90日です。自分のお気に入りに追加すると、写真アプリにもコピーします。相手には通知しません。")
-                    Text("自分が追加した写真の控えは、このiPhoneに最長30日保存します。")
-                    Text("送り合った履歴は長期保管用ではありません。端末や追加した時期により、見られる写真は異なります。機種変更や再インストール後に、過去の全写真を復元する機能はありません。")
+                    Text("新しく追加した写真とメモはこのまどに残り、二人で見返せます。別のアルバムへ追加する操作はいりません。Widgetにも届きます。")
+                    Text("内部テスト中の上限は、まどごとに写真100枚・メモ1,000件です。上限に達しても、古い写真を自動で消すことはありません。")
+                    Text("共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に「写真とメモを書き出す」から保存してください。無期限の保管や全端末を失った場合の復元は保証していません。")
                 }
-                Section("二人のアルバム") {
-                    Text("写真のメモを追加するとき、または「アルバムに写真を追加」から、選んだ写真を二人のアルバムに残せます。見るだけで自動追加されることはありません。")
-                    Text("書き出せるのは、アルバムに追加した写真とメモです。送り合った写真の履歴全体は含みません。")
-                    Text("共有を終了すると、アルバムも開けなくなります。必要な写真とメモは、共有を終了する前に書き出してください。無期限の保管や全端末を失った場合の復元には対応していません。")
+                Section("以前に送った写真") {
+                    Text("古いバージョンから送った写真は、以前の期限のまま表示します。写真を開いてメモを追加すると、写真と一緒にこのまどに残せます。")
+                    Text("保管されていない写真の履歴は、届いた側で最長90日、送った側で最長30日です。書き出しには含まれません。")
                 }
             }
             .navigationTitle("共有の写真")
@@ -1087,7 +1095,8 @@ struct FamilyWindowView: View {
                 spacing: 10
             ) {
                 ForEach(orderedReceivedMoments.dropFirst()) { item in
-                    compactMomentCard(item)
+                    compactMomentCard(item, caption: (item.senderPolicyVersion ?? 1) == 1
+                        ? model.caption(for: item) : nil)
                 }
             }
         }
@@ -1366,13 +1375,13 @@ struct FamilyWindowView: View {
         }
     }
 
-    private func compactMomentCard(_ item: MomentInboxItem) -> some View {
+    private func compactMomentCard(_ item: MomentInboxItem, caption: String? = nil) -> some View {
         Button {
             selectedMomentForDetail = item
         } label: {
             MomentReceivedPhotoThumbnail(
                 url: model.imageURL(for: item),
-                caption: model.caption(for: item),
+                caption: caption,
                 receivedAt: item.receivedAt,
                 isSaved: model.isSavedMemory(item),
                 hasSentHeart: model.heartOutboxItem(for: item)?.phase == .sent
@@ -1380,18 +1389,18 @@ struct FamilyWindowView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(compactMomentAccessibilityLabel(item))
+        .accessibilityLabel(compactMomentAccessibilityLabel(item, caption: caption))
         .accessibilityHint("写真を大きく表示して操作します")
         .accessibilityIdentifier("family-window-photo-thumbnail-\(item.id)")
     }
 
-    private func compactMomentAccessibilityLabel(_ item: MomentInboxItem) -> String {
+    private func compactMomentAccessibilityLabel(_ item: MomentInboxItem, caption: String?) -> String {
         var parts = [
             "届いた写真",
             captureLabel(item),
             "届いた日 \(item.receivedAt.formatted(.dateTime.month().day()))"
         ]
-        if let caption = model.caption(for: item) {
+        if let caption {
             parts.append("メモ。\(caption)")
         }
         if model.isSavedMemory(item) {
@@ -1954,13 +1963,13 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-outgoing-management")
     }
 
-    private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
+    private func sentRecordCard(_ record: MomentSentRecordPresentation, caption: String? = nil) -> some View {
         let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
 
-        return MomentSentRecordCard(record: record)
+        return MomentSentRecordCard(record: record, caption: caption)
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
@@ -1971,7 +1980,7 @@ struct FamilyWindowView: View {
                 )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(sentRecordAccessibilityLabel(record))
+        .accessibilityLabel(sentRecordAccessibilityLabel(record, caption: caption))
         .accessibilityHint(
             isNotificationTarget
                 ? "選んだ写真です"
@@ -1991,7 +2000,7 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordAccessibilityLabel(
-        _ record: MomentSentRecordPresentation
+        _ record: MomentSentRecordPresentation, caption: String?
     ) -> String {
         var parts = [
             "送った写真",
@@ -2000,7 +2009,7 @@ struct FamilyWindowView: View {
         if record.hasReceivedHeart {
             parts.append("ハートが届いています")
         }
-        if let caption = record.localCaption {
+        if let caption {
             parts.append("メモ。\(caption)")
         }
         if sentRecordThumbnail(record) == nil {
@@ -2178,7 +2187,7 @@ struct FamilyWindowView: View {
                     receivesNotificationFocus: receivesNotificationFocus,
                     contentMode: .fit
                 )
-                if let caption = model.caption(for: item) {
+                if (item.senderPolicyVersion ?? 1) == 1, let caption = model.caption(for: item) {
                     Text(verbatim: caption)
                         .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2292,7 +2301,7 @@ struct FamilyWindowView: View {
     ) -> some View {
         let photo = MomentReceivedPhotoHeader(
             url: model.imageURL(for: item),
-            caption: model.caption(for: item),
+            caption: (item.senderPolicyVersion ?? 1) == 1 ? model.caption(for: item) : nil,
             contentMode: contentMode
         )
         .accessibilityLabel("届いた写真。\(captureLabel(item))")
@@ -3238,6 +3247,7 @@ private struct MomentSentPhotoDetail: View {
                     FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
                         source: record.momentID != nil ? (model.pairingState?.spaceID).map { sharedMemoSource(record, spaceID: $0) } : nil,
                         caption: record.localCaption, captionIsOwn: true,
+                        allowsLegacyCaptionWithoutCatalog: record.senderPolicyVersion == 1,
                         captionIdentifier: "family-window-sent-caption", windowName: model.windowDisplayName) { memo in
                     MomentPhotoDetailBody(imageURL: displayedDetailURL,
                         legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },

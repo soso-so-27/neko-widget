@@ -1078,6 +1078,7 @@ final class MomentSharingViewModel: ObservableObject {
                     localThumbnailJPEG: MomentSharingStateStore
                         .readLocalThumbnail(for: $0),
                     localCaption: $0.localCaption,
+                    senderPolicyVersion: $0.senderPolicyVersion,
                     createdAt: $0.createdAt
                 )
             },

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Only an explicit addition from the same delivered moment uses this identity.
+/// A delivered photo and its shared record use the same explicit identity.
 /// It never guesses a relationship to older randomly identified photo records.
 enum FamilyRecordSourceIdentity {
     static func recordID(spaceID: String, momentID: String) throws -> String {
@@ -25,6 +25,38 @@ enum FamilyRecordSourceIdentity {
         guard row.kind == .photo, row.entryID == id else { throw FamilyRecordError.invalid }
         // A tombstone is still an existing photo. It must never become a new upload.
         return row
+    }
+}
+
+/// Prepared once and persisted before delivery commit. Retrying must reuse the
+/// exact ciphertext: the relay binds its idempotency key to the request bytes.
+struct FamilyRecordCommitPayload: Codable, Equatable, Sendable {
+    let photoID: String
+    let photoCiphertext: String
+    let wordsID: String?
+    let wordsCiphertext: String?
+
+    static func captionID(spaceID: String, photoID: String) throws -> String {
+        try FamilyRecordSourceIdentity.recordID(spaceID: spaceID, momentID: "memo-" + photoID)
+    }
+
+    static func prepare(jpeg: Data, capturedAt: Date?, caption: String?,
+                        spaceID: String, momentID: String, authorID: String,
+                        roomKey: Data) throws -> Self {
+        let photoID = try FamilyRecordSourceIdentity.recordID(spaceID: spaceID, momentID: momentID)
+        let photo = FamilyRecordPayload(schemaVersion: 1, text: nil, jpeg: jpeg, capturedAt: capturedAt)
+        let photoCiphertext = try FamilyRecordCrypto.seal(photo, roomKey: roomKey, spaceID: spaceID,
+            id: photoID, entryID: photoID, kind: .photo, authorID: authorID, revision: 1)
+            .base64URLEncodedString()
+        let text = caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let wordsID = text.isEmpty ? nil : try captionID(spaceID: spaceID, photoID: photoID)
+        let wordsCiphertext = try wordsID.map { id in
+            try FamilyRecordCrypto.seal(.words(text), roomKey: roomKey, spaceID: spaceID,
+                id: id, entryID: photoID, kind: .words, authorID: authorID, revision: 1)
+                .base64URLEncodedString()
+        }
+        return Self(photoID: photoID, photoCiphertext: photoCiphertext,
+                    wordsID: wordsID, wordsCiphertext: wordsCiphertext)
     }
 }
 

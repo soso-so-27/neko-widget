@@ -2073,6 +2073,20 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .uploaded {
+                    if item.senderPolicyVersion == 2, item.sharedRecordCommit == nil {
+                        guard let momentID = item.serverMomentID, let roomKey = credential.roomKey,
+                              let author = pairing.memberID else { throw MomentSharingError.stateUnavailable }
+                        let ciphertext = try MomentSharingStateStore.readCiphertext(for: item)
+                        let photo = try MomentCrypto.open(MomentPreparedPayload(context: item.context,
+                            ciphertext: ciphertext, ciphertextSHA256: item.ciphertextSHA256,
+                            moderationVersion: item.moderationVersion), spaceGenerationKey: roomKey)
+                        let shared = try FamilyRecordCommitPayload.prepare(jpeg: photo.jpeg,
+                            capturedAt: photo.manifest.capturedAt, caption: photo.manifest.caption,
+                            spaceID: item.context.spaceID, momentID: momentID, authorID: author, roomKey: roomKey)
+                        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+                        item = try MomentSharingStateStore.saveSharedRecordCommit(encoder.encode(shared),
+                            for: item, validating: lifecycleToken)
+                    }
                     stage = .beginCommit
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
@@ -2095,11 +2109,17 @@ actor MomentSharingCoordinator {
                         throw MomentSharingError.stateUnavailable
                     }
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    let sharedRecord: FamilyRecordCommitPayload?
+                    if item.senderPolicyVersion == 2 {
+                        sharedRecord = try JSONDecoder().decode(FamilyRecordCommitPayload.self,
+                            from: MomentSharingStateStore.readSharedRecordCommit(for: item))
+                    } else { sharedRecord = nil }
                     let commit = try await api.commit(
                         momentID: momentID,
                         clientRequestID: item.context.clientRequestID,
                         pairingState: pairing,
-                        credential: credential
+                        credential: credential,
+                        sharedRecord: sharedRecord
                     )
                     try SharingLifecycleGate.validate(lifecycleToken)
                     stage = .saveCommit
@@ -2162,6 +2182,12 @@ actor MomentSharingCoordinator {
                     continue
                 }
                 if (try? currentOutboxItem(candidate.id).phase) == .committing {
+                    if case .requestRejected(status: 409, code: "family_record_capacity", message: _) = error,
+                       candidate.senderPolicyVersion == 2 {
+                        try MomentSharingStateStore.markSharedPhotoCapacityRejected(itemID: candidate.id,
+                            validating: lifecycleToken)
+                        continue
+                    }
                     // A commit request may already have succeeded before its
                     // response became unusable. Never rewrite that ambiguity
                     // as a permanent local failure; retry the same idempotency
@@ -2626,7 +2652,8 @@ actor MomentSharingCoordinator {
             changeSequence: change.sequence,
             state: state,
             accessExpiresAt: change.accessExpiresAt,
-            caption: state == .available ? manifest.caption : nil
+            caption: state == .available ? manifest.caption : nil,
+            senderPolicyVersion: manifest.senderPolicyVersion ?? 1
         ).validated()
         // Final file publication and monotonic inbox mutation share the
         // lifecycle flock. A revoke/unlink either wins first or observes the

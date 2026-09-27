@@ -26,7 +26,7 @@ struct MomentShareIngressPhoto: Sendable {
 /// capture against a short-lived admission previously issued by the host app.
 struct MomentShareIngressService {
     private static let maximumSourceBytes = 64 * 1_024 * 1_024
-    private static let senderPolicyVersion = 1
+    private static let senderPolicyVersion = 2
 
     func prepare(from provider: NSItemProvider) async throws -> MomentShareIngressPhoto {
         try await withCheckedThrowingContinuation { continuation in

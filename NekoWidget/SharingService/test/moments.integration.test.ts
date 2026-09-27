@@ -3,6 +3,7 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { base64urlEncode, sha256, sha256Base64url } from "../src/encoding";
+import { momentSharedPhotoID, runFamilyRecordCleanup } from "../src/family-records";
 import type { Env } from "../src/env";
 import { route } from "../src/index";
 import {
@@ -734,6 +735,29 @@ async function remapOwnerToDistinctMomentParticipant(space: TestSpace): Promise<
   return participantID;
 }
 
+async function replaceInviteeParticipantForRecordTest(space: TestSpace): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const previous = await testEnv.DB.prepare(`SELECT participant.id,device.agreement_public_key,device.signing_public_key
+    FROM moment_participants participant JOIN moment_devices device ON device.participant_id=participant.id
+    WHERE participant.legacy_member_id=? AND device.legacy_member_id=?`)
+    .bind(space.invitee.id, space.invitee.id)
+    .first<{ id: string; agreement_public_key: string; signing_public_key: string }>();
+  if (!previous) throw new Error("invitee fixture is missing");
+  const nextParticipant = randomValue(16);
+  await testEnv.DB.batch([
+    testEnv.DB.prepare("UPDATE moment_devices SET legacy_member_id=NULL,state='revoked' WHERE participant_id=?")
+      .bind(previous.id),
+    testEnv.DB.prepare("UPDATE moment_participants SET legacy_member_id=NULL,state='revoked' WHERE id=?")
+      .bind(previous.id),
+    testEnv.DB.prepare(`INSERT INTO moment_participants(id,space_id,legacy_member_id,role,state,created_at,activated_at)
+      VALUES (?,?,?,'member','active',?,?)`).bind(nextParticipant, space.id, space.invitee.id, now, now),
+    testEnv.DB.prepare(`INSERT INTO moment_devices(id,participant_id,legacy_member_id,agreement_public_key,
+      signing_public_key,state,created_at,activated_at) VALUES (?,?,?,?,?,'active',?,?)`)
+      .bind(randomValue(16), nextParticipant, space.invitee.id,
+        previous.agreement_public_key, previous.signing_public_key, now, now),
+  ]);
+}
+
 describe("encrypted private window name", () => {
   it("lets the owner publish opaque ciphertext and both active participants read it", async () => {
     const space = await seedActiveSpace();
@@ -1059,6 +1083,119 @@ describe("encrypted private window name", () => {
 });
 
 describe("append-only encrypted moments", () => {
+  it("atomically commits a linked photo and memo, replays the response, and revokes delivery on withdrawal", async () => {
+    const space = await seedActiveSpace();
+    const ciphertext = crypto.getRandomValues(new Uint8Array(768));
+    const reserved = await reserve(space.owner, ciphertext,
+      { senderPolicyAcceptance: { version: 2, acceptedAt: new Date().toISOString() } });
+    expect(reserved.response.status).toBe(201);
+    const reservation = await reserved.response.json<ReservationResponse>();
+    const momentID = reservation.moment.id;
+    expect((await signedFetch(`/v2/moments/${momentID}/ciphertext`, "PUT", space.owner, ciphertext)).status).toBe(200);
+    const photoID = await momentSharedPhotoID(space.id, momentID);
+    const wordsID = await momentSharedPhotoID(space.id, `memo-${photoID}`);
+    const photoCiphertext = base64urlEncode(crypto.getRandomValues(new Uint8Array(100)));
+    const wordsCiphertext = base64urlEncode(crypto.getRandomValues(new Uint8Array(80)));
+    const body = { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+      sharedRecord: { photoID, photoCiphertext, wordsID, wordsCiphertext } };
+    const enabled = { ...testEnv, FAMILY_RECORD_RUNTIME_ENABLED: "YES" } as Env;
+    await expect((async () => route(await signedRequest(`/v2/moments/${momentID}/commit`, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() }), enabled))())
+      .rejects.toMatchObject({ code: "family_record_required" });
+    const commit = async () => route(await signedRequest(`/v2/moments/${momentID}/commit`, "POST", space.owner, body), enabled);
+    const first = await commit();
+    expect(first.status).toBe(201);
+    const firstBody = await first.json<CommitResponse & { sharedRecordID: string }>();
+    expect(firstBody.sharedRecordID).toBe(photoID);
+    expect((await (await commit()).json<{ sharedRecordID: string }>()).sharedRecordID).toBe(photoID);
+    const rows = await testEnv.DB.prepare(
+      "SELECT id,kind,state,object_key,ciphertext FROM family_records WHERE space_id=? ORDER BY kind,id",
+    ).bind(space.id).all<{ id: string; kind: string; state: string; object_key: string | null; ciphertext: string | null }>();
+    expect(rows.results).toHaveLength(2);
+    expect(rows.results.find(row => row.id === photoID)?.object_key).toMatch(/^family-records\/v1\//u);
+    expect(rows.results.find(row => row.id === wordsID)?.ciphertext).toBe(wordsCiphertext);
+    expect(await testEnv.DB.prepare("SELECT moment_id FROM family_record_moments WHERE photo_id=?")
+      .bind(photoID).first<{ moment_id: string }>()).toEqual({ moment_id: momentID });
+    const recipientBefore = await route(await signedRequest("/v2/family-records", "GET", space.invitee), enabled);
+    expect((await recipientBefore.json<{ records: unknown[] }>()).records).toHaveLength(2);
+    await replaceInviteeParticipantForRecordTest(space);
+    const recipientAfter = await route(await signedRequest("/v2/family-records", "GET", space.invitee), enabled);
+    expect((await recipientAfter.json<{ records: unknown[] }>()).records).toHaveLength(0);
+    await expect(route(await signedRequest(`/v2/family-records/${photoID}/photo`, "GET", space.invitee), enabled))
+      .rejects.toMatchObject({ status: 404 });
+    await expect(route(await signedRequest(`/v2/family-records/${crypto.randomUUID()}`, "PUT", space.invitee,
+      { entryID: photoID, kind: "words", expectedRevision: 0,
+        operationID: crypto.randomUUID(), ciphertext: wordsCiphertext }), enabled))
+      .rejects.toMatchObject({ status: 404 });
+    const withdraw = { entryID: photoID, kind: "photo", expectedRevision: 1,
+      operationID: crypto.randomUUID().toLowerCase(), ciphertext: null };
+    const withdrawal = async () => route(await signedRequest(`/v2/family-records/${photoID}`, "PUT", space.owner, withdraw), enabled);
+    expect((await withdrawal()).status).toBe(200);
+    expect((await withdrawal()).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT state FROM moment_deliveries WHERE moment_id=?")
+      .bind(momentID).first<{ state: string }>()).toEqual({ state: "revoked" });
+    expect(await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moment_changes WHERE moment_id=? AND change_type='delivery_revoked'",
+    ).bind(momentID).first<{ count: number }>()).toEqual({ count: 1 });
+    expect(await testEnv.DB.prepare("SELECT state FROM family_records WHERE id=?")
+      .bind(wordsID).first<{ state: string }>()).toEqual({ state: "active" });
+  });
+
+  it("rejects a mismatched linked ID and full catalog before any delivery commit", async () => {
+    const space = await seedActiveSpace();
+    const ciphertext = crypto.getRandomValues(new Uint8Array(768));
+    const reserved = await reserve(space.owner, ciphertext,
+      { senderPolicyAcceptance: { version: 2, acceptedAt: new Date().toISOString() } });
+    const reservation = await reserved.response.json<ReservationResponse>();
+    const momentID = reservation.moment.id;
+    expect((await signedFetch(`/v2/moments/${momentID}/ciphertext`, "PUT", space.owner, ciphertext)).status).toBe(200);
+    const enabled = { ...testEnv, FAMILY_RECORD_RUNTIME_ENABLED: "YES" } as Env;
+    const photoID = await momentSharedPhotoID(space.id, momentID);
+    const photoCiphertext = base64urlEncode(crypto.getRandomValues(new Uint8Array(100)));
+    const commit = async (id: string) => route(await signedRequest(`/v2/moments/${momentID}/commit`, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+        sharedRecord: { photoID: id, photoCiphertext } }), enabled);
+    await expect(commit(crypto.randomUUID().toLowerCase()))
+      .rejects.toMatchObject({ code: "family_record_photo_id_mismatch" });
+    const now = Math.floor(Date.now() / 1000);
+    await testEnv.DB.batch(Array.from({ length: 100 }, () => testEnv.DB.prepare(
+      `INSERT INTO family_records VALUES (?,?,?,'photo',?,1,'active',1,NULL,?,100,'seed',?,?,?)`,
+    ).bind(space.id, crypto.randomUUID().toLowerCase(), crypto.randomUUID().toLowerCase(),
+      space.owner.id, `seed/${crypto.randomUUID()}`, crypto.randomUUID().toLowerCase(), now, now)));
+    await expect(commit(photoID)).rejects.toMatchObject({ code: "family_record_capacity" });
+    expect(await testEnv.DB.prepare("SELECT state FROM moments WHERE id=?")
+      .bind(momentID).first<{ state: string }>()).toEqual({ state: "uploaded" });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM family_records WHERE id=?")
+      .bind(photoID).first<{ count: number }>()).toEqual({ count: 0 });
+  });
+
+  it("rolls back delivery and record together if the linked mapping conflicts", async () => {
+    const space = await seedActiveSpace();
+    const ciphertext = crypto.getRandomValues(new Uint8Array(768));
+    const reserved = await reserve(space.owner, ciphertext,
+      { senderPolicyAcceptance: { version: 2, acceptedAt: new Date().toISOString() } });
+    const momentID = (await reserved.response.json<ReservationResponse>()).moment.id;
+    expect((await signedFetch(`/v2/moments/${momentID}/ciphertext`, "PUT", space.owner, ciphertext)).status).toBe(200);
+    const photoID = await momentSharedPhotoID(space.id, momentID);
+    await testEnv.DB.prepare("INSERT INTO family_record_moments(space_id,photo_id,moment_id) VALUES (?,?,?)")
+      .bind(space.id, crypto.randomUUID().toLowerCase(), momentID).run();
+    const enabled = { ...testEnv, FAMILY_RECORD_RUNTIME_ENABLED: "YES" } as Env;
+    const body = { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+      sharedRecord: { photoID, photoCiphertext: base64urlEncode(crypto.getRandomValues(new Uint8Array(100))) } };
+    const attempt = () => signedRequest(`/v2/moments/${momentID}/commit`, "POST", space.owner, body);
+    await expect((async () => route(await attempt(), enabled))())
+      .rejects.toMatchObject({ code: "moment_commit_conflict" });
+    expect(await testEnv.DB.prepare("SELECT state FROM moments WHERE id=?")
+      .bind(momentID).first<{ state: string }>()).toEqual({ state: "uploaded" });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM family_records WHERE id=?")
+      .bind(photoID).first<{ count: number }>()).toEqual({ count: 0 });
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM family_record_staged_objects WHERE photo_id=?")
+      .bind(photoID).first<{ count: number }>()).toEqual({ count: 1 });
+    await runFamilyRecordCleanup(enabled, Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60 + 1);
+    expect((await enabled.MEDIA?.list({ prefix: `family-records/v1/${space.id}/${photoID}/` }))?.objects)
+      .toHaveLength(0);
+  });
+
   it("reserves, immutably uploads, snapshots recipients, changes, downloads and ACKs", async () => {
     const space = await seedActiveSpace();
     const thirdParticipantID = await addFutureParticipant(space.id);

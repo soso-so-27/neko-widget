@@ -411,7 +411,8 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
         momentID: String,
         clientRequestID: UUID,
         pairingState: PairingState,
-        credential: PairingCredential
+        credential: PairingCredential,
+        sharedRecord: FamilyRecordCommitPayload?
     ) async throws -> MomentCommitResult { try unsupported() }
 
     func changes(
@@ -5705,7 +5706,97 @@ actor SharingRuntimeSelfTestRunner {
         ) == retried else { throw MomentSharingError.stateUnavailable }
     }
 
+    private static func testSharedPhotoCommitPersistence() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let token = try SharingLifecycleGate.issueToken()
+        let key = Data(repeating: 0x61, count: 32)
+        let context = MomentRequestContext(spaceID: "space_shared_commit_fixture",
+            senderParticipantID: "member_shared_commit_fixture", senderDeviceID: "device_shared_commit_fixture",
+            clientRequestID: UUID(), clientMomentID: UUID(), kind: .live, keyEpoch: 1)
+        let payload = try MomentCrypto.prepare(canonicalJPEG: Data(repeating: 0x41, count: 512),
+            capturedAt: nil, pixelWidth: 32, pixelHeight: 16, context: context, spaceGenerationKey: key)
+        let queued = try MomentSharingStateStore.enqueue(payload: payload, senderPolicyVersion: 2,
+            senderPolicyAcceptedAt: .now, validating: token)
+        var state = try MomentSharingStateStore.mutate(validating: token) { state in
+            state.outbox[0].phase = .uploaded
+            state.outbox[0].serverMomentID = "moment_shared_commit_fixture"
+        }
+        var item = state.outbox[0]
+        let shared = try FamilyRecordCommitPayload.prepare(jpeg: Data(repeating: 0x41, count: 512),
+            capturedAt: nil, caption: "一緒に過ごした日", spaceID: context.spaceID,
+            momentID: item.serverMomentID!, authorID: context.senderParticipantID, roomKey: key)
+        let bytes = try JSONEncoder().encode(shared)
+        item = try MomentSharingStateStore.saveSharedRecordCommit(bytes, for: item, validating: token)
+        try MomentSharingStateStore.pruneLocalHistory()
+        state = try MomentSharingStateStore.load()
+        guard state.outbox.first?.sharedRecordCommit == item.sharedRecordCommit,
+              try MomentSharingStateStore.readSharedRecordCommit(for: state.outbox[0]) == bytes else {
+            throw MomentSharingError.stateUnavailable
+        }
+        _ = try MomentSharingStateStore.mutate(validating: token) { state in
+            state.outbox[0].phase = .committing
+            state.outbox[0].commitStartedAt = .now
+            state.outbox[0].updatedAt = .now
+        }
+        guard try MomentSharingStateStore.recoverExpiredReservation(itemID: queued.id, validating: token),
+              try MomentSharingStateStore.load().outbox[0].sharedRecordCommit == nil else {
+            throw MomentSharingError.stateUnavailable
+        }
+        // A new reservation must not reuse ciphertext authenticated for the old moment.
+        state = try MomentSharingStateStore.mutate(validating: token) { state in
+            state.outbox[0].phase = .uploaded
+            state.outbox[0].serverMomentID = "moment_shared_commit_retry"
+        }
+        let replacement = try FamilyRecordCommitPayload.prepare(jpeg: Data(repeating: 0x41, count: 512),
+            capturedAt: nil, caption: "一緒に過ごした日", spaceID: context.spaceID,
+            momentID: state.outbox[0].serverMomentID!, authorID: context.senderParticipantID, roomKey: key)
+        guard replacement.photoID != shared.photoID else { throw MomentSharingError.stateUnavailable }
+        item = try MomentSharingStateStore.saveSharedRecordCommit(JSONEncoder().encode(replacement),
+            for: state.outbox[0], validating: token)
+        _ = try MomentSharingStateStore.mutate(validating: token) { state in
+            state.outbox[0].phase = .committing
+            state.outbox[0].commitStartedAt = .now
+            state.outbox[0].updatedAt = .now
+        }
+        try MomentSharingStateStore.markSharedPhotoCapacityRejected(itemID: item.id, validating: token)
+        guard let rejected = try MomentSharingStateStore.load().outbox.first,
+              rejected.phase == .failed, rejected.commitStartedAt == nil,
+              rejected.lastErrorCode == "shared-photo-capacity" else { throw MomentSharingError.stateUnavailable }
+        if let directory = SharedContainer.momentSharingCiphertextDirectoryURL, let reference = item.sharedRecordCommit {
+            guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent(reference.fileName).path)
+            else { throw MomentSharingError.stateUnavailable }
+        }
+        // Missing additive metadata never opts a pre-upgrade queue into retention.
+        let old = try MomentOutboxItem(id: payload.context.clientMomentID, context: payload.context,
+            phase: .prepared, ciphertextFileName: "\(payload.context.clientMomentID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: payload.ciphertext.count, ciphertextSHA256: payload.ciphertextSHA256,
+            moderationVersion: payload.moderationVersion, senderPolicyVersion: 1, senderPolicyAcceptedAt: .now,
+            attemptCount: 0, createdAt: .now, updatedAt: .now).validated()
+        let decoded = try JSONDecoder().decode(MomentOutboxItem.self, from: JSONEncoder().encode(old))
+        guard decoded.senderPolicyVersion == 1, decoded.sharedRecordCommit == nil else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let receivedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let oldInbox = MomentInboxItem(id: "legacy_caption_fixture",
+            senderParticipantID: "member_legacy_caption", kind: .live, keyEpoch: 1,
+            localJPEGFileName: "legacy_caption_fixture.jpg", capturedAt: nil,
+            captureDateIsMissing: true, committedAt: receivedAt, receivedAt: receivedAt,
+            state: .available, accessExpiresAt: receivedAt.addingTimeInterval(3_600),
+            caption: "前から届いたひとこと")
+        let oldReceipt = try JSONDecoder().decode(MomentInboxItem.self,
+            from: JSONEncoder().encode(oldInbox)).validated()
+        guard oldReceipt.senderPolicyVersion == nil,
+              oldReceipt.caption == oldInbox.caption else { throw MomentSharingError.stateUnavailable }
+        var newInbox = oldInbox
+        newInbox.senderPolicyVersion = 2
+        let newReceipt = try JSONDecoder().decode(MomentInboxItem.self,
+            from: JSONEncoder().encode(newInbox)).validated()
+        guard newReceipt.senderPolicyVersion == 2 else { throw MomentSharingError.stateUnavailable }
+    }
+
     private static func testMomentOutboxBoundsAndExpiry() throws {
+        try testSharedPhotoCommitPersistence()
         // A paid-admission pause must not erase the encrypted photo. Other
         // authorization failures retain the existing terminal classification.
         for (status, code, retained) in [(403, "window_support_required", true),

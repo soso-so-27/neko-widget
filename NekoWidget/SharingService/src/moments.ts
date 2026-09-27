@@ -29,6 +29,10 @@ import {
   transientNetworkKey,
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
+import {
+  momentSharedRecordCapacityReached, parseMomentSharedRecord,
+  prepareMomentSharedRecordCommit, type MomentSharedRecord,
+} from "./family-records";
 import { requireWindowDeliverySupport, windowDeliverySupportGuard } from "./window-delivery-membership";
 import { encodeCanonicalFields, signedRequestTranscript } from "./protocol";
 import { momentNotificationEventStatements } from "./push";
@@ -77,7 +81,7 @@ const d1CASTupleChunkSize = 48;
 // client filter or policy text requires a Worker release that explicitly
 // accepts its version.
 const allowedClientModerationVersions = new Set([1]);
-const allowedSenderPolicyVersions = new Set([1]);
+const allowedSenderPolicyVersions = new Set([1, 2]);
 const allowedReporterConsentVersions = new Set([1]);
 const allowedModerationKeyIDs = new Set(["moderation-v1", "moderation-v2"]);
 
@@ -119,6 +123,7 @@ interface MomentRow {
   sender_device_id: string;
   kind: MomentKind;
   key_epoch: number;
+  sender_policy_version: number;
   state: MomentState;
   object_key: string;
   ciphertext_size: number;
@@ -703,7 +708,7 @@ async function loadMoment(env: Env, momentID: string): Promise<MomentRow | null>
   return env.DB.prepare(
     `SELECT id, client_moment_id, space_id, sender_participant_id,
             sender_device_id, kind, key_epoch, state, object_key,
-            ciphertext_size, ciphertext_sha256, quota_day_key, quota_counted,
+            ciphertext_size, ciphertext_sha256, sender_policy_version, quota_day_key, quota_counted,
             reservation_attempt, reserve_request_hash, created_at,
             upload_expires_at, uploaded_at, committed_at,
             unreceived_expires_at, closed_at
@@ -1203,13 +1208,19 @@ export async function commitMoment(
 ): Promise<Response> {
   const momentID = opaqueId(momentIDValue, "moment");
   const bucket = requireMediaBucket(env);
-  const { body, member } = await signedRequest(request, env);
+  const { body, member } = await signedRequest(request, env, 3 * 1024 * 1024);
   let clientRequestID: string;
+  let sharedRecord: MomentSharedRecord | null = null;
   try {
     const object = parseJsonBody(request, body);
-    exactKeys(object, ["protocolVersion", "clientRequestId"]);
+    exactKeys(object, Object.hasOwn(object, "sharedRecord")
+      ? ["protocolVersion", "clientRequestId", "sharedRecord"]
+      : ["protocolVersion", "clientRequestId"]);
     protocolVersion2(object);
     clientRequestID = uuidField(object, "clientRequestId");
+    if (Object.hasOwn(object, "sharedRecord")) {
+      sharedRecord = await parseMomentSharedRecord(object.sharedRecord, member.spaceId, momentID);
+    }
   } catch (error) {
     return consumeAndThrow(env, member, error);
   }
@@ -1228,6 +1239,10 @@ export async function commitMoment(
     requireSenderMoment(row, member, context);
   } catch (error) {
     return consumeAndThrow(env, member, error);
+  }
+  if ((row.sender_policy_version === 2) !== (sharedRecord !== null)) {
+    return consumeAndThrow(env, member, new ApiError(409, "family_record_required",
+      "This delivery must commit its photo and memo together."));
   }
   if (isExpiredDraft(row, member.now)) {
     return consumeAndThrow(
@@ -1297,8 +1312,19 @@ export async function commitMoment(
     },
     recipientCount: recipients.length,
     changeCursor: firstCursor,
+    ...(sharedRecord === null ? {} : { sharedRecordID: sharedRecord.photoID }),
   };
   const commitEventID = randomBase64url(16);
+  let sharedWrite: Awaited<ReturnType<typeof prepareMomentSharedRecordCommit>> | null = null;
+  if (sharedRecord !== null) {
+    try {
+      sharedWrite = await prepareMomentSharedRecordCommit(env, member, sharedRecord, clientRequestID, requestHash);
+    } catch (error) {
+      const raced = await replayResponse(env, "commit-moment", member, clientRequestID, requestHash);
+      if (raced !== null) return raced;
+      return consumeAndThrow(env, member, error);
+    }
+  }
   try {
     await env.DB.batch([
       ...nonceStatements(env, member),
@@ -1370,6 +1396,16 @@ export async function commitMoment(
         notificationsEnabled,
       ),
       env.DB.prepare("DELETE FROM moment_commit_events WHERE id = ?").bind(commitEventID),
+      ...(sharedWrite?.statements ?? []),
+      ...(sharedRecord === null ? [] : [
+        env.DB.prepare("INSERT INTO family_record_moments(space_id,photo_id,moment_id) VALUES (?,?,?)")
+          .bind(member.spaceId, sharedRecord.photoID, momentID),
+        env.DB.prepare("INSERT INTO family_record_moment_readers(space_id,photo_id,participant_id) VALUES (?,?,?)")
+          .bind(member.spaceId, sharedRecord.photoID, context.participant_id),
+        env.DB.prepare(`INSERT INTO family_record_moment_readers(space_id,photo_id,participant_id)
+          SELECT ?,?,recipient_participant_id FROM moment_deliveries WHERE moment_id=?`)
+          .bind(member.spaceId, sharedRecord.photoID, momentID),
+      ]),
       idempotencyStatement(
         env,
         "commit-moment",
@@ -1392,6 +1428,13 @@ export async function commitMoment(
       requestHash,
     );
     if (raced !== null) return raced;
+    if (sharedRecord !== null && await momentSharedRecordCapacityReached(
+      env, member.spaceId, sharedRecord.wordsID !== null,
+    )) {
+      return consumeAndThrow(env, member, new ApiError(
+        409, "family_record_capacity", "Shared record capacity reached; nothing was sent.",
+      ));
+    }
     await consumeNonce(env, member);
     throw new ApiError(409, "moment_commit_conflict", "The moment could not be committed.");
   }

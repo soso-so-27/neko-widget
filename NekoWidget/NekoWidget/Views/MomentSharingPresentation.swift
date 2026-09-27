@@ -270,6 +270,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let senderPolicyVersion: Int
     let createdAt: Date
 
     init(
@@ -287,6 +288,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         serverMomentID: String? = nil,
         localThumbnailJPEG: Data? = nil,
         localCaption: String? = nil,
+        senderPolicyVersion: Int = 1,
         createdAt: Date? = nil
     ) {
         self.stableID = stableID
@@ -303,6 +305,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.serverMomentID = serverMomentID
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.senderPolicyVersion = senderPolicyVersion
         self.createdAt = createdAt ?? updatedAt
     }
 }
@@ -386,6 +389,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
     let isOutboxCapacityBlocked: Bool
     let hasOtherRetryReason: Bool
     var quotaResetAt: Date? = nil
+    var isSharedPhotoCapacityBlocked = false
 
     var id: MomentOutgoingStatusKind { kind }
 
@@ -466,6 +470,9 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .resultUnknown:
             return "サーバーが配信を受け付けた可能性がありますが、結果を確認できませんでした。相手に届かなかったとは断定できません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
         case .failed:
+            if isSharedPhotoCapacityBlocked {
+                return "このまどに残せる写真・メモの上限に達しました。今回の写真は送信していません。これまでの写真は残っています。"
+            }
             return "送信は完了していません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
         }
     }
@@ -507,6 +514,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let senderPolicyVersion: Int
 
     init(
         id: String,
@@ -515,7 +523,8 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         recipientDeliveryConfirmedAt: Date?,
         hasReceivedHeart: Bool,
         localThumbnailJPEG: Data? = nil,
-        localCaption: String? = nil
+        localCaption: String? = nil,
+        senderPolicyVersion: Int = 1
     ) {
         self.id = id
         self.momentID = momentID
@@ -524,6 +533,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         self.hasReceivedHeart = hasReceivedHeart
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.senderPolicyVersion = senderPolicyVersion
     }
 
     var deliveryState: MomentSentRecordDeliveryState {
@@ -760,7 +770,8 @@ enum MomentSharingPresentationPolicy {
                             && $0 != "moment-runtime-disabled"
                             && $0 != "daily-quota-exceeded"
                     }),
-                    quotaResetAt: value.quotaResetAt
+                    quotaResetAt: value.quotaResetAt,
+                    isSharedPhotoCapacityBlocked: value.errorCodes.contains("shared-photo-capacity")
                 )
             }
 
@@ -831,7 +842,8 @@ enum MomentSharingPresentationPolicy {
                     recipientDeliveryConfirmedAt: confirmedAt,
                     hasReceivedHeart: delivery.hasReceivedHeart,
                     localThumbnailJPEG: delivery.localThumbnailJPEG,
-                    localCaption: delivery.localCaption
+                    localCaption: delivery.localCaption,
+                    senderPolicyVersion: delivery.senderPolicyVersion
                 )
             }
 

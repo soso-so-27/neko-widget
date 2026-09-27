@@ -124,15 +124,18 @@ struct FamilyRecordEntryButton: View {
     }
 }
 
-// One collection owns the reading surface; retaining a copy is still explicit.
+// One photo collection: newly sent photos are committed with their shared record.
 // Never infer identity from image contents or dates, or repopulate a tombstone.
 struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
+    enum CaptionSource {
+        case legacy, record(String?), unresolved
+    }
     let spaceID: String
     let windowName: String
     let photos: [MomentSharedPhoto]
     let canShowRecords: Bool
     let showInformation: () -> Void
-    let deliveryCard: (MomentSharedPhoto) -> DeliveryCard
+    let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
     private let fixturePhoto: MomentShareIngressPhoto?
     @StateObject private var model: FamilyRecordViewModel
     @StateObject private var exporter = RecordExportController()
@@ -144,9 +147,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private enum Destination: Identifiable {
-        case add, record(String)
+        case record(String)
         var id: String {
-            switch self { case .add: "add"; case let .record(id): "record-\(id)" }
+            switch self { case let .record(id): "record-\(id)" }
         }
     }
 
@@ -165,7 +168,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
          showInformation: @escaping () -> Void,
-         @ViewBuilder deliveryCard: @escaping (MomentSharedPhoto) -> DeliveryCard) {
+         deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.showInformation = showInformation
         self.deliveryCard = deliveryCard
@@ -188,6 +191,17 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         return try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: momentID)
     }
 
+    private func captionSource(for photo: MomentSharedPhoto, in snapshot: FamilyRecordSnapshot?) -> CaptionSource {
+        guard let snapshot else { return photo.senderPolicyVersion == 2 ? .unresolved : .legacy }
+        guard let row = linkedRecord(photo, in: snapshot) else {
+            return photo.senderPolicyVersion == 2 ? .unresolved : .legacy
+        }
+        guard let wordsID = try? FamilyRecordCommitPayload.captionID(spaceID: spaceID, photoID: row.id),
+              let words = snapshot.catalog.records.first(where: { $0.id == wordsID && $0.kind == .words })
+        else { return photo.senderPolicyVersion == 2 ? .record(nil) : .legacy }
+        return .record(words.state == .active ? snapshot.words[wordsID] : nil)
+    }
+
     private struct Projection {
         let snapshot: FamilyRecordSnapshot?
         let items: [Item]
@@ -197,7 +211,6 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     private var projection: Projection {
         let snapshot = self.snapshot
-        let linkedIDs = Set(photos.compactMap { linkedRecord($0, in: snapshot)?.id })
         let visibleDeliveries = photos.filter { photo in
             guard canShowRecords, scenePhase == .active, catalogResolved || snapshot != nil else { return false }
             let row = linkedRecord(photo, in: snapshot)
@@ -205,10 +218,20 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             switch photo { case let .received(item): momentID = item.id
                            case let .sent(record): momentID = record.momentID }
             let recordID = momentID.flatMap { try? FamilyRecordSourceIdentity.recordID(spaceID: spaceID, momentID: $0) }
-            return row?.state != .withdrawn && !(recordID.map { withdrawnIDs.contains($0) } ?? false)
+            // While the delivered photo is available, keep its full-screen
+            // zoom, Save and heart actions. A retained record takes its place
+            // only after that delivery photo leaves local history.
+            return row?.state != .withdrawn
+                && !(recordID.map { withdrawnIDs.contains($0) } ?? false)
         }
         let records = snapshot?.catalog.records ?? []
-        let retained = records.filter { $0.kind == .photo && $0.state == .active && !linkedIDs.contains($0.id) }
+        let displayedRecordIDs = Set(visibleDeliveries.compactMap { photo in
+            let row = linkedRecord(photo, in: snapshot)
+            return row?.state == .active ? row?.id : nil
+        })
+        let retained = records.filter {
+            $0.kind == .photo && $0.state == .active && !displayedRecordIDs.contains($0.id)
+        }
             .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt }
         let withdrawn = records.filter { photo in
             photo.kind == .photo && photo.state == .withdrawn && records.contains {
@@ -230,12 +253,8 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 MomentSharedAlbumHeading()
                 Spacer()
                 Menu {
-                    if value.snapshot != nil {
-                        Button("アルバムに写真を追加", systemImage: "photo.badge.plus") { destination = .add }
-                            .accessibilityIdentifier("family-collection-add")
-                    }
                     if value.exportable, let snapshot = value.snapshot {
-                        Button("アルバムの写真とメモを書き出す", systemImage: "square.and.arrow.up") {
+                        Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
                             let client = model.client
                             exporter.prepare(build: {
                                 try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
@@ -273,9 +292,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     }.accessibilityIdentifier("family-collection-withdrawn-\(row.id)")
                 }
             }
-            if model.loading { ProgressView("アルバムを確認中").font(.footnote) }
+            if model.loading { ProgressView("写真を確認中").font(.footnote) }
             if model.error != nil, canShowRecords {
-                Button("アルバムの写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
+                Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
                     .font(.subheadline).frame(minHeight: 44)
             }
             if exporter.preparing {
@@ -311,9 +330,6 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }
         .sheet(item: $destination, onDismiss: { Task { await reload() } }) { destination in
             switch destination {
-            case .add:
-                FamilyRecordEditor(client: model.client, target: nil, fixturePhoto: fixturePhoto,
-                    windowName: windowName, saved: { Task { await reload() } })
             case let .record(id):
                 FamilyRecordView(client: model.client, focusedEntryID: id, windowName: windowName)
             }
@@ -326,27 +342,23 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         .onDisappear { model.clear(); exporter.cancelPreparation() }
     }
 
-    private var albumBadge: some View {
-        Label("アルバム", systemImage: "photo.on.rectangle")
-            .font(.caption).foregroundStyle(.secondary)
-    }
-
     @ViewBuilder private func collectionCard(_ item: Item, snapshot: FamilyRecordSnapshot?) -> some View {
         switch item {
         case let .delivery(photo, retained):
             VStack(alignment: .leading, spacing: 4) {
-                deliveryCard(photo)
-                if retained { albumBadge }
+                deliveryCard(photo, captionSource(for: photo, in: snapshot))
+                if !retained { Text("以前の写真").font(.caption).foregroundStyle(.secondary) }
             }
         case let .record(row):
             Button { destination = .record(row.id) } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     FamilyRecordPhoto(client: model.client, row: row, thumbnail: true)
-                    albumBadge
+                    Text(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("アルバムの写真。\(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")が追加")
+            .accessibilityLabel("\(row.authorID == snapshot?.catalog.participantID ? "自分" : "相手")が追加した写真。写真とメモを開きます")
             .accessibilityIdentifier("family-collection-record-\(row.id)")
         }
     }
@@ -440,6 +452,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     let source: FamilyRecordPhotoSource?
     let caption: String?
     let captionIsOwn: Bool
+    let allowsLegacyCaptionWithoutCatalog: Bool
     let captionIdentifier: String
     let windowName: String
     let content: (AnyView) -> PhotoContent
@@ -448,9 +461,11 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(spaceID: String, source: FamilyRecordPhotoSource?, caption: String?, captionIsOwn: Bool,
+         allowsLegacyCaptionWithoutCatalog: Bool = true,
          captionIdentifier: String, windowName: String = "このまど",
          client: (any FamilyRecordServing)? = nil, @ViewBuilder content: @escaping (AnyView) -> PhotoContent) {
         self.source = source; self.caption = caption; self.captionIsOwn = captionIsOwn
+        self.allowsLegacyCaptionWithoutCatalog = allowsLegacyCaptionWithoutCatalog
         self.captionIdentifier = captionIdentifier; self.windowName = windowName
         self.content = content
         _model = StateObject(wrappedValue: FamilyRecordViewModel(
@@ -461,7 +476,16 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
         // The model, destination and sheet belong to the whole photo screen.
         // Footer layout changes (including keyboard insets) must not recreate
         // an editor or its draft inside a ViewThatFits candidate.
-        content(AnyView(memoContent))
+        Group {
+            if let source, let snapshot = model.snapshot,
+               let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID),
+               photo.state == .withdrawn {
+                VStack {
+                    ContentUnavailableView("写真は取り下げられました", systemImage: "photo")
+                    memoContent
+                }
+            } else { content(AnyView(memoContent)) }
+        }
         .task(id: source?.momentID) { await reload() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { clearPresentation() }
@@ -496,7 +520,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     private var memoContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                if let caption, !caption.isEmpty {
+                if let caption, !caption.isEmpty, shouldShowLegacyCaption {
                     memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
                 } else { Spacer(minLength: 0) }
                 if model.snapshot != nil {
@@ -540,6 +564,20 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 4)
+    }
+
+    private var shouldShowLegacyCaption: Bool {
+        guard allowsLegacyCaptionWithoutCatalog else { return false }
+        guard let source else { return true }
+        // An unresolved catalog cannot establish whether the delivery text
+        // was withdrawn. Never use the older delivery copy as a fallback.
+        guard let snapshot = model.snapshot else { return true }
+        guard let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog,
+            momentID: source.momentID),
+              let wordsID = try? FamilyRecordCommitPayload.captionID(
+                spaceID: snapshot.catalog.spaceID, photoID: photo.id)
+        else { return true }
+        return !snapshot.catalog.records.contains { $0.id == wordsID && $0.kind == .words }
     }
 
     private func reload() async {
@@ -656,12 +694,12 @@ struct FamilyRecordView: View {
                 }
                 if let error = exporter.error { Section { Text(error) } }
             }
-            .navigationTitle(currentEntryID == nil ? "このまどのアルバム" : windowName)
+            .navigationTitle(currentEntryID == nil ? "このまどの写真" : windowName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if focusedEntryID == nil && selectedEntryID != nil {
-                        Button("アルバム", systemImage: "chevron.left") { selectedEntryID = nil }
+                        Button("写真", systemImage: "chevron.left") { selectedEntryID = nil }
                             .accessibilityIdentifier("family-record-back-to-album")
                             .disabled(saving)
                     } else {
@@ -689,12 +727,12 @@ struct FamilyRecordView: View {
                                 .disabled(exporter.preparing || exporter.payload != nil)
                                 .accessibilityIdentifier("family-record-export")
                             }
-                            Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                            Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
                                 .accessibilityIdentifier("family-record-information")
-                        } label: { Label("アルバムの操作", systemImage: "ellipsis") }
+                        } label: { Label("写真の操作", systemImage: "ellipsis") }
                             .accessibilityIdentifier("family-record-menu")
                     } else {
-                        Button("このアルバムについて", systemImage: "info.circle") { showingInformation = true }
+                        Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
                             .accessibilityIdentifier("family-record-information")
                     }
                 }
@@ -765,7 +803,7 @@ struct FamilyRecordView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("まだ写真がありません", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("二人で残したい写真を追加できます。まどで送り合った写真は、自動では入りません。")
+                        Text("まどに写真を追加すると、ここで二人で見返せます。")
                             .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
@@ -935,14 +973,14 @@ struct FamilyRecordView: View {
                     Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
                 }
                 Section("写真の保管と引き継ぎ") {
-                    Text("ここに追加した鑑賞用の写真コピーとメモを、まどごとにまとめています。一覧の日付は、このアルバムへ追加した日です。写真アプリの原本や、まどへ届けた写真の履歴とは別の記録です。")
+                    Text("新しくまどに追加した写真とメモを、一緒に保管します。一覧の日付は、まどへ追加した日です。鑑賞用の写真コピーなので、写真アプリの原本はそのままにしてください。")
                     Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
                 }
                 Section("内部テストで使える範囲") {
                     Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
                 }
             }
-            .navigationTitle("このアルバムについて")
+            .navigationTitle("写真の共有について")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1086,7 +1124,7 @@ private struct FamilyRecordEditor: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if sourcePhoto != nil {
-                    Text("この写真とメモを二人のアルバムに追加します。相手もあとから見返せます。")
+                        Text("この写真とメモをまどに残します。相手もあとから見返せます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if photoAdded { Text("写真は追加済みです。メモの追加を確認しています。") }
@@ -1229,14 +1267,21 @@ struct FamilyRecordUIFixture: View {
             if CommandLine.arguments.contains("--family-collection-ui-fixture") {
                 NavigationStack {
                     ScrollView {
-                        FamilyWindowPhotoCollection(
+                        FamilyWindowPhotoCollection<AnyView>(
                             spaceID: otherSpace ? "another_family_space" : "fixture_family_space",
                             windowName: "マイファミリー", photos: collectionPhotos,
                             canShowRecords: canReadCollection, client: client, fixturePhoto: photo,
-                            showInformation: {}) { item in
+                            showInformation: {}) { item, captionSource in
                                 if case let .sent(record) = item {
-                                    MomentSentRecordCard(record: record)
-                                        .accessibilityIdentifier("family-collection-delivery")
+                                    let caption: String? = switch captionSource {
+                                    case .legacy: record.localCaption
+                                    case let .record(text): text
+                                    case .unresolved: nil
+                                    }
+                                    return AnyView(MomentSentRecordCard(record: record, caption: caption)
+                                        .accessibilityIdentifier("family-collection-delivery"))
+                                } else {
+                                    return AnyView(EmptyView())
                                 }
                             }
                             .id(otherSpace)
@@ -1258,6 +1303,14 @@ struct FamilyRecordUIFixture: View {
                         } }.accessibilityIdentifier("family-collection-fixture-retain")
                         Button("期限") { showDelivery.toggle() }
                             .accessibilityIdentifier("family-collection-fixture-expire")
+                        Menu("メモ") {
+                            Button("初回メモ") { Task {
+                                try? await client.addInitialDeliveryWords(); refresh()
+                            } }.accessibilityIdentifier("family-collection-fixture-initial-words")
+                            Button("初回メモを取り下げ") { Task {
+                                try? await client.withdrawInitialDeliveryWords(); refresh()
+                            } }.accessibilityIdentifier("family-collection-fixture-withdraw-initial-words")
+                        }
                         Button("撤回") { Task {
                             if let row = try? await client.load().catalog.records.first(where: { $0.kind == .photo }),
                                let operation = try? await client.prepareWithdrawal(row) {
@@ -1355,6 +1408,28 @@ actor FamilyRecordFixtureClient: FamilyRecordServing {
         rows.append(FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: peer,
             revision: 1, state: .active, keyEpoch: 1, ciphertext: nil, createdAt: now, updatedAt: now))
         words[id] = "相手が添えた言葉"
+    }
+    func addInitialDeliveryWords() throws {
+        try requireActive()
+        guard let photo = rows.first(where: { $0.kind == .photo }) else { throw FamilyRecordError.changed }
+        let id = try FamilyRecordCommitPayload.captionID(spaceID: space, photoID: photo.id)
+        guard !rows.contains(where: { $0.id == id }) else { throw FamilyRecordError.changed }
+        let now = Date().timeIntervalSince1970
+        rows.append(FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: author,
+            revision: 1, state: .active, keyEpoch: 1, ciphertext: nil, createdAt: now, updatedAt: now))
+        words[id] = "はじめてのおふろ"
+    }
+    func withdrawInitialDeliveryWords() throws {
+        try requireActive()
+        guard let photo = rows.first(where: { $0.kind == .photo }),
+              let id = try? FamilyRecordCommitPayload.captionID(spaceID: space, photoID: photo.id),
+              let index = rows.firstIndex(where: { $0.id == id && $0.state == .active })
+        else { throw FamilyRecordError.changed }
+        let prior = rows[index]
+        rows[index] = FamilyRecordRow(id: id, entryID: photo.id, kind: .words, authorID: author,
+            revision: prior.revision + 1, state: .withdrawn, keyEpoch: 1, ciphertext: nil,
+            createdAt: prior.createdAt, updatedAt: Date().timeIntervalSince1970)
+        words[id] = nil
     }
     func leave() { active = false }
 }

@@ -3067,7 +3067,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("到着は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
-        self.assertIn("MomentSentRecordCard(record: record)", family)
+        self.assertIn("MomentSentRecordCard(record: record, caption: caption)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
@@ -3447,7 +3447,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         gallery = section(family, "private var sharedPhotoContent:", "private var sharedPhotoInformation:")
         self.assertIn("received: model.receivedMoments", gallery)
         self.assertIn("sent: model.outgoingPresentation.sentRecords", gallery)
-        self.assertIn("FamilyWindowPhotoCollection(", gallery)
+        self.assertIn("FamilyWindowPhotoCollection<AnyView>(", gallery)
         self.assertIn("canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly", gallery)
         self.assertIn(".id(spaceID)", gallery)
         collection = section(source("NekoWidget/Views/FamilyRecordView.swift"),
@@ -3455,11 +3455,16 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentSharedAlbumHeading()", collection)
         self.assertIn("value.catalog.spaceID == spaceID", collection)
         self.assertIn("canShowRecords, scenePhase == .active", collection)
+        # Keep the delivery detail's photo actions, then replace it with the
+        # retained record after local delivery history expires.
         self.assertIn("row?.state != .withdrawn", collection)
+        self.assertIn("displayedRecordIDs.contains($0.id)", collection)
         self.assertIn("withdrawnIDs.contains", collection)
         self.assertIn("FamilyRecordSourceIdentity.existingPhoto", collection)
         self.assertIn("FamilyRecordExporter.verify", collection)
-        self.assertIn("compactMomentCard(item)", gallery)
+        self.assertIn("compactMomentCard(item, caption: caption)", gallery)
+        self.assertIn("case .unresolved: nil", gallery)
+        self.assertIn("captionSource(for: photo, in: snapshot)", collection)
         self.assertIn("selectedSentRecord = record", gallery)
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
@@ -3535,7 +3540,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentReceivedPhotoHeader(", primary)
         self.assertIn("contentMode: .fit", primary)
         self.assertIn("contentMode: .fill", primary)
-        self.assertIn("family-window-received-caption-full", primary)
+        self.assertIn("(item.senderPolicyVersion ?? 1) == 1, let caption = model.caption(for: item)", primary,
+            "Only old-policy captions may appear without a shared-record catalog.")
         self.assertNotIn(".frame(height: 280)", primary)
         self.assertNotIn("maxHeight: 520", primary)
 
@@ -3599,9 +3605,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         # Geometry is exercised by MomentDeliveryComposerUITests on iOS,
         # rather than pinning the old overlay implementation here.
-        self.assertIn("MomentSentRecordCard(record: record)", sent)
+        self.assertIn("MomentSentRecordCard(record: record, caption: caption)", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
-        self.assertIn("sentRecordAccessibilityLabel(record)", sent)
+        self.assertIn("sentRecordAccessibilityLabel(record, caption: caption)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)
 
         actions = section(

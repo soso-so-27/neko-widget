@@ -35,7 +35,7 @@ final class ShareViewController: UIViewController {
         titleLabel.font = .preferredFont(forTextStyle: .title2)
         titleLabel.adjustsFontForContentSizeCategory = true
 
-        detailLabel.text = "この1枚を\(PrivateWindowDisplayName.fallback)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
+        detailLabel.text = "この1枚を\(PrivateWindowDisplayName.fallback)へ届ける準備をします。アプリで送信後は、そのまどに写真が残り、相手と見返せます。位置情報は除きます。"
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
@@ -274,7 +274,7 @@ final class ShareViewController: UIViewController {
         destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
         destinationButton.configuration?.title = pickerTitle ?? admission.displayName
         destinationButton.accessibilityLabel = "届け先、\(admission.displayName)"
-        detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
+        detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。アプリで送信後は、そのまどに写真が残り、相手と見返せます。位置情報は除きます。"
         continueButton.isEnabled = preparedPhoto != nil
         statusLabel.textColor = .secondaryLabel
         statusLabel.text = "選んだまどへだけ一時保存します。保存後はアプリの「まど」から「\(admission.displayName)」を開くと、安全確認して届けます。"
