@@ -1,8 +1,10 @@
 import { ServiceError } from './contracts';
 import { verifyOwnerCloudEmpty } from './owner-cloud-empty';
 import { inspectOwnerD1Residue } from './owner-d1-residue';
-import type { PurgeIntentReference, S3PurgeIntentStore } from './s3-purge-intent';
-import type { S3PurgeManifestStore } from './s3-purge-manifest';
+import type { PurgeIntentCursor, PurgeIntentReference, PurgeIntentVersion,
+  S3PurgeIntentStore } from './s3-purge-intent';
+import type { PurgeManifestCopyCursor, PurgeManifestCopyVersion,
+  S3PurgeManifestStore } from './s3-purge-manifest';
 import type { S3PurgeEvidenceDelete } from './s3-purge-evidence-delete';
 import type { S3RecoveryCopy } from './s3-recovery-copy';
 
@@ -42,6 +44,36 @@ export type S3EvidenceCleanupStep = { state: 'progress'; kind: 'plan' | 'event';
 export class OwnerS3EvidenceCleanup {
   constructor(private readonly d: Dependencies) {}
 
+  private async eventInventory(ownerId: string): Promise<PurgeIntentVersion[]> {
+    const versions: PurgeIntentVersion[] = [];
+    const cursors = new Set<string>();
+    let cursor: PurgeIntentCursor | undefined;
+    while (true) {
+      const page = await this.d.intentStore.listOwnerVersionsPage(ownerId, cursor);
+      versions.push(...page.versions);
+      if (!page.nextCursor) return versions;
+      const marker = JSON.stringify(page.nextCursor);
+      if (cursors.has(marker)) throw unavailable();
+      cursors.add(marker);
+      cursor = page.nextCursor;
+    }
+  }
+
+  private async planInventory(ownerId: string): Promise<PurgeManifestCopyVersion[]> {
+    const versions: PurgeManifestCopyVersion[] = [];
+    const cursors = new Set<string>();
+    let cursor: PurgeManifestCopyCursor | undefined;
+    while (true) {
+      const page = await this.d.planStore.listOwnerEvidenceVersionsPage(ownerId, cursor);
+      versions.push(...page.versions);
+      if (!page.nextCursor) return versions;
+      const marker = JSON.stringify(page.nextCursor);
+      if (cursors.has(marker)) throw unavailable();
+      cursors.add(marker);
+      cursor = page.nextCursor;
+    }
+  }
+
   async step(ownerId: string, intentId: string,
     completedRef: PurgeIntentReference): Promise<S3EvidenceCleanupStep> {
     if (this.d.enabled !== 'YES' || !identifier.test(ownerId) || !identifier.test(intentId)
@@ -55,20 +87,9 @@ export class OwnerS3EvidenceCleanup {
         || Object.values(residue.ownerCursors).some(Boolean)
         || Object.values(residue.recoveryRepairCursors).some(Boolean)) throw unavailable();
 
-      // A final DELETE may have committed while its response was lost. Empty
-      // owner-wide prefixes and empty D1/cloud are then a safe terminal state,
-      // but never authorization to issue a new deletion.
-      let completed;
-      try { completed = await this.d.intentStore.readExact(completedRef); }
-      catch {
-        const [plans, events] = await Promise.all([
-          this.d.planStore.listOwnerEvidenceVersionsPage(ownerId),
-          this.d.intentStore.listOwnerVersionsPage(ownerId),
-        ]);
-        if (plans.versions.length || plans.nextCursor || events.versions.length || events.nextCursor)
-          throw unavailable();
-        return { state: 's3-cleared', overdue: false };
-      }
+      // A missing completed version is never proof of success: it can also
+      // mean premature removal while an older D1 restore is still possible.
+      const completed = await this.d.intentStore.readExact(completedRef);
       if (completed.ownerId !== ownerId || completed.intentId !== intentId
         || completed.stage !== 'completed' || !completed.manifestSha256
         || !Number.isSafeInteger(completed.recordedAt)
@@ -76,22 +97,43 @@ export class OwnerS3EvidenceCleanup {
         || !await this.d.restoreWindowClosed(completed.recordedAt)) throw unavailable();
       const overdue = now > completed.recordedAt + 35 * day;
 
-      const plans = await this.d.planStore.listOwnerEvidenceVersionsPage(ownerId);
-      if (plans.versions.length) {
-        const items = plans.versions.slice(0, maximumBatch);
+      // Inspect the complete inventory before the first irreversible delete.
+      // S3 is allowed to truncate before MaxKeys, including a page with only
+      // the completed event and more events in subsequent pages.
+      const [plans, events] = await Promise.all([
+        this.planInventory(ownerId), this.eventInventory(ownerId),
+      ]);
+      const seenPlans = new Set<string>();
+      for (const item of plans) {
+        const match = planKey.exec(item.key);
+        const identity = `${item.key}\0${item.versionId}`;
+        if (!match || match[1] !== ownerId || seenPlans.has(identity)) throw unavailable();
+        seenPlans.add(identity);
+      }
+      const seenEvents = new Set<string>();
+      let exactCompleted = 0;
+      for (const item of events) {
+        const match = eventKey.exec(item.key);
+        const identity = `${item.key}\0${item.versionId}`;
+        if (!match || match[1] !== ownerId || seenEvents.has(identity)) throw unavailable();
+        seenEvents.add(identity);
+        if (item.key.endsWith('/completed')) {
+          if (item.key !== completedRef.key || item.versionId !== completedRef.versionId
+            || item.deleteMarker || item.bytes !== completedRef.bytes) throw unavailable();
+          exactCompleted++;
+        }
+      }
+      if (exactCompleted !== 1) throw unavailable();
+      if (plans.length) {
+        const items = plans.slice(0, maximumBatch);
         for (const item of items) {
-          const match = planKey.exec(item.key);
-          if (!match || match[1] !== ownerId) throw unavailable();
+          const match = planKey.exec(item.key)!;
           await this.d.deleteStore.requestPlanVersionDeletion(ownerId, match[2]!, item);
         }
         return { state: 'progress', kind: 'plan', removed: items.length, overdue };
       }
-      if (plans.nextCursor) throw unavailable();
-
-      const events = await this.d.intentStore.listOwnerVersionsPage(ownerId);
-      const others = events.versions.filter(item => item.key !== completedRef.key
+      const others = events.filter(item => item.key !== completedRef.key
         || item.versionId !== completedRef.versionId);
-      if (others.some(item => item.key === completedRef.key)) throw unavailable();
       if (others.length) {
         const items = others.slice(0, maximumBatch);
         for (const item of items) {
@@ -101,17 +143,12 @@ export class OwnerS3EvidenceCleanup {
         }
         return { state: 'progress', kind: 'event', removed: items.length, overdue };
       }
-      if (events.nextCursor || events.versions.length !== 1
-        || events.versions[0]!.key !== completedRef.key
-        || events.versions[0]!.versionId !== completedRef.versionId
-        || events.versions[0]!.deleteMarker) throw unavailable();
-      await this.d.deleteStore.requestEventVersionDeletion(ownerId, intentId, events.versions[0]!);
+      if (events.length !== 1) throw unavailable();
+      await this.d.deleteStore.requestEventVersionDeletion(ownerId, intentId, events[0]!);
       const [afterPlans, afterEvents] = await Promise.all([
-        this.d.planStore.listOwnerEvidenceVersionsPage(ownerId),
-        this.d.intentStore.listOwnerVersionsPage(ownerId),
+        this.planInventory(ownerId), this.eventInventory(ownerId),
       ]);
-      if (afterPlans.versions.length || afterPlans.nextCursor
-        || afterEvents.versions.length || afterEvents.nextCursor) throw unavailable();
+      if (afterPlans.length || afterEvents.length) throw unavailable();
       return { state: 's3-cleared', overdue };
     } catch { throw unavailable(); }
   }

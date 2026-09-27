@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
 import { OwnerS3EvidenceCleanup } from '../src/owner-s3-evidence-cleanup';
 import type { PurgeIntentReference, PurgeIntentVersion,
-  S3PurgeIntentStore } from '../src/s3-purge-intent';
+  PurgeIntentCursor, S3PurgeIntentStore } from '../src/s3-purge-intent';
 import type { PurgeManifestCopyVersion, S3PurgeManifestStore } from '../src/s3-purge-manifest';
 import type { S3PurgeEvidenceDelete } from '../src/s3-purge-evidence-delete';
 import type { S3RecoveryCopy } from '../src/s3-recovery-copy';
@@ -11,7 +11,7 @@ const db = (env as unknown as { DB: D1Database }).DB;
 const day = 86_400_000;
 
 function fixture(options: { ageDays?: number; floor?: boolean; duplicateCompleted?: boolean;
-  loseFinalReply?: boolean } = {}) {
+  loseFinalReply?: boolean; eventPageSize?: number; extraAbortedEvents?: number } = {}) {
   const ownerId = crypto.randomUUID();
   const intentId = crypto.randomUUID();
   const abortedIntent = crypto.randomUUID();
@@ -30,6 +30,10 @@ function fixture(options: { ageDays?: number; floor?: boolean; duplicateComplete
       versionId: 'aborted-v1', deleteMarker: false, bytes: 200 },
     ...(options.duplicateCompleted ? [{ key: completedRef.key, versionId: 'completed-v2',
       deleteMarker: false, bytes: 200 }] : []),
+    ...Array.from({ length: options.extraAbortedEvents ?? 0 }, (_, index) => ({
+      key: `purge/v1/${ownerId}/${crypto.randomUUID()}/aborted`,
+      versionId: `extra-aborted-${index}`, deleteMarker: false, bytes: 200,
+    })),
   ];
   const plans: PurgeManifestCopyVersion[] = [
     { key: `purge-plan/v1/${ownerId}/${intentId}/header`,
@@ -47,7 +51,15 @@ function fixture(options: { ageDays?: number; floor?: boolean; duplicateComplete
       return { ownerId, intentId, stage: 'completed', manifestSha256: 'b'.repeat(64),
         recordedAt };
     },
-    listOwnerVersionsPage: async () => ({ versions: [...events], nextCursor: null }),
+    listOwnerVersionsPage: async (_owner: string, cursor?: PurgeIntentCursor) => {
+      const start = cursor ? events.findIndex(item => item.versionId === cursor.versionIdMarker) + 1 : 0;
+      if (cursor && start === 0) throw new Error('unknown cursor');
+      const count = options.eventPageSize ?? events.length;
+      const versions = events.slice(start, start + count);
+      const last = versions.at(-1);
+      return { versions, nextCursor: start + count < events.length && last
+        ? { keyMarker: last.key, versionIdMarker: last.versionId } : null };
+    },
   } as unknown as S3PurgeIntentStore;
   const planStore = { listOwnerEvidenceVersionsPage: async () =>
     ({ versions: [...plans], nextCursor: null }) } as unknown as S3PurgeManifestStore;
@@ -94,22 +106,29 @@ it('deletes plans first, other events next, and the exact completed version last
   expect(f.deleted.slice(2)).toEqual(['event:prepared-v1', 'event:aborted-v1']);
   expect(await f.run()).toEqual({ state: 's3-cleared', overdue: false });
   expect(f.deleted.at(-1)).toBe('event:completed-v1');
-  expect(await f.run()).toEqual({ state: 's3-cleared', overdue: false });
+  await expect(f.run()).rejects.toMatchObject({ code: 'PURGE_EVIDENCE_CLEANUP_UNAVAILABLE' });
 });
 
 it('fails closed on another version of the completed key', async () => {
   const f = fixture({ duplicateCompleted: true });
-  await f.run();
   await expect(f.run()).rejects.toMatchObject({ code: 'PURGE_EVIDENCE_CLEANUP_UNAVAILABLE' });
-  expect(f.deleted.every(value => value.startsWith('plan:'))).toBe(true);
+  expect(f.deleted).toEqual([]);
 });
 
-it('accepts a lost final deletion response only after both prefixes are empty', async () => {
+it('never reports success after a lost final response without completed proof', async () => {
   const f = fixture({ loseFinalReply: true });
   await f.run();
   await f.run();
   await expect(f.run()).rejects.toMatchObject({ code: 'PURGE_EVIDENCE_CLEANUP_UNAVAILABLE' });
   expect(f.events).toEqual([]);
   expect(f.plans).toEqual([]);
+  await expect(f.run()).rejects.toMatchObject({ code: 'PURGE_EVIDENCE_CLEANUP_UNAVAILABLE' });
+});
+
+it('follows truncated event pages even when the first only contains completed', async () => {
+  const f = fixture({ eventPageSize: 1, extraAbortedEvents: 33 });
+  expect((await f.run()).state).toBe('progress');
+  expect((await f.run()).state).toBe('progress');
   expect(await f.run()).toEqual({ state: 's3-cleared', overdue: false });
+  expect(f.deleted.at(-1)).toBe('event:completed-v1');
 });
