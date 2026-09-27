@@ -1490,6 +1490,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
         for largeText in [false, true] {
             let app = XCUIApplication()
+            // Acceptance scenarios use a separate two-tab harness; this opens MainTabView.
             app.launchArguments = ["--app-store-screenshot-fixture",
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
@@ -1510,6 +1511,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertTrue(tile.label.contains("準備中"), identifier)
                 XCTAssertFalse(app.buttons[identifier].exists, identifier)
             }
+            // The lower row is intentionally offscreen in the largest text size.
             for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
             XCTAssertTrue(lost.isHittable)
             let evacuation = app.descendants(matching: .any)["tools-evacuation-unavailable"]
