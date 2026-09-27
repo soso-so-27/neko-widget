@@ -979,7 +979,8 @@ struct FamilyWindowView: View {
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
-                addPhotoAction: pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
+                addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState
+                    && pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
                 case .legacy:
