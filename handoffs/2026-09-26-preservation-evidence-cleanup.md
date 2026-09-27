@@ -41,6 +41,9 @@ D1 Time Travel境界の確認が先行しない限り禁止する。
 現時点で復元可能な最古時刻を実確認するprovider、日次controller、証跡writerの停止、
 35日期限監視、復元演習は未実装。`restoreWindowClosed`は必須注入で、実装・接続なし。
 したがって局所候補は本線未反映・未配備・既定OFFで、35日清掃完了とはしない。
+9/27、staging D1に対する読取専用`wrangler d1 time-travel info --timestamp`
+を試したがCloudflare APIの認証エラー10000で不成功。通常の`d1 info`は成功。
+Time Travelの境界確認ができたとは扱わず、権限かCLI/API要因を分離して再試験する。
 
 ## 検証計画
 
