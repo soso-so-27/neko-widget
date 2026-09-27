@@ -981,7 +981,7 @@ struct FamilyWindowView: View {
             sent: model.outgoingPresentation.sentRecords
         )
         if let spaceID = model.pairingState?.spaceID {
-            FamilyWindowPhotoCollection(spaceID: spaceID, windowName: model.windowDisplayName,
+            FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
@@ -995,12 +995,12 @@ struct FamilyWindowView: View {
                 }
                 switch photo {
                 case let .received(item):
-                    compactMomentCard(item, caption: caption)
+                    AnyView(compactMomentCard(item, caption: caption))
                 case let .sent(record):
-                    Button { selectedSentRecord = record } label: {
+                    AnyView(Button { selectedSentRecord = record } label: {
                         sentRecordCard(record, caption: caption)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plain))
                 }
             }
             .id(spaceID)

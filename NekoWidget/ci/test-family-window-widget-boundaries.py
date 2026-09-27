@@ -3447,7 +3447,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         gallery = section(family, "private var sharedPhotoContent:", "private var sharedPhotoInformation:")
         self.assertIn("received: model.receivedMoments", gallery)
         self.assertIn("sent: model.outgoingPresentation.sentRecords", gallery)
-        self.assertIn("FamilyWindowPhotoCollection(", gallery)
+        self.assertIn("FamilyWindowPhotoCollection<AnyView>(", gallery)
         self.assertIn("canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly", gallery)
         self.assertIn(".id(spaceID)", gallery)
         collection = section(source("NekoWidget/Views/FamilyRecordView.swift"),

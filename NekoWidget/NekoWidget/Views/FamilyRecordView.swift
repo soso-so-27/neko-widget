@@ -1261,7 +1261,7 @@ struct FamilyRecordUIFixture: View {
             if CommandLine.arguments.contains("--family-collection-ui-fixture") {
                 NavigationStack {
                     ScrollView {
-                        FamilyWindowPhotoCollection(
+                        FamilyWindowPhotoCollection<AnyView>(
                             spaceID: otherSpace ? "another_family_space" : "fixture_family_space",
                             windowName: "マイファミリー", photos: collectionPhotos,
                             canShowRecords: canReadCollection, client: client, fixturePhoto: photo,
@@ -1272,8 +1272,10 @@ struct FamilyRecordUIFixture: View {
                                     case let .record(text): text
                                     case .unresolved: nil
                                     }
-                                    MomentSentRecordCard(record: record, caption: caption)
-                                        .accessibilityIdentifier("family-collection-delivery")
+                                    AnyView(MomentSentRecordCard(record: record, caption: caption)
+                                        .accessibilityIdentifier("family-collection-delivery"))
+                                } else {
+                                    AnyView(EmptyView())
                                 }
                             }
                             .id(otherSpace)
