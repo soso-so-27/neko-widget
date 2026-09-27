@@ -112,7 +112,7 @@ struct CatProfileDetailView: View {
                         photos: manualCandidatePhotos,
                         profiles: allProfiles,
                         actions: actions,
-                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
+                        navigationTitle: "猫の写真から追加",
                         preselectedProfileIdentifier: profile.identifier
                     )
                 } label: {
@@ -231,11 +231,8 @@ struct CatProfileDetailView: View {
     }
 
     private var preparednessCandidates: [CatProfilePhotoPresentation] {
-        let registered = Set(allProfiles.flatMap { $0.confirmedPhotos.map(\.localIdentifier) })
-        let unassigned = manualCandidatePhotos.filter {
-            !registered.contains($0.localIdentifier)
-        }
-        return profile.confirmedPhotos + unassigned
+        // A face/body reference must not silently use another cat's unassigned candidate.
+        return profile.confirmedPhotos
     }
 
     private var lifeReferenceSummary: String {
@@ -628,7 +625,7 @@ struct CatProfileConfirmedPhotosView: View {
                     photos: profile.manualCandidatePhotos,
                     profiles: allProfiles,
                     actions: actions,
-                    navigationTitle: "\(profile.displayName)の写真を追加",
+                    navigationTitle: "猫の写真から追加",
                     preselectedProfileIdentifier: profile.identifier,
                     dismissAfterSaving: true
                 )
@@ -877,7 +874,8 @@ struct UnassignedCatPhotosView: View {
                 Button {
                     addSelectedPhotos(to: profileID)
                 } label: {
-                    Text(isSaving ? "追加中…" : "\(selection.count.formatted())枚を追加")
+                    let catName = profiles.first(where: { $0.identifier == profileID })?.displayName ?? "この子"
+                    Text(isSaving ? "追加中…" : "\(catName)に\(selection.count.formatted())枚追加")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)

@@ -35,7 +35,9 @@ struct CatPreparednessView: View {
             } header: {
                 Text("この子の写真")
             } footer: {
-                Text("写真はこのiPhone内に準備します。写真アプリの元画像は変更されません。")
+                Text(candidatePhotos.isEmpty
+                     ? "先にこの子の写真を追加してください。"
+                     : "写真はこのiPhone内に準備します。写真アプリの元画像は変更されません。")
             }
 
             Section {

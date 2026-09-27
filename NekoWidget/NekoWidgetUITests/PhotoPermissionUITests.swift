@@ -1524,6 +1524,25 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testShowcasePickerOffersOnlyCatPhotoCandidates() {
+        let app = XCUIApplication()
+        // The fixture has eight detected-cat photos and nine additional
+        // favorites. Favorites alone must not become showcase candidates.
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let toolsTab = app.buttons["main-tab-tools"]
+        XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
+        toolsTab.tap()
+        let showcase = app.buttons["tools-showcase-open"]
+        XCTAssertTrue(showcase.waitForExistence(timeout: 5))
+        showcase.tap()
+        XCTAssertTrue(app.staticTexts["猫の写真から追加"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
+        capture("showcase-cat-candidates")
+    }
+
+    @MainActor
     func testManagedPreservationMembershipLinkConsentAndRetry() {
         continueAfterFailure = false
         let app = XCUIApplication()
