@@ -270,6 +270,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let senderPolicyVersion: Int
     let createdAt: Date
 
     init(
@@ -287,6 +288,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         serverMomentID: String? = nil,
         localThumbnailJPEG: Data? = nil,
         localCaption: String? = nil,
+        senderPolicyVersion: Int = 1,
         createdAt: Date? = nil
     ) {
         self.stableID = stableID
@@ -303,6 +305,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.serverMomentID = serverMomentID
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.senderPolicyVersion = senderPolicyVersion
         self.createdAt = createdAt ?? updatedAt
     }
 }
