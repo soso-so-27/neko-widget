@@ -61,4 +61,7 @@ context欠落・余分なkey・別の鍵・鍵削除はimplicitDenyを確認。
 その鍵は削除。次に12秒待ってSTSで専用主体を確認し、さらに別の一時鍵で
 合成32バイトのKMS Encrypt/Decrypt往復に成功した。試験用鍵は両方削除し、
 残る1本はInactive。初回失敗はIAM反映遅延が疑われるが断定しない。
-CLIの実KMS成功はWorkerの実通信・運用時のsecret使用・障害復旧の証拠ではない。
+既存`vitest.live-staging-kms.config.ts`のWorker実行環境で、一時鍵を使う
+合成32バイト鍵の実KMS wrap/unwrap 1件が成功した。試験鍵を削除し、
+残る鍵はInactiveと再照合した。これは製品コードの実AWS通信の証拠だが、
+配備済み非公開Workerのsecret・Service Binding連携や障害復旧の証拠ではない。
