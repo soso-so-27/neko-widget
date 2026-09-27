@@ -81,3 +81,10 @@ context欠落・余分なkey・別の鍵・鍵削除はimplicitDenyを確認。
 `0028_window_support_requests.sql`と同じ番号で別内容。並行中の共有機能作業が
 stagingを先行している状態なので、migration番号を上書き・手動補完しない。
 共有アプリへの影響と移行順序を本線担当と整合するまで課金照合はONにしない。
+
+## S3の現物設定
+
+9/27の読取照合でstaging復旧bucketはversioning Enabled、Public Access Blockの
+4項目すべてtrue、既定SSE-S3(AES256)、lifecycle未設定。
+版を残す復旧には適合するが、非現行版を含む容量・費用が自動で止まる設定ではない。
+復旧期間を壊す一律のlifecycleは追加していない。
