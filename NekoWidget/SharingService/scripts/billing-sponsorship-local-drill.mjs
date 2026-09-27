@@ -48,6 +48,7 @@ const expectedMigrationNames = [
   "0026_moment_block_withdrawals.sql",
   "0027_family_records.sql",
   "0028_window_support_requests.sql",
+  "0029_family_record_moments.sql",
 ];
 
 const databaseGateColumns = [
