@@ -202,6 +202,7 @@ require(opened.jpeg == jpeg, "media round trip changed bytes")
 require(opened.manifest.capturedAt == capturedAt, "capture date did not round trip inside manifest")
 require(!opened.manifest.captureDateIsMissing, "known capture date was marked missing")
 require(opened.manifest.kind == .live, "moment kind did not round trip")
+require(opened.manifest.senderPolicyVersion == nil, "legacy encrypted send was reclassified")
 require(payload.ciphertext.count <= MomentSharingProtocol.maximumObjectCiphertextBytes, "object cap failed")
 
 let serializedPayload = try JSONEncoder().encode(payload)
@@ -243,6 +244,14 @@ let captionPayload = try MomentCrypto.prepare(
 let captionOpened = try MomentCrypto.open(captionPayload, spaceGenerationKey: roomKey)
 require(captionOpened.jpeg == jpeg, "caption changed photograph bytes")
 require(captionOpened.manifest.caption == privateCaption, "encrypted caption did not round trip")
+let retainedCaptionPayload = try MomentCrypto.prepare(
+    canonicalJPEG: jpeg, capturedAt: capturedAt, pixelWidth: 1_920, pixelHeight: 1_280,
+    context: context, spaceGenerationKey: roomKey, caption: privateCaption,
+    senderPolicyVersion: 2
+)
+let retainedCaptionOpened = try MomentCrypto.open(retainedCaptionPayload, spaceGenerationKey: roomKey)
+require(retainedCaptionOpened.manifest.senderPolicyVersion == 2,
+        "new retained caption lost its encrypted policy identity")
 let captionOuterJSON = try JSONEncoder().encode(captionPayload)
 require(captionOuterJSON.range(of: Data("caption_fixture_private".utf8)) == nil,
         "caption plaintext escaped the encrypted manifest")

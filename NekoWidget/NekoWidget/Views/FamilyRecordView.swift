@@ -168,7 +168,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
          showInformation: @escaping () -> Void,
-         @ViewBuilder deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
+         deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.showInformation = showInformation
         self.deliveryCard = deliveryCard
@@ -192,11 +192,13 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     }
 
     private func captionSource(for photo: MomentSharedPhoto, in snapshot: FamilyRecordSnapshot?) -> CaptionSource {
-        guard let snapshot else { return .unresolved }
-        guard let row = linkedRecord(photo, in: snapshot) else { return .legacy }
+        guard let snapshot else { return photo.senderPolicyVersion == 2 ? .unresolved : .legacy }
+        guard let row = linkedRecord(photo, in: snapshot) else {
+            return photo.senderPolicyVersion == 2 ? .unresolved : .legacy
+        }
         guard let wordsID = try? FamilyRecordCommitPayload.captionID(spaceID: spaceID, photoID: row.id),
               let words = snapshot.catalog.records.first(where: { $0.id == wordsID && $0.kind == .words })
-        else { return .legacy }
+        else { return photo.senderPolicyVersion == 2 ? .record(nil) : .legacy }
         return .record(words.state == .active ? snapshot.words[wordsID] : nil)
     }
 
@@ -450,6 +452,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     let source: FamilyRecordPhotoSource?
     let caption: String?
     let captionIsOwn: Bool
+    let allowsLegacyCaptionWithoutCatalog: Bool
     let captionIdentifier: String
     let windowName: String
     let content: (AnyView) -> PhotoContent
@@ -458,9 +461,11 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(spaceID: String, source: FamilyRecordPhotoSource?, caption: String?, captionIsOwn: Bool,
+         allowsLegacyCaptionWithoutCatalog: Bool = true,
          captionIdentifier: String, windowName: String = "このまど",
          client: (any FamilyRecordServing)? = nil, @ViewBuilder content: @escaping (AnyView) -> PhotoContent) {
         self.source = source; self.caption = caption; self.captionIsOwn = captionIsOwn
+        self.allowsLegacyCaptionWithoutCatalog = allowsLegacyCaptionWithoutCatalog
         self.captionIdentifier = captionIdentifier; self.windowName = windowName
         self.content = content
         _model = StateObject(wrappedValue: FamilyRecordViewModel(
@@ -562,10 +567,11 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
     }
 
     private var shouldShowLegacyCaption: Bool {
+        guard allowsLegacyCaptionWithoutCatalog else { return false }
         guard let source else { return true }
         // An unresolved catalog cannot establish whether the delivery text
         // was withdrawn. Never use the older delivery copy as a fallback.
-        guard let snapshot = model.snapshot else { return false }
+        guard let snapshot = model.snapshot else { return true }
         guard let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog,
             momentID: source.momentID),
               let wordsID = try? FamilyRecordCommitPayload.captionID(
@@ -1272,10 +1278,10 @@ struct FamilyRecordUIFixture: View {
                                     case let .record(text): text
                                     case .unresolved: nil
                                     }
-                                    AnyView(MomentSentRecordCard(record: record, caption: caption)
+                                    return AnyView(MomentSentRecordCard(record: record, caption: caption)
                                         .accessibilityIdentifier("family-collection-delivery"))
                                 } else {
-                                    AnyView(EmptyView())
+                                    return AnyView(EmptyView())
                                 }
                             }
                             .id(otherSpace)

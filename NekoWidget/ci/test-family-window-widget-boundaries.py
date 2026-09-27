@@ -3540,8 +3540,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentReceivedPhotoHeader(", primary)
         self.assertIn("contentMode: .fit", primary)
         self.assertIn("contentMode: .fill", primary)
-        self.assertNotIn("model.caption(for: item)", primary,
-            "Report-only cards must not resurrect a withdrawn delivery caption.")
+        self.assertIn("(item.senderPolicyVersion ?? 1) == 1, let caption = model.caption(for: item)", primary,
+            "Only old-policy captions may appear without a shared-record catalog.")
         self.assertNotIn(".frame(height: 280)", primary)
         self.assertNotIn("maxHeight: 520", primary)
 

@@ -511,6 +511,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let senderPolicyVersion: Int
 
     init(
         id: String,
@@ -519,7 +520,8 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         recipientDeliveryConfirmedAt: Date?,
         hasReceivedHeart: Bool,
         localThumbnailJPEG: Data? = nil,
-        localCaption: String? = nil
+        localCaption: String? = nil,
+        senderPolicyVersion: Int = 1
     ) {
         self.id = id
         self.momentID = momentID
@@ -528,6 +530,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         self.hasReceivedHeart = hasReceivedHeart
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.senderPolicyVersion = senderPolicyVersion
     }
 
     var deliveryState: MomentSentRecordDeliveryState {
@@ -836,7 +839,8 @@ enum MomentSharingPresentationPolicy {
                     recipientDeliveryConfirmedAt: confirmedAt,
                     hasReceivedHeart: delivery.hasReceivedHeart,
                     localThumbnailJPEG: delivery.localThumbnailJPEG,
-                    localCaption: delivery.localCaption
+                    localCaption: delivery.localCaption,
+                    senderPolicyVersion: delivery.senderPolicyVersion
                 )
             }
 

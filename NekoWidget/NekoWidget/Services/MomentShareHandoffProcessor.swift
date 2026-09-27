@@ -300,7 +300,8 @@ struct MomentShareHandoffProcessor: Sendable {
                     pixelHeight: claim.record.pixelHeight,
                     context: context,
                     spaceGenerationKey: roomKey,
-                    caption: claim.record.caption
+                    caption: claim.record.caption,
+                    senderPolicyVersion: claim.record.senderPolicyVersion
                 )
                 _ = try reconcileOrPromote(
                     claim: claim,
