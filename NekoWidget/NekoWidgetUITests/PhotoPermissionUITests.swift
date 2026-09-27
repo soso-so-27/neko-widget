@@ -1487,16 +1487,27 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testShowcaseAlbumEntryRendersBeforeAlbumsAtStandardAndLargeText() {
+    func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
         for scenario in ["saved", "seasonal-large"] {
             let app = launch(scenario)
-            let row = app.buttons["albums-showcase-open"]
-            XCTAssertTrue(row.waitForExistence(timeout: 10))
-            XCTAssertTrue(row.isHittable)
-            XCTAssertTrue(row.label.contains("見せるアルバム"))
-            XCTAssertTrue(row.label.contains("写真を選ぶ"))
-            XCTAssertGreaterThanOrEqual(row.frame.height, 64)
-            capture("showcase-entry-\(scenario)")
+            XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
+            let tab = app.buttons["main-tab-tools"]
+            XCTAssertTrue(tab.waitForExistence(timeout: 10))
+            tab.tap()
+            let showcase = app.buttons["tools-showcase-open"]
+            let lost = app.buttons["tools-lost-cat-open"]
+            XCTAssertTrue(showcase.waitForExistence(timeout: 5))
+            XCTAssertTrue(showcase.isHittable)
+            XCTAssertTrue(showcase.label.contains("写真を見せる"))
+            XCTAssertTrue(lost.exists)
+            for identifier in ["tools-care-unavailable", "tools-vet-unavailable",
+                               "tools-evacuation-unavailable"] {
+                let tile = app.descendants(matching: .any)[identifier]
+                XCTAssertTrue(tile.exists, identifier)
+                XCTAssertTrue(tile.label.contains("準備中"), identifier)
+                XCTAssertFalse(app.buttons[identifier].exists, identifier)
+            }
+            capture("tools-entry-\(scenario)")
             app.terminate()
         }
     }

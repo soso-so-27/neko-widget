@@ -908,10 +908,6 @@ struct LikedPhotosView: View {
     var albumProfileActions: CatProfilesViewActions
     var albumScope: Binding<CatProfileScopePresentation>
     var showSettings: (() -> Void)?
-    var openShowcase: (() -> Void)?
-    var showcaseEntries: [ShowcasePhotoStore.Entry]
-    var showcaseCoverURL: URL?
-    var showcaseScopeTitle: String
     var showsReflectionArchive: Bool
     var showsHighlightArchive: Bool
     var referenceDate: Date
@@ -936,10 +932,6 @@ struct LikedPhotosView: View {
         albumProfileActions: CatProfilesViewActions = .noOp,
         albumScope: Binding<CatProfileScopePresentation> = .constant(.everyone),
         showSettings: (() -> Void)? = nil,
-        openShowcase: (() -> Void)? = nil,
-        showcaseEntries: [ShowcasePhotoStore.Entry] = [],
-        showcaseCoverURL: URL? = nil,
-        showcaseScopeTitle: String = "選んだ写真",
         showsReflectionArchive: Bool = false, showsHighlightArchive: Bool = false,
         referenceDate: Date = Date(),
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
@@ -963,10 +955,6 @@ struct LikedPhotosView: View {
         self.albumProfileActions = albumProfileActions
         self.albumScope = albumScope
         self.showSettings = showSettings
-        self.openShowcase = openShowcase
-        self.showcaseEntries = showcaseEntries
-        self.showcaseCoverURL = showcaseCoverURL
-        self.showcaseScopeTitle = showcaseScopeTitle
         self.showsReflectionArchive = showsReflectionArchive
         self.showsHighlightArchive = showsHighlightArchive
         self.referenceDate = referenceDate
@@ -1086,43 +1074,6 @@ struct LikedPhotosView: View {
 
     var body: some View {
         ScrollView {
-        if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive,
-           let openShowcase {
-            Button(action: openShowcase) {
-                HStack(spacing: 12) {
-                    Group {
-                        if let showcaseCoverURL,
-                           let image = UIImage(contentsOfFile: showcaseCoverURL.path) {
-                            Image(uiImage: image).resizable().scaledToFill()
-                        } else {
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(Color.secondary.opacity(0.12))
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("見せるアルバム").font(.subheadline.weight(.semibold))
-                        Text(showcaseEntries.isEmpty ? "写真を選ぶ"
-                             : "\(showcaseScopeTitle) · \(showcaseEntries.count)枚")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(minHeight: 64)
-                .padding(.horizontal, 12)
-                .background(Color(.secondarySystemGroupedBackground),
-                            in: RoundedRectangle(cornerRadius: 12))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("albums-showcase-open")
-            .padding(.horizontal, 16).padding(.top, 12)
-        }
         Group {
             if isPreparingAlbums {
                 ProgressView()
@@ -2632,7 +2583,7 @@ struct PhotoBrowserView: View {
                             Button {
                                 showcaseAddPhoto(selectedPhoto.localIdentifier)
                             } label: {
-                                Label("見せるアルバムに追加", systemImage: "photo.badge.plus")
+                                Label("見せる写真に追加", systemImage: "photo.badge.plus")
                             }
                             .accessibilityIdentifier("photo-browser-showcase-add")
                         }

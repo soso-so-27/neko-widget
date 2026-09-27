@@ -710,6 +710,7 @@ enum AppTab: Hashable {
     case photos
     case memories
     case windows
+    case tools
 }
 
 /// A small, revisitable collection derived only from albums in the current
