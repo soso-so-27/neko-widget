@@ -959,11 +959,6 @@ struct FamilyWindowView: View {
             sharedPhotoInformation
         }
         .toolbar {
-            if !model.isReportOnly, pendingNotificationRoute?.target == nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    sendPhotoAction
-                }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
                     windowSettingsContent
@@ -984,6 +979,8 @@ struct FamilyWindowView: View {
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
+                addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState
+                    && pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
                 case .legacy:
@@ -1045,20 +1042,23 @@ struct FamilyWindowView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("このまどでは、お互いに追加した写真を一緒に見られます。")
-                    Text("写真は自動では共有されません。追加する1枚を選んで確認します。")
+                    Text("＋から写真を1枚選び、確認して相手と共有します。写真や自分だけのメモが自動で共有されることはありません。")
                 }
-                Section("写真の保存") {
-                    Text("新しく追加した写真とメモはこのまどに残り、二人で見返せます。別のアルバムへ追加する操作はいりません。Widgetにも届きます。")
-                    Text("内部テスト中の上限は、まどごとに写真100枚・メモ1,000件です。上限に達しても、古い写真を自動で消すことはありません。")
-                    Text("共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に「写真とメモを書き出す」から保存してください。無期限の保管や全端末を失った場合の復元は保証していません。")
+                Section("追加した写真") {
+                    Text("新しい写真とメモはこのまどに残り、二人で見返せます。Widgetにも届きます。")
                 }
                 Section("以前に送った写真") {
-                    Text("古いバージョンから送った写真は、以前の期限のまま表示します。写真を開いてメモを追加すると、写真と一緒にこのまどに残せます。")
-                    Text("保管されていない写真の履歴は、届いた側で最長90日、送った側で最長30日です。書き出しには含まれません。")
+                    Text("「表示期限あり」の写真は以前の期限のままです。写真を開いてメモを追加すると、このまどに残せます。期限のある写真は書き出しに含まれません。")
+                }
+                Section("持ち出しと共有終了") {
+                    Text("写真とメモは「このまどの写真」の…から書き出せます。共有を終了すると、このまどの写真とメモは開けなくなります。")
+                    Text("無期限の保管や、二人の全端末を失った場合の復元は保証していません。")
+                }
+                Section("内部テスト中") {
+                    Text("まどごとに写真100枚・メモ1,000件まで。上限に達しても古い写真は自動で消しません。")
                 }
             }
-            .navigationTitle("共有の写真")
+            .navigationTitle("このまどの写真")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -3266,7 +3266,7 @@ private struct MomentSentPhotoDetail: View {
                 }
             }
             .background(.black)
-            .navigationTitle("送った写真").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(model.windowDisplayName).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showsInformation = true } label: { Image(systemName: "info.circle") }

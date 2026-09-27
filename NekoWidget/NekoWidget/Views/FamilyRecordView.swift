@@ -49,11 +49,11 @@ struct FamilyRecordEntryButton: View {
                         Button("この写真にメモを追加", systemImage: "square.and.pencil") {
                             destination = .photo(source)
                         }.accessibilityIdentifier("family-record-add-current-photo")
-                        Button("このまどのアルバムを見る", systemImage: "photo.on.rectangle.angled") {
+                        Button("このまどの写真を見る", systemImage: "photo.on.rectangle.angled") {
                             destination = .list
                         }.accessibilityIdentifier("family-record-open-list")
                     } label: {
-                        Label("このまどのアルバム", systemImage: "photo.on.rectangle.angled")
+                        Label("このまどの写真", systemImage: "photo.on.rectangle.angled")
                             .frame(minHeight: 44)
                     }
                     .accessibilityIdentifier("family-record-entry")
@@ -64,8 +64,8 @@ struct FamilyRecordEntryButton: View {
                                 .font(.title2).frame(width: 48, height: 48)
                                 .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("このまどのアルバム").font(.headline)
-                                Text("二人で残した写真とメモ")
+                                Text("このまどの写真").font(.headline)
+                                Text("二人で見られる写真とメモ")
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
@@ -134,6 +134,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     let windowName: String
     let photos: [MomentSharedPhoto]
     let canShowRecords: Bool
+    let addPhotoAction: AnyView?
     let showInformation: () -> Void
     let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
     private let fixturePhoto: MomentShareIngressPhoto?
@@ -167,10 +168,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
+         addPhotoAction: AnyView? = nil,
          showInformation: @escaping () -> Void,
          deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
-        self.canShowRecords = canShowRecords; self.showInformation = showInformation
+        self.canShowRecords = canShowRecords; self.addPhotoAction = addPhotoAction
+        self.showInformation = showInformation
         self.deliveryCard = deliveryCard
         self.fixturePhoto = fixturePhoto
         _model = StateObject(wrappedValue: FamilyRecordViewModel(
@@ -249,33 +252,32 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     private func collectionContent(_ value: Projection) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                MomentSharedAlbumHeading()
-                Spacer()
-                Menu {
-                    if value.exportable, let snapshot = value.snapshot {
-                        Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
-                            let client = model.client
-                            exporter.prepare(build: {
-                                try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
-                            }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
-                        }
-                        .disabled(exporter.preparing || exporter.payload != nil)
-                        .accessibilityIdentifier("family-record-export")
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("このまどの写真").font(.headline)
+                    HStack {
+                        Spacer()
+                        collectionActions(value)
                     }
-                    Button("写真の共有と保存について", systemImage: "info.circle", action: showInformation)
-                        .accessibilityIdentifier("family-window-shared-photo-info")
-                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
-                    .accessibilityLabel("このまどの写真の操作")
-                    .accessibilityIdentifier("family-collection-menu")
+                }
+            } else {
+                HStack {
+                    Text("このまどの写真").font(.headline)
+                    Spacer()
+                    collectionActions(value)
+                }
             }
             if !canShowRecords {
                 Label("接続を確認できません", systemImage: "wifi.exclamationmark")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .accessibilityIdentifier("family-collection-unavailable")
             } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
-                ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
-                    description: Text("右上の写真ボタンから、相手に一枚届けられます。"))
+                if addPhotoAction != nil {
+                    ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
+                        description: Text("＋から写真を1枚選び、相手と共有できます。"))
+                } else {
+                    ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle")
+                }
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
                     count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), alignment: .leading, spacing: 16) {
@@ -305,6 +307,29 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 }
             }
             if let error = exporter.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+        }
+    }
+
+    // The photo picker lives with this collection; the window toolbar only opens settings.
+    private func collectionActions(_ value: Projection) -> some View {
+        HStack(spacing: 0) {
+            if let addPhotoAction { addPhotoAction }
+            Menu {
+                if value.exportable, let snapshot = value.snapshot {
+                    Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
+                        let client = model.client
+                        exporter.prepare(build: {
+                            try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
+                        }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
+                    }
+                    .disabled(exporter.preparing || exporter.payload != nil)
+                    .accessibilityIdentifier("family-record-export")
+                }
+                Button("写真の共有と保存について", systemImage: "info.circle", action: showInformation)
+                    .accessibilityIdentifier("family-window-shared-photo-info")
+            } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                .accessibilityLabel("このまどの写真の操作")
+                .accessibilityIdentifier("family-collection-menu")
         }
     }
 
@@ -347,7 +372,16 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
         case let .delivery(photo, retained):
             VStack(alignment: .leading, spacing: 4) {
                 deliveryCard(photo, captionSource(for: photo, in: snapshot))
-                if !retained { Text("以前の写真").font(.caption).foregroundStyle(.secondary) }
+                HStack(spacing: 6) {
+                    switch photo {
+                    case .received: Text("相手")
+                    case .sent: Text("自分")
+                    }
+                    if !retained && photo.senderPolicyVersion == 1 {
+                        Text("· 表示期限あり")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
         case let .record(row):
             Button { destination = .record(row.id) } label: {
@@ -685,7 +719,7 @@ struct FamilyRecordView: View {
                 if let error = model.error {
                     Section { Text(error); Button("もう一度読み込む") { Task { await model.reload() } } }
                 }
-                if model.loading { ProgressView("アルバムを確認中") }
+                if model.loading { ProgressView("写真を確認中") }
                 if exporter.preparing {
                     Section {
                         ProgressView("写真とメモを準備しています…")
@@ -968,7 +1002,7 @@ struct FamilyRecordView: View {
                     Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いたメモは残ります。")
                 }
                 Section("共有を終了すると") {
-                    Text("共有を解除・ブロックすると、この共有メモは開けなくなります。退出だけで追加済みの記録が自動削除されるわけではありません。")
+                    Text("共有を解除・ブロックすると、このまどの写真とメモは開けなくなります。退出だけで追加済みの写真とメモが自動削除されるわけではありません。")
                         .accessibilityIdentifier("family-record-ending-explanation")
                     Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
                 }
@@ -1251,6 +1285,7 @@ struct FamilyRecordUIFixture: View {
     @State private var showDelivery = true
     @State private var canReadCollection = true
     @State private var otherSpace = false
+    @State private var fixtureSelection: PhotosPickerItem?
     init() {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 180)).image { context in
             UIColor.systemOrange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 240, height: 180))
@@ -1271,6 +1306,12 @@ struct FamilyRecordUIFixture: View {
                             spaceID: otherSpace ? "another_family_space" : "fixture_family_space",
                             windowName: "マイファミリー", photos: collectionPhotos,
                             canShowRecords: canReadCollection, client: client, fixturePhoto: photo,
+                            addPhotoAction: AnyView(PhotosPicker(selection: $fixtureSelection, matching: .images) {
+                                Image(systemName: "photo.badge.plus")
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .accessibilityLabel("写真を追加")
+                            .accessibilityIdentifier("family-window-photo-picker")),
                             showInformation: {}) { item, captionSource in
                                 if case let .sent(record) = item {
                                     let caption: String? = switch captionSource {
