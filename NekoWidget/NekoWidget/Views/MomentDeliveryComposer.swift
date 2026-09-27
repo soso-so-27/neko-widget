@@ -403,6 +403,7 @@ struct MomentSentHistory<Card: View>: View {
 
 struct MomentSentRecordCard: View {
     let record: MomentSentRecordPresentation
+    var caption: String? = nil
 
     var body: some View {
         let thumbnail = record.localThumbnailJPEG.flatMap { UIImage(data: $0) }
@@ -422,7 +423,7 @@ struct MomentSentRecordCard: View {
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .accessibilityHidden(true)
-                if let caption = record.localCaption {
+                if let caption {
                     Text(verbatim: caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)

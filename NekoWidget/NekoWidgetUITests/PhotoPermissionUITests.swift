@@ -3537,6 +3537,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(delivery.waitForExistence(timeout: 10),
                       "The delivered photo keeps its familiar zoom and actions while available.")
         XCTAssertEqual(retained.count, 0, "The stored photo must not add a second tile.")
+        let initialCaption = app.staticTexts["はじめてのおふろ"].firstMatch
+        XCTAssertTrue(initialCaption.waitForExistence(timeout: 5))
+        app.buttons["メモ"].tap()
+        app.buttons["family-collection-fixture-initial-words"].tap()
+        XCTAssertTrue(initialCaption.waitForExistence(timeout: 5))
+        app.buttons["メモ"].tap()
+        app.buttons["family-collection-fixture-withdraw-initial-words"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: initialCaption)], timeout: 10), .completed,
+            "Withdrawing the shared words must not reveal the older delivery caption.")
         menu.tap()
         app.buttons["family-record-export"].tap()
         let share = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
