@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-26",
+  "as_of": "2026-09-28",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.1,
   "upload_run": 35607517485,
@@ -432,6 +432,29 @@
       "first_ci_to_main_minutes": 46.3,
       "candidate_commit_to_main_minutes": 48.25,
       "note": "All four native jobs and both UI operations passed after privacy-safe DEBUG fixture error text and an evidence-based popover dismissal selector correction. Exact one-method diagnostic passed at the final candidate SHA. Initial 30-minute frame exceeded; cost plan was revised to 110 minutes before first CI, referencing full historical max while v2 was unmeasured. Includes failed candidate and diagnostic rather than reporting only final green duration. No TestFlight, live Apple/purchase, service activation, contracts or photo migration."
+    },
+    {
+      "scope": "app-view-ui-v1",
+      "candidate_minutes": 44.633,
+      "run_id": 36319636817,
+      "outcome": "failure",
+      "note": "Initial photo-picker candidate: Build, Photos scan, runtime and app-ui-solo passed; app-ui-other failed on an obsolete add-button label assertion and an XCTest fixture tap with an offscreen hit point. The failing run is retained in the cost baseline."
+    },
+    {
+      "scope": "app-view-ui-v1",
+      "candidate_minutes": 57.9,
+      "run_id": 36324970352,
+      "outcome": "success",
+      "runner_minutes": 154.733,
+      "diagnostic_run_ids": [
+        36322924482,
+        36323928026
+      ],
+      "upload_run_id": 36328574763,
+      "upload_minutes": 8.967,
+      "first_candidate_to_apple_upload_minutes": 161.3,
+      "first_task_ci_to_apple_upload_minutes": 232.7,
+      "note": "All five required jobs succeeded at b60fe76 after focused diagnosis of the two test defects. Build 211 verified and uploaded to Apple with no errors; Apple processing and device visibility were not checked. The original 20-30 minute target was missed; do not report only the final successful CI time."
     }
   ]
 }
