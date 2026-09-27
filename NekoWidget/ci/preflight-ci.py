@@ -235,7 +235,10 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     # not a measurement of its full required job graph. Keep its failures,
     # active status and elapsed time above; only a prior candidate CI consumes
     # the one first-measurement attempt.
-    candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW]
+    # Same-repository PR checks deliberately skip their jobs because push CI
+    # owns the candidate. A skipped PR is not a baseline measurement attempt.
+    candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW
+                      and not (run.get("event") == "pull_request" and run.get("conclusion") == "skipped")]
     first_measurement = measure_baseline and not candidate_runs and cost["status"] == "unmeasured"
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
         blockers.append("cumulative_cost_requires_replanning")
