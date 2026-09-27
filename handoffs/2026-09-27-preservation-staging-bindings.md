@@ -88,3 +88,20 @@ stagingを先行している状態なので、migration番号を上書き・手�
 4項目すべてtrue、既定SSE-S3(AES256)、lifecycle未設定。
 版を残す復旧には適合するが、非現行版を含む容量・費用が自動で止まる設定ではない。
 復旧期間を壊す一律のlifecycleは追加していない。
+
+## 9/27 10:11 JST 個人識別HMAC鍵の非公開登録
+
+`scripts/provision-staging-identity-secret.mjs` を専用commit `75a9195` で追加。
+AWS STSのアカウント、Cloudflareのアカウント・対象Worker、配備中の最新100%版の
+`PRESERVATION_ENABLED=NO` / `CLEANUP_ENABLED=NO` を読み取り照合してから、
+32バイト乱数を東京リージョンの既存KMS鍵によるSSM SecureStringとして
+`/neko/preservation/staging/identity-index-v1` に非上書き保存し、
+同値を非公開staging Workerの `IDENTITY_INDEX_SECRET` に登録した。
+鍵の値はチャット・ファイル・CLI引数・ログに出していない。
+事後のSSM存在確認、Worker secret名の確認、遠隔OFF再照合は成功。
+`--recover` はSSMからWorker secretを再登録する手段で、鍵を再生成しない。
+
+独立レビューは、初回の相対config/暗黙アカウントと、次のローカルOFFだけを
+信じる欠陥を指摘。両方直して再レビューし、具体的P1/P2なし。
+検証と本番の同時操作競合は運用上なお避ける。鍵登録は本人認証の成立、
+写真保存の有効化、課金照合、別端末復元、公開・販売の証拠ではない。
