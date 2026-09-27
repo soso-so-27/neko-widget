@@ -268,6 +268,9 @@ struct MainTabView: View {
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
     @State private var showsShowcasePreparation = false
+    @State private var preparingShowcaseScopes = Set<String>()
+    @State private var showcaseWaitingToOpen: String?
+    @State private var showcasePreparationError = false
     @State private var manageShowcaseAfterClosing = false
     @State private var showcaseAddPhotoIdentifier: String?
     @State private var showcaseAddError = false
@@ -388,6 +391,10 @@ struct MainTabView: View {
         .alert("写真を追加できませんでした", isPresented: $showcaseAddError) {
             Button("閉じる", role: .cancel) {}
         }
+        .alert("見せる写真を準備できませんでした", isPresented: $showcasePreparationError) {
+            Button("編集画面を開く") { showsShowcasePreparation = true }
+            Button("閉じる", role: .cancel) {}
+        }
         .fullScreenCover(item: $showcaseSession, onDismiss: {
             if manageShowcaseAfterClosing {
                 manageShowcaseAfterClosing = false
@@ -414,6 +421,8 @@ struct MainTabView: View {
                 store: showcaseStore,
                 candidates: showcaseCandidates,
                 profiles: catProfilesPresentation.profiles,
+                catProfilesPresentation: catProfilesPresentation,
+                catProfilesActions: catProfilesActions,
                 scopeID: $showcaseScopeID
             )
         }
@@ -474,6 +483,12 @@ struct MainTabView: View {
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { consumeShowcaseLaunchRequest() }
+        }
+        .onChange(of: selectedTab) { _, tab in
+            if tab != .tools { showcaseWaitingToOpen = nil }
+        }
+        .onChange(of: showcaseScopeID) { _, _ in
+            showcaseWaitingToOpen = nil
         }
         .onChange(of: hasPhotoAccess) { _, canShowPhotos in
             if canShowPhotos { consumeShowcaseLaunchRequest() }
@@ -585,30 +600,23 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                toolSection("日常で使う") {
-                    Button {
-                        if hasPhotoAccess {
-                            openPreparedShowcase()
-                        } else {
-                            selectedTab = .photos
-                            requestPhotoAccess()
-                        }
-                    } label: {
-                        ToolTile(title: "写真を見せる", systemImage: "photo.on.rectangle.angled",
-                                 subtitle: showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty
-                                    ? "選んだ写真だけを表示"
-                                    : "\(showcaseScopeTitle(effectiveShowcaseScopeID))・\(showcaseStore.availableEntries(in: effectiveShowcaseScopeID).count)枚")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("日常で使う")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    showcaseToolCard
+                    LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
+                                ? [GridItem(.flexible())]
+                                : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                              spacing: 12) {
+                        ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
+                                 subtitle: "準備中", isUnavailable: true)
+                            .accessibilityIdentifier("tools-care-unavailable")
+
+                        ToolTile(title: "病院で見せる", systemImage: "cross.case",
+                                 subtitle: "準備中", isUnavailable: true)
+                            .accessibilityIdentifier("tools-vet-unavailable")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("tools-showcase-open")
-
-                    ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
-                             subtitle: "準備中", isUnavailable: true)
-                        .accessibilityIdentifier("tools-care-unavailable")
-
-                    ToolTile(title: "病院で見せる", systemImage: "cross.case",
-                             subtitle: "準備中", isUnavailable: true)
-                        .accessibilityIdentifier("tools-vet-unavailable")
                 }
 
                 toolSection("もしものとき") {
@@ -634,12 +642,100 @@ struct MainTabView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            resolveInitialShowcaseScope()
+            if selectedTab == .tools && hasPhotoAccess {
+                prepareShowcaseIfNeeded(openAfter: false)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("tools-settings-button")
             }
+        }
+    }
+
+    private var showcaseToolCard: some View {
+        HStack(spacing: 8) {
+            Button {
+                if hasPhotoAccess {
+                    openPreparedShowcase()
+                } else {
+                    selectedTab = .photos
+                    requestPhotoAccess()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    showcaseCover
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("写真を見せる")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        if preparingShowcaseScopes.contains(effectiveShowcaseScopeID) {
+                            Text("準備中…")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            Text("\(showcaseStore.availableEntries(in: effectiveShowcaseScopeID).count)枚")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("tools-showcase-open")
+
+            VStack(spacing: 0) {
+                if !catProfilesPresentation.profiles.isEmpty {
+                    Menu {
+                        Button("みんな") { showcaseScopeID = "" }
+                        ForEach(catProfilesPresentation.profiles) { profile in
+                            Button(profile.displayName) { showcaseScopeID = profile.identifier }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(showcaseScopeTitle(effectiveShowcaseScopeID))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2)
+                        }
+                        .font(.footnote)
+                        .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("見せる猫を選ぶ")
+                }
+                Button {
+                    showsShowcasePreparation = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("見せる写真を編集")
+                .accessibilityIdentifier("tools-showcase-edit")
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var showcaseCover: some View {
+        if let entry = showcaseStore.availableEntries(in: effectiveShowcaseScopeID).first,
+           let url = showcaseStore.imageURL(for: entry),
+           let image = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.secondary.opacity(0.08))
         }
     }
 
@@ -664,24 +760,79 @@ struct MainTabView: View {
         }
         guard ShowcaseLaunchRequest.consume() else { return }
         selectedTab = .tools
+        resolveInitialShowcaseScope()
         openPreparedShowcase()
     }
 
     private func openPreparedShowcase() {
-        if showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty {
-            showsShowcasePreparation = true
-        } else {
-            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil,
-                                              scopeID: effectiveShowcaseScopeID)
+        prepareShowcaseIfNeeded(openAfter: true)
+    }
+
+    private func prepareShowcaseIfNeeded(openAfter: Bool) {
+        let scopeID = effectiveShowcaseScopeID
+        if !showcaseStore.availableEntries(in: scopeID).isEmpty {
+            if openAfter {
+                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
+            }
+            return
         }
+        if showcaseStore.hasCorruptManifest || showcaseStore.hasInitialized(scopeID) {
+            if openAfter { showsShowcasePreparation = true }
+            return
+        }
+        if openAfter { showcaseWaitingToOpen = scopeID }
+        guard preparingShowcaseScopes.insert(scopeID).inserted else { return }
+        let candidates = showcaseCandidatesForScope(scopeID)
+        Task {
+            let identifiers = await ShowcaseRecommender.identifiers(
+                from: candidates,
+                excluding: showcaseStore.excludedIdentifiers(in: scopeID)
+            )
+            do {
+                try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
+                preparingShowcaseScopes.remove(scopeID)
+                guard showcaseWaitingToOpen == scopeID,
+                      selectedTab == .tools,
+                      effectiveShowcaseScopeID == scopeID else { return }
+                showcaseWaitingToOpen = nil
+                if showcaseStore.availableEntries(in: scopeID).isEmpty {
+                    showsShowcasePreparation = true
+                } else {
+                    showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
+                }
+            } catch {
+                preparingShowcaseScopes.remove(scopeID)
+                guard showcaseWaitingToOpen == scopeID else { return }
+                showcaseWaitingToOpen = nil
+                showcasePreparationError = true
+            }
+        }
+    }
+
+    private func showcaseCandidatesForScope(_ scopeID: String) -> [PhotoPresentation] {
+        guard !scopeID.isEmpty else { return showcaseCandidates }
+        guard let profile = catProfilesPresentation.profiles.first(where: {
+            $0.identifier == scopeID
+        }) else { return [] }
+        let confirmed = Set(profile.confirmedPhotos.map(\.localIdentifier))
+        return showcaseCandidates.filter { confirmed.contains($0.localIdentifier) }
     }
 
     private var effectiveShowcaseScopeID: String {
         showcaseScopeID
     }
 
+    private func resolveInitialShowcaseScope() {
+        guard UserDefaults.standard.object(forKey: "showcase.lastScopeID.v1") == nil,
+              let first = catProfilesPresentation.profiles.first else { return }
+        showcaseScopeID = first.identifier
+    }
+
     private var showcaseAddScopes: [String] {
-        let scopes = [""] + catProfilesPresentation.profiles.map(\.identifier)
+        guard let identifier = showcaseAddPhotoIdentifier else { return [] }
+        let scopes = ([""] + catProfilesPresentation.profiles.map(\.identifier)).filter { scope in
+            showcaseCandidatesForScope(scope).contains { $0.localIdentifier == identifier }
+        }
         guard scopes.contains(showcaseScopeID) else { return scopes }
         return [showcaseScopeID] + scopes.filter { $0 != showcaseScopeID }
     }
