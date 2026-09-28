@@ -1448,64 +1448,108 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-fixture-\(UUID().uuidString)"
         app.launch()
-        XCTAssertFalse(app.buttons["lost-cat-share-image"].exists)
-        for (field, value) in [("猫の名前（任意）", "むぎ"),
-                               ("町名・公園名など", "駅の近く"),
-                               ("電話・メール・SNSアカウントなど", "08000000000")] {
-            let input = app.textFields[field]
-            XCTAssertTrue(input.waitForExistence(timeout: 5), field)
-            input.tap()
-            input.typeText(value)
+        XCTAssertTrue(app.buttons["まず探す・届け出る"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["仕上がりを確認"].isEnabled)
+        XCTAssertFalse(app.buttons["日時と場所を消す"].exists)
+        func field(_ name: String) -> XCUIElement {
+            let element = app.textFields[name]
+            for _ in 0..<10 {
+                if element.isHittable { return element }
+                // Drag inside the visible form, not across the keyboard. A fast
+                // whole-screen swipe can move a field behind the navigation bar.
+                let top = app.navigationBars.firstMatch.frame.maxY + 16
+                let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                let upper = top + (bottom - top) * 0.25
+                let lower = top + (bottom - top) * 0.70
+                let movesUp = !element.exists || element.frame.midY > top
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                    dy: movesUp ? lower : upper))
+                let end = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                    dy: movesUp ? upper : lower))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            }
+            XCTAssertTrue(element.isHittable, name)
+            return element
         }
+        for (name, value) in [("猫の名前（任意）", "むぎ"),
+                              ("町名・公園名など", "駅の近く"),
+                              ("電話・メール・SNSアカウントなど", "08000000000")] {
+            let input = field(name); input.tap(); input.typeText(value)
+        }
+        XCTAssertTrue(app.buttons["仕上がりを確認"].isEnabled)
         app.buttons["仕上がりを確認"].tap()
         let preview = app.buttons["共有する迷子の猫の画像"]
-        for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue((preview.value as? String ?? "").contains("日時: 不明"))
-        capture("lost-cat-unprepared-preview")
+        capture("lost-cat-social-one-photo")
         for action in ["lost-cat-share-image", "lost-cat-share-pdf"] {
-            if action == "lost-cat-share-pdf" { app.buttons["印刷"].tap() }
+            if action == "lost-cat-share-pdf" { app.buttons["A4チラシ"].tap() }
+            capture("lost-cat-layout-\(action)")
             let button = app.buttons[action]
-            for _ in 0..<5 where !button.isHittable { app.swipeUp() }
             XCTAssertTrue(button.isHittable, action)
             button.tap()
             let sheet = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
             XCTAssertTrue(sheet.waitForExistence(timeout: 10), action)
-            capture("lost-cat-unprepared-\(action)")
             let close = sheet.buttons["header.closeButton"].firstMatch
-            XCTAssertTrue(close.waitForExistence(timeout: 5))
-            close.tap()
+            XCTAssertTrue(close.waitForExistence(timeout: 5)); close.tap()
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: sheet
             )], timeout: 5), .completed)
         }
-        app.terminate()
-        app.launch()
-        let restoredName = app.textFields["猫の名前（任意）"]
-        XCTAssertTrue(restoredName.waitForExistence(timeout: 5))
-        XCTAssertEqual(restoredName.value as? String, "むぎ")
-        XCTAssertEqual(app.textFields["町名・公園名など"].value as? String, "駅の近く")
-        XCTAssertEqual(app.textFields["電話・メール・SNSアカウントなど"].value as? String,
-                       "08000000000")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.textFields["猫の名前（任意）"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field("猫の名前（任意）").value as? String, "むぎ")
+        XCTAssertEqual(field("町名・公園名など").value as? String, "駅の近く")
+        XCTAssertEqual(field("電話・メール・SNSアカウントなど").value as? String, "08000000000")
         app.terminate()
     }
 
     @MainActor
     func testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary() {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--lost-cat-draft-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-fixture-\(UUID().uuidString)"
         app.launchEnvironment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] = "1"
+        app.launchEnvironment["NEKO_LOST_CAT_PREPARED_PHOTOS"] = "1"
         app.launch()
         let choose = app.buttons["lost-cat-face-photo"]
-        for _ in 0..<5 where !choose.isHittable { app.swipeUp() }
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        capture("lost-cat-editor")
         choose.tap()
-        XCTAssertTrue(app.staticTexts["この子の写真"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["写真アプリから選ぶ"].exists)
-        capture("lost-cat-confirmed-photo-picker")
-        app.buttons["写真アプリから選ぶ"].tap()
-        capture("lost-cat-system-photo-picker")
+        let candidates = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "lost-cat-candidate-"))
+        XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(candidates.count, 3)
+        XCTAssertFalse(app.buttons["端末の全写真から追加"].exists)
+        capture("lost-cat-app-cat-photos")
+        app.segmentedControls.buttons["この子"].tap()
+        XCTAssertEqual(candidates.count, 1)
+        app.segmentedControls.buttons["猫の写真"].tap()
+        XCTAssertEqual(candidates.count, 3)
+        app.buttons["キャンセル"].tap()
+        app.buttons["仕上がりを確認"].tap()
+        XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
+        capture("lost-cat-two-aspect-social")
+        app.buttons["A4チラシ"].tap()
+        capture("lost-cat-two-aspect-paper")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let actions = app.buttons["lost-cat-face-actions"]
+        for _ in 0..<5 where !actions.isHittable { app.swipeDown() }
+        actions.tap(); app.buttons["範囲を調整"].tap()
+        XCTAssertTrue(app.sliders.firstMatch.waitForExistence(timeout: 3))
+        app.sliders.firstMatch.adjust(toNormalizedSliderPosition: 0.25)
+        capture("lost-cat-photo-crop")
+        app.buttons["この範囲を使う"].tap()
+        XCTAssertTrue(app.buttons["lost-cat-body-actions"].waitForExistence(timeout: 5))
+        app.buttons["lost-cat-body-actions"].tap(); app.buttons["2枚目を外す"].tap()
+        XCTAssertFalse(app.buttons["lost-cat-body-actions"].exists)
+        XCTAssertTrue(app.buttons["lost-cat-face-actions"].exists)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["lost-cat-face-actions"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["lost-cat-body-actions"].exists)
+        app.terminate()
     }
 
     @MainActor
