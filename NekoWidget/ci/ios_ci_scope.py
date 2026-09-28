@@ -26,6 +26,7 @@ CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
 LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
+EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -66,7 +67,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -942,7 +943,65 @@ ARCHIVE_PICKER_PATHS = frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/ci/run-sharing-runtime-matrix.sh",
 })
-MAPPED_PATHS = (MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# Exact app-only candidate 983008a against a4df484; not a generic service exemption.
+# CI mapping is merged independently before the product; mixed CI/product diffs
+# and any changed project membership or source contents fall back to full.
+EVACUATION_DIGESTS = {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
+        "9ded4b4678a9bcce8986d56ea449a39784b219c9de33b487e4f4901e87095dfd",
+        "a9e87b8c968fefee4897e6f9466cd8aa9a01136d76c75d727b4b26c9466fb687"
+    ],
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": [
+        "5ca2c4327955ed343e8ba8b1f38d8155e42dfe43f9e5cb163c6966c82fcdff79",
+        "630aed404a3fe4716dfd173a1a9750a0e9a8bfd33a1ed2b905b423bf060ac07e"
+    ],
+    "NekoWidget/NekoWidget/Services/EvacuationExporter.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "97ce4fa197c50302398e61a4856a03c9573a4d08a00437c67622c11ffc0973a3"
+    ],
+    "NekoWidget/NekoWidget/Services/EvacuationPlan.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "b510c99c3ae133950fa64b6ea80dccdf2cea773010faa640f92dcbb44fe9ff11"
+    ],
+    "NekoWidget/NekoWidget/Services/EvacuationStore.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "f1ab8bae3ae737aab6a292364a008105c389f8880988fd9b4e214ce9820f179f"
+    ],
+    "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "92ef7248d66d57719b67419d5b719e9a7602080a57bdc9b8215e47a31755e7e7"
+    ],
+    "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "b2e2e9d53a84174630a04b7a31125bc0fe1e7de9477d3d5a5bf888a1135909ca"
+    ],
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": [
+        "6c1dab0aae15847507c745869598dd63b5062e43efd10446e8a5367c98b4ed75",
+        "0e31956254fdf61505a7ac879bd264211359abd314ab166dcb2fcf228f6cb2eb"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "50dee0129496b71d3081330d84973e7d0373d5de32ecc9541f7bed605e049bbf",
+        "3c09ece1962d10f05aa8bd93be9694bf0d528453e19bb15ea706c0c947f5d797"
+    ]
+}
+EVACUATION_PATHS = frozenset(EVACUATION_DIGESTS)
+EVACUATION_NEW_PATHS = frozenset(path for path, pair in EVACUATION_DIGESTS.items()
+                                if pair[0] == hashlib.sha256(b"").hexdigest())
+EVACUATION_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testEvacuationPackingPersistsAndPrivateFieldsStayOutOfPreview",
+    "testEvacuationUnregisteredCatCanCreateAndRestoreRecord",
+    "testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText",
+))
+
+
+def reviewed_evacuation_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == EVACUATION_PATHS
+            and all(list(map(source_digest, changes[path])) == EVACUATION_DIGESTS[path]
+                    for path in EVACUATION_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], EVACUATION_TESTS))
+
+
+MAPPED_PATHS = (EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -1854,6 +1913,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == EVACUATION_SCOPE:
+        return sources == EVACUATION_PATHS
     if scope == LOST_CAT_UX_SCOPE:
         return {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= sources and sources <= {
             LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}
@@ -2011,6 +2072,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == EVACUATION_SCOPE:
+        return EVACUATION_TESTS
     if scope in (LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE):
         return LOST_CAT_PHOTO_TESTS
     if scope == FAMILY_WINDOW_UI_SCOPE:
@@ -2220,6 +2283,11 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
+        return FULL_SCOPE
+    if reviewed_evacuation_changes(changes):
+        return EVACUATION_SCOPE
+    # A partial or mutated instance of this frozen batch is not a generic UI edit.
+    if set(changes) & EVACUATION_NEW_PATHS:
         return FULL_SCOPE
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
