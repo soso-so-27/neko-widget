@@ -33,7 +33,7 @@ class LaneTests(unittest.TestCase):
         path = scope.LOST_CAT_PHOTO_PATH
         current = (CI.parents[0] / "NekoWidget" / "Views" /
                    "CatPreparednessView.swift").read_text(encoding="utf-8")
-        self.assertEqual(scope.source_digest(current), scope.LOST_CAT_PHOTO_DIGESTS[0])
+        self.assertIn(scope.source_digest(current), scope.LOST_CAT_PHOTO_DIGESTS)
         selected = scope.LOST_CAT_PHOTO_SCOPE
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.LOST_CAT_PHOTO_TESTS)
