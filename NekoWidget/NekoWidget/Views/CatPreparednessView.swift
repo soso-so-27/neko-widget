@@ -553,6 +553,8 @@ private struct LostCatPhotoChoiceView: View {
                                             showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
                     }
+                    // List's automatic row action must not trigger every photo button.
+                    .buttonStyle(.plain)
                     .disabled(busy || loadingPhoto)
                     .accessibilityLabel("猫の写真")
                     .accessibilityIdentifier("lost-cat-candidate-\(photo.localIdentifier)")
