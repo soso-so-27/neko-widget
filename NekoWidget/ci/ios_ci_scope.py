@@ -25,6 +25,7 @@ WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
 LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
+LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -65,7 +66,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -183,6 +184,7 @@ APP_VIEW_PATHS = frozenset({
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
 LOST_CAT_PHOTO_PATH = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"
+LOST_CAT_STORE_PATH = "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift"
 LOST_CAT_PHOTO_TEST_NAMES = frozenset((
     "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
     "testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary",
@@ -1614,6 +1616,99 @@ def lost_cat_photo_ui_changes(changes: dict[str, tuple[str, str]],
     return memory_tests_available(source, LOST_CAT_PHOTO_TESTS)
 
 
+def matching_swift_brace(masked: str, opening: int) -> int | None:
+    """Find a declaration's close after strings and comments are masked."""
+    if opening < 0 or masked[opening] != "{":
+        return None
+    depth = 0
+    for index in range(opening, len(masked)):
+        if masked[index] == "{":
+            depth += 1
+        elif masked[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def lost_cat_store_changes(before: str, after: str) -> bool:
+    """Keep legacy records, draft schema and persistence byte-for-byte.
+
+    The public draft/renderer may change. The sole allowed draft-store addition
+    is removePhoto; its concrete privacy and data-loss behavior needs review.
+    """
+    masked_before, masked_after = swift_declaration_source(before), swift_declaration_source(after)
+    if masked_before is None or masked_after is None:
+        return False
+    marker = "struct LostCatPublicDraft {"
+    if before.count(marker) != 1 or after.count(marker) != 1:
+        return False
+    old_prefix = before[:before.index(marker)]
+    new_prefix = after[:after.index(marker)]
+    if old_prefix != new_prefix:
+        old_lines = old_prefix.splitlines(keepends=True)
+        new_lines = new_prefix.splitlines(keepends=True)
+        edits = [operation for operation in difflib.SequenceMatcher(
+            None, old_lines, new_lines, autojunk=False).get_opcodes()
+            if operation[0] != "equal"]
+        if len(edits) != 1 or edits[0][0] != "insert":
+            return False
+        _, old_start, old_end, new_start, new_end = edits[0]
+        insertion = "".join(new_lines[new_start:new_end])
+        old_offset = sum(map(len, old_lines[:old_start]))
+        insert_mask = swift_declaration_source(insertion)
+        if (old_start != old_end or old_prefix[old_offset:].lstrip()[:11] != "func image("
+                or insert_mask is None):
+            return False
+        method = re.search(r"\bfunc removePhoto\(", insert_mask)
+        if method is None or len(re.findall(r"\bfunc\b", insert_mask)) != 1:
+            return False
+        opening = insert_mask.find("{", method.end())
+        closing = matching_swift_brace(insert_mask, opening)
+        if closing is None or insert_mask[:method.start()].strip() or insert_mask[closing + 1:].strip():
+            return False
+        owner = re.search(r"(?m)^final class LostCatDraftStore: ObservableObject \{", masked_before)
+        if owner is None:
+            return False
+        owner_end = matching_swift_brace(masked_before, masked_before.index("{", owner.start()))
+        if owner_end is None or not owner.end() < old_offset < owner_end:
+            return False
+    # No extra top-level declarations or executable code outside the two
+    # reviewed public-rendering types.
+    tail = masked_after[after.index(marker):]
+    public = re.match(r"struct LostCatPublicDraft \{", tail)
+    if public is None:
+        return False
+    public_end = matching_swift_brace(tail, public.end() - 1)
+    if public_end is None:
+        return False
+    renderer = re.match(r"\s*enum LostCatFlyerRenderer \{", tail[public_end + 1:])
+    if renderer is None:
+        return False
+    renderer_open = public_end + 1 + renderer.end() - 1
+    renderer_end = matching_swift_brace(tail, renderer_open)
+    return renderer_end is not None and not tail[renderer_end + 1:].strip()
+
+
+def lost_cat_ux_changes(changes: dict[str, tuple[str, str]],
+                        memory_test_source: str | None) -> bool:
+    paths = set(changes)
+    if not {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= paths or not paths <= {
+            LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}:
+        return False
+    if not lost_cat_store_changes(*changes[LOST_CAT_STORE_PATH]):
+        return False
+    if any(conditional_blocks(source) is None for pair in changes.values() for source in pair):
+        return False
+    if MEMORY_TEST_PATH in changes:
+        if not lost_cat_photo_test_changes(*changes[MEMORY_TEST_PATH]):
+            return False
+        source = changes[MEMORY_TEST_PATH][1]
+    else:
+        source = memory_test_source
+    return memory_tests_available(source, LOST_CAT_PHOTO_TESTS)
+
+
 def reviewed_app_record_export_changes(changes: dict[str, tuple[str, str]]) -> bool:
     if set(changes) != APP_ONLY_RECORD_EXPORT_PATHS or set(APP_ONLY_RECORD_EXPORT_DIGESTS) != APP_ONLY_RECORD_EXPORT_PATHS:
         return False
@@ -1759,6 +1854,9 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == LOST_CAT_UX_SCOPE:
+        return {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= sources and sources <= {
+            LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}
     if scope == LOST_CAT_PHOTO_SCOPE:
         return LOST_CAT_PHOTO_PATH in sources and sources <= {
             LOST_CAT_PHOTO_PATH, MEMORY_TEST_PATH}
@@ -1913,7 +2011,7 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
-    if scope == LOST_CAT_PHOTO_SCOPE:
+    if scope in (LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE):
         return LOST_CAT_PHOTO_TESTS
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return FAMILY_WINDOW_NATIVE_TESTS + (
@@ -2125,6 +2223,9 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
+
+    if lost_cat_ux_changes(changes, memory_test_source):
+        return LOST_CAT_UX_SCOPE
 
     if lost_cat_photo_ui_changes(changes, memory_test_source):
         return LOST_CAT_PHOTO_SCOPE

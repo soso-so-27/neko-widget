@@ -29,6 +29,48 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_lost_cat_ux_scope_keeps_store_boundaries_and_three_ui_checks(self):
+        store_path = scope.LOST_CAT_STORE_PATH
+        view_path = scope.LOST_CAT_PHOTO_PATH
+        before = (CI.parents[0] / "NekoWidget/Services/CatPreparednessStore.swift").read_text(
+            encoding="utf-8")
+        method = ("    func removePhoto(_ role: CatPreparednessStore.PhotoRole,\n"
+                  "                     draft: LostCatDraft, for key: String) throws -> LostCatDraft {\n"
+                  "        var updated = draft\n"
+                  "        if role == .face { updated.faceFileName = nil }\n"
+                  "        else { updated.bodyFileName = nil }\n"
+                  "        try save(updated, for: key)\n"
+                  "        return updated\n"
+                  "    }\n\n")
+        after = before.replace("    func image(_ name:", method + "    func image(_ name:", 1)
+        after = after.replace("猫を探しています。", "この猫を探しています。", 1)
+        self.assertTrue(scope.lost_cat_store_changes(before, after))
+        tests = (CI.parents[0] / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(
+            encoding="utf-8")
+        changes = {view_path: ("struct Before {}", "struct After {}"),
+                   store_path: (before, after)}
+        selected = scope.LOST_CAT_UX_SCOPE
+        self.assertEqual(scope.select_scope(changes, memory_test_source=tests), selected)
+        self.assertTrue(scope.accepts_paths(selected, changes))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.LOST_CAT_PHOTO_TESTS)
+        self.assertEqual(scope.smoke_tests(selected),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        self.assertEqual(planner.required_jobs_from_scope(selected),
+                         (planner.BUILD, planner.BOOTSTRAP_SMOKE,
+                          scope.lane_job(selected, "runtime"),
+                          scope.lane_job(selected, "app-ui")))
+        for unsafe in (after.replace("safe.name = String(record.name.prefix(60))", "safe.name = record.name"),
+                       after.replace("static let schemaVersion = 1", "static let schemaVersion = 2"),
+                       after.replace("try save(updated, for: key)", "try delete(for: key)", 1),
+                       after + "\nstruct ExtraStore {}\n"):
+            self.assertFalse(scope.lost_cat_store_changes(before, unsafe))
+            self.assertNotEqual(scope.select_scope({view_path: changes[view_path],
+                store_path: (before, unsafe)}, memory_test_source=tests), selected)
+        self.assertNotEqual(scope.select_scope({**changes,
+            "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift": ("old", "new")},
+            memory_test_source=tests), selected)
+
     def test_reviewed_lost_cat_photo_change_uses_only_owning_ui_checks(self):
         path = scope.LOST_CAT_PHOTO_PATH
         before_tests = """import XCTest
@@ -301,8 +343,8 @@ final class UnrelatedUITests: XCTestCase {
                     self.assertIn("    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
                 self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
-                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
-                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
+                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
+                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")
