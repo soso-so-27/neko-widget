@@ -553,8 +553,11 @@ private struct LostCatPhotoChoiceView: View {
                                             showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
                     }
+                    // List's automatic row action must not trigger every photo button.
+                    .buttonStyle(.plain)
                     .disabled(busy || loadingPhoto)
                     .accessibilityLabel("猫の写真")
+                    .accessibilityIdentifier("lost-cat-candidate-\(photo.localIdentifier)")
                 }
             }
         }
@@ -661,6 +664,13 @@ struct LostCatDraftFixtureView: View {
             context.cgContext.fill(CGRect(x: 0, y: 0, width: 1200, height: 900))
         }
     var body: some View {
+        if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] == "1" {
+            LostCatPhotoTapFixtureView()
+        } else {
+            draftFixture
+        }
+    }
+    @ViewBuilder private var draftFixture: some View {
         let profiles: [CatProfilePresentation] = candidatePhotos.isEmpty ? [] : [
             CatProfilePresentation(identifier: fixtureKey, name: "むぎ",
                                    coverPhoto: candidatePhotos.first,
@@ -670,6 +680,36 @@ struct LostCatDraftFixtureView: View {
             LostCatDraftView(initialKey: fixtureKey, initialName: "",
                              profiles: profiles, allPhotos: candidatePhotos,
                              initialPhotoImage: image)
+        }
+    }
+}
+
+/// Exercises the production List/grid hit targets with multiple candidates.
+/// Selection is observed before PhotoKit so one tap cannot hide extra requests.
+private struct LostCatPhotoTapFixtureView: View {
+    @State private var photoItem: PhotosPickerItem?
+    @State private var selections: [String] = []
+
+    var body: some View {
+        NavigationStack {
+            LostCatPhotoChoiceView(
+                ownPhotos: Array(AppStoreScreenshotFixture.photos.prefix(3)).map {
+                    CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
+                                                creationDate: $0.creationDate,
+                                                catBoundingBox: $0.catBoundingBox)
+                },
+                photoItem: $photoItem, photoError: false, loadingPhoto: false,
+                choose: { identifier in
+                    selections.append(identifier)
+                    try? await Task.sleep(for: .milliseconds(150))
+                    return true
+                },
+                cancel: {}
+            )
+            .safeAreaInset(edge: .bottom) {
+                Text(selections.joined(separator: ","))
+                    .accessibilityIdentifier("lost-cat-picker-selection-log")
+            }
         }
     }
 }

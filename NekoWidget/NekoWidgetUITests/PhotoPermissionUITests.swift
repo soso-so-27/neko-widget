@@ -1509,6 +1509,36 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testLostCatPhotoTapSelectsOnlyTheTappedCandidate() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] = "1"
+        app.launch()
+        let candidates = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "lost-cat-candidate-"))
+        XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(candidates.count, 3)
+        let identifiers = (0..<3).map { candidates.element(boundBy: $0).identifier }
+        var expected: [String] = []
+        for index in [0, 1, 2, 0] {
+            let button = app.buttons[identifiers[index]]
+            button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            expected.append(String(identifiers[index].dropFirst("lost-cat-candidate-".count)))
+            let log = app.staticTexts["lost-cat-picker-selection-log"]
+            XCTAssertTrue(log.waitForExistence(timeout: 5))
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", expected.joined(separator: ",")),
+                object: log
+            )], timeout: 5), .completed,
+                "One physical tap must request only its photo; actual: \(log.label)")
+        }
+        capture("lost-cat-picker-independent-photo-taps")
+        app.terminate()
+    }
+
+    @MainActor
     func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
         for largeText in [false, true] {
             let app = XCUIApplication()
