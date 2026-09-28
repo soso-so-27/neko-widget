@@ -455,6 +455,22 @@
       "first_candidate_to_apple_upload_minutes": 161.3,
       "first_task_ci_to_apple_upload_minutes": 232.7,
       "note": "All five required jobs succeeded at b60fe76 after focused diagnosis of the two test defects. Build 211 verified and uploaded to Apple with no errors; Apple processing and device visibility were not checked. The original 20-30 minute target was missed; do not report only the final successful CI time."
+    },
+    {
+      "scope": "lost-cat-photo-ui-v2",
+      "candidate_minutes": 18.133,
+      "run_id": 36430858661,
+      "run_attempt": 1,
+      "outcome": "failure",
+      "note": "Owning photo-selection/preview/picker UI, build and runtime passed. Existing photo-bootstrap test failed on an XCTest accessibility snapshot timeout after full Photos access succeeded. No product code was changed for this failure."
+    },
+    {
+      "scope": "lost-cat-photo-ui-v2",
+      "candidate_minutes": 38.883,
+      "run_id": 36430858661,
+      "run_attempt": 2,
+      "outcome": "success",
+      "note": "Elapsed from the original candidate run start through completion after rerunning only the failed photo-bootstrap job at identical SHA b2320e5. Retains the first failure and retry delay; not just the final successful job. Three owning UI tests passed. Earlier baseline diagnostics additionally consumed 3.5 min for a fixture compile defect and 12.6 min to reproduce one tap dispatching three photo actions."
     }
   ]
 }
