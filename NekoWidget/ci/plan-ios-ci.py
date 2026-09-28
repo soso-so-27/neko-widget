@@ -17,6 +17,7 @@ import urllib.request
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
 from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
+                          LOST_CAT_UX_SCOPE, LOST_CAT_PHOTO_TEST_NAMES,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -42,6 +43,10 @@ SHA = re.compile(r"[0-9a-f]{40}")
 # If a build, fixture, script, or project starts consuming it, remove this
 # exception before that dependency ships. Everything else must match exactly.
 INDEPENDENT_RESEARCH = "experiments/PetIdentityProbe/"
+TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
+    "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
+    "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
+))
 
 # These helpers are not app, build, safety-check or release-evidence inputs.
 # Selection/check-runner/workflow changes are deliberately excluded. Their
@@ -631,6 +636,102 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
         return False
 
 
+def test_correction_inputs(source: str, head: str) -> bool:
+    """Only owned lost-cat XCTest bodies and CI evidence controls may differ."""
+    try:
+        if not SHA.fullmatch(source) or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
+            return False
+        git("merge-base", "--is-ancestor", source, head)
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head)
+        parts = raw.split("\0")
+        if parts[-1:] == [""]:
+            parts.pop()
+        if len(parts) % 2:
+            return False
+        changed = set()
+        for index in range(0, len(parts), 2):
+            fields, path = parts[index].split(), parts[index + 1]
+            if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or path in changed or path not in TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH}
+                    or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            changed.add(path)
+        if MEMORY_TEST_PATH not in changed:
+            return False
+        from ios_ci_scope import family_window_test_methods, lost_cat_photo_test_changes
+        before, after = git("show", f"{source}:{MEMORY_TEST_PATH}"), git("show", f"{head}:{MEMORY_TEST_PATH}")
+        old = family_window_test_methods(before, owner_class="SoloMemoriesUITests",
+                                         required_names=LOST_CAT_PHOTO_TEST_NAMES)
+        new = family_window_test_methods(after, owner_class="SoloMemoriesUITests",
+                                         required_names=LOST_CAT_PHOTO_TEST_NAMES)
+        return (old is not None and new is not None and old.keys() == new.keys()
+                and lost_cat_photo_test_changes(before, after))
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def correction_source(run: dict, head: str, branch: str, repository: str, workflow_id: int,
+                      required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
+    """Verify each reusable job in a failed same-task run; never reuse its UI."""
+    if required != required_jobs_from_scope(LOST_CAT_UX_SCOPE):
+        return None
+    try:
+        finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+        if (type(run["id"]) is not int or run["id"] <= 0
+                or run["workflow_id"] != workflow_id or run["event"] != "push"
+                or run["head_branch"] != branch or not branch.startswith("codex/")
+                or run["head_repository"]["full_name"] != repository
+                or run["repository"]["full_name"] != repository
+                or run["status"] != "completed" or run["conclusion"] != "failure"
+                or not dt.timedelta(0) <= now - finished <= dt.timedelta(hours=24)
+                or run["head_sha"] == head or not test_correction_inputs(run["head_sha"], head)):
+            return None
+        jobs = executed_jobs(run, repository, api)
+        plan = [job for job in jobs if job.get("name") == PLAN_JOB]
+        if len(plan) != 1 or (plan[0].get("status"), plan[0].get("conclusion"), plan[0].get("head_sha")) != (
+                "completed", "success", run["head_sha"]):
+            return None
+        ui_name = lane_job(LOST_CAT_UX_SCOPE, "app-ui")
+        ui = [job for job in jobs if job.get("name") == ui_name]
+        if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
+                "completed", "failure", run["head_sha"]):
+            return None
+        reusable = tuple(name for name in required if name != ui_name)
+        if len(reusable) != 3 or not covers_jobs(jobs, reusable, run["head_sha"], now):
+            return None
+        entries = []
+        for name in reusable:
+            matching = [job for job in jobs if job.get("name") == name]
+            if len(matching) != 1 or type(matching[0].get("id")) is not int:
+                return None
+            entries.append({"name": name, "job_id": matching[0]["id"]})
+        return {"run_id": run["id"], "sha": run["head_sha"], "jobs": entries}
+    except (OSError, AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def find_test_correction_evidence(head: str, branch: str, repository: str,
+                                  required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
+    if required != required_jobs_from_scope(LOST_CAT_UX_SCOPE) or not branch.startswith("codex/"):
+        return None
+    prefix = f"/repos/{repository}/actions"
+    workflow = api(f"{prefix}/workflows/ios-build.yml")
+    workflow_id = workflow.get("id")
+    if type(workflow_id) is not int:
+        raise ValueError("Workflow identity unavailable")
+    query = urllib.parse.urlencode({"branch": branch, "event": "push", "status": "failure", "per_page": 100})
+    response = api(f"{prefix}/workflows/ios-build.yml/runs?{query}")
+    runs = response.get("workflow_runs")
+    count = response.get("total_count")
+    if not isinstance(runs, list) or type(count) is not int or count != len(runs) or count > 100:
+        raise ValueError("Incomplete test-correction run history")
+    for run in runs:
+        evidence = correction_source(run, head, branch, repository, workflow_id, required, api, now)
+        if evidence is not None:
+            return evidence
+    return None
+
+
 def evidence_log(stage: str, **fields) -> None:
     # Fixed reason codes and request paths only. Never log tokens, headers,
     # response bodies or exception messages (which can contain credentials).
@@ -887,7 +988,14 @@ def main() -> None:
         return
 
     try:
-        evidence = find_evidence(env, required, lambda path: github_api(env, path), dt.datetime.now(dt.timezone.utc))
+        api = lambda path: github_api(env, path)
+        now = dt.datetime.now(dt.timezone.utc)
+        evidence = find_evidence(env, required, api, now)
+        correction = (find_test_correction_evidence(
+            env["GITHUB_SHA"], env["GITHUB_REF"].removeprefix("refs/heads/"),
+            env["GITHUB_REPOSITORY"], required, api, now)
+            if evidence is None and env["GITHUB_EVENT_NAME"] == "push"
+            and env["GITHUB_REF"].startswith("refs/heads/codex/") else None)
     except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
         evidence_log("lookup_blocked", reason="evidence_lookup_failed", error=type(error).__name__)
         # A failed plan cannot authorize expensive dependent Mac jobs. The
@@ -897,11 +1005,11 @@ def main() -> None:
         raise SystemExit("No matching candidate evidence for main. No duplicate Mac checks started. "
                          "Use the tested merged candidate for release, or validate a new integration candidate.")
     values = {
-        "build": str(evidence is None).lower(),
+        "build": str(evidence is None and correction is None).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
-        "smoke": str(evidence is None and smoke_job(selected_scope) in required).lower(),
+        "smoke": str(evidence is None and correction is None and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
-        "sharing": str(evidence is None and bool(set(required) & set(sharing_jobs(selected_scope)))).lower(),
+        "sharing": str(evidence is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
         "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
         "app_ui_lanes": json.dumps(app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
@@ -919,6 +1027,7 @@ def main() -> None:
         "required_jobs": required,
         "evidence_run_id": evidence[0] if evidence else None,
         "evidence_sha": evidence[1] if evidence else None,
+        "test_correction_evidence": correction,
     }, separators=(",", ":")))
     summary = f"## iOS CI plan\n\nCommit: `{env['GITHUB_SHA']}`\n\nScope: `{scope}`.\n\n"
     if evidence is not None:
@@ -928,6 +1037,9 @@ def main() -> None:
             f"an ancestor with identical tracked files outside `{INDEPENDENT_RESEARCH}`"
         )
         summary += f"Reusing successful required jobs from {relation}: [run {run_id}]({url}), tested `{tested_sha}`.\n"
+    elif correction is not None:
+        summary += (f"Reusing three successful unchanged-input jobs from failed run {correction['run_id']} "
+                    f"at `{correction['sha']}`; executing all three owning app UI tests at this commit.\n")
     else:
         summary += "Executing: " + ", ".join(required) + ".\n"
     with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:

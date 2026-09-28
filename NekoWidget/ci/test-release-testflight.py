@@ -121,6 +121,44 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(release.Blocked):
             self.prepare()
 
+    def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self):
+        required = release.planner.required_jobs_from_scope(release.planner.LOST_CAT_UX_SCOPE)
+        self.run["head_branch"] = "codex/lost-cat"
+        self.plan.update(scope=release.planner.LOST_CAT_UX_SCOPE, required_jobs=list(required))
+        source_sha = "b" * 40
+        evidence = {"run_id": 10, "sha": source_sha,
+                    "jobs": [{"name": name, "job_id": 302 + index}
+                             for index, name in enumerate(required[:3])]}
+        self.plan["test_correction_evidence"] = evidence
+        self.set_plan()
+        current = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]["jobs"]
+        for job in current[1:4]:
+            job["conclusion"] = "skipped"
+        source = dict(self.run, id=10, head_sha=source_sha, conclusion="failure")
+        self.gh.values["actions/runs/10"] = source
+        old_jobs = [dict(self.plan_job, id=301, head_sha=source_sha)] + [
+            {"id": 302 + index, "name": name, "head_sha": source_sha,
+             "status": "completed", "conclusion": "failure" if index == 3 else "success",
+             "completed_at": self.now.isoformat()}
+            for index, name in enumerate(required)]
+        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"] = {
+            "total_count": len(old_jobs), "jobs": old_jobs}
+        old_plan = {"schema_version": 1, "repository": release.REPOSITORY, "head_sha": source_sha,
+                    "scope": release.planner.LOST_CAT_UX_SCOPE, "required_jobs": list(required),
+                    "evidence_run_id": None, "evidence_sha": None}
+        self.gh.logs[(10, 301)] = release.PLAN_MARKER + json.dumps(old_plan)
+        with patch.object(release.planner, "test_correction_inputs", return_value=True):
+            result = release.check_ci(self.gh, self.sha, 20, self.now)
+            self.assertEqual(result["reused_run"], 10)
+            for index in range(1, 4):
+                old_jobs[index]["conclusion"] = "skipped"
+                with self.assertRaises(release.Blocked):
+                    release.check_ci(self.gh, self.sha, 20, self.now)
+                old_jobs[index]["conclusion"] = "success"
+            current[-1]["conclusion"] = "failure"
+            with self.assertRaises(release.Blocked):
+                release.check_ci(self.gh, self.sha, 20, self.now)
+
     def test_reused_main_accepts_duplicate_skipped_matrix_placeholders(self):
         self.candidate()
         result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]
