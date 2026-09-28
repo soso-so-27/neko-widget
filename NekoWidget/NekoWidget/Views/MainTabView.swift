@@ -403,10 +403,7 @@ struct MainTabView: View {
         }) { session in
             ShowcasePhotoView(
                 store: showcaseStore,
-                items: session.currentPhotoIdentifier.map { [.current($0)] }
-                    ?? showcaseStore.availableEntries(in: session.scopeID).compactMap { entry in
-                        showcaseStore.imageURL(for: entry).map { .prepared(entry, $0) }
-                    },
+                items: showcaseItems(for: session),
                 title: session.currentPhotoIdentifier == nil
                     ? showcaseScopeTitle(session.scopeID) : "この写真",
                 onClose: { showcaseSession = nil },
@@ -421,8 +418,6 @@ struct MainTabView: View {
                 store: showcaseStore,
                 candidates: showcaseCandidates,
                 profiles: catProfilesPresentation.profiles,
-                catProfilesPresentation: catProfilesPresentation,
-                catProfilesActions: catProfilesActions,
                 scopeID: $showcaseScopeID
             )
         }
@@ -643,7 +638,6 @@ struct MainTabView: View {
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            resolveInitialShowcaseScope()
             if selectedTab == .tools && hasPhotoAccess {
                 prepareShowcaseIfNeeded(openAfter: false)
             }
@@ -760,12 +754,27 @@ struct MainTabView: View {
         }
         guard ShowcaseLaunchRequest.consume() else { return }
         selectedTab = .tools
-        resolveInitialShowcaseScope()
         openPreparedShowcase()
     }
 
     private func openPreparedShowcase() {
+#if DEBUG && targetEnvironment(simulator)
+        if ShowcasePhotoView.layoutFixtureItems != nil {
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: effectiveShowcaseScopeID)
+            return
+        }
+#endif
         prepareShowcaseIfNeeded(openAfter: true)
+    }
+
+    private func showcaseItems(for session: ShowcaseSession) -> [ShowcasePhotoView.Item] {
+        if let identifier = session.currentPhotoIdentifier { return [.current(identifier)] }
+#if DEBUG && targetEnvironment(simulator)
+        if let fixture = ShowcasePhotoView.layoutFixtureItems { return fixture }
+#endif
+        return showcaseStore.availableEntries(in: session.scopeID).compactMap { entry in
+            showcaseStore.imageURL(for: entry).map { .prepared(entry, $0) }
+        }
     }
 
     private func prepareShowcaseIfNeeded(openAfter: Bool) {
@@ -823,17 +832,11 @@ struct MainTabView: View {
         showcaseScopeID
     }
 
-    private func resolveInitialShowcaseScope() {
-        guard UserDefaults.standard.object(forKey: "showcase.lastScopeID.v1") == nil,
-              let first = catProfilesPresentation.profiles.first else { return }
-        showcaseScopeID = first.identifier
-    }
-
     private var showcaseAddScopes: [String] {
-        guard let identifier = showcaseAddPhotoIdentifier else { return [] }
-        let scopes = ([""] + catProfilesPresentation.profiles.map(\.identifier)).filter { scope in
-            showcaseCandidatesForScope(scope).contains { $0.localIdentifier == identifier }
-        }
+        guard let identifier = showcaseAddPhotoIdentifier,
+              showcaseCandidates.contains(where: { $0.localIdentifier == identifier }) else { return [] }
+        // Choosing a showcase set does not assign the photo to a cat profile.
+        let scopes = [""] + catProfilesPresentation.profiles.map(\.identifier)
         guard scopes.contains(showcaseScopeID) else { return scopes }
         return [showcaseScopeID] + scopes.filter { $0 != showcaseScopeID }
     }
