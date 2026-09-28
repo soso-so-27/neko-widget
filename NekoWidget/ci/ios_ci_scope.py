@@ -24,6 +24,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
+LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -64,7 +65,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -181,6 +182,13 @@ APP_VIEW_PATHS = frozenset({
     MEMORY_TEST_PATH,
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
+LOST_CAT_PHOTO_PATH = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"
+# Only the reviewed photo-picker correction receives the narrow UI route.
+# Any later edit to this view falls back to the general app-view checks.
+LOST_CAT_PHOTO_DIGESTS = (
+    "b94aa905638edc8561abf92fbffa607d45a2164bd6c7ce52501a399ef847c7f2",
+    "ee4096d6da9fa3437f4855573e6cdebfb7b2e9782cb18a0e000b25de967ad94e",
+)
 FAMILY_WINDOW_UI_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
@@ -1708,6 +1716,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == LOST_CAT_PHOTO_SCOPE:
+        return sources == {LOST_CAT_PHOTO_PATH}
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
@@ -1824,6 +1834,10 @@ REVIEWED_MANAGED_PRESERVATION_TESTS = (
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
 ))
+LOST_CAT_PHOTO_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
+    "testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary",
+))
 GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
     "testCaptureSharedWidgetAllSupportedSizes"
@@ -1854,6 +1868,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == LOST_CAT_PHOTO_SCOPE:
+        return LOST_CAT_PHOTO_TESTS
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return FAMILY_WINDOW_NATIVE_TESTS + (
                 "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
@@ -2064,6 +2080,10 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
+
+    if (set(changes) == {LOST_CAT_PHOTO_PATH}
+            and tuple(map(source_digest, changes[LOST_CAT_PHOTO_PATH])) == LOST_CAT_PHOTO_DIGESTS):
+        return LOST_CAT_PHOTO_SCOPE
     if set(changes) <= APP_VIEW_PATHS and (set(changes) & APP_VIEW_PRODUCT_PATHS or
                                           set(changes) == {MEMORY_TEST_PATH}):
         return APP_VIEW_SCOPE
