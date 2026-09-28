@@ -1597,9 +1597,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(second.minX, first.maxX + 7)
             cells.element(boundBy: 1).tap()
             XCTAssertTrue(app.staticTexts["2 / 9"].waitForExistence(timeout: 5))
-            app.buttons["showcase-back"].tap()
+            app.buttons["写真の一覧に戻る"].tap()
             XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
-            app.buttons["showcase-back"].tap()
+            app.buttons["閉じる"].tap()
             XCTAssertTrue(app.buttons["tools-showcase-open"].waitForExistence(timeout: 5))
             app.terminate()
         }
