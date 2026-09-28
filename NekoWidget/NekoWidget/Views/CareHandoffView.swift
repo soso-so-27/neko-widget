@@ -324,9 +324,19 @@ private struct CareDisclosureView: View {
         List {
             Section("今回お願いする猫") {
                 ForEach(store.plan.cats) { cat in
-                    Toggle(isOn: Binding(get: { disclosure.catIDs.contains(cat.id) }, set: { selected in
-                        if selected { disclosure.catIDs.insert(cat.id) } else { disclosure.catIDs.remove(cat.id) }
-                    })) { Text(cat.displayName) }.accessibilityIdentifier("care-select-\(cat.id.uuidString)")
+                    let selected = disclosure.catIDs.contains(cat.id)
+                    Button {
+                        if selected { disclosure.catIDs.remove(cat.id) } else { disclosure.catIDs.insert(cat.id) }
+                    } label: {
+                        HStack {
+                            Text(cat.displayName).foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .accessibilityValue(selected ? "選択済み" : "未選択")
+                        .accessibilityIdentifier("care-select-\(cat.id.uuidString)")
                 }
             }
             Section {

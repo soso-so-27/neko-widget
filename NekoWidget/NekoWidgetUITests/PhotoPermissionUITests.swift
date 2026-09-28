@@ -1452,12 +1452,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         for _ in 0..<4 where !add.isHittable { app.swipeUp() }
         add.tap()
-        let name = app.textFields["care-cat-name"].exists ? app.textFields["care-cat-name"] : app.textViews["care-cat-name"]
+        let name = app.textFields["care-cat-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap(); name.typeText("こはく")
         app.buttons["入力を閉じる"].tap()
-        let food = app.textFields["care-meal-food-0"].exists ? app.textFields["care-meal-food-0"] : app.textViews["care-meal-food-0"]
-        for _ in 0..<6 where !food.isHittable { app.swipeUp() }
+        // SwiftUI's offscreen Form rows are lazy; absence is not a different input type.
+        let food = app.textFields["care-meal-food-0"]
+        for _ in 0..<8 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
         food.tap(); food.typeText("いつものフード")
         app.buttons["入力を閉じる"].tap()
@@ -1494,11 +1495,15 @@ final class SoloMemoriesUITests: XCTestCase {
         configure.tap()
         let preview = app.buttons["care-preview-open"]
         XCTAssertFalse(preview.isEnabled)
-        app.switches["care-select-C0260929-0000-0000-0000-000000000001"].tap()
+        let chosenCat = app.buttons["care-select-C0260929-0000-0000-0000-000000000001"]
+        chosenCat.tap()
+        XCTAssertEqual(chosenCat.value as? String, "選択済み")
+        XCTAssertTrue(preview.isEnabled)
         XCTAssertEqual(app.switches["care-disclose-health"].value as? String, "0")
         XCTAssertEqual(app.switches["care-disclose-contacts"].value as? String, "0")
         capture("care-handoff-disclosure")
         preview.tap()
+        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["むぎ"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["そら"].exists)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
@@ -1752,7 +1757,10 @@ final class SoloMemoriesUITests: XCTestCase {
             for _ in 0..<5 where !care.isHittable { app.swipeUp() }
             XCTAssertTrue(care.isHittable)
             care.tap()
-            XCTAssertTrue(app.buttons["care-add-cat"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["預けるとき"].waitForExistence(timeout: 5))
+            let addCare = app.buttons["care-add-cat"]
+            for _ in 0..<5 where !addCare.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(addCare.isHittable)
             capture("tools-care-entry-\(largeText ? "large" : "standard")")
             app.navigationBars.buttons.element(boundBy: 0).tap()
             for identifier in ["tools-vet-unavailable"] {
