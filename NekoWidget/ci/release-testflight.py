@@ -186,6 +186,44 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             "CI plan identity/version does not match this release.")
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
+    correction = plan.get("test_correction_evidence")
+    if correction is not None:
+        require(plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+                and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
+                and isinstance(correction, dict)
+                and type(correction.get("run_id")) is int and type(correction.get("sha")) is str,
+                "Test-correction evidence has an invalid scope or identity.")
+        source = gh.get(f"actions/runs/{correction['run_id']}")
+        require(source.get("id") == correction["run_id"] and source.get("head_sha") == correction["sha"],
+                "Test-correction source run identity differs from its plan.")
+        def correction_api(path: str) -> dict:
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected test-correction API path.")
+            return gh.get(path[len(prefix):])
+        verified = planner.correction_source(
+            source, sha, current["head_branch"], REPOSITORY, ci_workflow["id"],
+            required, correction_api, now)
+        require(verified == correction, "Reused native jobs or unchanged-input proof differ from the CI plan.")
+        source_jobs = executed_jobs_for(gh, source)
+        old_plan_jobs = [job for job in source_jobs if job.get("name") == PLAN_JOB]
+        require(len(old_plan_jobs) == 1 and type(old_plan_jobs[0].get("id")) is int,
+                "Test-correction source has no unique plan job.")
+        old_plan = plan_from_log(gh.log(source["id"], old_plan_jobs[0]["id"]), source["head_sha"])
+        require(old_plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+                and old_plan.get("required_jobs") == list(required)
+                and old_plan.get("evidence_run_id") is None,
+                "Test-correction source did not run the same required check graph.")
+        ui_name = planner.lane_job(planner.LOST_CAT_UX_SCOPE, "app-ui")
+        current_jobs = executed_jobs_for(gh, current)
+        require(planner.covers_jobs(current_jobs, (ui_name,), sha, now=now),
+                "All three owning app UI cases must pass in the new candidate's normal job.")
+        # Skipped reused jobs are expected, but a duplicate/misrouted execution is not.
+        require(not any(job.get("name") in {entry["name"] for entry in correction["jobs"]}
+                        and job.get("conclusion") != "skipped" for job in current_jobs),
+                "A reused job also executed or failed in the new candidate.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "reused_run": source["id"], "reused_sha": source["head_sha"]}
     source_id, source_sha = plan.get("evidence_run_id"), plan.get("evidence_sha")
     if source_id is None:
         require(source_sha is None, "CI plan has an incomplete evidence reference.")

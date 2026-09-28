@@ -330,6 +330,23 @@ class PreflightTests(unittest.TestCase):
         # A Python/build failure does not force an unrelated UI test.
         self.assertTrue(check([{**failed, "failed_tests": []}])["ready"])
 
+    def test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(self):
+        now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
+        case = "SoloMemoriesUITests/testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary"
+        plan = {"ready": True, "head": "a" * 40, "scope": scope.LOST_CAT_UX_SCOPE,
+                "target_minutes": 30, "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}
+        failed = {"id": 10, "created_at": "2026-09-20T11:55:00Z", "status": "completed",
+                  "conclusion": "failure", "failed_tests": [case],
+                  "path": ".github/workflows/ios-build.yml"}
+        evidence = {"run_id": 10, "sha": "b" * 40, "jobs": []}
+        self.assertTrue(preflight.apply_task_gate(dict(plan), [failed], now,
+                        correction_evidence=evidence)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [failed], now)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [{**failed, "failed_tests": ["SoloMemoriesUITests/testOther"]}],
+                         now, correction_evidence=evidence)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [failed], now,
+                         correction_evidence={**evidence, "run_id": 11})["ready"])
+
     def test_unmeasured_baseline_is_explicit_and_first_attempt_only(self):
         plan = {"ready": False, "head": "a" * 40, "target_minutes": 30, "cost": {"status": "unmeasured"}}
         self.assertFalse(preflight.apply_task_gate(dict(plan), [])["ready"])
