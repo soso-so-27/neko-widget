@@ -1446,6 +1446,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--lost-cat-draft-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-fixture-\(UUID().uuidString)"
         app.launch()
         XCTAssertFalse(app.buttons["lost-cat-share-image"].exists)
         for (field, value) in [("猫の名前（任意）", "むぎ"),
@@ -1457,7 +1458,7 @@ final class SoloMemoriesUITests: XCTestCase {
             input.typeText(value)
         }
         app.buttons["仕上がりを確認"].tap()
-        let preview = app.images["共有する迷子の猫の画像"]
+        let preview = app.buttons["共有する迷子の猫の画像"]
         for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue((preview.value as? String ?? "").contains("日時: 不明"))
@@ -1478,6 +1479,14 @@ final class SoloMemoriesUITests: XCTestCase {
                 predicate: NSPredicate(format: "exists == false"), object: sheet
             )], timeout: 5), .completed)
         }
+        app.terminate()
+        app.launch()
+        let restoredName = app.textFields["猫の名前（任意）"]
+        XCTAssertTrue(restoredName.waitForExistence(timeout: 5))
+        XCTAssertEqual(restoredName.value as? String, "むぎ")
+        XCTAssertEqual(app.textFields["町名・公園名など"].value as? String, "駅の近く")
+        XCTAssertEqual(app.textFields["電話・メール・SNSアカウントなど"].value as? String,
+                       "08000000000")
         app.terminate()
     }
 

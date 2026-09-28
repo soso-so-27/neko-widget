@@ -650,7 +650,8 @@ private struct LostCatActivitySheet: UIViewControllerRepresentable {
 
 #if DEBUG
 struct LostCatDraftFixtureView: View {
-    @State private var fixtureKey = "guest-fixture-\(UUID().uuidString)"
+    @State private var fixtureKey = ProcessInfo.processInfo.environment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"]
+        ?? "guest-fixture-\(UUID().uuidString)"
     private var candidatePhotos: [CatProfilePhotoPresentation] {
         guard ProcessInfo.processInfo.environment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] == "1",
               let photo = AppStoreScreenshotFixture.photos.first else { return [] }
