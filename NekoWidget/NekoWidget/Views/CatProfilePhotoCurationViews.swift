@@ -97,7 +97,8 @@ struct CatProfileDetailView: View {
                     CatPreparednessView(
                         identityKey: profile.identifier,
                         catName: profile.displayName,
-                        candidatePhotos: preparednessCandidates
+                        candidatePhotos: preparednessCandidates,
+                        profiles: allProfiles
                     )
                 } label: {
                     Label("迷子への備え", systemImage: "pawprint")
@@ -204,6 +205,7 @@ struct CatProfileDetailView: View {
                     isDeleting = false
                     if deleted {
                         try? CatPreparednessStore.shared.delete(for: profile.identifier)
+                        try? LostCatDraftStore.shared.delete(for: profile.identifier)
                         try? ShowcasePhotoStore().removeScope(profile.identifier)
                         dismiss()
                     } else { deleteFailed = true }
@@ -231,8 +233,10 @@ struct CatProfileDetailView: View {
     }
 
     private var preparednessCandidates: [CatProfilePhotoPresentation] {
-        // A face/body reference must not silently use another cat's unassigned candidate.
-        return profile.confirmedPhotos
+        var seen = Set<String>()
+        return (profile.confirmedPhotos + manualCandidatePhotos
+                + allProfiles.flatMap { $0.confirmedPhotos + $0.manualCandidatePhotos })
+            .filter { seen.insert($0.localIdentifier).inserted }
     }
 
     private var lifeReferenceSummary: String {

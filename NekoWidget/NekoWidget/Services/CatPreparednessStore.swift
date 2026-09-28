@@ -117,6 +117,135 @@ final class CatPreparednessStore: ObservableObject {
     }
 }
 
+/// A private, local draft. The key is a profile identifier or a generated guest identifier.
+struct LostCatDraft: Codable, Equatable {
+    static let schemaVersion = 1
+    var schemaVersion = Self.schemaVersion
+    var faceFileName: String?
+    var bodyFileName: String?
+    var name = ""
+    var features = ""
+    var collar = ""
+    var approachAdvice = ""
+    var contact = ""
+    var lastSeenNear = ""
+    var lastSeenAt: Date?
+    var updatedAt = Date()
+}
+
+@MainActor
+final class LostCatDraftStore: ObservableObject {
+    static let shared = LostCatDraftStore()
+    @Published private(set) var drafts: [String: LostCatDraft] = [:]
+    private let directory: URL
+    private let manifest: URL
+    private let legacy: CatPreparednessStore
+    private let manifestUnreadable: Bool
+
+    init(directory: URL? = nil, legacy: CatPreparednessStore = .shared) {
+        let base = directory ?? FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0].appendingPathComponent("LostCatDrafts", isDirectory: true)
+        let file = base.appendingPathComponent("drafts.json")
+        self.directory = base
+        self.manifest = file
+        self.legacy = legacy
+        if let data = try? Data(contentsOf: file),
+           let saved = try? JSONDecoder().decode([String: LostCatDraft].self, from: data) {
+            drafts = saved
+            manifestUnreadable = false
+        } else {
+            manifestUnreadable = FileManager.default.fileExists(atPath: file.path)
+        }
+    }
+
+    func draft(for key: String, profileName: String = "") throws -> LostCatDraft {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        if let saved = drafts[key] { return saved }
+        let old = legacy.record(for: key == "guest-legacy" ? "unregistered" : key)
+        var migrated = LostCatDraft()
+        migrated.name = profileName.isEmpty ? old.name : profileName
+        migrated.features = old.identifyingFeatures
+        migrated.collar = old.collar
+        migrated.approachAdvice = old.approachAdvice
+        migrated.contact = old.contactSuggestion
+        // Copy before committing the manifest. Legacy files remain untouched.
+        var copied: [URL] = []
+        do {
+            for (role, photo) in [("face", old.face), ("body", old.body)] {
+                guard let source = legacy.photoURL(photo) else { continue }
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let name = UUID().uuidString + ".jpg"
+                let destination = directory.appendingPathComponent(name)
+                try FileManager.default.copyItem(at: source, to: destination)
+                copied.append(destination)
+                if role == "face" { migrated.faceFileName = name }
+                else { migrated.bodyFileName = name }
+            }
+            try save(migrated, for: key)
+            return migrated
+        } catch {
+            copied.forEach { try? FileManager.default.removeItem(at: $0) }
+            throw error
+        }
+    }
+
+    func save(_ draft: LostCatDraft, for key: String) throws {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        var next = drafts
+        var value = draft
+        value.updatedAt = Date()
+        next[key] = value
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        drafts = next
+    }
+
+    func replacePhoto(_ data: Data, role: CatPreparednessStore.PhotoRole,
+                      draft: LostCatDraft, for key: String) throws -> LostCatDraft {
+        guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.86)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let name = UUID().uuidString + ".jpg"
+        let url = directory.appendingPathComponent(name)
+        try jpeg.write(to: url, options: .atomic)
+        var updated = draft
+        let old = role == .face ? draft.faceFileName : draft.bodyFileName
+        if role == .face { updated.faceFileName = name } else { updated.bodyFileName = name }
+        do { try save(updated, for: key) }
+        catch { try? FileManager.default.removeItem(at: url); throw error }
+        if let old, old == URL(fileURLWithPath: old).lastPathComponent,
+           old.hasSuffix(".jpg"),
+           old != updated.faceFileName, old != updated.bodyFileName,
+           !drafts.values.contains(where: { $0.faceFileName == old || $0.bodyFileName == old }) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
+        }
+        return drafts[key] ?? updated
+    }
+
+    func image(_ name: String?) -> UIImage? {
+        guard let name, name == URL(fileURLWithPath: name).lastPathComponent,
+              name.hasSuffix(".jpg") else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(name).path)
+    }
+
+    func delete(for key: String) throws {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        guard let old = drafts[key] else { return }
+        var next = drafts
+        next.removeValue(forKey: key)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        drafts = next
+        for name in [old.faceFileName, old.bodyFileName].compactMap({ $0 })
+        where name == URL(fileURLWithPath: name).lastPathComponent
+            && name.hasSuffix(".jpg")
+            && !next.values.contains(where: { $0.faceFileName == name || $0.bodyFileName == name }) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+}
+
 /// A single-source public rendering; private fields never enter this value.
 struct LostCatPublicDraft {
     let name: String
@@ -144,27 +273,32 @@ struct LostCatPublicDraft {
 }
 
 enum LostCatFlyerRenderer {
-    private static let canvas = CGSize(width: 1200, height: 1697)
+    private static let canvas = CGSize(width: 1080, height: 1350)
 
     /// The preview and both exports use identical bounds. Never silently cut
     /// a location or contact method from a public flyer.
     static func fits(_ draft: LostCatPublicDraft) -> Bool {
-        textFits(draft.name, width: 1092, height: 105, size: 72, weight: .bold)
-        && textFits("最後に見た場所  \(draft.lastSeenNear)", width: 1092,
-                    height: 122, size: 46, weight: .bold)
-        && textFits("特徴  \(draft.features)", width: 1092,
-                    height: 126, size: 40, weight: .regular)
-        && textFits(draft.approachAdvice, width: 1092,
-                    height: 75, size: 35, weight: .regular)
-        && textFits("連絡先  \(draft.contact)", width: 1092,
-                    height: 132, size: 53, weight: .bold)
+        textFits(draft.name, width: 984, height: 70, size: 52, weight: .bold)
+        && textFits("最後に見た場所  \(draft.lastSeenNear)", width: 984,
+                    height: 100, size: 42, weight: .bold)
+        && textFits("特徴  \(draft.features)", width: 984,
+                    height: 92, size: 35, weight: .regular)
+        && textFits(draft.approachAdvice, width: 984,
+                    height: 62, size: 31, weight: .regular)
+        && textFits("連絡先  \(draft.contact)", width: 984,
+                    height: 100, size: 47, weight: .bold)
     }
 
-    static func previewImage(_ draft: LostCatPublicDraft) -> UIImage {
-        let size = CGSize(width: 420, height: 594)
+    static func previewImage(_ draft: LostCatPublicDraft, pdf: Bool = false) -> UIImage {
+        let size = pdf ? CGSize(width: 420, height: 594)
+                       : CGSize(width: 360, height: 450)
         return UIGraphicsImageRenderer(size: size).image { context in
-            context.cgContext.scaleBy(x: size.width / canvas.width,
-                                      y: size.height / canvas.height)
+            UIColor.white.setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: size))
+            let scale = min(size.width / canvas.width, size.height / canvas.height)
+            context.cgContext.translateBy(x: (size.width - canvas.width * scale) / 2,
+                                          y: (size.height - canvas.height * scale) / 2)
+            context.cgContext.scaleBy(x: scale, y: scale)
             draw(draft, context: context.cgContext)
         }
     }
@@ -186,8 +320,10 @@ enum LostCatFlyerRenderer {
         let renderer = UIGraphicsPDFRenderer(bounds: bounds)
         let data = renderer.pdfData { context in
             context.beginPage()
-            context.cgContext.scaleBy(x: bounds.width / canvas.width,
-                                      y: bounds.height / canvas.height)
+            let scale = min(bounds.width / canvas.width, bounds.height / canvas.height)
+            context.cgContext.translateBy(x: (bounds.width - canvas.width * scale) / 2,
+                                          y: (bounds.height - canvas.height * scale) / 2)
+            context.cgContext.scaleBy(x: scale, y: scale)
             draw(draft, context: context.cgContext)
         }
         let url = FileManager.default.temporaryDirectory
@@ -201,32 +337,32 @@ enum LostCatFlyerRenderer {
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill()
         context.fill(CGRect(origin: .zero, size: canvas))
-        text("猫を探しています", CGRect(x: 54, y: 48, width: 1092, height: 132),
-             size: 95, weight: .black)
-        text(draft.name, CGRect(x: 54, y: 186, width: 1092, height: 105),
-             size: 72, weight: .bold)
-        drawPhoto(draft.faceImage, in: CGRect(x: 54, y: 312, width: 708, height: 680))
+        text("猫を探しています", CGRect(x: 48, y: 35, width: 984, height: 105),
+             size: 78, weight: .black)
+        text(draft.name, CGRect(x: 48, y: 146, width: 984, height: 70),
+             size: 52, weight: .bold)
         if let body = draft.bodyImage {
-            drawPhoto(body, in: CGRect(x: 790, y: 492, width: 356, height: 356))
-            text("体の模様", CGRect(x: 790, y: 850, width: 356, height: 42),
-                 size: 30, weight: .medium)
+            drawPhoto(draft.faceImage, in: CGRect(x: 48, y: 228, width: 482, height: 615))
+            drawPhoto(body, in: CGRect(x: 550, y: 228, width: 482, height: 615))
+        } else {
+            drawPhoto(draft.faceImage, in: CGRect(x: 48, y: 228, width: 984, height: 615))
         }
         text("最後に見た場所  \(draft.lastSeenNear)",
-             CGRect(x: 54, y: 1040, width: 1092, height: 122), size: 46, weight: .bold)
+             CGRect(x: 48, y: 865, width: 984, height: 100), size: 42, weight: .bold)
         text("日時  \(draft.lastSeenDescription)",
-             CGRect(x: 54, y: 1172, width: 1092, height: 70), size: 42, weight: .regular)
+             CGRect(x: 48, y: 972, width: 984, height: 55), size: 35, weight: .regular)
         if !draft.features.isEmpty {
-            text("特徴  \(draft.features)", CGRect(x: 54, y: 1252, width: 1092, height: 126),
-                 size: 40, weight: .regular)
-        }
-        if !draft.approachAdvice.isEmpty {
-            text(draft.approachAdvice, CGRect(x: 54, y: 1384, width: 1092, height: 75),
+            text("特徴  \(draft.features)", CGRect(x: 48, y: 1035, width: 984, height: 92),
                  size: 35, weight: .regular)
         }
+        if !draft.approachAdvice.isEmpty {
+            text(draft.approachAdvice, CGRect(x: 48, y: 1132, width: 984, height: 62),
+                 size: 31, weight: .regular)
+        }
         UIColor.black.setFill()
-        context.fill(CGRect(x: 0, y: 1500, width: canvas.width, height: 197))
-        text("連絡先  \(draft.contact)", CGRect(x: 54, y: 1532, width: 1092, height: 132),
-             size: 53, weight: .bold, color: .white)
+        context.fill(CGRect(x: 0, y: 1210, width: canvas.width, height: 140))
+        text("連絡先  \(draft.contact)", CGRect(x: 48, y: 1227, width: 984, height: 100),
+             size: 47, weight: .bold, color: .white)
     }
 
     private static func drawPhoto(_ image: UIImage, in rect: CGRect) {
