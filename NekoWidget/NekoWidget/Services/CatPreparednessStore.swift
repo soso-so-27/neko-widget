@@ -143,17 +143,19 @@ final class LostCatDraftStore: ObservableObject {
     private let manifestUnreadable: Bool
 
     init(directory: URL? = nil, legacy: CatPreparednessStore = .shared) {
-        self.directory = directory ?? FileManager.default.urls(
+        let base = directory ?? FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         )[0].appendingPathComponent("LostCatDrafts", isDirectory: true)
-        self.manifest = self.directory.appendingPathComponent("drafts.json")
+        let file = base.appendingPathComponent("drafts.json")
+        self.directory = base
+        self.manifest = file
         self.legacy = legacy
-        if let data = try? Data(contentsOf: manifest),
+        if let data = try? Data(contentsOf: file),
            let saved = try? JSONDecoder().decode([String: LostCatDraft].self, from: data) {
             drafts = saved
             manifestUnreadable = false
         } else {
-            manifestUnreadable = FileManager.default.fileExists(atPath: manifest.path)
+            manifestUnreadable = FileManager.default.fileExists(atPath: file.path)
         }
     }
 
