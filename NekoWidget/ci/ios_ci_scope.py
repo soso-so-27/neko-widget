@@ -24,7 +24,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
-LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v1"
+LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -183,12 +183,11 @@ APP_VIEW_PATHS = frozenset({
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
 LOST_CAT_PHOTO_PATH = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"
-# Only the reviewed photo-picker correction receives the narrow UI route.
-# Any later edit to this view falls back to the general app-view checks.
-LOST_CAT_PHOTO_DIGESTS = (
-    "b94aa905638edc8561abf92fbffa607d45a2164bd6c7ce52501a399ef847c7f2",
-    "ee4096d6da9fa3437f4855573e6cdebfb7b2e9782cb18a0e000b25de967ad94e",
-)
+LOST_CAT_PHOTO_TEST_NAMES = frozenset((
+    "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
+    "testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary",
+    "testLostCatPhotoTapSelectsOnlyTheTappedCandidate",
+))
 FAMILY_WINDOW_UI_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
     "NekoWidget/NekoWidget/Views/FamilyRecordView.swift",
@@ -1460,12 +1459,15 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(source.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
-def family_window_test_methods(source: str):
+def family_window_test_methods(source: str, *,
+                               owner_class: str = "MomentDeliveryComposerUITests",
+                               required_names: frozenset[str] = FAMILY_WINDOW_TEST_NAMES):
     """Return direct XCTest methods and brace-bounded bodies, or fail closed."""
     masked = swift_declaration_source(source)
     if masked is None:
         return None
-    classes = list(re.finditer(r"(?ms)^final class MomentDeliveryComposerUITests: XCTestCase \{\n.*?^\}", masked))
+    classes = list(re.finditer(
+        rf"(?ms)^final class {re.escape(owner_class)}: XCTestCase \{{\n.*?^\}}", masked))
     if len(classes) != 1:
         return None
     owner = classes[0]
@@ -1497,7 +1499,7 @@ def family_window_test_methods(source: str):
             start = previous
         methods[name] = (start, match.start(), opening + 1, closing, closing + 1,
                          "private func " in match.group() or "private nonisolated" in match.group())
-    if not FAMILY_WINDOW_TEST_NAMES <= methods.keys():
+    if not required_names <= methods.keys():
         return None
     return methods
 
@@ -1569,6 +1571,47 @@ def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
     if any(conditional_blocks(text) is None for pair in changes.values() for text in pair):
         return False
     return MEMORY_TEST_PATH not in changes or family_window_test_changes(*changes[MEMORY_TEST_PATH])
+
+
+def lost_cat_photo_test_changes(before: str, after: str) -> bool:
+    """Only the three owned Solo tests may change; the third may be added."""
+    existing = LOST_CAT_PHOTO_TEST_NAMES - {"testLostCatPhotoTapSelectsOnlyTheTappedCandidate"}
+    old = family_window_test_methods(
+        before, owner_class="SoloMemoriesUITests", required_names=existing)
+    new = family_window_test_methods(
+        after, owner_class="SoloMemoriesUITests", required_names=LOST_CAT_PHOTO_TEST_NAMES)
+    if old is None or new is None or not old.keys() <= new.keys():
+        return False
+    added = new.keys() - old.keys()
+    if not added <= LOST_CAT_PHOTO_TEST_NAMES:
+        return False
+
+    def without_owned_bodies(source, methods, added_methods):
+        spans = [(methods[name][2], methods[name][3])
+                 for name in (LOST_CAT_PHOTO_TEST_NAMES & methods.keys()) - added_methods]
+        spans += [(methods[name][0], methods[name][4]) for name in added_methods]
+        for start, end in sorted(spans, reverse=True):
+            source = source[:start] + source[end:]
+        return "\n".join(line for line in source.splitlines() if line.strip())
+
+    return (without_owned_bodies(before, old, set())
+            == without_owned_bodies(after, new, added))
+
+
+def lost_cat_photo_ui_changes(changes: dict[str, tuple[str, str]],
+                              memory_test_source: str | None) -> bool:
+    paths = set(changes)
+    if LOST_CAT_PHOTO_PATH not in paths or not paths <= {LOST_CAT_PHOTO_PATH, MEMORY_TEST_PATH}:
+        return False
+    if any(conditional_blocks(source) is None for pair in changes.values() for source in pair):
+        return False
+    if MEMORY_TEST_PATH in changes:
+        if not lost_cat_photo_test_changes(*changes[MEMORY_TEST_PATH]):
+            return False
+        source = changes[MEMORY_TEST_PATH][1]
+    else:
+        source = memory_test_source
+    return memory_tests_available(source, LOST_CAT_PHOTO_TESTS)
 
 
 def reviewed_app_record_export_changes(changes: dict[str, tuple[str, str]]) -> bool:
@@ -1717,7 +1760,8 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == LOST_CAT_PHOTO_SCOPE:
-        return sources == {LOST_CAT_PHOTO_PATH}
+        return LOST_CAT_PHOTO_PATH in sources and sources <= {
+            LOST_CAT_PHOTO_PATH, MEMORY_TEST_PATH}
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
@@ -1837,6 +1881,7 @@ ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for
 LOST_CAT_PHOTO_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
     "testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary",
+    "testLostCatPhotoTapSelectsOnlyTheTappedCandidate",
 ))
 GALLERY_TEST = (
     "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
@@ -2081,8 +2126,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
 
-    if (set(changes) == {LOST_CAT_PHOTO_PATH}
-            and tuple(map(source_digest, changes[LOST_CAT_PHOTO_PATH])) == LOST_CAT_PHOTO_DIGESTS):
+    if lost_cat_photo_ui_changes(changes, memory_test_source):
         return LOST_CAT_PHOTO_SCOPE
     if set(changes) <= APP_VIEW_PATHS and (set(changes) & APP_VIEW_PRODUCT_PATHS or
                                           set(changes) == {MEMORY_TEST_PATH}):

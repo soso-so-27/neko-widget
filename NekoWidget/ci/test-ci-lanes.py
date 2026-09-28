@@ -31,13 +31,38 @@ def workflow_jobs():
 class LaneTests(unittest.TestCase):
     def test_reviewed_lost_cat_photo_change_uses_only_owning_ui_checks(self):
         path = scope.LOST_CAT_PHOTO_PATH
-        current = (CI.parents[0] / "NekoWidget" / "Views" /
-                   "CatPreparednessView.swift").read_text(encoding="utf-8")
-        self.assertIn(scope.source_digest(current), scope.LOST_CAT_PHOTO_DIGESTS)
+        before_tests = """import XCTest
+final class SoloMemoriesUITests: XCTestCase {
+    @MainActor
+    func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {
+        XCTAssertTrue(true)
+    }
+    @MainActor
+    func testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary() {
+        XCTAssertTrue(true)
+    }
+    @MainActor
+    func testOtherAlbumRoute() {
+        XCTAssertTrue(true)
+    }
+}
+final class UnrelatedUITests: XCTestCase {
+    func testOther() {}
+}
+"""
+        after_tests = before_tests.replace(
+            "    @MainActor\n    func testOtherAlbumRoute()",
+            "    @MainActor\n    func testLostCatPhotoTapSelectsOnlyTheTappedCandidate() {\n"
+            "        XCTAssertTrue(true)\n    }\n"
+            "    @MainActor\n    func testOtherAlbumRoute()",
+        )
+        before_view = '#if DEBUG\nlet fixture = 1\n#endif\n'
+        after_view = '#if DEBUG\nlet fixture = 2\n#endif\n'
         selected = scope.LOST_CAT_PHOTO_SCOPE
+        self.assertEqual(selected, "lost-cat-photo-ui-v2")
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.LOST_CAT_PHOTO_TESTS)
-        self.assertEqual(len(set(scope.LOST_CAT_PHOTO_TESTS)), 2)
+        self.assertEqual(len(set(scope.LOST_CAT_PHOTO_TESTS)), 3)
         self.assertEqual(scope.smoke_tests(selected),
                          ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
         self.assertEqual(planner.required_jobs_from_scope(selected),
@@ -45,17 +70,40 @@ class LaneTests(unittest.TestCase):
                           scope.lane_job(selected, "runtime"),
                           scope.lane_job(selected, "app-ui")))
         self.assertTrue(scope.accepts_paths(selected, [path]))
-        self.assertFalse(scope.accepts_paths(selected, [path, scope.MEMORY_TEST_PATH]))
-        with patch.object(scope, "source_digest", side_effect=lambda value: {
-            "before": scope.LOST_CAT_PHOTO_DIGESTS[0],
-            "after": scope.LOST_CAT_PHOTO_DIGESTS[1],
-            "changed": "0" * 64,
-        }[value]):
-            self.assertEqual(scope.select_scope({path: ("before", "after")}), selected)
-            self.assertEqual(scope.select_scope({path: ("before", "changed")}), scope.APP_VIEW_SCOPE)
-            self.assertEqual(scope.select_scope({path: ("before", "after"),
-                                                 scope.MEMORY_TEST_PATH: ("before", "after")}),
-                             scope.APP_VIEW_SCOPE)
+        self.assertTrue(scope.accepts_paths(selected, [path, scope.MEMORY_TEST_PATH]))
+        self.assertFalse(scope.accepts_paths(selected, [path,
+            "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift"]))
+        changes = {path: (before_view, after_view),
+                   scope.MEMORY_TEST_PATH: (before_tests, after_tests)}
+        self.assertEqual(scope.select_scope(changes), selected)
+        edited_owned_test = after_tests.replace(
+            "func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {\n"
+            "        XCTAssertTrue(true)",
+            "func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {\n"
+            "        XCTAssertTrue(false)")
+        self.assertEqual(scope.select_scope({path: (before_view, after_view),
+            scope.MEMORY_TEST_PATH: (before_tests, edited_owned_test)}), selected)
+        self.assertEqual(scope.select_scope({path: (before_view, after_view)},
+                         memory_test_source=after_tests), selected)
+        self.assertEqual(scope.select_scope({path: (before_view, after_view)},
+                         memory_test_source=before_tests), scope.APP_VIEW_SCOPE)
+        for changed_tests in (
+            after_tests.replace("func testOtherAlbumRoute() {\n        XCTAssertTrue(true)",
+                                "func testOtherAlbumRoute() {\n        XCTAssertTrue(false)"),
+            after_tests.replace("import XCTest", "import XCTest\nimport Photos"),
+            after_tests.replace("func testOther() {}", "func testOther() { XCTAssertTrue(true) }"),
+            after_tests.replace("func testOtherAlbumRoute()", "func newHelper() {}\n"
+                                "    @MainActor\n    func testOtherAlbumRoute()"),
+        ):
+            with self.subTest(changed_tests=changed_tests[-75:]):
+                self.assertEqual(scope.select_scope({path: (before_view, after_view),
+                    scope.MEMORY_TEST_PATH: (before_tests, changed_tests)}), scope.APP_VIEW_SCOPE)
+        self.assertEqual(scope.select_scope({**changes,
+            "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift": ("old", "new")}),
+            scope.FULL_SCOPE)
+        self.assertNotEqual(scope.select_scope({**changes,
+            "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift": ("old", "new")}),
+            selected)
 
     def test_app_view_scope_sources_belong_only_to_app_or_ui_test_target(self):
         project = (CI.parents[0] / "NekoWidget.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
