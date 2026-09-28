@@ -223,6 +223,23 @@ final class LostCatDraftStore: ObservableObject {
         return drafts[key] ?? updated
     }
 
+    /// Removing an optional copy never deletes its Photos-library original.
+    /// Commit the manifest first; failed persistence leaves the prior draft intact.
+    func removePhoto(role: CatPreparednessStore.PhotoRole, draft: LostCatDraft,
+                     for key: String) throws -> LostCatDraft {
+        guard role == .body else { return draft }
+        var updated = draft
+        let old = updated.bodyFileName
+        updated.bodyFileName = nil
+        try save(updated, for: key)
+        if let old, old == URL(fileURLWithPath: old).lastPathComponent,
+           old.hasSuffix(".jpg"),
+           !drafts.values.contains(where: { $0.faceFileName == old || $0.bodyFileName == old }) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
+        }
+        return drafts[key] ?? updated
+    }
+
     func image(_ name: String?) -> UIImage? {
         guard let name, name == URL(fileURLWithPath: name).lastPathComponent,
               name.hasSuffix(".jpg") else { return nil }
@@ -262,7 +279,8 @@ struct LostCatPublicDraft {
     }
 
     var message: String {
-        var parts = ["猫を探しています。", name]
+        var parts = ["猫を探しています。"]
+        if !name.isEmpty { parts.append(name) }
         if !features.isEmpty { parts.append("特徴: \(features)") }
         parts.append("最後に見た場所: \(lastSeenNear)")
         parts.append("日時: \(lastSeenDescription)")
@@ -273,40 +291,68 @@ struct LostCatPublicDraft {
 }
 
 enum LostCatFlyerRenderer {
-    private static let canvas = CGSize(width: 1080, height: 1350)
+    private enum Format { case social, paper }
+    private static let socialSize = CGSize(width: 1080, height: 1350)
+    private static let paperSize = CGSize(width: 595.2, height: 841.8)
 
-    /// The preview and both exports use identical bounds. Never silently cut
-    /// a location or contact method from a public flyer.
-    static func fits(_ draft: LostCatPublicDraft) -> Bool {
-        textFits(draft.name, width: 984, height: 70, size: 52, weight: .bold)
-        && textFits("最後に見た場所  \(draft.lastSeenNear)", width: 984,
-                    height: 100, size: 42, weight: .bold)
-        && textFits("特徴  \(draft.features)", width: 984,
-                    height: 92, size: 35, weight: .regular)
-        && textFits(draft.approachAdvice, width: 984,
-                    height: 62, size: 31, weight: .regular)
-        && textFits("連絡先  \(draft.contact)", width: 984,
-                    height: 100, size: 47, weight: .bold)
+    private struct TextBlock {
+        let value: String
+        let size: CGFloat
+        let weight: UIFont.Weight
+        let height: CGFloat
     }
 
+    private struct PositionedText {
+        let block: TextBlock
+        let rect: CGRect
+    }
+
+    private struct Layout {
+        let size: CGSize
+        let photoRect: CGRect
+        let contactBackground: CGRect
+        let texts: [PositionedText]
+    }
+
+    /// Keys correspond to editable public fields: name, place, features,
+    /// advice, contact. Both outputs must fit at their readable minimum sizes.
+    static func validationIssues(_ draft: LostCatPublicDraft) -> [String: String] {
+        var issues = layout(draft, format: .social).1
+        for (field, message) in layout(draft, format: .paper).1 {
+            issues[field] = message
+        }
+        return issues
+    }
+
+    static func inputIssue(_ draft: LostCatPublicDraft, field: String) -> String? {
+        validationIssues(draft)[field]
+    }
+
+    static func fits(_ draft: LostCatPublicDraft) -> Bool {
+        validationIssues(draft).isEmpty
+    }
+
+    /// The full-resolution PNG or a 2x A4 raster, drawn with the export layout.
     static func previewImage(_ draft: LostCatPublicDraft, pdf: Bool = false) -> UIImage {
-        let size = pdf ? CGSize(width: 420, height: 594)
-                       : CGSize(width: 360, height: 450)
-        return UIGraphicsImageRenderer(size: size).image { context in
-            UIColor.white.setFill()
-            context.cgContext.fill(CGRect(origin: .zero, size: size))
-            let scale = min(size.width / canvas.width, size.height / canvas.height)
-            context.cgContext.translateBy(x: (size.width - canvas.width * scale) / 2,
-                                          y: (size.height - canvas.height * scale) / 2)
-            context.cgContext.scaleBy(x: scale, y: scale)
-            draw(draft, context: context.cgContext)
+        let format: Format = pdf ? .paper : .social
+        let bounds = pdf ? CGSize(width: paperSize.width * 2, height: paperSize.height * 2)
+                         : socialSize
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = 1
+        rendererFormat.opaque = true
+        return UIGraphicsImageRenderer(size: bounds, format: rendererFormat).image { renderer in
+            if pdf { renderer.cgContext.scaleBy(x: 2, y: 2) }
+            draw(draft, format: format, context: renderer.cgContext)
         }
     }
 
     static func createImage(_ draft: LostCatPublicDraft) throws -> URL {
         guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
-        let renderer = UIGraphicsImageRenderer(size: canvas)
-        let image = renderer.image { context in draw(draft, context: context.cgContext) }
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = 1
+        rendererFormat.opaque = true
+        let image = UIGraphicsImageRenderer(size: socialSize, format: rendererFormat)
+            .image { draw(draft, format: .social, context: $0.cgContext) }
         guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("迷子の猫-\(UUID().uuidString).png")
@@ -316,15 +362,10 @@ enum LostCatFlyerRenderer {
 
     static func createPDF(_ draft: LostCatPublicDraft) throws -> URL {
         guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
-        let bounds = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)
-        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: paperSize))
         let data = renderer.pdfData { context in
             context.beginPage()
-            let scale = min(bounds.width / canvas.width, bounds.height / canvas.height)
-            context.cgContext.translateBy(x: (bounds.width - canvas.width * scale) / 2,
-                                          y: (bounds.height - canvas.height * scale) / 2)
-            context.cgContext.scaleBy(x: scale, y: scale)
-            draw(draft, context: context.cgContext)
+            draw(draft, format: .paper, context: context.cgContext)
         }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("迷子の猫-\(UUID().uuidString).pdf")
@@ -332,71 +373,235 @@ enum LostCatFlyerRenderer {
         return url
     }
 
-    private static func draw(_ draft: LostCatPublicDraft, context: CGContext) {
+    private static func layout(_ draft: LostCatPublicDraft,
+                               format: Format) -> (Layout, [String: String]) {
+        let paper = format == .paper
+        let canvas = paper ? paperSize : socialSize
+        let margin: CGFloat = paper ? 30 : 48
+        let gap: CGFloat = paper ? 9 : 16
+        let pad: CGFloat = paper ? 10 : 18
+        let width = canvas.width - 2 * margin
+        var issues: [String: String] = [:]
+        var texts: [PositionedText] = []
+
+        func field(_ value: String, id: String, maxSize: CGFloat, minSize: CGFloat,
+                   lines: CGFloat, weight: UIFont.Weight, measuredWidth: CGFloat) -> TextBlock? {
+            guard !value.isEmpty else { return nil }
+            var size = maxSize
+            while size > minSize {
+                let height = measuredHeight(value, width: measuredWidth, size: size, weight: weight)
+                let limit = ceil(UIFont.systemFont(ofSize: size, weight: weight).lineHeight * lines)
+                if height <= limit { break }
+                size -= 1
+            }
+            let height = measuredHeight(value, width: measuredWidth, size: size, weight: weight)
+            let limit = ceil(UIFont.systemFont(ofSize: size, weight: weight).lineHeight * lines)
+            if height > limit {
+                issues[id] = [
+                    "name": "名前を少し短くしてください。",
+                    "place": "場所を少し短くしてください。",
+                    "features": "特徴を少し短くしてください。",
+                    "advice": "見つけた方への文を少し短くしてください。",
+                    "contact": "連絡先を少し短くしてください。"
+                ][id]
+            }
+            return TextBlock(value: value, size: size, weight: weight,
+                             height: min(height, limit))
+        }
+
+        let title = TextBlock(value: "猫を探しています",
+                              size: paper ? 47 : 78, weight: .black,
+                              height: paper ? 62 : 100)
+        var top = margin
+        texts.append(PositionedText(block: title,
+                                    rect: CGRect(x: margin, y: top, width: width,
+                                                 height: title.height)))
+        top += title.height + gap
+        if let name = field(draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            id: "name", maxSize: paper ? 31 : 53,
+                            minSize: paper ? 23 : 40, lines: 2,
+                            weight: .bold, measuredWidth: width) {
+            texts.append(PositionedText(block: name,
+                                        rect: CGRect(x: margin, y: top, width: width,
+                                                     height: name.height)))
+            top += name.height + gap
+        }
+
+        var bottom = canvas.height - margin
+        let contactValue = draft.contact.trimmingCharacters(in: .whitespacesAndNewlines)
+        if contactValue.isEmpty { issues["contact"] = "公開する連絡先を入力してください。" }
+        let contact = field("連絡先  \(contactValue)", id: "contact",
+                            maxSize: paper ? 26 : 48, minSize: paper ? 18 : 37,
+                            lines: 3, weight: .bold,
+                            measuredWidth: width - 2 * pad)!
+        bottom -= contact.height + 2 * pad
+        let contactBackground = CGRect(x: margin, y: bottom, width: width,
+                                       height: contact.height + 2 * pad)
+        texts.append(PositionedText(block: contact,
+                                    rect: CGRect(x: margin + pad, y: bottom + pad,
+                                                 width: width - 2 * pad,
+                                                 height: contact.height)))
+        bottom -= gap
+
+        func prepend(_ block: TextBlock?, inset: CGFloat = 0) {
+            guard let block else { return }
+            bottom -= block.height
+            texts.append(PositionedText(block: block,
+                                        rect: CGRect(x: margin + inset, y: bottom,
+                                                     width: width - inset,
+                                                     height: block.height)))
+            bottom -= gap
+        }
+
+        prepend(field(draft.approachAdvice.trimmingCharacters(in: .whitespacesAndNewlines),
+                      id: "advice", maxSize: paper ? 19 : 33,
+                      minSize: paper ? 14 : 27, lines: 3,
+                      weight: .regular, measuredWidth: width))
+        prepend(field(draft.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      ? "" : "特徴  \(draft.features)",
+                      id: "features", maxSize: paper ? 21 : 36,
+                      minSize: paper ? 15 : 29, lines: 3,
+                      weight: .regular, measuredWidth: width))
+        prepend(field("日時  \(draft.lastSeenDescription)", id: "date",
+                      maxSize: paper ? 18 : 33, minSize: paper ? 18 : 33,
+                      lines: 1, weight: .regular, measuredWidth: width))
+        let placeValue = draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines)
+        if placeValue.isEmpty { issues["place"] = "最後に見かけた場所を入力してください。" }
+        prepend(field("最後に見かけた場所  \(placeValue)", id: "place",
+                      maxSize: paper ? 24 : 43, minSize: paper ? 17 : 34,
+                      lines: 3, weight: .bold, measuredWidth: width))
+
+        let photoHeight = bottom - top
+        let minimumPhoto: CGFloat = paper ? 315 : 455
+        if photoHeight < minimumPhoto {
+            let field = !draft.approachAdvice.isEmpty ? "advice"
+                : !draft.features.isEmpty ? "features"
+                : !draft.name.isEmpty ? "name"
+                : "place"
+            issues[field] = "この項目を短くして、写真を大きく表示してください。"
+        }
+        let photoRect = CGRect(x: margin, y: top, width: width,
+                               height: max(1, photoHeight))
+        return (Layout(size: canvas, photoRect: photoRect,
+                       contactBackground: contactBackground, texts: texts), issues)
+    }
+
+    private static func draw(_ draft: LostCatPublicDraft, format: Format,
+                             context: CGContext) {
+        let plan = layout(draft, format: format).0
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill()
-        context.fill(CGRect(origin: .zero, size: canvas))
-        text("猫を探しています", CGRect(x: 48, y: 35, width: 984, height: 105),
-             size: 78, weight: .black)
-        text(draft.name, CGRect(x: 48, y: 146, width: 984, height: 70),
-             size: 52, weight: .bold)
+        context.fill(CGRect(origin: .zero, size: plan.size))
+        UIColor(white: 0.93, alpha: 1).setFill()
+        context.fill(plan.contactBackground)
+        let photoGap: CGFloat = format == .paper ? 10 : 18
         if let body = draft.bodyImage {
-            drawPhoto(draft.faceImage, in: CGRect(x: 48, y: 228, width: 482, height: 615))
-            drawPhoto(body, in: CGRect(x: 550, y: 228, width: 482, height: 615))
+            let frames = photoFrames(first: draft.faceImage, second: body,
+                                     in: plan.photoRect, gap: photoGap)
+            drawPhoto(draft.faceImage, in: frames.0)
+            drawPhoto(body, in: frames.1)
         } else {
-            drawPhoto(draft.faceImage, in: CGRect(x: 48, y: 228, width: 984, height: 615))
+            drawPhoto(draft.faceImage, in: plan.photoRect)
         }
-        text("最後に見た場所  \(draft.lastSeenNear)",
-             CGRect(x: 48, y: 865, width: 984, height: 100), size: 42, weight: .bold)
-        text("日時  \(draft.lastSeenDescription)",
-             CGRect(x: 48, y: 972, width: 984, height: 55), size: 35, weight: .regular)
-        if !draft.features.isEmpty {
-            text("特徴  \(draft.features)", CGRect(x: 48, y: 1035, width: 984, height: 92),
-                 size: 35, weight: .regular)
+        for item in plan.texts {
+            text(item.block.value, item.rect, size: item.block.size,
+                 weight: item.block.weight)
         }
-        if !draft.approachAdvice.isEmpty {
-            text(draft.approachAdvice, CGRect(x: 48, y: 1132, width: 984, height: 62),
-                 size: 31, weight: .regular)
+    }
+
+    /// Evaluate both arrangements using the visible, aspect-fit image area.
+    /// A 30–70% split ensures neither photo gets only a decorative sliver.
+    private static func photoFrames(first: UIImage, second: UIImage,
+                                    in bounds: CGRect, gap: CGFloat) -> (CGRect, CGRect) {
+        var balanced = (bounds, bounds)
+        var balancedArea: CGFloat = -1
+        var balancedSmaller: CGFloat = -1
+        var fallback = (bounds, bounds)
+        var fallbackSmaller: CGFloat = -1
+        var fallbackArea: CGFloat = -1
+        for stacked in [false, true] {
+            for percent in 30...70 {
+                let share = CGFloat(percent) / 100
+                let available = (stacked ? bounds.height : bounds.width) - gap
+                let firstSpan = available * share
+                let secondSpan = available - firstSpan
+                let a: CGRect
+                let b: CGRect
+                if stacked {
+                    a = CGRect(x: bounds.minX, y: bounds.minY,
+                               width: bounds.width, height: firstSpan)
+                    b = CGRect(x: bounds.minX, y: a.maxY + gap,
+                               width: bounds.width, height: secondSpan)
+                } else {
+                    a = CGRect(x: bounds.minX, y: bounds.minY,
+                               width: firstSpan, height: bounds.height)
+                    b = CGRect(x: a.maxX + gap, y: bounds.minY,
+                               width: secondSpan, height: bounds.height)
+                }
+                let firstArea = fittedPhotoArea(first, in: a)
+                let secondArea = fittedPhotoArea(second, in: b)
+                let total = firstArea + secondArea
+                let smaller = min(firstArea, secondArea)
+                // Prefer arrangements where both actual visible images remain
+                // substantial, then maximize their combined displayed area.
+                if smaller >= max(firstArea, secondArea) * 0.55
+                    && (total > balancedArea + 0.001
+                        || (abs(total - balancedArea) <= 0.001
+                            && smaller > balancedSmaller)) {
+                    balanced = (a, b)
+                    balancedArea = total
+                    balancedSmaller = smaller
+                }
+                if smaller > fallbackSmaller + 0.001
+                    || (abs(smaller - fallbackSmaller) <= 0.001
+                        && total > fallbackArea) {
+                    fallback = (a, b)
+                    fallbackSmaller = smaller
+                    fallbackArea = total
+                }
+            }
         }
-        UIColor.black.setFill()
-        context.fill(CGRect(x: 0, y: 1210, width: canvas.width, height: 140))
-        text("連絡先  \(draft.contact)", CGRect(x: 48, y: 1227, width: 984, height: 100),
-             size: 47, weight: .bold, color: .white)
+        return balancedArea >= 0 ? balanced : fallback
+    }
+
+    private static func fittedPhotoArea(_ image: UIImage, in rect: CGRect) -> CGFloat {
+        guard image.size.width > 0, image.size.height > 0 else { return 0 }
+        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
+        return image.size.width * scale * image.size.height * scale
     }
 
     private static func drawPhoto(_ image: UIImage, in rect: CGRect) {
+        UIColor(white: 0.96, alpha: 1).setFill()
+        UIRectFill(rect)
+        guard image.size.width > 0, image.size.height > 0 else { return }
         let scale = min(rect.width / image.size.width, rect.height / image.size.height)
         let fitted = CGRect(x: rect.midX - image.size.width * scale / 2,
                             y: rect.midY - image.size.height * scale / 2,
                             width: image.size.width * scale, height: image.size.height * scale)
-        UIColor(white: 0.94, alpha: 1).setFill()
-        UIRectFill(rect)
         image.draw(in: fitted)
     }
 
     private static func text(_ value: String, _ rect: CGRect, size: CGFloat,
-                             weight: UIFont.Weight, color: UIColor = .black) {
+                             weight: UIFont.Weight) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
         (value as NSString).draw(in: rect, withAttributes: [
             .font: UIFont.systemFont(ofSize: size, weight: weight),
-            .foregroundColor: color,
+            .foregroundColor: UIColor.black,
             .paragraphStyle: paragraph
         ])
     }
 
-    private static func textFits(_ value: String, width: CGFloat, height: CGFloat,
-                                 size: CGFloat, weight: UIFont.Weight) -> Bool {
+    private static func measuredHeight(_ value: String, width: CGFloat,
+                                       size: CGFloat, weight: UIFont.Weight) -> CGFloat {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
-        let needed = (value as NSString).boundingRect(
+        return ceil((value as NSString).boundingRect(
             with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: UIFont.systemFont(ofSize: size, weight: weight),
-                         .paragraphStyle: paragraph],
-            context: nil
-        )
-        return needed.height <= height
+                         .paragraphStyle: paragraph], context: nil
+        ).height) + 2
     }
 }
