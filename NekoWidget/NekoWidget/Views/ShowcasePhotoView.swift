@@ -532,6 +532,7 @@ struct ShowcasePreparationView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 Button("写真を選ぶ") { pickerMode = .add }
+                    .accessibilityIdentifier("showcase-preparation-select")
                     .disabled(eligibleCandidates.isEmpty)
             } else {
                 Text("写真へのアクセスを確認してください")

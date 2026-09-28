@@ -1554,13 +1554,15 @@ final class SoloMemoriesUITests: XCTestCase {
         let toolsTab = app.tabBars.buttons["ツール"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
         toolsTab.tap()
-        app.buttons["tools-showcase-open"].tap()
+        let showcase = app.buttons["tools-showcase-open"]
+        XCTAssertTrue(showcase.waitForExistence(timeout: 10))
+        showcase.tap()
         let edit = app.buttons["showcase-gallery-edit"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
         app.buttons["showcase-scope-picker"].tap()
         app.buttons["ミケ"].tap()
-        let select = app.buttons["写真を選ぶ"]
+        let select = app.buttons["showcase-preparation-select"]
         XCTAssertTrue(select.waitForExistence(timeout: 5))
         select.tap()
         let candidate = app.buttons.matching(identifier: "showcase-candidate-photo").firstMatch
@@ -1613,8 +1615,18 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        app.tabBars.buttons["ツール"].tap()
-        app.buttons["tools-showcase-open"].tap()
+        let tools = app.tabBars.buttons["ツール"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 10))
+        tools.tap()
+        let showcase = app.buttons["tools-showcase-open"]
+        if !showcase.waitForExistence(timeout: 5) {
+            // Simulator startup may still be restoring the Album tab.
+            // Retry only when the requested tab was not selected.
+            XCTAssertFalse(tools.isSelected)
+            tools.tap()
+        }
+        XCTAssertTrue(showcase.waitForExistence(timeout: 10))
+        showcase.tap()
         let scope = app.buttons["showcase-gallery-scope"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertTrue(scope.label.contains("みんな"))
