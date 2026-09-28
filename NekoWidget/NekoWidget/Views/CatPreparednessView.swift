@@ -79,7 +79,7 @@ struct LostCatEmergencyEntryView: View {
     private func guestLabel(_ key: String) -> String {
         guard let draft = draftStore.drafts[key] else { return "未登録の猫" }
         let name = draft.name.isEmpty ? "未登録の猫" : draft.name
-        return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))"
+        return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))・\(key.suffix(4))"
     }
 }
 
@@ -376,7 +376,7 @@ struct LostCatDraftView: View {
     private func guestLabel(_ guestKey: String) -> String {
         guard let saved = store.drafts[guestKey] else { return "未登録の猫" }
         let name = saved.name.isEmpty ? "未登録の猫" : saved.name
-        return "\(name)・\(saved.updatedAt.formatted(date: .abbreviated, time: .shortened))"
+        return "\(name)・\(saved.updatedAt.formatted(date: .abbreviated, time: .shortened))・\(guestKey.suffix(4))"
     }
     private var otherPhotos: [CatProfilePhotoPresentation] {
         let ids = Set(ownPhotos.map(\.localIdentifier))
