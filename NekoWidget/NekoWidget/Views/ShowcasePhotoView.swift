@@ -444,6 +444,7 @@ struct ShowcasePreparationView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
+                        .accessibilityIdentifier("showcase-preparation-close")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {

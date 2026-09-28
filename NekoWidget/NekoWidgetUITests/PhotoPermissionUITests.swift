@@ -1638,7 +1638,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(scope.label.contains("ミケ"))
         app.buttons["showcase-gallery-edit"].tap()
         XCTAssertTrue(app.buttons["showcase-scope-picker"].waitForExistence(timeout: 5))
-        app.buttons["閉じる"].tap()
+        app.buttons["showcase-preparation-close"].tap()
         XCTAssertTrue(scope.label.contains("ミケ"))
         app.buttons["閉じる"].tap()
         app.buttons["tools-showcase-open"].tap()

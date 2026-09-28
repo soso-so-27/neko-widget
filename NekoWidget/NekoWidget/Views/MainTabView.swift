@@ -652,7 +652,6 @@ struct MainTabView: View {
     private var showcaseToolCard: some View {
         Button {
             if hasPhotoAccess {
-                showcaseScopeID = ""
                 openPreparedShowcase(scopeID: "")
             } else {
                 selectedTab = .photos
@@ -742,8 +741,7 @@ struct MainTabView: View {
                 try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
                 preparingShowcaseScopes.remove(scopeID)
                 guard showcaseWaitingToOpen == scopeID,
-                      selectedTab == .tools,
-                      (showcaseSession != nil || effectiveShowcaseScopeID == scopeID) else { return }
+                      selectedTab == .tools else { return }
                 showcaseWaitingToOpen = nil
                 showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
             } catch {
