@@ -2129,28 +2129,31 @@ class PlanTests(unittest.TestCase):
                      'privacyURL = changed', 'fixtureTitle = "x"', '"--new-launch-switch"'):
             self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.APP_VIEW_SCOPE)
 
-    def test_app_owned_showcase_store_keeps_app_checks_without_widget_gallery(self):
-        store = "NekoWidget/NekoWidget/Services/ShowcasePhotoStore.swift"
+    def test_app_owned_stores_keep_app_checks_without_widget_gallery(self):
         main = "NekoWidget/NekoWidget/Views/MainTabView.swift"
         presentation = "NekoWidget/NekoWidget/Views/ShowcasePhotoView.swift"
         tests = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
         pair = ("import Foundation\nstruct Before {}\n", "import Foundation\nstruct After {}\n")
         root = "NekoWidget/NekoWidget/App/AppRootView.swift"
-        changes = {path: pair for path in (root, store, main, presentation, tests)}
-        self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
-        self.assertEqual(scope.lanes(scope.APP_VIEW_SCOPE),
-                         ("runtime", "app-ui-solo", "app-ui-other"))
-        self.assertTrue(any("Build disabled app" in job for job in
-                            planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)))
-        self.assertFalse(any("gallery" in job.lower() for job in
-                             planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)))
-        for unrelated in (
-            "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
-            "NekoWidget/Shared/Storage/AtomicJSON.swift",
-            "NekoWidget/NekoWidget/Services/PhotoLibraryScanner.swift",
-            "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
-        ):
-            self.assertEqual(scope.select_scope(dict(changes, **{unrelated: pair})), scope.FULL_SCOPE)
+        for store in ("NekoWidget/NekoWidget/Services/ShowcasePhotoStore.swift",
+                      "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift"):
+            with self.subTest(store=store):
+                changes = {path: pair for path in (root, store, main, presentation, tests)}
+                self.assertEqual(scope.select_scope({store: pair}), scope.APP_VIEW_SCOPE)
+                self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
+                self.assertEqual(scope.lanes(scope.APP_VIEW_SCOPE),
+                                 ("runtime", "app-ui-solo", "app-ui-other"))
+                self.assertTrue(any("Build disabled app" in job for job in
+                                    planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)))
+                self.assertFalse(any("gallery" in job.lower() for job in
+                                     planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)))
+                for unrelated in (
+                    "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                    "NekoWidget/Shared/Storage/AtomicJSON.swift",
+                    "NekoWidget/NekoWidget/Services/PhotoLibraryScanner.swift",
+                    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                ):
+                    self.assertEqual(scope.select_scope(dict(changes, **{unrelated: pair})), scope.FULL_SCOPE)
 
     def test_family_window_scope_keeps_owning_class_and_photo_links_without_widget_rendering(self):
         window = "NekoWidget/NekoWidget/Views/FamilyWindowView.swift"

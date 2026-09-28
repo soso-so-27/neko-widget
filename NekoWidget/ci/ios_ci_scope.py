@@ -177,6 +177,7 @@ APP_VIEW_PATHS = frozenset({
     "NekoWidget/NekoWidget/Views/MainTabView.swift",
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
     "NekoWidget/NekoWidget/Services/ShowcasePhotoStore.swift",
+    "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift",
     MEMORY_TEST_PATH,
 })
 APP_VIEW_PRODUCT_PATHS = APP_VIEW_PATHS - {MEMORY_TEST_PATH}
