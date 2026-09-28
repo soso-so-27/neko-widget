@@ -113,7 +113,8 @@ private struct EvacuationPackingView: View {
                                     .filter { !$0.isEmpty }.joined(separator: "・"))
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
-                        }.frame(minHeight: 48).contentShape(Rectangle())
+                        }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityValue(store.plan.carriedIDs.contains(item.id) ? "持出確認済み" : "未確認")
@@ -240,7 +241,7 @@ private struct EvacuationCatsView: View {
                     .disabled(store.plan.cats.count >= 30)
             } footer: { Text("見せる写真と必要なことだけを準備できます。猫のプロフィール登録は不要です。") }
         }
-        .navigationTitle("どの子の情報ですか？")
+        .navigationTitle("猫の情報")
         .navigationDestination(isPresented: $opensNewCat) {
             if let openedID { destination(openedID) }
         }
