@@ -2135,7 +2135,8 @@ class PlanTests(unittest.TestCase):
         presentation = "NekoWidget/NekoWidget/Views/ShowcasePhotoView.swift"
         tests = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
         pair = ("import Foundation\nstruct Before {}\n", "import Foundation\nstruct After {}\n")
-        changes = {path: pair for path in (store, main, presentation, tests)}
+        root = "NekoWidget/NekoWidget/App/AppRootView.swift"
+        changes = {path: pair for path in (root, store, main, presentation, tests)}
         self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
         self.assertEqual(scope.lanes(scope.APP_VIEW_SCOPE),
                          ("runtime", "app-ui-solo", "app-ui-other"))
