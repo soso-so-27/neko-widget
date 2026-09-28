@@ -112,6 +112,7 @@ struct LostCatDraftView: View {
     @State private var missing: Set<String> = []
     @State private var overflowError = false
     @State private var showsPreview = false
+    @State private var previewDraft: LostCatPublicDraft?
     @State private var showsGuide = false
     @State private var showsCatChooser = false
     @State private var showsClearConfirmation = false
@@ -137,8 +138,8 @@ struct LostCatDraftView: View {
 
             Section {
                 HStack(spacing: 12) {
-                    photoTile("顔がわかる写真", role: .face, image: faceImage)
-                    photoTile("全身の写真・任意", role: .body, image: bodyImage)
+                    photoTile("メインの写真", role: .face, image: faceImage)
+                    photoTile("2枚目（任意）", role: .body, image: bodyImage)
                 }
                 .padding(.vertical, 5)
                 if photoBusy { ProgressView("写真を読み込み中…") }
@@ -154,7 +155,7 @@ struct LostCatDraftView: View {
                         }
                     }
                 }
-                if missing.contains("photo") { Text("顔がわかる写真を選んでください。").foregroundStyle(.red) }
+                if missing.contains("photo") { Text("メインの写真を選んでください。").foregroundStyle(.red) }
             }
 
             Section {
@@ -250,7 +251,7 @@ struct LostCatDraftView: View {
                 .background(.regularMaterial)
         }
         .navigationDestination(isPresented: $showsPreview) {
-            if let value = publicDraft {
+            if let value = previewDraft {
                 LostCatPreviewView(draft: value)
             }
         }
@@ -258,8 +259,6 @@ struct LostCatDraftView: View {
             NavigationStack {
                 LostCatPhotoChoiceView(
                     ownPhotos: ownPhotos,
-                    otherPhotos: otherPhotos,
-                    selectedIdentifier: nil,
                     photoItem: $pendingPhotoItem,
                     photoError: photoError,
                     loadingPhoto: photoBusy,
@@ -378,10 +377,6 @@ struct LostCatDraftView: View {
         let name = saved.name.isEmpty ? "未登録の猫" : saved.name
         return "\(name)・\(saved.updatedAt.formatted(date: .abbreviated, time: .shortened))・\(guestKey.suffix(4))"
     }
-    private var otherPhotos: [CatProfilePhotoPresentation] {
-        let ids = Set(ownPhotos.map(\.localIdentifier))
-        return allPhotos.filter { !ids.contains($0.localIdentifier) }
-    }
     private var faceImage: UIImage? {
         store.image(draft.faceFileName) ?? store.image(draft.bodyFileName)
             ?? (key == initialKey ? initialPhotoImage : nil)
@@ -431,7 +426,7 @@ struct LostCatDraftView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
-        .disabled(photoBusy)
+        .disabled(photoBusy || (role == .body && faceImage == nil))
     }
     private func saveNow() {
         guard loaded else { return }
@@ -500,14 +495,13 @@ struct LostCatDraftView: View {
             overflowError = true
             return
         }
+        previewDraft = value
         showsPreview = true
     }
 }
 
 private struct LostCatPhotoChoiceView: View {
     let ownPhotos: [CatProfilePhotoPresentation]
-    let otherPhotos: [CatProfilePhotoPresentation]
-    let selectedIdentifier: String?
     @Binding var photoItem: PhotosPickerItem?
     let photoError: Bool
     let loadingPhoto: Bool
@@ -523,15 +517,17 @@ private struct LostCatPhotoChoiceView: View {
             }
             .disabled(loadingPhoto || busy)
             if !ownPhotos.isEmpty { photoSection("この子の写真", ownPhotos) }
-            if !otherPhotos.isEmpty { photoSection("ほかの写真", otherPhotos) }
         }
         .navigationTitle("写真を選ぶ")
         .toolbar { Button("キャンセル") { cancel() }.disabled(busy || loadingPhoto) }
         .interactiveDismissDisabled(busy || loadingPhoto)
         .overlay { if busy || loadingPhoto { ProgressView("読み込み中…") } }
         .safeAreaInset(edge: .bottom) {
-            if failed || photoError {
-                Text("写真を読み込めませんでした。もう一度お試しください。")
+            if failed {
+                Text("この写真を読み込めませんでした。上の「写真アプリから選ぶ」で選び直してください。")
+                    .font(.footnote).foregroundStyle(.red).padding()
+            } else if photoError {
+                Text("写真を読み込めませんでした。通信状況を確認して選び直してください。")
                     .font(.footnote).foregroundStyle(.red).padding()
             }
         }
@@ -552,9 +548,9 @@ private struct LostCatPhotoChoiceView: View {
                         }
                     } label: {
                         PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                            catBoundingBox: photo.catBoundingBox,
                                             targetPixelSize: CGSize(width: 300, height: 300),
-                                            targetAspectRatio: 1)
+                                            targetAspectRatio: 1,
+                                            showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
                     }
                     .disabled(busy || loadingPhoto)
