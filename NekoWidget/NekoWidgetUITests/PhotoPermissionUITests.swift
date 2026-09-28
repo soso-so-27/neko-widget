@@ -1520,6 +1520,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("写真を見せる"))
+            let edit = app.buttons["tools-showcase-edit"]
+            XCTAssertTrue(edit.exists)
+            XCTAssertTrue(edit.isHittable)
             for identifier in ["tools-care-unavailable", "tools-vet-unavailable"] {
                 let tile = app.descendants(matching: .any)[identifier]
                 XCTAssertTrue(tile.exists, identifier)
@@ -1550,10 +1553,12 @@ final class SoloMemoriesUITests: XCTestCase {
         let toolsTab = app.buttons["main-tab-tools"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
         toolsTab.tap()
-        let showcase = app.buttons["tools-showcase-open"]
-        XCTAssertTrue(showcase.waitForExistence(timeout: 5))
-        showcase.tap()
-        XCTAssertTrue(app.staticTexts["猫の写真から追加"].waitForExistence(timeout: 5))
+        let edit = app.buttons["tools-showcase-edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+        let select = app.buttons["写真を選ぶ"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        select.tap()
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
         capture("showcase-cat-candidates")
     }
