@@ -357,7 +357,7 @@ private struct EvacuationCatEditor: View {
                     }
                     TextField("見分ける特徴（任意）", text: text(\.features), axis: .vertical)
                 }
-                Section("必要なことだけ") {
+                Section {
                     DisclosureGroup("いつものごはん") {
                         TextField("フード名・普段の量など", text: text(\.food), axis: .vertical)
                             .accessibilityIdentifier("evacuation-cat-food")
@@ -375,6 +375,7 @@ private struct EvacuationCatEditor: View {
                         Text("診断や薬の量の判断はしません。必要な相手に伝えるための記録です。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
+                } header: { Text("必要なことだけ")
                 } footer: { Text("空欄があっても使えます。変更は自動で保存します。見せる項目は前の画面で選べます。") }
                 Section("家庭で共通の連絡先") {
                     TextField("相手に伝える連絡先（任意）", text: Binding(get: { store.plan.contact }, set: { new in
