@@ -1519,10 +1519,10 @@ final class SoloMemoriesUITests: XCTestCase {
             let lost = app.buttons["tools-lost-cat-open"]
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
-            XCTAssertTrue(showcase.label.contains("写真を見せる"))
-            let edit = app.buttons["tools-showcase-edit"]
-            XCTAssertTrue(edit.exists)
-            XCTAssertTrue(edit.isHittable)
+            XCTAssertTrue(showcase.label.contains("うちの子を見せる"))
+            XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
+            let care = app.descendants(matching: .any)["tools-care-unavailable"]
+            XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)
             for identifier in ["tools-care-unavailable", "tools-vet-unavailable"] {
                 let tile = app.descendants(matching: .any)[identifier]
                 XCTAssertTrue(tile.exists, identifier)
@@ -1554,7 +1554,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let toolsTab = app.tabBars.buttons["ツール"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
         toolsTab.tap()
-        let edit = app.buttons["tools-showcase-edit"]
+        app.buttons["tools-showcase-open"].tap()
+        let edit = app.buttons["showcase-gallery-edit"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
         app.buttons["showcase-scope-picker"].tap()
@@ -1603,6 +1604,34 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["tools-showcase-open"].waitForExistence(timeout: 5))
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testShowcaseGalleryKeepsSelectedCatThroughDetailAndEditing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture", "--showcase-gallery-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        app.tabBars.buttons["ツール"].tap()
+        app.buttons["tools-showcase-open"].tap()
+        let scope = app.buttons["showcase-gallery-scope"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertTrue(scope.label.contains("みんな"))
+        scope.tap()
+        app.buttons["ミケ"].tap()
+        XCTAssertTrue(scope.label.contains("ミケ"))
+        app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.tap()
+        app.buttons["写真の一覧に戻る"].tap()
+        XCTAssertTrue(scope.label.contains("ミケ"))
+        app.buttons["showcase-gallery-edit"].tap()
+        XCTAssertTrue(app.buttons["showcase-scope-picker"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(scope.label.contains("ミケ"))
+        app.buttons["閉じる"].tap()
+        app.buttons["tools-showcase-open"].tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertTrue(scope.label.contains("みんな"))
     }
 
     @MainActor
