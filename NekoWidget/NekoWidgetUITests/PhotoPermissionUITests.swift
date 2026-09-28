@@ -1562,12 +1562,14 @@ final class SoloMemoriesUITests: XCTestCase {
         let select = app.buttons["写真を選ぶ"]
         XCTAssertTrue(select.waitForExistence(timeout: 5))
         select.tap()
+        let candidate = app.buttons.matching(identifier: "showcase-candidate-photo").firstMatch
+        let hasCandidate = candidate.waitForExistence(timeout: 5)
+        capture("showcase-cat-candidates")
+        XCTAssertTrue(hasCandidate)
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
         // Only one is assigned to this cat. Manual selection still offers the
         // unassigned cat photos, but never the fixture's non-cat favorites.
-        let candidate = app.buttons.matching(identifier: "showcase-candidate-photo").firstMatch
         XCTAssertEqual(candidate.frame.width, candidate.frame.height, accuracy: 1)
-        capture("showcase-cat-candidates")
     }
 
     @MainActor
@@ -1583,8 +1585,9 @@ final class SoloMemoriesUITests: XCTestCase {
             tools.tap()
             app.buttons["tools-showcase-open"].tap()
             let cells = app.buttons.matching(identifier: "showcase-gallery-photo")
-            XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
+            let hasPhotos = cells.firstMatch.waitForExistence(timeout: 5)
             capture("showcase-gallery-\(largeText ? "large" : "standard")")
+            XCTAssertTrue(hasPhotos)
             if !largeText { XCTAssertEqual(cells.count, 9) }
             let first = cells.element(boundBy: 0).frame
             let second = cells.element(boundBy: 1).frame

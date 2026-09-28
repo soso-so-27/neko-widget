@@ -141,6 +141,8 @@ struct ShowcasePhotoView: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityElement(children: .ignore)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { selectedIndex = index }
                             .accessibilityLabel("写真\(index + 1)を開く")
                             .accessibilityIdentifier("showcase-gallery-photo")
                         }
@@ -310,6 +312,8 @@ struct ShowcasePreparationView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityElement(children: .ignore)
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityAction { previewEntry = entry }
                                 .accessibilityLabel(entry.id == entries.first?.id
                                     ? "表紙、見せる写真" : "見せる写真")
                             }
@@ -551,6 +555,11 @@ private struct ShowcaseCandidatePicker: View {
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
                            GridItem(.flexible(), spacing: 8)]
 
+    private func toggleSelection(_ identifier: String) {
+        if selected.contains(identifier) { selected.remove(identifier) }
+        else if selected.count < maximumSelection { selected.insert(identifier) }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -559,13 +568,7 @@ private struct ShowcaseCandidatePicker: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(candidates) { photo in
-                            Button {
-                                if !selected.insert(photo.localIdentifier).inserted {
-                                    selected.remove(photo.localIdentifier)
-                                } else if selected.count > maximumSelection {
-                                    selected.remove(photo.localIdentifier)
-                                }
-                            } label: {
+                            Button { toggleSelection(photo.localIdentifier) } label: {
                                 ShowcaseSquare {
                                     PhotoAssetImageView(localIdentifier: photo.localIdentifier,
                                                         catBoundingBox: photo.catBoundingBox,
@@ -581,6 +584,8 @@ private struct ShowcaseCandidatePicker: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityElement(children: .ignore)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { toggleSelection(photo.localIdentifier) }
                             .accessibilityLabel("猫の写真")
                             .accessibilityAddTraits(selected.contains(photo.localIdentifier) ? .isSelected : [])
                             .accessibilityIdentifier("showcase-candidate-photo")
