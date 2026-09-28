@@ -243,7 +243,6 @@ struct ShowcasePhotoView: View {
                 )
             )
         }
-        .accessibilityIdentifier("showcase-viewer")
     }
 
     private func selectScope(_ newScopeID: String, preparesIfNeeded: Bool = true) {
