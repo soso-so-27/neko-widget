@@ -1551,7 +1551,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        let toolsTab = app.buttons["main-tab-tools"]
+        let toolsTab = app.tabBars.buttons["ツール"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
         toolsTab.tap()
         let edit = app.buttons["tools-showcase-edit"]
@@ -1578,12 +1578,13 @@ final class SoloMemoriesUITests: XCTestCase {
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
             app.launch()
-            let tools = app.buttons["main-tab-tools"]
+            let tools = app.tabBars.buttons["ツール"]
             XCTAssertTrue(tools.waitForExistence(timeout: 10))
             tools.tap()
             app.buttons["tools-showcase-open"].tap()
             let cells = app.buttons.matching(identifier: "showcase-gallery-photo")
             XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
+            capture("showcase-gallery-\(largeText ? "large" : "standard")")
             if !largeText { XCTAssertEqual(cells.count, 9) }
             let first = cells.element(boundBy: 0).frame
             let second = cells.element(boundBy: 1).frame
@@ -1591,7 +1592,6 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertEqual(first.width, second.width, accuracy: 1)
             XCTAssertEqual(first.minY, second.minY, accuracy: 1)
             XCTAssertGreaterThanOrEqual(second.minX, first.maxX + 7)
-            capture("showcase-gallery-\(largeText ? "large" : "standard")")
             cells.element(boundBy: 1).tap()
             XCTAssertTrue(app.staticTexts["2 / 9"].waitForExistence(timeout: 5))
             app.buttons["showcase-back"].tap()

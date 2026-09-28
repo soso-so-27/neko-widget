@@ -36,6 +36,7 @@ private struct ShowcaseSquare<Content: View>: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
     }
 }
 
@@ -139,6 +140,7 @@ struct ShowcasePhotoView: View {
                                 ShowcaseSquare { image(for: item, fillsSquare: true) }
                             }
                             .buttonStyle(.plain)
+                            .accessibilityElement(children: .ignore)
                             .accessibilityLabel("写真\(index + 1)を開く")
                             .accessibilityIdentifier("showcase-gallery-photo")
                         }
@@ -307,6 +309,7 @@ struct ShowcasePreparationView: View {
                                     thumbnail(entry)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(entry.id == entries.first?.id
                                     ? "表紙、見せる写真" : "見せる写真")
                             }
@@ -577,6 +580,9 @@ private struct ShowcaseCandidatePicker: View {
                                     }
                             }
                             .buttonStyle(.plain)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("猫の写真")
+                            .accessibilityAddTraits(selected.contains(photo.localIdentifier) ? .isSelected : [])
                             .accessibilityIdentifier("showcase-candidate-photo")
                         }
                     }
