@@ -147,9 +147,11 @@ private struct ToolTile: View {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
-            Text(subtitle)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
         .padding(12)
@@ -157,7 +159,8 @@ private struct ToolTile: View {
                     in: RoundedRectangle(cornerRadius: 12))
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(isUnavailable ? "\(title)、準備中、利用不可" : "\(title)、\(subtitle)")
+        .accessibilityLabel(isUnavailable ? "\(title)、準備中、利用不可"
+                            : subtitle.isEmpty ? title : "\(title)、\(subtitle)")
     }
 }
 
@@ -271,7 +274,6 @@ struct MainTabView: View {
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
     @State private var showcasePreparationError = false
-    @State private var manageShowcaseAfterClosing = false
     @State private var showcaseAddPhotoIdentifier: String?
     @State private var showcaseAddError = false
     @State private var photoLibraryRevision = 0
@@ -395,22 +397,23 @@ struct MainTabView: View {
             Button("編集画面を開く") { showsShowcasePreparation = true }
             Button("閉じる", role: .cancel) {}
         }
-        .fullScreenCover(item: $showcaseSession, onDismiss: {
-            if manageShowcaseAfterClosing {
-                manageShowcaseAfterClosing = false
-                showsShowcasePreparation = true
-            }
-        }) { session in
+        .fullScreenCover(item: $showcaseSession) { session in
             ShowcasePhotoView(
                 store: showcaseStore,
                 items: showcaseItems(for: session),
                 title: session.currentPhotoIdentifier == nil
                     ? showcaseScopeTitle(session.scopeID) : "この写真",
                 onClose: { showcaseSession = nil },
-                onManage: session.currentPhotoIdentifier == nil ? {
-                    manageShowcaseAfterClosing = true
-                    showcaseSession = nil
-                } : nil
+                onManage: nil,
+                initialScopeID: session.currentPhotoIdentifier == nil ? session.scopeID : nil,
+                profiles: catProfilesPresentation.profiles,
+                candidates: showcaseCandidates,
+                onScopeSelected: { scopeID, preparesIfNeeded in
+                    showcaseScopeID = scopeID
+                    if preparesIfNeeded {
+                        prepareShowcaseIfNeeded(openAfter: false, scopeID: scopeID)
+                    }
+                }
             )
         }
         .sheet(isPresented: $showsShowcasePreparation) {
@@ -599,11 +602,11 @@ struct MainTabView: View {
                     Text("日常で使う")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    showcaseToolCard
                     LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
                                 ? [GridItem(.flexible())]
                                 : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
+                        showcaseToolCard
                         ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
                                  subtitle: "準備中", isUnavailable: true)
                             .accessibilityIdentifier("tools-care-unavailable")
@@ -637,11 +640,6 @@ struct MainTabView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            if selectedTab == .tools && hasPhotoAccess {
-                prepareShowcaseIfNeeded(openAfter: false)
-            }
-        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
@@ -652,85 +650,19 @@ struct MainTabView: View {
     }
 
     private var showcaseToolCard: some View {
-        HStack(spacing: 8) {
-            Button {
-                if hasPhotoAccess {
-                    openPreparedShowcase()
-                } else {
-                    selectedTab = .photos
-                    requestPhotoAccess()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    showcaseCover
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("写真を見せる")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        if preparingShowcaseScopes.contains(effectiveShowcaseScopeID) {
-                            Text("準備中…")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        } else {
-                            Text("\(showcaseStore.availableEntries(in: effectiveShowcaseScopeID).count)枚")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .contentShape(Rectangle())
+        Button {
+            if hasPhotoAccess {
+                openPreparedShowcase(scopeID: "")
+            } else {
+                selectedTab = .photos
+                requestPhotoAccess()
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("tools-showcase-open")
-
-            VStack(spacing: 0) {
-                if !catProfilesPresentation.profiles.isEmpty {
-                    Menu {
-                        Button("みんな") { showcaseScopeID = "" }
-                        ForEach(catProfilesPresentation.profiles) { profile in
-                            Button(profile.displayName) { showcaseScopeID = profile.identifier }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(showcaseScopeTitle(effectiveShowcaseScopeID))
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2)
-                        }
-                        .font(.footnote)
-                        .frame(minWidth: 44, minHeight: 44)
-                    }
-                    .accessibilityLabel("見せる猫を選ぶ")
-                }
-                Button {
-                    showsShowcasePreparation = true
-                } label: {
-                    Image(systemName: "pencil")
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("見せる写真を編集")
-                .accessibilityIdentifier("tools-showcase-edit")
-            }
+        } label: {
+            ToolTile(title: "うちの子を見せる", systemImage: "photo.on.rectangle.angled",
+                     subtitle: "")
         }
-        .padding(12)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    @ViewBuilder
-    private var showcaseCover: some View {
-        if let entry = showcaseStore.availableEntries(in: effectiveShowcaseScopeID).first,
-           let url = showcaseStore.imageURL(for: entry),
-           let image = UIImage(contentsOfFile: url.path) {
-            Image(uiImage: image).resizable().scaledToFill()
-        } else {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.secondary.opacity(0.08))
-        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tools-showcase-open")
     }
 
     private func toolSection<Content: View>(_ title: String,
@@ -757,14 +689,15 @@ struct MainTabView: View {
         openPreparedShowcase()
     }
 
-    private func openPreparedShowcase() {
+    private func openPreparedShowcase(scopeID: String? = nil) {
+        let targetScopeID = scopeID ?? effectiveShowcaseScopeID
 #if DEBUG && targetEnvironment(simulator)
         if ShowcasePhotoView.layoutFixtureItems != nil {
-            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: effectiveShowcaseScopeID)
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: targetScopeID)
             return
         }
 #endif
-        prepareShowcaseIfNeeded(openAfter: true)
+        prepareShowcaseIfNeeded(openAfter: true, scopeID: targetScopeID)
     }
 
     private func showcaseItems(for session: ShowcaseSession) -> [ShowcasePhotoView.Item] {
@@ -777,8 +710,8 @@ struct MainTabView: View {
         }
     }
 
-    private func prepareShowcaseIfNeeded(openAfter: Bool) {
-        let scopeID = effectiveShowcaseScopeID
+    private func prepareShowcaseIfNeeded(openAfter: Bool, scopeID: String? = nil) {
+        let scopeID = scopeID ?? effectiveShowcaseScopeID
         // A saved set opens as-is; recommendation runs only before this scope's first set.
         if !showcaseStore.availableEntries(in: scopeID).isEmpty {
             if openAfter {
@@ -786,8 +719,14 @@ struct MainTabView: View {
             }
             return
         }
-        if showcaseStore.hasCorruptManifest || showcaseStore.hasInitialized(scopeID) {
-            if openAfter { showsShowcasePreparation = true }
+        if showcaseStore.hasCorruptManifest {
+            if openAfter { showcasePreparationError = true }
+            return
+        }
+        if showcaseStore.hasInitialized(scopeID) {
+            if openAfter {
+                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
+            }
             return
         }
         if openAfter { showcaseWaitingToOpen = scopeID }
@@ -802,14 +741,9 @@ struct MainTabView: View {
                 try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
                 preparingShowcaseScopes.remove(scopeID)
                 guard showcaseWaitingToOpen == scopeID,
-                      selectedTab == .tools,
-                      effectiveShowcaseScopeID == scopeID else { return }
+                      selectedTab == .tools else { return }
                 showcaseWaitingToOpen = nil
-                if showcaseStore.availableEntries(in: scopeID).isEmpty {
-                    showsShowcasePreparation = true
-                } else {
-                    showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
-                }
+                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
             } catch {
                 preparingShowcaseScopes.remove(scopeID)
                 guard showcaseWaitingToOpen == scopeID else { return }

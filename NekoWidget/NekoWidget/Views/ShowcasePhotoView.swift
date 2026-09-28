@@ -68,8 +68,32 @@ struct ShowcasePhotoView: View {
     let title: String
     let onClose: () -> Void
     let onManage: (() -> Void)?
+    var initialScopeID: String? = nil
+    var profiles: [CatProfilePresentation] = []
+    var candidates: [PhotoPresentation] = []
+    var onScopeSelected: ((String, Bool) -> Void)? = nil
     @State private var selectedIndex: Int?
+    @State private var selectedScopeID: String?
+    @State private var showsPreparation = false
     @State private var accessRevision = 0
+
+    private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
+
+    private var visibleItems: [Item] {
+        guard initialScopeID != nil else { return items }
+#if DEBUG && targetEnvironment(simulator)
+        if Self.layoutFixtureItems != nil { return items }
+#endif
+        return store.availableEntries(in: scopeID).compactMap { entry in
+            store.imageURL(for: entry).map { .prepared(entry, $0) }
+        }
+    }
+
+    private var visibleTitle: String {
+        guard initialScopeID != nil else { return title }
+        return profiles.first(where: { $0.identifier == scopeID })?.displayName
+            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
+    }
 
     private var isDirectPhoto: Bool {
         guard items.count == 1, case .current = items[0] else { return false }
@@ -79,6 +103,7 @@ struct ShowcasePhotoView: View {
     private var detailIndex: Int? { selectedIndex ?? (isDirectPhoto ? 0 : nil) }
 
     var body: some View {
+        let displayedItems = visibleItems
         VStack(spacing: 0) {
             HStack {
                 Button {
@@ -92,9 +117,35 @@ struct ShowcasePhotoView: View {
                 .accessibilityLabel(detailIndex != nil && !isDirectPhoto ? "写真の一覧に戻る" : "閉じる")
                 .accessibilityIdentifier("showcase-back")
                 Spacer(minLength: 8)
-                Text(title).font(.headline).lineLimit(1)
+                if detailIndex == nil && initialScopeID != nil && !profiles.isEmpty {
+                    Menu {
+                        Button("みんな") { selectScope("") }
+                        ForEach(profiles) { profile in
+                            Button(profile.displayName) { selectScope(profile.identifier) }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(visibleTitle).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.caption)
+                        }
+                        .font(.headline)
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("見せる猫、\(visibleTitle)")
+                    .accessibilityIdentifier("showcase-gallery-scope")
+                } else {
+                    Text(visibleTitle).font(.headline).lineLimit(1)
+                }
                 Spacer(minLength: 8)
-                if detailIndex == nil, let onManage {
+                if detailIndex == nil && initialScopeID != nil {
+                    Button { showsPreparation = true } label: {
+                        Image(systemName: "pencil")
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("見せる写真を編集")
+                    .accessibilityIdentifier("showcase-gallery-edit")
+                } else if detailIndex == nil, let onManage {
                     Button(action: onManage) {
                         Image(systemName: "pencil")
                             .frame(width: 44, height: 44)
@@ -108,34 +159,14 @@ struct ShowcasePhotoView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            if let index = detailIndex, items.indices.contains(index) {
-                image(for: items[index], fillsSquare: false)
-                    .id("\(items[index].id)-\(accessRevision)")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 35).onEnded { value in
-                        if value.translation.width < -50 { selectedIndex = min(index + 1, items.count - 1) }
-                        if value.translation.width > 50 { selectedIndex = max(index - 1, 0) }
-                    })
-                    .accessibilityAction(named: Text("次の写真")) {
-                        selectedIndex = min(index + 1, items.count - 1)
-                    }
-                    .accessibilityAction(named: Text("前の写真")) {
-                        selectedIndex = max(index - 1, 0)
-                    }
-                    .accessibilityIdentifier("showcase-detail-photo")
-                if items.count > 1 {
-                    Text("\(index + 1) / \(items.count)")
-                        .font(.footnote.monospacedDigit())
-                        .padding(16)
-                }
-            } else if !items.isEmpty {
-                ScrollView {
+            if !displayedItems.isEmpty {
+                ZStack {
+                    ScrollView {
                     LazyVGrid(columns: Array(
                         repeating: GridItem(.flexible(), spacing: 8),
                         count: dynamicTypeSize.isAccessibilitySize ? 2 : 3
                     ), spacing: 8) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
                             Button { selectedIndex = index } label: {
                                 ShowcaseSquare { image(for: item, fillsSquare: true) }
                             }
@@ -148,11 +179,52 @@ struct ShowcasePhotoView: View {
                         }
                     }
                     .padding(16)
+                    }
+                    .id(scopeID)
+                    .opacity(detailIndex == nil ? 1 : 0)
+                    .allowsHitTesting(detailIndex == nil)
+                    .accessibilityHidden(detailIndex != nil)
+                    .accessibilityIdentifier("showcase-gallery")
+
+                    if let index = detailIndex, displayedItems.indices.contains(index) {
+                        VStack {
+                            image(for: displayedItems[index], fillsSquare: false)
+                                .id("\(displayedItems[index].id)-\(accessRevision)")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .contentShape(Rectangle())
+                                .gesture(DragGesture(minimumDistance: 35).onEnded { value in
+                                    if value.translation.width < -50 {
+                                        selectedIndex = min(index + 1, displayedItems.count - 1)
+                                    }
+                                    if value.translation.width > 50 {
+                                        selectedIndex = max(index - 1, 0)
+                                    }
+                                })
+                                .accessibilityAction(named: Text("次の写真")) {
+                                    selectedIndex = min(index + 1, displayedItems.count - 1)
+                                }
+                                .accessibilityAction(named: Text("前の写真")) {
+                                    selectedIndex = max(index - 1, 0)
+                                }
+                                .accessibilityIdentifier("showcase-detail-photo")
+                            if displayedItems.count > 1 {
+                                Text("\(index + 1) / \(displayedItems.count)")
+                                    .font(.footnote.monospacedDigit())
+                                    .padding(16)
+                            }
+                        }
+                    }
                 }
-                .id(accessRevision)
-                .accessibilityIdentifier("showcase-gallery")
             } else {
-                ContentUnavailableView("写真を開けません", systemImage: "photo")
+                VStack(spacing: 16) {
+                    ContentUnavailableView("見せる写真がありません", systemImage: "photo")
+                    if initialScopeID != nil {
+                        Button("写真を選ぶ") { showsPreparation = true }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("showcase-gallery-select")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .foregroundStyle(.white)
@@ -160,7 +232,24 @@ struct ShowcasePhotoView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { accessRevision &+= 1 }
         }
-        .accessibilityIdentifier("showcase-viewer")
+        .sheet(isPresented: $showsPreparation) {
+            ShowcasePreparationView(
+                store: store,
+                candidates: candidates,
+                profiles: profiles,
+                scopeID: Binding(
+                    get: { scopeID },
+                    set: { selectScope($0, preparesIfNeeded: false) }
+                )
+            )
+        }
+    }
+
+    private func selectScope(_ newScopeID: String, preparesIfNeeded: Bool = true) {
+        guard initialScopeID != nil else { return }
+        selectedScopeID = newScopeID
+        selectedIndex = nil
+        onScopeSelected?(newScopeID, preparesIfNeeded)
     }
 
     @ViewBuilder
@@ -355,6 +444,7 @@ struct ShowcasePreparationView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
+                        .accessibilityIdentifier("showcase-preparation-close")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -443,6 +533,7 @@ struct ShowcasePreparationView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 Button("写真を選ぶ") { pickerMode = .add }
+                    .accessibilityIdentifier("showcase-preparation-select")
                     .disabled(eligibleCandidates.isEmpty)
             } else {
                 Text("写真へのアクセスを確認してください")
