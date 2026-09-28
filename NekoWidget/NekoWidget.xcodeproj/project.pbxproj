@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E02609290000000000000011 /* EvacuationPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000012 /* EvacuationPlan.swift */; };
+		E02609290000000000000013 /* EvacuationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000014 /* EvacuationStore.swift */; };
+		E02609290000000000000015 /* EvacuationExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000016 /* EvacuationExporter.swift */; };
+		E02609290000000000000017 /* EvacuationPreparationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000018 /* EvacuationPreparationView.swift */; };
+		E02609290000000000000019 /* EvacuationFixtureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260929000000000000001A /* EvacuationFixtureView.swift */; };
 		E02609230000000000000001 /* ShowcasePhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000002 /* ShowcasePhotoStore.swift */; };
 		E02609230000000000000003 /* ShowcasePhotoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000004 /* ShowcasePhotoView.swift */; };
 		E02609230000000000000005 /* CatPreparednessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609230000000000000006 /* CatPreparednessStore.swift */; };
@@ -271,6 +276,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E02609290000000000000012 /* EvacuationPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationPlan.swift; sourceTree = "<group>"; };
+		E02609290000000000000014 /* EvacuationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationStore.swift; sourceTree = "<group>"; };
+		E02609290000000000000016 /* EvacuationExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationExporter.swift; sourceTree = "<group>"; };
+		E02609290000000000000018 /* EvacuationPreparationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationPreparationView.swift; sourceTree = "<group>"; };
+		E0260929000000000000001A /* EvacuationFixtureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationFixtureView.swift; sourceTree = "<group>"; };
 		E02609230000000000000002 /* ShowcasePhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePhotoStore.swift; sourceTree = "<group>"; };
 		E02609230000000000000004 /* ShowcasePhotoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePhotoView.swift; sourceTree = "<group>"; };
 		E02609230000000000000006 /* CatPreparednessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessStore.swift; sourceTree = "<group>"; };
@@ -725,6 +735,9 @@
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
 				E02609230000000000000002 /* ShowcasePhotoStore.swift */,
 				E02609230000000000000006 /* CatPreparednessStore.swift */,
+				E02609290000000000000012 /* EvacuationPlan.swift */,
+				E02609290000000000000014 /* EvacuationStore.swift */,
+				E02609290000000000000016 /* EvacuationExporter.swift */,
 				F0000000000000000000024B /* CatIdentityExperimentCore.swift */,
 				F0000000000000000000024C /* CatIdentityExperimentService.swift */,
 				F0000000000000000000024D /* CatIdentityExperimentExporter.swift */,
@@ -783,6 +796,8 @@
 				F00000000000000000000233 /* MainTabView.swift */,
 				E02609230000000000000004 /* ShowcasePhotoView.swift */,
 				E02609230000000000000008 /* CatPreparednessView.swift */,
+				E02609290000000000000018 /* EvacuationPreparationView.swift */,
+				E0260929000000000000001A /* EvacuationFixtureView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
 				A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */,
@@ -1152,6 +1167,11 @@
 				100000000000000000000163 /* PhotoBookPDFExporter.swift in Sources */,
 				E02609230000000000000001 /* ShowcasePhotoStore.swift in Sources */,
 				E02609230000000000000005 /* CatPreparednessStore.swift in Sources */,
+				E02609290000000000000011 /* EvacuationPlan.swift in Sources */,
+				E02609290000000000000013 /* EvacuationStore.swift in Sources */,
+				E02609290000000000000015 /* EvacuationExporter.swift in Sources */,
+				E02609290000000000000017 /* EvacuationPreparationView.swift in Sources */,
+				E02609290000000000000019 /* EvacuationFixtureView.swift in Sources */,
 				100000000000000000000164 /* CatIdentityExperimentCore.swift in Sources */,
 				100000000000000000000165 /* CatIdentityExperimentService.swift in Sources */,
 				100000000000000000000166 /* CatIdentityExperimentExporter.swift in Sources */,
