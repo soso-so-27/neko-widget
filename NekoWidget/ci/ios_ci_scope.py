@@ -1002,7 +1002,7 @@ def reviewed_evacuation_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], EVACUATION_TESTS))
 
 
-# Independently reviewed app-only care handoff candidate 5cd8704 against 44d17ae.
+# Independently reviewed care handoff 5cd8704 integrated with main d0fee4f.
 # All nine before/after sources are fixed; no general exemption for new services.
 CARE_HANDOFF_DIGESTS = {
     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
@@ -1038,8 +1038,8 @@ CARE_HANDOFF_DIGESTS = {
         "dbe2ef1d35ed00405f525372cbf80108dc6a96ca348934917876f4be17cbe328"
     ],
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
-        "3c09ece1962d10f05aa8bd93be9694bf0d528453e19bb15ea706c0c947f5d797",
-        "9499666d1d48609db49c2bde314626c9d454270365f6675241fc2e5d61734d2d"
+        "4bf5660570114cf9994d7fcaec79a7ac608a71669b82f6beed4e2bab6e35a06d",
+        "1eebc06a9c033d88c6e23fa71a4dab384de779ed62cd3b3827b858b61be003b9"
     ]
 }
 CARE_HANDOFF_PATHS = frozenset(CARE_HANDOFF_DIGESTS)
