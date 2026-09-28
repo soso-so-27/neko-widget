@@ -44,7 +44,7 @@ struct EvacuationFixtureView: View {
         .dynamicTypeSize(CommandLine.arguments.contains("--ux-large-text") ? .accessibility3 : .large)
         .task {
             do { try Self.verifyBoundaries(); checks = "境界検証成功" }
-            catch { checks = "境界検証失敗：\(error)" }
+            catch { checks = "境界検証失敗" }
         }
     }
 

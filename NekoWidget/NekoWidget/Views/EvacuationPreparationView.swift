@@ -297,7 +297,10 @@ private struct EvacuationCatView: View {
                 Section {
                     Button("この内容を大きく見せる") {
                         do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
-                        catch { self.error = error.localizedDescription }
+                        catch {
+                            self.error = (error as? EvacuationStorageError)?.errorDescription
+                                ?? "表示する記録を開けませんでした。元の記録は変更していません。"
+                        }
                     }.accessibilityIdentifier("evacuation-preview-open")
                         .disabled(store.saveError != nil)
                     if let error { Text(error).foregroundStyle(.red) }

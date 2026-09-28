@@ -30,7 +30,7 @@ final class EvacuationStore: ObservableObject {
             pendingPhotoCleanup = loaded.pendingPhotoCleanup > 0
         } catch {
             repository = nil
-            loadError = EvacuationStorageError.unreadable.localizedDescription
+            loadError = EvacuationStorageError.unreadable.errorDescription
         }
     }
 
