@@ -1441,6 +1441,81 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testEvacuationPackingPersistsAndPrivateFieldsStayOutOfPreview() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--evacuation-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_EVACUATION_FIXTURE_KEY"] = UUID().uuidString
+        app.launch()
+        let boundaries = app.staticTexts["evacuation-boundary-result"]
+        XCTAssertTrue(boundaries.waitForExistence(timeout: 10))
+        XCTAssertEqual(boundaries.label, "境界検証成功")
+        app.buttons["evacuation-packing-open"].tap()
+        let supply = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-supply-")).firstMatch
+        XCTAssertTrue(supply.waitForExistence(timeout: 5))
+        let supplyID = supply.identifier
+        supply.tap()
+        XCTAssertEqual(supply.value as? String, "持出確認済み")
+        capture("evacuation-packing")
+        app.terminate()
+        app.launch()
+        app.buttons["evacuation-packing-open"].tap()
+        let restored = app.buttons[supplyID]
+        XCTAssertTrue(restored.waitForExistence(timeout: 5))
+        XCTAssertEqual(restored.value as? String, "持出確認済み")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["evacuation-cats-open"].tap()
+        let mugi = app.buttons["evacuation-cat-E0260929-0000-0000-0000-000000000001"]
+        XCTAssertTrue(mugi.waitForExistence(timeout: 5))
+        mugi.tap()
+        let preview = app.buttons["evacuation-preview-open"]
+        for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
+        preview.tap()
+        XCTAssertTrue(app.staticTexts["むぎ専用フード"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["非公開の薬メモ"].exists)
+        XCTAssertFalse(app.staticTexts["private-contact@example.invalid"].exists)
+        XCTAssertFalse(app.staticTexts["そら専用フード"].exists)
+        capture("evacuation-cat-private-fields-excluded")
+        let share = app.buttons["evacuation-share-pdf"]
+        for _ in 0..<6 where !share.isHittable { app.swipeUp() }
+        share.tap()
+        app.buttons["PDFを作って保存・印刷"].tap()
+        XCTAssertTrue(app.otherElements["ShareSheet.RemoteContainerView"].firstMatch.waitForExistence(timeout: 10))
+        capture("evacuation-print-share")
+        app.terminate()
+    }
+
+    @MainActor
+    func testEvacuationUnregisteredCatCanCreateAndRestoreRecord() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--evacuation-ui-fixture", "--ux-large-text", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_EVACUATION_FIXTURE_KEY"] = UUID().uuidString
+        app.launchEnvironment["NEKO_EVACUATION_EMPTY"] = "1"
+        app.launch()
+        let cats = app.buttons["evacuation-cats-open"]
+        XCTAssertTrue(cats.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !cats.isHittable { app.swipeUp() }
+        cats.tap()
+        app.buttons["evacuation-add-guest"].tap()
+        let edit = app.buttons["evacuation-cat-edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+        let name = app.textFields["evacuation-cat-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("こはく")
+        app.terminate()
+        app.launch()
+        let reopened = app.buttons["evacuation-cats-open"]
+        XCTAssertTrue(reopened.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !reopened.isHittable { app.swipeUp() }
+        reopened.tap()
+        XCTAssertTrue(app.buttons.containing(.staticText, identifier: "こはく").firstMatch.waitForExistence(timeout: 5))
+        capture("evacuation-unregistered-restored-large-text")
+        app.terminate()
+    }
+
+    @MainActor
     func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1613,11 +1688,11 @@ final class SoloMemoriesUITests: XCTestCase {
             // The lower row is intentionally offscreen in the largest text size.
             for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
             XCTAssertTrue(lost.isHittable)
-            let evacuation = app.descendants(matching: .any)["tools-evacuation-unavailable"]
+            let evacuation = app.buttons["tools-evacuation-open"]
             for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
             XCTAssertTrue(evacuation.isHittable)
-            XCTAssertTrue(evacuation.label.contains("準備中"))
-            XCTAssertFalse(app.buttons["tools-evacuation-unavailable"].exists)
+            evacuation.tap()
+            XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
             capture("tools-entry-\(largeText ? "large" : "standard")")
             app.terminate()
         }

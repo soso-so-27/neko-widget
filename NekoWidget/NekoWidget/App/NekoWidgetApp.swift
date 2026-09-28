@@ -29,6 +29,7 @@ struct NekoWidgetApp: App {
         // A share sheet cannot survive a process relaunch. Remove only export
         // files with this app's exact prefixes before any new export is made.
         if shouldRunLaunchCleanup {
+            EvacuationExporter.cleanupOnLaunch()
             TemporaryExportFileLifecycle.removeManagedFiles()
             Task {
                 // A seasonal movie share sheet also cannot survive relaunch.
@@ -71,6 +72,8 @@ struct NekoWidgetApp: App {
                 MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
                 PersonalArchiveUIFixture()
+            } else if CommandLine.arguments.contains("--evacuation-ui-fixture") {
+                EvacuationFixtureView()
             } else if CommandLine.arguments.contains("--lost-cat-draft-ui-fixture") {
                 LostCatDraftFixtureView()
             } else if CommandLine.arguments.contains("--family-record-ui-fixture") {
