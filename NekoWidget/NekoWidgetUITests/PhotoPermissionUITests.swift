@@ -1448,26 +1448,22 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         XCTAssertFalse(app.buttons["lost-cat-share-image"].exists)
-        for (field, value) in [("猫の名前", "むぎ"),
-                               ("最後に見た場所（地域・目印）", "駅の近く"),
-                               ("公開する連絡先", "08000000000")] {
+        for (field, value) in [("猫の名前（任意）", "むぎ"),
+                               ("町名・公園名など", "駅の近く"),
+                               ("電話・メール・SNSアカウントなど", "08000000000")] {
             let input = app.textFields[field]
             XCTAssertTrue(input.waitForExistence(timeout: 5), field)
             input.tap()
             input.typeText(value)
         }
-        let done = app.buttons["lost-cat-keyboard-done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 5))
-        done.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
-        )], timeout: 5), .completed)
+        app.buttons["仕上がりを確認"].tap()
         let preview = app.images["共有する迷子の猫の画像"]
         for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue((preview.value as? String ?? "").contains("日時: 不明"))
         capture("lost-cat-unprepared-preview")
         for action in ["lost-cat-share-image", "lost-cat-share-pdf"] {
+            if action == "lost-cat-share-pdf" { app.buttons["印刷"].tap() }
             let button = app.buttons[action]
             for _ in 0..<5 where !button.isHittable { app.swipeUp() }
             XCTAssertTrue(button.isHittable, action)
@@ -1492,12 +1488,12 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] = "1"
         app.launch()
-        let choose = app.buttons["lost-cat-choose-profile-photo"]
+        let choose = app.buttons["lost-cat-face-photo"]
         for _ in 0..<5 where !choose.isHittable { app.swipeUp() }
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
         choose.tap()
-        XCTAssertTrue(app.scrollViews["cat-profile-photo-grid"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        XCTAssertTrue(app.staticTexts["この子の写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["写真アプリから選ぶ"].exists)
         capture("lost-cat-confirmed-photo-picker")
     }
 
