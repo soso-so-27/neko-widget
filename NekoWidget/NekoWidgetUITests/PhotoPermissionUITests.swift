@@ -1495,6 +1495,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["この子の写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["写真アプリから選ぶ"].exists)
         capture("lost-cat-confirmed-photo-picker")
+        app.buttons["写真アプリから選ぶ"].tap()
+        capture("lost-cat-system-photo-picker")
     }
 
     @MainActor
