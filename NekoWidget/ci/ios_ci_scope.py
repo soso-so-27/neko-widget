@@ -1002,7 +1002,7 @@ def reviewed_evacuation_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], EVACUATION_TESTS))
 
 
-# Independently reviewed care handoff 5cd8704 integrated with main d0fee4f.
+# Independently reviewed care handoff b01ca71 against main d0fee4f.
 # All nine before/after sources are fixed; no general exemption for new services.
 CARE_HANDOFF_DIGESTS = {
     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
@@ -1031,7 +1031,7 @@ CARE_HANDOFF_DIGESTS = {
     ],
     "NekoWidget/NekoWidget/Views/CareHandoffView.swift": [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "a1bfc5f32e50774db1e830773a95863efb73ddb4990ed192273ee67fae8a90b2"
+        "4fa48bd4e0adaf66023eff35015ca473e1b21f23606ec0600d9fb35fa2917a2a"
     ],
     "NekoWidget/NekoWidget/Views/MainTabView.swift": [
         "0e31956254fdf61505a7ac879bd264211359abd314ab166dcb2fcf228f6cb2eb",
@@ -1039,7 +1039,7 @@ CARE_HANDOFF_DIGESTS = {
     ],
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
         "4bf5660570114cf9994d7fcaec79a7ac608a71669b82f6beed4e2bab6e35a06d",
-        "1eebc06a9c033d88c6e23fa71a4dab384de779ed62cd3b3827b858b61be003b9"
+        "739c8f8e91760402f6e65bf487cca8828fda497d653ea2aedb3625e5830728c3"
     ]
 }
 CARE_HANDOFF_PATHS = frozenset(CARE_HANDOFF_DIGESTS)
