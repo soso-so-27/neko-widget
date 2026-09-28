@@ -236,6 +236,7 @@ struct LostCatDraftView: View {
         Section {
             LabeledContent("名前") {
                 TextField("猫の名前（任意）", text: $draft.name, prompt: Text("任意"))
+                    .accessibilityIdentifier("lost-cat-name")
                     .accessibilityLabel("猫の名前（任意）")
                     .focused($focus, equals: .name)
             }
@@ -284,6 +285,7 @@ struct LostCatDraftView: View {
             VStack(alignment: .leading, spacing: 4) {
                 LabeledContent("場所") {
                     TextField("町名・公園名など", text: $draft.lastSeenNear)
+                        .accessibilityIdentifier("lost-cat-place")
                         .accessibilityLabel("町名・公園名など")
                         .focused($focus, equals: .place)
                 }
@@ -306,6 +308,7 @@ struct LostCatDraftView: View {
                 LabeledContent("連絡先") {
                     TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
                               prompt: Text("電話・メール・SNS"))
+                        .accessibilityIdentifier("lost-cat-contact")
                         .accessibilityLabel("電話・メール・SNSアカウントなど")
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($focus, equals: .contact)

@@ -1472,9 +1472,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(element.isHittable, name)
             return element
         }
-        for (name, value) in [("猫の名前（任意）", "むぎ"),
-                              ("町名・公園名など", "駅の近く"),
-                              ("電話・メール・SNSアカウントなど", "08000000000")] {
+        for (name, value) in [("lost-cat-name", "むぎ"),
+                              ("lost-cat-place", "駅の近く"),
+                              ("lost-cat-contact", "08000000000")] {
             let input = field(name); input.tap(); input.typeText(value)
         }
         XCTAssertTrue(app.buttons["仕上がりを確認"].isEnabled)
@@ -1498,10 +1498,10 @@ final class SoloMemoriesUITests: XCTestCase {
             )], timeout: 5), .completed)
         }
         app.terminate(); app.launch()
-        XCTAssertTrue(app.textFields["猫の名前（任意）"].waitForExistence(timeout: 5))
-        XCTAssertEqual(field("猫の名前（任意）").value as? String, "むぎ")
-        XCTAssertEqual(field("町名・公園名など").value as? String, "駅の近く")
-        XCTAssertEqual(field("電話・メール・SNSアカウントなど").value as? String, "08000000000")
+        XCTAssertTrue(app.textFields["lost-cat-name"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field("lost-cat-name").value as? String, "むぎ")
+        XCTAssertEqual(field("lost-cat-place").value as? String, "駅の近く")
+        XCTAssertEqual(field("lost-cat-contact").value as? String, "08000000000")
         app.terminate()
     }
 
