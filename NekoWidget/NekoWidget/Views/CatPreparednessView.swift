@@ -670,7 +670,7 @@ struct LostCatDraftFixtureView: View {
             draftFixture
         }
     }
-    private var draftFixture: some View {
+    @ViewBuilder private var draftFixture: some View {
         let profiles: [CatProfilePresentation] = candidatePhotos.isEmpty ? [] : [
             CatProfilePresentation(identifier: fixtureKey, name: "むぎ",
                                    coverPhoto: candidatePhotos.first,
