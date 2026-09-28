@@ -29,6 +29,79 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_care_handoff_frozen_sources_modes_and_evidence(self):
+        selected = scope.CARE_HANDOFF_SCOPE
+        methods = "\n".join("    func " + test.rsplit("/", 1)[1] + "() {}"
+                            for test in scope.CARE_HANDOFF_TESTS)
+        tests = "final class SoloMemoriesUITests: XCTestCase {\n" + methods + "\n}"
+        changes = {path: ("" if path in scope.CARE_HANDOFF_NEW_PATHS else "before",
+                          tests if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.CARE_HANDOFF_PATHS}
+        digests = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        base, head = "a" * 40, "b" * 40
+
+        def raw_scope(override=None, extra=False):
+            records = []
+            for path in sorted(changes):
+                added = path in scope.CARE_HANDOFF_NEW_PATHS
+                modes, status = (":000000 100644", "A") if added else (":100644 100644", "M")
+                if override and override[0] == path:
+                    modes, status = override[1:]
+                records.append(f"{modes} {'0' * 40 if added else 'c' * 40} {'d' * 40} {status}\0{path}\0")
+            if extra:
+                records.append(f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0")
+
+            def git(*args):
+                if args[0] == "diff":
+                    return "".join(records)
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return head
+
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(sorted(changes), {}, {"GITHUB_SHA": head})
+
+        with patch.object(scope, "CARE_HANDOFF_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), selected)
+            self.assertEqual(raw_scope(), selected)
+            self.assertEqual(raw_scope(extra=True), scope.FULL_SCOPE)
+            for path in changes:
+                self.assertEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}), scope.FULL_SCOPE)
+                for index in (0, 1):
+                    modified = dict(changes)
+                    pair = list(modified[path]); pair[index] += "unreviewed"
+                    modified[path] = tuple(pair)
+                    self.assertEqual(scope.select_scope(modified), scope.FULL_SCOPE)
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":000000 120000", "A"),
+                                      (":100644 100644", "R100")):
+                    self.assertEqual(raw_scope((path, modes, status)), scope.FULL_SCOPE)
+                incorrect = (":100644 100644", "M") if path in scope.CARE_HANDOFF_NEW_PATHS else (":000000 100644", "A")
+                self.assertEqual(raw_scope((path, *incorrect)), scope.FULL_SCOPE)
+            for path in ("NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                         "NekoWidget/ci/ios_ci_scope.py", ".github/workflows/ios-build.yml",
+                         "NekoWidget/Shared/Models/WidgetManifest.swift"):
+                self.assertEqual(scope.select_scope(changes | {path: ("old", "new")}), scope.FULL_SCOPE)
+        self.assertEqual(len(scope.CARE_HANDOFF_PATHS), 9)
+        self.assertEqual(len(scope.CARE_HANDOFF_NEW_PATHS), 5)
+        self.assertEqual(len(set(scope.CARE_HANDOFF_TESTS)), 3)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.CARE_HANDOFF_TESTS)
+        self.assertEqual(scope.smoke_tests(selected),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        required = planner.required_jobs_from_scope(selected)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
+        self.assertTrue(scope.accepts_paths(selected, changes))
+        self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(selected))
+        jobs = [dict(name=name, head_sha=head, status="completed", conclusion="success") for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, head))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, head))
+            for outcome in ("skipped", "failure", "cancelled"):
+                failed = copy.deepcopy(jobs); failed[index]["conclusion"] = outcome
+                self.assertFalse(planner.covers_jobs(failed, required, head))
+
     def test_evacuation_frozen_sources_modes_and_evidence(self):
         selected = scope.EVACUATION_SCOPE
         methods = "\n".join("    func " + test.rsplit("/", 1)[1] + "() {}"
@@ -416,8 +489,8 @@ final class UnrelatedUITests: XCTestCase {
                     self.assertIn("    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
                 self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
-                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
-                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
+                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
+                if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")

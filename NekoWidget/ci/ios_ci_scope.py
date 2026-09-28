@@ -27,6 +27,7 @@ APP_VIEW_SCOPE = "app-view-ui-v1"
 LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
+CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -67,7 +68,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1001,7 +1002,64 @@ def reviewed_evacuation_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], EVACUATION_TESTS))
 
 
-MAPPED_PATHS = (EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# Independently reviewed care handoff b01ca71 against main d0fee4f.
+# All nine before/after sources are fixed; no general exemption for new services.
+CARE_HANDOFF_DIGESTS = {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
+        "a9e87b8c968fefee4897e6f9466cd8aa9a01136d76c75d727b4b26c9466fb687",
+        "d1b604d3f2821eb01905e7157c9b719b753eed737c3e1624d85d60496981d9d7"
+    ],
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": [
+        "630aed404a3fe4716dfd173a1a9750a0e9a8bfd33a1ed2b905b423bf060ac07e",
+        "8d2f1f301013c69d95bd5938d12ca45aa0d59fb13875dd10471b42520ffb884e"
+    ],
+    "NekoWidget/NekoWidget/Services/CareHandoffExporter.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "9e4f9d62783402f1dbedeb93259e96038320acc7fcbddc4556ec239a2b94991c"
+    ],
+    "NekoWidget/NekoWidget/Services/CareHandoffPlan.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ff2725661ca6fcaae9154d6dbaa402853d90386fa81fe6bd6811677022d3bb02"
+    ],
+    "NekoWidget/NekoWidget/Services/CareHandoffStore.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "8ffcd64e8c9e257abbb933aa7e20bbcfcae80f746a4c1ce29f3f09caad651ccb"
+    ],
+    "NekoWidget/NekoWidget/Views/CareHandoffFixtureView.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "19e6426cc384e178067b030de6d93daf111d3c8c713b60d103e329f2d1e325fd"
+    ],
+    "NekoWidget/NekoWidget/Views/CareHandoffView.swift": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "4fa48bd4e0adaf66023eff35015ca473e1b21f23606ec0600d9fb35fa2917a2a"
+    ],
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": [
+        "0e31956254fdf61505a7ac879bd264211359abd314ab166dcb2fcf228f6cb2eb",
+        "dbe2ef1d35ed00405f525372cbf80108dc6a96ca348934917876f4be17cbe328"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "4bf5660570114cf9994d7fcaec79a7ac608a71669b82f6beed4e2bab6e35a06d",
+        "739c8f8e91760402f6e65bf487cca8828fda497d653ea2aedb3625e5830728c3"
+    ]
+}
+CARE_HANDOFF_PATHS = frozenset(CARE_HANDOFF_DIGESTS)
+CARE_HANDOFF_NEW_PATHS = frozenset(path for path, pair in CARE_HANDOFF_DIGESTS.items()
+                                  if pair[0] == hashlib.sha256(b"").hexdigest())
+CARE_HANDOFF_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testCareHandoffUnregisteredCatSavesAtLargeText",
+    "testCareHandoffSelectionPrivacyAndPDF",
+    "testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText",
+))
+
+
+def reviewed_care_handoff_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == CARE_HANDOFF_PATHS
+            and all(list(map(source_digest, changes[path])) == CARE_HANDOFF_DIGESTS[path]
+                    for path in CARE_HANDOFF_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], CARE_HANDOFF_TESTS))
+
+
+MAPPED_PATHS = (CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -1915,6 +1973,8 @@ def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == EVACUATION_SCOPE:
         return sources == EVACUATION_PATHS
+    if scope == CARE_HANDOFF_SCOPE:
+        return sources == CARE_HANDOFF_PATHS
     if scope == LOST_CAT_UX_SCOPE:
         return {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= sources and sources <= {
             LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}
@@ -2074,6 +2134,8 @@ def sharing_job(scope: str) -> str:
 def native_tests(scope: str) -> tuple[str, ...]:
     if scope == EVACUATION_SCOPE:
         return EVACUATION_TESTS
+    if scope == CARE_HANDOFF_SCOPE:
+        return CARE_HANDOFF_TESTS
     if scope in (LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE):
         return LOST_CAT_PHOTO_TESTS
     if scope == FAMILY_WINDOW_UI_SCOPE:
@@ -2283,6 +2345,10 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
+        return FULL_SCOPE
+    if reviewed_care_handoff_changes(changes):
+        return CARE_HANDOFF_SCOPE
+    if set(changes) & CARE_HANDOFF_NEW_PATHS:
         return FULL_SCOPE
     if reviewed_evacuation_changes(changes):
         return EVACUATION_SCOPE
