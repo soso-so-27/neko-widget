@@ -943,7 +943,7 @@ ARCHIVE_PICKER_PATHS = frozenset({
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
     "NekoWidget/ci/run-sharing-runtime-matrix.sh",
 })
-# Exact app-only candidate 983008a against a4df484; not a generic service exemption.
+# Exact app-only candidate 1a25992 against a4df484; not a generic service exemption.
 # CI mapping is merged independently before the product; mixed CI/product diffs
 # and any changed project membership or source contents fall back to full.
 EVACUATION_DIGESTS = {
@@ -965,15 +965,15 @@ EVACUATION_DIGESTS = {
     ],
     "NekoWidget/NekoWidget/Services/EvacuationStore.swift": [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "f1ab8bae3ae737aab6a292364a008105c389f8880988fd9b4e214ce9820f179f"
+        "2b9c041e97b3c172fafaa47ca1d8beff7487033d869e41a8cf904e8292ed24bc"
     ],
     "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "92ef7248d66d57719b67419d5b719e9a7602080a57bdc9b8215e47a31755e7e7"
+        "b682cae3a23b50ae434eadaa87c3247e8061dbae2b7d039497b2b5e8af3018df"
     ],
     "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "b2e2e9d53a84174630a04b7a31125bc0fe1e7de9477d3d5a5bf888a1135909ca"
+        "a0f91f48080e8562c6ea6af46419f8330c0c5c8a3e8f11f581f9d9c4db3e3b5f"
     ],
     "NekoWidget/NekoWidget/Views/MainTabView.swift": [
         "6c1dab0aae15847507c745869598dd63b5062e43efd10446e8a5367c98b4ed75",

@@ -1,0 +1,11 @@
+# 避難初版のエラー表示修正
+
+通常候補f699774/run36454230914のBuildで既存privacy検査が停止。
+test_product_code_never_persists_raw_error_text が新規3ファイルのAPI/補間を検出した。
+配布規約の確認漏れであり、環境障害やテスト不備として扱わない。
+
+製品1a25992では、既知の読み込みエラーを自前enumの定型文から取得し、previewは同じenumに限定した表示＋未知エラーの固定案内、DEBUG fixtureは固定失敗文とする。ログや記録への保存・写真処理・成功経路は変更しない。
+局所privacy検査は12成功/1skip。skipはWindowsにSwiftコンパイラがない既存native1件で、成功に数えず次のMac Buildで実行する。
+
+今回のCI専用変更は既存9ソースのうちこの3ファイルのafterhashを新候補へ固定し直すだけ。beforehash・許可パス/mode・3UI・必須4job・配布workflowは不変。exact差分を独立再レビューし、CI専用で採用後に製品へ統合する。
+初回通常runの残りjobは取消せず結果を回収する。全体完了後の失敗分を含む所要時間を計画へ反映し、修正した候補の必要CIを実行する。
