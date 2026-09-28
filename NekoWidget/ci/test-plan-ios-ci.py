@@ -2,6 +2,7 @@
 """Behavioral coverage for selecting and reusing iOS checks (no network)."""
 
 import copy
+import contextlib
 import datetime as dt
 import importlib.util
 import io
@@ -2581,6 +2582,108 @@ class PlanTests(unittest.TestCase):
                 self.assertIn(planner.MOVIE_VIEW, paths)
                 self.assertEqual(planner.required_jobs(paths), planner.FULL)
                 self.assertIsNone(planner.changed_paths({}, dict(env, GITHUB_EVENT_NAME="workflow_dispatch")))
+
+
+class TestCorrectionReuseTests(unittest.TestCase):
+    def test_candidate_plan_runs_only_normal_app_ui_after_verified_correction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / "event.json"
+            event.write_text("{}", encoding="utf-8")
+            output = root / "outputs"
+            summary = root / "summary"
+            head = "a" * 40
+            env = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output),
+                   "GITHUB_STEP_SUMMARY": str(summary), "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF": "refs/heads/codex/lost-cat", "GITHUB_SHA": head,
+                   "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SERVER_URL": "https://github.com"}
+            correction = {"run_id": 10, "sha": "b" * 40, "jobs": []}
+            printed = io.StringIO()
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=[scope.LOST_CAT_PHOTO_PATH]), \
+                    patch.object(planner, "runtime_scope", return_value=planner.LOST_CAT_UX_SCOPE), \
+                    patch.object(planner, "required_jobs", return_value=planner.required_jobs_from_scope(planner.LOST_CAT_UX_SCOPE)), \
+                    patch.object(planner, "find_evidence", return_value=None), \
+                    patch.object(planner, "find_test_correction_evidence", return_value=correction), \
+                    contextlib.redirect_stdout(printed):
+                planner.main()
+            values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+            self.assertEqual((values["build"], values["smoke"], values["sharing"], values["app_ui"]),
+                             ("false", "false", "false", "true"))
+            self.assertEqual(values["app_ui_lanes"], '["app-ui"]')
+            record = next(json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in printed.getvalue().splitlines()
+                          if line.startswith("IOS_CI_PLAN_JSON="))
+            self.assertEqual(record["test_correction_evidence"], correction)
+            self.assertEqual(record["required_jobs"], list(planner.required_jobs_from_scope(planner.LOST_CAT_UX_SCOPE)))
+
+    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.check_output(["git", "-C", directory, *args], text=True,
+                                               encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def write(path, value):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(value, encoding="utf-8")
+            def commit():
+                git("add", ".")
+                git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+                    "commit", "-qm", "fixture")
+                return git("rev-parse", "HEAD")
+            git("init", "-q")
+            names = sorted(scope.LOST_CAT_PHOTO_TEST_NAMES)
+            before = ("final class SoloMemoriesUITests: XCTestCase {\n"
+                      + "".join(f"    func {name}() {{\n        XCTAssertTrue(true)\n    }}\n"
+                                for name in names) + "}\n")
+            after = before.replace("XCTAssertTrue(true)", "XCTAssertTrue(false)", 1)
+            test_path = scope.MEMORY_TEST_PATH
+            control = "NekoWidget/ci/plan-ios-ci.py"
+            product = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"
+            workflow = ".github/workflows/ios-build.yml"
+            for path, value in ((test_path, before), (control, "old\n"),
+                                (product, "old\n"), (workflow, "old\n")):
+                write(path, value)
+            source = commit()
+            with patch.object(planner, "git", side_effect=git):
+                write(test_path, after)
+                write(control, "new\n")
+                head = commit()
+                self.assertTrue(planner.test_correction_inputs(source, head))
+                for path in (product, workflow):
+                    git("checkout", "--detach", "-q", source)
+                    write(test_path, after)
+                    write(path, "new\n")
+                    self.assertFalse(planner.test_correction_inputs(source, commit()))
+                git("checkout", "--detach", "-q", source)
+                write(test_path, before.replace("final class", "public final class"))
+                self.assertFalse(planner.test_correction_inputs(source, commit()))
+
+    def test_failed_source_reuses_only_three_successful_jobs(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        head, source = "a" * 40, "b" * 40
+        required = planner.required_jobs_from_scope(planner.LOST_CAT_UX_SCOPE)
+        run = {"id": 10, "workflow_id": 5, "head_sha": source, "head_branch": "codex/lost-cat",
+               "event": "push", "status": "completed", "conclusion": "failure",
+               "updated_at": now.isoformat(), "repository": {"full_name": "owner/repo"},
+               "head_repository": {"full_name": "owner/repo"}}
+        jobs = [{"id": 100, "name": planner.PLAN_JOB, "head_sha": source,
+                 "status": "completed", "conclusion": "success"}]
+        jobs += [{"id": 101 + index, "name": name, "head_sha": source, "status": "completed",
+                  "conclusion": "failure" if name == required[-1] else "success",
+                  "completed_at": now.isoformat()} for index, name in enumerate(required)]
+        with patch.object(planner, "test_correction_inputs", return_value=True), \
+                patch.object(planner, "executed_jobs", return_value=jobs):
+            evidence = planner.correction_source(run, head, "codex/lost-cat", "owner/repo", 5,
+                                                 required, None, now)
+            self.assertEqual([entry["name"] for entry in evidence["jobs"]], list(required[:3]))
+            for index in range(1, 4):
+                broken = copy.deepcopy(jobs)
+                broken[index]["conclusion"] = "skipped"
+                with patch.object(planner, "executed_jobs", return_value=broken):
+                    self.assertIsNone(planner.correction_source(run, head, "codex/lost-cat", "owner/repo", 5,
+                                                                 required, None, now))
+            self.assertIsNone(planner.correction_source({**run, "head_branch": "codex/other"}, head,
+                                                        "codex/lost-cat", "owner/repo", 5, required, None, now))
 
 
 if __name__ == "__main__":

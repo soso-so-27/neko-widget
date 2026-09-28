@@ -192,7 +192,7 @@ def read_diagnostic_evidence(run, head):
             "started_at": job["started_at"], "results": results}
 
 
-def apply_task_gate(result, runs, now=None, measure_baseline=False):
+def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -226,6 +226,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
     failed_tests = sorted(set(failed_tests) | {test for test, value in latest.items() if value["outcome"] != "passed"})
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
+    # A previous failed run can supply only unchanged build/smoke/runtime jobs.
+    # The normal candidate app-ui job still executes all three owning cases.
+    correction_cases = {"SoloMemoriesUITests/" + name for name in scope.LOST_CAT_PHOTO_TEST_NAMES}
+    if (correction_evidence is not None and result["scope"] == scope.LOST_CAT_UX_SCOPE
+            and set(missing) <= correction_cases
+            and any(run.get("id") == correction_evidence["run_id"] for run in failed)):
+        missing = []
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
     if unsupported:
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
@@ -246,6 +253,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False):
                       "active_runs": active, "diagnostic_runs": [run["id"] for run in diagnostics],
                       "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
+                      "test_correction_evidence": correction_evidence,
                       "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
                       "projected_total_minutes": projected, "blockers": blockers}
@@ -383,7 +391,15 @@ def main(argv=None):
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
         if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE}:
-            result = apply_task_gate(result, read_task_runs(result["head"]), measure_baseline=args.measure_baseline)
+            runs = read_task_runs(result["head"])
+            correction = None
+            if result["scope"] == scope.LOST_CAT_UX_SCOPE:
+                branch = planner.git("branch", "--show-current")
+                correction = planner.find_test_correction_evidence(
+                    result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
+                    lambda path: github(path.removeprefix("/")), dt.datetime.now(dt.timezone.utc))
+            result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
+                                     correction_evidence=correction)
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
