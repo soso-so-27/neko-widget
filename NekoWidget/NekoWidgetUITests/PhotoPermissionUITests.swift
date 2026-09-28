@@ -1531,7 +1531,8 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@", expected.joined(separator: ",")),
                 object: log
-            )], timeout: 5), .completed, "One physical tap must request only its photo")
+            )], timeout: 5), .completed,
+                "One physical tap must request only its photo; actual: \(log.label)")
         }
         capture("lost-cat-picker-independent-photo-taps")
         app.terminate()
