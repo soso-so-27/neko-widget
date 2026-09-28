@@ -1453,7 +1453,22 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["日時と場所を消す"].exists)
         func field(_ name: String) -> XCUIElement {
             let element = app.textFields[name]
-            for _ in 0..<7 where !element.isHittable { app.swipeUp() }
+            for _ in 0..<10 {
+                if element.isHittable { return element }
+                // Drag inside the visible form, not across the keyboard. A fast
+                // whole-screen swipe can move a field behind the navigation bar.
+                let top = app.navigationBars.firstMatch.frame.maxY + 16
+                let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                let upper = top + (bottom - top) * 0.25
+                let lower = top + (bottom - top) * 0.70
+                let movesUp = !element.exists || element.frame.midY > top
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                    dy: movesUp ? lower : upper))
+                let end = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                    dy: movesUp ? upper : lower))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            }
             XCTAssertTrue(element.isHittable, name)
             return element
         }
