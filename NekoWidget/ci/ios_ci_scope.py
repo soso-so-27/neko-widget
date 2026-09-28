@@ -171,6 +171,9 @@ REVIEWABLE_MEMORY_PATHS = frozenset({
 # membership and consumers have been checked. Keep all app UI suites for
 # behavior changes, but do not run Widget Gallery with no Widget input.
 APP_VIEW_PATHS = frozenset({
+    # App presentation entry, including app-side Widget deep links. These use
+    # the retained app UI/launch suites, not the unchanged Widget renderer.
+    "NekoWidget/NekoWidget/App/AppRootView.swift",
     "NekoWidget/NekoWidget/Views/MainTabView.swift",
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
     "NekoWidget/NekoWidget/Services/ShowcasePhotoStore.swift",
