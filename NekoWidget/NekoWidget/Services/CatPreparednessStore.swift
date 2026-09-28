@@ -140,6 +140,7 @@ final class LostCatDraftStore: ObservableObject {
     private let directory: URL
     private let manifest: URL
     private let legacy: CatPreparednessStore
+    private let manifestUnreadable: Bool
 
     init(directory: URL? = nil, legacy: CatPreparednessStore = .shared) {
         self.directory = directory ?? FileManager.default.urls(
@@ -150,10 +151,14 @@ final class LostCatDraftStore: ObservableObject {
         if let data = try? Data(contentsOf: manifest),
            let saved = try? JSONDecoder().decode([String: LostCatDraft].self, from: data) {
             drafts = saved
+            manifestUnreadable = false
+        } else {
+            manifestUnreadable = FileManager.default.fileExists(atPath: manifest.path)
         }
     }
 
     func draft(for key: String, profileName: String = "") throws -> LostCatDraft {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
         if let saved = drafts[key] { return saved }
         let old = legacy.record(for: key == "guest-legacy" ? "unregistered" : key)
         var migrated = LostCatDraft()
@@ -184,6 +189,7 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     func save(_ draft: LostCatDraft, for key: String) throws {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
         var next = drafts
         var value = draft
         value.updatedAt = Date()
@@ -222,6 +228,7 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     func delete(for key: String) throws {
+        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
         guard let old = drafts[key] else { return }
         var next = drafts
         next.removeValue(forKey: key)
