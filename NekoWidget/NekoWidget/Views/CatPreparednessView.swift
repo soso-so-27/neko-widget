@@ -117,7 +117,6 @@ struct LostCatDraftView: View {
     @State private var photoBusy = false
     @State private var photoError: String?
     @State private var saveError = false
-    @State private var saving = false
     @State private var showsPreview = false
     @State private var previewDraft: LostCatPublicDraft?
     @State private var showsGuide = false
@@ -133,8 +132,6 @@ struct LostCatDraftView: View {
                 Button { showsGuide = true } label: {
                     Label("まず探す・届け出る", systemImage: "info.circle")
                 }
-            } footer: {
-                Text("写真と連絡先から、捜索用の画像・チラシを作れます。")
             }
             catSection
             incidentSection
@@ -222,7 +219,6 @@ struct LostCatDraftView: View {
         .task { if !loaded { load(initialKey, name: initialName) } }
         .onChange(of: draft) { _, _ in
             guard loaded else { return }
-            saving = true
             saveTask?.cancel()
             saveTask = Task {
                 try? await Task.sleep(for: .milliseconds(350))
@@ -238,13 +234,11 @@ struct LostCatDraftView: View {
 
     private var catSection: some View {
         Section {
-            HStack {
-                Text(key.hasPrefix("guest") ? "登録していない猫" : catName)
-                Spacer()
-                Button("変更") { showsCatChooser = true }.disabled(photoBusy)
+            LabeledContent("名前") {
+                TextField("猫の名前（任意）", text: $draft.name, prompt: Text("任意"))
+                    .accessibilityLabel("猫の名前（任意）")
+                    .focused($focus, equals: .name)
             }
-            TextField("猫の名前（任意）", text: $draft.name)
-                .focused($focus, equals: .name)
             fieldIssue("name")
             HStack(alignment: .top, spacing: 12) {
                 photoTile("顔・毛柄", role: .face, image: faceImage)
@@ -258,22 +252,41 @@ struct LostCatDraftView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("特徴（任意）").font(.caption).foregroundStyle(.secondary)
-                TextField("毛色・模様・しっぽなど", text: $draft.features, axis: .vertical)
-                    .focused($focus, equals: .features)
+                LabeledContent("見た目") {
+                    TextField("毛色・模様・しっぽなど", text: $draft.features,
+                              prompt: Text("毛色・模様など（任意）"), axis: .vertical)
+                        .accessibilityLabel("見た目（任意）")
+                        .focused($focus, equals: .features)
+                }
                 fieldIssue("features")
             }
-            TextField("首輪の色・有無（任意）", text: $draft.collar)
-                .focused($focus, equals: .collar)
-        } header: { Text("猫の写真と特徴") }
-          footer: { Text("顔や毛柄がはっきり写る写真を。全身の写真は追加できます。") }
+            LabeledContent("首輪") {
+                TextField("首輪の色・有無（任意）", text: $draft.collar,
+                          prompt: Text("色・模様／なし（任意）"), axis: .vertical)
+                    .accessibilityLabel("首輪の色・有無（任意）")
+                    .focused($focus, equals: .collar)
+            }
+        } header: {
+            HStack {
+                Text("猫の写真と特徴")
+                Spacer()
+                Button("猫を変更") { showsCatChooser = true }
+                    .disabled(photoBusy)
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+            }
+            .textCase(nil)
+        }
     }
 
     private var incidentSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                TextField("町名・公園名など", text: $draft.lastSeenNear)
-                    .focused($focus, equals: .place)
+                LabeledContent("場所") {
+                    TextField("町名・公園名など", text: $draft.lastSeenNear)
+                        .accessibilityLabel("町名・公園名など")
+                        .focused($focus, equals: .place)
+                }
                 fieldIssue("place")
             }
             Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
@@ -290,25 +303,27 @@ struct LostCatDraftView: View {
     private var contactSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                TextField("電話・メール・SNSアカウントなど", text: $draft.contact)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .focused($focus, equals: .contact)
+                LabeledContent("連絡先") {
+                    TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
+                              prompt: Text("電話・メール・SNS"))
+                        .accessibilityLabel("電話・メール・SNSアカウントなど")
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .focused($focus, equals: .contact)
+                }
                 fieldIssue("contact")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("見つけた方へ（任意）").font(.caption).foregroundStyle(.secondary)
-                TextField("例：追いかけず、見かけた場所をお知らせください", text: $draft.approachAdvice, axis: .vertical)
-                    .focused($focus, equals: .advice)
+                LabeledContent("お願い") {
+                    TextField("例：追いかけず、見かけた場所をお知らせください", text: $draft.approachAdvice,
+                              prompt: Text("見つけた方へ（任意）"), axis: .vertical)
+                        .accessibilityLabel("見つけた方へ（任意）")
+                        .focused($focus, equals: .advice)
+                }
                 fieldIssue("advice")
             }
         } header: { Text("見つけた方からの連絡") }
           footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("この連絡先は画像・チラシに公開されます。")
-                if loaded && !saveError {
-                    Text(saving ? "保存中…" : "このiPhoneに自動保存済み")
-                }
-            }
+            Text("この連絡先は画像・チラシに公開されます。")
         }
     }
 
@@ -352,9 +367,6 @@ struct LostCatDraftView: View {
         }
     }
 
-    private var catName: String {
-        profiles.first(where: { $0.identifier == key })?.displayName ?? initialName
-    }
     private var sortedPhotos: [CatProfilePhotoPresentation] {
         allPhotos.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
     }
@@ -431,8 +443,8 @@ struct LostCatDraftView: View {
 
     private func saveNow() {
         guard loaded else { return }
-        do { try store.save(draft, for: key); saveError = false; saving = false }
-        catch { saveError = true; saving = false }
+        do { try store.save(draft, for: key); saveError = false }
+        catch { saveError = true }
     }
     private func load(_ identity: String, name: String) {
         do {
@@ -783,6 +795,8 @@ struct LostCatDraftFixtureView: View {
                     do {
                         var draft = LostCatDraft()
                         draft.name = "むぎ"
+                        draft.features = "茶白・しっぽが長い"
+                        draft.collar = "赤い首輪"
                         draft.lastSeenNear = "駅の近く"
                         draft.contact = "08000000000"
                         draft = try LostCatDraftStore.shared.replacePhoto(image.jpegData(compressionQuality: 0.9)!,
