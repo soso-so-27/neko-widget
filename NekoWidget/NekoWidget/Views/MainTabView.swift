@@ -630,9 +630,15 @@ struct MainTabView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("tools-lost-cat-open")
 
-                    ToolTile(title: "避難に備える", systemImage: "backpack",
-                             subtitle: "準備中", isUnavailable: true)
-                        .accessibilityIdentifier("tools-evacuation-unavailable")
+                    NavigationLink {
+                        EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
+                                                  unregisteredPhotos: unregisteredCatPhotos)
+                    } label: {
+                        ToolTile(title: "避難に備える", systemImage: "backpack",
+                                 subtitle: "持ち物とこの子の情報")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("tools-evacuation-open")
                 }
             }
             .padding(16)
