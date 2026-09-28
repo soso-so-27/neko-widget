@@ -1,4 +1,3 @@
-import LocalAuthentication
 import SwiftUI
 import UIKit
 
@@ -21,202 +20,192 @@ extension EnvironmentValues {
     }
 }
 
-/// A cold relaunch must not expose the owner's previous tab after handoff.
-@MainActor
-enum ShowcaseSessionGuard {
-    private static let key = "showcase.returnRequiresOwner.v1"
-    static var needsOwner: Bool { UserDefaults.standard.bool(forKey: key) }
-    static func begin() { UserDefaults.standard.set(true, forKey: key) }
-    static func end() { UserDefaults.standard.set(false, forKey: key) }
-}
-
-struct ShowcaseReturnGate: View {
-    let onUnlock: () -> Void
-    @State private var isAuthorizing = false
+/// Give every thumbnail a square layout proposal before the image is rendered.
+/// An image's portrait/landscape dimensions must never size a grid row.
+private struct ShowcaseSquare<Content: View>: View {
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "photo.on.rectangle.angled").font(.largeTitle)
-            Text("写真を見せています").font(.title2.bold())
-            Button("自分の写真に戻る") { authenticate() }
-                .buttonStyle(.borderedProminent)
-                .disabled(isAuthorizing)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground).ignoresSafeArea())
-    }
-
-    private func authenticate() {
-        guard !isAuthorizing else { return }
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            ShowcaseSessionGuard.end()
-            onUnlock()
-            return
-        }
-        isAuthorizing = true
-        Task {
-            defer { isAuthorizing = false }
-            if (try? await context.evaluatePolicy(
-                .deviceOwnerAuthentication,
-                localizedReason: "自分の写真へ戻ります"
-            )) == true {
-                ShowcaseSessionGuard.end()
-                onUnlock()
+        Color.secondary.opacity(0.12)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                GeometryReader { geometry in
+                    content()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                }
             }
-        }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-/// A presentation is a snapshot. It cannot page into the photo library or
-/// append new suggestions while someone else is holding the phone.
+/// The selected set is the browsing boundary. Open its grid first; enlarge only
+/// the photo the viewer chooses. Closing is an ordinary navigation action.
 struct ShowcasePhotoView: View {
     enum Item: Identifiable {
         case prepared(ShowcasePhotoStore.Entry, URL)
         case current(String)
+#if DEBUG && targetEnvironment(simulator)
+        case fixture(String, UIImage)
+#endif
 
         var id: String {
             switch self {
             case let .prepared(entry, _): entry.photoIdentifier
             case let .current(identifier): identifier
+#if DEBUG && targetEnvironment(simulator)
+            case let .fixture(identifier, _): identifier
+#endif
             }
         }
     }
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var store: ShowcasePhotoStore
     let items: [Item]
     let title: String
     let onClose: () -> Void
     let onManage: (() -> Void)?
-    @State private var index = 0
-    @State private var isAuthorizing = false
-    @State private var authUnavailable = false
+    @State private var selectedIndex: Int?
     @State private var accessRevision = 0
 
+    private var isDirectPhoto: Bool {
+        guard items.count == 1, case .current = items[0] else { return false }
+        return true
+    }
+
+    private var detailIndex: Int? { selectedIndex ?? (isDirectPhoto ? 0 : nil) }
+
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if items.indices.contains(index) {
-                image(for: items[index])
-                    .id(accessRevision)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 35).onEnded { value in
-                        if value.translation.width < -50 { index = min(index + 1, items.count - 1) }
-                        if value.translation.width > 50 { index = max(index - 1, 0) }
-                    })
-                    .accessibilityAction(named: Text("次の写真")) {
-                        index = min(index + 1, items.count - 1)
-                    }
-                    .accessibilityAction(named: Text("前の写真")) {
-                        index = max(index - 1, 0)
-                    }
-            } else {
-                ContentUnavailableView("写真を開けません", systemImage: "photo")
-                    .foregroundStyle(.white)
-            }
-        }
-        .overlay(alignment: .top) {
+        VStack(spacing: 0) {
             HStack {
                 Button {
-                    authenticateThen(onClose)
+                    if selectedIndex != nil && !isDirectPhoto { selectedIndex = nil }
+                    else { onClose() }
                 } label: {
-                    Image(systemName: "xmark")
+                    Image(systemName: detailIndex != nil && !isDirectPhoto ? "chevron.left" : "xmark")
                         .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())
                 }
-                .accessibilityLabel("見せるのを終える")
-                Spacer()
-                if items.count > 1 {
-                    Text("\(index + 1) / \(items.count)")
-                        .font(.footnote.monospacedDigit())
-                        .accessibilityLabel("\(items.count)枚中\(index + 1)枚目")
-                }
-                if let onManage {
-                    Button {
-                        authenticateThen(onManage)
-                    } label: {
-                        Image(systemName: "ellipsis")
+                .accessibilityLabel(detailIndex != nil && !isDirectPhoto ? "写真の一覧に戻る" : "閉じる")
+                .accessibilityIdentifier("showcase-back")
+                Spacer(minLength: 8)
+                Text(title).font(.headline).lineLimit(1)
+                Spacer(minLength: 8)
+                if detailIndex == nil, let onManage {
+                    Button(action: onManage) {
+                        Image(systemName: "pencil")
                             .frame(width: 44, height: 44)
                             .background(.ultraThinMaterial, in: Circle())
                     }
-                    .accessibilityLabel("見せる写真を選び直す")
+                    .accessibilityLabel("見せる写真を編集")
+                } else {
+                    Color.clear.frame(width: 44, height: 44)
                 }
             }
-            .foregroundStyle(.white)
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-        }
-        .overlay(alignment: .top) {
-            Text(title).font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.top, 24)
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .bottom) {
-            if authUnavailable {
-                Text("端末の認証を設定すると、写真を見せ終えるときに本人確認できます")
-                    .font(.footnote)
-                    .foregroundStyle(.white)
-                    .padding(12)
-                    .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
-                    .padding()
+            .padding(.vertical, 12)
+
+            if let index = detailIndex, items.indices.contains(index) {
+                image(for: items[index], fillsSquare: false)
+                    .id("\(items[index].id)-\(accessRevision)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 35).onEnded { value in
+                        if value.translation.width < -50 { selectedIndex = min(index + 1, items.count - 1) }
+                        if value.translation.width > 50 { selectedIndex = max(index - 1, 0) }
+                    })
+                    .accessibilityAction(named: Text("次の写真")) {
+                        selectedIndex = min(index + 1, items.count - 1)
+                    }
+                    .accessibilityAction(named: Text("前の写真")) {
+                        selectedIndex = max(index - 1, 0)
+                    }
+                    .accessibilityIdentifier("showcase-detail-photo")
+                if items.count > 1 {
+                    Text("\(index + 1) / \(items.count)")
+                        .font(.footnote.monospacedDigit())
+                        .padding(16)
+                }
+            } else if !items.isEmpty {
+                ScrollView {
+                    LazyVGrid(columns: Array(
+                        repeating: GridItem(.flexible(), spacing: 8),
+                        count: dynamicTypeSize.isAccessibilitySize ? 2 : 3
+                    ), spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            Button { selectedIndex = index } label: {
+                                ShowcaseSquare { image(for: item, fillsSquare: true) }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("写真\(index + 1)を開く")
+                            .accessibilityIdentifier("showcase-gallery-photo")
+                        }
+                    }
+                    .padding(16)
+                }
+                .id(accessRevision)
+                .accessibilityIdentifier("showcase-gallery")
+            } else {
+                ContentUnavailableView("写真を開けません", systemImage: "photo")
             }
         }
+        .foregroundStyle(.white)
+        .background(Color.black.ignoresSafeArea())
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { accessRevision &+= 1 }
         }
-        .onAppear { ShowcaseSessionGuard.begin() }
-        .statusBarHidden()
         .accessibilityIdentifier("showcase-viewer")
     }
 
     @ViewBuilder
-    private func image(for item: Item) -> some View {
+    private func image(for item: Item, fillsSquare: Bool) -> some View {
         switch item {
         case let .prepared(entry, url):
             if store.availableEntries.contains(entry),
                let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFit()
-                    .accessibilityLabel("見せる写真")
+                if fillsSquare {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(uiImage: image).resizable().scaledToFit()
+                }
             } else {
-                ContentUnavailableView("写真を開けません", systemImage: "photo")
-                    .foregroundStyle(.white)
+                Image(systemName: "photo").accessibilityLabel("写真を開けません")
             }
         case let .current(identifier):
             PhotoAssetImageView(
                 localIdentifier: identifier,
-                targetPixelSize: CGSize(width: 1600, height: 1600),
+                targetPixelSize: CGSize(width: fillsSquare ? 400 : 1600, height: fillsSquare ? 400 : 1600),
                 targetAspectRatio: 1,
-                showsFullImage: true
+                showsFullImage: !fillsSquare
             )
+#if DEBUG && targetEnvironment(simulator)
+        case let .fixture(_, image):
+            if fillsSquare { Image(uiImage: image).resizable().scaledToFill() }
+            else { Image(uiImage: image).resizable().scaledToFit() }
+#endif
         }
     }
 
-    private func authenticateThen(_ action: @escaping () -> Void) {
-        guard !isAuthorizing else { return }
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            authUnavailable = true
-            ShowcaseSessionGuard.end()
-            action()
-            return
-        }
-        isAuthorizing = true
-        Task {
-            defer { isAuthorizing = false }
-            if (try? await context.evaluatePolicy(
-                .deviceOwnerAuthentication,
-                localizedReason: "見せる画面を閉じて、自分の写真へ戻ります"
-            )) == true {
-                ShowcaseSessionGuard.end()
-                action()
+#if DEBUG && targetEnvironment(simulator)
+    static var layoutFixtureItems: [Item]? {
+        guard ProcessInfo.processInfo.arguments.contains("--showcase-gallery-ui-fixture") else { return nil }
+        return (0..<9).compactMap { index in
+            guard let image = AppStoreScreenshotFixture.image(
+                for: "app-store-screenshot-fixture-\(index % 8 + 1)"
+            ) else { return nil }
+            let size = index.isMultiple(of: 2)
+                ? CGSize(width: 360, height: 640) : CGSize(width: 640, height: 360)
+            let cropped = UIGraphicsImageRenderer(size: size).image { _ in
+                let side = max(size.width, size.height)
+                image.draw(in: CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2,
+                                      width: side, height: side))
             }
+            return .fixture("showcase-layout-\(index)", cropped)
         }
     }
+#endif
 }
 
 /// The owner's compact, persistent set. Candidate browsing is a separate sheet.
@@ -226,8 +215,6 @@ struct ShowcasePreparationView: View {
     @ObservedObject var store: ShowcasePhotoStore
     let candidates: [PhotoPresentation]
     let profiles: [CatProfilePresentation]
-    let catProfilesPresentation: CatProfilesPresentation
-    let catProfilesActions: CatProfilesViewActions
     @Binding var scopeID: String
 
     @State private var previewEntry: ShowcasePhotoStore.Entry?
@@ -267,11 +254,21 @@ struct ShowcasePreparationView: View {
             ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
     }
 
+    /// Manual choices may use any detected-cat photo; prior profile sorting is
+    /// optional. Prefer known photos without hiding unassigned ones.
     private var eligibleCandidates: [PhotoPresentation] {
-        if scopeID.isEmpty { return candidates }
-        guard let profile = profiles.first(where: { $0.identifier == scopeID }) else { return [] }
-        let confirmed = Set(profile.confirmedPhotos.map(\.localIdentifier))
-        return candidates.filter { confirmed.contains($0.localIdentifier) }
+        let known = Set(profiles.first(where: { $0.identifier == scopeID })?
+            .confirmedPhotos.map(\.localIdentifier) ?? [])
+        return candidates.filter { known.contains($0.localIdentifier) }
+            + candidates.filter { !known.contains($0.localIdentifier) }
+    }
+
+    /// Automatic selection must not guess which cat an unassigned photo shows.
+    private var recommendationCandidates: [PhotoPresentation] {
+        guard !scopeID.isEmpty else { return candidates }
+        let known = Set(profiles.first(where: { $0.identifier == scopeID })?
+            .confirmedPhotos.map(\.localIdentifier) ?? [])
+        return candidates.filter { known.contains($0.localIdentifier) }
     }
 
     var body: some View {
@@ -290,6 +287,7 @@ struct ShowcasePreparationView: View {
                                 }
                             }
                             .pickerStyle(.menu)
+                            .accessibilityIdentifier("showcase-scope-picker")
                         } else {
                             Text("みんな").font(.headline)
                         }
@@ -354,7 +352,8 @@ struct ShowcasePreparationView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("おすすめで選び直す") { Task { await selectRecommendations() } }
-                            .disabled(isPreparing || allEntries.count > ShowcasePhotoStore.maximumCount
+                            .disabled(isPreparing || recommendationCandidates.isEmpty
+                                      || allEntries.count > ShowcasePhotoStore.maximumCount
                                       || allEntries.filter(\.pinned).count >= ShowcasePhotoStore.maximumCount)
                     } label: {
                         Image(systemName: "ellipsis")
@@ -428,23 +427,16 @@ struct ShowcasePreparationView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(eligibleCandidates.isEmpty
-                ? (scopeID.isEmpty ? "見せられる猫の写真がありません" : "この猫に登録した写真がありません")
+                ? "見せられる猫の写真がありません"
                 : "まだ写真を選んでいません")
                 .font(.headline)
             if allEntries.isEmpty {
-                if !eligibleCandidates.isEmpty {
+                if !recommendationCandidates.isEmpty {
                     Button("おすすめで選ぶ") { Task { await selectRecommendations() } }
                         .buttonStyle(.borderedProminent)
                 }
-                if eligibleCandidates.isEmpty && !scopeID.isEmpty {
-                    NavigationLink("猫の写真を登録") {
-                        CatProfilesView(presentation: catProfilesPresentation,
-                                        actions: catProfilesActions)
-                    }
-                } else {
-                    Button("写真を選ぶ") { pickerMode = .add }
-                        .disabled(eligibleCandidates.isEmpty)
-                }
+                Button("写真を選ぶ") { pickerMode = .add }
+                    .disabled(eligibleCandidates.isEmpty)
             } else {
                 Text("写真へのアクセスを確認してください")
                     .foregroundStyle(.secondary)
@@ -457,30 +449,30 @@ struct ShowcasePreparationView: View {
     }
 
     private func thumbnail(_ entry: ShowcasePhotoStore.Entry) -> some View {
-        ZStack(alignment: .topLeading) {
+        ShowcaseSquare {
             if let url = store.imageURL(for: entry),
                let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 Color.secondary.opacity(0.15)
             }
+        }
+        .overlay(alignment: .topLeading) {
             if entry.id == entries.first?.id {
                 Text("表紙")
                     .font(.caption2.bold()).foregroundStyle(.white)
                     .padding(4).background(.black.opacity(0.65), in: Capsule())
                     .padding(5)
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
             if entry.pinned {
                 Image(systemName: "pin.fill")
                     .font(.caption2).foregroundStyle(.white)
                     .padding(6).background(.black.opacity(0.65), in: Circle())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(5)
             }
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private func preview(_ entry: ShowcasePhotoStore.Entry) -> some View {
@@ -537,7 +529,7 @@ struct ShowcasePreparationView: View {
         isPreparing = true
         defer { isPreparing = false }
         let identifiers = await ShowcaseRecommender.identifiers(
-            from: eligibleCandidates,
+            from: recommendationCandidates,
             excluding: store.excludedIdentifiers(in: targetScope)
         )
         do { try await store.applyRecommendations(identifiers, to: targetScope) }
@@ -571,12 +563,12 @@ private struct ShowcaseCandidatePicker: View {
                                     selected.remove(photo.localIdentifier)
                                 }
                             } label: {
-                                PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                                    catBoundingBox: photo.catBoundingBox,
-                                                    targetPixelSize: CGSize(width: 330, height: 330),
-                                                    targetAspectRatio: 1)
-                                    .aspectRatio(1, contentMode: .fill)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                ShowcaseSquare {
+                                    PhotoAssetImageView(localIdentifier: photo.localIdentifier,
+                                                        catBoundingBox: photo.catBoundingBox,
+                                                        targetPixelSize: CGSize(width: 330, height: 330),
+                                                        targetAspectRatio: 1)
+                                }
                                     .overlay(alignment: .topTrailing) {
                                         if selected.contains(photo.localIdentifier) {
                                             Image(systemName: "checkmark.circle.fill")

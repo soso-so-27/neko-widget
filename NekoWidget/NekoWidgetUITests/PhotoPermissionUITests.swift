@@ -1549,6 +1549,7 @@ final class SoloMemoriesUITests: XCTestCase {
         // favorites. Favorites alone must not become showcase candidates.
         app.launchArguments = ["--app-store-screenshot-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
         let toolsTab = app.buttons["main-tab-tools"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
@@ -1556,11 +1557,49 @@ final class SoloMemoriesUITests: XCTestCase {
         let edit = app.buttons["tools-showcase-edit"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
+        app.buttons["showcase-scope-picker"].tap()
+        app.buttons["ミケ"].tap()
         let select = app.buttons["写真を選ぶ"]
         XCTAssertTrue(select.waitForExistence(timeout: 5))
         select.tap()
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
+        // Only one is assigned to this cat. Manual selection still offers the
+        // unassigned cat photos, but never the fixture's non-cat favorites.
+        let candidate = app.buttons.matching(identifier: "showcase-candidate-photo").firstMatch
+        XCTAssertEqual(candidate.frame.width, candidate.frame.height, accuracy: 1)
         capture("showcase-cat-candidates")
+    }
+
+    @MainActor
+    func testShowcaseOpensSquareGalleryAndReturnsWithoutAuthentication() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture", "--showcase-gallery-ui-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                + (largeText ? ["--ux-large-text"] : [])
+            app.launch()
+            let tools = app.buttons["main-tab-tools"]
+            XCTAssertTrue(tools.waitForExistence(timeout: 10))
+            tools.tap()
+            app.buttons["tools-showcase-open"].tap()
+            let cells = app.buttons.matching(identifier: "showcase-gallery-photo")
+            XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
+            if !largeText { XCTAssertEqual(cells.count, 9) }
+            let first = cells.element(boundBy: 0).frame
+            let second = cells.element(boundBy: 1).frame
+            XCTAssertEqual(first.width, first.height, accuracy: 1)
+            XCTAssertEqual(first.width, second.width, accuracy: 1)
+            XCTAssertEqual(first.minY, second.minY, accuracy: 1)
+            XCTAssertGreaterThanOrEqual(second.minX, first.maxX + 7)
+            capture("showcase-gallery-\(largeText ? "large" : "standard")")
+            cells.element(boundBy: 1).tap()
+            XCTAssertTrue(app.staticTexts["2 / 9"].waitForExistence(timeout: 5))
+            app.buttons["showcase-back"].tap()
+            XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
+            app.buttons["showcase-back"].tap()
+            XCTAssertTrue(app.buttons["tools-showcase-open"].waitForExistence(timeout: 5))
+            app.terminate()
+        }
     }
 
     @MainActor

@@ -29,14 +29,11 @@ struct AppRootView: View {
     @State private var onboardingScanErrorMessage: String?
     @StateObject private var widgetShowcaseStore = ShowcasePhotoStore()
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
-    @State private var mustUnlockAfterShowcase = ShowcaseSessionGuard.needsOwner
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
             Group {
-                if mustUnlockAfterShowcase {
-                    ShowcaseReturnGate { mustUnlockAfterShowcase = false }
-                } else if OnboardingPresentationPersistence.requiresPresentation(
+                if OnboardingPresentationPersistence.requiresPresentation(
                     completedVersion: onboardingCompletedVersion
                 ) {
                     onboardingContent
