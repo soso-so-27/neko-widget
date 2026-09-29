@@ -75,3 +75,24 @@ integration and internal Apple upload are not yet verified.
   device chrome; fixture names do not cover arbitrary long names; paired-account
   switching is unchanged and not exercised by the already-active setup fixture.
   No claim of hardware testing or live feed replenishment.
+
+## First native result and first candidate failure
+
+- Diagnostic36529924885 passed all3 cases, no failures/skips;13.917min wall,
+  13.683 runner minutes. Actual screenshots were inspected in dark/light,
+  320pt constrained content and AX5. Product files remained05e76ec.
+- Candidatepush36531491897 atcaa3c45 failed in Build's Python guard before
+  app compilation: test_window_list_preserves_cached_windows_and_scopes_pending_counts
+  still demanded SubtleWindowThumbnail. This is a stale presentation assertion,
+  not a native product defect. Source routing/privacy/retention guards passed up
+  to that point. The unused thumbnail helper was not reintroduced to appease it.
+- Update that assertion to the shipping setup card, bundled cat poses, actual
+  expiry predicate and per-window placeholder. Other boundary assertions stay.
+  Local boundary suite:62 passed,1 macOS-only check skipped on Windows; that
+  platform check is still mandatory in the normal Mac Build job.
+- Freeze the entire corrected boundary-test file as the seventh CI companion.
+  Diagnostic/native product sources remain unchanged, so no new UI diagnostic
+  is needed. Keep the old run's sibling results; do not cancel them. Release
+  still requires a complete normal candidate run at the new SHA because this
+  repository does not reuse a different-SHA guard correction as release evidence.
+  Do not label the failed candidate successful or omit its cost.

@@ -524,7 +524,7 @@ WINDOW_HUB_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/ios_ci_scope.py": [
         "c71d5f01c1ced02cb0770cafcf5e3eae13471dcc09321c6b56e2f2e9530570f0",
-        "d5abd6d01e23afa4a35e5884b2b29f2e350ec04604961d78dd2ac7790b7c8480"
+        "607e8b443240852738b1f645bc13f8163e227f8ddbfea988e4c86e901faa4109"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "9bf31d0bd87f6f8512bb5b0bf2a54f35cdb83583edd7190aff76f424226d5517",
@@ -533,6 +533,10 @@ WINDOW_HUB_COMPANION_DIGESTS = {
     "NekoWidget/ci/test-ci-lanes.py": [
         "6f5eb1d0a3bac755c73e2b0333a86053576d30f8092619ef43beaaf7181e3675",
         "d782918dba31003281459268d9405d68216dadcf2ba0b82ce8f7c345b2e84ce6"
+    ],
+    "NekoWidget/ci/test-family-window-widget-boundaries.py": [
+        "b6c0ff0dd259929a85c8892bf34de53cdfed1c2cf38dcb8eb388f5035b9f78bc",
+        "a1fd9ce56078338320af72c7b99bde8f011c8305f40fdcb780187490fbda3761"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "bc54a09139cef2411c937a8326adbe04e3e27c81f53f31d3181822180c9ac812",
