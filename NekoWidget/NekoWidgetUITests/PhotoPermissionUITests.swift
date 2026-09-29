@@ -698,6 +698,14 @@ final class OfficialWindowUITests: XCTestCase {
                                "Pending setup belongs in the same shelf, beside the second public window")
                 XCTAssertFalse(setup.frame.intersects(nap.frame), "The neighboring window must retain its own tap target")
             }
+            if largeText {
+                // A partly visible card is already hittable. Bring its status
+                // and action above the tab bar for the visual review as well.
+                for _ in 0..<4 {
+                    if setup.frame.maxY < app.tabBars.firstMatch.frame.minY { break }
+                    app.swipeUp()
+                }
+            }
             capture("window-hub-\(appearance)", app)
             if appearance == "light" || appearance == "narrow" {
                 app.terminate()
@@ -2241,6 +2249,16 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertTrue(heading.isHittable)
                 let attachment = XCTAttachment(screenshot: app.screenshot())
                 attachment.name = "membership-details-\(largeText ? "largest" : "standard")-\(title)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            if largeText {
+                // The final paragraph is taller than the viewport at AX5.
+                // Keep a second capture of its continuation, not just its heading.
+                app.swipeUp()
+                app.swipeUp()
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-details-largest-continuation"
                 attachment.lifetime = .keepAlways
                 add(attachment)
             }
