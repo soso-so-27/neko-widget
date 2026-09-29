@@ -26,6 +26,7 @@ AWSログインを使い回さないため、固定設定にsession tokenがあ�
 
 plist構文、プロファイル現物のApp ID/entitlement、CI preflight Python構文、JSON構文と禁止action不在、git diff空白検査は通過。Swiftの実ビルド、実Apple認証、実会員、実JPEG、S3書込、実iPhone、別端末復元、ZIPは未確認。無関係なWidget画面試験や全件CIを最初のprobeに使わない。
 追加の局所確認として、disabled release設定11件と署名artifact認証4件は成功した。`Info.plist`・entitlements・xcconfig・TestFlight workflowを含む候補は現行iOS CIの限定ファイル集合に収まらず、pushすれば広域CIを選ぶ見込み。結線前の未完成候補では走らせない。
+S3資格情報の登録後、stagingの接続先（AWS account/region/bucket）を `wrangler.jsonc` に固定し、`RECOVERY_COPY_ENABLED=NO` を明記した。Wrangler 4.125.0のstaging dry-runは約4秒で成功し、受付・cleanup・復旧コピーの3 gateがすべて `NO` と表示された。これは設定・bundleの検証であり、遠隔Workerへの配備やS3到達の証拠ではない。
 
 ## 次の成立順
 
