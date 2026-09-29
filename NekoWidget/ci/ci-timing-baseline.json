@@ -1,9 +1,13 @@
 {
   "as_of": "2026-09-29",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
-  "upload_minutes": 11.1,
-  "upload_run": 35607517485,
+  "upload_minutes": 11.483,
+  "upload_run": 36502758642,
   "upload_observations": [
+    {
+      "run_id": 36502758642,
+      "minutes": 11.483
+    },
     {
       "run_id": 35493368458,
       "minutes": 9.22
@@ -46,6 +50,11 @@
       "runner_minutes_all_candidates_and_diagnostics": 79.95,
       "first_product_source_to_ci_minutes": 60.55,
       "first_diagnostic_to_ci_minutes": 48.717,
+      "upload_run_id": 36502758642,
+      "first_product_source_to_apple_upload_minutes": 73.383,
+      "normal_candidate_ci_start_to_apple_upload_minutes": 31.333,
+      "apple_upload_succeeded_at": "2026-09-29T00:33:40Z",
+      "build_number": 221,
       "diagnostic_observations": [
         {"run_id": 36498510914, "minutes": 13.917, "outcome": "failure"},
         {"run_id": 36500096014, "minutes": 10.117, "outcome": "success"}
