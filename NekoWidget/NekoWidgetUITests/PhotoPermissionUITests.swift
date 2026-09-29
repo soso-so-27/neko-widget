@@ -688,6 +688,7 @@ final class OfficialWindowUITests: XCTestCase {
             let setup = app.buttons["window-list-row-10000000-0000-0000-0000-000000000002"]
             for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(setup.isHittable)
+            XCTAssertTrue((setup.value as? String ?? "").contains("設定を完了できませんでした"))
             XCTAssertTrue((setup.value as? String ?? "").contains("設定を開いて確認"))
             if !largeText {
                 let nap = app.buttons["public-window-entry-nap-cats"]
@@ -2215,6 +2216,41 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["membership-new"].tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "The current beta stays unrestricted")
         app.terminate()
+    }
+
+    @MainActor
+    func testMembershipOfferExplainsExpiryWithoutChangingThePlan() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--membership-offer-ui-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if largeText {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+            app.buttons["membership-preview-open"].tap()
+            let details = app.buttons["membership-offer-details"]
+            for _ in 0..<10 { if details.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(details.isHittable)
+            XCTAssertFalse(app.staticTexts["無料で使えること"].exists)
+            details.tap()
+            for title in ["無料で使えること", "会員の有効期間が終わると", "招待相手への影響"] {
+                let heading = app.staticTexts[title]
+                for _ in 0..<10 { if heading.isHittable { break }; app.swipeUp() }
+                XCTAssertTrue(heading.isHittable)
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-details-\(largeText ? "largest" : "standard")-\(title)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                           "Reading the terms must not purchase, restore, or finish the offer")
+            XCTAssertTrue(app.buttons["membership-offer-close"].isHittable)
+            app.buttons["membership-offer-close"].tap()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 5))
+            app.terminate()
+        }
     }
 
     @MainActor
