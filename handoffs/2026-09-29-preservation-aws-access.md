@@ -12,14 +12,15 @@ Stagingの小規模検証では、AWSアカウント `164892691568` に保管専
 
 - CLIの `neko-preservation-test` はrootの `login_session` だけ。別の有効なAWSプロファイルはない。
 - `aws login --remote` は個人用ブラウザで2回ともAWSの400。2回目はCodex側でリンクを開いていない。原因をリンク再利用と断定できず、再試行を止めた。Cookie削除や会社用Chromeの利用を求めない。
-- S3の現物、IAM鍵、KMS鍵状態は今回未再確認。秘密鍵のAWS SSM控えも未完了。Apple専用鍵はCloudflareの非公開secretへ設定済みで、原本はローカルのアクセス制限付きファイルに残す。
+- 利用者の個人用Consoleログイン後にAWSアカウント `164892691568` を確認。S3対象bucketは東京リージョン、versioning有効、Block Public Access全ON、bucket policy・lifecycle ruleなし。現行object一覧0件だが過去versionの再一覧は未実施。既存KMS keyは有効で説明が「staging synthetic test only」。KMS用IAM userの唯一のaccess keyはInactive。秘密鍵のAWS SSM控えも未完了。Apple専用鍵はCloudflareの非公開secretへ設定済みで、原本はローカルのアクセス制限付きファイルに残す。
+- 利用者の明示承認を受け、S3専用managed policy `neko-preservation-staging-s3-writer-v1` とコンソールアクセスなしのuser `neko-preservation-staging-s3-writer` を作成した。policyは `recovery/v1/*` のPUT/GET/GetVersion、指定prefixのListBucketVersions、`purge/v1/*` のGET/GetVersionのみ。userには同policy 1件だけを付け、アクセスキー1本がActiveであることをAWS画面で確認した。Cloudflareの非公開staging Workerへ `RECOVERY_S3_ACCESS_KEY_ID` と `RECOVERY_S3_SECRET_ACCESS_KEY` を暗号化secretとして登録し、両方が `Value encrypted` と表示されることを確認。鍵本文は会話・Git・ログに記録していない。実S3リクエストはまだ行っていない。
 - 保管Workerは公開routeなし、受付・cleanupともOFF。実会員の購入・照合も未成立。実保存・別端末復元・ZIPは未検証。
 
 ## 再開時の一回限りの管理手順
 
 1. 個人のAWS管理画面に通常の方法で入り、対象アカウントとRegionを**画面で**照合する。CLIの400解消を保管サービスの前提条件にしない。会社アカウントのブラウザや別アカウントを流用しない。
 2. versioning、Block Public Access、bucket policy、KMS鍵と既存KMS主体を読み取る。ここで差があれば変更前に原因を確定する。
-3. S3専用主体に上記の限定policyを適用し、消去権限・他bucket権限がないことを確認する。資格情報はログ、Git、チャットに出さずCloudflare secretへ一度だけ登録する。人のCLIセッションtokenを登録しない。
+3. S3専用主体への限定policy適用とCloudflare secretへの登録は完了。消去権限・他bucket権限を付けず、人のCLI session tokenも登録していない。
 4. 受付OFFのまま、資格情報の有効性とS3の保存・読戻しを合成1件で確かめ、残存0件に戻す。KMS・R2・D1を含む実フローと実会員を別に確認する。失敗を成功扱いしない。
 5. Apple鍵の独立した暗号化控えを作り、読戻しを照合する。これは復旧可能性の条件であり、同じAWSログイン障害を解くための先行タスクにはしない。
 
