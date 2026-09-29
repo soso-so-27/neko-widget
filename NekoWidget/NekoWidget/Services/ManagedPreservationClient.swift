@@ -5,7 +5,7 @@ import ImageIO
 struct ManagedPreservationConfiguration: Sendable {
     let origin: URL?
     let membershipAudience: String?
-    var isEnabled: Bool { origin != nil }
+    var isEnabled: Bool { origin != nil && membershipAudience != nil }
 
     /// Bundle/build configuration only. Never accept a user, deep-link or server supplied origin.
     init(isEnabled: Bool = false, origin: URL? = nil, membershipAudience: String? = nil) {
@@ -25,7 +25,10 @@ struct ManagedPreservationConfiguration: Sendable {
     }
 
     static var current: Self {
-        Self(isEnabled: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationEnabled") as? Bool == true,
+        let enabledValue = Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationEnabled")
+        let enabled = (enabledValue as? NSNumber)?.boolValue == true
+            || (enabledValue as? String)?.uppercased() == "YES"
+        return Self(isEnabled: enabled,
              origin: (Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationOrigin") as? String)
                 .flatMap(URL.init(string:)),
              membershipAudience: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationMembershipAudience") as? String)

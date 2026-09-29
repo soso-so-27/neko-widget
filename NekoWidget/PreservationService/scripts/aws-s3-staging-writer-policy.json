@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WriteAndReadOnlyStagingRecoveryVersions",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568/recovery/v1/*"
+    },
+    {
+      "Sid": "ListOnlyStagingRecoveryAndPurgePrefixes",
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568",
+      "Condition": {
+        "StringLike": { "s3:prefix": ["recovery/v1/*", "purge/v1/*"] }
+      }
+    },
+    {
+      "Sid": "ReadOnlyStagingPurgeLedger",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568/purge/v1/*"
+    }
+  ]
+}

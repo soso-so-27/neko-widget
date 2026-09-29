@@ -989,6 +989,7 @@ jobs:
               label: str,
               requires_safety_analysis: bool = False,
               requires_push: bool = False,
+              requires_apple_sign_in: bool = False,
           ) -> None:
               with open(path, "rb") as handle:
                   profile = plistlib.load(handle)
@@ -1000,6 +1001,7 @@ jobs:
               certificates = profile.get("DeveloperCertificates", [])
               safety_analysis = entitlements.get("com.apple.developer.sensitivecontentanalysis.client", [])
               push_environment = entitlements.get("aps-environment")
+              apple_sign_in = entitlements.get("com.apple.developer.applesignin", [])
 
               if team_id not in teams:
                   raise SystemExit(f"{label} profile belongs to another Team.")
@@ -1015,6 +1017,10 @@ jobs:
                   raise SystemExit(f"{label} profile does not contain production APNs entitlement.")
               if not requires_push and push_environment is not None:
                   raise SystemExit(f"{label} profile unexpectedly contains APNs entitlement.")
+              if requires_apple_sign_in and apple_sign_in != ["Default"]:
+                  raise SystemExit(f"{label} profile does not contain Sign in with Apple entitlement.")
+              if not requires_apple_sign_in and apple_sign_in:
+                  raise SystemExit(f"{label} profile unexpectedly contains Sign in with Apple entitlement.")
               if entitlements.get("get-task-allow") is not False:
                   raise SystemExit(f"{label} profile is not a distribution profile (get-task-allow).")
               if profile.get("ProvisionsAllDevices") is True or profile.get("ProvisionedDevices"):
@@ -1040,6 +1046,7 @@ jobs:
               "App",
               requires_safety_analysis=True,
               requires_push=True,
+              requires_apple_sign_in=True,
           )
           validate_profile(widget_path, widget_id, "Widget")
           validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=False)

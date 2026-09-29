@@ -10,6 +10,12 @@
 	<string>$(PERSONAL_ARCHIVE_ENABLED)</string>
 	<key>PersonalArchiveContainerIdentifier</key>
 	<string>$(PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER)</string>
+	<key>ManagedPreservationEnabled</key>
+	<string>$(MANAGED_PRESERVATION_ENABLED)</string>
+	<key>ManagedPreservationOrigin</key>
+	<string>$(MANAGED_PRESERVATION_ORIGIN)</string>
+	<key>ManagedPreservationMembershipAudience</key>
+	<string>$(MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE)</string>
 	<key>OfficialWindowFeedURL</key>
 	<string>$(OFFICIAL_WINDOW_FEED_URL)</string>
 	<key>AppGroupIdentifier</key>
