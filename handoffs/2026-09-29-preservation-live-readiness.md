@@ -5,7 +5,7 @@
 ## 直接確認した現状
 
 - 基点 `02ca0418d2eaa30074298c616bce92af2f9ec8b6` の専用worktree。既存の汚れた研究checkoutは変更していない。
-- Cloudflareの保管staging Workerは公開routeなし・受付OFF。secret名は `IDENTITY_INDEX_SECRET` と `KEY_WRAPPER_CALLER_SECRET` のみ。Apple認証、pilot本人一覧、S3資格情報は未登録。D1はowner/record各0、pilot enabled=0、復旧policyの2条件=0。従って実写真を受け付けない。
+- Cloudflareの保管staging Workerは公開routeなし・受付OFF。Apple認証用secretは追加済みだが、pilot本人一覧とS3資格情報は未登録。D1はowner/record各0、pilot enabled=0、復旧policyの2条件=0。従って実写真を受け付けない。
 - private billing WorkerはOFF。共有staging D1はbilling account=0、active key=0、effective entitlement gate=0。実会員照合の成功はまだ不可能。nativeのPlus billingも既定OFF。
 - private KMS WorkerにはKMSとcaller用secret名があるが、IAM鍵の有効状態はAWS再認証待ち。JPEG Workerも設定上OFF。S3の専用書込資格情報は保管Workerにない。
 - Apple Developer `jp.nekowidget.app` App IDはSign In with Appleが未設定だった。利用者承認後にprimary App IDとして有効化し、再表示でONを確認。これで既存App StoreアプリプロファイルがInvalidになったため、同じ証明書を選んで再生成した。新プロファイルはApp ID一致、Apple Sign In entitlement `Default`、証明書1件をダウンロード現物で確認。AppleのProfiles一覧ではInvalidが消えた。GitHub `testflight` environmentの `APP_PROVISIONING_PROFILE_BASE64` を更新し、更新時刻を照合した。Widget/Shareのプロファイル・secretは変更していない。
@@ -24,7 +24,7 @@ plist構文、プロファイル現物のApp ID/entitlement、CI preflight Pytho
 ## 次の成立順
 
 1. Apple専用キーを登録し、private keyを一度だけ取得して保管Workerのsecretへ入れる。ここまでは済んだ。AWSの暗号化控えは未完了。tokenや鍵本文をログへ出さない。
-2. AWSへの個人ログインを繰り返し要求しない経路を決め、同一アカウント・bucket versioning/公開遮断・KMS/IAM状態を照合。S3書込専用主体を最小権限で接続し、KMS既存鍵を再利用する。管理者の一時CLIログインはアプリ運用経路に使わない。
+2. [AWS接続の見直し](2026-09-29-preservation-aws-access.md)に従い、同一アカウント・bucket versioning/公開遮断・KMS/IAM状態を照合。S3書込専用主体を最小権限で接続し、KMS既存鍵を再利用する。管理者の一時CLIログインはアプリ運用経路に使わない。
 3. 有料アプリ契約がActiveになり、商品・Sandbox購入が用意された後、実在するBillingAccountIDとApple側の正当なPlus権利を通す。`active`の仮置きでは済ませない。pilot本人HMACはApple検証済みsubjectからのみ作る。
 4. 受付・復旧policy・会員/JPEG/KMSのgateを限定7日/最大3人の設定と共に結線して、1件保存→同ID読戻し→新session/別端末→ZIPを実証する。未達ならONにしない。
 
