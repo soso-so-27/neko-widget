@@ -662,12 +662,15 @@ final class OfficialWindowUITests: XCTestCase {
     @MainActor
     func testMixedWindowsKeepAdditionAndScopedRecoveryReachable() {
         continueAfterFailure = false
-        for largeText in [false, true] {
+        for appearance in ["dark", "light", "narrow", "largest"] {
+            let largeText = appearance == "largest"
             let app = XCUIApplication()
             app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-subscribed",
-                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-            if largeText { app.launchArguments.append("--window-list-large-text") }
+                                   "--window-list-two-public", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if largeText { app.launchArguments.append("--window-list-largest-text") }
+            else if appearance == "light" { app.launchArguments.append("--window-list-light") }
             else { app.launchArguments.append("--window-list-dark") }
+            if appearance == "narrow" { app.launchArguments.append("--window-list-narrow") }
             app.launch()
             let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
             XCTAssertTrue(family.waitForExistence(timeout: 10))
@@ -687,10 +690,18 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(setup.isHittable)
             XCTAssertTrue((setup.value as? String ?? "").contains("設定を開いて確認"))
             if !largeText {
-                XCTAssertLessThan(setup.frame.height, family.frame.height / 2,
-                                  "Unfinished setup is a compact resume row, not another photo card")
+                let nap = app.buttons["public-window-entry-nap-cats"]
+                XCTAssertTrue(nap.waitForExistence(timeout: 5))
+                XCTAssertEqual(setup.frame.width, family.frame.width, accuracy: 1)
+                XCTAssertEqual(setup.frame.minY, nap.frame.minY, accuracy: 1,
+                               "Pending setup belongs in the same shelf, beside the second public window")
+                XCTAssertFalse(setup.frame.intersects(nap.frame), "The neighboring window must retain its own tap target")
             }
-            capture(largeText ? "window-mixed-large-text" : "window-mixed-standard", app)
+            capture("window-hub-\(appearance)", app)
+            if appearance == "light" || appearance == "narrow" {
+                app.terminate()
+                continue
+            }
             let discover = app.buttons["window-list-discover"]
             let connect = app.buttons["window-list-connect"]
             XCTAssertTrue(discover.isHittable)
@@ -708,9 +719,10 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
                           "One back from discovery must return to the window list")
             XCTAssertTrue(connect.isHittable)
-            connect.tap()
+            for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
+            setup.tap()
             XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5),
-                          "A single unfinished window must open directly from the person-plus action")
+                          "The pending window itself must resume its setup directly")
             XCTAssertFalse(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
             XCTAssertFalse(app.buttons["window-list-resume-setup"].exists)
             capture(largeText ? "window-setup-direct-large-text" : "window-setup-direct-standard", app)
@@ -718,6 +730,15 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5),
                           "One back from setup must return to the window list")
             connect.tap()
+            XCTAssertTrue(app.navigationBars["相手とつなぐ"].waitForExistence(timeout: 5),
+                          "Person-plus must keep a stable destination even when setup is pending")
+            let resume = app.buttons["window-list-resume-setup"]
+            XCTAssertTrue(resume.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["window-list-create"].exists,
+                           "The existing unfinished slot must not be bypassed by creating another one")
+            app.navigationBars["相手とつなぐ"].buttons.element(boundBy: 0).tap()
+            for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
+            setup.tap()
             XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5))
             let restart = app.buttons["設定をやり直す"]
             for _ in 0..<6 { if restart.isHittable { break }; app.swipeUp() }

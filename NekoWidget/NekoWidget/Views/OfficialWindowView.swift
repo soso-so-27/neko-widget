@@ -4,10 +4,12 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-/// The window shelf uses one photo crop and one title row for every window.
+/// Keep identity above the changing photo. Setup uses the same shelf footprint
+/// without pretending that an unfinished connection already contains photos.
 @MainActor
 struct WindowPhotoCard<Photo: View>: View {
-    enum Kind: Equatable { case shared, official }
+    enum Kind: Equatable { case shared, official, setup }
+    @ScaledMetric(relativeTo: .subheadline) private var identityHeight = 38
     let title: String
     let kind: Kind
     let photo: Photo
@@ -19,31 +21,46 @@ struct WindowPhotoCard<Photo: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Color(.tertiarySystemFill)
-                .aspectRatio(1, contentMode: .fit)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                Image(kind == .shared ? "ToolCat-snug" : "ToolCat-peek")
+                    .resizable().scaledToFit()
+                    .frame(width: 23, height: 23)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: identityHeight, alignment: .leading)
+            Color(.secondarySystemGroupedBackground)
+                .aspectRatio(4.0 / 4.65, contentMode: .fit)
                 .overlay {
                     GeometryReader { geometry in
                         photo.frame(width: geometry.size.width, height: geometry.size.height).clipped()
                     }
                 }
-            HStack(spacing: 8) {
-                Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if kind == .shared {
-                    Image(systemName: "lock").font(.caption).accessibilityHidden(true)
-                } else {
-                    Text("公式").font(.caption2).fixedSize()
+                .overlay(alignment: .bottomTrailing) {
+                    if kind != .setup {
+                        Group {
+                            if kind == .shared {
+                                Image(systemName: "lock").font(.caption)
+                            } else {
+                                Text("公式").font(.caption2)
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 5)
+                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(10)
+                        .accessibilityHidden(true)
+                    }
                 }
-            }
-            .foregroundStyle(.secondary)
-            .frame(minHeight: 24)
-            .padding(12)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .contentShape(RoundedRectangle(cornerRadius: 20))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
     }
 }
 
@@ -148,8 +165,20 @@ struct OfficialWindowEntryCard: View {
             } else if preview.isLoading {
                 ProgressView().accessibilityLabel("写真を確認しています")
             } else {
-                Image(systemName: preview.failed ? "photo.badge.exclamationmark" : "pawprint")
-                    .font(.largeTitle).foregroundStyle(.secondary)
+                VStack(spacing: 12) {
+                    if preview.failed {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.largeTitle).foregroundStyle(.secondary)
+                    } else {
+                        Image("ToolCat-hide").resizable().scaledToFit()
+                            .frame(width: 58, height: 58).accessibilityHidden(true)
+                    }
+                    Text(preview.failed ? "写真を読み込めませんでした" : "表示できる写真がありません")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
