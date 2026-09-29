@@ -23,6 +23,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DiagnosticRouteBoundaryTests(unittest.TestCase):
+    def test_window_diagnostic_selects_only_existing_requested_methods(self):
+        source = (ROOT / "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+        methods = ("testMixedWindowsKeepAdditionAndScopedRecoveryReachable",
+                   "testDiscoverReceiveGuideAndStopUpdatesWindowList",
+                   "testWindowListLargeTextKeepsDiscoveryAndPhotoReachable")
+        self.assertEqual(scope.diagnostic_tests("OfficialWindowUITests", ",".join(methods), source),
+                         tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for name in methods))
+        for names in ("testUnknownWindowMethod", ",".join(methods + (methods[0],)), methods[0] + ";exit 0"):
+            with self.assertRaises(ValueError):
+                scope.diagnostic_tests("OfficialWindowUITests", names, source)
+
     def test_exact_diagnostic_addition_preserves_regular_commands(self):
         path = scope.CI_DIAGNOSTIC_MATRIX
         current = (ROOT / path).read_text(encoding="utf-8")
