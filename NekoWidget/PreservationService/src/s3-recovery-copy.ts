@@ -19,7 +19,7 @@ export interface S3RecoveryConfig {
 }
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type BoundConfig = { region: string; bucket: string; accountId: string; access: string;
-  secret: string; session?: string };
+  secret: string };
 export type RecoveryObject = { key: string; sha256: string; bytes: number; versionId: string };
 export type RecoveryVersion = { key: string; versionId: string; deleteMarker: boolean; bytes: number | null };
 export type RecoveryVersionCursor = { keyMarker: string; versionIdMarker?: string };
@@ -54,10 +54,10 @@ const decodedKey = (value: unknown): string => {
 function configured(config: S3RecoveryConfig): BoundConfig {
   if (config.enabled !== 'YES' || !regionPattern.test(config.region ?? '')
     || !bucketPattern.test(config.bucket ?? '') || !/^[0-9]{12}$/u.test(config.expectedAccountId ?? '')
-    || !config.accessKeyId || !config.secretAccessKey) throw unavailable();
+    || !config.accessKeyId || !config.secretAccessKey || config.sessionToken) throw unavailable();
+  // Worker bindings are static: a copied human/STS session would expire without refresh.
   return { region: config.region!, bucket: config.bucket!, accountId: config.expectedAccountId!,
-    access: config.accessKeyId, secret: config.secretAccessKey,
-    ...(config.sessionToken ? { session: config.sessionToken } : {}) };
+    access: config.accessKeyId, secret: config.secretAccessKey };
 }
 function objectUrl(config: BoundConfig, key: string, versionId?: string): string {
   if (!recoveryKeyPattern.test(key)) throw unavailable();
@@ -92,7 +92,6 @@ export class S3RecoveryCopy {
     const url = objectUrl(this.config, key, versionId);
     const signer = new AwsV4Signer({ url, method, service: 's3', region: this.config.region,
       accessKeyId: this.config.access, secretAccessKey: this.config.secret,
-      ...(this.config.session ? { sessionToken: this.config.session } : {}),
       allHeaders: true, headers: { 'x-amz-expected-bucket-owner': this.config.accountId, ...headers },
       ...(body ? { body: body as BodyInit } : {}) });
     const signed = await signer.sign();
@@ -197,7 +196,7 @@ export class S3RecoveryCopy {
     try {
       const signer = new AwsV4Signer({ url, method: 'GET', service: 's3', region: this.config.region,
         accessKeyId: this.config.access, secretAccessKey: this.config.secret,
-        ...(this.config.session ? { sessionToken: this.config.session } : {}), allHeaders: true,
+        allHeaders: true,
         headers: { 'x-amz-expected-bucket-owner': this.config.accountId } });
       const signed = await signer.sign();
       const response = await this.fetcher(signed.url, { method: 'GET', headers: signed.headers,

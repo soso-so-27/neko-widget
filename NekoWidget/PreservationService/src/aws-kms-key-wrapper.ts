@@ -51,16 +51,16 @@ async function authenticated(request: Request, secret: string): Promise<boolean>
   return different === 0;
 }
 
-function configured(env: KeyWrapperEnv): { region: string; keyArn: string; access: string; secret: string; session: string | undefined } {
+function configured(env: KeyWrapperEnv): { region: string; keyArn: string; access: string; secret: string } {
   const region = env.KMS_REGION ?? '';
   const keyArn = env.KMS_KEY_ARN ?? '';
   const match = arnPattern.exec(keyArn);
   if (env.PRESERVATION_KMS_ENABLED !== 'YES' || !match || match[1] !== region
       || !/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u.test(region)
-      || !env.KMS_ACCESS_KEY_ID || !env.KMS_SECRET_ACCESS_KEY
+      || !env.KMS_ACCESS_KEY_ID || !env.KMS_SECRET_ACCESS_KEY || env.KMS_SESSION_TOKEN
       || !tokenPattern.test(env.KEY_WRAPPER_CALLER_SECRET ?? '')) throw new Error();
-  return { region, keyArn, access: env.KMS_ACCESS_KEY_ID, secret: env.KMS_SECRET_ACCESS_KEY,
-    session: env.KMS_SESSION_TOKEN };
+  // This Worker cannot refresh a copied CLI/STS session after it expires.
+  return { region, keyArn, access: env.KMS_ACCESS_KEY_ID, secret: env.KMS_SECRET_ACCESS_KEY };
 }
 
 /** An approved replica differs from the stored primary ARN only by Region. */
@@ -80,7 +80,6 @@ async function kmsCall(env: KeyWrapperEnv, action: 'Encrypt' | 'Decrypt', payloa
   const signer = new AwsV4Signer({ url: `https://kms.${config.region}.amazonaws.com/`,
     method: 'POST', body, service: 'kms', region: config.region,
     accessKeyId: config.access, secretAccessKey: config.secret,
-    ...(config.session ? { sessionToken: config.session } : {}),
     allHeaders: true, headers: { 'content-type': 'application/x-amz-json-1.1',
       'x-amz-target': `TrentService.${action}` } });
   const signed = await signer.sign();

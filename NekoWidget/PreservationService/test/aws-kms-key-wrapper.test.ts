@@ -55,6 +55,9 @@ describe('private AWS KMS data-key wrapper', () => {
     expect((await handleKeyWrapperRequest(request('/keys/wrap',
       { version: 1, key: encode(raw), contextSHA256 }, 'x'.repeat(43)), env, fetcher)).status).toBe(503);
     expect((await handleKeyWrapperRequest(request('/keys/wrap',
+      { version: 1, key: encode(raw), contextSHA256 }),
+      { ...env, KMS_SESSION_TOKEN: 'temporary-session' }, fetcher)).status).toBe(503);
+    expect((await handleKeyWrapperRequest(request('/keys/wrap',
       { version: 1, key: encode(raw.slice(0, 31)), contextSHA256 }), env, fetcher)).status).toBe(400);
     expect((await handleKeyWrapperRequest(request('/keys/unwrap', { version: 1, keyId: 'attacker-key',
       wrappedKey: encode(raw), contextSHA256 }), env, fetcher)).status).toBe(400);

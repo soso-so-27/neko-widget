@@ -18,6 +18,8 @@
 
 アプリ側にManagedPreservationのビルド設定3値を追加し、既定はOFF。URLと会員audienceが両方妥当なときだけ入口を利用可能にした。Apple Sign In entitlementをホストアプリに追加。TestFlightの署名前チェックに、アプリだけ同entitlementを要求する検査を追加した。S3書込主体のstagingポリシーは `recovery/v1/*` のPUT/GET/版一覧と `purge/v1/*` の読取だけで、KMSと版削除を含まない候補を作った。
 
+AWSログインを使い回さないため、固定設定にsession tokenがある場合はS3復旧コピーとKMS Workerが通信前に拒否する候補を追加。関連13件と型検査を局所実行して成功。AWS現物の資格情報・接続・復元は未確認で、この変更はWorkerの受付をONにしない。
+
 plist構文、プロファイル現物のApp ID/entitlement、CI preflight Python構文、JSON構文と禁止action不在、git diff空白検査は通過。Swiftの実ビルド、実Apple認証、実会員、実JPEG、S3書込、実iPhone、別端末復元、ZIPは未確認。無関係なWidget画面試験や全件CIを最初のprobeに使わない。
 追加の局所確認として、disabled release設定11件と署名artifact認証4件は成功した。`Info.plist`・entitlements・xcconfig・TestFlight workflowを含む候補は現行iOS CIの限定ファイル集合に収まらず、pushすれば広域CIを選ぶ見込み。結線前の未完成候補では走らせない。
 
