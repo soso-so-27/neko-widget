@@ -43,8 +43,9 @@ signing or release gate is waived. The prior full fallback took up to 97.92
 minutes, so do not launch that as a first probe or describe it as a 30-minute
 delivery. Independently review the bounded selector before adopting it.
 
-Native screenshots, required CI and Apple upload remain pending at this record.
-Build 222 belongs to the parallel lost-cat release; coordinate 223 or later.
+At the initial plan, native screenshots, required CI and Apple upload were
+pending. Build 222 belonged to the parallel lost-cat release. The results below
+supersede that initial state; build 223 is reserved for this candidate.
 
 ## First native observation and correction
 
@@ -65,3 +66,28 @@ Build 222 belongs to the parallel lost-cat release; coordinate 223 or later.
   freezes all 13 product blobs plus four CI companions. Existing generic app-view
   selection is unchanged when the newly added ToolCat assets are not in the diff.
 - Build 223 reserved with the mainline owner. Apple upload is not yet complete.
+
+## Verified candidate and mainline integration
+
+- Corrected focused diagnostic 36513611018 at 313c93d passed in 16.45 minutes.
+  Inspected actual Simulator screenshots in dark, light and AX5. The tools hub
+  uses one column at AX5; all four routes and the upcoming preview open/close
+  passed. The sheet screenshot tagged large still uses fixture-default text;
+  do not claim that sheet's AX5 typography or a physical iPhone was verified.
+- Required candidate **push** CI 36515439688 passed all four jobs, including all
+  three owning UI cases with zero failures. Total 18.85 minutes; candidate
+  runner time 62.75 minutes. First source candidate to normal CI success was
+  73.433 minutes, not 18.85. Failed diagnostic and rework remain counted.
+- Creating the normal branch at an existing diagnostic SHA emitted CreateEvent
+  only. PR run 36515117672 was skipped and is not successful evidence. Created
+  `codex/tools-brand-20260929-ci` at the existing base and fast-forwarded the
+  exact same SHA to cause a push. This changes no validation/release inputs;
+  the original task clock and failures remain in the timing observation.
+- PR 98 merged as d3e6394 on 2026-09-29 at 12:22 JST. Confirmed full candidate
+  313c93d633ea0fb6f88d31a30dad9af9974a232b remains an ancestor of origin/main.
+- Release CLI dry-run passed with CI 36515439688 and unused build 223, then
+  dispatched TestFlight run 36516927611 exactly once. Its source is the fixed
+  candidate, not newer documentation-only main changes. Internal testflight
+  environment approval covered only this run; no public release/invites.
+- At this subsection's creation the upload was running; it is not yet evidence
+  of Apple acceptance. Final upload evidence is recorded separately below.

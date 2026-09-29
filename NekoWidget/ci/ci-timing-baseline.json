@@ -43,6 +43,20 @@
   ],
   "observations": [
     {
+      "scope": "reviewed-tools-hub-ui-v1",
+      "candidate_minutes": 18.85,
+      "run_id": 36515439688,
+      "outcome": "success",
+      "runner_minutes_all_candidates_and_diagnostics": 99.75,
+      "first_product_source_to_ci_minutes": 73.433,
+      "first_diagnostic_to_ci_minutes": 70.85,
+      "diagnostic_observations": [
+        {"run_id": 36511431307, "minutes": 21.05, "outcome": "failure"},
+        {"run_id": 36513611018, "minutes": 16.45, "outcome": "success"}
+      ],
+      "note": "First exact tools-hub scope. Four mandatory Build/Photos/both-OS runtime/app-ui jobs and three owning UI cases passed. Initial diagnostic failed a test assumption about the zero-cat fixture's destination, not product behavior; corrected expectation passed. Failed diagnosis, preparation and trigger recovery remain in total time. New ref at an already-pushed diagnostic SHA produced CreateEvent only; creating a separate candidate ref at base then fast-forwarding the same SHA started push CI, without changing inputs or resetting the task clock. 18.85m is candidate CI only, not total delivery. First candidate was 2026-09-29T02:08:57Z. Runner minutes are neither charges nor Codex tokens."
+    },
+    {
       "scope": "reviewed-care-handoff-ui-v1",
       "candidate_minutes": 18.5,
       "run_id": 36501077785,
