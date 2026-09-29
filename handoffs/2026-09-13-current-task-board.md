@@ -1,5 +1,9 @@
 # 現在のタスクと優先順位
 
+## 2026-09-29 個人保管：実接続は未完、AWSログインの反復を停止
+
+専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。アプリ設定は既定OFFのまま。実Apple本人・実会員・S3資格情報・新端末復元・ZIPの通し確認は未完で、受付もOFF。AWS CLIの一時ログインは個人用ブラウザで2回とも400となり再試行を止めた。保存処理を人のCLIログインに依存させない接続方針と、一回限りの管理手順を[記録](2026-09-29-preservation-aws-access.md)に固定した。Paid Apps Agreementと商品も未成立。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
+
 ## 2026-09-26 個人保管：JPEG実配備と既定OFFの期限消去統合
 
 Workers Paid切替後、非公開JPEGサーバーの初回起動、破損拒否、4096²画像、同時制限、
