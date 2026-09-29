@@ -91,3 +91,22 @@ supersede that initial state; build 223 is reserved for this candidate.
   environment approval covered only this run; no public release/invites.
 - At this subsection's creation the upload was running; it is not yet evidence
   of Apple acceptance. Final upload evidence is recorded separately below.
+
+## Final upload evidence
+
+- TestFlight run 36516927611 succeeded. At **2026-09-29 12:32:45 JST**, Apple
+  upload logged `UPLOAD SUCCEEDED with no errors` and `No errors uploading`.
+  Build **223**, source **313c93d633ea0fb6f88d31a30dad9af9974a232b**.
+- Run duration 9.267 minutes, runner time 8.35 minutes. Initial product candidate
+  to Apple upload was **83.813 minutes**, including the failed probe and trigger
+  recovery. Original 30–40-minute expectation was missed; the revised estimate
+  at approximately 11:41 JST was 45–55 remaining minutes (actual about52).
+- Apple processing, internal-group visibility and physical-device installation
+  were not checked; do not equate upload success with those states.
+- Native screenshots: `C:/dev/neko-evidence/tools-brand-diagnostic-36513611018/ios-26-2/composer-screenshots/`.
+  Dark hub `EB165991-61BB-46CA-B620-D3D4532A8C61.png`, light hub
+  `3E5C3C02-64C8-4269-A890-CD4183439A72.png`, large text
+  `109B6084-D9A1-4F9A-B057-18D239AA3DF2.png`.
+- Timing/handoff follow-up changes only observations, not product, tests,
+  selection rules, workflow, signing or fixed-source release inputs. Existing
+  native success is retained; no additional TestFlight build is required.
