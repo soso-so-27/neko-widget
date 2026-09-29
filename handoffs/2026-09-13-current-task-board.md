@@ -1,8 +1,8 @@
 # 現在のタスクと優先順位
 
-## 2026-09-29 個人保管：S3専用資格情報を接続準備、実保存は未検証
+## 2026-09-29 個人保管：S3・KMS専用資格情報を接続準備、実保存は未検証
 
-専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。staging設定候補にS3接続先と `RECOVERY_COPY_ENABLED=NO` を明記し、Wrangler dry-runは成功した。アプリ・Workerの受付とcleanupはOFFで、実Apple本人・実会員・S3書込/読戻し・新端末復元・ZIPは未検証。KMS側のIAM鍵はInactive。AWS CLIの一時ログインは個人用ブラウザで2回とも400となり再試行を止めたが、通常の個人用Consoleで管理できた。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementと商品も未成立。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
+専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。KMS専用userには新しい鍵を1本作り、非公開KMS Workerの2 secretを差し替えた。旧鍵はInactive、新鍵はActiveで、KMS Workerの受付はOFF。staging設定候補にS3接続先と `RECOVERY_COPY_ENABLED=NO` を明記し、Wrangler dry-runは成功した。アプリ・Workerの受付とcleanupはOFFで、実Apple本人・実会員・S3書込/読戻し・KMS Encrypt/Decrypt・新端末復元・ZIPは未検証。AWS CLIの一時ログインは個人用ブラウザで2回とも400となり再試行を止めたが、通常の個人用Consoleで管理できた。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementと商品も未成立。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
 
 ## 2026-09-29 まど一覧：写真主体のカードと接続導線
 
