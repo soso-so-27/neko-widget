@@ -1601,25 +1601,33 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["まず探す・届け出る"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["仕上がりを確認"].isEnabled)
         XCTAssertFalse(app.buttons["日時と場所を消す"].exists)
+        let fieldOrder = ["lost-cat-name", "lost-cat-features", "lost-cat-collar", "lost-cat-place", "lost-cat-contact"]
+        var lastFieldIndex = 0
         func field(_ name: String) -> XCUIElement {
-            let element = app.textFields[name]
+            let element = app.descendants(matching: .any).matching(identifier: name).firstMatch
+            let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             for _ in 0..<10 {
-                if element.isHittable { return element }
-                // Drag inside the visible form, not across the keyboard. A fast
-                // whole-screen swipe can move a field behind the navigation bar.
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
                 let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                // isHittable can be true even when the floating bottom action
+                // covers the field's centre. Tap only in the visible form band.
+                if element.exists, element.isHittable,
+                   element.frame.midY > top + 8, element.frame.midY < bottom - 8 {
+                    lastFieldIndex = index
+                    return element
+                }
                 let upper = top + (bottom - top) * 0.25
                 let lower = top + (bottom - top) * 0.70
-                let movesUp = !element.exists || element.frame.midY > top
+                let movesUp = element.exists ? element.frame.midY >= bottom - 8 : index >= lastFieldIndex
                 let origin = app.coordinate(withNormalizedOffset: .zero)
-                let start = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                // Use the form margin, so a multiline editor doesn't consume the drag.
+                let start = origin.withOffset(CGVector(dx: app.frame.width - 10,
                     dy: movesUp ? lower : upper))
-                let end = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                let end = origin.withOffset(CGVector(dx: app.frame.width - 10,
                     dy: movesUp ? upper : lower))
                 start.press(forDuration: 0.05, thenDragTo: end)
             }
-            XCTAssertTrue(element.isHittable, name)
+            XCTFail("Input did not reach the visible form band: \(name)")
             return element
         }
         for (name, value) in [("lost-cat-name", "むぎ"),
@@ -1652,6 +1660,37 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(field("lost-cat-name").value as? String, "むぎ")
         XCTAssertEqual(field("lost-cat-place").value as? String, "駅の近く")
         XCTAssertEqual(field("lost-cat-contact").value as? String, "08000000000")
+        // Long input must not be lost or prevent the user from seeing what to fix.
+        let overLimit = String(repeating: "茶", count: 201)
+        let features = field("lost-cat-features")
+        features.tap(); features.typeText(overLimit)
+        XCTAssertEqual(features.value as? String, overLimit)
+        XCTAssertTrue(app.buttons["仕上がりを確認"].isEnabled)
+        app.buttons["仕上がりを確認"].tap()
+        XCTAssertTrue(app.buttons["lost-cat-edit-text"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["lost-cat-share-image"].isEnabled)
+        XCTAssertTrue(app.staticTexts["見分ける特徴は200文字までです。あと1文字減らしてください。"].exists)
+        capture("lost-cat-over-limit-keeps-original")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.textFields["lost-cat-name"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field("lost-cat-features").value as? String, overLimit)
+        let restoredFeatures = field("lost-cat-features")
+        // A tap after relaunch doesn't promise a caret at the end. Select the
+        // existing text explicitly, as a user replacing the description would.
+        restoredFeatures.tap()
+        restoredFeatures.press(forDuration: 1.2)
+        let selectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])
+        ).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+        selectAll.tap()
+        restoredFeatures.typeText(String(repeating: "茶", count: 200))
+        XCTAssertEqual((restoredFeatures.value as? String)?.count, 200)
+        app.buttons["仕上がりを確認"].tap()
+        XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lost-cat-share-image"].isEnabled)
+        app.buttons["A4チラシ"].tap()
+        XCTAssertTrue(app.buttons["lost-cat-share-pdf"].isEnabled)
         app.terminate()
     }
 
@@ -1664,6 +1703,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-fixture-\(UUID().uuidString)"
         app.launchEnvironment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] = "1"
         app.launchEnvironment["NEKO_LOST_CAT_PREPARED_PHOTOS"] = "1"
+        app.launchEnvironment["NEKO_LOST_CAT_LONG_TEXT"] = "1"
         app.launch()
         let choose = app.buttons["lost-cat-face-photo"]
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
@@ -1679,10 +1719,17 @@ final class SoloMemoriesUITests: XCTestCase {
         app.segmentedControls.buttons["猫の写真"].tap()
         XCTAssertEqual(candidates.count, 3)
         app.buttons["キャンセル"].tap()
+        let features = app.descendants(matching: .any).matching(identifier: "lost-cat-features").firstMatch
+        for _ in 0..<5 where !features.isHittable { app.swipeUp() }
+        XCTAssertEqual((features.value as? String)?.count, 200)
+        XCTAssertGreaterThan(features.frame.width, app.frame.width * 0.65)
+        capture("lost-cat-long-text-editor")
         app.buttons["仕上がりを確認"].tap()
         XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lost-cat-share-image"].isEnabled)
         capture("lost-cat-two-aspect-social")
         app.buttons["A4チラシ"].tap()
+        XCTAssertTrue(app.buttons["lost-cat-share-pdf"].isEnabled)
         capture("lost-cat-two-aspect-paper")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let actions = app.buttons["lost-cat-face-actions"]
