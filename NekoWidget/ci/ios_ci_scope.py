@@ -1060,12 +1060,13 @@ def reviewed_care_handoff_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], CARE_HANDOFF_TESTS))
 
 
-# Exact reviewed presentation/assets in product 78a2c45 against main a178f8b.
+# Exact reviewed presentation/assets in product 78a2c45 against main a178f8b,
+# with the evidence-based unregistered-cat XCTest expectation in 008dc43.
 # Git blob pairs include binary pixels; no arbitrary Assets or fixture allowance.
 TOOLS_HUB_BLOBS = {
     "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": ("0744d172120eb952a6b45723fe8ad3201421fec1", "485bf145e2325f66e6fdf7014349949138a695d9"),
     "NekoWidget/NekoWidget/Views/MainTabView.swift": ("74264327a6da9bb8e854fd48f794b5384d03e076", "2be7515f47e86fa27c60cf98e5f6858c117ad5c0"),
-    MEMORY_TEST_PATH: ("d6f1f87a42aba8c632e59d9141f2a44b3fca7d01", "989c258a4ad9a66a02deed486b2b7ada15c78372"),
+    MEMORY_TEST_PATH: ("d6f1f87a42aba8c632e59d9141f2a44b3fca7d01", "d1d9b2f49f2fe4eea90013df3c430035a8bc1cea"),
 }
 for _pose, _json, _png in (
     ("hide", "c74f4f752227cd900084dd02eba17c457286241a", "468f65001194c03df20da6f15b99b8fe9970c508"),

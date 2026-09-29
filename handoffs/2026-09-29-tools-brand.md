@@ -45,3 +45,23 @@ delivery. Independently review the bounded selector before adopting it.
 
 Native screenshots, required CI and Apple upload remain pending at this record.
 Build 222 belongs to the parallel lost-cat release; coordinate 223 or later.
+
+## First native observation and correction
+
+- First product candidate: 9fd318f, 2026-09-29 11:08:57 JST.
+- Diagnostic 36511431307 at 78a2c45: 21.05 minutes overall; two owning tests
+  (showcase/gallery and lost-cat export) passed. Preserve these probe results.
+- Tools hub rendered in dark appearance; reviewed the actual 402-point iPhone
+  17 Pro screenshot. Five distinct window-cat poses, all four tools and the
+  upcoming card fit; labels and eyes remain readable, with no new accent hues.
+- Tools test failed at its assumed registered-cat selector title. The exported
+  native hierarchy instead proves `NavigationBar: 迷子のとき`: this harness
+  has zero registered cats and correctly opens the editor directly.
+- 008dc43 changes only that test expectation plus a comment, not product behavior.
+  Re-run only the corrected tools method in the focused diagnostic before normal
+  CI. The first run spent about 15 minutes before XCTest started; do not promise
+  the earlier 10–14-minute reference. Normal CI retains all three owning cases.
+- Product/CI review found no P1/P2. Closed scope retains four required jobs and
+  freezes all 13 product blobs plus four CI companions. Existing generic app-view
+  selection is unchanged when the newly added ToolCat assets are not in the diff.
+- Build 223 reserved with the mainline owner. Apple upload is not yet complete.
