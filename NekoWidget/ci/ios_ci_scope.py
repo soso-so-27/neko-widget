@@ -29,6 +29,7 @@ LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
+WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -69,7 +70,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOLS_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -120,7 +121,8 @@ CI_DIAGNOSTIC_MATRIX = "NekoWidget/ci/run-sharing-runtime-matrix.sh"
 PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3dab940ad288e4a56ed97b2d"
 INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST = "27e3a21f42709a87b6f8d6e99866f138827be6a1052ead5918a72a9124d135fe"
 PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
-DIAGNOSTIC_WORKFLOW_DIGEST = "922c3e21dfe35347d4d974dfdffa811c4b38317d1503c7cbbfe7c78b27510f70"
+PROFILE_DIAGNOSTIC_WORKFLOW_DIGEST = "922c3e21dfe35347d4d974dfdffa811c4b38317d1503c7cbbfe7c78b27510f70"
+DIAGNOSTIC_WORKFLOW_DIGEST = "ea83e077b3025b357e1cc326baecfb059cbe263262cbf15099d68626c219eeed"
 DIAGNOSTIC_BLOCKS_DIGEST = "f1319d5060a5a0d44efd76c21faf9693b5092b0c5cf4623b26f14747aa3b314c"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
@@ -1089,7 +1091,27 @@ TOOLS_HUB_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name
 ))
 
 
-MAPPED_PATHS = (TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# Exact reviewed window-shelf presentation and owning tests, 02ca041..05e76ec.
+# Identity, transport, retention, stores, Widget, project and release inputs are
+# not covered. Every source and every CI companion must match the frozen pair.
+WINDOW_HUB_BLOBS = {
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": ("2be7515f47e86fa27c60cf98e5f6858c117ad5c0", "77419dfa495b954c05648ac7d13cafcd3e1114f6"),
+    OFFICIAL_VIEW: ("ef0bf5f3f61ea9cf54ad5b5ef697e210d046d4ee", "2ca68f8f710efcf383a41e4e2feedad8c1c76544"),
+    MEMORY_TEST_PATH: ("d1d9b2f49f2fe4eea90013df3c430035a8bc1cea", "39eca48cf6969addbee5402b39e0f7ac2d604566"),
+}
+WINDOW_HUB_PATHS = frozenset(WINDOW_HUB_BLOBS)
+WINDOW_HUB_COMPANIONS = TOOLS_HUB_COMPANIONS | {
+    CI_DIAGNOSTIC_WORKFLOW, "NekoWidget/ci/test-widget-ci-scope.py",
+    "NekoWidget/ci/test-family-window-widget-boundaries.py",
+}
+WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for name in (
+    "testMixedWindowsKeepAdditionAndScopedRecoveryReachable",
+    "testDiscoverReceiveGuideAndStopUpdatesWindowList",
+    "testWindowListLargeTextKeepsDiscoveryAndPhotoReachable",
+))
+
+
+MAPPED_PATHS = (WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -1565,7 +1587,7 @@ def swift_declaration_source(source: str) -> str | None:
     return result
 
 
-DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests")
+DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests", "OfficialWindowUITests")
 
 
 def diagnostic_tests(test_class: str, methods: str, source: str | None = None) -> tuple[str, ...]:
@@ -1956,7 +1978,7 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     if CI_DIAGNOSTIC_WORKFLOW in changes:
         before, after = changes[CI_DIAGNOSTIC_WORKFLOW]
-        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
+        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST, PROFILE_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
             return False
     if CI_DIAGNOSTIC_MATRIX in changes:
         normalized = []
@@ -2007,6 +2029,8 @@ def accepts_paths(scope: str, paths) -> bool:
         return sources == CARE_HANDOFF_PATHS
     if scope == TOOLS_HUB_SCOPE:
         return sources in (TOOLS_HUB_PATHS, TOOLS_HUB_PATHS | TOOLS_HUB_COMPANIONS)
+    if scope == WINDOW_HUB_SCOPE:
+        return sources in (WINDOW_HUB_PATHS, WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS)
     if scope == LOST_CAT_UX_SCOPE:
         return {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= sources and sources <= {
             LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}
@@ -2166,6 +2190,8 @@ def sharing_job(scope: str) -> str:
 def native_tests(scope: str) -> tuple[str, ...]:
     if scope == TOOLS_HUB_SCOPE:
         return TOOLS_HUB_TESTS
+    if scope == WINDOW_HUB_SCOPE:
+        return WINDOW_HUB_TESTS
     if scope == EVACUATION_SCOPE:
         return EVACUATION_TESTS
     if scope == CARE_HANDOFF_SCOPE:
