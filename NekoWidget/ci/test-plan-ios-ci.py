@@ -25,6 +25,74 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_tools_hub_requires_exact_pixels_sources_and_complete_companions(self):
+        product = dict(scope.TOOLS_HUB_BLOBS)
+        before_after = {path: ("before " + path, "after " + path)
+                        for path in scope.TOOLS_HUB_COMPANIONS}
+        selector = "NekoWidget/ci/plan-ios-ci.py"
+        empty = "TOOLS_HUB_COMPANION_DIGESTS = {}\n"
+        before_after[selector] = (before_after[selector][0], empty + "# reviewed logic\n")
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in before_after.items()}
+        literal = "TOOLS_HUB_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        before_after[selector] = (before_after[selector][0], before_after[selector][1].replace(empty, literal))
+        def records(companions=False):
+            rows = {}
+            for path, (old, new) in product.items():
+                modes, status = (":000000 100644", "A") if old == "0" * 40 else (":100644 100644", "M")
+                rows[path] = f"{modes} {old} {new} {status}"
+            if companions:
+                rows.update({path: f":100644 100644 {'c' * 40} {'d' * 40} M" for path in before_after})
+            return rows
+        def select(rows, sources=None, raw_extra="", mutate_companion=False):
+            def git(*args):
+                if args[0] == "diff":
+                    return "".join(header + "\0" + path + "\0" for path, header in rows.items()) + raw_extra
+                if args[0] == "show":
+                    ref, path = args[1].split(":", 1)
+                    return before_after[path][int(ref == self.sha)] + ("# changed" if mutate_companion else "")
+                raise AssertionError(args)
+            with patch.object(planner, "comparison_base", return_value="b" * 40), \
+                    patch.object(planner, "git", side_effect=git), \
+                    patch.object(planner, "TOOLS_HUB_COMPANION_DIGESTS", bindings):
+                return planner.runtime_scope(list(rows) if sources is None else sources, {}, self.env)
+        self.assertEqual(select(records()), scope.TOOLS_HUB_SCOPE)
+        self.assertEqual(select(records(True)), scope.TOOLS_HUB_SCOPE)
+        expected = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.TOOLS_HUB_SCOPE)
+        self.assertEqual(planner.required_jobs(list(records(True)), scope.TOOLS_HUB_SCOPE), expected)
+        self.assertEqual(scope.lanes(scope.TOOLS_HUB_SCOPE), ("runtime", "app-ui"))
+        self.assertEqual(len(scope.native_tests(scope.TOOLS_HUB_SCOPE)), 3)
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText",
+                      scope.native_tests(scope.TOOLS_HUB_SCOPE))
+        for path in product:
+            changed = records()
+            changed[path] = changed[path].replace(product[path][1], "e" * 40)
+            self.assertEqual(select(changed), scope.FULL_SCOPE, path)
+            missing = records()
+            del missing[path]
+            self.assertEqual(select(missing), scope.FULL_SCOPE, path)
+        image = next(path for path in product if path.endswith(".png"))
+        for mode in ("100755", "120000", "160000"):
+            changed = records()
+            changed[image] = changed[image].replace("100644", mode)
+            self.assertEqual(select(changed), scope.FULL_SCOPE)
+        for companion in before_after:
+            changed = records(True)
+            del changed[companion]
+            self.assertEqual(select(changed), scope.FULL_SCOPE)
+        self.assertEqual(select(records(True), mutate_companion=True), scope.FULL_SCOPE)
+        for unknown in ("NekoWidget/Shared/Models/Photo.swift", "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                        ".github/workflows/ios.yml", "NekoWidget/NekoWidget/Assets.xcassets/Other.imageset/a.png"):
+            changed = records()
+            changed[unknown] = f":000000 100644 {'0' * 40} {'e' * 40} A"
+            self.assertEqual(select(changed), scope.FULL_SCOPE)
+        self.assertEqual(select(records(), sources=list(records()) + [image]), scope.FULL_SCOPE)
+        self.assertEqual(select(records(), raw_extra=records()[image] + "\0" + image + "\0"), scope.FULL_SCOPE)
+        handoff = records()
+        handoff["handoffs/tools.md"] = f":000000 100644 {'0' * 40} {'d' * 40} A"
+        self.assertEqual(select(handoff), scope.TOOLS_HUB_SCOPE)
+        handoff["handoffs/tools.md"] = f":000000 120000 {'0' * 40} {'d' * 40} A"
+        self.assertEqual(select(handoff), scope.FULL_SCOPE)
+
     @staticmethod
     def jpeg_changes(companions=True, profile="JPEG"):
         workflow = getattr(planner, profile + "_WORKFLOW")
