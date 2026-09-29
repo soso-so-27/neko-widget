@@ -205,7 +205,7 @@ struct MembershipOfferView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("招待相手への影響").fontWeight(.semibold)
-                    Text("そのまどへの会員サポートが終了すると、あなたも招待相手も新しい写真を送れなくなります。受信済みの写真は、通常の保存期間内で引き続き見られます。")
+                    Text("まどを支えている会員の有効期間が終わると、お互いに新しい写真を送れなくなります。受信済みの写真は、通常の保存期間内で引き続き見られます。")
                 }
             }
             .foregroundStyle(.secondary)
