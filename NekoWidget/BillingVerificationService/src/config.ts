@@ -118,13 +118,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
   const bundleId = required(env, "BILLING_BUNDLE_ID");
   const subscriptionGroupId = required(env, "BILLING_SUBSCRIPTION_GROUP_ID");
   const monthlyProductId = required(env, "BILLING_MONTHLY_PRODUCT_ID");
-  const annualProductId = required(env, "BILLING_ANNUAL_PRODUCT_ID");
+  const annualProductId = env.BILLING_ANNUAL_PRODUCT_ID;
   if (
     !bundleIdPattern.test(bundleId)
     || !productIdPattern.test(subscriptionGroupId)
     || !productIdPattern.test(monthlyProductId)
-    || !productIdPattern.test(annualProductId)
-    || monthlyProductId === annualProductId
+    || (annualProductId !== undefined && annualProductId !== ""
+      && (!productIdPattern.test(annualProductId) || monthlyProductId === annualProductId))
   ) {
     throw new Error("Billing product identity is invalid");
   }
@@ -150,7 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
     environment,
     bundleId,
     subscriptionGroupId,
-    productIds: new Set([monthlyProductId, annualProductId]),
+    productIds: new Set([monthlyProductId, ...(annualProductId ? [annualProductId] : [])]),
     notificationVerificationEnabled: explicitSwitch(
       env,
       "BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED",

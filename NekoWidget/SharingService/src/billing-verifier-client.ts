@@ -188,14 +188,14 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
   const environment = requiredSetting(env.BILLING_STORE_ENVIRONMENT);
   const subscriptionGroupId = requiredSetting(env.BILLING_SUBSCRIPTION_GROUP_ID);
   const monthlyProductId = requiredSetting(env.BILLING_MONTHLY_PRODUCT_ID);
-  const annualProductId = requiredSetting(env.BILLING_ANNUAL_PRODUCT_ID);
+  const annualProductId = env.BILLING_ANNUAL_PRODUCT_ID;
   if (
     !bundleIdPattern.test(bundleId)
     || (environment !== "Sandbox" && environment !== "Production")
     || !subscriptionGroupPattern.test(subscriptionGroupId)
     || !productIdPattern.test(monthlyProductId)
-    || !productIdPattern.test(annualProductId)
-    || monthlyProductId === annualProductId
+    || (annualProductId !== undefined && annualProductId !== ""
+      && (!productIdPattern.test(annualProductId) || monthlyProductId === annualProductId))
   ) {
     throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   }
@@ -206,7 +206,7 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
     bundleId,
     environment,
     subscriptionGroupId,
-    productIds: new Set([monthlyProductId, annualProductId]),
+    productIds: new Set([monthlyProductId, ...(annualProductId ? [annualProductId] : [])]),
   };
 }
 

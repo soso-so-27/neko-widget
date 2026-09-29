@@ -2,7 +2,9 @@
 
 ## 2026-09-29 個人保管：S3・KMS専用資格情報を接続準備、実保存は未検証
 
-専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。復旧用の個人AWS SSMパラメータは東京リージョン・指定名・`SecureString`・伏字値を確認し、原本との一致は未確認。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。KMS専用userには新しい鍵を1本作り、非公開KMS Workerの2 secretを差し替えた。旧鍵はInactive、新鍵はActive。非公開KMS service binding経由の合成鍵wrap/unwrapはHTTP 200で一致を確認し、KMS受付は自動でOFFへ復帰した。staging WorkerのS3合成32 byteは版付きPUT、版指定GET、版一覧の一致を確認。初回の環境指定失敗と、次のPUT段階の原因不明503を経て、3回目で成功した。通常Workerへ復帰し、一時token消失と受付/cleanup/復旧コピーOFFを再読取した。実Apple本人・実会員・実写真・新端末復元・ZIPは未検証。AWS CLIの一時ログインは個人用ブラウザで2回とも400となり再試行を止めたが、通常の個人用Consoleで管理できた。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementと商品も未成立。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
+専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。復旧用の個人AWS SSMパラメータは東京リージョン・指定名・`SecureString`・伏字値を確認し、原本との一致は未確認。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。KMS専用userには新しい鍵を1本作り、非公開KMS Workerの2 secretを差し替えた。旧鍵はInactive、新鍵はActive。非公開KMS service binding経由の合成鍵wrap/unwrapはHTTP 200で一致を確認。staging WorkerのS3合成32 byteは版付きPUT、版指定GET、版一覧の一致を確認。通常Workerへ復帰し、一時token消失と受付/cleanup/復旧コピーOFFを再読取した。実Apple本人・実会員・実写真・新端末復元・ZIPは未検証。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementは未成立、月額商品は審査前の骨格だけ作成。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
+
+追記：App Store Connectに審査前のPlus購読グループと月額商品IDを作成。価格・無料期間・配信地域・説明は未設定で、販売やSandbox購入はまだできない。契約一覧には無料アプリ契約のみで、更新されたDeveloper Program契約もAccount Holder確認待ち。月額だけを受理し年額取引を拒否するサーバー候補は局所型検査と関連16件に成功、未push・未CI・未配布。[接続記録](2026-09-29-preservation-live-readiness.md)参照。
 
 ## 2026-09-29 まど一覧：写真主体のカードと接続導線
 

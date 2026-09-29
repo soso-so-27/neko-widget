@@ -10,6 +10,7 @@ import {
 } from "../src/billing-verifier-protocol";
 import {
   type VerifiedBillingTransaction,
+  loadVerifierConfig,
   verifyAppleTransactionViaService,
 } from "../src/billing-verifier-client";
 import type { Env } from "../src/env";
@@ -106,6 +107,29 @@ function verifierFetch(
 }
 
 describe("Worker to Apple verifier client", () => {
+  it("supports a monthly-only verifier and rejects a mismatched optional annual ID", () => {
+    const monthlyOnly = { ...testEnv };
+    delete monthlyOnly.BILLING_ANNUAL_PRODUCT_ID;
+    expect([...loadVerifierConfig(monthlyOnly).productIds]).toEqual(["jp.nekowidget.plus.monthly"]);
+    const emptyAnnual = { ...testEnv, BILLING_ANNUAL_PRODUCT_ID: "" } as Env;
+    expect([...loadVerifierConfig(emptyAnnual).productIds]).toEqual(["jp.nekowidget.plus.monthly"]);
+    const duplicateAnnual = {
+      ...testEnv,
+      BILLING_ANNUAL_PRODUCT_ID: "jp.nekowidget.plus.monthly",
+    } as Env;
+    expect(() => loadVerifierConfig(duplicateAnnual)).toThrowError();
+  });
+
+  it("does not accept an annual transaction in monthly-only mode", async () => {
+    const monthlyOnly = { ...testEnv };
+    delete monthlyOnly.BILLING_ANNUAL_PRODUCT_ID;
+    await expect(verifyAppleTransactionViaService(
+      "header.payload.signature",
+      monthlyOnly,
+      verifierFetch(transaction({ productId: "jp.nekowidget.plus.annual" })),
+    )).rejects.toMatchObject({ code: "billing_verifier_invalid_response", status: 503 });
+  });
+
   it("authenticates both directions and revalidates normalized identity", async () => {
     const expected = transaction();
     const { protocolVersion: _ignored, ...normalized } = expected;

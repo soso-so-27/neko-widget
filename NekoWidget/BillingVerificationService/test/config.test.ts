@@ -32,6 +32,19 @@ test("loads only an explicit Sandbox verifier configuration", () => {
   assert.equal(result.nonceRedisURL, "rediss://billing-nonce.invalid:6380/0");
 });
 
+test("accepts a monthly-only product and rejects an invalid optional annual product", () => {
+  const monthlyOnly = environment();
+  delete monthlyOnly.BILLING_ANNUAL_PRODUCT_ID;
+  assert.deepEqual([...loadConfig(monthlyOnly).productIds], ["jp.nekowidget.plus.monthly"]);
+  monthlyOnly.BILLING_ANNUAL_PRODUCT_ID = "";
+  assert.deepEqual([...loadConfig(monthlyOnly).productIds], ["jp.nekowidget.plus.monthly"]);
+
+  monthlyOnly.BILLING_ANNUAL_PRODUCT_ID = "jp.nekowidget.plus.monthly";
+  assert.throws(() => loadConfig(monthlyOnly), /product identity is invalid/u);
+  monthlyOnly.BILLING_ANNUAL_PRODUCT_ID = "invalid annual";
+  assert.throws(() => loadConfig(monthlyOnly), /product identity is invalid/u);
+});
+
 test("requires a TLS Redis nonce store without URL options", () => {
   const missing = environment();
   delete missing.BILLING_NONCE_REDIS_URL;

@@ -30,7 +30,7 @@
 | `BILLING_APP_APPLE_ID` | Productionで必須、Sandboxでは指定しない |
 | `BILLING_SUBSCRIPTION_GROUP_ID` | 自動更新購読group ID |
 | `BILLING_MONTHLY_PRODUCT_ID` | 月額商品ID |
-| `BILLING_ANNUAL_PRODUCT_ID` | 年額商品ID |
+| `BILLING_ANNUAL_PRODUCT_ID` | 任意の年額商品ID。月額のみの場合は省略または空欄 |
 | `BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED` | 通知検証endpointを正確に`YES`で有効化。既定`NO` |
 | `BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED` | Notification History取得endpointを正確に`YES`で有効化。既定`NO` |
 | `BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED` | Subscription Status照合endpointを正確に`YES`で有効化。既定`NO` |
