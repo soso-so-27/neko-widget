@@ -607,9 +607,15 @@ struct MainTabView: View {
                                 : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
                         showcaseToolCard
-                        ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
-                                 subtitle: "準備中", isUnavailable: true)
-                            .accessibilityIdentifier("tools-care-unavailable")
+                        NavigationLink {
+                            CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                            unregisteredPhotos: unregisteredCatPhotos)
+                        } label: {
+                            ToolTile(title: "預けるとき", systemImage: "person.crop.rectangle.stack",
+                                     subtitle: "写真付きのお世話メモ")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("tools-care-open")
 
                         ToolTile(title: "病院で見せる", systemImage: "cross.case",
                                  subtitle: "準備中", isUnavailable: true)
