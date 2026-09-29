@@ -96,6 +96,7 @@ private struct LostCatCropRequest: Identifiable {
 
 struct LostCatDraftView: View {
     private enum Field: Hashable { case name, features, collar, place, contact, advice }
+    private enum Collar: String, CaseIterable { case unknown = "不明", none = "なし", present = "あり" }
     let initialKey: String
     let initialName: String
     let profiles: [CatProfilePresentation]
@@ -155,8 +156,8 @@ struct LostCatDraftView: View {
                     Text("\(requiredFields.joined(separator: "・"))を入れると作成できます")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if !issues.isEmpty {
-                    Text("入力欄の案内を確認してください")
-                        .font(.caption).foregroundStyle(.red)
+                    Text("仕上がりで調整する項目があります")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Button("仕上がりを確認") { openPreview() }
                     .buttonStyle(.borderedProminent)
@@ -252,20 +253,17 @@ struct LostCatDraftView: View {
                     Button("今表示している写真を使う") { self.photoError = nil }
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("見た目") {
-                    TextField("毛色・模様・しっぽなど", text: $draft.features,
-                              prompt: Text("毛色・模様など（任意）"), axis: .vertical)
-                        .accessibilityLabel("見た目（任意）")
-                        .focused($focus, equals: .features)
-                }
-                fieldIssue("features")
+            textEntry("見分ける特徴（任意）", text: $draft.features, field: .features,
+                      limit: LostCatFlyerRenderer.featuresLimit,
+                      example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。")
+            Picker("首輪", selection: collarChoice) {
+                ForEach(Collar.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            LabeledContent("首輪") {
-                TextField("首輪の色・有無（任意）", text: $draft.collar,
-                          prompt: Text("色・模様／なし（任意）"), axis: .vertical)
-                    .accessibilityLabel("首輪の色・有無（任意）")
-                    .focused($focus, equals: .collar)
+            .accessibilityIdentifier("lost-cat-collar-choice")
+            if collarChoice.wrappedValue == .present {
+                textEntry("首輪の色・模様", text: collarDetail, field: .collar,
+                          limit: LostCatFlyerRenderer.collarLimit,
+                          example: "例：赤い布製、鈴付き", minimumLines: 1)
             }
         } header: {
             HStack {
@@ -283,7 +281,8 @@ struct LostCatDraftView: View {
     private var incidentSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("場所") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("場所")
                     TextField("町名・公園名など", text: $draft.lastSeenNear)
                         .accessibilityIdentifier("lost-cat-place")
                         .accessibilityLabel("町名・公園名など")
@@ -305,7 +304,8 @@ struct LostCatDraftView: View {
     private var contactSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("連絡先") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("連絡先")
                     TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
                               prompt: Text("電話・メール・SNS"))
                         .accessibilityIdentifier("lost-cat-contact")
@@ -315,15 +315,9 @@ struct LostCatDraftView: View {
                 }
                 fieldIssue("contact")
             }
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("お願い") {
-                    TextField("例：追いかけず、見かけた場所をお知らせください", text: $draft.approachAdvice,
-                              prompt: Text("見つけた方へ（任意）"), axis: .vertical)
-                        .accessibilityLabel("見つけた方へ（任意）")
-                        .focused($focus, equals: .advice)
-                }
-                fieldIssue("advice")
-            }
+            textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
+                      limit: LostCatFlyerRenderer.adviceLimit,
+                      example: "例：追いかけず、見かけた場所をお知らせください", minimumLines: 2)
         } header: { Text("見つけた方からの連絡") }
           footer: {
             Text("この連絡先は画像・チラシに公開されます。")
@@ -332,6 +326,44 @@ struct LostCatDraftView: View {
 
     @ViewBuilder private func fieldIssue(_ field: String) -> some View {
         if let issue = issues[field] { Text(issue).font(.footnote).foregroundStyle(.red) }
+    }
+
+    private func textEntry(_ title: String, text: Binding<String>, field: Field,
+                           limit: Int, example: String, minimumLines: Int = 3) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            TextField(example, text: text, axis: .vertical)
+                .lineLimit(minimumLines...8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier("lost-cat-\(field)")
+                .focused($focus, equals: field)
+            Text("\(text.wrappedValue.count) / \(limit)文字")
+                .font(.caption).monospacedDigit()
+                .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            fieldIssue(String(describing: field))
+        }
+    }
+
+    // Existing free-text collar values remain intact; no draft schema migration.
+    private var collarChoice: Binding<Collar> {
+        Binding(get: {
+            if draft.collar.isEmpty || draft.collar == "不明" { return .unknown }
+            return draft.collar == "なし" ? .none : .present
+        }, set: { value in
+            switch value {
+            case .unknown: draft.collar = ""
+            case .none: draft.collar = "なし"
+            case .present:
+                if collarChoice.wrappedValue != .present { draft.collar = "あり" }
+            }
+        })
+    }
+
+    private var collarDetail: Binding<String> {
+        Binding(get: { draft.collar == "あり" ? "" : draft.collar },
+                set: { draft.collar = $0.isEmpty ? "あり" : $0 })
     }
 
     private var dateSheet: some View {
@@ -389,7 +421,7 @@ struct LostCatDraftView: View {
         guard let faceImage else { return nil }
         return LostCatPublicDraft(
             name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
-            features: [draft.features, draft.collar.isEmpty ? "" : "首輪: \(draft.collar)"].filter { !$0.isEmpty }.joined(separator: "／"),
+            features: draft.features, collar: draft.collar,
             approachAdvice: draft.approachAdvice, lastSeenAt: draft.lastSeenAt,
             lastSeenNear: draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines),
             contact: draft.contact.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -407,7 +439,7 @@ struct LostCatDraftView: View {
         return values
     }
     private var canPreview: Bool {
-        loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty && issues.isEmpty
+        loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty
     }
 
     private func photoTile(_ title: String, role: CatPreparednessStore.PhotoRole, image: UIImage?) -> some View {
@@ -700,12 +732,14 @@ private struct LostCatGuideView: View {
 
 private struct LostCatPreviewView: View {
     let draft: LostCatPublicDraft
+    @Environment(\.dismiss) private var dismiss
     @State private var format = 0
     @State private var payload: LostCatSharePayload?
     @State private var exportError = false
     @State private var expanded = false
     @State private var copied = false
     @State private var previews: [Int: UIImage] = [:]
+    private var issues: [String: String] { LostCatFlyerRenderer.validationIssues(draft) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -714,7 +748,19 @@ private struct LostCatPreviewView: View {
                 Text("A4チラシ").tag(1)
             }.pickerStyle(.segmented).padding()
             ScrollView {
-                if let image = previews[format] {
+                if !issues.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("書いた内容は残っています").font(.headline)
+                        ForEach(issues.keys.sorted(), id: \.self) { key in
+                            Text(issues[key] ?? "").foregroundStyle(.red)
+                        }
+                        Button("入力を直す") { dismiss() }
+                            .accessibilityIdentifier("lost-cat-edit-text")
+                        Divider()
+                        Text(draft.message).textSelection(.enabled)
+                            .accessibilityIdentifier("lost-cat-original-text")
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding()
+                } else if let image = previews[format] {
                     Button { expanded = true } label: {
                         Image(uiImage: image).resizable().scaledToFit()
                             .accessibilityLabel("共有する迷子の猫の画像")
@@ -741,11 +787,14 @@ private struct LostCatPreviewView: View {
                 } catch { exportError = true }
             }
             .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
+            .disabled(!issues.isEmpty)
             .accessibilityIdentifier(format == 0 ? "lost-cat-share-image" : "lost-cat-share-pdf")
             .padding().background(.regularMaterial)
         }
         .task(id: format) {
-            if previews[format] == nil { previews[format] = LostCatFlyerRenderer.previewImage(draft, pdf: format == 1) }
+            if issues.isEmpty, previews[format] == nil {
+                previews[format] = LostCatFlyerRenderer.previewImage(draft, pdf: format == 1)
+            }
         }
         .sheet(item: $payload) { item in
             LostCatActivitySheet(items: [item.url])
@@ -800,6 +849,11 @@ struct LostCatDraftFixtureView: View {
                         draft.name = "むぎ"
                         draft.features = "茶白・しっぽが長い"
                         draft.collar = "赤い首輪"
+                        if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_LONG_TEXT"] == "1" {
+                            draft.features = String(String(repeating: "茶白の短毛。胸と足先は白く、背中に丸い茶色の模様があります。\nしっぽは長く、先が少し曲がっています。左耳の先に小さな切れ込みがあります。", count: 4).prefix(200))
+                            draft.collar = String(String(repeating: "赤い布製で白い水玉模様。小さな鈴付き。", count: 3).prefix(40))
+                            draft.approachAdvice = String(String(repeating: "追いかけず、見かけた場所と時間をご連絡ください。怖がりで、物陰に隠れることがあります。", count: 2).prefix(80))
+                        }
                         draft.lastSeenNear = "駅の近く"
                         draft.contact = "08000000000"
                         draft = try LostCatDraftStore.shared.replacePhoto(image.jpegData(compressionQuality: 0.9)!,
