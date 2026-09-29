@@ -18,8 +18,8 @@
 - AWS IAM Policy Simulatorで同ユーザーの同一対象ARNを評価し、`s3:PutObject` は明示的許可、`s3:DeleteObjectVersion` は一致する許可がないため暗黙的拒否と表示された。これはポリシー評価であり、キー認証・実S3操作・bucket側の制約を通した証拠ではない。
 - AWS画面でKMS専用user `neko-preservation-staging-kms-worker` の直接policyが1件、コンソールアクセスなしを確認。policy本文はローカルの `scripts/aws-kms-staging-worker-policy.json` と同じく、対象key `339319dc-388b-4bd7-adb8-29d37d836d72` のEncrypt/Decryptと暗号化context key `neko-preservation-context-sha256` に限定されている。利用者の明示承認後、新しいaccess keyを1本作り、Cloudflareの非公開KMS Workerの `KMS_ACCESS_KEY_ID` / `KMS_SECRET_ACCESS_KEY` を暗号化secretとしてそれぞれ差し替えた。画面では両方 `Value encrypted`、`PRESERVATION_KMS_ENABLED=NO` を確認。AWS画面では旧鍵がInactive、新鍵がActiveの計2本。鍵本文は会話・Git・ログに出していない。KMSの実Encrypt/Decryptと新鍵による認証は未検証。
 - AWS KMS Consoleで対象keyのpolicyにアカウントrootをprincipalとする `Enable IAM User Permissions` があり、IAM側policyを適用できる形であることを確認した。これは実KMS認証の成功ではない。既存の実接続probeは「KMS鍵1本だけInactive」「人のAWS CLI session有効」を前提としており、現在の2本（旧Inactive・新Active）と期限切れCLIには適合しない。誤って実行せず、新しい鍵を無効化しない経路に改める。
-- Apple Developer画面には、最新のProgram License Agreementへの同意期限が2026-10-02と表示されている。契約本文の確認・同意は本人の判断であり、この作業では行わない。
-- App Store Connectの「ビジネス→契約」は無料アプリ契約だけが表示され、有料アプリ契約は有効でない。「ねこのまど→サブスクリプション」にはグループも商品もない。Apple公式の[アプリ内購入の設定](https://developer.apple.com/help/app-store-connect/configure-in-app-purchase-settings/overview-for-configuring-in-app-purchases/)によれば、Sandbox試験にも有料アプリ契約のActive状態が必要。よって現時点の実Plus会員の購入・照合は成立しない。契約への同意と税務・銀行情報はAccount Holder本人の判断・入力が必要。
+- Apple Developer画面には、最新のProgram License Agreementへの同意期限が2026-10-02と表示されていた。その後の利用者による同意が契約履歴へ反映した。契約本文の確認・同意は本人の判断であり、この作業では行わない。
+- App Store Connectの「ビジネス→契約」に有料アプリ契約は「新規」として現れたが、有効でない。審査前の月額商品骨格は別途作成済み。Apple公式の[アプリ内購入の設定](https://developer.apple.com/help/app-store-connect/configure-in-app-purchase-settings/overview-for-configuring-in-app-purchases/)によれば、Sandbox試験にも有料アプリ契約のActive状態が必要。よって現時点の実Plus会員の購入・照合は成立しない。契約への同意と税務・銀行情報はAccount Holder本人の判断・入力が必要。
 
 ## 固定候補の変更挙動・直接証拠・残り
 
@@ -52,7 +52,7 @@ AWS応答段階だけを返す診断を付けた再実行で、同じWorkerの�
 
 App Store Connectの契約一覧を再読取すると無料アプリ契約のみで、有料アプリ契約はない。Apple Developer Program使用許諾契約の更新もAccount Holderの確認待ち。`ねこのまど` に審査前グループ `ねこのまど Plus`（ID `22424520`）と月額商品 `jp.nekowidget.plus.monthly`（Apple ID `6817296251`、期間1か月）を作成した。価格・無料期間・配信地域・顧客向け説明は未設定、審査提出なし、実課金なし。既存の会員仕様で980円・初回7日は検証案なので販売条件とはしない。Apple公式はPaid Apps AgreementがActiveでないとSandboxの実購入試験もできないとしている。
 
-利用者は更新契約に「同意した」と報告したが、その後のApple Developerアカウント画面には2026年10月2日期限の同意案内が残り、契約履歴の同意日は2026年8月16日のままだった。App Store Connectのビジネス画面も同意待ち案内と無料アプリ契約だけを表示した。表示の遅延か手続き未完かは未確定。契約ActiveやSandbox課金可能と扱わず、Apple側の反映を再確認する。
+最初の同意報告後はApple Developerアカウント画面に案内が残ったが、利用者が再度同意した後の再読取では、新しいProgram License Agreement `XG8DNV4HYY` の同意日が2026年9月29日となり、案内が消えた。App Store Connectにも無料アプリ契約が有効、有料アプリ契約が「新規」として現れた。有料契約の本文・添付ファイルと未選択の同意チェックを確認したが、同意操作は行っていない。契約ActiveやSandbox課金可能と扱わない。
 
 サーバーのApple verifierとSharing verifier clientが年額IDを必須としていた前提を、年額ID省略・空欄なら月額のみ受理する候補に修正。任意の年額IDを設定した場合は書式と月額との重複を検査し、月額のみ構成では年額取引を拒否する。BillingVerificationServiceの型検査・構成9件、SharingServiceの型検査・verifier client 7件が局所成功。依存未導入による最初の実行環境失敗はoffline `npm ci` で解消した。候補は未push・未CI・未配布で、独立レビューと必要なbackend確認は本線反映前に残る。
 
