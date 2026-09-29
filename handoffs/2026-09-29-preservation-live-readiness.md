@@ -48,6 +48,8 @@ KMSの実接続用には、期限切れの管理者CLI sessionや旧Inactive鍵�
 
 AWS応答段階だけを返す診断を付けた再実行で、同じWorkerの登録済み資格情報から合成32 byteの版付きPUT、版指定GETの内容一致、owner版一覧の当該version一致を確認。`S3_SYNTHETIC_ROUND_TRIP_PASS` のkeyは `recovery/v1/3ff2fb4d-5a86-486f-8c43-1caae8a53069/photo/1f768bcf-614e-4258-be65-0319e36b4fc9`、versionは `3HADRtH5Z1Y14n5pn_0JixaU0YPbduWk`。合成objectは意図的に保持する。通常entrypointへ戻し、一時tokenの消失と受付/cleanup/復旧コピーの3 gate `NO` を再読取した。最初の実S3失敗の原因は不明であり、単回成功から安定稼働までは断定しない。S3実接続の初候補から成功・復帰まで約15分。実写真・会員・別端末復元は依然未検証。
 
+個人AWS Consoleの `recovery/v1/` 一覧には成功したownerフォルダ1件だけが表示され、先の失敗keyに対応する現行objectは見えない。過去versionや失敗のHTTP原因はこの画面では証明していない。Apple専用鍵の復旧用SecureStringは、利用者の明示承認を受けて個人AWS `164892691568` の東京リージョンで名前・標準tier・`alias/aws/ssm` まで入力した。CloudShellはsession開始がtimeoutし、ローカル `.p8` をIABで開く操作はブラウザーの安全審査で禁止された。鍵本文をモデル出力やshellログへ出さずに渡すため、画面の「値」への貼付と最終作成を利用者へ依頼中。作成成功は未確認で、ローカル原本は維持する。
+
 1. Apple専用キーを登録し、private keyを一度だけ取得して保管Workerのsecretへ入れる。ここまでは済んだ。AWSの暗号化控えは未完了。tokenや鍵本文をログへ出さない。
 2. [AWS接続の見直し](2026-09-29-preservation-aws-access.md)に従う同一アカウント・bucket versioning/公開遮断・KMS/IAM状態の照合、S3書込専用主体とKMS専用主体のsecret登録、受付OFFでのS3合成1件の版付き書込・読戻し、KMSの実Encrypt/Decryptは済んだ。前段のS3失敗1回の原因と残存有無は未確認。Apple専用鍵の暗号化控えも未完。管理者の一時CLIログインはアプリ運用経路に使わない。
 3. 有料アプリ契約がActiveになり、商品・Sandbox購入が用意された後、実在するBillingAccountIDとApple側の正当なPlus権利を通す。`active`の仮置きでは済ませない。pilot本人HMACはApple検証済みsubjectからのみ作る。
