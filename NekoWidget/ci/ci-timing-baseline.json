@@ -5,6 +5,10 @@
   "upload_run": 36502758642,
   "upload_observations": [
     {
+      "run_id": 36535759050,
+      "minutes": 11.633
+    },
+    {
       "run_id": 36516927611,
       "minutes": 9.267
     },
@@ -46,6 +50,35 @@
     }
   ],
   "observations": [
+    {
+      "scope": "reviewed-window-hub-ui-v1",
+      "candidate_minutes": 18.217,
+      "run_id": 36531491897,
+      "outcome": "failure",
+      "runner_minutes": 45.533,
+      "note": "Build failed before compilation on an obsolete SubtleWindowThumbnail source assertion. All three owning UI operations, Photos bootstrap/scan and both-OS runtime passed. Corrected the presentation guard, not product behavior; retained this failed candidate in total elapsed and resource cost."
+    },
+    {
+      "scope": "reviewed-window-hub-ui-v1",
+      "candidate_minutes": 20.05,
+      "run_id": 36533648139,
+      "outcome": "success",
+      "runner_minutes": 72.45,
+      "diagnostic_run_id": 36529924885,
+      "diagnostic_minutes": 13.917,
+      "diagnostic_runner_minutes": 13.683,
+      "main_run_id": 36535645109,
+      "main_reused": true,
+      "runner_minutes_all_candidates_and_diagnostic": 131.666,
+      "first_product_candidate_at": "2026-09-29T06:05:23Z",
+      "first_product_source_to_apple_upload_minutes": 83.607,
+      "apple_upload_succeeded_at": "2026-09-29T07:28:59.420Z",
+      "upload_run_id": 36535759050,
+      "upload_minutes": 11.633,
+      "upload_runner_minutes": 10.25,
+      "build_number": 224,
+      "note": "Final candidate 72d29f0 passed all four required native jobs: Build, Photos bootstrap/real scan, both-OS runtime and three owning window UI operations. Product and native test source unchanged from first product candidate 05e76ec. Dark/light/320pt content/AX5 screenshots directly inspected. The first failed candidate and native diagnostic are retained; 20.05 minutes is not end-to-end task duration. Initial 50-65 minute plan was revised to 70-85 minutes after the stale test assertion required a new exact-SHA candidate."
+    },
     {
       "scope": "reviewed-tools-hub-ui-v1",
       "candidate_minutes": 18.85,

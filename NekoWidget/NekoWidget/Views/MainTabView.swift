@@ -2445,12 +2445,13 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty {
-                    LazyVGrid(columns: cardColumns, spacing: 14) {
+                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty || !setupWindows.isEmpty {
+                    LazyVGrid(columns: cardColumns, spacing: 22) {
                         ForEach(connectedWindows) { window in
                             windowCard(window)
                         }
                         ForEach(receivingPublicWindows) { source in publicCard(source) }
+                        ForEach(setupWindows) { window in windowCard(window) }
                     }
                     .accessibilityIdentifier("window-list-receiving")
                 }
@@ -2469,14 +2470,6 @@ private struct WindowListView: View {
 
                     if windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
-                    } else {
-                        if !setupWindows.isEmpty {
-                            VStack(spacing: 8) {
-                                ForEach(setupWindows) { window in
-                                    windowCard(window)
-                                }
-                            }
-                        }
                     }
 
                     if let message = model.operationErrorMessage {
@@ -2503,7 +2496,7 @@ private struct WindowListView: View {
                     connectionEntry
                 }
                 NavigationLink { discovery } label: {
-                    Image(systemName: "magnifyingglass")
+                    Image(systemName: "safari")
                 }
                 .accessibilityLabel("まどを探す")
                 .accessibilityIdentifier("window-list-discover")
@@ -2547,22 +2540,12 @@ private struct WindowListView: View {
         model.bootstrapRetryMessage ?? catalogLoadMessage
     }
 
-    @ViewBuilder
     private var connectionEntry: some View {
-        if setupWindows.count == 1, let pending = setupWindows.first {
-            Button { open(pending) } label: {
-                Image(systemName: "person.badge.plus")
-            }
-            .disabled(model.isWorking || pausesWindowChanges || switchingWindowID != nil)
-            .accessibilityLabel("\(pending.displayName)の設定を続ける")
-            .accessibilityIdentifier("window-list-connect")
-        } else {
-            NavigationLink { connectionOptions } label: {
-                Image(systemName: "person.badge.plus")
-            }
-            .accessibilityLabel("相手とつなぐ")
-            .accessibilityIdentifier("window-list-connect")
+        NavigationLink { connectionOptions } label: {
+            Image(systemName: "person.badge.plus")
         }
+        .accessibilityLabel("相手とつなぐ")
+        .accessibilityIdentifier("window-list-connect")
     }
 
     private var pausesWindowChanges: Bool {
@@ -2724,34 +2707,27 @@ private struct WindowListView: View {
             open(window)
         } label: {
             if isSetup {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(window.displayName)
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if windowErrors.contains(window.localWindowID) {
-                            Label("設定を開く", systemImage: "exclamationmark.circle")
-                                .font(.caption).foregroundStyle(.orange)
+                WindowPhotoCard(title: window.displayName, kind: .setup) {
+                    VStack(spacing: 18) {
+                        Image("ToolCat-tilt").resizable().scaledToFit()
+                            .frame(width: 58, height: 58).accessibilityHidden(true)
+                        if isSwitching {
+                            ProgressView()
                         } else {
-                            Text(windowPrimaryStatusLabel(for: window))
-                                .font(.caption).foregroundStyle(.secondary)
+                            Label(windowErrors.contains(window.localWindowID)
+                                  ? "設定を開く" : windowPrimaryStatusLabel(for: window),
+                                  systemImage: windowErrors.contains(window.localWindowID)
+                                  ? "exclamationmark.circle" : "chevron.right")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(windowErrors.contains(window.localWindowID)
+                                                 ? Color.orange : Color.accentColor)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    if isSwitching {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(minHeight: 44)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .contentShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 WindowPhotoCard(title: window.displayName, kind: .shared) {
                     windowCover(for: window)
@@ -2800,7 +2776,8 @@ private struct WindowListView: View {
                         .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 } else {
                     VStack(spacing: 12) {
-                        SubtleWindowThumbnail(showsSetupMark: false)
+                        Image("ToolCat-hide").resizable().scaledToFit()
+                            .frame(width: 58, height: 58)
                         Text(coverPlaceholder(for: window))
                             .font(.caption).foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -3164,13 +3141,15 @@ struct WindowListNavigationFixture: View {
                                refreshOfficialFeed: { try await model.refresh() },
                                previewOfficialFeed: { try await model.preview() },
                                publicWindows: sources)
+                    .frame(maxWidth: CommandLine.arguments.contains("--window-list-narrow") ? 320 : .infinity)
             }
             .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
         }
         .environment(\.dynamicTypeSize,
                      CommandLine.arguments.contains("--window-list-largest-text") ? .accessibility5 :
                      CommandLine.arguments.contains("--window-list-large-text") ? .accessibility3 : .large)
-        .preferredColorScheme(CommandLine.arguments.contains("--window-list-dark") ? .dark : nil)
+        .preferredColorScheme(CommandLine.arguments.contains("--window-list-dark") ? .dark :
+                              CommandLine.arguments.contains("--window-list-light") ? .light : nil)
     }
 }
 #endif
