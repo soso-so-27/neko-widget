@@ -20,6 +20,7 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDG
                           LOST_CAT_UX_SCOPE, LOST_CAT_PHOTO_TEST_NAMES,
                           EVACUATION_PATHS, EVACUATION_NEW_PATHS,
                           CARE_HANDOFF_PATHS, CARE_HANDOFF_NEW_PATHS,
+                          TOOLS_HUB_SCOPE, TOOLS_HUB_PATHS, TOOLS_HUB_COMPANIONS, TOOLS_HUB_BLOBS,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -495,8 +496,81 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
     return [p for p in git("diff", "--name-only", "--no-renames", "-z", base, env["GITHUB_SHA"]).split("\0") if p]
 
 
+TOOLS_HUB_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "84010d2201f2d5f13ef7c259420804824ddacdbf892b158b26fdcce9cc7758db",
+        "2e29aca8b84b029e0902d7d2cd21b195eabc26f9899bea5cb3341386adad659a"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "4a7fdb56a05eac295a00b48e15050ee3d17f4615b7e07f2ea7297651db788fe7",
+        "34fc85219cc6d50acc06aeeac68776f57c7c3d2c1c34661984bb327cf89cb72e"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "de80d3894669888398a4a793ee713f55df5c4c4fc82351707061acb231fbed2f",
+        "bc54a09139cef2411c937a8326adbe04e3e27c81f53f31d3181822180c9ac812"
+    ]
+}
+
+
+def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
+    """Closed product + pixel diff, with frozen CI companions on introduction."""
+    sources = source_paths(paths)
+    companions = sources & TOOLS_HUB_COMPANIONS
+    if (sources not in (TOOLS_HUB_PATHS, TOOLS_HUB_PATHS | TOOLS_HUB_COMPANIONS)
+            or len(paths) != len(set(paths))):
+        return False
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if raw[-1:] == [""]:
+        raw.pop()
+    if len(raw) != 2 * len(paths):
+        return False
+    seen = set()
+    for index in range(0, len(raw), 2):
+        fields, path = raw[index].split(), raw[index + 1]
+        if len(fields) != 5 or path not in paths or path in seen:
+            return False
+        seen.add(path)
+        if path in TOOLS_HUB_BLOBS:
+            before, after = TOOLS_HUB_BLOBS[path]
+            modes = [":000000", "100644"] if before == "0" * 40 else [":100644", "100644"]
+            status = "A" if before == "0" * 40 else "M"
+            if fields != modes + [before, after, status]:
+                return False
+        elif path in companions:
+            if fields[:2] != [":100644", "100644"] or fields[4] != "M":
+                return False
+        elif not is_handoff(path) or (fields[:2], fields[4]) not in (
+                ([":000000", "100644"], "A"), ([":100644", "100644"], "M")):
+            return False
+    if seen != set(paths):
+        return False
+    if companions:
+        if set(TOOLS_HUB_COMPANION_DIGESTS) != companions:
+            return False
+        for path, pair in TOOLS_HUB_COMPANION_DIGESTS.items():
+            before, after = (git("show", f"{ref}:{path}") for ref in (base, head))
+            if path == "NekoWidget/ci/plan-ios-ci.py":
+                literal = "TOOLS_HUB_COMPANION_DIGESTS = " + json.dumps(
+                    TOOLS_HUB_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+                if after.count(literal) != 1:
+                    return False
+                after = after.replace(literal, "TOOLS_HUB_COMPANION_DIGESTS = {}\n", 1)
+            if list(map(source_digest, (before, after))) != pair:
+                return False
+    return True
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if any(path.startswith("NekoWidget/NekoWidget/Assets.xcassets/ToolCat-") for path in sources):
+        try:
+            base = comparison_base(event, env)
+            if base and tools_hub_only(paths, base, env["GITHUB_SHA"]):
+                return TOOLS_HUB_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        # Do not let a partial/mutated fixed batch fall through as generic UI.
+        return FULL_SCOPE
     if sources and sources <= ORCHESTRATION_PATHS and not sources <= DEVELOPMENT_PATHS:
         try:
             base = comparison_base(event, env)

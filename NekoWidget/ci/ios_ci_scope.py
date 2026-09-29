@@ -28,6 +28,7 @@ LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
+TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
@@ -68,7 +69,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOLS_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1059,7 +1060,35 @@ def reviewed_care_handoff_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], CARE_HANDOFF_TESTS))
 
 
-MAPPED_PATHS = (CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# Exact reviewed presentation/assets in product 78a2c45 against main a178f8b.
+# Git blob pairs include binary pixels; no arbitrary Assets or fixture allowance.
+TOOLS_HUB_BLOBS = {
+    "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift": ("0744d172120eb952a6b45723fe8ad3201421fec1", "485bf145e2325f66e6fdf7014349949138a695d9"),
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": ("74264327a6da9bb8e854fd48f794b5384d03e076", "2be7515f47e86fa27c60cf98e5f6858c117ad5c0"),
+    MEMORY_TEST_PATH: ("d6f1f87a42aba8c632e59d9141f2a44b3fca7d01", "989c258a4ad9a66a02deed486b2b7ada15c78372"),
+}
+for _pose, _json, _png in (
+    ("hide", "c74f4f752227cd900084dd02eba17c457286241a", "468f65001194c03df20da6f15b99b8fe9970c508"),
+    ("peek", "5503acd2a2d7e0c6513061746a710d51d288167f", "dd135a34bd346204762362ef65804c7f77d6a284"),
+    ("side-eye", "800b10d3a11d7dc4f9948df37805234b196c234d", "f0f4fe2cff1bd246fcd31d6607b2b616c5ee688b"),
+    ("snug", "ababc5e9887fb353618932200ff3032ddd13f822", "c662fb814ef604d2a8ffc233a12f65edfb5568be"),
+    ("tilt", "16fd71957aa12f9801425609fc7838dc2d8293c0", "29aeb97a1593590c0d4bcb5a4e17864a81261a4c"),
+):
+    _directory = f"NekoWidget/NekoWidget/Assets.xcassets/ToolCat-{_pose}.imageset/"
+    TOOLS_HUB_BLOBS[_directory + "Contents.json"] = ("0" * 40, _json)
+    TOOLS_HUB_BLOBS[_directory + f"cat-{_pose}.png"] = ("0" * 40, _png)
+TOOLS_HUB_PATHS = frozenset(TOOLS_HUB_BLOBS)
+TOOLS_HUB_COMPANIONS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py",
+))
+TOOLS_HUB_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText",
+    "testShowcaseOpensSquareGalleryAndReturnsWithoutAuthentication",
+    "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
+))
+
+
+MAPPED_PATHS = (TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -1975,6 +2004,8 @@ def accepts_paths(scope: str, paths) -> bool:
         return sources == EVACUATION_PATHS
     if scope == CARE_HANDOFF_SCOPE:
         return sources == CARE_HANDOFF_PATHS
+    if scope == TOOLS_HUB_SCOPE:
+        return sources in (TOOLS_HUB_PATHS, TOOLS_HUB_PATHS | TOOLS_HUB_COMPANIONS)
     if scope == LOST_CAT_UX_SCOPE:
         return {LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH} <= sources and sources <= {
             LOST_CAT_PHOTO_PATH, LOST_CAT_STORE_PATH, MEMORY_TEST_PATH}
@@ -2132,6 +2163,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == TOOLS_HUB_SCOPE:
+        return TOOLS_HUB_TESTS
     if scope == EVACUATION_SCOPE:
         return EVACUATION_TESTS
     if scope == CARE_HANDOFF_SCOPE:
