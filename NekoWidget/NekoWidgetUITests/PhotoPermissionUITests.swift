@@ -1823,7 +1823,8 @@ final class SoloMemoriesUITests: XCTestCase {
             for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
             XCTAssertTrue(lost.isHittable)
             lost.tap()
-            XCTAssertTrue(app.navigationBars["どの子ですか？"].waitForExistence(timeout: 5))
+            // This harness has no registered cats; the real entry opens the editor directly.
+            XCTAssertTrue(app.navigationBars["迷子のとき"].waitForExistence(timeout: 5))
             capture("tools-lost-cat-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
             let evacuation = app.buttons["tools-evacuation-open"]
