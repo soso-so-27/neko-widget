@@ -19,6 +19,7 @@ from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only,
 from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           LOST_CAT_UX_SCOPE, LOST_CAT_PHOTO_TEST_NAMES,
                           EVACUATION_PATHS, EVACUATION_NEW_PATHS,
+                          CARE_HANDOFF_PATHS, CARE_HANDOFF_NEW_PATHS,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -533,6 +534,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         head = env["GITHUB_SHA"]
         ci_only = sources <= CI_SELECTION_PATHS
         evacuation_only = sources == EVACUATION_PATHS
+        care_handoff_only = sources == CARE_HANDOFF_PATHS
         icon_only = icon_paths_only(sources)
         membership_offer_only = sources == (MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST})
         membership_access_only = sources == (MEMBERSHIP_ACCESS_PATHS | MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST})
@@ -571,6 +573,10 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             else:
                 valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
                 if evacuation_only and path in EVACUATION_NEW_PATHS:
+                    valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
+                    if valid:
+                        added_sources.add(path)
+                if care_handoff_only and path in CARE_HANDOFF_NEW_PATHS:
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)
