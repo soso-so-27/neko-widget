@@ -486,7 +486,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     private var productScreens: some View {
         mainTabContent
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
-        .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark : nil)
+        .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark
+                              : CommandLine.arguments.contains("--tools-hub-light") ? .light : nil)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
         .task {
             if ["excluded", "scoped", "available", "rediscovery"].contains(widgetRecoveryCase ?? "") {

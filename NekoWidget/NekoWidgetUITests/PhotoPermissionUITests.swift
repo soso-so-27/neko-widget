@@ -1788,7 +1788,7 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launchArguments = ["--app-store-screenshot-fixture",
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
-                + (appearance == "dark" ? ["--tools-hub-dark"] : [])
+                + [appearance == "dark" ? "--tools-hub-dark" : "--tools-hub-light"]
             app.launch()
             XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
             let identified = app.buttons["main-tab-tools"]
@@ -1822,6 +1822,10 @@ final class SoloMemoriesUITests: XCTestCase {
             // The lower row is intentionally offscreen in the largest text size.
             for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
             XCTAssertTrue(lost.isHittable)
+            lost.tap()
+            XCTAssertTrue(app.navigationBars["どの子ですか？"].waitForExistence(timeout: 5))
+            capture("tools-lost-cat-entry-\(appearance)")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
             let evacuation = app.buttons["tools-evacuation-open"]
             for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
             XCTAssertTrue(evacuation.isHittable)
