@@ -499,11 +499,15 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
 TOOLS_HUB_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "84010d2201f2d5f13ef7c259420804824ddacdbf892b158b26fdcce9cc7758db",
-        "2e29aca8b84b029e0902d7d2cd21b195eabc26f9899bea5cb3341386adad659a"
+        "b100fd90b944382431ceb7e38c12c8c6b967f9a13ee2f0484a06f507ae61315c"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "4a7fdb56a05eac295a00b48e15050ee3d17f4615b7e07f2ea7297651db788fe7",
         "34fc85219cc6d50acc06aeeac68776f57c7c3d2c1c34661984bb327cf89cb72e"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "31971b198636c647edefca55f0c04eae52648ccc13b0a4a18e560a99c4efd261",
+        "6f5eb1d0a3bac755c73e2b0333a86053576d30f8092619ef43beaaf7181e3675"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "de80d3894669888398a4a793ee713f55df5c4c4fc82351707061acb231fbed2f",

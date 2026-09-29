@@ -1079,7 +1079,7 @@ for _pose, _json, _png in (
     TOOLS_HUB_BLOBS[_directory + f"cat-{_pose}.png"] = ("0" * 40, _png)
 TOOLS_HUB_PATHS = frozenset(TOOLS_HUB_BLOBS)
 TOOLS_HUB_COMPANIONS = frozenset("NekoWidget/ci/" + name for name in (
-    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py",
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-ci-lanes.py",
 ))
 TOOLS_HUB_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText",
