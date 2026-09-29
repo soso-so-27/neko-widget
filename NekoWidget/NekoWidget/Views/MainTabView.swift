@@ -2714,13 +2714,14 @@ private struct WindowListView: View {
                         if isSwitching {
                             ProgressView()
                         } else {
-                            Label(windowErrors.contains(window.localWindowID)
-                                  ? "設定を開く" : windowPrimaryStatusLabel(for: window),
-                                  systemImage: windowErrors.contains(window.localWindowID)
-                                  ? "exclamationmark.circle" : "chevron.right")
+                            VStack(spacing: 8) {
+                                Text(windowPrimaryStatusLabel(for: window))
+                                    .foregroundStyle(windowErrors.contains(window.localWindowID)
+                                                     ? Color.orange : Color.primary)
+                                Label("設定を開く", systemImage: "chevron.right")
+                                    .foregroundStyle(Color.accentColor)
+                            }
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(windowErrors.contains(window.localWindowID)
-                                                 ? Color.orange : Color.accentColor)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

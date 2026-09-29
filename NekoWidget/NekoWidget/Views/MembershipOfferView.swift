@@ -56,6 +56,7 @@ struct MembershipOfferView: View {
 
                 offerDetails
                 actions
+                membershipDetails
                 legalLinks
             }
             .frame(maxWidth: 440)
@@ -189,6 +190,33 @@ struct MembershipOfferView: View {
             VStack(spacing: 12) { legalLinkContent }
         }
         .font(.footnote)
+    }
+
+    private var membershipDetails: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("無料で使えること").fontWeight(.semibold)
+                    Text("写真・お気に入りの閲覧、保存済みのメモの閲覧・編集・書き出しは、会員でなくても利用できます。")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("会員の有効期間が終わると").fontWeight(.semibold)
+                    Text("自動アルバム、ウィジェットの写真更新、新しいメモ・まどの作成は利用できなくなります。")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("招待相手への影響").fontWeight(.semibold)
+                    Text("まどを支えている会員の有効期間が終わると、お互いに新しい写真を送れなくなります。受信済みの写真は、通常の保存期間内で引き続き見られます。")
+                }
+            }
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 8)
+        } label: {
+            Text("無料で使えること・会員期間の終了後")
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.footnote)
+        .accessibilityIdentifier("membership-offer-details")
     }
 
     @ViewBuilder private var legalLinkContent: some View {
