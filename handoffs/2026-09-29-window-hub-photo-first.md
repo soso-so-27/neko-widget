@@ -50,3 +50,28 @@ if that route exceeds it. Record the first candidate time and failed attempts.
 
 Current state: implementation prepared; native rendering, required CI, mainline
 integration and internal Apple upload are not yet verified.
+
+## Candidate and route decisions
+
+- First product candidate: `05e76ec`, 2026-09-29 15:05:23 JST. All elapsed
+  accounting starts here, not at the final green run.
+- One user-authorized, history-free reviewer found no P1/P2 in the product or
+  diagnostic extension. Minimum owning methods are the three above.
+- Local development-flow checks passed (119.5 seconds) at `2717537`.
+  The normal selector would require full-v1 (observed 64.43-97.92 minutes).
+  That normal run was NOT launched. A bounded manual diagnostic, non-release,
+  was dispatched instead: `36529924885`, exact source `2717537`, three methods.
+- Prepare a separately reviewed closed window-hub scope during that probe.
+  Exact three product git-blob pairs and six full CI companion pairs are bound;
+  unknown inputs retain the pre-existing conservative selection. Build, real
+  Photos bootstrap/scan, both-OS runtime and all three owning operations remain.
+  Diagnostic results are not reused as the required normal candidate CI.
+- Planning references after successful probing: prior three-operation tools
+  scope 18.85 minutes, internal Apple upload 9.267 minutes. This scope is new,
+  so these are references, not its measured duration. Expect roughly 50-65
+  minutes from first candidate if this probe succeeds, including preparation,
+  review, required CI and upload; rework/queue time can exceed that.
+- Native evidence limitations to report: 320pt constrains list content, not
+  device chrome; fixture names do not cover arbitrary long names; paired-account
+  switching is unchanged and not exercised by the already-active setup fixture.
+  No claim of hardware testing or live feed replenishment.

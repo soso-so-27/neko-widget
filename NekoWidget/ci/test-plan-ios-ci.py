@@ -25,6 +25,68 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_window_hub_requires_frozen_product_and_complete_ci_boundary(self):
+        product = dict(scope.WINDOW_HUB_BLOBS)
+        pairs = {path: ("before " + path, "after " + path) for path in scope.WINDOW_HUB_COMPANIONS}
+        selector = "NekoWidget/ci/plan-ios-ci.py"
+        empty = "WINDOW_HUB_COMPANION_DIGESTS = {}\n"
+        pairs[selector] = (pairs[selector][0], empty + "# reviewed selector\n")
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in pairs.items()}
+        literal = "WINDOW_HUB_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        pairs[selector] = (pairs[selector][0], pairs[selector][1].replace(empty, literal))
+        rows = {path: f":100644 100644 {before} {after} M" for path, (before, after) in product.items()}
+        rows.update({path: f":100644 100644 {'c' * 40} {'d' * 40} M" for path in pairs})
+
+        def verify(candidate, paths=None, extra="", mutated=None):
+            def git(*args):
+                if args[0] == "diff":
+                    return "".join(header + "\0" + path + "\0" for path, header in candidate.items()) + extra
+                if args[0] == "show":
+                    ref, path = args[1].split(":", 1)
+                    return pairs[path][int(ref == self.sha)] + ("# changed" if path == mutated else "")
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git), \
+                    patch.object(planner, "WINDOW_HUB_COMPANION_DIGESTS", bindings):
+                return planner.window_hub_only(list(candidate) if paths is None else paths, "b" * 40, self.sha)
+
+        self.assertTrue(verify(rows))
+        self.assertTrue(verify({path: rows[path] for path in product}))
+        with patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "window_hub_only", return_value=True):
+            self.assertEqual(planner.runtime_scope(list(rows), {}, self.env), scope.WINDOW_HUB_SCOPE)
+        expected = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.WINDOW_HUB_SCOPE)
+        self.assertEqual(planner.required_jobs(list(rows), scope.WINDOW_HUB_SCOPE), expected)
+        self.assertEqual(scope.lanes(scope.WINDOW_HUB_SCOPE), ("runtime", "app-ui"))
+        source = (Path(__file__).resolve().parents[2] / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8")
+        self.assertEqual(scope.native_tests(scope.WINDOW_HUB_SCOPE), scope.diagnostic_tests(
+            "OfficialWindowUITests", ",".join(test.rsplit("/", 1)[-1] for test in scope.WINDOW_HUB_TESTS), source))
+        self.assertEqual(len(scope.WINDOW_HUB_TESTS), 3)
+        for path in rows:
+            missing = dict(rows)
+            del missing[path]
+            self.assertFalse(verify(missing), path)
+            for mode in ("100755", "120000", "160000"):
+                changed = dict(rows)
+                changed[path] = changed[path].replace("100644", mode)
+                self.assertFalse(verify(changed), (path, mode))
+        for path, (before, after) in product.items():
+            for blob in (before, after):
+                changed = dict(rows)
+                changed[path] = changed[path].replace(blob, "e" * 40)
+                self.assertFalse(verify(changed), path)
+        for path in pairs:
+            self.assertFalse(verify(rows, mutated=path), path)
+        for unknown in ("NekoWidget/Shared/Models/Photo.swift", ".github/workflows/ios-build.yml",
+                        "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"):
+            self.assertFalse(verify(dict(rows, **{unknown: f":000000 100644 {'0' * 40} {'e' * 40} A"})))
+        first = next(iter(rows))
+        self.assertFalse(verify(rows, paths=list(rows) + [first]))
+        self.assertFalse(verify(rows, extra=rows[first] + "\0" + first + "\0"))
+        handoff = dict(rows, **{"handoffs/window-hub.md": f":000000 100644 {'0' * 40} {'e' * 40} A"})
+        self.assertTrue(verify(handoff))
+        handoff["handoffs/window-hub.md"] = handoff["handoffs/window-hub.md"].replace("100644", "120000")
+        self.assertFalse(verify(handoff))
+
     def test_tools_hub_requires_exact_pixels_sources_and_complete_companions(self):
         product = dict(scope.TOOLS_HUB_BLOBS)
         before_after = {path: ("before " + path, "after " + path)

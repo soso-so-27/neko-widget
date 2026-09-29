@@ -21,6 +21,7 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDG
                           EVACUATION_PATHS, EVACUATION_NEW_PATHS,
                           CARE_HANDOFF_PATHS, CARE_HANDOFF_NEW_PATHS,
                           TOOLS_HUB_SCOPE, TOOLS_HUB_PATHS, TOOLS_HUB_COMPANIONS, TOOLS_HUB_BLOBS,
+                          WINDOW_HUB_SCOPE, WINDOW_HUB_PATHS, WINDOW_HUB_COMPANIONS, WINDOW_HUB_BLOBS,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -516,11 +517,42 @@ TOOLS_HUB_COMPANION_DIGESTS = {
 }
 
 
-def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
+WINDOW_HUB_COMPANION_DIGESTS = {
+    ".github/workflows/ios-ui-diagnostic.yml": [
+        "922c3e21dfe35347d4d974dfdffa811c4b38317d1503c7cbbfe7c78b27510f70",
+        "ea83e077b3025b357e1cc326baecfb059cbe263262cbf15099d68626c219eeed"
+    ],
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "c71d5f01c1ced02cb0770cafcf5e3eae13471dcc09321c6b56e2f2e9530570f0",
+        "d5abd6d01e23afa4a35e5884b2b29f2e350ec04604961d78dd2ac7790b7c8480"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "9bf31d0bd87f6f8512bb5b0bf2a54f35cdb83583edd7190aff76f424226d5517",
+        "9de80bf46dfea7f9413e764b1604689f8fcbf491829bb67560b573e1b3f299d6"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "6f5eb1d0a3bac755c73e2b0333a86053576d30f8092619ef43beaaf7181e3675",
+        "d782918dba31003281459268d9405d68216dadcf2ba0b82ce8f7c345b2e84ce6"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "bc54a09139cef2411c937a8326adbe04e3e27c81f53f31d3181822180c9ac812",
+        "f0f6839bca4dc19013ed9a82b3acf16438d8bfb7257396cd9815794ca04e3098"
+    ],
+    "NekoWidget/ci/test-widget-ci-scope.py": [
+        "c894b36aed4843c2c69776e945c69061efb80c082ee9eaa0cbef4bc690065811",
+        "b5723df1f6b7ea45cee60f4113fe918577e6507294b3824dae220f55b28fca5f"
+    ]
+}
+
+
+def reviewed_hub_only(paths: list[str], base: str, head: str, *, product_blobs: dict,
+                      companion_paths: frozenset, companion_digests: dict,
+                      companion_name: str) -> bool:
     """Closed product + pixel diff, with frozen CI companions on introduction."""
     sources = source_paths(paths)
-    companions = sources & TOOLS_HUB_COMPANIONS
-    if (sources not in (TOOLS_HUB_PATHS, TOOLS_HUB_PATHS | TOOLS_HUB_COMPANIONS)
+    products = frozenset(product_blobs)
+    companions = sources & companion_paths
+    if (sources not in (products, products | companion_paths)
             or len(paths) != len(set(paths))):
         return False
     raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
@@ -534,8 +566,8 @@ def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
         if len(fields) != 5 or path not in paths or path in seen:
             return False
         seen.add(path)
-        if path in TOOLS_HUB_BLOBS:
-            before, after = TOOLS_HUB_BLOBS[path]
+        if path in product_blobs:
+            before, after = product_blobs[path]
             modes = [":000000", "100644"] if before == "0" * 40 else [":100644", "100644"]
             status = "A" if before == "0" * 40 else "M"
             if fields != modes + [before, after, status]:
@@ -549,23 +581,46 @@ def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
     if seen != set(paths):
         return False
     if companions:
-        if set(TOOLS_HUB_COMPANION_DIGESTS) != companions:
+        if set(companion_digests) != companions:
             return False
-        for path, pair in TOOLS_HUB_COMPANION_DIGESTS.items():
+        for path, pair in companion_digests.items():
             before, after = (git("show", f"{ref}:{path}") for ref in (base, head))
             if path == "NekoWidget/ci/plan-ios-ci.py":
-                literal = "TOOLS_HUB_COMPANION_DIGESTS = " + json.dumps(
-                    TOOLS_HUB_COMPANION_DIGESTS, indent=4, sort_keys=True) + "\n"
+                literal = companion_name + " = " + json.dumps(
+                    companion_digests, indent=4, sort_keys=True) + "\n"
                 if after.count(literal) != 1:
                     return False
-                after = after.replace(literal, "TOOLS_HUB_COMPANION_DIGESTS = {}\n", 1)
+                after = after.replace(literal, companion_name + " = {}\n", 1)
             if list(map(source_digest, (before, after))) != pair:
                 return False
     return True
 
 
+def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
+    return reviewed_hub_only(paths, base, head, product_blobs=TOOLS_HUB_BLOBS,
+                             companion_paths=TOOLS_HUB_COMPANIONS,
+                             companion_digests=TOOLS_HUB_COMPANION_DIGESTS,
+                             companion_name="TOOLS_HUB_COMPANION_DIGESTS")
+
+
+def window_hub_only(paths: list[str], base: str, head: str) -> bool:
+    return reviewed_hub_only(paths, base, head, product_blobs=WINDOW_HUB_BLOBS,
+                             companion_paths=WINDOW_HUB_COMPANIONS,
+                             companion_digests=WINDOW_HUB_COMPANION_DIGESTS,
+                             companion_name="WINDOW_HUB_COMPANION_DIGESTS")
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if WINDOW_HUB_PATHS <= sources:
+        try:
+            base = comparison_base(event, env)
+            if base and window_hub_only(paths, base, env["GITHUB_SHA"]):
+                return WINDOW_HUB_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        # An unmatched batch still has to pass the pre-existing conservative
+        # selector; this scope must not change other reviewed batch behavior.
     if any(path.startswith("NekoWidget/NekoWidget/Assets.xcassets/ToolCat-") for path in sources):
         try:
             base = comparison_base(event, env)
