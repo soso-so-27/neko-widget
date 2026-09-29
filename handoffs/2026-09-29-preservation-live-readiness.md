@@ -7,7 +7,7 @@
 - 基点 `02ca0418d2eaa30074298c616bce92af2f9ec8b6` の専用worktree。既存の汚れた研究checkoutは変更していない。
 - Cloudflareの保管staging Workerは公開routeなし・受付OFF。Apple認証用secretとS3書込専用の資格情報は追加済みだが、pilot本人一覧は未登録。D1はowner/record各0、pilot enabled=0、復旧policyの2条件=0。従って実写真を受け付けない。
 - private billing WorkerはOFF。共有staging D1はbilling account=0、active key=0、effective entitlement gate=0。実会員照合の成功はまだ不可能。nativeのPlus billingも既定OFF。
-- private KMS WorkerにはKMSとcaller用secret名があり、KMS専用IAMの新しい鍵を登録した。旧鍵はInactiveのまま。KMS WorkerとJPEG Workerは設定上OFF。S3の専用書込資格情報は保管Workerへ登録済みで、実際の書込・読戻しは未検証。
+- private KMS WorkerにはKMSとcaller用secret名があり、KMS専用IAMの新しい鍵を登録した。旧鍵はInactiveのまま。KMS WorkerとJPEG Workerは設定上OFF。S3の専用書込資格情報は保管Workerへ登録済みで、合成1件の書込・版読戻しは成功。実写真・新端末復元は未検証。
 - Apple Developer `jp.nekowidget.app` App IDはSign In with Appleが未設定だった。利用者承認後にprimary App IDとして有効化し、再表示でONを確認。これで既存App StoreアプリプロファイルがInvalidになったため、同じ証明書を選んで再生成した。新プロファイルはApp ID一致、Apple Sign In entitlement `Default`、証明書1件をダウンロード現物で確認。AppleのProfiles一覧ではInvalidが消えた。GitHub `testflight` environmentの `APP_PROVISIONING_PROFILE_BASE64` を更新し、更新時刻を照合した。Widget/Shareのプロファイル・secretは変更していない。
 - 利用者の続行指示を受け、AppleにNekoWidget App IDだけを対象とするSign in with Apple専用キー `KRG3JMSBCD` を登録。秘密鍵を一度だけDownloadsへ取得し、PEM形式とローカルACLを確認した。鍵本文は会話・Git・ログへ出していない。Cloudflareの同じ個人アカウントを照合して、非公開保管Workerの `APPLE_CREDENTIALS_JSON` に登録。secret名が存在し、現行deploymentの `PRESERVATION_ENABLED=NO` / `CLEANUP_ENABLED=NO` を再確認した。AWS SSMの暗号化控えが完成するまでローカルの一度限りの原本を消さない。
 - AWS CLIのstagingプロファイルはsession期限切れ。最初の再ログインは既定の会社ブラウザを開いてしまい、利用者の指摘で中止した。続く `aws login --remote` のリンクは、利用者の個人用ブラウザでも2回連続でAWS側の400 Bad Requestになった。2回目はCodex側でリンクを開いていないため、単なる再利用が原因との先の説明は誤り。再試行は中止し、現在の鍵・bucket・IAMはこのバッチでは未確認。CLIプロファイルはこのアカウントのroot login_sessionだけで、別の有効なAWSプロファイルは見つからなかった。厳密な400原因は未確定。
@@ -36,8 +36,20 @@ KMSの実接続用には、期限切れの管理者CLI sessionや旧Inactive鍵�
 
 ## 次の成立順
 
+### S3実接続の次候補（2026-09-29 18:25 JSTごろ開始）
+
+変更する挙動は、公開経路のない保管staging Workerを一時的な合成S3検査入口へ切り替え、同Workerの既存のS3 secretでランダムな32 byteを1件だけPUT→版指定GET→版一覧で確認した後、通常の受付OFFコードへ自動復帰すること。実写真・D1 owner・有料会員は触らない。検査用ワンタイムtokenは短時間の一時varだけで、通常配備へ戻すと消える。合成オブジェクトは書込主体に削除権限がないため残し、keyとversionを記録する。
+
+直接証拠は専用entrypointの型検査、PowerShell構文検査、遠隔配備候補のWrangler dry-run成功。S3実操作、remote service bindingの到達、実行後の通常entrypointへの復帰は未確認。局所dev起動と2回の非公開配備を含む予想は数分で、iOS CI/TestFlightは対象外。失敗時は最初のHTTP段階と合成keyを記録し、正常復帰が確認できない場合はincidentとして扱う。
+
+初回実行はローカルWranglerに `--local` を明示したため、`remote: true` のservice bindingが無効となりHTTP 503（対象Workerがローカルで見つからない）で停止。これは検査環境の起動指定の誤りで、S3へは未到達。自動復帰で通常entrypointと3 gateのNO、ワンタイムtoken削除を遠隔で確認。次回は `--local` を外し、同じ合成1件だけ再実行する。
+
+`--local` を外した次の実行はprivate binding経由でWorkerへ到達したが、`putVersioned` 内で503となった。これはS3 PUTそのものか、その後のHEADかを区別できないエラー応答だった。合成keyは `recovery/v1/2ab1b06d-0395-463f-9be7-143bad87e5ee/photo/3059a17e-2433-46fb-b7d6-a18868bb8880`。この実行のS3実応答・残存有無は未確認。検査用入口の自動復帰と3 gateのNOを確認した。
+
+AWS応答段階だけを返す診断を付けた再実行で、同じWorkerの登録済み資格情報から合成32 byteの版付きPUT、版指定GETの内容一致、owner版一覧の当該version一致を確認。`S3_SYNTHETIC_ROUND_TRIP_PASS` のkeyは `recovery/v1/3ff2fb4d-5a86-486f-8c43-1caae8a53069/photo/1f768bcf-614e-4258-be65-0319e36b4fc9`、versionは `3HADRtH5Z1Y14n5pn_0JixaU0YPbduWk`。合成objectは意図的に保持する。通常entrypointへ戻し、一時tokenの消失と受付/cleanup/復旧コピーの3 gate `NO` を再読取した。最初の実S3失敗の原因は不明であり、単回成功から安定稼働までは断定しない。S3実接続の初候補から成功・復帰まで約15分。実写真・会員・別端末復元は依然未検証。
+
 1. Apple専用キーを登録し、private keyを一度だけ取得して保管Workerのsecretへ入れる。ここまでは済んだ。AWSの暗号化控えは未完了。tokenや鍵本文をログへ出さない。
-2. [AWS接続の見直し](2026-09-29-preservation-aws-access.md)に従う同一アカウント・bucket versioning/公開遮断・KMS/IAM状態の照合、S3書込専用主体とKMS専用主体のsecret登録は済んだ。受付OFFのままS3合成1件の書込・版読戻しと残存確認、KMSの実Encrypt/Decryptを行う。管理者の一時CLIログインはアプリ運用経路に使わない。
+2. [AWS接続の見直し](2026-09-29-preservation-aws-access.md)に従う同一アカウント・bucket versioning/公開遮断・KMS/IAM状態の照合、S3書込専用主体とKMS専用主体のsecret登録、受付OFFでのS3合成1件の版付き書込・読戻し、KMSの実Encrypt/Decryptは済んだ。前段のS3失敗1回の原因と残存有無は未確認。Apple専用鍵の暗号化控えも未完。管理者の一時CLIログインはアプリ運用経路に使わない。
 3. 有料アプリ契約がActiveになり、商品・Sandbox購入が用意された後、実在するBillingAccountIDとApple側の正当なPlus権利を通す。`active`の仮置きでは済ませない。pilot本人HMACはApple検証済みsubjectからのみ作る。
 4. 受付・復旧policy・会員/JPEG/KMSのgateを限定7日/最大3人の設定と共に結線して、1件保存→同ID読戻し→新session/別端末→ZIPを実証する。未達ならONにしない。
 
