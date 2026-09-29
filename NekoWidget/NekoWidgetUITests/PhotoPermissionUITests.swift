@@ -1601,25 +1601,33 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["まず探す・届け出る"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["仕上がりを確認"].isEnabled)
         XCTAssertFalse(app.buttons["日時と場所を消す"].exists)
+        let fieldOrder = ["lost-cat-name", "lost-cat-features", "lost-cat-collar", "lost-cat-place", "lost-cat-contact"]
+        var lastFieldIndex = 0
         func field(_ name: String) -> XCUIElement {
             let element = app.descendants(matching: .any).matching(identifier: name).firstMatch
+            let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             for _ in 0..<10 {
-                if element.isHittable { return element }
-                // Drag inside the visible form, not across the keyboard. A fast
-                // whole-screen swipe can move a field behind the navigation bar.
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
                 let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                // isHittable can be true even when the floating bottom action
+                // covers the field's centre. Tap only in the visible form band.
+                if element.exists, element.isHittable,
+                   element.frame.midY > top + 8, element.frame.midY < bottom - 8 {
+                    lastFieldIndex = index
+                    return element
+                }
                 let upper = top + (bottom - top) * 0.25
                 let lower = top + (bottom - top) * 0.70
-                let movesUp = !element.exists || element.frame.midY > top
+                let movesUp = element.exists ? element.frame.midY >= bottom - 8 : index >= lastFieldIndex
                 let origin = app.coordinate(withNormalizedOffset: .zero)
-                let start = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                // Use the form margin, so a multiline editor doesn't consume the drag.
+                let start = origin.withOffset(CGVector(dx: app.frame.width - 10,
                     dy: movesUp ? lower : upper))
-                let end = origin.withOffset(CGVector(dx: app.frame.width / 2,
+                let end = origin.withOffset(CGVector(dx: app.frame.width - 10,
                     dy: movesUp ? upper : lower))
                 start.press(forDuration: 0.05, thenDragTo: end)
             }
-            XCTAssertTrue(element.isHittable, name)
+            XCTFail("Input did not reach the visible form band: \(name)")
             return element
         }
         for (name, value) in [("lost-cat-name", "むぎ"),
