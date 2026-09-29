@@ -1441,6 +1441,81 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testCareHandoffUnregisteredCatSavesAtLargeText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--care-handoff-ui-fixture", "--ux-large-text", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_CARE_FIXTURE_KEY"] = UUID().uuidString
+        app.launchEnvironment["NEKO_CARE_EMPTY"] = "1"
+        app.launch()
+        let add = app.buttons["care-add-cat"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        for _ in 0..<4 where !add.isHittable { app.swipeUp() }
+        add.tap()
+        let name = app.textFields["care-cat-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("こはく")
+        app.buttons["入力を閉じる"].tap()
+        // SwiftUI's offscreen Form rows are lazy; absence is not a different input type.
+        let food = app.textFields["care-meal-food-0"]
+        for _ in 0..<8 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        food.tap(); food.typeText("いつものフード")
+        app.buttons["入力を閉じる"].tap()
+        capture("care-unregistered-labeled-inputs-large-text")
+        app.terminate(); app.launch()
+        let saved = app.buttons.containing(.staticText, identifier: "こはく").firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        for _ in 0..<4 where !saved.isHittable { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["いつものフード"].exists)
+        XCTAssertFalse(app.staticTexts["care-save-error"].exists)
+        capture("care-unregistered-restored-large-text")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCareHandoffSelectionPrivacyAndPDF() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--care-handoff-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_CARE_FIXTURE_KEY"] = UUID().uuidString
+        app.launch()
+        let boundaries = app.staticTexts["care-boundary-result"]
+        XCTAssertTrue(boundaries.waitForExistence(timeout: 10))
+        XCTAssertEqual(boundaries.label, "境界検証成功")
+        capture("care-handoff-home")
+        app.buttons["出力を確認"].tap()
+        XCTAssertTrue(app.scrollViews["care-rendered-output"].waitForExistence(timeout: 5))
+        capture("care-generated-image")
+        app.swipeUp(); capture("care-generated-pdf-last-page")
+        app.terminate(); app.launch()
+        let configure = app.buttons["care-disclosure-open"]
+        XCTAssertTrue(configure.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !configure.isHittable { app.swipeUp() }
+        configure.tap()
+        let preview = app.buttons["care-preview-open"]
+        XCTAssertFalse(preview.isEnabled)
+        let chosenCat = app.buttons["care-select-C0260929-0000-0000-0000-000000000001"]
+        chosenCat.tap()
+        XCTAssertEqual(chosenCat.value as? String, "選択済み")
+        XCTAssertTrue(preview.isEnabled)
+        XCTAssertEqual(app.switches["care-disclose-health"].value as? String, "0")
+        XCTAssertEqual(app.switches["care-disclose-contacts"].value as? String, "0")
+        capture("care-handoff-disclosure")
+        preview.tap()
+        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["むぎ"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["そら"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
+        capture("care-handoff-selected-preview")
+        app.buttons["care-share-pdf"].tap()
+        app.buttons["PDFを作って渡す"].tap()
+        XCTAssertTrue(app.otherElements["ShareSheet.RemoteContainerView"].firstMatch.waitForExistence(timeout: 10))
+        capture("care-handoff-pdf-share")
+        app.terminate()
+    }
+
+    @MainActor
     func testEvacuationPackingPersistsAndPrivateFieldsStayOutOfPreview() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1677,9 +1752,18 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("うちの子を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
-            let care = app.descendants(matching: .any)["tools-care-unavailable"]
+            let care = app.buttons["tools-care-open"]
             XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)
-            for identifier in ["tools-care-unavailable", "tools-vet-unavailable"] {
+            for _ in 0..<5 where !care.isHittable { app.swipeUp() }
+            XCTAssertTrue(care.isHittable)
+            care.tap()
+            XCTAssertTrue(app.navigationBars["預けるとき"].waitForExistence(timeout: 5))
+            let addCare = app.buttons["care-add-cat"]
+            for _ in 0..<5 where !addCare.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(addCare.isHittable)
+            capture("tools-care-entry-\(largeText ? "large" : "standard")")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            for identifier in ["tools-vet-unavailable"] {
                 let tile = app.descendants(matching: .any)[identifier]
                 XCTAssertTrue(tile.exists, identifier)
                 XCTAssertTrue(tile.label.contains("準備中"), identifier)
