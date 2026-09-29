@@ -1675,7 +1675,16 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.textFields["lost-cat-name"].waitForExistence(timeout: 5))
         XCTAssertEqual(field("lost-cat-features").value as? String, overLimit)
         let restoredFeatures = field("lost-cat-features")
-        restoredFeatures.tap(); restoredFeatures.typeText(XCUIKeyboardKey.delete.rawValue)
+        // A tap after relaunch doesn't promise a caret at the end. Select the
+        // existing text explicitly, as a user replacing the description would.
+        restoredFeatures.tap()
+        restoredFeatures.press(forDuration: 1.2)
+        let selectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])
+        ).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+        selectAll.tap()
+        restoredFeatures.typeText(String(repeating: "茶", count: 200))
         XCTAssertEqual((restoredFeatures.value as? String)?.count, 200)
         app.buttons["仕上がりを確認"].tap()
         XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
