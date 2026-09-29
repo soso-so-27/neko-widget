@@ -48,13 +48,15 @@ KMSの実接続用には、期限切れの管理者CLI sessionや旧Inactive鍵�
 
 AWS応答段階だけを返す診断を付けた再実行で、同じWorkerの登録済み資格情報から合成32 byteの版付きPUT、版指定GETの内容一致、owner版一覧の当該version一致を確認。`S3_SYNTHETIC_ROUND_TRIP_PASS` のkeyは `recovery/v1/3ff2fb4d-5a86-486f-8c43-1caae8a53069/photo/1f768bcf-614e-4258-be65-0319e36b4fc9`、versionは `3HADRtH5Z1Y14n5pn_0JixaU0YPbduWk`。合成objectは意図的に保持する。通常entrypointへ戻し、一時tokenの消失と受付/cleanup/復旧コピーの3 gate `NO` を再読取した。最初の実S3失敗の原因は不明であり、単回成功から安定稼働までは断定しない。S3実接続の初候補から成功・復帰まで約15分。実写真・会員・別端末復元は依然未検証。
 
-個人AWS Consoleの `recovery/v1/` 一覧には成功したownerフォルダ1件だけが表示され、先の失敗keyに対応する現行objectは見えない。過去versionや失敗のHTTP原因はこの画面では証明していない。Apple専用鍵の復旧用パラメータは利用者の作成後に個人AWS `164892691568` の東京リージョンで再読取し、指定名 `/neko/preservation/staging/apple-sign-in-private-key-v1`、種類 `SecureString`、値の伏字表示、version 1を確認した。復号化チェックは押しておらず、値の一致とKMSキーIDは未確認。鍵本文をモデル出力やshellログへ出さず、ローカルの一度限りの原本は維持する。
+個人AWS Consoleの `recovery/v1/` 一覧には成功したownerフォルダ1件だけが表示され、先の失敗keyに対応する現行objectは見えない。過去versionや失敗のHTTP原因はこの画面では証明していない。Apple専用鍵の復旧用パラメータは利用者の作成後に個人AWS `164892691568` の東京リージョンで再読取し、指定名 `/neko/preservation/staging/apple-sign-in-private-key-v1`、種類 `SecureString`、値の伏字表示、version 1を確認した。続いて個人AWS CloudShellから値を復号したままパイプ内でPEM本体をDERへ戻してSHA-256を計算し、ローカル原本の同じDERハッシュと一致した。鍵本文は画面・会話・Git・ログに出していない。SSMのKeyIdは `alias/aws/ssm` と確認した。ローカルの一度限りの原本は維持する。
 
 App Store Connectの契約一覧を再読取すると無料アプリ契約のみで、有料アプリ契約はない。Apple Developer Program使用許諾契約の更新もAccount Holderの確認待ち。`ねこのまど` に審査前グループ `ねこのまど Plus`（ID `22424520`）と月額商品 `jp.nekowidget.plus.monthly`（Apple ID `6817296251`、期間1か月）を作成した。価格・無料期間・配信地域・顧客向け説明は未設定、審査提出なし、実課金なし。既存の会員仕様で980円・初回7日は検証案なので販売条件とはしない。Apple公式はPaid Apps AgreementがActiveでないとSandboxの実購入試験もできないとしている。
 
+利用者は更新契約に「同意した」と報告したが、その後のApple Developerアカウント画面には2026年10月2日期限の同意案内が残り、契約履歴の同意日は2026年8月16日のままだった。App Store Connectのビジネス画面も同意待ち案内と無料アプリ契約だけを表示した。表示の遅延か手続き未完かは未確定。契約ActiveやSandbox課金可能と扱わず、Apple側の反映を再確認する。
+
 サーバーのApple verifierとSharing verifier clientが年額IDを必須としていた前提を、年額ID省略・空欄なら月額のみ受理する候補に修正。任意の年額IDを設定した場合は書式と月額との重複を検査し、月額のみ構成では年額取引を拒否する。BillingVerificationServiceの型検査・構成9件、SharingServiceの型検査・verifier client 7件が局所成功。依存未導入による最初の実行環境失敗はoffline `npm ci` で解消した。候補は未push・未CI・未配布で、独立レビューと必要なbackend確認は本線反映前に残る。
 
-1. Apple専用キーを登録し、private keyを一度だけ取得して保管Workerのsecretへ入れる。ここまでは済んだ。AWSの暗号化控えは指定名・`SecureString` 型・伏字値を確認したが、原本との一致とKMSキーIDは未確認。tokenや鍵本文をログへ出さない。
+1. Apple専用キーを登録し、private keyを一度だけ取得して保管Workerのsecretへ入れる。ここまでは済んだ。AWSの暗号化控えは指定名・`SecureString` 型・KeyId `alias/aws/ssm`・DERハッシュによる原本一致を確認した。tokenや鍵本文をログへ出さない。
 2. [AWS接続の見直し](2026-09-29-preservation-aws-access.md)に従う同一アカウント・bucket versioning/公開遮断・KMS/IAM状態の照合、S3書込専用主体とKMS専用主体のsecret登録、受付OFFでのS3合成1件の版付き書込・読戻し、KMSの実Encrypt/Decryptは済んだ。前段のS3失敗1回の原因と残存有無は未確認。管理者の一時CLIログインはアプリ運用経路に使わない。
 3. Account Holderによる更新契約と有料アプリ契約、銀行・税務情報の設定が必要。月額商品は審査前の骨格のみ作成済み。Sandboxに必要な価格・販売地域・ローカライズ・試験用Apple Accountを整え、契約Active後に実在するBillingAccountIDとApple側の正当なPlus権利を通す。`active`の仮置きでは済ませない。pilot本人HMACはApple検証済みsubjectからのみ作る。
 4. 受付・復旧policy・会員/JPEG/KMSのgateを限定7日/最大3人の設定と共に結線して、1件保存→同ID読戻し→新session/別端末→ZIPを実証する。未達ならONにしない。
