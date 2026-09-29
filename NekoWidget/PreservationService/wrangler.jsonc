@@ -5,6 +5,7 @@
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "preview_urls": false,
   "observability": { "enabled": false },
   "vars": { "PRESERVATION_ENABLED": "NO", "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO", "ENVIRONMENT": "local" },
   "d1_databases": [{ "binding": "DB", "database_name": "neko-preservation-local", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
@@ -13,6 +14,7 @@
     "staging": {
       "name": "neko-preservation-staging-disabled",
       "workers_dev": false,
+      "preview_urls": false,
       "vars": {
         "PRESERVATION_ENABLED": "NO",
         "PILOT_MODE": "YES",
