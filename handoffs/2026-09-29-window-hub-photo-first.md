@@ -48,8 +48,9 @@ Broad app-view validation is not the first probe. Inspect the selected route
 and observed duration before running normal CI; do not claim a 30-minute finish
 if that route exceeds it. Record the first candidate time and failed attempts.
 
-Current state: implementation prepared; native rendering, required CI, mainline
-integration and internal Apple upload are not yet verified.
+Current state: native rendering and required CI passed; PR100 is merged into
+main and internal TestFlight224 was uploaded to Apple with no errors.
+Apple processing and physical-device visibility have not been checked.
 
 ## Candidate and route decisions
 
@@ -96,3 +97,65 @@ integration and internal Apple upload are not yet verified.
   still requires a complete normal candidate run at the new SHA because this
   repository does not reuse a different-SHA guard correction as release evidence.
   Do not label the failed candidate successful or omit its cost.
+
+## Final candidate, integration and release
+
+- Product and owning native test sources did not change after `05e76ec`.
+  Independent review covered the corrected guard and all seven frozen CI
+  companions as well; no P1/P2 findings. No second reviewer/history fork.
+- Corrected candidate `72d29f07bd40bdaaaf13a4b3aec185d786e93c47` passed normal
+  push CI `36533648139`: all four mandatory jobs actually executed successfully
+  (Build, real Photos bootstrap/scan, iOS18.5/26.2 runtime, three owning UI
+  operations). 20.05 minutes wall, 72.45 unweighted runner minutes. The
+  macOS-only guard skipped locally was executed successfully in Mac Build.
+- PR100: https://github.com/soso-so-27/neko-widget/pull/100, merged as
+  `da9ed9c74de5e693ecc824db0c0eea7d11ac8e96`. Fixed candidate72d29f0 is a
+  verified ancestor of main. Main CI `36535645109` succeeded and its actual
+  plan log confirms reuse of `36533648139`; no duplicate native jobs.
+- Internal TestFlight224: dry-run verified source72d29f0, CI36533648139 and
+  unused build224 before dispatch. Upload run `36535759050` uses main's
+  workflow atda9ed9c and the fixed product source72d29f0. Approved only that
+  run's matching `testflight` deployment, without changing protection rules.
+  Actual altool log confirms `VERIFY SUCCEEDED with no errors` and
+  `UPLOAD SUCCEEDED with no errors` at2026-09-29T07:28:59.420Z. Upload step
+  source72d29f0 and build224 match the fixed candidate. Mode remains the
+  existing `media-staging`; no public release or external invitations.
+  Workflow11.633min including approval wait,10.25 unweighted runner minutes.
+
+## Actual scope and known limits
+
+- Names and existing monochrome cat artwork appear above photos; private and
+  subscribed public windows remain in one grid. An unfinished connection is
+  an equal-size card that resumes itself. Person-plus always opens connection
+  options; compass opens discovery. No extra explanatory copy or new colors.
+- Dark/light, 320pt constrained list content and maximum AX5 rendering were
+  directly inspected. Discovery, subscription/stop, setup, scoped recovery
+  and photo viewing passed native assertions. 320pt is not device/chrome
+  coverage; arbitrary long names, hardware rendering and switching to another
+  private account were not directly exercised.
+- Fixture images are synthetic test photos, and its tab bar has three tabs.
+  The production four-tab shell is unchanged. The images do not demonstrate
+  live feed replenishment; expiry and recipient/account boundaries remain.
+- Diagnostic evidence: `C:/dev/neko-evidence/window-hub-diagnostic-36529924885/`
+  `ios-26-2/composer-screenshots/manifest.json`. These local images are native
+  evidence, not product photos or proof of Apple processing/device delivery.
+
+## Time and cost accountability
+
+The initial whole-task50-65 minute estimate was missed because the old source
+guard was not updated before the first normal candidate. This was a test-update
+omission, not a product defect; normal CI was not used to change native behavior.
+The revised70-85 minute plan retains that failed run and the exact-SHA rerun.
+The longer watcher backoff also delayed notification; later stages use one60s
+watcher. No duplicate monitors or cancelled sibling jobs.
+
+Diagnostic plus both normal candidates consumed131.666 unweighted runner
+minutes; this excludes upload/main and is not billed minutes or money. Baseline
+records both failed18.217 and successful20.05 minute candidates. Do not report
+the latter as the elapsed time from the first candidate at15:05:23 JST.
+
+Apple upload succeeded at16:28:59 JST, **83.607 minutes from the first product
+candidate**, including the failed run and correction (not just final CI).
+This exceeds the original50-65 minute plan and falls within the revised70-85
+minute estimate. Final documentation/integration time is additional. The
+timing-only follow-up does not change the shipped app or require another upload.
