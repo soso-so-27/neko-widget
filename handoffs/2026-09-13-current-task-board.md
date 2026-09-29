@@ -4,7 +4,7 @@
 
 専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。復旧用の個人AWS SSMパラメータは東京リージョン・指定名・`SecureString` を確認し、DERハッシュでローカル原本との一致を検証した。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。KMS専用userには新しい鍵を1本作り、非公開KMS Workerの2 secretを差し替えた。旧鍵はInactive、新鍵はActive。非公開KMS service binding経由の合成鍵wrap/unwrapはHTTP 200で一致を確認。staging WorkerのS3合成32 byteは版付きPUT、版指定GET、版一覧の一致を確認。通常Workerへ復帰し、一時token消失と受付/cleanup/復旧コピーOFFを再読取した。実Apple本人・実会員・実写真・新端末復元・ZIPは未検証。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementは未成立、月額商品は審査前の骨格だけ作成。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。
 
-追記：App Store Connectに審査前のPlus購読グループと月額商品IDを作成。価格・無料期間・配信地域・説明は未設定で、販売やSandbox購入はまだできない。更新されたDeveloper Program契約は利用者の同意が反映済み。有料アプリ契約は「新規」で未同意・未Active。月額だけを受理し年額取引を拒否するサーバー候補は局所型検査と関連16件に成功、未push・未CI・未配布。[接続記録](2026-09-29-preservation-live-readiness.md)参照。
+追記：App Store Connectに審査前のPlus購読グループと月額商品IDを作成。価格・無料期間・配信地域・説明は未設定で、販売やSandbox購入はまだできない。更新されたDeveloper Program契約と有料アプリ契約は利用者の同意が反映済み。有料契約の表示は「ユーザ情報を保留中」で、銀行口座・税務情報が未登録のためActiveではない。Small Business Programは本人の収益・関連アカウント回答と提出許可に基づき申請し、Appleの受付画面を確認。審査結果待ちで15%適用は未確認。月額だけを受理し年額取引を拒否するサーバー候補は局所型検査と関連16件に成功、未push・未CI・未配布。[接続記録](2026-09-29-preservation-live-readiness.md)参照。
 
 ## 2026-09-29 まど一覧：写真主体のカードと接続導線
 

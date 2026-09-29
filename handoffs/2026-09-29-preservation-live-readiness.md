@@ -61,4 +61,6 @@ App Store Connectの契約一覧を再読取すると無料アプリ契約のみ
 3. Account Holderによる更新契約と有料アプリ契約、銀行・税務情報の設定が必要。月額商品は審査前の骨格のみ作成済み。Sandboxに必要な価格・販売地域・ローカライズ・試験用Apple Accountを整え、契約Active後に実在するBillingAccountIDとApple側の正当なPlus権利を通す。`active`の仮置きでは済ませない。pilot本人HMACはApple検証済みsubjectからのみ作る。
 4. 受付・復旧policy・会員/JPEG/KMSのgateを限定7日/最大3人の設定と共に結線して、1件保存→同ID読戻し→新session/別端末→ZIPを実証する。未達ならONにしない。
 
+2026-09-29追記：利用者が有料アプリ契約に同意した後、App Store Connectで同契約の期間と「ユーザ情報を保留中」を確認。銀行口座と税務フォームが未登録のためActiveではない。Small Business Programの別申請では、本人回答に基づき関連Apple Developerアカウント4問をすべてNoに設定。本人が前年収益の宣誓内容を確認して提出を許可した後、Appleの「Thank you for your submission」「審査結果はメールで通知」画面を確認。承認・15%適用は未確認。販売・課金・保管受付は引き続きOFF。
+
 候補のpush/CI/TestFlightは、必要な設定が揃って範囲を固定した後に選ぶ。現時点で本線アプリ配布は行っていない。
