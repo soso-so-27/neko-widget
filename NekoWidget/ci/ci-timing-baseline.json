@@ -56,8 +56,16 @@
       "apple_upload_succeeded_at": "2026-09-29T00:33:40Z",
       "build_number": 221,
       "diagnostic_observations": [
-        {"run_id": 36498510914, "minutes": 13.917, "outcome": "failure"},
-        {"run_id": 36500096014, "minutes": 10.117, "outcome": "success"}
+        {
+          "run_id": 36498510914,
+          "minutes": 13.917,
+          "outcome": "failure"
+        },
+        {
+          "run_id": 36500096014,
+          "minutes": 10.117,
+          "outcome": "success"
+        }
       ],
       "note": "First exact care-handoff scope. All four required Build/Photos/runtime/app-ui jobs and three owning UI cases passed once in the normal candidate. Initial diagnostic exposed a cat Toggle tap that did not select, lazy offscreen TextField misclassification, and an unscrolled large-text entry. Product selection row and evidence-based test corrections then passed the focused diagnostic. Retains failed diagnosis and preparation time; 18.5m is candidate CI only, not total delivery time. First product source was created at 2026-09-28T23:20:17Z; research/design preceded it. Runner minutes are not billing or Codex tokens. No unchanged full UI suite or extra native main run is required."
     },
@@ -494,6 +502,34 @@
       "run_attempt": 2,
       "outcome": "success",
       "note": "Elapsed from the original candidate run start through completion after rerunning only the failed photo-bootstrap job at identical SHA b2320e5. Retains the first failure and retry delay; not just the final successful job. Three owning UI tests passed. Earlier baseline diagnostics additionally consumed 3.5 min for a fixture compile defect and 12.6 min to reproduce one tap dispatching three photo actions."
+    },
+    {
+      "scope": "lost-cat-photo-ui-v3",
+      "candidate_minutes": 18.267,
+      "run_id": 36508417159,
+      "outcome": "success",
+      "runner_minutes": 64.15,
+      "diagnostic_observations": [
+        {
+          "run_id": 36502107812,
+          "minutes": 20.917,
+          "outcome": "cancelled-after-test-failure",
+          "cause": "Test tapped a field underneath floating preview action; one prepared-photo/maximum-text case passed."
+        },
+        {
+          "run_id": 36504094798,
+          "minutes": 25.767,
+          "outcome": "cancelled-after-test-failure",
+          "cause": "Test assumed restored caret position; 201-character retention and relaunch passed but correction assertion failed."
+        },
+        {
+          "run_id": 36506354776,
+          "minutes": 22.45,
+          "outcome": "success",
+          "cause": "Explicit native Select All/replacement passed the complete recovery operation."
+        }
+      ],
+      "note": "All four required jobs passed, owning lost-cat UI3; no Widget gallery. Product code unchanged from first candidate09:12:16 JST through native verification, with Care main integrated. Native preparation took15m40 then21m28 before cases, including shared runtime41-case preparation. Original40-45 minute plan was exceeded; diagnostic failures and preparation cost must be retained, not reported as an18-minute end-to-end release."
     }
   ]
 }
