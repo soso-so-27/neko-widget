@@ -1781,12 +1781,14 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText() {
-        for largeText in [false, true] {
+        for appearance in ["dark", "light", "large"] {
+            let largeText = appearance == "large"
             let app = XCUIApplication()
             // Acceptance scenarios use a separate two-tab harness; this opens MainTabView.
             app.launchArguments = ["--app-store-screenshot-fixture",
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
+                + (appearance == "dark" ? ["--tools-hub-dark"] : [])
             app.launch()
             XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
             let identified = app.buttons["main-tab-tools"]
@@ -1801,6 +1803,13 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
             let care = app.buttons["tools-care-open"]
             XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)
+            if largeText {
+                XCTAssertGreaterThan(care.frame.minY, showcase.frame.minY)
+            } else {
+                XCTAssertEqual(showcase.frame.minY, care.frame.minY, accuracy: 1)
+                XCTAssertGreaterThan(care.frame.minX, showcase.frame.minX)
+            }
+            capture("tools-hub-\(appearance)")
             for _ in 0..<5 where !care.isHittable { app.swipeUp() }
             XCTAssertTrue(care.isHittable)
             care.tap()
@@ -1808,14 +1817,8 @@ final class SoloMemoriesUITests: XCTestCase {
             let addCare = app.buttons["care-add-cat"]
             for _ in 0..<5 where !addCare.isHittable { app.swipeUp(velocity: .slow) }
             XCTAssertTrue(addCare.isHittable)
-            capture("tools-care-entry-\(largeText ? "large" : "standard")")
+            capture("tools-care-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
-            for identifier in ["tools-vet-unavailable"] {
-                let tile = app.descendants(matching: .any)[identifier]
-                XCTAssertTrue(tile.exists, identifier)
-                XCTAssertTrue(tile.label.contains("準備中"), identifier)
-                XCTAssertFalse(app.buttons[identifier].exists, identifier)
-            }
             // The lower row is intentionally offscreen in the largest text size.
             for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
             XCTAssertTrue(lost.isHittable)
@@ -1824,7 +1827,21 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(evacuation.isHittable)
             evacuation.tap()
             XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
-            capture("tools-entry-\(largeText ? "large" : "standard")")
+            capture("tools-entry-\(appearance)")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            let preview = app.buttons["tools-vet-preview-open"]
+            for _ in 0..<6 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(preview.isHittable)
+            XCTAssertTrue(preview.label.contains("準備中"))
+            capture("tools-hub-upcoming-\(appearance)")
+            preview.tap()
+            XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["このツールはまだ使えません"].exists)
+            let close = app.buttons["tools-vet-preview-close"]
+            XCTAssertTrue(close.isHittable)
+            capture("tools-vet-preview-\(appearance)")
+            close.tap()
+            XCTAssertTrue(preview.waitForExistence(timeout: 5))
             app.terminate()
         }
     }
