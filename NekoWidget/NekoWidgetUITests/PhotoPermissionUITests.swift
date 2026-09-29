@@ -1609,6 +1609,14 @@ final class SoloMemoriesUITests: XCTestCase {
         let name = app.textFields["evacuation-cat-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap(); name.typeText("こはく")
+        // Establish that keyboard input reached the field before testing persistence.
+        // typeText returning alone did not establish this in the failed CI recording.
+        let completedInput = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "こはく"), object: name)
+        XCTAssertEqual(XCTWaiter.wait(for: [completedInput], timeout: 5), .completed,
+                       "The complete name must be visible before terminating the app")
+        XCTAssertFalse(app.otherElements["evacuation-save-error"].exists)
+        capture("evacuation-unregistered-before-restart-large-text")
         app.terminate()
         app.launch()
         let reopened = app.buttons["evacuation-cats-open"]
@@ -1617,6 +1625,11 @@ final class SoloMemoriesUITests: XCTestCase {
         reopened.tap()
         XCTAssertTrue(app.buttons.containing(.staticText, identifier: "こはく").firstMatch.waitForExistence(timeout: 5))
         capture("evacuation-unregistered-restored-large-text")
+        app.buttons.containing(.staticText, identifier: "こはく").firstMatch.tap()
+        app.buttons["evacuation-cat-edit"].tap()
+        let restoredName = app.textFields["evacuation-cat-name"]
+        XCTAssertTrue(restoredName.waitForExistence(timeout: 5))
+        XCTAssertEqual(restoredName.value as? String, "こはく")
         app.terminate()
     }
 
