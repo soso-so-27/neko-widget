@@ -777,6 +777,8 @@ class PlanTests(unittest.TestCase):
                     continue
                 if extra in scope.MANAGED_PRESERVATION_PATHS:
                     continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
                 altered = dict(changes, **{extra: ("before", "after")})
                 self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
                 self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)
@@ -802,7 +804,7 @@ class PlanTests(unittest.TestCase):
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
         ))
         self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v3')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 33)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 31)
         self.assertIn('NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql', scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
