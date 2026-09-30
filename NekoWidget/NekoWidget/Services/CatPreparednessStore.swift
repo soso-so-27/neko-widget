@@ -131,6 +131,17 @@ struct LostCatDraft: Codable, Equatable {
     var lastSeenNear = ""
     var lastSeenAt: Date?
     var updatedAt = Date()
+    // Optional for existing drafts. These are real editable values, not placeholders.
+    var prefilledFields: Set<String>?
+}
+
+/// Only cat-identifying information may cross into a public flyer draft.
+/// Contact, incident, care instructions and medical information have no fields here.
+struct LostCatSavedInformation {
+    var name = ""
+    var features = ""
+    var facePhoto: Data?
+    var bodyPhoto: Data?
 }
 
 @MainActor
@@ -159,7 +170,8 @@ final class LostCatDraftStore: ObservableObject {
         }
     }
 
-    func draft(for key: String, profileName: String = "") throws -> LostCatDraft {
+    func draft(for key: String, profileName: String = "",
+               savedInformation: LostCatSavedInformation? = nil) throws -> LostCatDraft {
         guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
         if let saved = drafts[key] { return saved }
         let old = legacy.record(for: key == "guest-legacy" ? "unregistered" : key)
@@ -169,6 +181,17 @@ final class LostCatDraftStore: ObservableObject {
         migrated.collar = old.collar
         migrated.approachAdvice = old.approachAdvice
         migrated.contact = old.contactSuggestion
+        migrated.prefilledFields = []
+        if let savedInformation {
+            if migrated.name.isEmpty && !savedInformation.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                migrated.name = savedInformation.name
+                migrated.prefilledFields?.insert("name")
+            }
+            if migrated.features.isEmpty && !savedInformation.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                migrated.features = savedInformation.features
+                migrated.prefilledFields?.insert("features")
+            }
+        }
         // Copy before committing the manifest. Legacy files remain untouched.
         var copied: [URL] = []
         do {
@@ -181,6 +204,21 @@ final class LostCatDraftStore: ObservableObject {
                 copied.append(destination)
                 if role == "face" { migrated.faceFileName = name }
                 else { migrated.bodyFileName = name }
+            }
+            // Each source photo becomes an independently owned JPEG copy. Never
+            // replace legacy photos, touch the source, or share its file path.
+            for (role, data) in [("face", savedInformation?.facePhoto), ("body", savedInformation?.bodyPhoto)] {
+                guard (role == "face" ? migrated.faceFileName : migrated.bodyFileName) == nil,
+                      let data, let image = UIImage(data: data),
+                      let jpeg = image.jpegData(compressionQuality: 0.86) else { continue }
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let name = UUID().uuidString + ".jpg"
+                let destination = directory.appendingPathComponent(name)
+                copied.append(destination)
+                try jpeg.write(to: destination, options: .atomic)
+                if role == "face" { migrated.faceFileName = name }
+                else { migrated.bodyFileName = name }
+                migrated.prefilledFields?.insert(role)
             }
             try save(migrated, for: key)
             return migrated
@@ -212,6 +250,7 @@ final class LostCatDraftStore: ObservableObject {
         var updated = draft
         let old = role == .face ? draft.faceFileName : draft.bodyFileName
         if role == .face { updated.faceFileName = name } else { updated.bodyFileName = name }
+        updated.prefilledFields?.remove(role == .face ? "face" : "body")
         do { try save(updated, for: key) }
         catch { try? FileManager.default.removeItem(at: url); throw error }
         if let old, old == URL(fileURLWithPath: old).lastPathComponent,
@@ -231,6 +270,7 @@ final class LostCatDraftStore: ObservableObject {
         var updated = draft
         let old = updated.bodyFileName
         updated.bodyFileName = nil
+        updated.prefilledFields?.remove("body")
         try save(updated, for: key)
         if let old, old == URL(fileURLWithPath: old).lastPathComponent,
            old.hasSuffix(".jpg"),
