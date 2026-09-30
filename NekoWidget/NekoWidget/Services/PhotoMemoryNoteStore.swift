@@ -24,6 +24,7 @@ struct PhotoMemoWeightValue: Codable, Equatable, Sendable {
         let parts = value.split(separator: "-", omittingEmptySubsequences: false)
         guard value.count == 10, parts.count == 3, parts[0].count == 4,
               parts[1].count == 2, parts[2].count == 2,
+              parts.allSatisfy({ $0.utf8.allSatisfy { $0 >= 48 && $0 <= 57 } }),
               let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
               (1...9999).contains(year), (1...12).contains(month), (1...31).contains(day) else { return false }
         var calendar = Calendar(identifier: .gregorian)

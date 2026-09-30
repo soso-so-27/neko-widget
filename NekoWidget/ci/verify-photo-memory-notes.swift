@@ -30,7 +30,7 @@ enum PhotoMemoryNoteVerifier {
         try require(PhotoMemoWeightValue.grams(from: "4.205") == 4205 && PhotoMemoWeightValue.grams(from: "4,2") == 4200, "kg conversion changed a measurement")
         for input in ["0", "0.0001", "-4", "101", "nan", "4e2", "4.2000"] { try require(PhotoMemoWeightValue.grams(from: input) == nil, "invalid kg accepted") }
         try require(PhotoMemoWeightValue.validDay("2024-02-29") && !PhotoMemoWeightValue.validDay("2026-02-29")
-            && !PhotoMemoWeightValue.validDay("2026-09-31"), "civil day rolled over")
+            && !PhotoMemoWeightValue.validDay("2026-09-31") && !PhotoMemoWeightValue.validDay("+026-+1-01"), "civil day rolled over or accepted noncanonical digits")
         let value = PhotoMemoWeightValue(grams: 4200, measuredOn: nil, catName: nil)
         try value.validate()
         let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as! [String: Any]
