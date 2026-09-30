@@ -1,5 +1,9 @@
 # 現在のタスクと優先順位
 
+## 2026-09-30 個人保管：依頼1〜3の準備候補
+
+専用候補へmain `cc4f396` を統合。private Verifier/TLS Redis/Tunnelの配備資材、期限切れ後12か月・再契約復帰・予告通知の結線準備、保管状態/結果不明時の照合/未送信メモ保護を用意。backend関連35件、局所TLS、OFFのdry-run、native runtime41件が成功。UI1操作は同意tapで失敗し、操作を修正したが再々実行はしていない。準備物と確認範囲は[接続記録](2026-09-29-preservation-live-readiness.md)。月額試算は推奨4121円で既存3000円目標と2200円受付停止条件を超える。費用方針/domain/実接続/Apple会員/実保存・復元・ZIPは未達。受付・通知・削除OFFを維持、main反映・TestFlightなし。
+
 ## 2026-09-30 個人保管：月額構成の独立レビュー・配備用ビルド完了
 
 専用候補にmain `83f77d0` までを統合し、月額のみ設定の独立レビューは問題なし。配備用Nodeビルド、Apple公式root3件の取得・検査、OFFのSandbox設定を用意した。既存の型検査と関連16件は入力・依存が同じため再利用。実購入検証の前には、Apple契約Activeだけでなく、隔離Verifier host・private ingress・TLS Redisとsecret注入・商品販売条件・native origin/pilot結線が必要。有料契約はユーザ情報保留、銀行は処理中、納税フォームは未提出。remote配備・受付ON・CI・TestFlightは未実行。準備物と未達条件は[接続記録](2026-09-29-preservation-live-readiness.md#2026-09-30-接続候補のレビューと配備用準備)に記載。

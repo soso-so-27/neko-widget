@@ -2087,9 +2087,16 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["preservation-membership-check"].waitForExistence(timeout: 15))
         tap("preservation-membership-check", scrollUp: false)
+        XCTAssertTrue(app.descendants(matching: .any)["preservation-membership-ready"].firstMatch
+            .waitForExistence(timeout: 8))
         let consent = app.switches["この保管方法に同意する"]
         for _ in 0..<10 where !consent.isHittable { app.swipeUp() }
-        XCTAssertTrue(consent.waitForExistence(timeout: 8)); consent.tap()
+        XCTAssertTrue(consent.waitForExistence(timeout: 8))
+        // SwiftUI exposes the whole Form row as a switch. Its default tap point
+        // is the label, so target the visible switch at the trailing edge.
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let agreed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: consent)
+        XCTAssertEqual(XCTWaiter.wait(for: [agreed], timeout: 5), .completed, "consent must be on before saving")
         tap("preservation-copy-save")
         XCTAssertTrue(app.buttons["preservation-copy-confirm"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["preservation-copy-save"].exists)
