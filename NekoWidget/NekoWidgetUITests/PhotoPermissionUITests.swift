@@ -1495,9 +1495,15 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<5 where !disclosure.isHittable { app.swipeUp(velocity: .slow) }
         disclosure.tap()
         let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-select-")).firstMatch
-        XCTAssertTrue(selected.waitForExistence(timeout: 5)); selected.tap()
-        app.buttons["care-preview-open"].tap()
-        XCTAssertTrue(app.staticTexts["いつものフード 20g"].waitForExistence(timeout: 5))
+        XCTAssertTrue(selected.waitForExistence(timeout: 5))
+        if selected.value as? String != "選択済み" { selected.tap() }
+        XCTAssertEqual(selected.value as? String, "選択済み")
+        let preview = app.buttons["care-preview-open"]
+        XCTAssertTrue(preview.isEnabled); preview.tap()
+        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
+        let previewFood = app.staticTexts["いつものフード 20g"]
+        for _ in 0..<5 where !previewFood.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(previewFood.isHittable)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("care-autofill-output-without-editing")
         app.navigationBars.buttons.element(boundBy: 0).tap()
