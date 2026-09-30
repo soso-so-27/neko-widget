@@ -24,6 +24,7 @@ WIDGET_LAYOUT_SCOPE = "widget-layout-v1"
 WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
+APP_DATA_SCOPE = "app-private-data-ui-v1"
 LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
@@ -71,7 +72,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1144,7 +1145,132 @@ WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for n
 ))
 
 
-MAPPED_PATHS = (WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# These private app stores are not Widget/cache/selection inputs. Storage,
+# migration, privacy, Photos, runtime and BOTH app UI shards remain required;
+# only the three unrelated Widget gallery lanes are omitted. Do not generalize
+# this to Services/**, Shared/**, app startup, fixtures or arbitrary new files.
+APP_DATA_PRODUCT_PATHS = frozenset("NekoWidget/NekoWidget/Services/" + name for name in (
+    "PhotoMemoCoordinator.swift", "PhotoMemoryNoteStore.swift", "PhotoMemoryNoteExporter.swift",
+    "PersonalArchiveStore.swift", "PersonalArchiveCloudClient.swift", "VeterinaryVisitStore.swift",
+    "ManagedPreservationClient.swift", "ManagedPreservationCoordinator.swift",
+)) | frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
+    "PhotoMemoryNoteView.swift", "PhotoMemoryNoteLibraryView.swift", "PersonalArchiveView.swift",
+    "ManagedPreservationView.swift", "VeterinaryVisitView.swift", "MainTabView.swift",
+))
+APP_DATA_PROJECT = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
+APP_DATA_DIAGNOSTIC = ".github/workflows/memo-model-diagnostic.yml"
+APP_DATA_DIAGNOSTIC_DIGEST = "d45be1c0008f61cc85dcbbcd2712b5d27c9e078fad3c93b1169c28114995e8a9"
+APP_DATA_REGISTRATIONS = {
+    "VeterinaryVisitStore.swift": ("D02609300000000000000001", "D02609300000000000000002", "C00000000000000000000003"),
+    "VeterinaryVisitView.swift": ("D02609300000000000000003", "D02609300000000000000004", "C00000000000000000000005"),
+}
+APP_DATA_PATHS = APP_DATA_PRODUCT_PATHS | {
+    APP_DATA_PROJECT, APP_DATA_DIAGNOSTIC, CI_WORKFLOW, MEMORY_TEST_PATH,
+    "NekoWidget/PreservationService/src/contracts.ts",
+    "NekoWidget/PreservationService/src/documents.ts",
+    "NekoWidget/PreservationService/test/weight-document.test.ts",
+    "NekoWidget/docs/ADR-026-うちの子との時間と会員体験.md",
+} | frozenset("NekoWidget/ci/" + name for name in (
+    "verify-photo-memory-notes.swift", "verify-photo-memory-note-export.swift",
+    "verify-personal-archive.swift", "verify-veterinary-visits.swift",
+))
+APP_DATA_NEW_PATHS = frozenset({
+    "NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift",
+    "NekoWidget/NekoWidget/Views/VeterinaryVisitView.swift",
+    "NekoWidget/ci/verify-veterinary-visits.swift",
+    "NekoWidget/PreservationService/test/weight-document.test.ts", APP_DATA_DIAGNOSTIC,
+})
+APP_DATA_MODEL_CHECK = '''          xcrun swiftc -parse-as-library \\
+            NekoWidget/Services/PhotoMemoryNoteStore.swift \\
+            NekoWidget/Services/VeterinaryVisitStore.swift \\
+            ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-veterinary-visits"
+          "$RUNNER_TEMP/verify-veterinary-visits"
+'''
+
+
+def app_data_project_unchanged(before: str, after: str) -> bool:
+    """Accept only app-target Swift registration; every other byte stays fixed."""
+    before, after = (text.replace("\r\n", "\n") for text in (before, after))
+    remainder = after
+    for name, (build_id, file_id, group_id) in APP_DATA_REGISTRATIONS.items():
+        # Already registered files cannot be moved, renamed or reconfigured.
+        if name in before or name not in after:
+            continue
+        escaped = re.escape(name)
+        patterns = (
+            rf'(?m)^[\t ]*{build_id} /\* {escaped} in Sources \*/ = \{{isa = PBXBuildFile; fileRef = {file_id} /\* {escaped} \*/; \}};\n',
+            rf'(?m)^[\t ]*{file_id} /\* {escaped} \*/ = \{{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {escaped}; sourceTree = "<group>"; \}};\n',
+            rf'(?m)^[\t ]*{file_id} /\* {escaped} \*/,\n',
+            rf'(?m)^[\t ]*{build_id} /\* {escaped} in Sources \*/,\n',
+        )
+        # No source registration in Widget, share extension or test targets,
+        # even if its filename/comment says it belongs to the private app.
+        for object_id, entry in (("A00000000000000000000021", build_id), (group_id, file_id)):
+            blocks = re.findall(rf'(?ms)^[\t ]*{object_id} /\* [^\n]* \*/ = \{{.*?^[\t ]*\}};', after)
+            if len(blocks) != 1 or not re.search(rf'(?m)^[\t ]*{entry} /\* ', blocks[0]):
+                return False
+        for pattern in patterns:
+            if len(re.findall(pattern, remainder)) != 1:
+                return False
+            remainder = re.sub(pattern, "", remainder)
+    return before == remainder
+
+
+def app_data_changes(changes, *, project_source=None) -> bool:
+    product_paths = APP_DATA_PRODUCT_PATHS - {"NekoWidget/NekoWidget/Views/MainTabView.swift"}
+    if not changes or not set(changes) <= APP_DATA_PATHS or not set(changes) & product_paths:
+        return False
+    if any(not after.strip() for before, after in changes.values()):
+        return False
+    project_pair = changes.get(APP_DATA_PROJECT)
+    if project_pair is not None:
+        if not app_data_project_unchanged(*project_pair):
+            return False
+        project_source = project_pair[1]
+    if project_source is None:
+        return False
+    # The actual Widget source phase must exist and must not contain private
+    # memo/clinical sources. A changed project is otherwise compared in full.
+    widget = re.findall(r'(?ms)^[\t ]*A00000000000000000000025 /\* Sources \*/ = \{.*?^[\t ]*\};', project_source)
+    if len(widget) != 1:
+        return False
+    files = re.findall(r'(?ms)^[\t ]*files = \(\n(.*?)^[\t ]*\);', widget[0])
+    if len(files) != 1:
+        return False
+    # Resolve source IDs through actual fileRef/path fields, not comments.
+    # Renaming a comment cannot hide a private store linked into Widget.
+    build_entries = re.findall(r'(?m)^[\t ]*([A-F0-9]{24}) /\* [^\n]* \*/ = \{isa = PBXBuildFile; fileRef = ([A-F0-9]{24}) /\* [^\n]* \*/; \};', project_source)
+    file_entries = re.findall(r'(?m)^[\t ]*([A-F0-9]{24}) /\* [^\n]* \*/ = \{isa = PBXFileReference;[^\n]*? path = ("[^"\n]*"|[^;\n]*);[^\n]*\};', project_source)
+    builds, references = dict(build_entries), dict(file_entries)
+    if len(builds) != len(build_entries) or len(references) != len(file_entries):
+        return False
+    private_names = {Path(path).name for path in APP_DATA_PRODUCT_PATHS}
+    entries = re.findall(r'(?m)^[\t ]*([A-F0-9]{24}) /\* [^\n]* \*/,', files[0])
+    if not entries:
+        return False
+    for entry in entries:
+        reference = builds.get(entry)
+        filename = references.get(reference)
+        if filename is None or Path(filename.strip('"')).name in private_names:
+            return False
+    if len(entries) != len(files[0].strip().splitlines()):
+        return False
+    if CI_WORKFLOW in changes:
+        before, after = (text.replace("\r\n", "\n") for text in changes[CI_WORKFLOW])
+        # One additive persistence verifier is permitted, not edits to jobs,
+        # safety checks, commands, fixture preparation or gallery execution.
+        if before == after or before.count(APP_DATA_MODEL_CHECK) or after.count(APP_DATA_MODEL_CHECK) != 1:
+            return False
+        if before != after.replace(APP_DATA_MODEL_CHECK, "", 1):
+            return False
+    if APP_DATA_DIAGNOSTIC in changes:
+        before, after = changes[APP_DATA_DIAGNOSTIC]
+        if before or source_digest(after) != APP_DATA_DIAGNOSTIC_DIGEST:
+            return False
+    return True
+
+
+MAPPED_PATHS = (APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2056,6 +2182,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == APP_DATA_SCOPE:
+        return bool(sources & APP_DATA_PRODUCT_PATHS and sources <= APP_DATA_PATHS)
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
         return sources == TOOL_CAT_AUTOFILL_PATHS
     if scope == EVACUATION_SCOPE:
@@ -2213,7 +2341,7 @@ def smoke_tests(scope: str) -> tuple[str, ...]:
         raise ValueError("Unknown iOS runtime scope")
     bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",)
     return (bootstrap + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",)
-            if scope in (FULL_SCOPE, APP_VIEW_SCOPE) else bootstrap)
+            if scope in (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE) else bootstrap)
 
 
 def sharing_job(scope: str) -> str:
@@ -2269,7 +2397,7 @@ def native_tests(scope: str) -> tuple[str, ...]:
         return ()  # The build job installs/captures the real app once.
     if scope == REVIEWED_APP_SCOPE:
         return REVIEWED_APP_TESTS
-    if scope == APP_VIEW_SCOPE:
+    if scope in (APP_VIEW_SCOPE, APP_DATA_SCOPE):
         return PHOTO_TESTS + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",)
     if scope in (WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, CI_SELECTION_SCOPE):
         return WIDGET_UI_TESTS + (GALLERY_TEST,)
@@ -2290,7 +2418,7 @@ def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
     if scope == FULL_SCOPE:
         return ("runtime",) + FULL_APP_UI_LANES + LANES[2:]
-    if scope == APP_VIEW_SCOPE:
+    if scope in (APP_VIEW_SCOPE, APP_DATA_SCOPE):
         return ("runtime",) + FULL_APP_UI_LANES
     if scope == ICON_SCOPE:
         return ()
@@ -2435,7 +2563,7 @@ def presentation_only(changes: dict[str, tuple[str, str]]) -> bool:
 
 
 def select_scope(changes: dict[str, tuple[str, str]] | None, *,
-                 memory_test_source: str | None = None) -> str:
+                 memory_test_source: str | None = None, project_source: str | None = None) -> str:
     # The planner first proves existing regular source files, modification-only
     # and unchanged modes. Handoff prose is not an app or CI input.
     if not changes:
@@ -2509,6 +2637,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return REVIEWED_MEMORY_SCOPE if memory_tests_available(source) else FULL_SCOPE
     if reviewed_app_changes(changes):
         return REVIEWED_APP_SCOPE
+    if app_data_changes(changes, project_source=project_source):
+        return APP_DATA_SCOPE
     if any(path in changes and source_digest(changes[path][0]) == pair[0]
            for path, pair in CI_EVIDENCE_DIGESTS.items()):
         # The reviewed base must match the whole batch. A partial, enlarged or

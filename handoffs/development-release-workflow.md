@@ -8,6 +8,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - 開始時に現在のmain、対象差分、完了条件を一度決め、機能変更とCI試作を別の候補にする。検証待ちの間に同じ候補へ追加変更を積まない。
 - 候補をcommitした後、push前に `python NekoWidget/ci/check-development-flow.py` を実行する。既存の安価な検証に加え、実CIと同じ選択器でbranch全差分・必要job・全件になる理由・過去の所要時間を表示する。配布予定なら `--include-upload`。作業中の単体確認だけなら `--checks-only` とし、push前確認の代用にはしない。
 - `--decision` は記録用であり、時間超過・失敗を通過させない。preflightは同じ作業名の `codex/<task>` と `diagnostic/<task>` のCI履歴を取得し、初回CIからの累計経過時間＋次のCI（配布予定ならuploadも）の実測上限を表示する。稼働中CIがあれば重複起動を止める。既定30分を超える場合は方法を変えるか、実測に基づく計画へ明示的に組み直す。`--target-minutes` を変えた場合は当初目標内に収まったと報告しない。成功済みの単体検証は繰り返さず **preflight-ci.pyだけ** 再実行する。
+- 時間計画の延長は、検証範囲の妥当性を確かめる代わりにならない。「未知ファイル／既存の分類に入らないため全件」は必要性の証拠ではない。依存先を安価に調べ、必要な確認と除外根拠を決め、選択処理へ反映してから起動する。既知の無関係な確認を、時間枠を広げただけで実行しない。安全への影響が未確認なら、チェックを手動で抜かず原因調査を先行する。
 - 未計測scopeの初回計測だけは `preflight-ci.py --measure-baseline`。同じ作業に通常candidate CI履歴があれば再利用できない。focused diagnosticだけを先行した場合は、失敗・稼働中・累積時間の判定を維持して初回計測できる。計測後は失敗分も含めtiming baselineへ反映する。未計測を短時間の約束にしない。この計画変更は主担当の責任で行い、ユーザーへの確認を毎回増やさない。
 - 必要なprivacy、署名、migration、fail-closed確認は省略しない。
 
@@ -15,6 +16,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - 制御用Python、対応する単体テスト、workflowの起動条件・配布SHA固定だけの変更は `ci-orchestration-v1`。Ubuntuのplan jobで検証し、Mac・Simulator・Widget画面検証は起動しない。native build/test/upload本体の変更や製品変更との混在はこの範囲に含めない。この成功はiOS製品・配布の検証証拠に使えない。
 - 既存のアプリViews内だけの動作変更は `app-view-ui-v1`。アプリ操作・Photos・runtime・buildを確認し、Widget galleryは起動しない。共有モデル・Widget・project・fixtureの変更を含む場合は別途判定する。既存の文字・余白だけの限定判定は維持する。
+- `app-private-data-ui-v1` は明示された写真メモ・個人保管・診察控えのapp専用保存／表示だけ。Widgetの実source ID→fileRef→pathを確認し、project差分は既知2ファイルのapp専用登録以外を全て拒否する。初回の保存検証追加は既存workflow不変＋1つの追加検証blockだけ。Build内の保存・migration・privacy確認、従来Photos／scan、両OS runtime、app UI両shardは維持し、Widget gallery3系統だけを除く。共有モデル・Widget描画／更新／cache・startup・画像fixture・未知ファイル・不明なmode／登録は対象外。選択処理だけの今回の修正は `ci-orchestration-v1` でPythonだけを検証し、Mac／Simulator／再配布を行わない。新scopeのnative所要時間は未計測で、除外した件数を実測の時間短縮や全件成功に読み替えない。
 - `family-window-ui-v2` は既存FamilyWindowView・FamilyRecordView内の変更。共有写真の配置、選択中写真への操作、送受信一覧、共同記録の取り下げ・権限・書き出しの5テストとWidget URLから写真を開く3操作、build・Photos権限・実写真scan・両OS runtimeを実行する。Widget galleryは起動しない。UIテスト差分は選択された5メソッドの本文と、そこからのみ呼ぶ新規private helperに限定する。未選択テスト・既存helper・他class・importsは不変と確認し、未知・共有モデル・Widget実装・project・workflowの混在は対象外とする。v1のクラス全件所要時間をv2の実測値にしない。
 - 同一リポジトリのPRはpush CIを使い、PR側ではMac jobを重複起動しない。fork PRは従来通り検証する。main pushは一致する候補の成功証拠を再利用し、一致する候補がない場合はplanで終了する。無条件に広い検証へ戻さず、配布済みでない固定候補を使うか、必要な統合候補を作る。
 
