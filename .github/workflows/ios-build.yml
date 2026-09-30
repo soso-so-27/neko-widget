@@ -1107,8 +1107,8 @@ jobs:
       fail-fast: false
       matrix:
         lane: ${{ fromJSON(needs.plan.outputs.app_ui_lanes) }}
-    # Full UI execution can consume 60 minutes before result/attachment export.
-    timeout-minutes: 60
+    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 

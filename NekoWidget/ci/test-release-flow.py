@@ -75,6 +75,34 @@ class ReleaseFlowTests(unittest.TestCase):
                 mixed = {path: ("old", "new"), "NekoWidget/Shared/Storage/AtomicJSON.swift": ("old", "new")}
                 self.assertEqual(scope.select_scope(mixed), scope.FULL_SCOPE)
 
+    def test_only_exact_reviewed_app_ui_result_budget_is_control_plane(self):
+        path = ".github/workflows/ios-build.yml"
+        before = (CI.parents[1] / path).read_text(encoding="utf-8")
+        old = "    # Full UI execution can consume 60 minutes before result/attachment export.\n    timeout-minutes: 60\n"
+        new = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+        # This test runs before and after adoption without changing the fixture.
+        if new in before:
+            before = before.replace(new, old, 1)
+        self.assertEqual(before.count(old), 1)
+        after = before.replace(old, new, 1)
+        for candidate, expected in (
+            (after, True),
+            (after.replace("timeout-minutes: 75", "timeout-minutes: 90"), False),
+            (after.replace("timeout-minutes: 75", "timeout-minutes: 30"), False),
+            (after.replace("timeout-minutes: 40", "timeout-minutes: 75"), False),
+            (after.replace("run: bash ci/run-sharing-runtime-matrix.sh", "run: true"), False),
+            (after.replace("retention-days: 7", "retention-days: 0"), False),
+            (after.replace("if: needs.plan.outputs.app_ui == 'true'", "if: false"), False),
+        ):
+            with self.subTest(expected=expected, candidate=candidate[-120:]), \
+                    patch.object(planner, "development_tools_only", return_value=True), \
+                    patch.object(planner, "git", side_effect=[before, candidate]):
+                self.assertEqual(planner.orchestration_only([path], "old", "new"), expected)
+        # Reject native/build changes when there is no budget correction as well.
+        with patch.object(planner, "development_tools_only", return_value=True), \
+                patch.object(planner, "git", side_effect=[before, before.replace("timeout-minutes: 60", "timeout-minutes: 75")]):
+            self.assertFalse(planner.orchestration_only([path], "old", "new"))
+
     def test_same_repo_pr_does_not_duplicate_push_and_main_run_is_not_cancelled(self):
         workflow = (CI.parents[1] / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
         self.assertIn("if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository", workflow)
