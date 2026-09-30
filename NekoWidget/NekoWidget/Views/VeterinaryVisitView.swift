@@ -1,6 +1,42 @@
 import SwiftUI
 import UIKit
 
+/// Only saved identity and its name are reused. Never infer identity from a
+/// name, or carry health, care, contact or incident information into a visit.
+@MainActor
+enum SavedToolCatChoices {
+    struct Choice {
+        let id: UUID
+        let name: String
+        let source: String
+        var cat: PhotoMemoryNoteCat { .init(id: id, name: name) }
+    }
+
+    static func cats(care: CareHandoffStore, evacuation: EvacuationStore) -> [Choice] {
+        func identity(_ profile: String?, _ tool: UUID?, _ legacy: UUID) -> UUID? {
+            if let profile { return UUID(uuidString: profile) }
+            return tool ?? legacy
+        }
+        let careCats = care.loadError == nil && care.saveError == nil ? care.plan.cats : []
+        let evacuationCats = evacuation.loadError == nil && evacuation.saveError == nil ? evacuation.plan.cats : []
+        let careGroups = Dictionary(grouping: careCats.compactMap { cat in
+            identity(cat.profileID, cat.toolCatID, cat.id).map { ($0, cat.displayName) }
+        }, by: { $0.0 })
+        let evacuationGroups = Dictionary(grouping: evacuationCats.compactMap { cat in
+            identity(cat.profileID, cat.toolCatID, cat.id).map { ($0, cat.displayName) }
+        }, by: { $0.0 })
+        return Set(careGroups.keys).union(evacuationGroups.keys).compactMap { id -> Choice? in
+            let a = careGroups[id] ?? [], b = evacuationGroups[id] ?? []
+            // Duplicate identity within a tool is ambiguous, even if names agree.
+            guard a.count <= 1, b.count <= 1 else { return nil }
+            let sources = [a.isEmpty ? nil : "預けるとき", b.isEmpty ? nil : "避難に備える"].compactMap { $0 }
+            return Choice(id: id, name: a.first?.1 ?? b.first!.1, source: sources.joined(separator: "・"))
+        }.sorted {
+            $0.name == $1.name ? $0.id.uuidString < $1.id.uuidString : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+}
+
 /// Display only the closed, user-facing messages owned by these stores.
 /// Arbitrary platform errors may contain file paths or private source details.
 private func veterinaryErrorMessage(_ error: any Error) -> String {
@@ -17,9 +53,12 @@ struct VeterinaryVisitsView: View {
     var noteStore: PhotoMemoryNoteStore = .shared
     var store: VeterinaryVisitStore = .shared
     var initialRecord: PhotoMemoryNoteRecord? = nil
+    @ObservedObject var careStore: CareHandoffStore = .shared
+    @ObservedObject var evacuationStore: EvacuationStore = .shared
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visits: [VeterinaryVisit] = []
     @State private var cats: [PhotoMemoryNoteCat] = []
+    @State private var toolSources: [UUID: String] = [:]
     @State private var selected: VeterinaryVisit?
     @State private var error: String?
     @State private var ready = false
@@ -34,7 +73,12 @@ struct VeterinaryVisitsView: View {
                     ForEach(cats, id: \.id) { cat in
                         Button { Task { await open(cat) } } label: {
                             HStack {
-                                Label(cat.name, systemImage: "cat")
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(cat.name, systemImage: "cat")
+                                    if let source = toolSources[cat.id] {
+                                        Text(source).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                                 Spacer()
                                 if let visit = visits.first(where: { $0.catID == cat.id && $0.completedAt == nil }), !visit.entries.isEmpty {
                                     Text("\(visit.entries.count)件").foregroundStyle(.secondary)
@@ -91,9 +135,20 @@ struct VeterinaryVisitsView: View {
             catch { notes = []; sourceError = "元のメモを読み込めません。保存済みの診察メモは開けます。" }
             var seen = Set<UUID>()
             let known = profiles.compactMap { profile in UUID(uuidString: profile.identifier).map { PhotoMemoryNoteCat(id: $0, name: profile.displayName) } }
+            let savedTools = SavedToolCatChoices.cats(care: careStore, evacuation: evacuationStore)
+            let measuredCats = notes.compactMap { record -> PhotoMemoryNoteCat? in
+                guard let weight = record.note.weight, let id = weight.catID else { return nil }
+                return PhotoMemoryNoteCat(id: id, name: weight.value.catName ?? "名前未設定の猫")
+            }
             let candidates = known + (initialRecord?.note.context?.cats ?? [])
                 + notes.flatMap { $0.note.context?.cats ?? [] } + loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) }
+                + savedTools.map(\.cat) + measuredCats
             cats = candidates.filter { seen.insert($0.id).inserted }
+            toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
+            if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
+                let message = "入力済みの猫を一部読み込めません。既存の診察メモや、名前を入力して作る操作は使えます。"
+                sourceError = sourceError.map { $0 + "\n" + message } ?? message
+            }
             visits = loaded; ready = true; error = sourceError
             do { cleanupPending = try await store.cleanupPending() }
             catch { cleanupPending = true }

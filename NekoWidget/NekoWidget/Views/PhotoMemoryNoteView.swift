@@ -337,7 +337,22 @@ struct PhotoMemoryNoteEditor: View {
         if let original { return original.weight }
         return archiveRecord?.context?.weight.map { PhotoMemoWeight(value: $0, catID: nil) }
     }
-    private var weightCats: [PhotoMemoryNoteCat] { original?.context?.cats ?? context?.cats ?? [] }
+    @ObservedObject private var careStore: CareHandoffStore = .shared
+    @ObservedObject private var evacuationStore: EvacuationStore = .shared
+    private var photoCats: [PhotoMemoryNoteCat] { original?.context?.cats ?? context?.cats ?? [] }
+    private var toolCats: [SavedToolCatChoices.Choice] { SavedToolCatChoices.cats(care: careStore, evacuation: evacuationStore) }
+    private var weightCats: [PhotoMemoryNoteCat] {
+        var existing = photoCats
+        if let weight = originalWeight, let id = weight.catID {
+            existing.append(.init(id: id, name: weight.value.catName ?? "記録した猫"))
+        }
+        var seen = Set<UUID>()
+        return (existing + toolCats.map(\.cat)).filter { seen.insert($0.id).inserted }
+    }
+    private func weightCatLabel(_ cat: PhotoMemoryNoteCat) -> String {
+        guard !photoCats.contains(where: { $0.id == cat.id }), let source = toolCats.first(where: { $0.id == cat.id }) else { return cat.name }
+        return cat.name + " · " + source.source
+    }
     private static func dayFormatter() -> DateFormatter {
         let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
@@ -355,8 +370,9 @@ struct PhotoMemoryNoteEditor: View {
         weightDateKnown = weight?.value.measuredOn != nil
         weightDate = weight?.value.measuredOn.flatMap { Self.dayFormatter().date(from: $0) } ?? Date()
         weightCatID = weight?.catID; weightCatName = weight?.value.catName
-        if weight == nil, weightCats.count == 1 {
-            weightCatID = weightCats[0].id; weightCatName = weightCats[0].name
+        // A single saved tool cat does not establish who is in this photo.
+        if weight == nil, photoCats.count == 1 {
+            weightCatID = photoCats[0].id; weightCatName = photoCats[0].name
         }
     }
 
@@ -375,6 +391,7 @@ struct PhotoMemoryNoteEditor: View {
 
     init(record: PhotoMemoryNoteRecord, photo: PhotoPresentation?, store: PhotoMemoryNoteStore,
          archiveStore: PersonalArchiveStore = .shared,
+         careStore: CareHandoffStore = .shared, evacuationStore: EvacuationStore = .shared,
          onSaved: @escaping () -> Void) {
         self.photo = photo
         self.store = store
@@ -382,6 +399,8 @@ struct PhotoMemoryNoteEditor: View {
         self.recordID = record.id
         self.onSaved = onSaved
         self.archiveStore = archiveStore
+        _careStore = ObservedObject(wrappedValue: careStore)
+        _evacuationStore = ObservedObject(wrappedValue: evacuationStore)
         archiveAccount = nil
         didUpdateArchive = nil
     }
@@ -479,8 +498,9 @@ struct PhotoMemoryNoteEditor: View {
                     if !weightCats.isEmpty {
                         Picker("測定した猫", selection: $weightCatID) {
                             Text(weightCatID == nil && weightCatName != nil ? "\(weightCatName!)（対象を確認）" : "未指定").tag(Optional<UUID>.none)
-                            ForEach(weightCats, id: \.id) { cat in Text(cat.name).tag(Optional(cat.id)) }
+                            ForEach(weightCats, id: \.id) { cat in Text(weightCatLabel(cat)).tag(Optional(cat.id)) }
                         }.onChange(of: weightCatID) { _, id in weightCatName = weightCats.first { $0.id == id }?.name }
+                            .accessibilityIdentifier("memo-weight-cat-picker")
                     }
                     Toggle("測定日を指定", isOn: $weightDateKnown).accessibilityIdentifier("memo-weight-date-toggle")
                     if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
