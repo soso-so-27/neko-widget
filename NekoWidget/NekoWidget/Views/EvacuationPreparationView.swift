@@ -6,6 +6,7 @@ struct EvacuationPreparationView: View {
     var profiles: [CatProfilePresentation]
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: EvacuationStore = .shared
+    @ObservedObject var reuseStore: CareHandoffStore = .shared
 
     var body: some View {
         Group {
@@ -23,7 +24,7 @@ struct EvacuationPreparationView: View {
                     }
                     Section {
                         NavigationLink {
-                            EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store)
+                            EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store, reuseStore: reuseStore)
                         } label: {
                             entry("猫の情報を見せる", detail: "写真・ごはん・必要な配慮", icon: "person.text.rectangle")
                         }
@@ -216,6 +217,7 @@ private struct EvacuationCatsView: View {
     let profiles: [CatProfilePresentation]
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
+    @ObservedObject var reuseStore: CareHandoffStore
     @State private var openedID: UUID?
     @State private var opensNewCat = false
     var body: some View {
@@ -231,6 +233,25 @@ private struct EvacuationCatsView: View {
             }
             let available = profiles.filter { profile in !store.plan.cats.contains { $0.profileID == profile.identifier } }
             Section {
+                ForEach(availableSavedCats) { cat in
+                    Button {
+                        if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
+                            openedID = id; opensNewCat = true
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            EvacuationPhoto(image: reuseStore.image(cat.photoName), label: "いつもの写真")
+                                .frame(width: 54, height: 60)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(cat.displayName).font(.headline)
+                                Text("入力済みの情報で作る").font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                        }
+                    }.accessibilityIdentifier("evacuation-saved-cat-\(cat.id.uuidString)")
+                        .disabled(store.plan.cats.count >= 30 || store.saveError != nil)
+                }
                 ForEach(available) { profile in
                     Button {
                         openNew(profileID: profile.identifier, name: profile.displayName)
@@ -248,7 +269,16 @@ private struct EvacuationCatsView: View {
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
     private func openNew(profileID: String? = nil, name: String = "") {
-        if let id = store.addCat(profileID: profileID, name: name) { openedID = id; opensNewCat = true }
+        if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) { openedID = id; opensNewCat = true }
+    }
+    private var availableSavedCats: [CareCat] {
+        guard reuseStore.loadError == nil, reuseStore.saveError == nil else { return [] }
+        return reuseStore.plan.cats.filter { source in
+            !store.plan.cats.contains { target in
+                (source.profileID != nil && target.profileID == source.profileID)
+                    || (target.toolCatID ?? target.id) == (source.toolCatID ?? source.id)
+            } && !profiles.contains { $0.identifier == source.profileID }
+        }
     }
     private func destination(_ id: UUID) -> some View {
         EvacuationCatView(id: id, profiles: profiles, otherPhotos: otherPhotos, store: store)
@@ -272,7 +302,7 @@ private struct EvacuationCatView: View {
             if let cat {
                 Section {
                     HStack(spacing: 14) {
-                        EvacuationPhoto(image: store.image(cat.photos["face"]), label: "顔の写真")
+                        EvacuationPhoto(image: store.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]), label: "この子の写真")
                             .frame(width: 80, height: 90)
                         VStack(alignment: .leading, spacing: 7) {
                             Text(cat.displayName).font(.title2.bold())
@@ -342,7 +372,7 @@ private struct EvacuationCatEditor: View {
             if let cat {
                 Section("写真と名前") {
                     TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
-                    ForEach(EvacuationCat.PhotoRole.allCases) { role in
+                    ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
                         Button { photoRole = role } label: {
                             HStack {
                                 EvacuationPhoto(image: store.image(cat.photos[role.rawValue]), label: role.title)
@@ -362,12 +392,27 @@ private struct EvacuationCatEditor: View {
                     TextField("見分ける特徴（任意）", text: text(\.features), axis: .vertical)
                 }
                 Section {
-                    DisclosureGroup("いつものごはん") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("いつものごはん").font(.subheadline.weight(.medium))
+                            if cat.prefilledFields?.contains("food") == true {
+                                Text("普段の情報").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         TextField("フード名・普段の量など", text: text(\.food), axis: .vertical)
                             .accessibilityIdentifier("evacuation-cat-food")
+                            .foregroundStyle(cat.prefilledFields?.contains("food") == true ? Color.secondary : Color.primary)
                     }
-                    DisclosureGroup("接し方・苦手なこと") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("接し方・苦手なこと").font(.subheadline.weight(.medium))
+                            if cat.prefilledFields?.contains("handling") == true {
+                                Text("普段の情報").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         TextField("例：大きな音が苦手", text: text(\.handling), axis: .vertical)
+                            .accessibilityIdentifier("evacuation-cat-handling")
+                            .foregroundStyle(cat.prefilledFields?.contains("handling") == true ? Color.secondary : Color.primary)
                     }
                     DisclosureGroup("病歴・薬") {
                         Picker("病歴・薬の記録", selection: Binding(get: { cat.medicalStatus }, set: { new in

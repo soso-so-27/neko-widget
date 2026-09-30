@@ -7,14 +7,16 @@ struct EvacuationCat: Codable, Equatable, Identifiable {
             switch self { case .unknown: "不明・未確認"; case .none: "なし"; case .recorded: "あり" }
         }
     }
-    enum PhotoRole: String, CaseIterable, Identifiable { case face, body, withOwner
+    enum PhotoRole: String, CaseIterable, Identifiable { case reference, face, body, withOwner
         var id: String { rawValue }
         var title: String {
-            switch self { case .face: "顔が分かる写真"; case .body: "全身・柄が分かる写真"; case .withOwner: "飼い主と一緒の写真" }
+            switch self { case .reference: "いつもの写真"; case .face: "顔が分かる写真"; case .body: "全身・柄が分かる写真"; case .withOwner: "飼い主と一緒の写真" }
         }
     }
     var id = UUID()
     var profileID: String?
+    var toolCatID: UUID?
+    var prefilledFields: Set<String>?
     var name = ""
     var features = ""
     var food = ""
@@ -197,6 +199,8 @@ final class EvacuationRepository {
         }
         let url = directory.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else { throw EvacuationStorageError.photoUnavailable }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw EvacuationStorageError.photoUnavailable }
         return url
     }
 }

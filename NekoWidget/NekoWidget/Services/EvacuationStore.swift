@@ -61,19 +61,64 @@ final class EvacuationStore: ObservableObject {
     func editCat(_ id: UUID, change: (inout EvacuationCat) -> Void) {
         update { plan in
             guard let index = plan.cats.firstIndex(where: { $0.id == id }) else { return }
+            let before = plan.cats[index]
             change(&plan.cats[index])
+            if before.name != plan.cats[index].name { plan.cats[index].prefilledFields?.remove("name") }
+            if before.food != plan.cats[index].food { plan.cats[index].prefilledFields?.remove("food") }
+            if before.handling != plan.cats[index].handling { plan.cats[index].prefilledFields?.remove("handling") }
+            if before.photos != plan.cats[index].photos { plan.cats[index].prefilledFields?.remove("photo") }
             plan.cats[index].updatedAt = Date()
             plan.cats[index].reviewedAt = nil
         }
     }
 
-    func addCat(profileID: String? = nil, name: String = "") -> UUID? {
+    func addCat(profileID: String? = nil, name: String = "",
+                using source: CareHandoffStore? = nil, sourceCatID: UUID? = nil) -> UUID? {
         if let profileID, let found = plan.cats.first(where: { $0.profileID == profileID }) { return found.id }
+        guard plan.cats.count < 30, loadError == nil, saveError == nil, let repository else { return nil }
+        let candidates = source?.loadError == nil && source?.saveError == nil ? source?.plan.cats ?? [] : []
+        let matches = candidates.filter { cat in
+            if let sourceCatID { return cat.id == sourceCatID && (profileID == nil || cat.profileID == profileID) }
+            return profileID != nil && cat.profileID == profileID
+        }
+        let previous = matches.count == 1 ? matches[0] : nil
+        if sourceCatID != nil && previous == nil { return nil }
+        if let previous, let found = plan.cats.first(where: {
+            ($0.toolCatID ?? $0.id) == (previous.toolCatID ?? previous.id)
+                && ($0.profileID == nil || previous.profileID == nil || $0.profileID == previous.profileID)
+        }) { return found.id }
         var cat = EvacuationCat()
         cat.profileID = profileID
         cat.name = name
-        guard update({ $0.cats.append(cat) }) else { return nil }
-        return cat.id
+        cat.toolCatID = previous?.toolCatID ?? previous?.id ?? cat.id
+        cat.prefilledFields = []
+        var photos: [String: Data] = [:]
+        do {
+            if let previous {
+                cat.profileID = previous.profileID
+                if name.isEmpty { cat.name = previous.name; cat.prefilledFields?.insert("name") }
+                if !previous.reusableFood.isEmpty { cat.food = previous.reusableFood; cat.prefilledFields?.insert("food") }
+                if !previous.handling.isEmpty { cat.handling = previous.handling; cat.prefilledFields?.insert("handling") }
+                if let photo = previous.photoName {
+                    guard let bytes = try source?.photoData(photo) else { throw EvacuationStorageError.photoUnavailable }
+                    let name = UUID().uuidString + ".jpg"
+                    photos[name] = try Self.normalizedJPEG(bytes)
+                    // A general photo is not a claim that face, body or owner are visible.
+                    cat.photos["reference"] = name; cat.prefilledFields?.insert("photo")
+                }
+            }
+            var next = plan; next.cats.append(cat)
+            try repository.commit(next, newPhotos: photos)
+            plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            return cat.id
+        } catch {
+            saveError = "猫の情報を保存できませんでした。元の記録は残っています。保存を再試行してから、もう一度この子を選んでください。"
+            return nil
+        }
+    }
+    func photoData(_ name: String) throws -> Data {
+        guard loadError == nil, saveError == nil, let repository else { throw EvacuationStorageError.unreadable }
+        return try Data(contentsOf: repository.photoURL(name))
     }
 
     func image(_ name: String?) -> UIImage? {
@@ -90,6 +135,7 @@ final class EvacuationStore: ObservableObject {
         let name = UUID().uuidString + ".jpg"
         var next = plan
         next.cats[index].photos[role.rawValue] = name
+        next.cats[index].prefilledFields?.remove("photo")
         next.cats[index].updatedAt = Date()
         next.cats[index].reviewedAt = nil
         // Commit against current edits, not the record captured before PhotoKit awaited.
@@ -102,7 +148,10 @@ final class EvacuationStore: ObservableObject {
     func shareRecord(catID: UUID, disclosure: EvacuationDisclosure) throws -> EvacuationShareRecord {
         guard loadError == nil, saveError == nil,
               let cat = plan.cats.first(where: { $0.id == catID }) else { throw EvacuationStorageError.unreadable }
-        let roles: [EvacuationCat.PhotoRole] = disclosure.withOwnerPhoto ? [.face, .body, .withOwner] : [.face, .body]
+        // Prefer purpose-selected identification photos; a general saved photo is a fallback.
+        var roles: [EvacuationCat.PhotoRole] = cat.photos["face"] != nil || cat.photos["body"] != nil
+            ? [.face, .body] : [.reference]
+        if disclosure.withOwnerPhoto { roles.append(.withOwner) }
         let photos = try roles.compactMap { role -> UIImage? in
             guard let name = cat.photos[role.rawValue] else { return nil }
             guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
