@@ -65,6 +65,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIを改善するとき
 
+- 病院・体重の保存済み猫選択は `reviewed-vet-saved-cat-ui-v1`。アプリ専用2View・既存DEBUG fixture・既存UIテストの完全4ファイルbefore/after一致だけを認める。関連3メソッド（体重編集、明示的な診察追加/除去と共通ID選択、写真なし/日付不明/大文字）とBuild・Photos bootstrap・両OS runtimeを維持し、全UI一式・Widget Galleryは起動しない。未知入力・mode/type変更・共有モデル・project・workflow・CI混在はこの登録を借りない。制御用登録はnative/配布成功ではなく、初回の所要時間は実測する。
+
 - 迷子の保存済み情報入力（`d2f8418`）はstoreの完全before/afterを独立レビューして `lost-cat-photo-ui-v3` へ登録する。既存の迷子3操作へ候補入力・編集・再起動・禁止項目の非転記・同名別猫の場面を追加し、Build・Photos bootstrap・両OS runtimeは維持。全アプリUI・Widget Galleryは起動しない。未知store差分や他の入力はこの登録を借りず、既存selectorで判定する。制御用の登録だけではnative/配布成功と扱わない。
 
 - CI高速化の試作は専用候補で検証する。製品側は検証済み構成を使うが、既知の時間超過を繰り返すことをこの分離規則で正当化しない。選択理由と所要時間を実行前に確認し、必要なら基盤側を先に改善する。

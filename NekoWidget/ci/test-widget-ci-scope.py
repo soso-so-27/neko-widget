@@ -531,5 +531,54 @@ class LostCatSavedInfoBoundaryTests(unittest.TestCase):
         self.assertFalse(scope.lost_cat_store_changes(before + "\n// unknown input\n", after))
 
 
+class VetSavedCatBoundaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.base = "201c757500ce4427a5a5f81f17ee8c9a28143d89"
+        cls.head = "075fd0b3beefb080c84fe13ccf5508f962f1d410"
+        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0") if path]
+        cls.changes = {path: (planner.git("show", f"{cls.base}:{path}"), planner.git("show", f"{cls.head}:{path}"))
+                       for path in cls.paths}
+
+    def test_real_candidate_selects_only_vet_weight_cases_and_required_boundaries(self):
+        self.assertEqual(set(self.paths), scope.VET_SAVED_CAT_PATHS)
+        self.assertEqual(scope.select_scope(self.changes), scope.VET_SAVED_CAT_SCOPE)
+        with patch.object(planner, "comparison_base", return_value=self.base):
+            self.assertEqual(planner.runtime_scope(self.paths, {}, {"GITHUB_SHA": self.head}), scope.VET_SAVED_CAT_SCOPE)
+        self.assertEqual(len(scope.VET_SAVED_CAT_TESTS), 3)
+        self.assertEqual(scope.native_tests(scope.VET_SAVED_CAT_SCOPE), scope.VET_SAVED_CAT_TESTS)
+        required = planner.required_jobs(self.paths, scope.VET_SAVED_CAT_SCOPE)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.VET_SAVED_CAT_SCOPE))
+        self.assertEqual(len(required), 4)
+        self.assertEqual(scope.lanes(scope.VET_SAVED_CAT_SCOPE), ("runtime", "app-ui"))
+        self.assertEqual(scope.smoke_tests(scope.VET_SAVED_CAT_SCOPE),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        self.assertFalse(any("gallery" in job for job in required))
+
+    def test_no_unknown_product_or_control_input_can_borrow_review(self):
+        for path in self.paths:
+            for side in (0, 1):
+                altered = dict(self.changes); pair = list(altered[path]); pair[side] += "\n// unreviewed"
+                altered[path] = tuple(pair)
+                self.assertNotEqual(scope.select_scope(altered), scope.VET_SAVED_CAT_SCOPE)
+            incomplete = dict(self.changes); del incomplete[path]
+            self.assertNotEqual(scope.select_scope(incomplete), scope.VET_SAVED_CAT_SCOPE)
+        for path in ("NekoWidget/NekoWidget/Services/CareHandoffStore.swift", "NekoWidget/Shared/Storage/AtomicJSON.swift",
+                     "NekoWidget/ci/ios_ci_scope.py", ".github/workflows/ios-build.yml",
+                     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", "NekoWidget/NekoWidgetWidget/NekoWidget.swift"):
+            altered = dict(self.changes); altered[path] = ("before", "after")
+            self.assertNotEqual(scope.select_scope(altered), scope.VET_SAVED_CAT_SCOPE)
+        # Required jobs remain same-SHA, actually executed evidence, not skips.
+        required = planner.required_jobs(self.paths, scope.VET_SAVED_CAT_SCOPE)
+        jobs = [{"name": name, "head_sha": self.head, "status": "completed", "conclusion": "success"} for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.head))
+        self.assertFalse(planner.covers_jobs(jobs, required, self.base))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.head))
+        for index in range(len(jobs)):
+            for result in ("failure", "skipped", "cancelled", None):
+                changed = copy.deepcopy(jobs); changed[index]["conclusion"] = result
+                self.assertFalse(planner.covers_jobs(changed, required, self.head))
+
+
 if __name__ == "__main__":
     unittest.main()
