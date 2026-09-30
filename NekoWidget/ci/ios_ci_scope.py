@@ -1087,7 +1087,7 @@ VET_SAVED_CAT_DIGESTS = {
     "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["aea6313e1f514bac82f532f6992da974643d317757f2907b83380b5fc7c3f374", "24afb79a9832d638b693cb2d502b633c9abd5f9a7917ef498af145327727e150"],
     "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": ["0badda5b62680993d67cace1ccdc94a85c78c70f8cd9f57513c22b1e2117ce75", "c78219faebdb02a35d989135e808ee09e51fcc6c7c52fe38b492e8428dc7653e"],
     "NekoWidget/NekoWidget/Views/VeterinaryVisitView.swift": ["2586726ca4db6cf8bf363f9599df7000e651d0c8bd8740c47339df9dea1acd75", "9969a6d280886b6e4224d1a57bd41494728c47becf4bb74deb274de3197cf3d9"],
-    MEMORY_TEST_PATH: ["106f7e4b81d56c6e18ad416f33ae4d7503af79f1bc15ec3467d1f3b7be790773", "40f1a9d86b3a71fed67d104aede42ac1b16dcd72eaada8938a6cb9428144d40e"],
+    MEMORY_TEST_PATH: ["106f7e4b81d56c6e18ad416f33ae4d7503af79f1bc15ec3467d1f3b7be790773", "bdeff8b9a2d3899af790de67be0325c9816563548d3555ad55746b5283497fa1"],
 }
 VET_SAVED_CAT_PATHS = frozenset(VET_SAVED_CAT_DIGESTS)
 VET_SAVED_CAT_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (

@@ -188,7 +188,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
     if correction is not None:
-        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE, planner.VET_SAVED_CAT_SCOPE)
                 and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
                 and isinstance(correction, dict)
                 and type(correction.get("run_id")) is int and type(correction.get("sha")) is str,

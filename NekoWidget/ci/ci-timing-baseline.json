@@ -56,6 +56,16 @@
   "observations": [
     {
       "scope": "reviewed-vet-saved-cat-ui-v1",
+      "candidate_minutes": 24.717,
+      "run_id": 36748058067,
+      "outcome": "failure",
+      "runner_minutes": 79.233,
+      "source_sha": "4760345bd74abdb8aa3f45fe4707a99c29146488",
+      "first_product_candidate_at": "2026-09-30T16:09:50Z",
+      "note": "Build/safety, Photos bootstrap and both-OS runtime passed. Three owning UI cases executed: two passed; saved-cat case failed only because XCTest waited for a lazy records button before scrolling at AX3. Native AX shows the correct visit sheet open with remarks/questions and the lower section not yet generated. Correct only that owned test body, preserve product/fixture bytes and successful job inputs, require all three UI cases in the new SHA, and retain this failed graph plus prior compiler failure in total elapsed/cost."
+    },
+    {
+      "scope": "reviewed-vet-saved-cat-ui-v1",
       "candidate_minutes": 7.083,
       "run_id": 36746067370,
       "outcome": "failure",
