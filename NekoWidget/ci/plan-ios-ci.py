@@ -288,16 +288,16 @@ PRESERVATION_REVIEWED_TREE = "a5c98ae71bc7c33e0a991150f8899d451b6880fb"
 PRESERVATION_WORKFLOW_DIGEST = "e46504ffd7e0b698f49f7ff2d894b070d7bc25ef20bea89f45e1957c2b26778a"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "f357a717b850eab944da3c386b203a505249f1ae246dd41ec4765c8aae02cf0a",
-        "f783797d7d81ad2384042976490d93eb98be903852c09c8082a03d948f80fbc8"
+        "0c03e7d59537d3a27ed906451f26cdd227113f26c4637e1997895532ca412691",
+        "39c531e380a966685a564487e5ff87c345706de000c97fdfe9a8e5e32b489860"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "0de217b939e009f9327f73cafcfa1bca9107c0ac99f343eb16ef65f0c30bb366",
-        "c285ba07bed46467fdb6ba049c5a75cb353f746a245edba1cf9161fcbe548b25"
+        "f1db96ea42bf04231fbd5c41c64b57c1c83f5eeb5dd68feffc2cffeb36d98a1a",
+        "c5fcd1f5caf85a53045fdde4118b3f374817bc2206a8f59572934b48d6f4feb5"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "cc0e195af3ed4663cf7cb6873a16123624a91d964882d81a0ef84f4637757676",
-        "1cf33fcf336bbfb5c1a88c55fda8110302d7927f5cb7d6ceed0147164574f126"
+        "b59fc54e4458ba10959f8f9f1187770bbeb78acacf697695a3587ab7849c36e1",
+        "657c770a60412ea314f196d39f9c50013a118e49ef60b7ceca2e2c64d44c411b"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "ad5d436c9f70b1848b710424a92a3a32a837b4acf8b29eaa4f6259718baf6545",
