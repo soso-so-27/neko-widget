@@ -108,6 +108,7 @@ private struct VeterinaryConsultationView: View {
     @State private var error: String?
     @State private var busy = false
     @State private var chosen: PhotoMemoryNoteRecord?
+    @State private var pendingSource: PhotoMemoryNoteRecord?
 
     private var changes: Bool {
         guard let visit else { return false }
@@ -187,8 +188,8 @@ private struct VeterinaryConsultationView: View {
             }
             if initialVisit.completedAt == nil { chosen = initialRecord }
         }
-        .sheet(isPresented: $picking) {
-            if let visit { VeterinaryRecordPicker(visit: visit, photos: photos, noteStore: noteStore) { chosen = $0; picking = false } }
+        .sheet(isPresented: $picking, onDismiss: { chosen = pendingSource; pendingSource = nil }) {
+            if let visit { VeterinaryRecordPicker(visit: visit, photos: photos, noteStore: noteStore) { pendingSource = $0; picking = false } }
         }
         .sheet(item: $chosen) { source in
             if let visit {

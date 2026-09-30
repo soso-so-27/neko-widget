@@ -1550,6 +1550,14 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(remove.isHittable); remove.tap()
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
+        let pick = app.buttons["vet-pick-records"]; revealVetElement(pick, app: app); pick.tap()
+        let source = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-source-")).firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
+        source.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Picker dismissal must present the real confirmation")
+        app.navigationBars["内容を確認"].buttons["閉じる"].tap()
         app.navigationBars["診察メモ"].buttons["閉じる"].tap()
         app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
         XCTAssertTrue(app.staticTexts["memory-note-body"].waitForExistence(timeout: 5))
