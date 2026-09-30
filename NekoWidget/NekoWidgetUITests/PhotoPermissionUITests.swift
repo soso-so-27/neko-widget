@@ -1868,8 +1868,13 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("evacuation-cat-private-fields-excluded")
         let share = app.buttons["evacuation-share-pdf"]
         for _ in 0..<6 where !share.isHittable { app.swipeUp() }
+        XCTAssertTrue(share.isHittable)
         share.tap()
-        app.buttons["PDFを作って保存・印刷"].tap()
+        let confirmation = app.buttons["PDFを作って保存・印刷"]
+        let presented = confirmation.waitForExistence(timeout: 5)
+        capture("evacuation-print-confirmation")
+        XCTAssertTrue(presented, "The print confirmation must be presented before confirming export")
+        confirmation.tap()
         XCTAssertTrue(app.otherElements["ShareSheet.RemoteContainerView"].firstMatch.waitForExistence(timeout: 10))
         capture("evacuation-print-share")
         app.terminate()
