@@ -1,7 +1,7 @@
 import { ServiceError, sha256, type IdentityVerifier } from './contracts';
 import { DurableAuth } from './auth';
 import { ArchiveStore, cleanupArchive } from './storage';
-import { AppleIdentityVerifier, createAppleClientSecret } from './apple';
+import { AppleIdentityVerifier, AppleSignInFailure, createAppleClientSecret } from './apple';
 import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './providers';
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
@@ -22,6 +22,7 @@ export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
+  APPLE_AUTH_DIAGNOSTICS_UNTIL?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
@@ -300,6 +301,20 @@ export default {
       const services = configuredServices(env);
       return await route(request, services);
     } catch (error) {
+      // Finite private-pilot probe: first fixed failure only. Never retain tokens,
+      // subjects, email, request bodies, IP, nonce or raw exception text.
+      const until = Number(env.APPLE_AUTH_DIAGNOSTICS_UNTIL);
+      const now = Date.now();
+      if (error instanceof AppleSignInFailure && env.ENVIRONMENT === 'staging' && env.PILOT_MODE === 'YES'
+          && env.PILOT_REGISTRATION_ENABLED === 'YES' && request.method === 'POST'
+          && new URL(request.url).pathname === '/v1/auth/sessions'
+          && Number.isSafeInteger(until) && until > now && until <= now + 86_400_000) {
+        try {
+          await env.ARCHIVE.put('__service_diagnostics/apple-auth-first.json', JSON.stringify({
+            at: new Date(now).toISOString(), code: error.code, stage: error.stage, claim: error.claim,
+          }), { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'application/json' } });
+        } catch { /* Diagnostics must not alter the authentication response. */ }
+      }
       return error instanceof ServiceError ? response({ error: { code: error.code,
         ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
           ? { registrationReference: error.registrationReference } : {}) } }, error.status)
