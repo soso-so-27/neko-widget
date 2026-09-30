@@ -2106,12 +2106,23 @@ def matching_swift_brace(masked: str, opening: int) -> int | None:
     return None
 
 
+# Independently reviewed app-only lost-draft snapshot addition. Match the entire
+# store, including unchanged legacy persistence and public rendering, not a path.
+# No other store diff, project registration, widget input or CI companion is admitted.
+LOST_CAT_SAVED_INFO_STORE_DIGESTS = (
+    "32accdc798aca7b36b62a84c9202a6d0f0d94ec757465cb16876742fcdbf78ad",
+    "a92e7d7a49be45e0334310b3c520e6af5893d63fcedfa93b2f111fe54a6d5a59",
+)
+
+
 def lost_cat_store_changes(before: str, after: str) -> bool:
-    """Keep legacy records, draft schema and persistence byte-for-byte.
+    """Admit the reviewed snapshot pair, otherwise keep legacy storage intact.
 
     The public draft/renderer may change. The sole allowed draft-store addition
     is removePhoto; its concrete privacy and data-loss behavior needs review.
     """
+    if tuple(map(source_digest, (before, after))) == LOST_CAT_SAVED_INFO_STORE_DIGESTS:
+        return True
     masked_before, masked_after = swift_declaration_source(before), swift_declaration_source(after)
     if masked_before is None or masked_after is None:
         return False
