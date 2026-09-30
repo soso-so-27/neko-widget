@@ -276,7 +276,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
         raise ValueError("Full baseline reference is limited to the reviewed app UI profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
-    # A new backend allowlist (including preservation v19) is unmeasured even when its unchanged
+    # A new backend allowlist (including preservation v20) is unmeasured even when its unchanged
     # job has observations under an older scope (for example service v1/v2).
     if not samples:
         if use_full_baseline:
@@ -304,7 +304,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "reference_upper_minutes": with_upload, "samples": [], "reference_samples": reference["samples"],
                     "includes_future_rework": False,
                     "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
-        # Each exact service-tree profile (including v19's disabled purge integration) measures its
+        # Each exact service-tree profile (including v20's finite auth diagnostics) measures its
         # own first run; earlier backend timings are not reused as evidence.
         if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
