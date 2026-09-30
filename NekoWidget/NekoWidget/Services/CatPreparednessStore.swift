@@ -170,6 +170,10 @@ final class LostCatDraftStore: ObservableObject {
         }
     }
 
+    func hasPreparedRecord(for key: String) -> Bool {
+        drafts[key] != nil || legacy.records[key == "guest-legacy" ? "unregistered" : key] != nil
+    }
+
     func draft(for key: String, profileName: String = "",
                savedInformation: LostCatSavedInformation? = nil) throws -> LostCatDraft {
         guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }

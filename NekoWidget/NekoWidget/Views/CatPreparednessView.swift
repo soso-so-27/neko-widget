@@ -571,7 +571,7 @@ struct LostCatDraftView: View {
             let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
                 .filter { $0.id == identity }
             // Existing drafts need no source access, even if its copy is now unavailable.
-            let information = store.drafts[identity] == nil && candidates.count == 1
+            let information = !store.hasPreparedRecord(for: identity) && candidates.count == 1
                 ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
             let saved = try store.draft(for: identity, profileName: name, savedInformation: information)
             key = identity
