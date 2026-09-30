@@ -1,6 +1,16 @@
 import SwiftUI
 import UIKit
 
+/// Display only the closed, user-facing messages owned by these stores.
+/// Arbitrary platform errors may contain file paths or private source details.
+private func veterinaryErrorMessage(_ error: any Error) -> String {
+    let message: String?
+    if let known = error as? VeterinaryVisitError { message = known.errorDescription }
+    else if let known = error as? PhotoMemoryNoteStoreError { message = known.errorDescription }
+    else { message = nil }
+    return message ?? "操作の結果を確認できませんでした。開き直して保存状況を確認してください。"
+}
+
 struct VeterinaryVisitsView: View {
     var profiles: [CatProfilePresentation] = []
     var photos: [PhotoPresentation]
@@ -70,7 +80,7 @@ struct VeterinaryVisitsView: View {
     }
     private func open(_ cat: PhotoMemoryNoteCat) async {
         do { selected = try await store.current(catID: cat.id, catName: cat.name); error = nil }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = veterinaryErrorMessage(error) }
     }
     private func reload() async {
         do {
@@ -87,7 +97,7 @@ struct VeterinaryVisitsView: View {
             visits = loaded; ready = true; error = sourceError
             do { cleanupPending = try await store.cleanupPending() }
             catch { cleanupPending = true }
-        } catch { self.error = error.localizedDescription; ready = false }
+        } catch { self.error = veterinaryErrorMessage(error); ready = false }
     }
 }
 
@@ -229,19 +239,19 @@ private struct VeterinaryConsultationView: View {
         draft.startedOn = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil
         if completing { draft.completedAt = Date() }
         do { visit = try await store.save(draft, expectedRevision: draft.revision); error = nil }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = veterinaryErrorMessage(error) }
     }
     private func remove(_ entry: VeterinaryVisitEntry) async {
         guard let visit, !busy else { return }
         busy = true; defer { busy = false }
         do { self.visit = try await store.remove(entryID: entry.id, from: visit.id, expectedRevision: visit.revision); error = nil }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = veterinaryErrorMessage(error) }
     }
     private func deleteVisit() async {
         guard let visit, !busy else { return }
         busy = true; defer { busy = false }
         do { try await store.delete(visitID: visit.id, expectedRevision: visit.revision); dismiss() }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = veterinaryErrorMessage(error) }
     }
 }
 
@@ -301,7 +311,7 @@ private struct VeterinaryRecordPicker: View {
                     records = try await noteStore.records().filter {
                         $0.note.weight?.catID == nil || $0.note.weight?.catID == visit.catID
                     }
-                } catch { self.error = error.localizedDescription }
+                } catch { self.error = veterinaryErrorMessage(error) }
             }
             .onDisappear { access.stop() }
         }
@@ -378,7 +388,7 @@ private struct VeterinaryRecordConfirmation: View {
                 expectedRevision: visit.revision, confirmedTarget: confirmed,
                 replace: visit.entries.contains { $0.sourceNoteID == source.id })
             saved(updated)
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = veterinaryErrorMessage(error) }
     }
     private func sourceIsCurrent() async throws -> Bool {
         if photoOnly {
