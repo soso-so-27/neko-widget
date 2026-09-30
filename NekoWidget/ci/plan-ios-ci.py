@@ -33,7 +33,7 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_P
                           DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_COMPANION_PATHS,
                           WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS,
                           MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS,
-                          REVIEWED_MANAGED_PRESERVATION_SCOPE)
+                          REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -807,12 +807,12 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
-    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE)
+    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
 
 
 def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SCOPE) -> bool:
-    """Only owned lost-cat XCTest bodies and CI evidence controls may differ."""
+    """Only owned XCTest bodies and reviewed CI evidence controls may differ."""
     try:
         if not SHA.fullmatch(source) or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
             return False
@@ -824,28 +824,33 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
         if len(parts) % 2:
             return False
         managed = selected_scope == REVIEWED_MANAGED_PRESERVATION_SCOPE
-        if selected_scope not in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE):
+        vet = selected_scope == VET_SAVED_CAT_SCOPE
+        if selected_scope not in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE):
             return False
         controls = TEST_CORRECTION_CONTROL_PATHS | (frozenset({
             "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/reviewed-app-ui.json",
             "NekoWidget/ci/test-ci-lanes.py"}) if managed else frozenset())
         main_tests = frozenset({"NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py"}) if managed else frozenset()
+        if vet:
+            controls |= frozenset({"NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/ci-timing-baseline.json"})
+            main_tests = frozenset({"NekoWidget/ci/test-widget-ci-scope.py"})
         changed = set()
         for index in range(0, len(parts), 2):
             fields, path = parts[index].split(), parts[index + 1]
             if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
-                    or path in changed or (path not in controls | main_tests | {MEMORY_TEST_PATH} and not (managed and is_handoff(path)))
+                    or path in changed or (path not in controls | main_tests | {MEMORY_TEST_PATH} and not ((managed or vet) and is_handoff(path)))
                     or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
                 return False
-            if path in main_tests and git("show", f"{head}:{path}") != git("show", f"origin/main:{path}"):
+            if (path in main_tests or (vet and path != MEMORY_TEST_PATH)) and git("show", f"{head}:{path}") != git("show", f"origin/main:{path}"):
                 return False
             changed.add(path)
         if MEMORY_TEST_PATH not in changed:
             return False
         from ios_ci_scope import family_window_test_methods, lost_cat_photo_test_changes
         before, after = git("show", f"{source}:{MEMORY_TEST_PATH}"), git("show", f"{head}:{MEMORY_TEST_PATH}")
-        if managed:
-            names = {"testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
+        if managed or vet:
+            names = {"testVeterinarySelectionIsExplicitAndRemovalKeepsSource"} if vet else {
+                "testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
             old = family_window_test_methods(before, owner_class="SoloMemoriesUITests", required_names=names)
             new = family_window_test_methods(after, owner_class="SoloMemoriesUITests", required_names=names)
             if old is None or new is None or old.keys() != new.keys():
