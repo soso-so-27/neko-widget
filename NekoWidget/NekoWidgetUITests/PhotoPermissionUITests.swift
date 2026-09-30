@@ -688,6 +688,7 @@ final class OfficialWindowUITests: XCTestCase {
             let setup = app.buttons["window-list-row-10000000-0000-0000-0000-000000000002"]
             for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(setup.isHittable)
+            XCTAssertTrue((setup.value as? String ?? "").contains("設定を完了できませんでした"))
             XCTAssertTrue((setup.value as? String ?? "").contains("設定を開いて確認"))
             if !largeText {
                 let nap = app.buttons["public-window-entry-nap-cats"]
@@ -696,6 +697,14 @@ final class OfficialWindowUITests: XCTestCase {
                 XCTAssertEqual(setup.frame.minY, nap.frame.minY, accuracy: 1,
                                "Pending setup belongs in the same shelf, beside the second public window")
                 XCTAssertFalse(setup.frame.intersects(nap.frame), "The neighboring window must retain its own tap target")
+            }
+            if largeText {
+                // A partly visible card is already hittable. Bring its status
+                // and action above the tab bar for the visual review as well.
+                for _ in 0..<4 {
+                    if setup.frame.maxY < app.tabBars.firstMatch.frame.minY { break }
+                    app.swipeUp()
+                }
             }
             capture("window-hub-\(appearance)", app)
             if appearance == "light" || appearance == "narrow" {
@@ -1600,6 +1609,14 @@ final class SoloMemoriesUITests: XCTestCase {
         let name = app.textFields["evacuation-cat-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap(); name.typeText("こはく")
+        // Establish that keyboard input reached the field before testing persistence.
+        // typeText returning alone did not establish this in the failed CI recording.
+        let completedInput = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "こはく"), object: name)
+        XCTAssertEqual(XCTWaiter.wait(for: [completedInput], timeout: 5), .completed,
+                       "The complete name must be visible before terminating the app")
+        XCTAssertFalse(app.otherElements["evacuation-save-error"].exists)
+        capture("evacuation-unregistered-before-restart-large-text")
         app.terminate()
         app.launch()
         let reopened = app.buttons["evacuation-cats-open"]
@@ -1608,6 +1625,11 @@ final class SoloMemoriesUITests: XCTestCase {
         reopened.tap()
         XCTAssertTrue(app.buttons.containing(.staticText, identifier: "こはく").firstMatch.waitForExistence(timeout: 5))
         capture("evacuation-unregistered-restored-large-text")
+        app.buttons.containing(.staticText, identifier: "こはく").firstMatch.tap()
+        app.buttons["evacuation-cat-edit"].tap()
+        let restoredName = app.textFields["evacuation-cat-name"]
+        XCTAssertTrue(restoredName.waitForExistence(timeout: 5))
+        XCTAssertEqual(restoredName.value as? String, "こはく")
         app.terminate()
     }
 
@@ -2215,6 +2237,51 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["membership-new"].tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "The current beta stays unrestricted")
         app.terminate()
+    }
+
+    @MainActor
+    func testMembershipOfferExplainsExpiryWithoutChangingThePlan() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--membership-offer-ui-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if largeText {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+            app.buttons["membership-preview-open"].tap()
+            let details = app.buttons["membership-offer-details"]
+            for _ in 0..<10 { if details.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(details.isHittable)
+            XCTAssertFalse(app.staticTexts["無料で使えること"].exists)
+            details.tap()
+            for title in ["無料で使えること", "会員の有効期間が終わると", "招待相手への影響"] {
+                let heading = app.staticTexts[title]
+                for _ in 0..<10 { if heading.isHittable { break }; app.swipeUp() }
+                XCTAssertTrue(heading.isHittable)
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-details-\(largeText ? "largest" : "standard")-\(title)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            if largeText {
+                // The final paragraph is taller than the viewport at AX5.
+                // Keep a second capture of its continuation, not just its heading.
+                app.swipeUp()
+                app.swipeUp()
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-details-largest-continuation"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                           "Reading the terms must not purchase, restore, or finish the offer")
+            XCTAssertTrue(app.buttons["membership-offer-close"].isHittable)
+            app.buttons["membership-offer-close"].tap()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 5))
+            app.terminate()
+        }
     }
 
     @MainActor

@@ -425,6 +425,14 @@ def orchestration_only(paths, base, head):
         # The explicit source variable binds signing metadata to pinned checkout.
         old_native = before.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
         new_native = after.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
+        if path.endswith("ios-build.yml"):
+            # One bounded scheduling correction, not a native-command exemption.
+            # All build/test/artifact/evidence inputs still compare byte-for-byte.
+            old_budget = "    # Full UI execution can consume 60 minutes before result/attachment export.\n    timeout-minutes: 60\n"
+            new_budget = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+            if (old_native.count(old_budget) == 1 and new_native.count(new_budget) == 1
+                    and new_budget not in old_native and old_budget not in new_native):
+                old_native = old_native.replace(old_budget, new_budget, 1)
         if old_native != new_native:
             return False
     return True
