@@ -142,6 +142,7 @@ private struct MemoryReadingItem: Identifiable {
     let preserved: PersonalArchiveRecord?
     var id: String { local.map { "note-\($0.id)" } ?? "archive-\(preserved!.id)" }
     var text: String { local?.note.text ?? preserved?.text ?? "" }
+    var weight: PhotoMemoWeightValue? { local != nil ? local?.note.weight?.value : preserved?.context?.weight }
     var cats: [String] { local?.note.context?.cats.map(\.name) ?? preserved?.context?.catNames ?? [] }
     var date: Date {
         local?.note.context?.capturedAt ?? preserved?.capturedAt
@@ -215,10 +216,10 @@ struct PhotoMemoryNotesListView: View {
             MemoryReadingItem(local: nil, preserved: $0)
         }
         return (local + other).filter {
-            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.weight != nil
         }.filter {
             search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || ([$0.text] + $0.cats + [$0.date.formatted(.dateTime.year().month().day())])
+                || ([$0.text] + $0.cats + [$0.weight?.kilogramsText ?? "", $0.weight?.measuredOn ?? "", $0.date.formatted(.dateTime.year().month().day())])
                     .joined(separator: " ").localizedStandardContains(search)
         }.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
     }
@@ -416,6 +417,7 @@ struct PhotoMemoryNotesListView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(item.text.isEmpty ? "写真の記録" : item.text)
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 4).foregroundStyle(.primary)
+                if let weight = item.weight { Label("\(weight.kilogramsText) kg", systemImage: "scalemass").font(.subheadline).foregroundStyle(.secondary) }
                 if !item.cats.isEmpty {
                     Text(item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -640,6 +642,7 @@ struct PhotoMemoryNoteDetailView: View {
     private let archiveEnabled: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var record: PhotoMemoryNoteRecord?
     @State private var loaded = false
@@ -654,6 +657,7 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var archivedAccount: String?
     @State private var reflection: PhotoMemoReflectionState = .localOnly
     @State private var showsArchiveDetails = false
+    @State private var addsToVet = false
 
     init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          archiveStore: PersonalArchiveStore? = nil) {
@@ -677,7 +681,7 @@ struct PhotoMemoryNoteDetailView: View {
             } else if let record {
                 PhotoMemoDetailContent(text: record.note.text,
                     capturedAt: record.note.context?.capturedAt, writtenAt: record.note.writtenAt,
-                    fallbackDate: record.note.updatedAt) {
+                    fallbackDate: record.note.updatedAt, weight: record.note.weight?.value) {
                         if let photo = access.photo(for: record.photoIdentifier) {
                             NavigationLink(value: MemoriesRoute.memoryNotePhoto(record.id)) {
                                     PhotoAssetImageView(localIdentifier: photo.localIdentifier,
@@ -697,6 +701,8 @@ struct PhotoMemoryNoteDetailView: View {
                                 .accessibilityIdentifier("memory-note-photo-unavailable")
                         }
                 } status: {
+                    Button("診察メモに追加", systemImage: "cross.case") { addsToVet = true }
+                        .accessibilityIdentifier("memory-note-add-vet")
                     if reflection == .pending || reflection == .conflict || reflection == .accountChanged {
                         Text(reflection == .conflict ? "別の変更があります。" : "iCloudへの反映待ち")
                             .font(.caption).foregroundStyle(.secondary)
@@ -744,10 +750,19 @@ struct PhotoMemoryNoteDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $addsToVet) {
+            if let record {
+                NavigationStack {
+                    VeterinaryVisitsView(photos: photos, noteStore: store, store: veterinaryStore, initialRecord: record)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { addsToVet = false } } }
+                }
+                .environment(\.dynamicTypeSize, typeSize)
+            }
+        }
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入りはそのまま残ります。保管先への反映を有効にしたメモは、iCloudの文章にも反映します。") }
+        } message: { Text("写真とお気に入りはそのまま残ります。文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。診察メモに選んだ控えは残ります。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -795,6 +810,13 @@ struct PhotoMemoryNoteDetailView: View {
             }
     }
 
+    private var veterinaryStore: VeterinaryVisitStore {
+#if DEBUG
+        if CommandLine.arguments.contains("--memory-library-fixture") { return PhotoMemoryNoteLibraryFixture.veterinaryStore }
+#endif
+        return .shared
+    }
+
     private func reload() async {
         let token = UUID()
         request = token
@@ -832,7 +854,7 @@ struct PhotoMemoryNoteDetailView: View {
         do {
             let result = try await PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
                 .saveLocal(text: "", recordID: record.id, expectedRevision: record.note.revision,
-                           expectedAccount: nil)
+                           expectedAccount: nil, weightChange: .set(nil))
             if result.reflection == .stored || result.reflection == .localOnly { dismiss() }
             else {
                 self.error = "このiPhoneのメモを削除しました。iCloudへの反映はまだ完了していません。"
@@ -894,6 +916,8 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
 /// Uses the real album entry, library, editor and photo routes with an isolated
 /// temporary store. No live sharing, settings, or Photos writes are involved.
 struct PhotoMemoryNoteLibraryFixture: View {
+    static let veterinaryStore = VeterinaryVisitStore(directory:
+        FileManager.default.temporaryDirectory.appendingPathComponent("VeterinaryUIFixture/\(UUID().uuidString)"))
     private static let store = PhotoMemoryNoteStore(fileURL:
         FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoMemoryLibraryUIFixture/\(UUID().uuidString)/state.json"))
@@ -985,6 +1009,15 @@ struct PhotoMemoryNoteLibraryFixture: View {
                                 context: PhotoMemoryNoteContext(capturedAt:
                                     Date(timeIntervalSince1970: 1_720_000_000 + Double(number) * 86_400), cats: []))
                         }
+                    } else if CommandLine.arguments.contains("--memory-library-weight") {
+                        let cat = PhotoMemoryNoteCat(id: UUID(uuidString: "09300000-0000-0000-0000-000000000001")!, name: "むぎ")
+                        _ = try await Self.store.save(text: "食べる量が少なかった。", for: "app-store-screenshot-fixture-1", expectedRevision: nil,
+                            context: PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSince1970: 1_720_000_000), cats: [cat]),
+                            weightChange: .set(PhotoMemoWeight(value: PhotoMemoWeightValue(grams: 4200, measuredOn: "2026-09-29", catName: cat.name), catID: cat.id)))
+                        let other = PhotoMemoryNoteCat(id: UUID(uuidString: "09300000-0000-0000-0000-000000000002")!, name: "そら")
+                        _ = try await Self.store.save(text: "選んでいない別の猫の記録", for: "app-store-screenshot-fixture-2", expectedRevision: nil,
+                            context: PhotoMemoryNoteContext(capturedAt: nil, cats: [other]),
+                            weightChange: .set(PhotoMemoWeight(value: PhotoMemoWeightValue(grams: 3800, measuredOn: nil, catName: other.name), catID: other.id)))
                     } else {
                         _ = try await Self.store.save(text: "窓辺で初めて寝た日。\n小さな寝息を聞きながら、一緒に過ごした午後。",
                             for: "app-store-screenshot-fixture-1", expectedRevision: nil,

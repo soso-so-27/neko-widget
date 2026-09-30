@@ -1,5 +1,63 @@
 import Foundation
 
+/// A measured value, not a diagnosis. A civil day is never inferred from a photo
+/// or the memo's writing date. Device identity is kept out of portable data.
+struct PhotoMemoWeightValue: Codable, Equatable, Sendable {
+    let grams: Int
+    let measuredOn: String?
+    let catName: String?
+    private enum CodingKeys: String, CodingKey { case grams, measuredOn, catName }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(grams, forKey: .grams)
+        try values.encode(measuredOn, forKey: .measuredOn)
+        try values.encode(catName, forKey: .catName)
+    }
+
+    func validate() throws {
+        guard (1...100_000).contains(grams),
+              catName.map({ !$0.isEmpty && $0.count <= 200 && $0.utf8.count <= 800 && !$0.contains("\0") }) ?? true,
+              measuredOn.map(Self.validDay) ?? true else { throw PhotoMemoryNoteStoreError.invalidContext }
+    }
+
+    static func validDay(_ value: String) -> Bool {
+        let parts = value.split(separator: "-", omittingEmptySubsequences: false)
+        guard value.count == 10, parts.count == 3, parts[0].count == 4,
+              parts[1].count == 2, parts[2].count == 2,
+              parts.allSatisfy({ $0.utf8.allSatisfy { $0 >= 48 && $0 <= 57 } }),
+              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              (1...9999).contains(year), (1...12).contains(month), (1...31).contains(day) else { return false }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = DateComponents(year: year, month: month, day: day)
+        guard let date = calendar.date(from: components) else { return false }
+        return calendar.dateComponents([.year, .month, .day], from: date) == components
+    }
+
+    var kilogramsText: String { String(format: "%.3f", Double(grams) / 1000).replacingOccurrences(of: "0+$", with: "", options: .regularExpression).replacingOccurrences(of: "\\.$", with: "", options: .regularExpression) }
+
+    static func grams(from input: String) -> Int? {
+        let text = input.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        guard text.range(of: "^[0-9]{1,3}(\\.[0-9]{1,3})?$", options: .regularExpression) != nil,
+              let value = Double(text), value > 0, value <= 100 else { return nil }
+        return Int((value * 1000).rounded())
+    }
+}
+
+struct PhotoMemoWeight: Codable, Equatable, Sendable {
+    let value: PhotoMemoWeightValue
+    /// Nil after portable restore. Never recover this by matching a name.
+    let catID: UUID?
+}
+
+enum PhotoMemoWeightChange: Sendable {
+    case unchanged
+    case set(PhotoMemoWeight?)
+    func applying(to old: PhotoMemoWeight?) -> PhotoMemoWeight? {
+        switch self { case .unchanged: old; case .set(let value): value }
+    }
+}
+
 struct PhotoMemoryNoteCat: Codable, Equatable, Sendable {
     let id: UUID
     let name: String
@@ -21,6 +79,7 @@ struct PhotoMemoryNote: Codable, Equatable, Sendable {
     /// Nil for legacy notes: their original writing date was never stored.
     let writtenAt: Date?
     let context: PhotoMemoryNoteContext?
+    var weight: PhotoMemoWeight? = nil
 
     init(
         id: UUID = UUID(),
@@ -28,7 +87,8 @@ struct PhotoMemoryNote: Codable, Equatable, Sendable {
         updatedAt: Date,
         revision: String,
         writtenAt: Date? = nil,
-        context: PhotoMemoryNoteContext? = nil
+        context: PhotoMemoryNoteContext? = nil,
+        weight: PhotoMemoWeight? = nil
     ) {
         self.id = id
         self.text = text
@@ -36,6 +96,7 @@ struct PhotoMemoryNote: Codable, Equatable, Sendable {
         self.revision = revision
         self.writtenAt = writtenAt
         self.context = context
+        self.weight = weight
     }
 }
 
@@ -56,6 +117,7 @@ struct PhotoMemoryNoteReflection: Codable, Equatable, Sendable {
     let context: PhotoMemoryNoteContext?
     var conflictLocalRevision: String? = nil
     var conflictRemoteRevision: String? = nil
+    var weight: PhotoMemoWeight? = nil
 }
 
 struct PhotoMemoryNoteArchiveBinding: Codable, Equatable, Sendable {
@@ -169,7 +231,8 @@ actor PhotoMemoryNoteStore {
         text: String,
         for identifier: String,
         expectedRevision: String?,
-        context: PhotoMemoryNoteContext? = nil
+        context: PhotoMemoryNoteContext? = nil,
+        weightChange: PhotoMemoWeightChange = .unchanged
     ) throws -> PhotoMemoryNote? {
         try Self.validate(identifier: identifier)
         let normalized = try Self.normalizedText(text)
@@ -186,13 +249,14 @@ actor PhotoMemoryNoteStore {
             throw PhotoMemoryNoteStoreError.conflict
         }
         return try save(normalized: normalized, for: identifier, existing: existing,
-                        context: context, state: &state, to: url)
+                        context: context, weightChange: weightChange, state: &state, to: url)
     }
 
     func save(
         text: String,
         recordID: UUID,
-        expectedRevision: String
+        expectedRevision: String,
+        weightChange: PhotoMemoWeightChange = .unchanged
     ) throws -> PhotoMemoryNoteRecord? {
         let normalized = try Self.normalizedText(text)
         try Self.validate(revision: expectedRevision)
@@ -205,12 +269,12 @@ actor PhotoMemoryNoteStore {
             throw PhotoMemoryNoteStoreError.conflict
         }
         guard let note = try save(normalized: normalized, for: entry.key, existing: entry.value,
-                                  context: nil, state: &state, to: url) else { return nil }
+                                  context: nil, weightChange: weightChange, state: &state, to: url) else { return nil }
         return PhotoMemoryNoteRecord(photoIdentifier: entry.key, note: note)
     }
 
     func delete(id: UUID, expectedRevision: String) throws {
-        _ = try save(text: "", recordID: id, expectedRevision: expectedRevision)
+        _ = try save(text: "", recordID: id, expectedRevision: expectedRevision, weightChange: .set(nil))
     }
 
     func archiveBinding(for identifier: String) throws -> PhotoMemoryNoteArchiveBinding? {
@@ -245,7 +309,7 @@ actor PhotoMemoryNoteStore {
         bindings[record.photoIdentifier] = PhotoMemoryNoteArchiveBinding(
             photoIdentifier: record.photoIdentifier, noteID: record.id, recordID: recordID,
             accountKey: accountKey, archiveRevision: archiveRevision)
-        state.archiveBindings = bindings; state.schemaVersion = 3
+        state.archiveBindings = bindings; state.schemaVersion = max(3, state.schemaVersion)
         try commit(state, to: url)
     }
 
@@ -283,8 +347,10 @@ actor PhotoMemoryNoteStore {
     /// Accept an already fetched version only while no local edit is queued.
     /// This never makes a new PhotoKit relationship or calls the network.
     func acceptArchiveText(binding expected: PhotoMemoryNoteArchiveBinding, text: String,
-                           writtenAt: Date?, updatedAt: Date, archiveRevision: String) throws -> PhotoMemoryNoteRecord? {
+                           writtenAt: Date?, updatedAt: Date, archiveRevision: String,
+                           weightValue: PhotoMemoWeightValue? = nil, memoSchema: Int = 1) throws -> PhotoMemoryNoteRecord? {
         let text = try Self.normalizedText(text)
+        try weightValue?.validate()
         Self.commitLock.lock(); defer { Self.commitLock.unlock() }
         let url = try resolvedFileURL()
         var state = try load(from: url)
@@ -293,25 +359,31 @@ actor PhotoMemoryNoteStore {
               Self.validDigest(archiveRevision), updatedAt.timeIntervalSinceReferenceDate.isFinite,
               writtenAt?.timeIntervalSinceReferenceDate.isFinite ?? true else { throw PhotoMemoryNoteStoreError.conflict }
         let old = state.notes[binding.photoIdentifier]
-        if binding.archiveRevision == archiveRevision, (old?.text ?? "") == text {
+        guard memoSchema == 1 || memoSchema == 2,
+              weightValue == nil || memoSchema == 2,
+              memoSchema == 2 || old?.weight == nil else { throw PhotoMemoryNoteStoreError.conflict }
+        let weight = weightValue.map { PhotoMemoWeight(value: $0, catID: old?.weight?.value == $0 ? old?.weight?.catID : nil) }
+        if binding.archiveRevision == archiveRevision, (old?.text ?? "") == text, old?.weight == weight {
             return old.map { PhotoMemoryNoteRecord(photoIdentifier: binding.photoIdentifier, note: $0) }
         }
         let note: PhotoMemoryNote?
-        if text.isEmpty { note = nil }
-        else if old?.text == text { note = old }
+        if text.isEmpty && weight == nil { note = nil }
+        else if old?.text == text && old?.weight == weight { note = old }
         else {
             note = PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: updatedAt,
-                revision: UUID().uuidString, writtenAt: old?.writtenAt ?? writtenAt, context: old?.context)
+                revision: UUID().uuidString, writtenAt: old?.writtenAt ?? writtenAt, context: old?.context, weight: weight)
         }
         state.notes[binding.photoIdentifier] = note
         binding.archiveRevision = archiveRevision
         state.archiveBindings?[binding.photoIdentifier] = binding
+        if weight != nil || old?.weight != nil { state.schemaVersion = 4 }
         try commit(state, to: url)
         return note.map { PhotoMemoryNoteRecord(photoIdentifier: binding.photoIdentifier, note: $0) }
     }
 
     func stageConflictResolution(binding expected: PhotoMemoryNoteArchiveBinding, expectedNoteRevision: String?,
-                                 text: String, operationID: UUID, localRevision: String, remoteRevision: String) throws {
+                                 text: String, operationID: UUID, localRevision: String, remoteRevision: String,
+                                 weightChange: PhotoMemoWeightChange = .unchanged) throws {
         let text = try Self.normalizedText(text)
         Self.commitLock.lock(); defer { Self.commitLock.unlock() }
         let url = try resolvedFileURL()
@@ -320,14 +392,17 @@ actor PhotoMemoryNoteStore {
               state.notes[binding.photoIdentifier]?.revision == expectedNoteRevision,
               Self.validDigest(localRevision), Self.validDigest(remoteRevision) else { throw PhotoMemoryNoteStoreError.conflict }
         let old = state.notes[binding.photoIdentifier], now = Date(), revision = UUID().uuidString
-        let note = text.isEmpty ? nil : PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: now,
-            revision: revision, writtenAt: old?.writtenAt, context: old?.context)
+        let weight = weightChange.applying(to: old?.weight)
+        try weight?.value.validate()
+        let note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: now,
+            revision: revision, writtenAt: old?.writtenAt, context: old?.context, weight: weight)
         state.notes[binding.photoIdentifier] = note
         binding.inFlight = PhotoMemoryNoteReflection(operationID: operationID, text: text, revision: revision,
             writtenAt: old?.writtenAt, updatedAt: now, context: old?.context,
-            conflictLocalRevision: localRevision, conflictRemoteRevision: remoteRevision)
+            conflictLocalRevision: localRevision, conflictRemoteRevision: remoteRevision, weight: weight)
         binding.pending = nil
         state.archiveBindings?[binding.photoIdentifier] = binding
+        if weight != nil || old?.weight != nil { state.schemaVersion = 4 }
         try commit(state, to: url)
     }
 
@@ -341,30 +416,34 @@ actor PhotoMemoryNoteStore {
         for identifier: String,
         existing: PhotoMemoryNote?,
         context: PhotoMemoryNoteContext?,
+        weightChange: PhotoMemoWeightChange,
         state: inout State,
         to url: URL
     ) throws -> PhotoMemoryNote? {
         let preservedContext = existing?.context ?? context
+        let weight = weightChange.applying(to: existing?.weight)
+        try weight?.value.validate()
         // Same text with newly available context is still a real mutation.
-        if existing?.text == text, existing?.context == preservedContext { return existing }
-        if existing == nil, text.isEmpty { return nil }
+        if existing?.text == text, existing?.context == preservedContext, existing?.weight == weight { return existing }
+        if existing == nil, text.isEmpty, weight == nil { return nil }
 
         let now = Date()
-        let note = text.isEmpty ? nil : PhotoMemoryNote(
+        let note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(
             id: existing?.id ?? state.archiveBindings?[identifier]?.noteID ?? UUID(),
             text: text,
             updatedAt: now,
             revision: UUID().uuidString,
             writtenAt: existing == nil ? now : existing?.writtenAt,
-            context: preservedContext
+            context: preservedContext, weight: weight
         )
         state.notes[identifier] = note
         if var binding = state.archiveBindings?[identifier] {
             binding.pending = PhotoMemoryNoteReflection(operationID: UUID(), text: text,
                 revision: note?.revision ?? UUID().uuidString,
-                writtenAt: note?.writtenAt ?? existing?.writtenAt, updatedAt: now, context: preservedContext)
+                writtenAt: note?.writtenAt ?? existing?.writtenAt, updatedAt: now, context: preservedContext, weight: weight)
             state.archiveBindings?[identifier] = binding
         }
+        if weight != nil || existing?.weight != nil { state.schemaVersion = 4 }
         try commit(state, to: url)
         // Do not expose a new revision until the atomic write succeeds.
         return note
@@ -453,7 +532,7 @@ actor PhotoMemoryNoteStore {
         } catch {
             throw PhotoMemoryNoteStoreError.corruptedState
         }
-        guard (1...3).contains(header.schemaVersion) else {
+        guard (1...4).contains(header.schemaVersion) else {
             throw PhotoMemoryNoteStoreError.unsupportedSchema(header.schemaVersion)
         }
         let state: State
@@ -473,7 +552,9 @@ actor PhotoMemoryNoteStore {
             }
             for (identifier, note) in state.notes {
                 try Self.validate(identifier: identifier)
-                guard !note.text.isEmpty,
+                try note.weight?.value.validate()
+                guard !note.text.isEmpty || note.weight != nil else { throw PhotoMemoryNoteStoreError.corruptedState }
+                guard note.weight == nil || state.schemaVersion == 4,
                       note.text == note.text.trimmingCharacters(in: .whitespacesAndNewlines),
                       note.text.count <= Self.maximumCharacters,
                       UUID(uuidString: note.revision) != nil,
@@ -483,7 +564,7 @@ actor PhotoMemoryNoteStore {
                     throw PhotoMemoryNoteStoreError.corruptedState
                 }
             }
-            guard state.archiveBindings == nil || state.schemaVersion == 3 else {
+            guard state.archiveBindings == nil || state.schemaVersion >= 3 else {
                 throw PhotoMemoryNoteStoreError.corruptedState
             }
             let bindings = Array((state.archiveBindings ?? [:]).values)
@@ -499,6 +580,8 @@ actor PhotoMemoryNoteStore {
                     throw PhotoMemoryNoteStoreError.corruptedState
                 }
                 for operation in [binding.pending, binding.inFlight].compactMap({ $0 }) {
+                    try operation.weight?.value.validate()
+                    guard operation.weight == nil || state.schemaVersion == 4 else { throw PhotoMemoryNoteStoreError.corruptedState }
                     guard try Self.normalizedText(operation.text) == operation.text,
                           UUID(uuidString: operation.revision) != nil,
                           operation.updatedAt.timeIntervalSinceReferenceDate.isFinite,

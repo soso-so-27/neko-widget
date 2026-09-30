@@ -1,0 +1,59 @@
+name: Private memo model diagnostic
+
+on:
+  push:
+    branches: ['diagnostic/memo-veterinary-*']
+    paths:
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift'
+      - 'NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift'
+      - 'NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift'
+      - 'NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift'
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoCoordinator.swift'
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift'
+      - 'NekoWidget/ci/verify-photo-memory-notes.swift'
+      - 'NekoWidget/ci/verify-veterinary-visits.swift'
+      - 'NekoWidget/ci/verify-personal-archive.swift'
+      - 'NekoWidget/ci/verify-photo-memory-note-export.swift'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memo-model-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  private-models:
+    name: Apple persistence models only - not release evidence
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Verify memo, consultation, archive and export with injected local fixtures
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/neko-memo-model-diagnostic"
+          {
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes"
+            "$RUNNER_TEMP/verify-notes"
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-visits"
+            "$RUNNER_TEMP/verify-visits"
+            xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-archive"
+            "$RUNNER_TEMP/verify-archive"
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoryNoteExporter.swift ci/verify-photo-memory-note-export.swift -o "$RUNNER_TEMP/verify-export"
+            "$RUNNER_TEMP/verify-export"
+          } 2>&1 | tee "$RUNNER_TEMP/neko-memo-model-diagnostic/models.log"
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: memo-model-diagnostic-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/neko-memo-model-diagnostic
+          retention-days: 7
+          if-no-files-found: warn

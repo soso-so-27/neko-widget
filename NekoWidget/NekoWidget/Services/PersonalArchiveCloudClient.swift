@@ -165,8 +165,8 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
             // Keep the fetched record's changeTag. Never turn a conditional edit
             // into an unconditional creation, even when another client deleted it.
             let record = existing ?? CKRecord(recordType: Self.recordType, recordID: recordID)
-            record["schema"] = NSNumber(value: 1)
-            // Extended context and tombstones use the existing encrypted field/schema.
+            record["schema"] = NSNumber(value: payload.cloudSchema)
+            // Older clients reject schema 2 instead of silently dropping weight.
             record.encryptedValues["payload"] = try JSONEncoder().encode(payload) as NSData
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("PersonalArchiveUpload-" + UUID().uuidString, isDirectory: true)
             defer { try? FileManager.default.removeItem(at: temporary) }
@@ -303,9 +303,10 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
     }
     private func decode(_ record: CKRecord) throws -> PersonalArchivePayload {
         guard record.recordType == Self.recordType, let id = UUID(uuidString: record.recordID.recordName),
-              (record["schema"] as? NSNumber)?.intValue == 1,
+              let schema = (record["schema"] as? NSNumber)?.intValue, (1...2).contains(schema),
               let data = record.encryptedValues["payload"] as? Data, data.count <= 131_072,
-              let payload = try? JSONDecoder().decode(PersonalArchivePayload.self, from: data), payload.id == id else {
+              let payload = try? JSONDecoder().decode(PersonalArchivePayload.self, from: data), payload.id == id,
+              payload.cloudSchema == schema else {
             throw PersonalArchiveError.corruptedState
         }
         try payload.validate()

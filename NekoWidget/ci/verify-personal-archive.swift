@@ -162,7 +162,76 @@ enum PersonalArchiveVerifier {
         try await unifiedMemoOutbox(root.appendingPathComponent("memo-outbox"))
         try await unifiedMemoBoundaries(root.appendingPathComponent("memo-boundaries"))
         try await unifiedMemoConcurrency(root.appendingPathComponent("memo-concurrency"))
+        try await measurementReflection(root.appendingPathComponent("measurement"))
         print("Personal archive verifier passed: 15 boundary groups; no CloudKit network or account access")
+    }
+
+    private static func measurementReflection(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), store = PersonalArchiveStore(directory: root.appendingPathComponent("archive"), transport: cloud)
+        let notes = PhotoMemoryNoteStore(fileURL: root.appendingPathComponent("notes.json"))
+        let coordinator = PhotoMemoCoordinator(noteStore: notes, archiveStore: store)
+        let account = try await store.accountContext(), owner = UUID()
+        let weight = PhotoMemoWeight(value: PhotoMemoWeightValue(grams: 4200, measuredOn: "2026-09-29", catName: "むぎ"), catID: owner)
+        let first = try await coordinator.saveLocal(text: "", photoIdentifier: "private-photo", expectedRevision: nil, weightChange: .set(weight))
+        guard let source = first.localRecord else { throw Failure(message: "weight-only source missing") }
+        let enrolled = try await coordinator.enableUpdates(for: source, jpegData: nil, expectedAccount: account)
+        guard let archived = enrolled.archiveRecord else { throw Failure(message: "weight not preserved") }
+        let portable = await cloud.payload(archived.id)
+        try require(portable?.context?.weight == weight.value && portable?.memoSchema == 2, "cloud dropped measurement/schema")
+        let encoded = String(decoding: try JSONEncoder().encode(portable), as: UTF8.self)
+        try require(!encoded.contains(owner.uuidString) && !encoded.contains("private-photo"), "cloud leaked local identity")
+        // Same words, different remote weight must restore; a name must not
+        // bind the restored value to the old local owner identity.
+        let other = PersonalArchiveStore(directory: root.appendingPathComponent("other"), transport: cloud)
+        guard let remote = try await other.refresh().first else { throw Failure(message: "remote missing") }
+        var context = remote.context!; context.weight = PhotoMemoWeightValue(grams: 4300, measuredOn: nil, catName: "同じ名前")
+        _ = try await other.update(id: remote.id, operationID: UUID(), expectedRevision: remote.revision,
+            text: remote.text, capturedAt: remote.capturedAt, context: context, expectedAccount: account)
+        _ = try await store.refresh(); try await coordinator.reconcile(expectedAccount: account)
+        guard let restored = try await notes.record(id: source.id) else { throw Failure(message: "restored measurement deleted") }
+        try require(restored.note.weight?.value.grams == 4300 && restored.note.weight?.catID == nil,
+                    "same-text restore skipped measurement or inferred owner by name")
+        // Keep some words while clearing the measurement; both formats must
+        // retain their old-writer gate after an explicit clear.
+        let cleared = try await coordinator.saveLocal(text: "体重欄を消した", recordID: source.id,
+            expectedRevision: restored.note.revision, expectedAccount: account, weightChange: .set(nil))
+        let afterClear = await cloud.payload(archived.id)
+        try require(cleared.reflection == .stored && afterClear?.context?.weight == nil && afterClear?.memoSchema == 2,
+                    "clear was not reflected or downgraded writer gate")
+        // Conflict choice includes remote weight, not just remote words.
+        guard let local = cleared.localRecord, let current = try await other.refresh().first else { throw Failure(message: "cleared record missing") }
+        var remoteContext = current.context!; remoteContext.weight = PhotoMemoWeightValue(grams: 4100, measuredOn: "2026-09-30", catName: "むぎ")
+        _ = try await other.update(id: current.id, operationID: UUID(), expectedRevision: current.revision,
+            text: "別端末の内容", capturedAt: nil, context: remoteContext, expectedAccount: account)
+        _ = try await store.refresh()
+        let pending = try await coordinator.saveLocal(text: "この端末の内容", recordID: local.id,
+            expectedRevision: local.note.revision, expectedAccount: account, weightChange: .set(weight))
+        guard let conflict = try await store.memoRecord(id: archived.id, expectedAccount: account), let latest = pending.localRecord else { throw Failure(message: "conflict missing") }
+        try require(conflict.state == .conflict && conflict.conflictingContext?.weight?.grams == 4100, "conflict lost remote measurement")
+        let resolved = try await coordinator.resolveConflict(record: conflict, chooseRemote: true, operationID: UUID(),
+            expectedAccount: account, expectedLocalNoteRevision: latest.note.revision)
+        try require(resolved.reflection == .stored && resolved.localRecord?.note.text == "別端末の内容"
+            && resolved.localRecord?.note.weight?.value.grams == 4100 && resolved.localRecord?.note.weight?.catID == nil,
+            "remote choice used local measurement or identity")
+        let legacyCloud = ArchiveCloudFixture()
+        let legacyStore = PersonalArchiveStore(directory: root.appendingPathComponent("legacy-archive"), transport: legacyCloud)
+        let legacyNotes = PhotoMemoryNoteStore(fileURL: root.appendingPathComponent("legacy-notes.json"))
+        let legacyCoordinator = PhotoMemoCoordinator(noteStore: legacyNotes, archiveStore: legacyStore)
+        let legacyAccount = try await legacyStore.accountContext()
+        let oldNote = try await legacyCoordinator.saveLocal(text: "以前からのメモ", photoIdentifier: "legacy-photo", expectedRevision: nil)
+        guard let oldLocal = oldNote.localRecord,
+              let oldCopy = try await legacyCoordinator.enableUpdates(for: oldLocal, jpegData: nil, expectedAccount: legacyAccount).archiveRecord else { throw Failure(message: "legacy setup failed") }
+        await legacyCloud.failNext(.beforeCommit)
+        let upgrading = try await legacyCoordinator.saveLocal(text: oldLocal.note.text, recordID: oldLocal.id,
+            expectedRevision: oldLocal.note.revision, expectedAccount: legacyAccount, weightChange: .set(weight))
+        try require(upgrading.reflection == .pending, "failed first weight upload was not pending")
+        _ = try await legacyStore.refresh()
+        let pendingUpgrade = try await legacyStore.memoRecord(id: oldCopy.id, expectedAccount: legacyAccount)
+        try require(pendingUpgrade?.state == .pending, "expected legacy server version became a conflict")
+        try await legacyCoordinator.retryUpdates(expectedAccount: legacyAccount)
+        let upgraded = await legacyCloud.payload(oldCopy.id)
+        try require(upgraded?.context?.weight == weight.value && upgraded?.memoSchema == 2,
+                    "first weight upload could not recover after reconnect")
     }
 
     private static func unifiedMemoOutbox(_ root: URL) async throws {

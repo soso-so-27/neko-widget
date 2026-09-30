@@ -124,9 +124,10 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
     var updatedAt: Date?
     var catNames: [String]
     var photoFile: String?
+    var weight: PhotoMemoWeightValue? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile
+        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight
     }
 
     func encode(to encoder: Encoder) throws {
@@ -138,14 +139,17 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
         try values.encode(updatedAt, forKey: .updatedAt)
         try values.encode(catNames, forKey: .catNames)
         try values.encode(photoFile, forKey: .photoFile)
+        try values.encodeIfPresent(weight, forKey: .weight)
     }
 
     func validated() throws -> Self {
-        guard formatVersion == 1, text.count <= 500, text.utf8.count <= 65_536,
+        do { try weight?.validate() } catch { throw ManagedPreservationError.invalidRecord }
+        guard (1...2).contains(formatVersion), weight == nil || formatVersion == 2,
+              text.count <= 500, text.utf8.count <= 65_536,
               catNames.count <= 100,
               catNames.allSatisfy({ !$0.isEmpty && $0.count <= 200 && $0.utf8.count <= 800 }),
               photoFile == nil || photoFile == "photo.jpg",
-              photoFile != nil || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              photoFile != nil || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || weight != nil else {
             throw ManagedPreservationError.invalidRecord
         }
         for date in [capturedAt, writtenAt, updatedAt].compactMap({ $0 }) {
@@ -172,6 +176,7 @@ extension ManagedPreservationDocument {
         updatedAt = try values.decode(Date?.self, forKey: .updatedAt)
         catNames = try values.decode([String].self, forKey: .catNames)
         photoFile = try values.decode(String?.self, forKey: .photoFile)
+        weight = try values.decodeIfPresent(PhotoMemoWeightValue.self, forKey: .weight)
     }
 }
 

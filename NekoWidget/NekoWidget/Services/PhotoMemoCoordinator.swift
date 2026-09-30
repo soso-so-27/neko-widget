@@ -43,7 +43,8 @@ actor PhotoMemoCoordinator {
         }
         guard let source = snapshot.associations.first(where: { $0.recordID == record.id })?.source,
               let local = try await noteStore.record(id: source.noteID),
-              Self.source(local) == source, local.note.text == record.text else { return nil }
+              Self.source(local) == source, local.note.text == record.text,
+              local.note.weight?.value == record.context?.weight else { return nil }
         _ = try await archiveStore.verifiedAccount(expectedAccount: expectedAccount)
         return local
     }
@@ -90,7 +91,7 @@ actor PhotoMemoCoordinator {
         let old = try await archiveStore.linkedRecord(noteID: record.id, expectedAccount: expectedAccount)
         let archived: PersonalArchiveRecord
         if let old, status != .deleted {
-            guard old.text == record.note.text else { throw PersonalArchiveError.conflict }
+            guard old.text == record.note.text, old.context?.weight == record.note.weight?.value else { throw PersonalArchiveError.conflict }
             archived = old
         } else {
             archived = try await archiveStore.preserve(source: source, jpegData: jpegData, text: record.note.text,
@@ -112,22 +113,24 @@ actor PhotoMemoCoordinator {
 
     @discardableResult
     func saveLocal(text: String, photoIdentifier: String, expectedRevision: String?,
-                   context: PhotoMemoryNoteContext? = nil, expectedAccount: String? = nil) async throws -> PhotoMemoSaveResult {
-        _ = try await noteStore.save(text: text, for: photoIdentifier, expectedRevision: expectedRevision, context: context)
+                   context: PhotoMemoryNoteContext? = nil, expectedAccount: String? = nil,
+                   weightChange: PhotoMemoWeightChange = .unchanged) async throws -> PhotoMemoSaveResult {
+        _ = try await noteStore.save(text: text, for: photoIdentifier, expectedRevision: expectedRevision, context: context, weightChange: weightChange)
         return try await reflect(photoIdentifier: photoIdentifier, expectedAccount: expectedAccount)
     }
 
     @discardableResult
     func saveLocal(text: String, recordID: UUID, expectedRevision: String,
-                   expectedAccount: String? = nil) async throws -> PhotoMemoSaveResult {
+                   expectedAccount: String? = nil, weightChange: PhotoMemoWeightChange = .unchanged) async throws -> PhotoMemoSaveResult {
         guard let old = try await noteStore.record(id: recordID) else { throw PhotoMemoryNoteStoreError.conflict }
-        _ = try await noteStore.save(text: text, recordID: recordID, expectedRevision: expectedRevision)
+        _ = try await noteStore.save(text: text, recordID: recordID, expectedRevision: expectedRevision, weightChange: weightChange)
         return try await reflect(photoIdentifier: old.photoIdentifier, expectedAccount: expectedAccount)
     }
 
     @discardableResult
     func saveArchive(record: PersonalArchiveRecord, text: String, operationID: UUID,
-                     expectedAccount: String, expectedLocalRevision: String? = nil) async throws -> PhotoMemoSaveResult {
+                     expectedAccount: String, expectedLocalRevision: String? = nil,
+                     weightChange: PhotoMemoWeightChange = .unchanged) async throws -> PhotoMemoSaveResult {
         // Only enrolled links write the local original. A legacy link needs the
         // explicit enableUpdates confirmation before becoming one logical memo.
         let account = try await archiveStore.verifiedAccount(expectedAccount: expectedAccount)
@@ -138,18 +141,22 @@ actor PhotoMemoCoordinator {
             }
             guard let expectedLocalRevision, local.note.revision == expectedLocalRevision else { throw PhotoMemoryNoteStoreError.conflict }
             return try await saveLocal(text: text, recordID: local.id, expectedRevision: expectedLocalRevision,
-                                       expectedAccount: expectedAccount)
+                                       expectedAccount: expectedAccount, weightChange: weightChange)
         }
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, record.jpegData == nil {
+        var context = record.context ?? PersonalArchiveContext(writtenAt: nil, updatedAt: nil, catNames: [])
+        let oldWeight = context.weight.map { PhotoMemoWeight(value: $0, catID: nil) }
+        context.weight = weightChange.applying(to: oldWeight)?.value
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, record.jpegData == nil, context.weight == nil {
             // A missing local image must not be mistaken for a text-only record.
             let deleted = try await archiveStore.deleteWords(id: record.id, operationID: operationID,
-                expectedRevision: record.revision, expectedAccount: expectedAccount)
+                expectedRevision: record.revision, expectedAccount: expectedAccount,
+                replacementContext: context, replacesContext: true)
             return PhotoMemoSaveResult(localRecord: nil, archiveRecord: deleted,
                 reflection: deleted.state == .stored ? .stored : (deleted.state == .conflict ? .conflict : .pending))
         }
         let updated = try await archiveStore.update(id: record.id, operationID: operationID,
             expectedRevision: record.revision, text: text, capturedAt: record.capturedAt,
-            context: record.context, expectedAccount: expectedAccount)
+            context: context, expectedAccount: expectedAccount)
         return PhotoMemoSaveResult(localRecord: nil, archiveRecord: updated,
             reflection: updated.state == .stored ? .stored : (updated.state == .conflict ? .conflict : .pending))
     }
@@ -174,15 +181,18 @@ actor PhotoMemoCoordinator {
             // Local means the current frozen original, including a newer edit
             // queued behind the conflicting request, never an older draft.
             let text = chooseRemote ? remoteText : (local?.note.text ?? "")
+            let weight = chooseRemote ? record.conflictingContext?.weight.map { value in
+                PhotoMemoWeight(value: value, catID: local?.note.weight?.value == value ? local?.note.weight?.catID : nil)
+            } : local?.note.weight
             try await archiveStore.validateMemoConflict(id: record.id, localRevision: record.revision,
-                remoteRevision: remoteRevision, text: text, expectedAccount: expectedAccount)
+                remoteRevision: remoteRevision, text: text, expectedAccount: expectedAccount, weight: weight?.value)
             try await noteStore.stageConflictResolution(binding: binding, expectedNoteRevision: expectedLocalNoteRevision,
-                text: text, operationID: operationID, localRevision: record.revision, remoteRevision: remoteRevision)
+                text: text, operationID: operationID, localRevision: record.revision, remoteRevision: remoteRevision, weightChange: .set(weight))
             return try await reflect(photoIdentifier: binding.photoIdentifier, expectedAccount: expectedAccount)
         }
         let resolved = try await archiveStore.resolveMemoConflict(id: record.id, operationID: operationID,
             localRevision: record.revision, remoteRevision: remoteRevision, text: chooseRemote ? remoteText : record.text,
-            expectedAccount: expectedAccount)
+            expectedAccount: expectedAccount, replacementContext: chooseRemote ? record.conflictingContext : record.context, replacesContext: true)
         return PhotoMemoSaveResult(localRecord: nil, archiveRecord: resolved,
             reflection: resolved.state == .stored ? .stored : (resolved.state == .conflict ? .conflict : .pending))
     }
@@ -222,7 +232,7 @@ actor PhotoMemoCoordinator {
             _ = try await archiveStore.verifiedAccount(expectedAccount: expectedAccount)
             let local = try await noteStore.acceptArchiveText(binding: binding, text: record.text,
                 writtenAt: record.context?.writtenAt, updatedAt: record.context?.updatedAt ?? record.createdAt,
-                archiveRevision: record.revision)
+                archiveRevision: record.revision, weightValue: record.context?.weight, memoSchema: record.memoSchema)
             _ = try await archiveStore.verifiedAccount(expectedAccount: expectedAccount)
             if let local {
                 try await archiveStore.acknowledgeMemoSource(Self.source(local), recordID: record.id,
@@ -257,16 +267,17 @@ actor PhotoMemoCoordinator {
                         if let localRevision = operation.conflictLocalRevision, let remoteRevision = operation.conflictRemoteRevision {
                             archived = try await archiveStore.resolveMemoConflict(id: current.recordID,
                                 operationID: operation.operationID, localRevision: localRevision, remoteRevision: remoteRevision,
-                                text: operation.text, sourceSnapshot: source, expectedAccount: context)
-                        } else if operation.text.isEmpty {
+                                text: operation.text, sourceSnapshot: source, expectedAccount: context,
+                                replacementContext: Self.context(operation), replacesContext: true)
+                        } else if operation.text.isEmpty && operation.weight == nil {
                             archived = try await archiveStore.deleteWords(id: current.recordID, operationID: operation.operationID,
-                                expectedRevision: current.archiveRevision, expectedAccount: context, sourceSnapshot: source)
+                                expectedRevision: current.archiveRevision, expectedAccount: context, sourceSnapshot: source,
+                                replacementContext: Self.context(operation), replacesContext: true)
                         } else {
                             archived = try await archiveStore.update(id: current.recordID, operationID: operation.operationID,
                             expectedRevision: current.archiveRevision, text: operation.text,
                             capturedAt: operation.context?.capturedAt,
-                            context: PersonalArchiveContext(writtenAt: operation.writtenAt, updatedAt: operation.updatedAt,
-                                catNames: operation.context?.cats.map(\.name) ?? []), expectedAccount: context,
+                            context: Self.context(operation), expectedAccount: context,
                             sourceSnapshot: source)
                         }
                         guard let archived, archived.state == .stored || archived.state == .partial else {
@@ -301,6 +312,10 @@ actor PhotoMemoCoordinator {
         PersonalArchiveSourceSnapshot(noteID: record.id, revision: record.note.revision, photoIdentifier: record.photoIdentifier)
     }
     private static func context(_ note: PhotoMemoryNote) -> PersonalArchiveContext {
-        PersonalArchiveContext(writtenAt: note.writtenAt, updatedAt: note.updatedAt, catNames: note.context?.cats.map(\.name) ?? [])
+        PersonalArchiveContext(writtenAt: note.writtenAt, updatedAt: note.updatedAt, catNames: note.context?.cats.map(\.name) ?? [], weight: note.weight?.value)
+    }
+    private static func context(_ operation: PhotoMemoryNoteReflection) -> PersonalArchiveContext {
+        PersonalArchiveContext(writtenAt: operation.writtenAt, updatedAt: operation.updatedAt,
+                               catNames: operation.context?.cats.map(\.name) ?? [], weight: operation.weight?.value)
     }
 }

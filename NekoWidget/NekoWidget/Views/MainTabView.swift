@@ -200,40 +200,6 @@ private struct ToolCardButtonStyle: ButtonStyle {
     }
 }
 
-private struct VeterinaryToolPreview: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    ToolCatArtwork(pose: "hide", systemImage: "cross.case")
-                    Text("準備中")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text("気になる様子を写真やメモにまとめて\n診察のときに見せられるように")
-                        .font(.title3.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("このツールはまだ使えません")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
-            }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("病院で見せる")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("閉じる") { dismiss() }
-                        .accessibilityIdentifier("tools-vet-preview-close")
-                }
-            }
-        }
-    }
-}
-
 enum MemoriesRoute: Hashable {
     case favorites
     case memoryNotes
@@ -351,7 +317,6 @@ struct MainTabView: View {
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
     @State private var showsSettings = false
-    @State private var showsVeterinaryToolPreview = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
@@ -680,6 +645,15 @@ struct MainTabView: View {
                         }
                         .buttonStyle(ToolCardButtonStyle())
                         .accessibilityIdentifier("tools-care-open")
+                        NavigationLink {
+                            VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                                photos: memoryNotePhotos, noteStore: memoStore)
+                        } label: {
+                            ToolTile(title: "病院で見せる", systemImage: "cross.case",
+                                     subtitle: "写真とメモで伝える", catPose: "hide")
+                        }
+                        .buttonStyle(ToolCardButtonStyle())
+                        .accessibilityIdentifier("tools-vet-open")
                 }
 
                 toolSection("もしものとき") {
@@ -706,50 +680,12 @@ struct MainTabView: View {
                     .accessibilityIdentifier("tools-evacuation-open")
                 }
 
-                Button { showsVeterinaryToolPreview = true } label: {
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("準備中")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Color(.tertiarySystemFill), in: Capsule())
-                            Text("病院で見せる")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text("写真とメモで伝える")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        if !dynamicTypeSize.isAccessibilitySize {
-                            ToolCatArtwork(pose: "hide", systemImage: "cross.case")
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground),
-                                in: RoundedRectangle(cornerRadius: 16))
-                    .contentShape(RoundedRectangle(cornerRadius: 16))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("病院で見せる、準備中、写真とメモで伝える")
-                }
-                .buttonStyle(ToolCardButtonStyle())
-                .accessibilityHint("予定している機能の説明を開きます")
-                .accessibilityIdentifier("tools-vet-preview-open")
             }
             .padding(16)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showsVeterinaryToolPreview) {
-            VeterinaryToolPreview()
-        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }

@@ -1471,6 +1471,184 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    private func launchWeightMemo(extra: [String] = []) -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-weight",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"] + extra
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "WeightMemoUITest.\(UUID())"
+        app.launch()
+        let section = app.buttons["photos-section-notes"]
+        XCTAssertTrue(section.waitForExistence(timeout: 15)); section.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "memory-note-row-", "食べる量が少なかった")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        XCTAssertTrue(app.staticTexts["memory-note-weight"].waitForExistence(timeout: 5))
+        return app
+    }
+
+    @MainActor
+    private func revealVetElement(_ element: XCUIElement, app: XCUIApplication) {
+        for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
+    }
+
+    // The real PhotoKit request can arrive while the fixture's source-confirmation
+    // sheet is visible. Grant access only to the imported public test photos;
+    // XCTest's default interruption handler otherwise denies and consumes a tap.
+    @MainActor
+    @discardableResult
+    private func dismissVetPhotosPromptIfPresent() -> Bool {
+        let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        guard alert.waitForExistence(timeout: 2) else { return false }
+        let labels = ["Allow Full Access", "Allow Access to All Photos",
+                      "フルアクセスを許可", "すべての写真へのアクセスを許可"]
+        guard let fullAccess = labels.map({ alert.buttons[$0] }).first(where: { $0.exists }) else {
+            XCTFail("Unexpected system alert; do not dismiss unrelated permissions: \(alert.debugDescription)")
+            return false
+        }
+        fullAccess.tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 10))
+        return true
+    }
+
+    @MainActor
+    private func setVetToggle(_ toggle: XCUIElement, to value: String, app: XCUIApplication) {
+        revealVetElement(toggle, app: app)
+        dismissVetPhotosPromptIfPresent()
+        if toggle.value as? String == value { return }
+        // SwiftUI exposes both the whole labelled row and its native UISwitch.
+        // Tap the thumb, not the row's center (which can be inert at large text).
+        let thumb = toggle.switches.firstMatch
+        XCTAssertTrue(thumb.exists, "A real switch thumb must be exposed: \(toggle.debugDescription)")
+        thumb.tap()
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+        if XCTWaiter.wait(for: [changed], timeout: 3) == .completed { return }
+        // Retry only when a newly arrived, positively identified Photos prompt
+        // consumed that interaction, never to conceal an unresponsive control.
+        guard dismissVetPhotosPromptIfPresent() else {
+            capture("vet-toggle-did-not-change")
+            XCTFail("Switch did not reach \(value): \(toggle.debugDescription)")
+            return
+        }
+        if toggle.value as? String != value { thumb.tap() }
+        let afterPermission = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [afterPermission], timeout: 5), .completed)
+    }
+
+    @MainActor
+    func testWeightOnlyMemoRemainsReadableAndEditable() {
+        let app = launchWeightMemo()
+        app.buttons["memory-note-edit"].tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap()
+        input.press(forDuration: 1.2)
+        let selectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5)); selectAll.tap()
+        input.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertEqual(input.value as? String, "")
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(input.waitForNonExistence(timeout: 5), "Weight alone is a record, not a deletion request")
+        XCTAssertEqual(app.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
+        XCTAssertFalse(app.staticTexts["memory-note-body"].exists)
+        capture("weight-only-memo-detail")
+        app.navigationBars.buttons.firstMatch.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "memory-note-row-", "4.2 kg")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
+        app.buttons["memory-note-edit"].tap()
+        let weight = app.textFields["memo-weight-input"]
+        revealVetElement(weight, app: app)
+        XCTAssertEqual(weight.value as? String, "4.2")
+        let date = app.switches["memo-weight-date-toggle"]; revealVetElement(date, app: app)
+        XCTAssertEqual(date.value as? String, "1")
+        capture("weight-only-memo-editor")
+        app.terminate()
+    }
+
+    @MainActor
+    func testVeterinarySelectionIsExplicitAndRemovalKeepsSource() {
+        let app = launchWeightMemo()
+        let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
+        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
+        let confirm = app.switches["vet-confirm-target"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
+        dismissVetPhotosPromptIfPresent()
+        let add = app.buttons["vet-add-confirmed"]
+        XCTAssertFalse(add.isEnabled)
+        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        capture("vet-selected-source-confirmation")
+        setVetToggle(confirm, to: "1", app: app)
+        revealVetElement(add, app: app); XCTAssertTrue(add.isEnabled); add.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
+        XCTAssertTrue(app.scrollViews["vet-reading"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
+        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        capture("vet-selected-record-in-person-display")
+        app.navigationBars["診察で見せる"].buttons["閉じる"].tap()
+        let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
+        for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(remove.isHittable); remove.tap()
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        capture("vet-record-removed-source-kept")
+        let pick = app.buttons["vet-pick-records"]; revealVetElement(pick, app: app); pick.tap()
+        let source = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-source-")).firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
+        source.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Picker dismissal must present the real confirmation")
+        app.navigationBars["内容を確認"].buttons["閉じる"].tap()
+        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
+        XCTAssertTrue(app.staticTexts["memory-note-body"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["memory-note-body"].label, "食べる量が少なかった。")
+        XCTAssertEqual(app.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
+        app.terminate()
+    }
+
+    @MainActor
+    func testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText() {
+        let app = launchWeightMemo(extra: ["--memory-library-no-photo", "--photo-window-large"])
+        app.buttons["memory-note-edit"].tap()
+        let date = app.switches["memo-weight-date-toggle"]
+        setVetToggle(date, to: "0", app: app)
+        XCTAssertEqual(date.value as? String, "0")
+        capture("weight-input-unknown-day-largest-text")
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(date.waitForNonExistence(timeout: 5))
+        let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
+        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
+        let confirm = app.switches["vet-confirm-target"]
+        XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].waitForExistence(timeout: 5))
+        // At the largest size the confirmation thumb is below the first screen.
+        // Verify the missing-photo explanation before scrolling it offscreen.
+        revealVetElement(confirm, app: app)
+        setVetToggle(confirm, to: "1", app: app)
+        let add = app.buttons["vet-add-confirmed"]; revealVetElement(add, app: app)
+        XCTAssertTrue(add.isEnabled); add.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
+        // Presented sheets can leave the source memo's accessibility tree alive.
+        // Assert the actual in-person reading surface, not every stacked view.
+        let reading = app.scrollViews["vet-reading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5))
+        let weight = reading.staticTexts["memory-note-weight"]
+        revealVetElement(weight, app: app)
+        XCTAssertEqual(weight.label, "体重 4.2 kg")
+        XCTAssertTrue(reading.staticTexts["むぎ · 測定日 不明"].exists)
+        XCTAssertFalse(reading.staticTexts["選んでいない別の猫の記録"].exists)
+        XCTAssertLessThanOrEqual(weight.frame.maxX, app.frame.maxX)
+        capture("vet-text-weight-without-photo-largest-text")
+        app.terminate()
+    }
+
+    @MainActor
     func testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1690,8 +1868,13 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("evacuation-cat-private-fields-excluded")
         let share = app.buttons["evacuation-share-pdf"]
         for _ in 0..<6 where !share.isHittable { app.swipeUp() }
+        XCTAssertTrue(share.isHittable)
         share.tap()
-        app.buttons["PDFを作って保存・印刷"].tap()
+        let confirmation = app.buttons["PDFを作って保存・印刷"]
+        let presented = confirmation.waitForExistence(timeout: 5)
+        capture("evacuation-print-confirmation")
+        XCTAssertTrue(presented, "The print confirmation must be presented before confirming export")
+        confirmation.tap()
         XCTAssertTrue(app.otherElements["ShareSheet.RemoteContainerView"].firstMatch.waitForExistence(timeout: 10))
         capture("evacuation-print-share")
         app.terminate()
@@ -1984,17 +2167,17 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
             capture("tools-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
-            let preview = app.buttons["tools-vet-preview-open"]
-            for _ in 0..<6 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+            let preview = app.buttons["tools-vet-open"]
+            for _ in 0..<6 where !preview.isHittable { app.swipeDown(velocity: .slow) }
             XCTAssertTrue(preview.isHittable)
-            XCTAssertTrue(preview.label.contains("準備中"))
-            capture("tools-hub-upcoming-\(appearance)")
+            XCTAssertFalse(preview.label.contains("準備中"))
+            capture("tools-hub-veterinary-\(appearance)")
             preview.tap()
             XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.staticTexts["このツールはまだ使えません"].exists)
-            let close = app.buttons["tools-vet-preview-close"]
+            let close = app.navigationBars.buttons.element(boundBy: 0)
             XCTAssertTrue(close.isHittable)
-            capture("tools-vet-preview-\(appearance)")
+            XCTAssertTrue(app.buttons["vet-new-cat"].exists)
+            capture("tools-vet-entry-\(appearance)")
             close.tap()
             XCTAssertTrue(preview.waitForExistence(timeout: 5))
             app.terminate()

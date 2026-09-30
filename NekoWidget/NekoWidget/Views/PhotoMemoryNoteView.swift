@@ -198,13 +198,15 @@ struct PhotoMemoDetailContent<Photo: View, Status: View>: View {
     let capturedAt: Date?
     let writtenAt: Date?
     let fallbackDate: Date
+    let weight: PhotoMemoWeightValue?
     let photo: Photo
     let status: Status
 
-    init(text: String, capturedAt: Date?, writtenAt: Date?, fallbackDate: Date,
+    init(text: String, capturedAt: Date?, writtenAt: Date?, fallbackDate: Date, weight: PhotoMemoWeightValue? = nil,
          @ViewBuilder photo: () -> Photo, @ViewBuilder status: () -> Status) {
         self.text = text; self.capturedAt = capturedAt
         self.writtenAt = writtenAt; self.fallbackDate = fallbackDate
+        self.weight = weight
         self.photo = photo(); self.status = status()
     }
 
@@ -217,10 +219,23 @@ struct PhotoMemoDetailContent<Photo: View, Status: View>: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("memory-note-body")
                 }
+                if let weight { PhotoMemoWeightLabel(weight: weight) }
                 Text("\(capturedAt == nil ? "メモ" : "撮影") \((capturedAt ?? writtenAt ?? fallbackDate).formatted(.dateTime.year().month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
                 status
             }.padding(16)
+        }
+    }
+}
+
+struct PhotoMemoWeightLabel: View {
+    let weight: PhotoMemoWeightValue
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("体重 \(weight.kilogramsText) kg", systemImage: "scalemass")
+                .font(.headline).accessibilityIdentifier("memory-note-weight")
+            Text("\(weight.catName ?? "対象未指定") · 測定日 \(weight.measuredOn ?? "不明")")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
@@ -301,6 +316,7 @@ struct PhotoMemoryNoteEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isWriting: Bool
+    @FocusState private var isMeasuring: Bool
     @State private var original: PhotoMemoryNote?
     @State private var text = ""
     @State private var isLoaded = false
@@ -310,6 +326,39 @@ struct PhotoMemoryNoteEditor: View {
     @State private var saveError: String?
     @State private var confirmsDiscard = false
     @State private var confirmsDelete = false
+    @State private var weightEnabled = false
+    @State private var weightKg = ""
+    @State private var weightDateKnown = false
+    @State private var weightDate = Date()
+    @State private var weightCatID: UUID?
+    @State private var weightCatName: String?
+
+    private var originalWeight: PhotoMemoWeight? {
+        if let original { return original.weight }
+        return archiveRecord?.context?.weight.map { PhotoMemoWeight(value: $0, catID: nil) }
+    }
+    private var weightCats: [PhotoMemoryNoteCat] { original?.context?.cats ?? context?.cats ?? [] }
+    private static func dayFormatter() -> DateFormatter {
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }
+    private var draftWeight: PhotoMemoWeight? {
+        guard weightEnabled, let grams = PhotoMemoWeightValue.grams(from: weightKg) else { return nil }
+        return PhotoMemoWeight(value: PhotoMemoWeightValue(grams: grams,
+            measuredOn: weightDateKnown ? Self.dayFormatter().string(from: weightDate) : nil,
+            catName: weightCatName), catID: weightCatID)
+    }
+    private var validWeight: Bool { !weightEnabled || draftWeight != nil }
+    private func loadWeight(_ weight: PhotoMemoWeight?) {
+        weightEnabled = weight != nil; weightKg = weight?.value.kilogramsText ?? ""
+        weightDateKnown = weight?.value.measuredOn != nil
+        weightDate = weight?.value.measuredOn.flatMap { Self.dayFormatter().date(from: $0) } ?? Date()
+        weightCatID = weight?.catID; weightCatName = weight?.value.catName
+        if weight == nil, weightCats.count == 1 {
+            weightCatID = weightCats[0].id; weightCatName = weightCats[0].name
+        }
+    }
 
     init(photo: PhotoPresentation, store: PhotoMemoryNoteStore,
          context: PhotoMemoryNoteContext? = nil, archiveStore: PersonalArchiveStore = .shared,
@@ -360,7 +409,8 @@ struct PhotoMemoryNoteEditor: View {
     }
 
     private var hasChanges: Bool {
-        isLoaded && savedNotice == nil && normalizedText != (original?.text ?? archiveRecord?.text ?? "")
+        isLoaded && savedNotice == nil && (normalizedText != (original?.text ?? archiveRecord?.text ?? "")
+            || draftWeight != originalWeight || (weightEnabled && !validWeight))
     }
 
     private var hasCurrentPhoto: Bool {
@@ -416,6 +466,27 @@ struct PhotoMemoryNoteEditor: View {
                     audience: "自分だけ", identifier: "photo-memory-note-text", minimumHeight: 160)
                     .disabled(isSaving || savedNotice != nil || accountChanged)
             }
+            Section {
+                Toggle("体重を添える", isOn: $weightEnabled).accessibilityIdentifier("memo-weight-toggle")
+                if weightEnabled {
+                    HStack {
+                        TextField("体重", text: $weightKg).keyboardType(.decimalPad)
+                            .focused($isMeasuring)
+                            .accessibilityIdentifier("memo-weight-input")
+                        Text("kg").foregroundStyle(.secondary)
+                    }
+                    if !weightKg.isEmpty && !validWeight { Text("kgで入力してください（小数第3位まで）。").font(.caption).foregroundStyle(.secondary) }
+                    if !weightCats.isEmpty {
+                        Picker("測定した猫", selection: $weightCatID) {
+                            Text(weightCatID == nil && weightCatName != nil ? "\(weightCatName!)（対象を確認）" : "未指定").tag(Optional<UUID>.none)
+                            ForEach(weightCats, id: \.id) { cat in Text(cat.name).tag(Optional(cat.id)) }
+                        }.onChange(of: weightCatID) { _, id in weightCatName = weightCats.first { $0.id == id }?.name }
+                    }
+                    Toggle("測定日を指定", isOn: $weightDateKnown).accessibilityIdentifier("memo-weight-date-toggle")
+                    if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
+                }
+            } footer: { Text("任意の記録です。測定日は撮影日とは別に残します。") }
+                .disabled(isSaving || savedNotice != nil || accountChanged)
             if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
         } else if loadFailed {
             Section {
@@ -440,7 +511,7 @@ struct PhotoMemoryNoteEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
-                        isWriting = false
+                        isWriting = false; isMeasuring = false
                         if hasChanges { confirmsDiscard = true } else { dismiss() }
                     }
                     .disabled(isSaving)
@@ -448,21 +519,21 @@ struct PhotoMemoryNoteEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(savedNotice == nil ? "保存" : "完了") {
-                        isWriting = false
+                        isWriting = false; isMeasuring = false
                         if savedNotice != nil { dismiss() }
                         else if enrollmentRecord != nil { confirmsArchiveUpdates = true }
-                        else if normalizedText.isEmpty && (original != nil || archiveRecord != nil) {
+                        else if normalizedText.isEmpty && !weightEnabled && (original != nil || archiveRecord != nil) {
                             confirmsDelete = true
                         } else {
                             Task { await save(normalizedText) }
                         }
                     }
-                    .disabled((!hasChanges && savedNotice == nil) || text.count > PhotoMemoryNoteStore.maximumCharacters || isSaving || accountChanged)
+                    .disabled((!hasChanges && savedNotice == nil) || !validWeight || text.count > PhotoMemoryNoteStore.maximumCharacters || isSaving || accountChanged)
                     .accessibilityIdentifier("photo-memory-note-save")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("完了") { isWriting = false }
+                    Button("完了") { isWriting = false; isMeasuring = false }
                         .accessibilityIdentifier("photo-memory-note-keyboard-done")
                 }
             }
@@ -474,13 +545,13 @@ struct PhotoMemoryNoteEditor: View {
                 Button("反映して保存") { Task { await save(normalizedText) } }
                 Button("編集に戻る", role: .cancel) {}
             } message: {
-                Text("この写真はiCloudにも保管されています。これからは一つのメモとして、編集と削除を保管先にも反映します。")
+                Text("この写真はiCloudにも保管されています。これからは文章・体重・測定日の編集と削除を保管先にも反映します。")
             }
             .confirmationDialog("この写真のメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
                 Button("削除", role: .destructive) { Task { await save("") } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真とお気に入りはそのまま残ります。保管先への反映を有効にしたメモは、iCloudの文章にも反映します。")
+                Text("写真とお気に入りはそのまま残ります。メモの文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。")
             }
             .alert("メモを保存できませんでした", isPresented: Binding(
                 get: { saveError != nil }, set: { if !$0 { saveError = nil } }
@@ -525,11 +596,13 @@ struct PhotoMemoryNoteEditor: View {
                     throw PersonalArchiveError.accountChanged
                 }
                 text = archiveRecord.text
+                loadWeight(archiveRecord.context?.weight.map { PhotoMemoWeight(value: $0, catID: nil) })
                 let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
                 if let local = try await coordinator.localRecord(forArchive: archiveRecord, expectedAccount: archiveAccount) {
                     linkedLocalRecord = local
                     original = local.note
                     text = local.note.text
+                    loadWeight(local.note.weight)
                     await prepareEnrollment(for: local)
                 }
                 isLoaded = true
@@ -550,6 +623,7 @@ struct PhotoMemoryNoteEditor: View {
             guard !Task.isCancelled else { return }
             original = loaded
             text = loaded?.text ?? ""
+            loadWeight(loaded?.weight)
             if let loaded, let local = try await store.record(id: loaded.id) {
                 await prepareEnrollment(for: local)
             }
@@ -569,7 +643,8 @@ struct PhotoMemoryNoteEditor: View {
             guard try await coordinator.syncStatus(photoIdentifier: local.photoIdentifier) == .localOnly,
                   let account = try? await archiveStore.accountContext(),
                   let copy = try await coordinator.linkedArchive(for: local, expectedAccount: account),
-                  copy.text == local.note.text, copy.state == .stored, !copy.isDeletionPending else { return }
+                  copy.text == local.note.text, copy.context?.weight == local.note.weight?.value,
+                  copy.state == .stored, !copy.isDeletionPending else { return }
             // Only an explicit link and matching content qualify; the Save
             // confirmation enrolls it, never this read.
             enrollmentRecord = local
@@ -580,7 +655,7 @@ struct PhotoMemoryNoteEditor: View {
 
     private func save(_ value: String) async {
         guard isLoaded, !isSaving else { return }
-        guard !createsNewMemo || value.isEmpty
+        guard !createsNewMemo || (value.isEmpty && !weightEnabled)
                 || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
             saveError = "会員情報を確認してください。入力した文章はそのままです。"
             return
@@ -594,19 +669,20 @@ struct PhotoMemoryNoteEditor: View {
                                                         expectedAccount: enrollmentAccount)
                 self.enrollmentRecord = nil
             }
+            let weightChange = PhotoMemoWeightChange.set(draftWeight)
             let result: PhotoMemoSaveResult
             if let linkedLocalRecord {
                 result = try await coordinator.saveLocal(text: value, recordID: linkedLocalRecord.id,
-                    expectedRevision: linkedLocalRecord.note.revision, expectedAccount: archiveAccount)
+                    expectedRevision: linkedLocalRecord.note.revision, expectedAccount: archiveAccount, weightChange: weightChange)
             } else if let archiveRecord, let archiveAccount {
                 result = try await coordinator.saveArchive(record: archiveRecord, text: value,
-                    operationID: operationID, expectedAccount: archiveAccount)
+                    operationID: operationID, expectedAccount: archiveAccount, weightChange: weightChange)
             } else if let recordID, let original {
                 result = try await coordinator.saveLocal(text: value, recordID: recordID,
-                    expectedRevision: original.revision, expectedAccount: nil)
+                    expectedRevision: original.revision, expectedAccount: nil, weightChange: weightChange)
             } else if let photo {
                 result = try await coordinator.saveLocal(text: value, photoIdentifier: photo.localIdentifier,
-                    expectedRevision: original?.revision, context: context)
+                    expectedRevision: original?.revision, context: context, weightChange: weightChange)
             } else { throw PhotoMemoryNoteStoreError.invalidIdentifier }
             if let updated = result.archiveRecord {
                 self.archiveRecord = updated

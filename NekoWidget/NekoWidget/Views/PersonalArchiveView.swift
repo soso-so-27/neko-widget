@@ -324,6 +324,7 @@ struct PersonalArchiveRecordView: View {
     @State private var resolutionID = UUID()
     @State private var localNoteRevision: String?
     @State private var localNoteText: String?
+    @State private var localNoteWeight: PhotoMemoWeightValue?
     @State private var resolving = false
 
     var body: some View {
@@ -332,7 +333,8 @@ struct PersonalArchiveRecordView: View {
                 ProgressView()
             } else {
             PhotoMemoDetailContent(text: record.state == .conflict ? (localNoteText ?? record.text) : record.text, capturedAt: record.capturedAt,
-                writtenAt: record.context?.writtenAt, fallbackDate: record.createdAt) {
+                writtenAt: record.context?.writtenAt, fallbackDate: record.createdAt,
+                weight: record.state == .conflict && localNoteText != nil ? localNoteWeight : record.context?.weight) {
                 if let data = record.jpegData {
                     MemoArchivePhoto(data: data, allowsExpansion: true)
                 }
@@ -348,6 +350,7 @@ struct PersonalArchiveRecordView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("別の変更があります").font(.headline)
                         Text(remoteText.isEmpty ? "メモなし" : remoteText).textSelection(.enabled)
+                        if let weight = record.conflictingContext?.weight { PhotoMemoWeightLabel(weight: weight) }
                         Text("どちらの内容も残しています。必要な内容を確認してください。")
                             .font(.caption).foregroundStyle(.secondary)
                         if record.state == .conflict, record.conflictingRevision != nil {
@@ -384,7 +387,7 @@ struct PersonalArchiveRecordView: View {
                     Button(record.jpegData == nil ? "メモのみを書き出す" : "写真とメモを書き出す",
                            systemImage: "square.and.arrow.up") { exportRecord() }
                         .disabled(record.isDeletionPending || record.state == .conflict ||
-                                  (record.jpegData == nil && record.text.isEmpty))
+                                  (record.jpegData == nil && record.text.isEmpty && record.context?.weight == nil))
                         .accessibilityIdentifier("personal-archive-export")
                     Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
                         .disabled(record.isDeletionPending || record.state == .conflict)
@@ -436,7 +439,10 @@ struct PersonalArchiveRecordView: View {
             }
             Button("戻る", role: .cancel) { resolutionChoice = nil }
         } message: {
-            Text(resolutionChoice == true ? (record.conflictingText ?? "メモなし") : ((localNoteText ?? record.text).isEmpty ? "メモなし" : (localNoteText ?? record.text)))
+            let remote = resolutionChoice == true
+            let text = remote ? (record.conflictingText ?? "") : (localNoteText ?? record.text)
+            let weight = remote ? record.conflictingContext?.weight : (localNoteText != nil ? localNoteWeight : record.context?.weight)
+            Text((text.isEmpty ? "文章なし" : text) + "\n" + (weight.map { "体重 \($0.kilogramsText) kg · 測定日 \($0.measuredOn ?? "不明")" } ?? "体重の記録なし"))
         }
         .confirmationDialog("保管したコピーを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("コピーを削除", role: .destructive) { Task { await delete() } }
@@ -454,7 +460,7 @@ struct PersonalArchiveRecordView: View {
                 text: selected.text, capturedAt: selected.capturedAt,
                 writtenAt: selected.context?.writtenAt,
                 updatedAt: selected.context?.updatedAt,
-                catNames: selected.context?.catNames ?? [], jpegData: selected.jpegData)
+                catNames: selected.context?.catNames ?? [], jpegData: selected.jpegData, weight: selected.context?.weight)
         }, verify: {
             let snapshot = try await store.readingSnapshot(expectedAccount: account)
             guard let current = snapshot.records.first(where: { $0.id == selected.id }),
@@ -484,7 +490,8 @@ struct PersonalArchiveRecordView: View {
                 let local = try await noteStore.record(id: binding.noteID)
                 localNoteRevision = local?.note.revision
                 localNoteText = local?.note.text ?? ""
-            } else { localNoteRevision = nil; localNoteText = nil }
+                localNoteWeight = local?.note.weight?.value
+            } else { localNoteRevision = nil; localNoteText = nil; localNoteWeight = nil }
         } catch { errorMessage = personalArchiveMessage(for: error) }
     }
 
@@ -567,7 +574,7 @@ struct PhotoMemoryNoteArchiveView: View {
     }
     private var context: PersonalArchiveContext {
         .init(writtenAt: record.note.writtenAt, updatedAt: record.note.updatedAt,
-              catNames: record.note.context?.cats.map(\.name) ?? [])
+              catNames: record.note.context?.cats.map(\.name) ?? [], weight: record.note.weight?.value)
     }
     private var title: String {
         if attempted { return "再試行" }

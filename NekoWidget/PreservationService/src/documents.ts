@@ -24,8 +24,8 @@ function date(value: unknown): string | null {
 export function validateDocument(input: unknown): ArchiveDocument {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return fail();
   const value = input as Record<string, unknown>;
-  const keys = ['formatVersion', 'text', 'capturedAt', 'writtenAt', 'updatedAt', 'catNames', 'photoFile'];
-  if (Object.keys(value).some((key) => !keys.includes(key)) || value.formatVersion !== 1
+  const keys = ['formatVersion', 'text', 'capturedAt', 'writtenAt', 'updatedAt', 'catNames', 'photoFile', 'weight'];
+  if (Object.keys(value).some((key) => !keys.includes(key)) || ![1, 2].includes(value.formatVersion as number)
     || typeof value.text !== 'string' || !Array.isArray(value.catNames) || value.catNames.length > 100
     || ![null, 'photo.jpg'].includes(value.photoFile as null | string)) return fail();
   const text = value.text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
@@ -33,9 +33,24 @@ export function validateDocument(input: unknown): ArchiveDocument {
   const catNames = [...value.catNames];
   if (catNames.some((name) => typeof name !== 'string' || !name || new TextEncoder().encode(name).length > 800
     || !countWithin(name, 200))) return fail();
-  if (!text && value.photoFile === null) return fail();
-  return { formatVersion: 1, text, capturedAt: date(value.capturedAt), writtenAt: date(value.writtenAt),
-    updatedAt: date(value.updatedAt), catNames: catNames as string[], photoFile: value.photoFile as 'photo.jpg' | null };
+  let weight: ArchiveDocument['weight'];
+  if (value.weight !== undefined) {
+    if (value.formatVersion !== 2 || !value.weight || typeof value.weight !== 'object' || Array.isArray(value.weight)) return fail();
+    const item = value.weight as Record<string, unknown>;
+    if (Object.keys(item).some(key => !['grams', 'measuredOn', 'catName'].includes(key))
+      || !Number.isInteger(item.grams) || (item.grams as number) < 1 || (item.grams as number) > 100_000
+      || !(item.catName === null || (typeof item.catName === 'string' && !!item.catName && !item.catName.includes('\0')
+        && countWithin(item.catName, 200) && new TextEncoder().encode(item.catName).length <= 800))) return fail();
+    if (item.measuredOn !== null) {
+      if (typeof item.measuredOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.measuredOn)) return fail();
+      date(item.measuredOn + 'T00:00:00Z'); // validates the civil day, without timezone conversion
+    }
+    weight = { grams: item.grams as number, measuredOn: item.measuredOn as string | null, catName: item.catName as string | null };
+  }
+  if (!text && value.photoFile === null && !weight) return fail();
+  return { formatVersion: value.formatVersion as 1 | 2, text, capturedAt: date(value.capturedAt), writtenAt: date(value.writtenAt),
+    updatedAt: date(value.updatedAt), catNames: catNames as string[], photoFile: value.photoFile as 'photo.jpg' | null,
+    ...(weight ? { weight } : {}) };
 }
 export function decodePhoto(value: unknown): Uint8Array | null {
   if (value === null) return null;
