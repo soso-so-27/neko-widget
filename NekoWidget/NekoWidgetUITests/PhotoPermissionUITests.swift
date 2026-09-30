@@ -1599,7 +1599,12 @@ final class SoloMemoriesUITests: XCTestCase {
         let saved = app.buttons.containing(.staticText, identifier: "こはく").firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 10))
         for _ in 0..<4 where !saved.isHittable { app.swipeUp() }
-        XCTAssertTrue(app.staticTexts["いつものフード"].exists)
+        // The summary now includes field labels. Verify the saved input itself,
+        // not an exact standalone summary label that no longer exists.
+        saved.tap()
+        for _ in 0..<8 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        XCTAssertEqual(food.value as? String, "いつものフード")
         XCTAssertFalse(app.staticTexts["care-save-error"].exists)
         capture("care-unregistered-restored-large-text")
         app.terminate()
