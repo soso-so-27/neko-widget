@@ -174,15 +174,17 @@ final class LostCatDraftStore: ObservableObject {
                savedInformation: LostCatSavedInformation? = nil) throws -> LostCatDraft {
         guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
         if let saved = drafts[key] { return saved }
-        let old = legacy.record(for: key == "guest-legacy" ? "unregistered" : key)
+        let legacyKey = key == "guest-legacy" ? "unregistered" : key
+        let hasLegacyRecord = legacy.records[legacyKey] != nil
+        let old = legacy.record(for: legacyKey)
         var migrated = LostCatDraft()
-        migrated.name = profileName.isEmpty ? old.name : profileName
+        migrated.name = hasLegacyRecord ? old.name : (profileName.isEmpty ? old.name : profileName)
         migrated.features = old.identifyingFeatures
         migrated.collar = old.collar
         migrated.approachAdvice = old.approachAdvice
         migrated.contact = old.contactSuggestion
         migrated.prefilledFields = []
-        if let savedInformation {
+        if let savedInformation, !hasLegacyRecord {
             if migrated.name.isEmpty && !savedInformation.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 migrated.name = savedInformation.name
                 migrated.prefilledFields?.insert("name")
@@ -207,10 +209,12 @@ final class LostCatDraftStore: ObservableObject {
             }
             // Each source photo becomes an independently owned JPEG copy. Never
             // replace legacy photos, touch the source, or share its file path.
-            for (role, data) in [("face", savedInformation?.facePhoto), ("body", savedInformation?.bodyPhoto)] {
+            let newInformation = hasLegacyRecord ? nil : savedInformation
+            for (role, data) in [("face", newInformation?.facePhoto), ("body", newInformation?.bodyPhoto)] {
                 guard (role == "face" ? migrated.faceFileName : migrated.bodyFileName) == nil,
-                      let data, let image = UIImage(data: data),
-                      let jpeg = image.jpegData(compressionQuality: 0.86) else { continue }
+                      let data else { continue }
+                guard let image = UIImage(data: data),
+                      let jpeg = image.jpegData(compressionQuality: 0.86) else { throw CocoaError(.fileReadCorruptFile) }
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let name = UUID().uuidString + ".jpg"
                 let destination = directory.appendingPathComponent(name)

@@ -27,15 +27,15 @@ private struct LostCatSavedCat: Identifiable {
         }
     }
 
-    func information(evacuation store: EvacuationStore, care careStore: CareHandoffStore) -> LostCatSavedInformation {
+    func information(evacuation store: EvacuationStore, care careStore: CareHandoffStore) throws -> LostCatSavedInformation {
         var result = LostCatSavedInformation(name: name, features: evacuation?.features ?? "")
         if let evacuation {
             // The explicitly owner-containing photo is never used in a public draft.
             let first = evacuation.photos["face"] ?? evacuation.photos["reference"] ?? evacuation.photos["body"]
-            if let first { result.facePhoto = try? store.photoData(first) }
-            if let body = evacuation.photos["body"], body != first { result.bodyPhoto = try? store.photoData(body) }
+            if let first { result.facePhoto = try store.photoData(first) }
+            if let body = evacuation.photos["body"], body != first { result.bodyPhoto = try store.photoData(body) }
         }
-        if result.facePhoto == nil, let photo = care?.photoName { result.facePhoto = try? careStore.photoData(photo) }
+        if result.facePhoto == nil, let photo = care?.photoName { result.facePhoto = try careStore.photoData(photo) }
         return result
     }
 }
@@ -191,9 +191,9 @@ struct LostCatDraftView: View {
                     Label("まず探す・届け出る", systemImage: "info.circle")
                 }
             }
-            catSection
-            incidentSection
-            contactSection
+            catSection.disabled(!loaded)
+            incidentSection.disabled(!loaded)
+            contactSection.disabled(!loaded)
             if saveError {
                 Section {
                     Button("保存できませんでした。再試行") {
@@ -570,7 +570,9 @@ struct LostCatDraftView: View {
         do {
             let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
                 .filter { $0.id == identity }
-            let information = candidates.count == 1 ? candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
+            // Existing drafts need no source access, even if its copy is now unavailable.
+            let information = store.drafts[identity] == nil && candidates.count == 1
+                ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
             let saved = try store.draft(for: identity, profileName: name, savedInformation: information)
             key = identity
             draft = saved
@@ -1020,13 +1022,17 @@ struct LostCatDraftFixtureView: View {
         try require(candidates.count == 2 && Set(candidates.map(\.id)).count == 2)
         guard let first = candidates.first(where: { $0.id == "guest-tool-\(toolID.uuidString)" }),
               let other = candidates.first(where: { $0.id == "guest-tool-\(otherID.uuidString)" }) else { throw Failure.invariant }
-        let info = first.information(evacuation: evacuation, care: care)
+        let info = try first.information(evacuation: evacuation, care: care)
         try require(info.features == "茶白・しっぽが長い" && info.facePhoto != nil && info.bodyPhoto != nil)
-        try require(other.information(evacuation: evacuation, care: care).facePhoto == nil)
+        try require(try other.information(evacuation: evacuation, care: care).facePhoto == nil)
         // Subsequent UI launches retain the edited real draft. The boundary
         // checks already ran on this exact fixture/input before its creation.
         if !lost.drafts.isEmpty { return (evacuation, care, lost) }
         let boundary = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
+        var refusedInvalidPhoto = false
+        do { _ = try boundary.draft(for: "bad-photo", savedInformation: .init(facePhoto: Data("not a JPEG".utf8))) }
+        catch { refusedInvalidPhoto = true }
+        try require(refusedInvalidPhoto && boundary.drafts["bad-photo"] == nil)
         var draft = try boundary.draft(for: "boundary", savedInformation: info)
         try require(draft.name == info.name && draft.features == info.features && draft.contact.isEmpty
             && draft.approachAdvice.isEmpty && draft.collar.isEmpty && draft.lastSeenNear.isEmpty && draft.lastSeenAt == nil)
@@ -1045,12 +1051,24 @@ struct LostCatDraftFixtureView: View {
         try legacy.save(old, for: "legacy-boundary")
         let migrated = try boundary.draft(for: "legacy-boundary", savedInformation: info)
         try require(migrated.name == old.name && migrated.features == old.identifyingFeatures)
+        try legacy.save(CatPreparednessRecord(), for: "legacy-empty")
+        let empty = try boundary.draft(for: "legacy-empty", profileName: "登録名", savedInformation: info)
+        try require(empty.name.isEmpty && empty.features.isEmpty && empty.faceFileName == nil && empty.bodyFileName == nil)
         let ambiguous = EvacuationStore(directory: directory.appendingPathComponent("ambiguous"))
         var a = EvacuationCat(); a.profileID = "duplicate-profile"
         var b = EvacuationCat(); b.profileID = a.profileID
         try require(ambiguous.update { $0.cats = [a, b] })
         try require(LostCatSavedCat.candidates(evacuation: ambiguous,
             care: CareHandoffStore(directory: directory.appendingPathComponent("empty-care"))).isEmpty)
+        let sourceName = evacuation.plan.cats[0].photos["face"]!
+        let source = directory.appendingPathComponent("evacuation").appendingPathComponent(sourceName)
+        let held = source.appendingPathExtension("fixture-held")
+        try FileManager.default.moveItem(at: source, to: held)
+        defer { try? FileManager.default.moveItem(at: held, to: source) }
+        var refusedMissingPhoto = false
+        do { _ = try first.information(evacuation: evacuation, care: care) }
+        catch { refusedMissingPhoto = true }
+        try require(refusedMissingPhoto && lost.drafts.isEmpty)
         return (evacuation, care, lost)
     }
 }
