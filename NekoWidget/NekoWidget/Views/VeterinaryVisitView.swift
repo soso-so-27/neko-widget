@@ -140,9 +140,14 @@ struct VeterinaryVisitsView: View {
                 guard let weight = record.note.weight, let id = weight.catID else { return nil }
                 return PhotoMemoryNoteCat(id: id, name: weight.value.catName ?? "名前未設定の猫")
             }
-            let candidates = known + (initialRecord?.note.context?.cats ?? [])
-                + notes.flatMap { $0.note.context?.cats ?? [] } + loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) }
-                + savedTools.map(\.cat) + measuredCats
+            // Keep each append separately typed; a long chain of overloaded +
+            // exceeded the native compiler's expression-checking budget.
+            var candidates: [PhotoMemoryNoteCat] = known
+            candidates.append(contentsOf: initialRecord?.note.context?.cats ?? [])
+            candidates.append(contentsOf: notes.flatMap { $0.note.context?.cats ?? [] })
+            candidates.append(contentsOf: loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) })
+            candidates.append(contentsOf: savedTools.map(\.cat))
+            candidates.append(contentsOf: measuredCats)
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
             if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
