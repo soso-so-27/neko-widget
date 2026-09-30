@@ -64,3 +64,27 @@ App Store Connectの契約一覧を再読取すると無料アプリ契約のみ
 2026-09-29追記：利用者が有料アプリ契約に同意した後、App Store Connectで同契約の期間と「ユーザ情報を保留中」を確認。銀行口座と税務フォームが未登録のためActiveではない。Small Business Programの別申請では、本人回答に基づき関連Apple Developerアカウント4問をすべてNoに設定。本人が前年収益の宣誓内容を確認して提出を許可した後、Appleの「Thank you for your submission」「審査結果はメールで通知」画面を確認。承認・15%適用は未確認。販売・課金・保管受付は引き続きOFF。
 
 候補のpush/CI/TestFlightは、必要な設定が揃って範囲を固定した後に選ぶ。現時点で本線アプリ配布は行っていない。
+
+## 2026-09-30 接続候補のレビューと配備用準備
+
+- `origin/main` の `83f77d0` までを専用候補へ競合なく統合。候補 `11595aec634efb6229f769db4213e067ba06d1f1`。月額のみ構成 `07d67b6` は独立レビューで問題なし。年額省略以外の不正ID拒否、署名、bundle・環境・購読group・購入者の照合は維持される。対象サービス・依存にはmainの変更がなく、既存の型検査・関連16件を再実行していない。
+- BillingVerificationServiceの配備用 `tsc -p tsconfig.build.json` が成功。Apple PKIの公式配布元から3種類のroot DERを取得し、NodeのX509実装で自己署名・CA属性、取得物の有効期間を確認した。最初のPython自己署名検査は旧rootのSHA-1に対する検査ライブラリの非対応で停止したため、実サービスと同じNodeの検査を使った。製品や署名検証条件は変更していない。
+- 配備用のdist、固定package-lock、証明書の出典・SHA256、月額のみSandbox設定を `C:/dev/neko-evidence/preservation-sandbox-20260930/` に用意した。`sandbox.env.template` はruntimeと追加endpointがすべてNO、資格情報とRedis接続先は空欄。実ロードで起動が拒否されることを確認。秘密鍵・Apple JWS・個人写真を含まない。これは配備済み・購入成功の証拠ではない。
+- App Store Connectを読取確認：有料アプリ契約は「ユーザ情報を保留中」、銀行情報は処理中、2つのUS納税フォームは未提出。居住住所の綴り修正はAppleへの依頼受付までで、反映は未確認。納税フォームは送信していない。
+- **Apple承認だけでは接続は完了しない。** Verifier Nodeの隔離host、private ingress、TLS Redis、共有secretの注入、月額商品の販売条件とSandboxアカウント、アプリ側の保管origin、検証済み本人のpilot設定が残る。実購入→会員リンク→実写真の保存・新session/別端末読戻し→ZIPは未検証。仮のactive権利で代替しない。
+- この段階ではremote配備・gate変更・push・CI・TestFlightを実行していない。月額候補の初回時刻は2026-09-29 19:24:53 JST。今回のビルドは約5秒、設定ロード確認は約2秒で、待機・調査を含む候補全体の所要時間とは区別する。
+
+## 2026-09-30 利用者依頼1〜3の候補
+
+1. 配備準備：最新main `cc4f396` を統合した専用checkoutを使用。Node/同一hostのTLS Redis/Tunnel/Accessの設定雛形、systemd unit、費用計算をBillingVerificationService/operationsへ追加。Redis専用CAは絶対path・単一CA・有効期間を検査し、Redisだけへ渡す。hostname検証とrejectUnauthorizedを維持。月額試算は既存の無料枠非控除2735円に、512MiB hostなら990円、推奨1GiBなら1386円を加える。最低3725円・推奨4121円で、3000円目標と2200円新規受付停止条件を超える。資源作成・予算条件変更・remote gate変更はしていない。メモリ適合・実TLS/Redis/Tunnelは未検証。
+2. 解約後：期限切れ確認から12暦月、unknown中の期限停止、active/grace確認で期限解除は既存処理を維持。通知の現行Cloudflare send()→messageId契約は既存adapterと一致。送信domain・Queue・delivery subscriptionの設定雛形をPreservationService/operationsへ追加。staging設定の通知2gateを明示NO。domain未定、実送信・送達・実Apple失効/再契約は未検証。物理削除を開始していない。
+3. 表示/再試行：端末のみ/保管中/保管済み/失敗を分け、応答消失は「結果の確認」として別表示。本人別に状態を保持し、同じIDのdocumentとJPEGをdetailで照合するまで再PUT不可。照合は送信と同じミリ秒精度に正規化し、server所有updatedAtだけ比較から外す。入力中に未送信メモを端末Keychainへ保持。失敗時は文章を控える操作・再保存、未永続化メモがある間の閉じる保護を表示。Keychain読込失敗でも同じ本人のmemory draftと保管済み一覧を失わない。再契約の操作説明、期限の時刻/現在timezoneを追加。
+
+### 検証と残る不確実性
+
+- 初回の本修正候補は2026-09-30 11:33 JSTごろ。先行の接続先・費用・現状調査はこの候補作成前から行っており、局所テスト秒数をタスク全体の時間にしない。
+- Billing strict typecheck +設定/Redis 15件が約8秒で成功、production build成功。公式CAを一時ファイルへ置く正のconfig-loadも成功。これはRedis TLS接続の証拠ではない。
+- 保管期限・通知送信・delivery eventの3file/20件が約13秒で成功。実メールや実billingの証拠ではない。
+- 独立レビューで当初の3点（ログイン解除で閉じる保護解除、Date精度で照合不一致、本人切替で未確定書込状態消失）を修正後、追加の修正必須指摘なし。static reviewである。
+- WindowsではSwift/Xcode描画を直接実行できない。既存のfocused diagnostic routeで、同じcandidateのSoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredStateを1件実行する。このDEBUG fixtureは既存保管membership boundaryの追加シナリオも先に実行する。端末同意・応答消失・同ID読戻し・stored表示、owner切替と日時精度を確認する。全Widgetや全CI、TestFlightは起動しない。
+- 過去focused diagnosticの所要時間は約14〜21分。通常pushの広域CIと混同せずdiagnostic/**を使う。これは配布証拠には使えない。描画・native挙動は結果が出るまで未検証。実Keychain障害、実保管復元・別端末・ZIPは依然未達。

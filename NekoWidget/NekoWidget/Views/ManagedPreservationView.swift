@@ -12,9 +12,13 @@ struct ManagedPreservationView: View {
     @State private var confirmsDeletion = false
     @State private var needsResume = false
     @State private var confirmsMembershipLink = false
+    @State private var confirmsDraftDiscard = false
+    private let onUnsecuredMemoChange: ((Bool) -> Void)?
 
     init(configuration: ManagedPreservationConfiguration = .current,
-         draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil) {
+         draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
+         onUnsecuredMemoChange: ((Bool) -> Void)? = nil) {
+        self.onUnsecuredMemoChange = onUnsecuredMemoChange
         let exporter = RecordExportController()
         _exporter = StateObject(wrappedValue: exporter)
         _coordinator = StateObject(wrappedValue: ManagedPreservationCoordinator(
@@ -33,6 +37,16 @@ struct ManagedPreservationView: View {
         }
         .navigationTitle("サービスに保管")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(coordinator.hasUnsecuredMemo)
+        .interactiveDismissDisabled(coordinator.hasUnsecuredMemo)
+        .onChange(of: coordinator.hasUnsecuredMemo) { _, value in onUnsecuredMemoChange?(value) }
+        .confirmationDialog("端末に残せない未送信メモを破棄しますか？",
+                            isPresented: $confirmsDraftDiscard, titleVisibility: .visible) {
+            Button("未送信の編集を破棄", role: .destructive) { coordinator.discardUnsecuredMemos() }
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("この画面だけに残っている編集は失われます。サービスに保管済みのメモは変更しません。必要な文章を控えてから破棄してください。")
+        }
         .task { coordinator.start() }
         .onDisappear { exporter.cancelPreparation(); coordinator.stop() }
         .sheet(item: $exporter.payload) { payload in
@@ -97,12 +111,15 @@ struct ManagedPreservationView: View {
                 noticeContactSection
                 retentionSection
                 usageSection
-                if let draft = coordinator.draft, !coordinator.draftWasSaved { newCopySection(draft) }
+                if let draft = coordinator.draft { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                 recordsSection
             }
             if coordinator.isBusy {
-                Section { ProgressView("保管先に確認しています…") }
+                Section {
+                    ProgressView(coordinator.copyState == .saving || coordinator.copyState == .checking
+                                 ? coordinator.copyState.title : "保管先に確認しています…")
+                }
             }
             if exporter.preparing {
                 Section {
@@ -115,7 +132,16 @@ struct ManagedPreservationView: View {
             }
             if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
             if let warning = coordinator.draftRecoveryWarning {
-                Section { Text(warning).foregroundStyle(.red) }
+                Section {
+                    Text(warning).foregroundStyle(.red)
+                    if coordinator.hasUnsecuredMemo {
+                        Button("未送信メモを端末に保存し直す") { coordinator.retryPendingMemoStorage() }
+                        if !coordinator.editedText.isEmpty {
+                            ShareLink("メモを控える", item: coordinator.editedText)
+                        }
+                        Button("保存できない未送信メモを破棄", role: .destructive) { confirmsDraftDiscard = true }
+                    }
+                }
             }
             if coordinator.isSignedIn {
                 Section {
@@ -165,7 +191,7 @@ struct ManagedPreservationView: View {
                     Label("会員情報は接続済みです", systemImage: "person.crop.circle.badge.checkmark")
                         .accessibilityIdentifier("preservation-membership-linked")
                     Text(membership.status == .expired
-                         ? "現在、新しい保管は利用できません。保管済みの写真は下の一覧から開けます。"
+                         ? "新しい保管は停止中です。同じ会員情報で再契約した後、「会員情報を確認」で保管を再開できます。保管済みの写真は引き続き開けます。"
                          : "会員資格をまだ確認できません。保管済みの写真は下の一覧から開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
@@ -251,7 +277,7 @@ struct ManagedPreservationView: View {
                              ? "持ち出し期限の目安（削除予告によって延長）"
                              : "現在の持ち出し期限")
                             .font(.footnote).foregroundStyle(.secondary)
-                        Text(Date(timeIntervalSince1970: Double(dueAt) / 1000), format: .dateTime.year().month().day())
+                        Text(Self.deadline(dueAt))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Text(retention.finalNoticeDeliveredAt == nil
@@ -271,12 +297,22 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-retention-check")
         } header: { Text("保管終了後の持ち出し") }
         footer: {
-            Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。")
+            Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。同じ会員情報の再契約を確認すると、持ち出し期限は解除されます。")
         }
     }
 
     private static func capacity(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+
+    private static func deadline(_ milliseconds: Int64) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = .current
+        formatter.dateStyle = .medium; formatter.timeStyle = .short
+        let date = Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+        let zone = formatter.timeZone.abbreviation(for: date) ?? formatter.timeZone.identifier
+        return "\(formatter.string(from: date))（\(zone)）"
     }
 
     private var pendingMemoSection: some View {
@@ -286,6 +322,7 @@ struct ManagedPreservationView: View {
                     Text(memo.text.isEmpty ? "メモを空にする未送信の編集" : memo.text)
                         .font(.footnote).textSelection(.enabled)
                     Button("この未送信メモを再開") { coordinator.resumePendingMemo(memo) }
+                    if coordinator.hasUnsecuredMemo { ShareLink("メモを控える", item: memo.text) }
                 }
             }
         } header: { Text("この本人の未送信メモ") }
@@ -302,12 +339,24 @@ struct ManagedPreservationView: View {
                     .accessibilityLabel("今回保管する写真のコピー")
             }
             if !draft.document.text.isEmpty { Text(draft.document.text) }
-            Toggle("この保管方法に同意する", isOn: $coordinator.consentToNewSave)
-            Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
-                .font(.footnote).foregroundStyle(.secondary)
-            Button("選んだコピーを保管") { coordinator.saveSelectedCopy() }
-                .disabled(!coordinator.consentToNewSave || coordinator.membership?.canSave != true)
-                .accessibilityIdentifier("preservation-copy-save")
+            Label(coordinator.copyState.title, systemImage: coordinator.draftWasSaved
+                  ? "checkmark.icloud" : "iphone")
+                .accessibilityIdentifier("preservation-copy-status")
+            if coordinator.copyState == .needsConfirmation {
+                Text("通信が切れたため、保存できたか分かりません。元の写真とメモは端末に残っています。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("保管結果を確認") { coordinator.confirmCopyResult() }
+                    .accessibilityIdentifier("preservation-copy-confirm")
+            } else if !coordinator.draftWasSaved {
+                Toggle("この保管方法に同意する", isOn: $coordinator.consentToNewSave)
+                Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button(coordinator.copyState == .failed ? "もう一度保管する" : "選んだコピーを保管") {
+                    coordinator.saveSelectedCopy()
+                }
+                    .disabled(!coordinator.consentToNewSave || coordinator.membership?.canSave != true)
+                    .accessibilityIdentifier("preservation-copy-save")
+            }
         } header: { Text("今回選んだ記録") }
         footer: {
             Text("新しい保管には会員資格が必要です。保管済みの記録の閲覧・メモ編集・削除・持ち出しに会員資格は必要ありません。写真原本や端末の元メモは変更しません。")
@@ -361,6 +410,7 @@ struct ManagedPreservationView: View {
                 }
                 TextEditor(text: $coordinator.editedText)
                     .frame(minHeight: 120).accessibilityLabel("保管コピーのメモ")
+                    .onChange(of: coordinator.editedText) { _, _ in coordinator.retainUnsentEdit() }
                 Text("\(coordinator.editedText.count) / 500文字")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("保管コピーのメモを更新") { coordinator.saveEditedNote() }
@@ -386,18 +436,29 @@ struct ManagedPreservationView: View {
 struct ManagedPreservationMembershipFixture: View {
     @State private var fixture: PreservationNativeFixture?
     @State private var failure: String?
+    private var testsCopyResult: Bool { CommandLine.arguments.contains("--preservation-copy-result-ui-fixture") }
+
+    private var fixtureDraft: ManagedPreservationDraft? {
+        guard testsCopyResult else { return nil }
+        return .init(recordID: PreservationFixtureServer.recordID,
+                     document: .init(text: "選んだメモ", capturedAt: nil, writtenAt: nil,
+                                     updatedAt: nil, catNames: [], photoFile: nil), jpegData: nil)
+    }
 
     var body: some View {
         NavigationStack {
             if let fixture {
-                ManagedPreservationView(configuration: fixture.configuration, client: fixture.client)
+                ManagedPreservationView(configuration: fixture.configuration, draft: fixtureDraft, client: fixture.client)
             } else if let failure {
                 Text(failure).accessibilityIdentifier("preservation-fixture-failure")
             } else { ProgressView("準備中") }
         }
         .task {
             guard fixture == nil else { return }
-            do { fixture = try PreservationNativeFixture.make(.firstFailure) }
+            do {
+                if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
+                fixture = try PreservationNativeFixture.make(testsCopyResult ? .copyResultLost : .firstFailure)
+            }
             catch { failure = "試験用の保管画面を準備できませんでした。" }
         }
         .onDisappear { try? fixture?.cleanup() }
@@ -419,6 +480,7 @@ struct ManagedPreservationPhotoView: View {
     @State private var draftID = UUID()
     @State private var errorMessage: String?
     @State private var attempt = UUID()
+    @State private var hasUnsecuredMemo = false
 
     var body: some View {
         NavigationStack {
@@ -426,7 +488,7 @@ struct ManagedPreservationPhotoView: View {
                 if !ManagedPreservationConfiguration.current.isEnabled {
                     ContentUnavailableView("保管先は準備中です", systemImage: "externaldrive")
                 } else if let draft {
-                    ManagedPreservationView(draft: draft)
+                    ManagedPreservationView(draft: draft, onUnsecuredMemoChange: { hasUnsecuredMemo = $0 })
                 } else if let errorMessage {
                     ContentUnavailableView {
                         Label("写真を準備できませんでした", systemImage: "photo")
@@ -436,7 +498,7 @@ struct ManagedPreservationPhotoView: View {
                 } else { ProgressView("選んだ写真を準備しています…") }
             }
             .toolbar { ToolbarItem(placement: .cancellationAction) {
-                Button("閉じる") { dismiss() }
+                Button("閉じる") { dismiss() }.disabled(hasUnsecuredMemo)
             } }
             .task(id: attempt) { await prepare() }
             .onChange(of: scenePhase) { _, phase in
@@ -445,6 +507,7 @@ struct ManagedPreservationPhotoView: View {
             }
             .onDisappear { access.stop() }
         }
+        .interactiveDismissDisabled(hasUnsecuredMemo)
     }
 
     private func prepare() async {

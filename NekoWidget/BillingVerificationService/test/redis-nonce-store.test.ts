@@ -49,6 +49,14 @@ test("pins TLS, bounded queues, and an atomic SET NX EX command", () => {
   });
 });
 
+test("scopes a private CA to Redis while preserving hostname and certificate verification", () => {
+  const options = redisNonceClientOptions("rediss://nonce.internal:6380/0", "private-redis-ca");
+  assert.equal(options.socket.ca, "private-redis-ca");
+  assert.equal(options.socket.servername, "nonce.internal");
+  assert.equal(options.socket.rejectUnauthorized, true);
+  assert.equal("ca" in redisNonceClientOptions("rediss://nonce.internal:6380/0").socket, false);
+});
+
 test("fails closed for invalid claims, store errors, and unexpected replies", async () => {
   const invalid = new RedisBillingVerifierNonceStore(async () => "OK");
   await assert.rejects(() => invalid.claim({ ...claim, retentionSeconds: 0 }), {

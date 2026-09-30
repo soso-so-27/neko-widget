@@ -17,7 +17,7 @@ export function redisNonceSetOptions(retentionSeconds: number) {
   };
 }
 
-export function redisNonceClientOptions(url: string) {
+export function redisNonceClientOptions(url: string, ca?: string) {
   const parsed = new URL(url);
   return {
     url,
@@ -25,6 +25,7 @@ export function redisNonceClientOptions(url: string) {
       tls: true as const,
       servername: parsed.hostname,
       rejectUnauthorized: true,
+      ...(ca ? { ca } : {}),
       connectTimeout: 2_000,
       reconnectStrategy: (retries: number) => (
         retries >= 3 ? false : Math.min(100 * (2 ** retries), 1_000)
@@ -72,8 +73,9 @@ export class RedisBillingVerifierNonceStore implements BillingVerifierNonceStore
 
 export async function connectRedisBillingVerifierNonceStore(
   url: string,
+  ca?: string,
 ): Promise<{ nonceStore: BillingVerifierNonceStore; close: () => Promise<void> }> {
-  const client = createClient(redisNonceClientOptions(url));
+  const client = createClient(redisNonceClientOptions(url, ca));
   // node-redis requires an error listener. Metrics are added at the private
   // ingress layer; never log errors here because URLs may contain credentials.
   client.on("error", () => {});

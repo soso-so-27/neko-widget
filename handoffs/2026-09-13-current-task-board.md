@@ -1,5 +1,9 @@
 # 現在のタスクと優先順位
 
+## 2026-09-30 個人保管：月額構成の独立レビュー・配備用ビルド完了
+
+専用候補にmain `83f77d0` までを統合し、月額のみ設定の独立レビューは問題なし。配備用Nodeビルド、Apple公式root3件の取得・検査、OFFのSandbox設定を用意した。既存の型検査と関連16件は入力・依存が同じため再利用。実購入検証の前には、Apple契約Activeだけでなく、隔離Verifier host・private ingress・TLS Redisとsecret注入・商品販売条件・native origin/pilot結線が必要。有料契約はユーザ情報保留、銀行は処理中、納税フォームは未提出。remote配備・受付ON・CI・TestFlightは未実行。準備物と未達条件は[接続記録](2026-09-29-preservation-live-readiness.md#2026-09-30-接続候補のレビューと配備用準備)に記載。
+
 ## 2026-09-29 個人保管：S3・KMS専用資格情報を接続準備、実保存は未検証
 
 専用候補でApple App IDのSign in with Appleと署名profileを整え、Apple専用鍵を非公開保管Workerのsecretへ登録した。復旧用の個人AWS SSMパラメータは東京リージョン・指定名・`SecureString` を確認し、DERハッシュでローカル原本との一致を検証した。個人AWSの限定S3 IAM user/keyも作成し、同Workerに暗号化secretとして登録済み。KMS専用userには新しい鍵を1本作り、非公開KMS Workerの2 secretを差し替えた。旧鍵はInactive、新鍵はActive。非公開KMS service binding経由の合成鍵wrap/unwrapはHTTP 200で一致を確認。staging WorkerのS3合成32 byteは版付きPUT、版指定GET、版一覧の一致を確認。通常Workerへ復帰し、一時token消失と受付/cleanup/復旧コピーOFFを再読取した。実Apple本人・実会員・実写真・新端末復元・ZIPは未検証。保存処理を人のCLIログインに依存させない接続方針は[記録](2026-09-29-preservation-aws-access.md)。Paid Apps Agreementは未成立、月額商品は審査前の骨格だけ作成。広域CI・TestFlightは未開始。候補の現物と次の成立順は[接続記録](2026-09-29-preservation-live-readiness.md)。

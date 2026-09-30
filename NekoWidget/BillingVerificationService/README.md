@@ -24,6 +24,7 @@
 | `BILLING_VERIFIER_RUNTIME_ENABLED` | 正確に`YES`のときだけ起動 |
 | `BILLING_VERIFIER_SHARED_SECRET` | Workerと共有する32-byte canonical base64url secret |
 | `BILLING_NONCE_REDIS_URL` | 共有nonce予約専用のTLS Redis URL（`rediss://`）。secret managerからだけ注入 |
+| `BILLING_NONCE_REDIS_CA_FILE` | 任意。Redis専用のprivate CA証明書1枚を置いた絶対path。指定時はCA属性・有効期間を検査し、Redis接続だけに使用。Appleの検証や他のTLS通信のtrustは変更しない |
 | `APPLE_ROOT_CERTIFICATES_BASE64_JSON` | Apple公式root DERをbase64化したJSON配列 |
 | `BILLING_STORE_ENVIRONMENT` | `Sandbox`または`Production` |
 | `BILLING_BUNDLE_ID` | App bundle ID |

@@ -1,0 +1,13 @@
+# Named tunnel, never a Quick Tunnel. Access policy is configured separately.
+tunnel: REPLACE_WITH_PERSONAL_ACCOUNT_TUNNEL_UUID
+credentials-file: /etc/neko/tunnel-credentials.json
+ingress:
+  - hostname: REPLACE_WITH_OWNED_VERIFIER_HOSTNAME
+    service: http://127.0.0.1:8080
+    originRequest:
+      access:
+        required: true
+        teamName: REPLACE_WITH_ACCESS_TEAM
+        audTag:
+          - REPLACE_WITH_ACCESS_APPLICATION_AUDIENCE
+  - service: http_status:404

@@ -1,4 +1,7 @@
 import { Environment } from "@apple/app-store-server-library";
+import { X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 
 export interface VerificationServiceConfig {
   port: number;
@@ -22,6 +25,7 @@ export interface VerificationServiceConfig {
 
 export interface VerificationRuntimeConfig extends VerificationServiceConfig {
   nonceRedisURL: string;
+  nonceRedisCA?: string;
 }
 
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
@@ -96,6 +100,23 @@ function nonceRedisURL(env: NodeJS.ProcessEnv): string {
     throw new Error("BILLING_NONCE_REDIS_URL must use TLS without query or fragment");
   }
   return value;
+}
+
+function nonceRedisCA(env: NodeJS.ProcessEnv): string | undefined {
+  const file = env.BILLING_NONCE_REDIS_CA_FILE;
+  if (file === undefined || file === "") return undefined;
+  try {
+    if (!isAbsolute(file) || file !== file.trim()) throw new Error();
+    const pem = readFileSync(file, "utf8");
+    if (pem.length > 16_384 || (pem.match(/BEGIN CERTIFICATE/gu)?.length ?? 0) !== 1) throw new Error();
+    const certificate = new X509Certificate(pem);
+    const now = Date.now();
+    if (!certificate.ca || now < Date.parse(certificate.validFrom) || now >= Date.parse(certificate.validTo)) throw new Error();
+    return certificate.toString();
+  } catch {
+    // Never expose a filesystem path or credential in a startup exception.
+    throw new Error("Billing verifier Redis CA is invalid or unavailable");
+  }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRuntimeConfig {
@@ -193,5 +214,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
   ) {
     throw new Error("App Store Server API credentials require an exact Server API runtime switch");
   }
-  return { ...config, nonceRedisURL: nonceRedisURL(env) };
+  const ca = nonceRedisCA(env);
+  return { ...config, nonceRedisURL: nonceRedisURL(env), ...(ca ? { nonceRedisCA: ca } : {}) };
 }

@@ -1,0 +1,35 @@
+{
+  "status": "prepared-not-deployed",
+  "applyMode": "merge these keys into the existing staging environment, preserve D1/R2/services",
+  "vars": {
+    "PRESERVATION_ENABLED": "NO",
+    "CLEANUP_ENABLED": "NO",
+    "RETENTION_TRACKING_ENABLED": "NO",
+    "NOTICE_SEND_ENABLED": "NO",
+    "NOTICE_EVENTS_ENABLED": "NO",
+    "NOTICE_ACCOUNT_ID": "REPLACE_WITH_PERSONAL_CLOUDFLARE_ACCOUNT_ID",
+    "NOTICE_ZONE_ID": "REPLACE_WITH_OWNED_DOMAIN_ZONE_ID",
+    "NOTICE_SUBSCRIPTION_ID": "REPLACE_WITH_DOMAIN_EVENT_SUBSCRIPTION_ID",
+    "NOTICE_EVENT_QUEUE_NAME": "neko-preservation-staging-notice-events",
+    "NOTICE_DOMAIN": "REPLACE_WITH_OWNED_SENDING_DOMAIN",
+    "NOTICE_SENDER": "REPLACE_WITH_VERIFIED_SENDER"
+  },
+  "send_email": [{ "name": "NOTICE_EMAIL", "allowed_sender_addresses": ["REPLACE_WITH_VERIFIED_SENDER"] }],
+  "queues": {
+    "consumers": [{
+      "queue": "neko-preservation-staging-notice-events",
+      "max_batch_size": 10,
+      "max_batch_timeout": 5,
+      "max_retries": 3,
+      "dead_letter_queue": "neko-preservation-staging-notice-events-dlq"
+    }]
+  },
+  "triggers": { "crons": ["0 * * * *"] },
+  "secrets": ["NOTICE_RECIPIENT_TAG_SECRET"],
+  "eventSubscription": {
+    "eventType": "cf.email.sending.message.delivered",
+    "sourceType": "email.sending",
+    "source": "configured zone and sending domain only",
+    "destination": "configured private queue only"
+  }
+}

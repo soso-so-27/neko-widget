@@ -1,0 +1,31 @@
+[Unit]
+Description=Private Neko Sandbox billing verifier
+After=network-online.target neko-billing-nonce.service
+Wants=network-online.target
+Requires=neko-billing-nonce.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=neko-verifier
+Group=neko-verifier
+WorkingDirectory=/opt/neko-billing-verifier
+EnvironmentFile=/etc/neko/billing-sandbox.env
+ExecStart=/usr/bin/node --max-old-space-size=128 dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+# Verifier stdout/stderr are not a place to retain Apple JWS or secrets.
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

@@ -29,6 +29,8 @@
         "RECOVERY_S3_ACCOUNT_ID": "164892691568",
         "OWNER_RECOVERY_COMPRESSION_ENABLED": "NO",
         "RETENTION_TRACKING_ENABLED": "NO",
+        "NOTICE_SEND_ENABLED": "NO",
+        "NOTICE_EVENTS_ENABLED": "NO",
         "PRESERVATION_LINK_AUDIENCE": "neko-preservation-staging",
         "ENVIRONMENT": "staging"
       },

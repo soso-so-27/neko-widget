@@ -1,0 +1,46 @@
+{
+  "status": "prepared-not-deployed",
+  "host": {
+    "provider": "AWS Lightsail",
+    "region": "ap-northeast-1",
+    "operatingSystem": "Linux",
+    "recommendedMemoryMiB": 1024,
+    "recommendedMonthlyUsd": 7,
+    "smallestMemoryMiB": 512,
+    "smallestMonthlyUsd": 5,
+    "memoryCapacityMeasured": false,
+    "publicApplicationPorts": [],
+    "verifierBind": "127.0.0.1:8080",
+    "redisBind": "127.0.0.1:6380",
+    "redisScheme": "rediss",
+    "nonceStore": "dedicated same-host Redis with AOF always and no eviction"
+  },
+  "ingress": {
+    "namedTunnel": true,
+    "accessPolicyAction": "Service Auth",
+    "accessPolicyInclude": "specific preservation billing Worker service token only",
+    "applicationHmacRequired": true,
+    "requestLoggingEnabled": false,
+    "ownedHostname": null
+  },
+  "activation": {
+    "createPaidResources": false,
+    "runtimeEnabled": false,
+    "newPhotoIntakeEnabled": false,
+    "budgetThresholdsChanged": false,
+    "ready": false,
+    "unresolved": [
+      "existing monthly budget and intake-pause threshold cannot accommodate this host",
+      "owned hostname and exact Access audience",
+      "Linux Node/Redis/Tunnel memory under four concurrent Apple checks",
+      "real Redis TLS/password and atomic replay across service restart",
+      "Apple online certificate revocation egress and valid Sandbox JWS",
+      "private Subscription Status API credentials for expiry and renewal reconciliation"
+    ]
+  },
+  "sources": [
+    "https://aws.amazon.com/lightsail/pricing/",
+    "https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/",
+    "https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/"
+  ]
+}

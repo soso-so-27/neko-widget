@@ -2069,6 +2069,40 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testManagedPreservationLostCopyResultShowsConfirmationAndStoredState() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--managed-preservation-membership-ui-fixture", "--preservation-copy-result-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        func tap(_ identifier: String, scrollUp: Bool = true) {
+            let button = app.buttons.matching(identifier: identifier).firstMatch
+            for _ in 0..<10 where !button.isHittable {
+                if scrollUp { app.swipeUp() } else { app.swipeDown() }
+            }
+            XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: button)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, identifier)
+            button.tap()
+        }
+        XCTAssertTrue(app.buttons["preservation-membership-check"].waitForExistence(timeout: 15))
+        tap("preservation-membership-check", scrollUp: false)
+        let consent = app.switches["この保管方法に同意する"]
+        for _ in 0..<10 where !consent.isHittable { app.swipeUp() }
+        XCTAssertTrue(consent.waitForExistence(timeout: 8)); consent.tap()
+        tap("preservation-copy-save")
+        XCTAssertTrue(app.buttons["preservation-copy-confirm"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["preservation-copy-save"].exists)
+        capture("preservation-copy-result-unknown")
+        tap("preservation-copy-confirm", scrollUp: false)
+        let status = app.descendants(matching: .any)["preservation-copy-status"].firstMatch
+        let stored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "サービスに保管済み"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [stored], timeout: 8), .completed)
+        capture("preservation-copy-stored")
+        app.terminate()
+    }
+
+    @MainActor
     func testManagedPreservationDisabledHidesEntries() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()

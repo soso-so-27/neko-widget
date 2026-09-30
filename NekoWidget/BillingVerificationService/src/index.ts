@@ -3,7 +3,7 @@ import { connectRedisBillingVerifierNonceStore } from "./redis-nonce-store.js";
 import { listen } from "./server.js";
 
 const config = loadConfig();
-const redis = await connectRedisBillingVerifierNonceStore(config.nonceRedisURL);
+const redis = await connectRedisBillingVerifierNonceStore(config.nonceRedisURL, config.nonceRedisCA);
 let listener: Awaited<ReturnType<typeof listen>>;
 try {
   listener = await listen(config, {

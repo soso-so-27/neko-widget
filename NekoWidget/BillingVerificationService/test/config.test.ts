@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Environment } from "@apple/app-store-server-library";
 import { loadConfig } from "../src/config.js";
 
@@ -57,6 +60,19 @@ test("requires a TLS Redis nonce store without URL options", () => {
   const options = environment();
   options.BILLING_NONCE_REDIS_URL = "rediss://billing-nonce.invalid:6380/0?secret=value";
   assert.throws(() => loadConfig(options), /without query or fragment/u);
+});
+
+test("rejects relative, missing and malformed private Redis CAs without exposing paths", () => {
+  const folder = mkdtempSync(join(tmpdir(), "neko-redis-ca-"));
+  try {
+    const malformed = join(folder, "ca.pem");
+    writeFileSync(malformed, "not a certificate");
+    for (const file of ["ca.pem", join(folder, "missing.pem"), malformed]) {
+      assert.throws(() => loadConfig({ ...environment(), BILLING_NONCE_REDIS_CA_FILE: file }), {
+        message: "Billing verifier Redis CA is invalid or unavailable",
+      });
+    }
+  } finally { unlinkSync(join(folder, "ca.pem")); rmdirSync(folder); }
 });
 
 test("requires appAppleId in Production and rejects test bypass environments", () => {

@@ -123,6 +123,20 @@ enum ManagedPreservationExport {
 /// or shared windows, and never treats a purchase/account ID as preservation identity.
 @MainActor
 final class ManagedPreservationCoordinator: ObservableObject {
+    enum CopyState: Equatable {
+        case deviceOnly, saving, stored, failed, needsConfirmation, checking
+
+        var title: String {
+            switch self {
+            case .deviceOnly: "この端末のみ"
+            case .saving: "保管中…"
+            case .stored: "サービスに保管済み"
+            case .failed: "保管できませんでした"
+            case .needsConfirmation: "保管結果を確認してください"
+            case .checking: "保管結果を確認中…"
+            }
+        }
+    }
     typealias ExportValidation = @MainActor () async throws -> Void
     typealias ExportHandler = @MainActor (ManagedPreservationExportSnapshot, @escaping ExportValidation) async throws -> Void
 
@@ -136,9 +150,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var records: [ManagedPreservationRecord] = []
     @Published private(set) var selected: ManagedPreservationExportSnapshot?
     @Published private(set) var hasMore = false
-    @Published private(set) var draftWasSaved = false
+    @Published private(set) var copyState: CopyState = .deviceOnly
+    var draftWasSaved: Bool { copyState == .stored }
     @Published private(set) var pendingMemoDrafts: [ManagedPreservationSessionStore.PendingMemo] = []
     @Published private(set) var draftRecoveryWarning: String?
+    @Published private(set) var hasUnsecuredMemo = false
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
     @Published private(set) var noticeContact: ManagedPreservationNoticeContact?
@@ -164,6 +180,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private var editingDraftID = UUID()
     // Fallback only when Keychain is locked/unavailable. Never published for another owner.
     private var volatileDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
+    private var unsecuredMemoIDs: Set<UUID> = []
+    private var copyStates: [String: CopyState] = [:]
+
+    private func setCopyState(_ state: CopyState, owner: String) {
+        copyStates[owner] = state
+        if authenticatedOwnerID == owner { copyState = state }
+    }
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, onExport: ExportHandler? = nil,
@@ -324,15 +347,32 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func closeDetail() {
         guard !isBusy else { return }
         retainUnsentEdit()
+        guard !hasUnsecuredMemo else { return }
         selected = nil; editedText = ""
     }
 
     func saveSelectedCopy() {
-        guard let draft, !draftWasSaved, consentToNewSave, membership?.canSave == true else { return }
+        guard let draft, !isBusy, copyState == .deviceOnly || copyState == .failed,
+              consentToNewSave, membership?.canSave == true else { return }
         run { ticket in
-            do { _ = try await self.client.put(draft, consent: true) }
+            let owner = try await self.requireCurrentOwner(ticket)
+            self.setCopyState(.saving, owner: owner)
+            do {
+                _ = try await self.client.put(draft, consent: true)
+                guard try await self.requireCurrentOwner(ticket) == owner else {
+                    throw ManagedPreservationError.staleSession
+                }
+            }
             catch {
                 try self.check(ticket)
+                // A missing response does not prove that the server rejected the write.
+                // Re-read this ID before permitting another PUT; never overwrite on conflict.
+                let known = error as? ManagedPreservationError
+                let rejected = known.map {
+                    [ManagedPreservationError.membershipRequired, .accessUnconfirmed, .consentRequired,
+                     .invalidRecord, .capacityReached, .rateLimited, .accountingUnavailable].contains($0)
+                } ?? false
+                self.setCopyState(rejected ? .failed : .needsConfirmation, owner: owner)
                 if let known = error as? ManagedPreservationError,
                    known == .membershipRequired || known == .accessUnconfirmed {
                     self.membership = nil
@@ -341,9 +381,42 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 throw error
             }
             try self.check(ticket)
-            self.draftWasSaved = true
+            self.setCopyState(.stored, owner: owner)
             self.statusMessage = "選んだ記録のコピーを保管しました。元の写真・メモは変更していません。"
             try await self.loadFirstPage(ticket)
+        }
+    }
+
+    func confirmCopyResult() {
+        guard let draft, !isBusy, copyState == .needsConfirmation else { return }
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            guard self.copyStates[owner] == .needsConfirmation else { throw ManagedPreservationError.staleSession }
+            self.setCopyState(.checking, owner: owner)
+            do {
+                let existing = try await self.client.detail(draft.recordID)
+                guard try await self.requireCurrentOwner(ticket) == owner else {
+                    throw ManagedPreservationError.staleSession
+                }
+                // updatedAt belongs to the server. Every client-owned field and photo must match.
+                // Compare the exact millisecond-precision wire representation, not Date() fractions.
+                var expected = try ManagedPreservationWire.decoder().decode(ManagedPreservationDocument.self,
+                    from: ManagedPreservationWire.encoder().encode(draft.document))
+                expected.updatedAt = existing.document.updatedAt
+                guard existing.document == expected, existing.jpegData == draft.jpegData else {
+                    throw ManagedPreservationError.conflict
+                }
+                self.setCopyState(.stored, owner: owner)
+                self.statusMessage = "選んだ写真とメモが保管済みであることを確認しました。"
+                try await self.loadFirstPage(ticket)
+            } catch {
+                try self.check(ticket)
+                if self.copyState != .stored {
+                    self.setCopyState((error as? ManagedPreservationError) == .notFound ? .failed : .needsConfirmation,
+                                      owner: owner)
+                }
+                throw error
+            }
         }
     }
 
@@ -442,6 +515,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
     /// A dispatched write might still have reached the server; re-read on returning.
     func stop() {
         retainUnsentEdit()
+        if let owner = authenticatedOwnerID, copyState == .saving || copyState == .checking {
+            setCopyState(.needsConfirmation, owner: owner)
+        }
         cancelCurrentWork()
         preparedSignIn = nil; selected = nil; editedText = ""; records = []
         nextCursor = nil; listingGeneration = nil; hasMore = false
@@ -451,10 +527,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
         retention = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
+        copyState = .deviceOnly
         exportProgress = nil
     }
 
     private func loadFirstPage(_ ticket: UUID) async throws {
+        let requestedOwner = try await client.sessionOwnerID()
+        try check(ticket)
+        if authenticatedOwnerID != requestedOwner {
+            // A local session change is enough to hide the former owner's presentation.
+            // Drafts are still exposed only after this new session's list is accepted.
+            records = []; pendingMemoDrafts = []; copyState = .deviceOnly
+            authenticatedOwnerID = nil
+        }
         let page = try await client.list()
         try check(ticket)
         records = page.items; nextCursor = page.nextCursor
@@ -464,10 +549,18 @@ final class ManagedPreservationCoordinator: ObservableObject {
             throw ManagedPreservationError.authenticationRequired
         }
         try check(ticket)
+        guard owner == requestedOwner else { throw ManagedPreservationError.staleSession }
         authenticatedOwnerID = owner
-        var ownDrafts = Dictionary(uniqueKeysWithValues: try draftStore.pendingMemos(ownerId: owner).map { ($0.id, $0) })
+        copyState = copyStates[owner] ?? .deviceOnly
+        var ownDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
+        do {
+            ownDrafts = Dictionary(uniqueKeysWithValues: try draftStore.pendingMemos(ownerId: owner).map { ($0.id, $0) })
+        } catch {
+            draftRecoveryWarning = "端末の未送信メモを読み込めません。ロック解除後に一覧を更新してください。保管済みの記録は引き続き開けます。"
+        }
         for value in volatileDrafts.values where value.ownerId == owner { ownDrafts[value.id] = value }
         pendingMemoDrafts = ownDrafts.values.sorted { $0.id.uuidString < $1.id.uuidString }
+        hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
         loadUsage(ticket, owner: owner)
     }
 
@@ -529,6 +622,33 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    func retryPendingMemoStorage() {
+        guard isSignedIn, !isBusy else { return }
+        retainUnsentEdit()
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            for memo in self.pendingMemoDrafts where memo.ownerId == owner {
+                try self.draftStore.savePendingMemo(memo)
+                self.unsecuredMemoIDs.remove(memo.id)
+            }
+            self.hasUnsecuredMemo = !self.unsecuredMemoIDs.isEmpty
+            if !self.hasUnsecuredMemo {
+                self.draftRecoveryWarning = nil
+                self.statusMessage = "未送信メモをこの端末に残しました。サービスにはまだ送信していません。"
+            }
+        }
+    }
+
+    /// Explicitly discard only edits that failed durable local storage. No service record is touched.
+    func discardUnsecuredMemos() {
+        guard !isBusy else { return }
+        if unsecuredMemoIDs.contains(editingDraftID) { editedText = selected?.document.text ?? "" }
+        for id in unsecuredMemoIDs { volatileDrafts[id] = nil }
+        pendingMemoDrafts.removeAll { unsecuredMemoIDs.contains($0.id) }
+        unsecuredMemoIDs.removeAll()
+        hasUnsecuredMemo = false; draftRecoveryWarning = nil
+    }
+
     private func requireCurrentOwner(_ ticket: UUID) async throws -> String {
         guard let owner = try await client.sessionOwnerID() else { throw ManagedPreservationError.authenticationRequired }
         try check(ticket)
@@ -536,7 +656,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
         return owner
     }
 
-    private func retainUnsentEdit() {
+    /// Save while typing, so a locked/unavailable Keychain is visible before leaving.
+    func retainUnsentEdit() {
         guard let owner = authenticatedOwnerID, let selected else { return }
         if editedText == selected.document.text {
             if volatileDrafts[editingDraftID] != nil || pendingMemoDrafts.contains(where: { $0.id == editingDraftID }) {
@@ -547,13 +668,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
         let memo = ManagedPreservationSessionStore.PendingMemo(id: editingDraftID, ownerId: owner,
             recordId: selected.record.id, baseRevision: selected.record.revision, text: editedText)
         volatileDrafts[memo.id] = memo
-        do { try draftStore.savePendingMemo(memo) }
+        do {
+            try draftStore.savePendingMemo(memo)
+            unsecuredMemoIDs.remove(memo.id)
+            if unsecuredMemoIDs.isEmpty { draftRecoveryWarning = nil }
+        }
         catch {
+            unsecuredMemoIDs.insert(memo.id)
             draftRecoveryWarning = "未送信メモは安全な端末保存に失敗し、この画面のメモリだけに残っています。アプリや画面を閉じると失われる可能性があります。同じ本人で確認し直し、文章を控えてください。"
         }
         if isSignedIn {
             pendingMemoDrafts.removeAll { $0.id == memo.id }
             pendingMemoDrafts.append(memo)
+            hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
         }
     }
 
@@ -561,7 +688,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
         do {
             try draftStore.removePendingMemo(id: id, ownerId: owner)
             volatileDrafts[id] = nil
+            unsecuredMemoIDs.remove(id)
             pendingMemoDrafts.removeAll { $0.id == id && $0.ownerId == owner }
+            hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
+            if !hasUnsecuredMemo { draftRecoveryWarning = nil }
         } catch {
             draftRecoveryWarning = "更新前の下書きを端末から片付けられませんでした。保管先の最新内容と比較し、重ねて送信しないでください。"
         }
@@ -604,12 +734,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
         usageTask?.cancel(); usageTask = nil; usageRequestID = UUID()
         isSignedIn = false; preparedSignIn = nil; selected = nil; editedText = ""
         records = []; nextCursor = nil; listingGeneration = nil; hasMore = false
-        consentToNewSave = false; draftWasSaved = false
+        // Keep a possibly committed write bound to its owner until that owner can re-read it.
+        if let owner = authenticatedOwnerID, copyState == .saving || copyState == .checking {
+            setCopyState(.needsConfirmation, owner: owner)
+        }
+        consentToNewSave = false
+        copyState = .deviceOnly
         membership = nil; membershipMessage = nil
         noticeContact = nil
         retention = nil
         usage = nil; usageLoading = false; usageMessage = nil
         authenticatedOwnerID = nil; pendingMemoDrafts = []
+        hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
+        if !hasUnsecuredMemo { draftRecoveryWarning = nil }
         exportProgress = nil
     }
 }
