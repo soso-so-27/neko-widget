@@ -2,6 +2,44 @@ import SwiftUI
 import UIKit
 import PhotosUI
 
+/// Profile IDs or a shared tool UUID establish identity. A matching name never does.
+@MainActor
+private struct LostCatSavedCat: Identifiable {
+    let id: String
+    let profileID: String?
+    let evacuation: EvacuationCat?
+    let care: CareCat?
+    var name: String { evacuation?.name.isEmpty == false ? evacuation!.name : care?.name ?? "" }
+    var displayName: String { name.isEmpty ? "名前未設定の猫" : name }
+
+    static func candidates(evacuation: EvacuationStore, care: CareHandoffStore) -> [Self] {
+        let evacCats = evacuation.loadError == nil && evacuation.saveError == nil ? evacuation.plan.cats : []
+        let careCats = care.loadError == nil && care.saveError == nil ? care.plan.cats : []
+        func key(_ profile: String?, _ tool: UUID) -> String { profile ?? "guest-tool-\(tool.uuidString)" }
+        let evacGroups = Dictionary(grouping: evacCats) { key($0.profileID, $0.toolCatID ?? $0.id) }
+        let careGroups = Dictionary(grouping: careCats) { key($0.profileID, $0.toolCatID ?? $0.id) }
+        return Set(evacGroups.keys).union(careGroups.keys).sorted().compactMap { identity in
+            let e = evacGroups[identity] ?? [], c = careGroups[identity] ?? []
+            // Ambiguous saved records are not silently combined or auto-selected.
+            guard e.count <= 1, c.count <= 1 else { return nil }
+            return Self(id: identity, profileID: e.first?.profileID ?? c.first?.profileID,
+                        evacuation: e.first, care: c.first)
+        }
+    }
+
+    func information(evacuation store: EvacuationStore, care careStore: CareHandoffStore) throws -> LostCatSavedInformation {
+        var result = LostCatSavedInformation(name: name, features: evacuation?.features ?? "")
+        if let evacuation {
+            // The explicitly owner-containing photo is never used in a public draft.
+            let first = evacuation.photos["face"] ?? evacuation.photos["reference"] ?? evacuation.photos["body"]
+            if let first { result.facePhoto = try store.photoData(first) }
+            if let body = evacuation.photos["body"], body != first { result.bodyPhoto = try store.photoData(body) }
+        }
+        if result.facePhoto == nil, let photo = care?.photoName { result.facePhoto = try careStore.photoData(photo) }
+        return result
+    }
+}
+
 // Both the profile and the Tools card open the same private editor.
 struct CatPreparednessView: View {
     let identityKey: String
@@ -22,11 +60,18 @@ extension CatPreparednessStore.PhotoRole: Identifiable {
 struct LostCatEmergencyEntryView: View {
     let profiles: [CatProfilePresentation]
     let unregisteredPhotos: [PhotoPresentation]
-    @ObservedObject private var draftStore = LostCatDraftStore.shared
+    @ObservedObject var draftStore = LostCatDraftStore.shared
+    @ObservedObject var evacuationStore = EvacuationStore.shared
+    @ObservedObject var careStore = CareHandoffStore.shared
+    private var savedCats: [LostCatSavedCat] {
+        LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
+            .filter { candidate in candidate.profileID == nil || !profiles.contains { $0.identifier == candidate.profileID } }
+    }
 
     private var savedGuestKeys: [String] {
-        draftStore.drafts.keys
-            .filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" }
+        let listed = Set(savedCats.map(\.id))
+        return draftStore.drafts.keys
+            .filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" && !listed.contains($0) }
             .sorted { (draftStore.drafts[$0]?.updatedAt ?? .distantPast)
                 > (draftStore.drafts[$1]?.updatedAt ?? .distantPast) }
     }
@@ -44,9 +89,9 @@ struct LostCatEmergencyEntryView: View {
 
     var body: some View {
         Group {
-            if profiles.count == 1, let profile = profiles.first {
+            if profiles.count == 1, savedCats.isEmpty, let profile = profiles.first {
                 editor(profile.identifier, profile.displayName)
-            } else if profiles.isEmpty {
+            } else if profiles.isEmpty, savedCats.isEmpty {
                 editor("guest-legacy", "")
             } else {
                 List {
@@ -55,6 +100,15 @@ struct LostCatEmergencyEntryView: View {
                             editor(profile.identifier, profile.displayName)
                         } label: {
                             Label(profile.displayName, systemImage: "cat")
+                        }
+                    }
+                    if !savedCats.isEmpty {
+                        Section("入力済みの猫") {
+                            ForEach(savedCats) { cat in
+                                NavigationLink { editor(cat.id, "") } label: {
+                                    Label(cat.displayName, systemImage: "cat")
+                                }.accessibilityIdentifier("lost-cat-saved-\(cat.id)")
+                            }
                         }
                     }
                     NavigationLink { editor("guest-legacy", "") } label: {
@@ -73,7 +127,8 @@ struct LostCatEmergencyEntryView: View {
 
     private func editor(_ key: String, _ name: String) -> some View {
         LostCatDraftView(initialKey: key, initialName: name,
-                         profiles: profiles, allPhotos: allPhotos)
+                         profiles: profiles, allPhotos: allPhotos,
+                         evacuationStore: evacuationStore, careStore: careStore, store: draftStore)
     }
 
     private func guestLabel(_ key: String) -> String {
@@ -102,8 +157,10 @@ struct LostCatDraftView: View {
     let profiles: [CatProfilePresentation]
     let allPhotos: [CatProfilePhotoPresentation]
     var initialPhotoImage: UIImage? = nil
+    @ObservedObject var evacuationStore = EvacuationStore.shared
+    @ObservedObject var careStore = CareHandoffStore.shared
 
-    @ObservedObject private var store = LostCatDraftStore.shared
+    @ObservedObject var store = LostCatDraftStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var key = ""
     @State private var draft = LostCatDraft()
@@ -134,9 +191,9 @@ struct LostCatDraftView: View {
                     Label("まず探す・届け出る", systemImage: "info.circle")
                 }
             }
-            catSection
-            incidentSection
-            contactSection
+            catSection.disabled(!loaded)
+            incidentSection.disabled(!loaded)
+            contactSection.disabled(!loaded)
             if saveError {
                 Section {
                     Button("保存できませんでした。再試行") {
@@ -236,7 +293,8 @@ struct LostCatDraftView: View {
     private var catSection: some View {
         Section {
             LabeledContent("名前") {
-                TextField("猫の名前（任意）", text: $draft.name, prompt: Text("任意"))
+                TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("任意"))
+                    .foregroundStyle(isPrefilled("name") ? Color.secondary : Color.primary)
                     .accessibilityIdentifier("lost-cat-name")
                     .accessibilityLabel("猫の名前（任意）")
                     .focused($focus, equals: .name)
@@ -253,7 +311,7 @@ struct LostCatDraftView: View {
                     Button("今表示している写真を使う") { self.photoError = nil }
                 }
             }
-            textEntry("見分ける特徴（任意）", text: $draft.features, field: .features,
+            textEntry("見分ける特徴（任意）", text: textBinding(\.features, field: "features"), field: .features,
                       limit: LostCatFlyerRenderer.featuresLimit,
                       example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。")
             Picker("首輪", selection: collarChoice) {
@@ -275,6 +333,11 @@ struct LostCatDraftView: View {
                     .frame(minHeight: 44)
             }
             .textCase(nil)
+        } footer: {
+            if !(draft.prefilledFields ?? []).isEmpty {
+                Text("入力候補は保存済みの情報です。今の姿に合わせて直せます。")
+                    .accessibilityIdentifier("lost-cat-prefill-note")
+            }
         }
     }
 
@@ -333,6 +396,7 @@ struct LostCatDraftView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
             TextField(example, text: text, axis: .vertical)
+                .foregroundStyle(isPrefilled(String(describing: field)) ? Color.secondary : Color.primary)
                 .lineLimit(minimumLines...8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(title)
@@ -391,6 +455,14 @@ struct LostCatDraftView: View {
                 ForEach(profiles) { profile in
                     Button(profile.displayName) { switchTo(profile.identifier, name: profile.displayName) }
                 }
+                if !savedCats.isEmpty {
+                    Section("入力済みの猫") {
+                        ForEach(savedCats) { cat in
+                            Button(cat.displayName) { switchTo(cat.id, name: "") }
+                                .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
+                        }
+                    }
+                }
                 Button("登録せずに使う") { switchTo("guest-legacy", name: "") }
                 ForEach(savedGuestKeys, id: \.self) { guestKey in
                     Button(guestLabel(guestKey)) { switchTo(guestKey, name: "") }
@@ -410,8 +482,20 @@ struct LostCatDraftView: View {
         return sortedPhotos.filter { ids.contains($0.localIdentifier) }
     }
     private var savedGuestKeys: [String] {
-        store.drafts.keys.filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" }
+        let listed = Set(savedCats.map(\.id))
+        return store.drafts.keys.filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" && !listed.contains($0) }
             .sorted { (store.drafts[$0]?.updatedAt ?? .distantPast) > (store.drafts[$1]?.updatedAt ?? .distantPast) }
+    }
+    private var savedCats: [LostCatSavedCat] {
+        LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
+            .filter { candidate in candidate.profileID == nil || !profiles.contains { $0.identifier == candidate.profileID } }
+    }
+    private func isPrefilled(_ field: String) -> Bool { draft.prefilledFields?.contains(field) == true }
+    private func textBinding(_ path: WritableKeyPath<LostCatDraft, String>, field: String) -> Binding<String> {
+        Binding(get: { draft[keyPath: path] }, set: { value in
+            if draft[keyPath: path] != value { draft.prefilledFields?.remove(field) }
+            draft[keyPath: path] = value
+        })
     }
     private func guestLabel(_ guestKey: String) -> String {
         guard let saved = store.drafts[guestKey] else { return "登録していない猫" }
@@ -458,7 +542,8 @@ struct LostCatDraftView: View {
             .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
             .disabled(photoBusy || (role == .body && faceImage == nil))
             HStack {
-                Text(title).font(.caption)
+                Text(isPrefilled(role == .face ? "face" : "body") ? "\(title)・候補" : title).font(.caption)
+                    .foregroundStyle(isPrefilled(role == .face ? "face" : "body") ? Color.secondary : Color.primary)
                 Spacer(minLength: 0)
                 if let image {
                     Menu {
@@ -483,7 +568,12 @@ struct LostCatDraftView: View {
     }
     private func load(_ identity: String, name: String) {
         do {
-            let saved = try store.draft(for: identity, profileName: name)
+            let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
+                .filter { $0.id == identity }
+            // Existing drafts need no source access, even if its copy is now unavailable.
+            let information = !store.hasPreparedRecord(for: identity) && candidates.count == 1
+                ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
+            let saved = try store.draft(for: identity, profileName: name, savedInformation: information)
             key = identity
             draft = saved
             faceImage = store.image(saved.faceFileName) ?? store.image(saved.bodyFileName)
@@ -824,6 +914,8 @@ struct LostCatDraftFixtureView: View {
     @State private var fixtureKey = ProcessInfo.processInfo.environment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"]
         ?? "guest-fixture-\(UUID().uuidString)"
     @State private var prepared = false
+    @State private var savedStores: (EvacuationStore, CareHandoffStore, LostCatDraftStore)?
+    @State private var fixtureError = false
     private var candidatePhotos: [CatProfilePhotoPresentation] {
         guard ProcessInfo.processInfo.environment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] == "1" else { return [] }
         return Array(AppStoreScreenshotFixture.photos.prefix(3)).map { photo in
@@ -836,12 +928,18 @@ struct LostCatDraftFixtureView: View {
         AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
     }
     var body: some View {
-        if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] == "1" {
+        if fixtureError {
+            Text("入力候補の保存境界が成立しません").accessibilityIdentifier("lost-cat-fixture-error")
+        } else if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] == "1" {
             LostCatPhotoTapFixtureView()
         } else if prepared {
             draftFixture
         } else {
             ProgressView().task {
+                if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_SAVED_INFO"] == "1" {
+                    do { savedStores = try Self.prepareSavedInformation(key: fixtureKey, image: image) }
+                    catch { fixtureError = true; return }
+                }
                 if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PREPARED_PHOTOS"] == "1",
                    LostCatDraftStore.shared.drafts[fixtureKey] == nil {
                     do {
@@ -878,10 +976,100 @@ struct LostCatDraftFixtureView: View {
                                    confirmedPhotos: Array(candidatePhotos.prefix(1)))
         ]
         NavigationStack {
-            LostCatDraftView(initialKey: fixtureKey, initialName: "",
+            if let savedStores {
+                LostCatEmergencyEntryView(profiles: [], unregisteredPhotos: [], draftStore: savedStores.2,
+                    evacuationStore: savedStores.0, careStore: savedStores.1)
+                    .safeAreaInset(edge: .top) {
+                        Text("保存境界確認済み").font(.caption).accessibilityIdentifier("lost-cat-model-checks-passed")
+                    }
+            } else {
+                LostCatDraftView(initialKey: fixtureKey, initialName: "",
                              profiles: profiles, allPhotos: candidatePhotos,
                              initialPhotoImage: image)
+            }
         }
+        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility3 : .large)
+    }
+
+    @MainActor private static func prepareSavedInformation(key: String, image: UIImage) throws
+        -> (EvacuationStore, CareHandoffStore, LostCatDraftStore) {
+        enum Failure: Error { case invariant }
+        func require(_ value: Bool) throws { if !value { throw Failure.invariant } }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("LostCatReuse-" + key)
+        let evacuation = EvacuationStore(directory: directory.appendingPathComponent("evacuation"))
+        let care = CareHandoffStore(directory: directory.appendingPathComponent("care"))
+        let legacy = CatPreparednessStore(directory: directory.appendingPathComponent("legacy"))
+        let lost = LostCatDraftStore(directory: directory.appendingPathComponent("lost"), legacy: legacy)
+        let toolID = UUID(uuidString: "AAAA0000-0000-4000-8000-000000000001")!
+        let otherID = UUID(uuidString: "AAAA0000-0000-4000-8000-000000000002")!
+        if evacuation.plan.cats.isEmpty {
+            var first = EvacuationCat(); first.id = toolID; first.toolCatID = toolID
+            first.name = "むぎ"; first.features = "茶白・しっぽが長い"
+            first.food = "非公開のごはん"; first.handling = "非公開のお世話"
+            first.medicalStatus = .recorded; first.medicalDetails = "非公開の薬"
+            var other = EvacuationCat(); other.id = otherID; other.toolCatID = otherID
+            other.name = "むぎ"; other.features = "黒猫・短いしっぽ"
+            try require(evacuation.update { $0.cats = [first, other]; $0.contact = "非公開の住所・連絡先" })
+            let jpeg = image.jpegData(compressionQuality: 0.9)!
+            try evacuation.replacePhoto(jpeg, catID: toolID, role: .face)
+            try evacuation.replacePhoto(jpeg, catID: toolID, role: .body)
+            try evacuation.replacePhoto(jpeg, catID: otherID, role: .withOwner)
+            guard let careID = care.addCat(using: evacuation, sourceCatID: toolID) else { throw Failure.invariant }
+            try require(care.update { $0.cats[0].important = "非公開の玄関の暗証番号"; $0.contact = "非公開の電話" })
+            try require(care.plan.cats[0].id == careID)
+        }
+        let candidates = LostCatSavedCat.candidates(evacuation: evacuation, care: care)
+        try require(candidates.count == 2 && Set(candidates.map(\.id)).count == 2)
+        guard let first = candidates.first(where: { $0.id == "guest-tool-\(toolID.uuidString)" }),
+              let other = candidates.first(where: { $0.id == "guest-tool-\(otherID.uuidString)" }) else { throw Failure.invariant }
+        let info = try first.information(evacuation: evacuation, care: care)
+        try require(info.features == "茶白・しっぽが長い" && info.facePhoto != nil && info.bodyPhoto != nil)
+        try require(try other.information(evacuation: evacuation, care: care).facePhoto == nil)
+        // Subsequent UI launches retain the edited real draft. The boundary
+        // checks already ran on this exact fixture/input before its creation.
+        if !lost.drafts.isEmpty { return (evacuation, care, lost) }
+        let boundary = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
+        var refusedInvalidPhoto = false
+        do { _ = try boundary.draft(for: "bad-photo", savedInformation: .init(facePhoto: Data("not a JPEG".utf8))) }
+        catch { refusedInvalidPhoto = true }
+        try require(refusedInvalidPhoto && boundary.drafts["bad-photo"] == nil)
+        var draft = try boundary.draft(for: "boundary", savedInformation: info)
+        try require(draft.name == info.name && draft.features == info.features && draft.contact.isEmpty
+            && draft.approachAdvice.isEmpty && draft.collar.isEmpty && draft.lastSeenNear.isEmpty && draft.lastSeenAt == nil)
+        try require(draft.prefilledFields == ["name", "features", "face", "body"])
+        try require(draft.faceFileName != evacuation.plan.cats[0].photos["face"])
+        draft.name = "編集した名前"; draft.features = ""; draft.prefilledFields?.remove("features")
+        try boundary.save(draft, for: "boundary")
+        let reopened = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
+        let retained = try reopened.draft(for: "boundary", savedInformation: .init(name: "違う名前", features: "違う特徴"))
+        try require(retained.name == "編集した名前" && retained.features.isEmpty)
+        _ = try reopened.removePhoto(role: .body, draft: retained, for: "boundary")
+        try require(evacuation.plan.cats[0].photos["body"].flatMap { try? evacuation.photoData($0) } != nil)
+        let oldJSON = Data("{\"schemaVersion\":1,\"name\":\"旧下書き\",\"features\":\"\",\"collar\":\"\",\"approachAdvice\":\"\",\"contact\":\"\",\"lastSeenNear\":\"\",\"updatedAt\":0}".utf8)
+        try require(try JSONDecoder().decode(LostCatDraft.self, from: oldJSON).prefilledFields == nil)
+        var old = CatPreparednessRecord(); old.name = "既存の名前"; old.identifyingFeatures = "既存の特徴"
+        try legacy.save(old, for: "legacy-boundary")
+        let migrated = try boundary.draft(for: "legacy-boundary", savedInformation: info)
+        try require(migrated.name == old.name && migrated.features == old.identifyingFeatures)
+        try legacy.save(CatPreparednessRecord(), for: "legacy-empty")
+        let empty = try boundary.draft(for: "legacy-empty", profileName: "登録名", savedInformation: info)
+        try require(empty.name.isEmpty && empty.features.isEmpty && empty.faceFileName == nil && empty.bodyFileName == nil)
+        let ambiguous = EvacuationStore(directory: directory.appendingPathComponent("ambiguous"))
+        var a = EvacuationCat(); a.profileID = "duplicate-profile"
+        var b = EvacuationCat(); b.profileID = a.profileID
+        try require(ambiguous.update { $0.cats = [a, b] })
+        try require(LostCatSavedCat.candidates(evacuation: ambiguous,
+            care: CareHandoffStore(directory: directory.appendingPathComponent("empty-care"))).isEmpty)
+        let sourceName = evacuation.plan.cats[0].photos["face"]!
+        let source = directory.appendingPathComponent("evacuation").appendingPathComponent(sourceName)
+        let held = source.appendingPathExtension("fixture-held")
+        try FileManager.default.moveItem(at: source, to: held)
+        defer { try? FileManager.default.moveItem(at: held, to: source) }
+        var refusedMissingPhoto = false
+        do { _ = try first.information(evacuation: evacuation, care: care) }
+        catch { refusedMissingPhoto = true }
+        try require(refusedMissingPhoto && lost.drafts.isEmpty)
+        return (evacuation, care, lost)
     }
 }
 
