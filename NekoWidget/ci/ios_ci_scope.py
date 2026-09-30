@@ -1075,7 +1075,7 @@ TOOL_CAT_AUTOFILL_DIGESTS = {
     "NekoWidget/NekoWidget/Views/CareHandoffView.swift": ["4fa48bd4e0adaf66023eff35015ca473e1b21f23606ec0600d9fb35fa2917a2a", "2f88925559fc7d2f7f7838f722b7cec7e423d8b9371902018ffe27c819faa8c2"],
     "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["b682cae3a23b50ae434eadaa87c3247e8061dbae2b7d039497b2b5e8af3018df", "aea6313e1f514bac82f532f6992da974643d317757f2907b83380b5fc7c3f374"],
     "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": ["a0f91f48080e8562c6ea6af46419f8330c0c5c8a3e8f11f581f9d9c4db3e3b5f", "4d531748502840a71c343611b720bfada66a82ac2043ddb5b6e7122c54186106"],
-    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["ad132430d184c9b7f2f224c06f58e36d0884596e4ad402b72e9665a3b4eea002", "ab691ba48c530037adce576424694f5bade4237442d40536a09bcb8c378520bf"]
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["ad132430d184c9b7f2f224c06f58e36d0884596e4ad402b72e9665a3b4eea002", "20830e4535be8b68f070719ae79cb007bed78a5d7af99f1379673f1051bc848f"]
 }
 TOOL_CAT_AUTOFILL_PATHS = frozenset(TOOL_CAT_AUTOFILL_DIGESTS)
 TOOL_CAT_AUTOFILL_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
