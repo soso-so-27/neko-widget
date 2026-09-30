@@ -1471,6 +1471,108 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--care-handoff-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_CARE_FIXTURE_KEY"] = UUID().uuidString
+        app.launchEnvironment["NEKO_CARE_EMPTY"] = "1"
+        app.launchEnvironment["NEKO_CARE_AUTOFILL"] = "1"
+        app.launch()
+        let boundaries = app.staticTexts["care-boundary-result"]
+        XCTAssertTrue(boundaries.waitForExistence(timeout: 10))
+        XCTAssertEqual(boundaries.label, "境界検証成功")
+        let saved = app.buttons["care-saved-cat-C0260929-0000-0000-0000-000000000001"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        saved.tap()
+        let food = app.textFields["care-usual-food"]
+        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        XCTAssertEqual(food.value as? String, "いつものフード 20g")
+        capture("care-autofill-visible-real-value")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let disclosure = app.buttons["care-disclosure-open"]
+        for _ in 0..<5 where !disclosure.isHittable { app.swipeUp(velocity: .slow) }
+        disclosure.tap()
+        let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-select-")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 5))
+        if selected.value as? String != "選択済み" { selected.tap() }
+        XCTAssertEqual(selected.value as? String, "選択済み")
+        let preview = app.buttons["care-preview-open"]
+        XCTAssertTrue(preview.isEnabled); preview.tap()
+        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
+        let previewFood = app.staticTexts["いつものフード 20g"]
+        for _ in 0..<5 where !previewFood.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(previewFood.isHittable)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
+        capture("care-autofill-output-without-editing")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let cat = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
+        for _ in 0..<5 where !cat.isHittable { app.swipeDown(velocity: .slow) }
+        cat.tap()
+        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        food.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // Verify app-owned editing/persistence, not the OS selection-menu geometry.
+        // An insertion may land at any caret position; it must preserve every
+        // original character plus exactly one copy of the entered fragment.
+        let entered = "今回のフード"
+        food.typeText(entered)
+        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: food)
+        XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
+        let editedValue = food.value as? String ?? ""
+        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "いつものフード 20g")
+        XCTAssertEqual(editedValue.count, "いつものフード 20g".count + entered.count)
+        app.terminate(); app.launch()
+        let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
+        XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
+        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertEqual(food.value as? String, editedValue)
+        capture("care-autofill-edited-value-restored")
+        app.terminate()
+    }
+
+    @MainActor
+    func testEvacuationAutofillKeepsMealDetailsAndIndependentPhotoAtLargeText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--evacuation-ui-fixture", "--ux-large-text", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_EVACUATION_FIXTURE_KEY"] = UUID().uuidString
+        app.launchEnvironment["NEKO_EVACUATION_EMPTY"] = "1"
+        app.launchEnvironment["NEKO_EVACUATION_AUTOFILL"] = "1"
+        app.launch()
+        let open = app.buttons["evacuation-cats-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10)); open.tap()
+        let saved = app.buttons["evacuation-saved-cat-E0260929-0000-0000-0000-000000000001"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 5)); saved.tap()
+        app.buttons["evacuation-cat-edit"].tap()
+        XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
+        capture("evacuation-autofill-general-photo-large-text")
+        let food = app.textFields["evacuation-cat-food"]
+        for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        let value = food.value as? String ?? ""
+        XCTAssertTrue(value.contains("朝8時") && value.contains("むぎ専用フード") && value.contains("20g"))
+        capture("evacuation-autofill-visible-values-large-text")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let preview = app.buttons["evacuation-preview-open"]
+        for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+        preview.tap()
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
+        capture("evacuation-autofill-output-without-editing-large-text")
+        app.terminate(); app.launch()
+        app.buttons["evacuation-cats-open"].tap()
+        let restored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-cat-")).firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 5)); restored.tap()
+        app.buttons["evacuation-cat-edit"].tap()
+        XCTAssertTrue(app.buttons["evacuation-photo-reference"].exists)
+        for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertEqual(food.value as? String, value)
+        app.terminate()
+    }
+
+    @MainActor
     func testCareHandoffUnregisteredCatSavesAtLargeText() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1497,7 +1599,12 @@ final class SoloMemoriesUITests: XCTestCase {
         let saved = app.buttons.containing(.staticText, identifier: "こはく").firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 10))
         for _ in 0..<4 where !saved.isHittable { app.swipeUp() }
-        XCTAssertTrue(app.staticTexts["いつものフード"].exists)
+        // The summary now includes field labels. Verify the saved input itself,
+        // not an exact standalone summary label that no longer exists.
+        saved.tap()
+        for _ in 0..<8 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        XCTAssertEqual(food.value as? String, "いつものフード")
         XCTAssertFalse(app.staticTexts["care-save-error"].exists)
         capture("care-unregistered-restored-large-text")
         app.terminate()

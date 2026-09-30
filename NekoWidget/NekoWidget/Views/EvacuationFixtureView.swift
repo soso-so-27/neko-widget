@@ -7,6 +7,7 @@ import CoreGraphics
 /// Raster illustrations exercise storage/layout, not real PhotoKit retrieval.
 struct EvacuationFixtureView: View {
     @StateObject private var store: EvacuationStore
+    @StateObject private var reuseStore: CareHandoffStore
     @State private var checks = ""
     private static let mugi = UUID(uuidString: "E0260929-0000-0000-0000-000000000001")!
     private static let sora = UUID(uuidString: "E0260929-0000-0000-0000-000000000002")!
@@ -16,6 +17,18 @@ struct EvacuationFixtureView: View {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EvacuationFixture", isDirectory: true).appendingPathComponent(key, isDirectory: true)
         let store = EvacuationStore(directory: directory)
+        let reuse = CareHandoffStore(directory: directory.deletingLastPathComponent()
+            .appendingPathComponent(key + "-other-tool", isDirectory: true))
+        if ProcessInfo.processInfo.environment["NEKO_EVACUATION_AUTOFILL"] == "1", reuse.plan.cats.isEmpty {
+            var cat = CareCat(); cat.id = Self.mugi; cat.name = "むぎ"
+            cat.meals[0].time = "朝8時"; cat.meals[0].food = "むぎ専用フード"; cat.meals[0].amount = "20g"
+            cat.handling = "無理に抱かない"; cat.healthStatus = .recorded; cat.healthDetails = "private-health"
+            reuse.update { $0.cats = [cat]; $0.contact = "private-contact" }
+            if let photo = AppStoreScreenshotFixture.photos.first,
+               let data = AppStoreScreenshotFixture.image(for: photo.localIdentifier)?.pngData() {
+                try? reuse.replacePhoto(data, catID: cat.id)
+            }
+        }
         if store.plan.cats.isEmpty && ProcessInfo.processInfo.environment["NEKO_EVACUATION_EMPTY"] != "1" {
             var mugi = EvacuationCat(); mugi.id = Self.mugi; mugi.name = "むぎ"
             mugi.features = "茶白・足先が白い"; mugi.food = "むぎ専用フード"
@@ -33,10 +46,11 @@ struct EvacuationFixtureView: View {
             }
         }
         _store = StateObject(wrappedValue: store)
+        _reuseStore = StateObject(wrappedValue: reuse)
     }
     var body: some View {
         NavigationStack {
-            EvacuationPreparationView(profiles: [], unregisteredPhotos: [], store: store)
+            EvacuationPreparationView(profiles: [], unregisteredPhotos: [], store: store, reuseStore: reuseStore)
                 .safeAreaInset(edge: .bottom) {
                     Text(checks).font(.caption2).accessibilityIdentifier("evacuation-boundary-result")
                 }

@@ -16,8 +16,13 @@ struct CareCat: Codable, Equatable, Identifiable {
     }
     var id = UUID()
     var profileID: String?
+    // Stable across tools, including cats without a household profile. Never match by name.
+    var toolCatID: UUID?
+    var prefilledFields: Set<String>?
     var name = ""
     var photoName: String?
+    // Preserve free-form food information without guessing meal times or doses.
+    var usualFood: String?
     var meals = [CareMeal()]
     var water = ""
     var toilet = ""
@@ -27,6 +32,15 @@ struct CareCat: Codable, Equatable, Identifiable {
     var healthDetails = ""
     var updatedAt = Date()
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前未設定の猫" : name }
+    var reusableFood: String {
+        var parts = [usualFood ?? ""].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        for meal in meals {
+            let fields = [("時間", meal.time), ("フード", meal.food), ("量", meal.amount)]
+                .filter { !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !fields.isEmpty { parts.append(fields.map { "\($0.0)：\($0.1)" }.joined(separator: "\n")) }
+        }
+        return parts.joined(separator: "\n\n")
+    }
     var healthText: String {
         switch healthStatus {
         case .unknown: "薬・アレルギーは未確認。飼い主に確認してください。"
@@ -183,7 +197,12 @@ struct CareHandoffDisclosure {
 
     func fields(cat: CareCat) -> [(String, String)] {
         var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
+        if let food = cat.usualFood, !food.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append(("いつものごはん", food))
+        }
         for (index, meal) in cat.meals.enumerated() {
+            // A copied free-form note is usable as-is. Do not output empty invented meals.
+            if cat.usualFood != nil && [meal.time, meal.food, meal.amount].allSatisfy({ $0.isEmpty }) { continue }
             fields.append(("ごはん \(index + 1)", "時間：\(Self.value(meal.time))\nフード：\(Self.value(meal.food))\n量：\(Self.value(meal.amount))"))
         }
         fields += [("水", Self.value(cat.water)), ("トイレ", Self.value(cat.toilet)), ("接し方・苦手なこと", Self.value(cat.handling))]

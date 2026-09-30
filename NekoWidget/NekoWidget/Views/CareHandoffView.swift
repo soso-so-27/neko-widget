@@ -6,6 +6,7 @@ struct CareHandoffView: View {
     var profiles: [CatProfilePresentation]
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: CareHandoffStore = .shared
+    @ObservedObject var reuseStore: EvacuationStore = .shared
     @State private var newCatID: UUID?
     @State private var opensNewCat = false
 
@@ -31,11 +32,30 @@ struct CareHandoffView: View {
                                     CarePhoto(image: store.image(cat.photoName)).frame(width: 64, height: 64)
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(cat.displayName).font(.headline)
-                                        Text(cat.meals.first.map { $0.food.isEmpty ? "お世話の内容を記入" : $0.food } ?? "お世話の内容を記入")
+                                        Text(cat.reusableFood.isEmpty ? "お世話の内容を記入" : cat.reusableFood)
                                             .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                                     }
                                 }.padding(.vertical, 4)
                             }.accessibilityIdentifier("care-cat-\(cat.id.uuidString)")
+                        }
+                        ForEach(availableSavedCats) { cat in
+                            Button {
+                                if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
+                                    newCatID = id; opensNewCat = true
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    CarePhoto(image: reuseStore.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]))
+                                        .frame(width: 64, height: 64)
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(cat.displayName).font(.headline)
+                                        Text("入力済みの情報で作る").font(.subheadline).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                }.padding(.vertical, 4)
+                            }.accessibilityIdentifier("care-saved-cat-\(cat.id.uuidString)")
+                                .disabled(store.plan.cats.count >= 20 || store.saveError != nil)
                         }
                         Button(store.plan.cats.isEmpty ? "お世話メモを作る" : "猫を追加", systemImage: "plus") { addCat() }
                             .accessibilityIdentifier("care-add-cat").disabled(store.plan.cats.count >= 20)
@@ -73,7 +93,16 @@ struct CareHandoffView: View {
         .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
     }
     private func addCat(profileID: String? = nil, name: String = "") {
-        if let id = store.addCat(profileID: profileID, name: name) { newCatID = id; opensNewCat = true }
+        if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) { newCatID = id; opensNewCat = true }
+    }
+    private var availableSavedCats: [EvacuationCat] {
+        guard reuseStore.loadError == nil, reuseStore.saveError == nil else { return [] }
+        return reuseStore.plan.cats.filter { source in
+            !store.plan.cats.contains { target in
+                (source.profileID != nil && target.profileID == source.profileID)
+                    || (target.toolCatID ?? target.id) == (source.toolCatID ?? source.id)
+            } && !profiles.contains { $0.identifier == source.profileID }
+        }
     }
     private func editor(_ id: UUID) -> some View {
         let profileID = store.plan.cats.first(where: { $0.id == id })?.profileID
@@ -111,11 +140,16 @@ private struct CareField: View {
     let identifier: String
     @Binding var text: String
     var limit = 4000
+    var isPrefilled = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.subheadline.weight(.medium))
+            HStack {
+                Text(label).font(.subheadline.weight(.medium))
+                if isPrefilled { Text("普段の情報").font(.caption).foregroundStyle(.secondary) }
+            }
             TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
                 .lineLimit(1...8).frame(minHeight: 36)
+                .foregroundStyle(isPrefilled ? Color.secondary : Color.primary)
                 .accessibilityLabel(label).accessibilityIdentifier(identifier)
         }.padding(.vertical, 4)
     }
@@ -159,6 +193,14 @@ private struct CareCatEditor: View {
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
                 } footer: { Text("必ず守ってほしいことを先頭に載せます。空欄のままでも保存できます。") }
+                if cat.usualFood != nil {
+                    Section {
+                        CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
+                            text: Binding(get: { self.cat?.usualFood ?? "" }, set: { new in
+                                store.editCat(id) { $0.usualFood = new }
+                            }), isPrefilled: cat.prefilledFields?.contains("food") == true)
+                    } footer: { Text("このままお世話メモに載ります。時間や量を分けたい場合は、下の欄に追加できます。") }
+                }
                 ForEach(Array(cat.meals.enumerated()), id: \.element.id) { index, meal in
                     Section("ごはん \(index + 1)") {
                         CareField(label: "時間", example: "例：朝8時", identifier: "care-meal-time-\(index)", text: mealText(meal.id, \.time))
@@ -176,7 +218,8 @@ private struct CareCatEditor: View {
                 Section("ふだんのお世話") {
                     CareField(label: "水", example: "器の場所・取り替え方", identifier: "care-water", text: text(\.water))
                     CareField(label: "トイレ", example: "掃除のタイミング・砂や袋の場所", identifier: "care-toilet", text: text(\.toilet))
-                    CareField(label: "接し方・苦手なこと", example: "例：隠れていたら無理に抱かず、そっとしておく", identifier: "care-handling", text: text(\.handling))
+                    CareField(label: "接し方・苦手なこと", example: "例：隠れていたら無理に抱かず、そっとしておく", identifier: "care-handling", text: text(\.handling),
+                        isPrefilled: cat.prefilledFields?.contains("handling") == true)
                 }
                 Section {
                     DisclosureGroup("薬・アレルギー") {
