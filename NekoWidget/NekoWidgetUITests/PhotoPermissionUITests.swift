@@ -2025,6 +2025,55 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["A4チラシ"].tap()
         XCTAssertTrue(app.buttons["lost-cat-share-pdf"].isEnabled)
         app.terminate()
+        // Exercise the production saved-cat entry and real editable candidates,
+        // not a separately drawn mock screen. Same-named cats keep separate IDs.
+        app.launchEnvironment["NEKO_LOST_CAT_SAVED_INFO"] = "1"
+        app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-reuse-\(UUID().uuidString)"
+        app.launchArguments.append("--ux-large-text")
+        app.launch()
+        XCTAssertTrue(app.staticTexts["lost-cat-model-checks-passed"].waitForExistence(timeout: 8))
+        let firstKey = "guest-tool-AAAA0000-0000-4000-8000-000000000001"
+        let otherKey = "guest-tool-AAAA0000-0000-4000-8000-000000000002"
+        app.buttons["lost-cat-saved-\(firstKey)"].tap()
+        lastFieldIndex = 0
+        XCTAssertEqual(field("lost-cat-name").value as? String, "むぎ")
+        XCTAssertTrue(app.buttons["lost-cat-face-actions"].exists)
+        XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・しっぽが長い")
+        capture("lost-cat-saved-candidates-large-text")
+        let candidateFeatures = field("lost-cat-features")
+        candidateFeatures.tap(); candidateFeatures.press(forDuration: 1.2)
+        let candidateSelectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])).firstMatch
+        XCTAssertTrue(candidateSelectAll.waitForExistence(timeout: 5)); candidateSelectAll.tap()
+        candidateFeatures.typeText("茶白・右耳に小さな傷")
+        XCTAssertEqual(candidateFeatures.value as? String, "茶白・右耳に小さな傷")
+        let contact = field("lost-cat-contact")
+        XCTAssertFalse((contact.value as? String ?? "").contains("非公開"))
+        contact.tap(); contact.typeText("public@example.test")
+        let place = field("lost-cat-place")
+        XCTAssertFalse((place.value as? String ?? "").contains("非公開"))
+        place.tap(); place.typeText("公園の近く")
+        app.buttons["仕上がりを確認"].tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        let publicText = preview.value as? String ?? ""
+        XCTAssertTrue(publicText.contains("茶白・右耳に小さな傷"))
+        XCTAssertTrue(publicText.contains("public@example.test"))
+        XCTAssertFalse(publicText.contains("非公開"))
+        capture("lost-cat-saved-candidates-public-preview")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["lost-cat-saved-\(firstKey)"].waitForExistence(timeout: 8))
+        app.buttons["lost-cat-saved-\(firstKey)"].tap()
+        lastFieldIndex = 0
+        XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・右耳に小さな傷")
+        capture("lost-cat-edited-candidate-restored")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["lost-cat-saved-\(otherKey)"].waitForExistence(timeout: 8))
+        app.buttons["lost-cat-saved-\(otherKey)"].tap()
+        lastFieldIndex = 0
+        XCTAssertEqual(field("lost-cat-features").value as? String, "黒猫・短いしっぽ")
+        XCTAssertFalse(app.buttons["lost-cat-face-actions"].exists,
+            "A photo marked as including the owner must not become a public candidate")
+        app.terminate()
     }
 
     @MainActor
