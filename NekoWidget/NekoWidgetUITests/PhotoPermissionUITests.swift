@@ -1513,22 +1513,22 @@ final class SoloMemoriesUITests: XCTestCase {
         cat.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         food.tap()
-        // A tap in this multiline field can place the caret at the beginning.
-        // Use the same explicit replacement operation as the existing lost-cat test.
-        food.press(forDuration: 1.2)
-        let selectAll = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])
-        ).firstMatch
-        XCTAssertTrue(selectAll.waitForExistence(timeout: 5)); selectAll.tap()
-        food.typeText("今回のフード")
-        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "今回のフード"), object: food)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // Verify app-owned editing/persistence, not the OS selection-menu geometry.
+        // An insertion may land at any caret position; it must preserve every
+        // original character plus exactly one copy of the entered fragment.
+        let entered = "今回のフード"
+        food.typeText(entered)
+        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: food)
         XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
-        XCTAssertEqual(food.value as? String, "今回のフード")
+        let editedValue = food.value as? String ?? ""
+        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "いつものフード 20g")
+        XCTAssertEqual(editedValue.count, "いつものフード 20g".count + entered.count)
         app.terminate(); app.launch()
         let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
         XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertEqual(food.value as? String, "今回のフード")
+        XCTAssertEqual(food.value as? String, editedValue)
         capture("care-autofill-edited-value-restored")
         app.terminate()
     }
