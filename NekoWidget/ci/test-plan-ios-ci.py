@@ -767,18 +767,6 @@ class PlanTests(unittest.TestCase):
                           "NekoWidget/PreservationService/src/index.ts"):
                 if extra in scope.MANAGED_PRESERVATION_PATHS:
                     continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
-                if extra in scope.MANAGED_PRESERVATION_PATHS:
-                    continue
                 altered = dict(changes, **{extra: ("before", "after")})
                 self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
                 self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)

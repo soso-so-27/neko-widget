@@ -838,7 +838,7 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "1985cee6bd50e808d9d354f91e31d41fcf5fd26a0a094ab85b35a7075ef39370",
-        "91991ef8f22b01a784f441daddc1de534f734b6039799019a506af276ee9f449"
+        "4e2fa6a126b5807d2d35d3e4ca04e13773fff2d678f67c80f9e6962a8a09d50d"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "8443731b59055bb87a75c8b1e2650f5114a4b1959ee3613491d6cb152953f2d1",
