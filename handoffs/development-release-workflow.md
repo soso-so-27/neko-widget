@@ -30,6 +30,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHA、既存 `MomentDeliveryComposerUITests` または `SoloMemoriesUITests` のclass、同じclass内の失敗したメソッド名1〜3個（カンマ区切り）。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_class=SoloMemoriesUITests -f test_method=<METHOD1,METHOD2>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
 - 同じ作業のapp-uiで当該classの失敗があれば、preflightは失敗ログのメソッドと候補SHAに一致する診断成功を要求する。別操作・旧SHA・skip/0件を代用しない。ビルド・環境失敗に無関係なUI診断を要求しない。ログや履歴を取得できない場合は推測で通さない。
+- 既存の厳密なtest-correction機構が成功したBuild/Photos/runtimeの入力不変と、同一作業の既知UI本文だけの修正を証明できる場合は、重複する診断ビルドを挟まず通常のowning UI jobで再確認する。迷子・保管の既存範囲に加え、病院の保存済み猫選択は1本文だけ、他の制御は既反映main同一、未知失敗や後続失敗は対象外。新SHAの関連3UI全件成功は必須で、過去のUI失敗・skipを成功へ読み替えない。製品/fixture/共有モデル/権限/workflowの変更には使わない。
 - 他classの実XCTest失敗は、準備・環境失敗として無視しない。現在の診断経路の対象外として明示的に止め、対応する切り分け経路を用意する。通常CIの繰り返しや理由文で代用しない。
 - 診断後は同じSHAを `codex/<task>` にpushし、既存の必須CIを一度実行して配布へ進む。診断workflowは署名・配布を行わず、通常CI・main再利用・TestFlightの合格証拠には使えない。診断にも同じwatcherを1本だけ使う。branch変更で作業の累計をリセットしない。
 - 診断のcaseごとの成功は、祖先関係と全tracked raw差分で、既存通常ファイルの `preflight-ci.py`・`test-preflight-ci.py`・`verify-app-icon.py` の3本だけの変更と確認できた場合に限り継承できる。最後の1本は別Release job専用でnative診断が読み込まないため。診断が依存する変更を加える場合は例外を再レビューして撤去する。診断workflow・準備helper・選択器・製品・UIテストの変更は対象外で、通常CI/main/配布の成功証拠を継承する条件とは別。
