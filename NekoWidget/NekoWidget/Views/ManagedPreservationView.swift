@@ -186,6 +186,7 @@ struct ManagedPreservationView: View {
             if let membership = coordinator.membership {
                 if membership.access == .pilot, let end = membership.pilotEndsAt {
                     Text("内部テストの保管枠")
+                        .accessibilityIdentifier("preservation-pilot-access")
                     Text("利用期限 \(Date(timeIntervalSince1970: Double(end) / 1000), format: .dateTime.year().month().day())")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else if membership.canSave {
@@ -466,7 +467,7 @@ struct ManagedPreservationMembershipFixture: View {
             guard fixture == nil else { return }
             do {
                 if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
-                fixture = try PreservationNativeFixture.make(testsCopyResult ? .copyResultLost : .firstFailure)
+                fixture = try PreservationNativeFixture.make(testsCopyResult ? .pilotCopyResultLost : .firstFailure)
             }
             catch { failure = "試験用の保管画面を準備できませんでした。" }
         }

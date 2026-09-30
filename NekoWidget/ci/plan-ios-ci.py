@@ -681,6 +681,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         evacuation_only = sources == EVACUATION_PATHS
         care_handoff_only = sources == CARE_HANDOFF_PATHS
         icon_only = icon_paths_only(sources)
+        if sources & ICON_PATHS and not icon_only:
+            return FULL_SCOPE  # Mixed binary/product changes cannot use text-source classification.
         membership_offer_only = sources == (MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST})
         membership_access_only = sources == (MEMBERSHIP_ACCESS_PATHS | MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST})
         delivery_membership_only = sources == (DELIVERY_MEMBERSHIP_PATHS | DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST})
@@ -749,9 +751,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                     if valid:
                         added_sources.add(path)
                 if managed_preservation_only and path in MANAGED_PRESERVATION_NEW_PATHS:
-                    # v2 has no additions. Keep the reviewed set explicit:
-                    # every native/validator/selector input must already be a
-                    # regular file; an added or unknown input falls back full.
+                    # Only exact hash-reviewed v3 additions are accepted.
+                    # Unknown additions or mode/type changes still fall back full.
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)

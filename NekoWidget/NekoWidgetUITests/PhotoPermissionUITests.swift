@@ -2377,8 +2377,9 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["preservation-membership-check"].waitForExistence(timeout: 15))
         tap("preservation-membership-check", scrollUp: false)
-        XCTAssertTrue(app.descendants(matching: .any)["preservation-membership-ready"].firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["preservation-pilot-access"].firstMatch
             .waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["preservation-membership-connect"].exists)
         let consent = app.switches["この保管方法に同意する"]
         for _ in 0..<10 where !consent.isHittable { app.swipeUp() }
         XCTAssertTrue(consent.waitForExistence(timeout: 8))

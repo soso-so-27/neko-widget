@@ -11,6 +11,7 @@ from pathlib import Path
 
 MAXIMUM_REPORT_BYTES = 32 * 1024
 REQUIRED_CASES = {
+    "managed-preservation-pilot-boundary",
     "managed-preservation-membership-boundary",
     "managed-preservation-export-boundary",
     "canonical-local-only-privacy-budget",

@@ -353,14 +353,15 @@ def check_duplicates(gh: GitHub, build: str, cache: dict[int, int]) -> int:
 
 
 def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
-            cache: dict[int, int]) -> dict:
+            cache: dict[int, int], *, preservation_pilot: bool = False) -> dict:
+    require(type(preservation_pilot) is bool, "Internal preservation pilot must be an explicit boolean.")
     require(isinstance(build, str) and BUILD.fullmatch(build) is not None,
             "--build-number must be an explicit positive integer without leading zeros.")
     require(type(run_id) is int and run_id > 0, "--main-ci-run must be a positive run ID.")
     check_checkout(gh, sha)
     evidence = check_ci(gh, sha, run_id, now)
     highest = check_duplicates(gh, build, cache)
-    return {
+    plan = {
         "repository": REPOSITORY, "sha": sha, "previous_reserved_build": highest, "ci": evidence,
         "inputs": {
             "expected_main_sha": sha, "build_number": build, "release_mode": "media-staging",
@@ -368,6 +369,9 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
             "upload_to_testflight": "true", "retain_signed_artifacts": "true",
         },
     }
+    if preservation_pilot:
+        plan["inputs"]["preservation_pilot"] = "true"
+    return plan
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,11 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
+    parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled.")
     args = parser.parse_args(argv)
     os.chdir(ROOT)  # The reused planner's git checks must inspect this checkout.
     gh, cache = GitHub(), {}
     try:
-        plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache)
+        plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache,
+                       preservation_pilot=args.preservation_pilot)
         if args.dispatch:
             # Recheck main and the live release index immediately before POST.
             # expected_main_sha also closes a subsequent ref race in workflow.

@@ -114,6 +114,16 @@ class ReleaseTests(unittest.TestCase):
                 self.set_plan()
                 self.assertEqual(self.prepare()["ci"]["scope"], scope)
 
+    def test_internal_preservation_flag_is_explicit_and_normal_release_is_unchanged(self):
+        self.assertNotIn("preservation_pilot", self.prepare()["inputs"])
+        result = release.prepare(self.gh, self.sha, "165", 20, self.now, {}, preservation_pilot=True)
+        self.assertEqual(result["inputs"]["preservation_pilot"], "true")
+        self.assertEqual(result["inputs"]["release_mode"], "media-staging")
+        self.assertEqual(self.gh.dispatches, [])
+        for value in ("true", 1, None):
+            with self.assertRaises(release.Blocked):
+                release.prepare(self.gh, self.sha, "165", 20, self.now, {}, preservation_pilot=value)
+
     def test_skipped_main_jobs_require_real_referenced_candidate_jobs(self):
         self.candidate()
         self.assertEqual(self.prepare()["ci"]["tested_run"], 10)

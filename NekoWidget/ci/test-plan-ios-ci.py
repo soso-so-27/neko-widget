@@ -765,6 +765,12 @@ class PlanTests(unittest.TestCase):
                           "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
                           "NekoWidget/Shared/Models/WidgetRenderPlan.swift",
                           "NekoWidget/PreservationService/src/index.ts"):
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
                 altered = dict(changes, **{extra: ("before", "after")})
                 self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
                 self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)
@@ -782,20 +788,20 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(scope.select_scope(dict(changes, **{selector: (changes[selector][0], source + source)})),
                              scope.FULL_SCOPE)
             # Changing the manifest to an old evidence namespace is not review.
-            old_review = json.loads(changes[scope.REVIEW_MANIFEST][1]); old_review['scope'] = 'reviewed-managed-preservation-app-v1'
+            old_review = json.loads(changes[scope.REVIEW_MANIFEST][1]); old_review['scope'] = 'reviewed-managed-preservation-app-v2'
             self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ('{}', json.dumps(old_review))})), scope.FULL_SCOPE)
         tests = scope.native_tests(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
         self.assertEqual(tests, (
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
         ))
-        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v2')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 9)
-        self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
-        self.assertIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertIn("NekoWidget/NekoWidget/App/NekoWidgetApp.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v3')
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 31)
+        self.assertIn('NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql', scope.MANAGED_PRESERVATION_NEW_PATHS)
+        self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 4)
         self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
 
     def test_managed_preservation_raw_modifications_and_four_safety_jobs(self):
@@ -839,7 +845,7 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
-        legacy_jobs = [dict(job, name=job['name'].replace('-app-v2]', '-app-v1]')) for job in jobs]
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v3]', '-app-v2]')) for job in jobs]
         self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))

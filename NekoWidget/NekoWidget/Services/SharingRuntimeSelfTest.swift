@@ -17,7 +17,7 @@ final class PreservationFixtureKeys: @unchecked Sendable {
 enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
-    case copyResultLost, copyNotCommitted
+    case copyResultLost, copyNotCommitted, pilotCopyResultLost
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
@@ -113,6 +113,10 @@ actor PreservationFixtureServer {
             return try json(["linked": true])
         }
         if request.httpMethod == "GET", url.path == "/v1/membership" {
+            if scenario == .pilotCopyResultLost {
+                return try json(["linked": false, "status": "unknown", "access": "pilot",
+                                 "pilotEndsAt": Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1000)])
+            }
             if linked && scenario == .changedKeyDuringStatus { keys.replace(nil) }
             if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
             if scenario == .saveRejected || scenario == .copyResultLost || scenario == .copyNotCommitted {
@@ -167,8 +171,8 @@ actor PreservationFixtureServer {
         }
         if request.httpMethod == "PUT" {
             saves += 1
-            if scenario == .copyResultLost || scenario == .copyNotCommitted {
-                if scenario == .copyResultLost {
+            if scenario == .copyResultLost || scenario == .copyNotCommitted || scenario == .pilotCopyResultLost {
+                if scenario == .copyResultLost || scenario == .pilotCopyResultLost {
                     guard let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any],
                           let stored = body["document"] else { throw ManagedPreservationError.invalidResponse }
                     savedDocument = try ManagedPreservationWire.decoder().decode(ManagedPreservationDocument.self,
@@ -725,6 +729,9 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(await runAsync("managed-preservation-membership-boundary") {
             try await Self.testManagedPreservationMembershipBoundary()
+        })
+        results.append(await runAsync("managed-preservation-pilot-boundary") {
+            try await Self.testManagedPreservationPilotBoundary()
         })
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
@@ -9945,7 +9952,7 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     @MainActor
-    static func testManagedPreservationMembershipBoundary() async throws {
+    static func testManagedPreservationPilotBoundary() async throws {
         let pilotUntil = Int64(Date().timeIntervalSince1970 * 1000) + 60_000
         let pilot = try ManagedPreservationWire.decoder().decode(ManagedPreservationMembership.self,
             from: Data("{\"linked\":false,\"status\":\"unknown\",\"access\":\"pilot\",\"pilotEndsAt\":\(pilotUntil)}".utf8))
@@ -9954,6 +9961,10 @@ actor SharingRuntimeSelfTestRunner {
               !ManagedPreservationMembership(linked: false, status: .unknown, access: .pilot, pilotEndsAt: 0).canSave,
               ManagedPreservationMembership(linked: true, status: .active).canSave
         else { throw ManagedPreservationError.invalidResponse }
+    }
+
+    @MainActor
+    static func testManagedPreservationMembershipBoundary() async throws {
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),
