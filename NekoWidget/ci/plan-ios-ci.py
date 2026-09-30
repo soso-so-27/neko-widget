@@ -827,6 +827,10 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
         vet = selected_scope == VET_SAVED_CAT_SCOPE
         if selected_scope not in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE):
             return False
+        # Match the candidate's already-main approval, not a mutable newer tip.
+        # Parallel backend-only registrations must not invalidate native inputs
+        # that were proven unchanged. An unmerged control blob still fails.
+        approval_base = git("merge-base", head, "origin/main") if vet else "origin/main"
         controls = TEST_CORRECTION_CONTROL_PATHS | (frozenset({
             "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/reviewed-app-ui.json",
             "NekoWidget/ci/test-ci-lanes.py"}) if managed else frozenset())
@@ -841,7 +845,7 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
                     or path in changed or (path not in controls | main_tests | {MEMORY_TEST_PATH} and not ((managed or vet) and is_handoff(path)))
                     or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
                 return False
-            if (path in main_tests or (vet and path != MEMORY_TEST_PATH)) and git("show", f"{head}:{path}") != git("show", f"origin/main:{path}"):
+            if (path in main_tests or (vet and path != MEMORY_TEST_PATH)) and git("show", f"{head}:{path}") != git("show", f"{approval_base}:{path}"):
                 return False
             changed.add(path)
         if MEMORY_TEST_PATH not in changed:

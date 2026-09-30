@@ -2866,6 +2866,13 @@ class TestCorrectionReuseTests(unittest.TestCase):
                     git("update-ref", "refs/remotes/origin/main", head)
                 self.assertTrue(planner.test_correction_inputs(source, head, selected_scope))
                 if selected_scope == scope.VET_SAVED_CAT_SCOPE:
+                    # A later already-main backend control registration does
+                    # not revoke the candidate's prior merged control inputs.
+                    write(control, "later main control\n")
+                    later_main = commit()
+                    git("update-ref", "refs/remotes/origin/main", later_main)
+                    git("checkout", "--detach", "-q", head)
+                    self.assertTrue(planner.test_correction_inputs(source, head, selected_scope))
                     write(control, "unmerged control\n")
                     self.assertFalse(planner.test_correction_inputs(source, commit(), selected_scope))
                     for replacement in (after.replace("\n}\n", "\n    func testUnrelated() {}\n}\n", 1),

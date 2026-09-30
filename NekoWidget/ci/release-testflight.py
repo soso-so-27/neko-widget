@@ -118,6 +118,13 @@ def check_checkout(gh: GitHub, sha: str) -> None:
                 "Release commit is not merged into main.")
 
 
+def verified_candidate_root(gh: GitHub, path: Path) -> Path:
+    """Use the merged, clean tool to qualify another clean source checkout."""
+    require(path.is_absolute() and path.is_dir(), "--checkout must be an existing absolute source directory.")
+    check_checkout(gh, git("rev-parse", "HEAD"))
+    return path.resolve(strict=True)
+
+
 def workflow(gh: GitHub, filename: str) -> dict:
     value = gh.get(f"actions/workflows/{filename}")
     require(type(value.get("id")) is int and value["id"] > 0
@@ -375,16 +382,22 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
 
 
 def main(argv: list[str] | None = None) -> int:
+    global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
+    parser.add_argument("--checkout", type=Path, help="Qualify a fixed source checkout with this already-main clean tool; source SHA/CI/release checks remain mandatory.")
     parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled.")
     args = parser.parse_args(argv)
+    tool_root = ROOT
     os.chdir(ROOT)  # The reused planner's git checks must inspect this checkout.
     gh, cache = GitHub(), {}
     try:
+        if args.checkout is not None:
+            ROOT = verified_candidate_root(gh, args.checkout)
+            os.chdir(ROOT)
         plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache,
                        preservation_pilot=args.preservation_pilot)
         if args.dispatch:
@@ -402,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
         message = str(error) if isinstance(error, Blocked) else "Evidence could not be parsed; nothing further was dispatched."
         print(f"Blocked: {message}", file=sys.stderr)
         return 1
+    finally:
+        ROOT = tool_root
 
 
 if __name__ == "__main__":
