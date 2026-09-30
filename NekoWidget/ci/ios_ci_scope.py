@@ -30,6 +30,7 @@ LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
+VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
@@ -72,7 +73,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v3"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, VET_SAVED_CAT_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1078,6 +1079,29 @@ def reviewed_tool_cat_autofill_changes(changes: dict[str, tuple[str, str]]) -> b
             and all(list(map(source_digest, changes[path])) == TOOL_CAT_AUTOFILL_DIGESTS[path]
                     for path in TOOL_CAT_AUTOFILL_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CAT_AUTOFILL_TESTS))
+
+
+# Exact app-only identity/weight chooser batch against main 201c757.
+# No model, migration, Widget, registration or workflow changes are admitted.
+VET_SAVED_CAT_DIGESTS = {
+    "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["aea6313e1f514bac82f532f6992da974643d317757f2907b83380b5fc7c3f374", "24afb79a9832d638b693cb2d502b633c9abd5f9a7917ef498af145327727e150"],
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": ["0badda5b62680993d67cace1ccdc94a85c78c70f8cd9f57513c22b1e2117ce75", "c78219faebdb02a35d989135e808ee09e51fcc6c7c52fe38b492e8428dc7653e"],
+    "NekoWidget/NekoWidget/Views/VeterinaryVisitView.swift": ["2586726ca4db6cf8bf363f9599df7000e651d0c8bd8740c47339df9dea1acd75", "965a0d2c0190fb73e2da3bf6bb6a4c030c799c6af8811fca36d4116d65bde00d"],
+    MEMORY_TEST_PATH: ["106f7e4b81d56c6e18ad416f33ae4d7503af79f1bc15ec3467d1f3b7be790773", "40f1a9d86b3a71fed67d104aede42ac1b16dcd72eaada8938a6cb9428144d40e"],
+}
+VET_SAVED_CAT_PATHS = frozenset(VET_SAVED_CAT_DIGESTS)
+VET_SAVED_CAT_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testWeightOnlyMemoRemainsReadableAndEditable",
+    "testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
+    "testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText",
+))
+
+
+def reviewed_vet_saved_cat_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == VET_SAVED_CAT_PATHS
+            and all(list(map(source_digest, changes[path])) == VET_SAVED_CAT_DIGESTS[path]
+                    for path in VET_SAVED_CAT_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], VET_SAVED_CAT_TESTS))
 
 
 # Exact reviewed presentation/assets in product 78a2c45 against main a178f8b,
@@ -2181,6 +2205,8 @@ def accepts_paths(scope: str, paths) -> bool:
         return bool(sources & APP_DATA_PRODUCT_PATHS and sources <= APP_DATA_PATHS)
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
         return sources == TOOL_CAT_AUTOFILL_PATHS
+    if scope == VET_SAVED_CAT_SCOPE:
+        return sources == VET_SAVED_CAT_PATHS
     if scope == EVACUATION_SCOPE:
         return sources == EVACUATION_PATHS
     if scope == CARE_HANDOFF_SCOPE:
@@ -2346,6 +2372,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == VET_SAVED_CAT_SCOPE:
+        return VET_SAVED_CAT_TESTS
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
         return TOOL_CAT_AUTOFILL_TESTS
     if scope == TOOLS_HUB_SCOPE:
@@ -2582,6 +2610,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if reviewed_tool_cat_autofill_changes(changes):
         return TOOL_CAT_AUTOFILL_SCOPE
+    if reviewed_vet_saved_cat_changes(changes):
+        return VET_SAVED_CAT_SCOPE
     if reviewed_care_handoff_changes(changes):
         return CARE_HANDOFF_SCOPE
     if set(changes) & CARE_HANDOFF_NEW_PATHS:
