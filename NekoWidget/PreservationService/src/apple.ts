@@ -9,10 +9,19 @@ export const APPLE_TOKEN_URL = `${APPLE_ISSUER}/auth/token`;
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_TOKEN = 16_384;
 const MAX_FLOW_MS = 300_000;
-const fail = (code: string): never => {
+type AppleStage = 'other' | 'challenge' | 'native-jwt' | 'native-claims' | 'native-nonce' | 'native-code-hash'
+  | 'code-exchange' | 'exchanged-jwt' | 'exchanged-claims' | 'exchanged-nonce' | 'exchanged-code-hash' | 'identity-match';
+const claims = ['iss', 'aud', 'sub', 'exp', 'iat', 'nonce'] as const;
+type AppleClaim = typeof claims[number] | 'none';
+export class AppleSignInFailure extends ServiceError {
+  constructor(code: string, status: number, readonly stage: AppleStage, readonly claim: AppleClaim = 'none') {
+    super(code, status);
+  }
+}
+const fail = (code: string, stage: AppleStage = 'other', claim: AppleClaim = 'none'): never => {
   const status = code === 'APPLE_CONFIGURATION_ERROR' || code === 'APPLE_UNAVAILABLE' || code === 'APPLE_SIGNIN_DISABLED'
     ? 503 : code === 'APPLE_RESPONSE_INVALID' ? 502 : 401;
-  throw new ServiceError(code, status);
+  throw new AppleSignInFailure(code, status, stage, claim);
 };
 const bounded = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= max;
@@ -90,7 +99,8 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     });
   }
 
-  private async verifyToken(idToken: string, nonce: string, authorizationCode: string): Promise<{ subject: string; email: string | null }> {
+  private async verifyToken(idToken: string, nonce: string, authorizationCode: string,
+    phase: 'native' | 'exchanged'): Promise<{ subject: string; email: string | null }> {
     if (!bounded(idToken, MAX_TOKEN)) return fail('APPLE_IDENTITY_UNCONFIRMED');
     try {
       const { payload } = await jwtVerify(idToken, this.keys, {
@@ -101,14 +111,21 @@ export class AppleIdentityVerifier implements IdentityVerifier {
       if (payload.aud !== this.options.clientId || !bounded(payload.sub, 255) || !payload.sub.trim()
           || payload.nonce !== nonce || typeof payload.iat !== 'number' || !Number.isSafeInteger(payload.iat)
           || typeof payload.exp !== 'number' || !Number.isSafeInteger(payload.exp)
-          || payload.exp <= payload.iat || payload.exp * 1000 <= timeValue(this.now)) return fail('APPLE_IDENTITY_UNCONFIRMED');
+          || payload.exp <= payload.iat || payload.exp * 1000 <= timeValue(this.now)) return fail('APPLE_IDENTITY_UNCONFIRMED',
+            payload.nonce !== nonce ? `${phase}-nonce` : `${phase}-claims`);
       // Preserve the reviewed RS256 OIDC binding. c_hash may be absent; nonce never is optional here.
       if (payload.c_hash !== undefined) {
         const expected = Buffer.from(createHash('sha256').update(authorizationCode, 'ascii').digest()).subarray(0, 16).toString('base64url');
-        if (payload.c_hash !== expected) return fail('APPLE_IDENTITY_UNCONFIRMED');
+        if (payload.c_hash !== expected) return fail('APPLE_IDENTITY_UNCONFIRMED', `${phase}-code-hash`);
       }
       return { subject: payload.sub, email: verifiedEmail(payload.email, payload.email_verified) };
-    } catch { return fail('APPLE_IDENTITY_UNCONFIRMED'); }
+    } catch (error) {
+      if (error instanceof AppleSignInFailure && error.code === 'APPLE_IDENTITY_UNCONFIRMED'
+          && error.stage.startsWith(phase + '-')) throw error;
+      const claim = error && typeof error === 'object' && 'claim' in error ? error.claim : undefined;
+      return fail('APPLE_IDENTITY_UNCONFIRMED', `${phase}-jwt`,
+        claims.some(value => value === claim) ? claim as AppleClaim : 'none');
+    }
   }
 
   private async exchangeCode(authorizationCode: string): Promise<TokenResponse> {
@@ -131,7 +148,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('APPLE_RESPONSE_INVALID');
     const value = body as Record<string, unknown>;
-    if (response.status === 400 && value.error === 'invalid_grant') return fail('APPLE_AUTHORIZATION_REJECTED');
+    if (response.status === 400 && value.error === 'invalid_grant') return fail('APPLE_AUTHORIZATION_REJECTED', 'code-exchange');
     if (response.status === 400 && value.error === 'invalid_client') return fail('APPLE_CONFIGURATION_ERROR');
     if (response.status !== 200 || value.error || value.token_type !== 'Bearer'
         || !bounded(value.id_token, MAX_TOKEN) || !bounded(value.refresh_token, MAX_TOKEN)
@@ -149,16 +166,16 @@ export class AppleIdentityVerifier implements IdentityVerifier {
         || !bounded(authorizationCode, 4096) || !/^[\x21-\x7e]+$/u.test(authorizationCode)) return fail('APPLE_AUTHORIZATION_REJECTED');
     let challenge: Challenge;
     try { challenge = await this.options.takeChallenge({ challengeId, challengeProof }); }
-    catch { return fail('APPLE_AUTHORIZATION_REJECTED'); }
+    catch { return fail('APPLE_AUTHORIZATION_REJECTED', 'challenge'); }
     const started = timeValue(this.now);
     if (!challenge || !bounded(challenge.nonce, 256) || !Number.isSafeInteger(challenge.createdAt)
         || !Number.isSafeInteger(challenge.expiresAt) || challenge.createdAt > started || challenge.createdAt < 0
         || challenge.expiresAt <= started || challenge.expiresAt <= challenge.createdAt
         || challenge.expiresAt - challenge.createdAt > MAX_FLOW_MS) return fail('APPLE_AUTHORIZATION_REJECTED');
-    const initial = await this.verifyToken(identityToken, challenge.nonce, authorizationCode);
+    const initial = await this.verifyToken(identityToken, challenge.nonce, authorizationCode, 'native');
     const exchanged = await this.exchangeCode(authorizationCode);
-    const confirmed = await this.verifyToken(exchanged.id_token, challenge.nonce, authorizationCode);
-    if (confirmed.subject !== initial.subject) return fail('APPLE_IDENTITY_MISMATCH');
+    const confirmed = await this.verifyToken(exchanged.id_token, challenge.nonce, authorizationCode, 'exchanged');
+    if (confirmed.subject !== initial.subject) return fail('APPLE_IDENTITY_MISMATCH', 'identity-match');
     if (timeValue(this.now) >= challenge.expiresAt) return fail('APPLE_AUTHORIZATION_REJECTED');
     // Server-internal result only; DurableAuth must seal the refresh credential before issuing a session.
     const matchingEmail = confirmed.email !== null && (initial.email === null || initial.email === confirmed.email);

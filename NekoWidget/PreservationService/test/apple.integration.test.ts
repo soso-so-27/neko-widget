@@ -120,9 +120,15 @@ describe('Apple adapter production-candidate port', () => {
   });
 
   it('rejects native nonce/code substitution before exchange and consumes the failed attempt', async () => {
-    for (const nativeClaims of [{ nonce: 'wrong-flow' }, { c_hash: 'wrong-code' }]) {
+    for (const [nativeClaims, stage, claim] of [
+      [{ nonce: 'wrong-flow' }, 'native-nonce', 'none'],
+      [{ c_hash: 'wrong-code' }, 'native-code-hash', 'none'],
+      [{ aud: 'invalid.other-client' }, 'native-jwt', 'aud'],
+    ] as const) {
       const f = await setup({ enabled: true, nativeClaims });
-      await expect(f.adapter.verifyNativeAuthorization(f.request)).rejects.toMatchObject({ code: 'APPLE_IDENTITY_UNCONFIRMED' });
+      await expect(f.adapter.verifyNativeAuthorization(f.request)).rejects.toMatchObject({
+        code: 'APPLE_IDENTITY_UNCONFIRMED', status: 401, stage, claim,
+      });
       expect(f.calls).not.toContain(APPLE_TOKEN_URL);
       await expect(f.auth.takeChallenge(f.challenge)).rejects.toMatchObject({ code: 'unauthorized' });
     }
