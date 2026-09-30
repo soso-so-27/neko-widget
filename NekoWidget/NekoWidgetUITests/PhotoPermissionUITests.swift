@@ -1513,9 +1513,17 @@ final class SoloMemoriesUITests: XCTestCase {
         cat.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         food.tap()
-        food.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "いつものフード 20g".count) + "今回のフード")
+        // A tap in this multiline field can place the caret at the beginning.
+        // Use the same explicit replacement operation as the existing lost-cat test.
+        food.press(forDuration: 1.2)
+        let selectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])
+        ).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5)); selectAll.tap()
+        food.typeText("今回のフード")
         let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "今回のフード"), object: food)
         XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
+        XCTAssertEqual(food.value as? String, "今回のフード")
         app.terminate(); app.launch()
         let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
         XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
