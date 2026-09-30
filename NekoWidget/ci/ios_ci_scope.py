@@ -28,6 +28,7 @@ LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
+TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
@@ -70,7 +71,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v2"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1062,6 +1063,38 @@ def reviewed_care_handoff_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], CARE_HANDOFF_TESTS))
 
 
+# One independently reviewed app-only snapshot batch against 7b79cb6.
+# Exact complete before/after sources; no arbitrary storage/fixture exception.
+# Mapping is merged separately, so mixing control-plane files fails closed.
+TOOL_CAT_AUTOFILL_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/CareHandoffPlan.swift": ["ff2725661ca6fcaae9154d6dbaa402853d90386fa81fe6bd6811677022d3bb02", "086a37e76a380633ec274f78f7d35d3e9776ca73236a28189d8b0ad92929221b"],
+    "NekoWidget/NekoWidget/Services/CareHandoffStore.swift": ["8ffcd64e8c9e257abbb933aa7e20bbcfcae80f746a4c1ce29f3f09caad651ccb", "513db4e3dcb9bd131d25a8e88ba2e5696538e120c2ab684f1a3345000288ea99"],
+    "NekoWidget/NekoWidget/Services/EvacuationPlan.swift": ["b510c99c3ae133950fa64b6ea80dccdf2cea773010faa640f92dcbb44fe9ff11", "41f8ea8687420287a25f6cc48403e799fcf40be8a8396c20cdd0b574a144d67a"],
+    "NekoWidget/NekoWidget/Services/EvacuationStore.swift": ["2b9c041e97b3c172fafaa47ca1d8beff7487033d869e41a8cf904e8292ed24bc", "69d4f1653c54f7ec02c5fd0ae5321ce7b251a620f0ba24a888c1b9423dd75d61"],
+    "NekoWidget/NekoWidget/Views/CareHandoffFixtureView.swift": ["19e6426cc384e178067b030de6d93daf111d3c8c713b60d103e329f2d1e325fd", "30f3b00bf7ddca9b6e78fc73aafc30abd91d7765125d714e31c6fbd534c3d18b"],
+    "NekoWidget/NekoWidget/Views/CareHandoffView.swift": ["4fa48bd4e0adaf66023eff35015ca473e1b21f23606ec0600d9fb35fa2917a2a", "2f88925559fc7d2f7f7838f722b7cec7e423d8b9371902018ffe27c819faa8c2"],
+    "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["b682cae3a23b50ae434eadaa87c3247e8061dbae2b7d039497b2b5e8af3018df", "aea6313e1f514bac82f532f6992da974643d317757f2907b83380b5fc7c3f374"],
+    "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": ["a0f91f48080e8562c6ea6af46419f8330c0c5c8a3e8f11f581f9d9c4db3e3b5f", "4d531748502840a71c343611b720bfada66a82ac2043ddb5b6e7122c54186106"],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["ad132430d184c9b7f2f224c06f58e36d0884596e4ad402b72e9665a3b4eea002", "97f4d0773f17960cbebd6002d4bdacfc513a930312b2357465148f11e398858e"]
+}
+TOOL_CAT_AUTOFILL_PATHS = frozenset(TOOL_CAT_AUTOFILL_DIGESTS)
+TOOL_CAT_AUTOFILL_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart",
+    "testEvacuationAutofillKeepsMealDetailsAndIndependentPhotoAtLargeText",
+    "testCareHandoffUnregisteredCatSavesAtLargeText",
+    "testCareHandoffSelectionPrivacyAndPDF",
+    "testEvacuationPackingPersistsAndPrivateFieldsStayOutOfPreview",
+    "testEvacuationUnregisteredCatCanCreateAndRestoreRecord",
+))
+
+
+def reviewed_tool_cat_autofill_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == TOOL_CAT_AUTOFILL_PATHS
+            and all(list(map(source_digest, changes[path])) == TOOL_CAT_AUTOFILL_DIGESTS[path]
+                    for path in TOOL_CAT_AUTOFILL_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CAT_AUTOFILL_TESTS))
+
+
 # Exact reviewed presentation/assets in product 78a2c45 against main a178f8b,
 # with the evidence-based unregistered-cat XCTest expectation in 008dc43.
 # Git blob pairs include binary pixels; no arbitrary Assets or fixture allowance.
@@ -2023,6 +2056,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == TOOL_CAT_AUTOFILL_SCOPE:
+        return sources == TOOL_CAT_AUTOFILL_PATHS
     if scope == EVACUATION_SCOPE:
         return sources == EVACUATION_PATHS
     if scope == CARE_HANDOFF_SCOPE:
@@ -2188,6 +2223,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == TOOL_CAT_AUTOFILL_SCOPE:
+        return TOOL_CAT_AUTOFILL_TESTS
     if scope == TOOLS_HUB_SCOPE:
         return TOOLS_HUB_TESTS
     if scope == WINDOW_HUB_SCOPE:
@@ -2406,6 +2443,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_tool_cat_autofill_changes(changes):
+        return TOOL_CAT_AUTOFILL_SCOPE
     if reviewed_care_handoff_changes(changes):
         return CARE_HANDOFF_SCOPE
     if set(changes) & CARE_HANDOFF_NEW_PATHS:
