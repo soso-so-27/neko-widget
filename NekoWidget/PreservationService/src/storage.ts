@@ -27,6 +27,7 @@ interface Dependencies {
   intakeControl?: { admit(plannedBytes: number): Promise<void> };
   requireIntakeControl?: boolean;
   mutationAdmission?: { admitMutation(ownerId: string): Promise<void> };
+  pilotStorageAccess?: import('./pilot-control').PilotStorageAccess;
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
@@ -403,11 +404,12 @@ export class ArchiveStore {
     await this.d.mutationAdmission?.admitMutation(session.ownerId);
     const existing = await this.row(session.ownerId, id);
     if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
+    const pilotAccess = !existing && await this.d.pilotStorageAccess?.allowed(session.ownerId);
     if (!existing && (this.d.requireIntakeControl || this.d.intakeControl)) {
       if (!this.d.intakeControl) throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503);
       // Authenticate membership before spending the shared allowance. Classify
       // by the server-owned row, never by caller-supplied expectedRevision.
-      await this.paid(session.ownerId);
+      if (!pilotAccess) await this.paid(session.ownerId);
       const encoded = input && typeof input === 'object'
         ? (input as Record<string, unknown>).photoBase64 : undefined;
       // O(1) conservative estimate; no base64 decoding or hashing before admission.
@@ -515,7 +517,7 @@ export class ArchiveStore {
     if (this.d.requireGlobalAdmissionLimit && this.d.globalActiveBytesLimit === undefined) {
       throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
     }
-    await this.paid(session.ownerId);
+    if (!pilotAccess) await this.paid(session.ownerId);
     if (photo !== null && !await this.d.photos.validateJPEG(photo)) throw new ServiceError('INVALID_JPEG');
     const operation = crypto.randomUUID();
     const key = `personal/${session.ownerId}/${id}/${operation}`;
@@ -527,16 +529,17 @@ export class ArchiveStore {
     if (metadata.length > 512 * 1024 || (sealedPhoto?.length ?? 0) > 30 * 1024 * 1024) throw new ServiceError('ARCHIVE_TOO_LARGE', 413);
     const size = metadata.length + (sealedPhoto?.length ?? 0);
     await this.d.db.prepare('INSERT OR IGNORE INTO pa_inventory(owner_id) VALUES(?)').bind(session.ownerId).run();
+    const reservationFence = pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
       AND (? IS NULL OR ((SELECT coalesce(sum(quota_bytes),0) FROM pa_records)
         +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?)
       AND ((SELECT count(*) FROM pa_records WHERE owner_id=? AND deleted=0)
-        +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession}
+        +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession} AND ${reservationFence.sql}
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,
       session.ownerId, size, this.d.quotaBytes,
       this.d.globalActiveBytesLimit ?? null, this.d.globalActiveBytesLimit ?? null, size,
-      session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session))
+      session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session), ...reservationFence.bindings)
       .first<{ operation_id: string }>();
     if (!reserved) { await this.d.auth.requireSession(token); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
     try {
@@ -558,15 +561,16 @@ export class ArchiveStore {
         recordId: id, revision: 1, initialFingerprint, initialOperation: operation,
         metadata, photoKey: sealedPhoto === null ? null : key, photoBytes: photo?.length ?? 0,
         quotaBytes: size, deleted: false, photoCiphertext: sealedPhoto }) : null;
-      await this.paid(session.ownerId);
+      if (!pilotAccess) await this.paid(session.ownerId);
+      const commitFence = pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
       // Commit reference and consume its reservation in one D1 transaction.
       const result = await this.d.db.batch([
         this.d.db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,
           metadata,photo_key,photo_bytes,quota_bytes)
           SELECT ?,?,1,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM pa_uploads WHERE operation_id=? AND state='active' AND expires_at>?)
-          AND ${activeSession} AND NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?) RETURNING revision`)
+          AND ${activeSession} AND ${commitFence.sql} AND NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?) RETURNING revision`)
           .bind(session.ownerId, id, initialFingerprint, operation, bytes(metadata), photo === null ? null : key, photo?.length ?? 0,
-            size, operation, this.d.now(), ...this.sessionBindings(session), session.ownerId, id),
+            size, operation, this.d.now(), ...this.sessionBindings(session), ...commitFence.bindings, session.ownerId, id),
         this.d.db.prepare(`DELETE FROM pa_uploads WHERE operation_id=? AND EXISTS
           (SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=?)`)
           .bind(operation, session.ownerId, id, operation),

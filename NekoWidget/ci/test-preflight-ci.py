@@ -344,10 +344,15 @@ class PreflightTests(unittest.TestCase):
         # A Python/build failure does not force an unrelated UI test.
         self.assertTrue(check([{**failed, "failed_tests": []}])["ready"])
 
-    def test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(self):
+    def test_managed_pilot_test_correction_preserves_elapsed_and_failed_case_gates(self):
+        self.test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+
+    def test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
         now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
-        case = "SoloMemoriesUITests/testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary"
-        plan = {"ready": True, "head": "a" * 40, "scope": scope.LOST_CAT_UX_SCOPE,
+        case = ("SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"
+                if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
+                "SoloMemoriesUITests/testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary")
+        plan = {"ready": True, "head": "a" * 40, "scope": selected_scope,
                 "target_minutes": 30, "cost": {"status": "observed", "with_upload_minutes": [10, 20]}}
         failed = {"id": 10, "created_at": "2026-09-20T11:55:00Z", "status": "completed",
                   "conclusion": "failure", "failed_tests": [case],
@@ -360,6 +365,14 @@ class PreflightTests(unittest.TestCase):
                          now, correction_evidence=evidence)["ready"])
         self.assertFalse(preflight.apply_task_gate(dict(plan), [failed], now,
                          correction_evidence={**evidence, "run_id": 11})["ready"])
+        later = {**failed, "id": 12, "head_sha": plan["head"], "created_at": "2026-09-20T11:59:00Z"}
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [failed, later], now,
+                         correction_evidence=evidence)["ready"])
+        diagnostic = self.diagnostic_run_evidence({**later, "path": preflight.DIAGNOSTIC_WORKFLOW,
+            "event": "workflow_dispatch", "head_branch": "diagnostic/task",
+            "display_title": "UI diagnosis: " + case})
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [failed, diagnostic], now,
+                         correction_evidence=evidence)["ready"])
 
     def test_unmeasured_baseline_is_explicit_and_first_attempt_only(self):
         plan = {"ready": False, "head": "a" * 40, "target_minutes": 30, "cost": {"status": "unmeasured"}}

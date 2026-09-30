@@ -8,6 +8,11 @@ const eligible = `singleton=1 AND enabled=1 AND starts_at<=? AND ends_at>?
   AND valid_until>? AND valid_until<=reviewed_at+86400000 AND forecast_yen<2200`;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
+export interface PilotStorageAccess {
+  allowed(ownerId: string): Promise<{ expiresAt: number } | null>;
+  fence(ownerId: string): { sql: string; bindings: (string | number)[] };
+}
+
 /** Private, default-closed pilot write policy, not a monetary billing cap.
  * Identity entries are the existing HMAC(verified Apple issuer, subject), not
  * emails, bearer tokens, caller-supplied owner IDs or a first-come signup list.
@@ -15,7 +20,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
  */
 export class PilotControl {
   constructor(private readonly db: D1Database, private readonly now: () => number,
-    private readonly mode: string | undefined, private readonly identityKeysJSON: string | undefined) {}
+    private readonly mode: string | undefined, private readonly identityKeysJSON: string | undefined,
+    private readonly registrationEnabled = false) {}
 
   private settings(): { now: number; keys: [string, string, string]; times: number[] } {
     if (this.mode !== 'YES') throw closed();
@@ -34,6 +40,28 @@ export class PilotControl {
   }
 
   async createOwner(ownerId: string, identityKey: string, _authNow: number): Promise<void> {
+    if (this.registrationEnabled && /^[0-9a-f]{64}$/u.test(identityKey)) {
+      let approved = false;
+      try { approved = this.settings().keys.includes(identityKey); } catch { /* No write grant. */ }
+      if (!approved) {
+        // Only DurableAuth calls this after Apple verification. Pending identities
+        // confer no owner, session, storage or Plus entitlement.
+        const now = this.now();
+        if (!Number.isSafeInteger(now) || now < 0 || now > 253_402_300_200_000) throw closed();
+        const reference = crypto.randomUUID();
+        const results = await this.db.batch([
+          this.db.prepare('DELETE FROM pa_pilot_registrations WHERE expires_at<=?').bind(now),
+          this.db.prepare(`INSERT INTO pa_pilot_registrations(identity_key,reference,created_at,expires_at)
+            SELECT ?,?,?,? WHERE (SELECT count(*) FROM pa_pilot_registrations)<32
+            ON CONFLICT(identity_key) DO NOTHING`).bind(identityKey, reference, now, now + 600_000),
+          this.db.prepare('SELECT reference FROM pa_pilot_registrations WHERE identity_key=? AND expires_at>?')
+            .bind(identityKey, now),
+        ]);
+        const pending = results[2]?.results[0] as { reference: string } | undefined;
+        if (!pending) throw closed();
+        throw new ServiceError('PILOT_REGISTRATION_PENDING', 403, pending.reference);
+      }
+    }
     const s = this.settings();
     if (!uuid.test(ownerId) || !s.keys.includes(identityKey) || !identityKey) throw denied();
     try {
@@ -48,6 +76,26 @@ export class PilotControl {
         .bind(identityKey).first<{ present: number }>();
       if (!present) throw closed();
     } catch { throw closed(); }
+  }
+
+  /** Preserves the pilot checks in the same SQL transaction as reservation/commit. */
+  fence(ownerId: string): { sql: string; bindings: (string | number)[] } {
+    const s = this.settings();
+    if (!uuid.test(ownerId)) throw denied();
+    return { sql: `EXISTS(SELECT 1 FROM pa_pilot_control WHERE ${eligible}
+      AND (SELECT count(*) FROM pa_owners)<=3
+      AND NOT EXISTS(SELECT 1 FROM pa_membership_links WHERE owner_id=?)
+      AND EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0 AND identity_key IN (?,?,?)))`,
+      bindings: [...s.times, ownerId, ownerId, ...s.keys] };
+  }
+
+  async allowed(ownerId: string): Promise<{ expiresAt: number } | null> {
+    try {
+      const fence = this.fence(ownerId);
+      const row = await this.db.prepare(`SELECT ends_at AS expiresAt FROM pa_pilot_control WHERE ${fence.sql}`)
+        .bind(...fence.bindings).first<{ expiresAt: number }>();
+      return row ?? null;
+    } catch { return null; }
   }
 
   async admitMutation(ownerId: string): Promise<void> {

@@ -13,6 +13,12 @@ APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 PERSONAL_ARCHIVE_ENABLED = NO
 PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER = iCloud.jp.nekowidget.app.personal
 
+// Internal managed-preservation pilot. All three values must be explicitly
+// supplied together by its release overlay; ordinary builds remain disabled.
+MANAGED_PRESERVATION_ENABLED = NO
+MANAGED_PRESERVATION_ORIGIN =
+MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE =
+
 // v1 supports iOS 17.1 and later.
 IPHONEOS_DEPLOYMENT_TARGET = 17.1
 

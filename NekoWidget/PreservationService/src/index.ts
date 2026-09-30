@@ -21,6 +21,7 @@ import { RecoveryWriteLease } from './recovery-write-lease';
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
+  PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
@@ -178,7 +179,12 @@ export function configuredServices(env: Env): Services {
   const now = () => Date.now();
   // No deployment may drop the pilot gate by losing its mode/environment/secret.
   // The gate is checked only on creation/writes, never on reads or exports.
-  const pilot = new PilotControl(env.DB, now, env.PILOT_MODE, env.PILOT_IDENTITY_KEYS_JSON);
+  const internalPilot = env.PILOT_STORAGE_ACCESS_ENABLED === 'YES';
+  const registration = env.PILOT_REGISTRATION_ENABLED === 'YES';
+  if ((internalPilot || registration) && (env.ENVIRONMENT !== 'staging' || env.PILOT_MODE !== 'YES')) {
+    throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+  }
+  const pilot = new PilotControl(env.DB, now, env.PILOT_MODE, env.PILOT_IDENTITY_KEYS_JSON, registration);
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   let recovery: RecordRecoveryCopy | undefined;
@@ -198,6 +204,7 @@ export function configuredServices(env: Env): Services {
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
   const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
     audience: env.PRESERVATION_LINK_AUDIENCE, now,
+    ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
@@ -207,6 +214,7 @@ export function configuredServices(env: Env): Services {
     requireGlobalAdmissionLimit: true,
     intakeControl: new IntakeControl(env.DB, now), requireIntakeControl: true,
     mutationAdmission: pilot,
+    ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
@@ -292,7 +300,9 @@ export default {
       const services = configuredServices(env);
       return await route(request, services);
     } catch (error) {
-      return error instanceof ServiceError ? response({ error: { code: error.code } }, error.status)
+      return error instanceof ServiceError ? response({ error: { code: error.code,
+        ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
+          ? { registrationReference: error.registrationReference } : {}) } }, error.status)
         : response({ error: { code: 'PRESERVATION_UNAVAILABLE' } }, 503);
     }
   },

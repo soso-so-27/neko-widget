@@ -36,6 +36,17 @@ async function fixture() {
     advance: (ms: number) => { now += ms; }, status: (value: MembershipStatus) => { membership = value; } };
 }
 describe('two-proof preservation membership link', () => {
+  it('uses the pilot for unlinked owners and preserves an existing real billing link', async () => {
+    const f = await fixture();
+    const links = new MembershipLinks({ db, auth: f.auth, authority: f.authority,
+      audience: 'local-preservation-v1', now: () => Date.UTC(2026, 8, 22),
+      pilotStorageAccess: { allowed: async () => ({ expiresAt: Date.UTC(2026, 8, 29) }),
+        fence: () => ({ sql: '1', bindings: [] }) } });
+    expect(await links.forSession(f.user.token)).toEqual({ linked: false, status: 'unknown', access: 'pilot',
+      pilotEndsAt: Date.UTC(2026, 8, 29) });
+    await f.link();
+    expect(await links.forSession(f.user.token)).toEqual({ linked: true, status: 'active' });
+  });
   it('shows only the signed-in owner retention window and pauses it on billing failure', async () => {
     const f = await fixture();
     const { retention: _disabled, ...withoutRetention } = f.services;

@@ -12,6 +12,11 @@ const digest = async (value: Uint8Array) => base64(new Uint8Array(
   await crypto.subtle.digest('SHA-256', value as BufferSource)));
 
 describe('private, versioned S3 recovery-object transport', () => {
+  it('does not pin an expiring CLI session into the always-on recovery Worker', () => {
+    expect(() => new S3RecoveryCopy({ ...config, sessionToken: 'temporary-session' }))
+      .toThrowError(/RECOVERY_COPY_UNAVAILABLE/);
+  });
+
   it('accepts the owner bootstrap kind under the same fixed-account version contract', async () => {
     const ownerKey = `recovery/v1/${owner}/owner/00000000-0000-4000-8000-000000000008`;
     const copy = new S3RecoveryCopy(config, async (input, init) => {

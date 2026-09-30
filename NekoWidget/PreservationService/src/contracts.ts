@@ -33,7 +33,7 @@ export interface AuthDependencies {
   ownerAdmission?: { createOwner(ownerId: string, identityKey: string, now: number): Promise<void> };
 }
 export class ServiceError extends Error {
-  constructor(public code: string, public status = 400) { super(code); this.name = 'ServiceError'; }
+  constructor(public code: string, public status = 400, public registrationReference?: string) { super(code); this.name = 'ServiceError'; }
 }
 export const sha256 = async (value: Uint8Array | string): Promise<string> => {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;

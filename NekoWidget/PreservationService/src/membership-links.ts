@@ -1,6 +1,7 @@
 import { DurableAuth } from './auth';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { type MembershipAuthority, ServiceError, randomToken } from './contracts';
+import type { PilotStorageAccess } from './pilot-control';
 import { type BillingLinkAuthority, type LinkChallenge, LINK_TTL_MS, LINK_SIGNING_PATH,
   linkTranscript, uuidV4, validAudience, validateChallenge, validateProof } from './billing-link-protocol';
 
@@ -8,7 +9,7 @@ interface Row { challenge_id: string; owner_id: string; billing_account_id: stri
 export class MembershipLinks implements MembershipAuthority {
   constructor(private readonly d: { db: D1Database; auth: DurableAuth; authority: BillingLinkAuthority;
     audience: string; now: () => number; ownerRecovery?: OwnerRecoveryCopy;
-    requireOwnerRecovery?: boolean }) {
+    requireOwnerRecovery?: boolean; pilotStorageAccess?: PilotStorageAccess }) {
     if (!validAudience(d.audience)) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
   }
   private clock() {
@@ -96,6 +97,14 @@ export class MembershipLinks implements MembershipAuthority {
     const session = await this.d.auth.requireSession(token);
     const link = await this.d.db.prepare('SELECT billing_account_id FROM pa_membership_links WHERE owner_id=?')
       .bind(session.ownerId).first<{ billing_account_id: string }>();
+    const pilot = !link && await this.d.pilotStorageAccess?.allowed(session.ownerId);
+    if (pilot) {
+      const current = await this.d.auth.requireSession(token);
+      if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
+        throw new ServiceError('SESSION_INVALID', 401);
+      }
+      return { linked: false, status: 'unknown' as const, access: 'pilot', pilotEndsAt: pilot.expiresAt };
+    }
     const status = link ? await this.status(session.ownerId) : 'unknown';
     await this.d.auth.requireSession(token);
     return { linked: link !== null, status };

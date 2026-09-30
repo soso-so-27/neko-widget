@@ -32,7 +32,8 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_P
                           MEMBERSHIP_ACCESS_PATHS, MEMBERSHIP_ACCESS_NEW_PATHS, MEMBERSHIP_ACCESS_COMPANION_PATHS,
                           DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_COMPANION_PATHS,
                           WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS,
-                          MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS)
+                          MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS,
+                          REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -682,6 +683,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         evacuation_only = sources == EVACUATION_PATHS
         care_handoff_only = sources == CARE_HANDOFF_PATHS
         icon_only = icon_paths_only(sources)
+        if sources & ICON_PATHS and not icon_only:
+            return FULL_SCOPE  # Mixed binary/product changes cannot use text-source classification.
         membership_offer_only = sources == (MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_OFFER_COMPANION_PATHS | {REVIEW_MANIFEST})
         membership_access_only = sources == (MEMBERSHIP_ACCESS_PATHS | MEMBERSHIP_ACCESS_COMPANION_PATHS | {REVIEW_MANIFEST})
         delivery_membership_only = sources == (DELIVERY_MEMBERSHIP_PATHS | DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST})
@@ -754,9 +757,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                     if valid:
                         added_sources.add(path)
                 if managed_preservation_only and path in MANAGED_PRESERVATION_NEW_PATHS:
-                    # v2 has no additions. Keep the reviewed set explicit:
-                    # every native/validator/selector input must already be a
-                    # regular file; an added or unknown input falls back full.
+                    # Only exact hash-reviewed v3 additions are accepted.
+                    # Unknown additions or mode/type changes still fall back full.
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
                         added_sources.add(path)
@@ -804,7 +806,12 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
         return False
 
 
-def test_correction_inputs(source: str, head: str) -> bool:
+def test_correction_scope(required: tuple[str, ...]) -> str | None:
+    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE)
+                 if required == required_jobs_from_scope(selected)), None)
+
+
+def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SCOPE) -> bool:
     """Only owned lost-cat XCTest bodies and CI evidence controls may differ."""
     try:
         if not SHA.fullmatch(source) or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
@@ -816,18 +823,38 @@ def test_correction_inputs(source: str, head: str) -> bool:
             parts.pop()
         if len(parts) % 2:
             return False
+        managed = selected_scope == REVIEWED_MANAGED_PRESERVATION_SCOPE
+        if selected_scope not in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE):
+            return False
+        controls = TEST_CORRECTION_CONTROL_PATHS | (frozenset({
+            "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/reviewed-app-ui.json",
+            "NekoWidget/ci/test-ci-lanes.py"}) if managed else frozenset())
+        main_tests = frozenset({"NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py"}) if managed else frozenset()
         changed = set()
         for index in range(0, len(parts), 2):
             fields, path = parts[index].split(), parts[index + 1]
             if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
-                    or path in changed or path not in TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH}
+                    or path in changed or (path not in controls | main_tests | {MEMORY_TEST_PATH} and not (managed and is_handoff(path)))
                     or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            if path in main_tests and git("show", f"{head}:{path}") != git("show", f"origin/main:{path}"):
                 return False
             changed.add(path)
         if MEMORY_TEST_PATH not in changed:
             return False
         from ios_ci_scope import family_window_test_methods, lost_cat_photo_test_changes
         before, after = git("show", f"{source}:{MEMORY_TEST_PATH}"), git("show", f"{head}:{MEMORY_TEST_PATH}")
+        if managed:
+            names = {"testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
+            old = family_window_test_methods(before, owner_class="SoloMemoriesUITests", required_names=names)
+            new = family_window_test_methods(after, owner_class="SoloMemoriesUITests", required_names=names)
+            if old is None or new is None or old.keys() != new.keys():
+                return False
+            def without_body(text, methods):
+                for start, end in sorted((methods[name][2:4] for name in names), reverse=True):
+                    text = text[:start] + text[end:]
+                return text.replace("\r\n", "\n")
+            return without_body(before, old) == without_body(after, new)
         old = family_window_test_methods(before, owner_class="SoloMemoriesUITests",
                                          required_names=LOST_CAT_PHOTO_TEST_NAMES)
         new = family_window_test_methods(after, owner_class="SoloMemoriesUITests",
@@ -841,7 +868,8 @@ def test_correction_inputs(source: str, head: str) -> bool:
 def correction_source(run: dict, head: str, branch: str, repository: str, workflow_id: int,
                       required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     """Verify each reusable job in a failed same-task run; never reuse its UI."""
-    if required != required_jobs_from_scope(LOST_CAT_UX_SCOPE):
+    selected_scope = test_correction_scope(required)
+    if selected_scope is None:
         return None
     try:
         finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
@@ -852,14 +880,14 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                 or run["repository"]["full_name"] != repository
                 or run["status"] != "completed" or run["conclusion"] != "failure"
                 or not dt.timedelta(0) <= now - finished <= dt.timedelta(hours=24)
-                or run["head_sha"] == head or not test_correction_inputs(run["head_sha"], head)):
+                or run["head_sha"] == head or not test_correction_inputs(run["head_sha"], head, selected_scope)):
             return None
         jobs = executed_jobs(run, repository, api)
         plan = [job for job in jobs if job.get("name") == PLAN_JOB]
         if len(plan) != 1 or (plan[0].get("status"), plan[0].get("conclusion"), plan[0].get("head_sha")) != (
                 "completed", "success", run["head_sha"]):
             return None
-        ui_name = lane_job(LOST_CAT_UX_SCOPE, "app-ui")
+        ui_name = lane_job(selected_scope, "app-ui")
         ui = [job for job in jobs if job.get("name") == ui_name]
         if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
                 "completed", "failure", run["head_sha"]):
@@ -880,7 +908,7 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
-    if required != required_jobs_from_scope(LOST_CAT_UX_SCOPE) or not branch.startswith("codex/"):
+    if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
     prefix = f"/repos/{repository}/actions"
     workflow = api(f"{prefix}/workflows/ios-build.yml")
@@ -1016,7 +1044,7 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
         raise ValueError("Invalid workflow attempt")
     prefix = f"/repos/{repository}/actions/runs/{int(run['id'])}/jobs"
     if attempt == 1:
-        result = api(prefix + "?filter=latest&per_page=100")
+        result = api(prefix + "?filter=latest&per_page=100&page=1")
         if result["total_count"] != len(result["jobs"]):
             raise ValueError("Incomplete job response")
         return result["jobs"]
@@ -1207,7 +1235,7 @@ def main() -> None:
         summary += f"Reusing successful required jobs from {relation}: [run {run_id}]({url}), tested `{tested_sha}`.\n"
     elif correction is not None:
         summary += (f"Reusing three successful unchanged-input jobs from failed run {correction['run_id']} "
-                    f"at `{correction['sha']}`; executing all three owning app UI tests at this commit.\n")
+                    f"at `{correction['sha']}`; executing all owning app UI tests at this commit.\n")
     else:
         summary += "Executing: " + ", ".join(required) + ".\n"
     with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:

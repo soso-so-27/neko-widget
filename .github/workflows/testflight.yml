@@ -28,6 +28,11 @@ on:
         required: false
         default: ""
         type: string
+      preservation_pilot:
+        description: "保管サービスの内部Sandbox確認。protected設定の承認とmedia-stagingが必要"
+        required: true
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -680,6 +685,23 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Prepare internal preservation release settings
+        shell: bash
+        env:
+          PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
+          PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
+          PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py" \
+            --requested "${PRESERVATION_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${PRESERVATION_APPROVAL:-}" \
+            --scope "${PRESERVATION_SCOPE:-}" \
+            --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
+            --env-file "$GITHUB_ENV" \
+            --privacy-manifest "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
+
       - name: Validate limited external beta reporting boundary
         shell: bash
         run: |
@@ -989,6 +1011,7 @@ jobs:
               label: str,
               requires_safety_analysis: bool = False,
               requires_push: bool = False,
+              requires_apple_sign_in: bool = False,
           ) -> None:
               with open(path, "rb") as handle:
                   profile = plistlib.load(handle)
@@ -1000,6 +1023,7 @@ jobs:
               certificates = profile.get("DeveloperCertificates", [])
               safety_analysis = entitlements.get("com.apple.developer.sensitivecontentanalysis.client", [])
               push_environment = entitlements.get("aps-environment")
+              apple_sign_in = entitlements.get("com.apple.developer.applesignin", [])
 
               if team_id not in teams:
                   raise SystemExit(f"{label} profile belongs to another Team.")
@@ -1015,6 +1039,10 @@ jobs:
                   raise SystemExit(f"{label} profile does not contain production APNs entitlement.")
               if not requires_push and push_environment is not None:
                   raise SystemExit(f"{label} profile unexpectedly contains APNs entitlement.")
+              if requires_apple_sign_in and apple_sign_in != ["Default"]:
+                  raise SystemExit(f"{label} profile does not contain Sign in with Apple entitlement.")
+              if not requires_apple_sign_in and apple_sign_in:
+                  raise SystemExit(f"{label} profile unexpectedly contains Sign in with Apple entitlement.")
               if entitlements.get("get-task-allow") is not False:
                   raise SystemExit(f"{label} profile is not a distribution profile (get-task-allow).")
               if profile.get("ProvisionsAllDevices") is True or profile.get("ProvisionedDevices"):
@@ -1040,6 +1068,7 @@ jobs:
               "App",
               requires_safety_analysis=True,
               requires_push=True,
+              requires_apple_sign_in=True,
           )
           validate_profile(widget_path, widget_id, "Widget")
           validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=False)
@@ -1140,6 +1169,15 @@ jobs:
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
+            MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
+            MANAGED_PRESERVATION_ORIGIN="$RELEASE_MANAGED_PRESERVATION_ORIGIN" \
+            MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE="$RELEASE_MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE" \
+            PLUS_STOREFRONT_ENABLED="$RELEASE_PLUS_STOREFRONT_ENABLED" \
+            PLUS_MONTHLY_PRODUCT_ID="$RELEASE_PLUS_MONTHLY_PRODUCT_ID" \
+            PLUS_ANNUAL_PRODUCT_ID="$RELEASE_PLUS_ANNUAL_PRODUCT_ID" \
+            PLUS_BILLING_CLIENT_ENABLED="$RELEASE_PLUS_BILLING_CLIENT_ENABLED" \
+            PLUS_BILLING_API_BASE_URL="$RELEASE_PLUS_BILLING_API_BASE_URL" \
+            PLUS_BILLING_RECOVERY_ENABLED="$RELEASE_PLUS_BILLING_RECOVERY_ENABLED" \
             SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED" \
             SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED" \
             SHARING_REVIEW_PREVIEW_ENABLED="$RELEASE_SHARING_REVIEW_PREVIEW_ENABLED" \
@@ -1161,11 +1199,22 @@ jobs:
         shell: bash
         env:
           SHARING_EXPORT_REVIEWED: ${{ vars.SHARING_EXPORT_REVIEWED }}
+          PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
+          PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
+          PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
         run: |
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
           widget_path="$app_path/PlugIns/NekoWidgetWidgetExtension.appex"
           share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
+          python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py" \
+            --requested "${PRESERVATION_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${PRESERVATION_APPROVAL:-}" \
+            --scope "${PRESERVATION_SCOPE:-}" \
+            --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
+            --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
+            --app-info-plist "$app_path/Info.plist"
           python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" archive \
             --app-info-plist "$app_path/Info.plist" \
             --widget-info-plist "$widget_path/Info.plist"
@@ -1287,6 +1336,9 @@ jobs:
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
+          PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
+          PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
         run: |
           set -euo pipefail
           sed \
@@ -1299,6 +1351,13 @@ jobs:
             -e "s|__SHARE_PROFILE_UUID__|$SHARE_PROFILE_UUID|g" \
             "$PROJECT_DIRECTORY/ci/ExportOptions.plist.template" \
             > "$RUNNER_TEMP/ExportOptions.plist"
+          python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py" \
+            --requested "${PRESERVATION_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${PRESERVATION_APPROVAL:-}" \
+            --scope "${PRESERVATION_SCOPE:-}" \
+            --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Export IPA

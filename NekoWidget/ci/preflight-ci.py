@@ -212,8 +212,17 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     blockers = []
     if active:
         blockers.append("ci_already_running")
+    correction_cases = ({"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
+                        if result.get("scope") == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
+                        {"SoloMemoriesUITests/" + name for name in scope.LOST_CAT_PHOTO_TEST_NAMES})
+    correction_run = (correction_evidence["run_id"] if correction_evidence is not None
+                      and result.get("scope") in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+                      else None)
+    # Only the proven source attempt is awaiting the normal candidate UI retry.
+    # A subsequent run or diagnostic failure must remain a blocking failure.
     failed_tests = sorted({test if "/" in test else "MomentDeliveryComposerUITests/" + test
-                           for run in failed for test in run.get("failed_tests", [])})
+                           for run in failed for test in run.get("failed_tests", [])
+                           if not (run.get("id") == correction_run and test in correction_cases)})
     latest = {}
     for run in sorted(diagnostics, key=lambda item: (
             parse(item["diagnostic_evidence"]["started_at"]), item["id"], item["diagnostic_evidence"]["run_attempt"])):
@@ -226,13 +235,6 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     failed_tests = sorted(set(failed_tests) | {test for test, value in latest.items() if value["outcome"] != "passed"})
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
-    # A previous failed run can supply only unchanged build/smoke/runtime jobs.
-    # The normal candidate app-ui job still executes all three owning cases.
-    correction_cases = {"SoloMemoriesUITests/" + name for name in scope.LOST_CAT_PHOTO_TEST_NAMES}
-    if (correction_evidence is not None and result["scope"] == scope.LOST_CAT_UX_SCOPE
-            and set(missing) <= correction_cases
-            and any(run.get("id") == correction_evidence["run_id"] for run in failed)):
-        missing = []
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
     if unsupported:
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
@@ -395,7 +397,7 @@ def main(argv=None):
         if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE}:
             runs = read_task_runs(result["head"])
             correction = None
-            if result["scope"] == scope.LOST_CAT_UX_SCOPE:
+            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),

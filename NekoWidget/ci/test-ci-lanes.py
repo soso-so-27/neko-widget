@@ -372,16 +372,16 @@ final class UnrelatedUITests: XCTestCase {
             with self.assertRaises(ValueError):
                 scope.lane_tests(selected, lane)
         selected = scope.REVIEWED_MANAGED_PRESERVATION_SCOPE
-        self.assertEqual(selected, 'reviewed-managed-preservation-app-v2')
+        self.assertEqual(selected, 'reviewed-managed-preservation-app-v3')
         self.assertEqual(scope.matrix_lanes(selected), ('runtime',))
         self.assertEqual(scope.lane_tests(selected, 'app-ui'), (
             'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries',
-            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState',
         ))
         self.assertEqual(planner.required_jobs_from_scope(selected), (
             planner.BUILD, planner.BOOTSTRAP_SMOKE,
-            'Sharing checks [runtime; scope reviewed-managed-preservation-app-v2]',
-            'Sharing checks [app-ui; scope reviewed-managed-preservation-app-v2]',
+            'Sharing checks [runtime; scope reviewed-managed-preservation-app-v3]',
+            'Sharing checks [app-ui; scope reviewed-managed-preservation-app-v3]',
         ))
         with self.assertRaises(ValueError):
             planner.required_jobs_from_scope('reviewed-managed-preservation-app-v1')

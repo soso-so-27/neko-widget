@@ -127,7 +127,7 @@ def workflow(gh: GitHub, filename: str) -> dict:
 
 
 def jobs_for(gh: GitHub, run_id: int) -> list[dict]:
-    result = gh.get(f"actions/runs/{run_id}/jobs?filter=latest&per_page=100")
+    result = gh.get(f"actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1")
     jobs = result.get("jobs")
     require(isinstance(jobs, list) and type(result.get("total_count")) is int
             and result["total_count"] == len(jobs), "Job evidence is incomplete.")
@@ -188,7 +188,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
     if correction is not None:
-        require(plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE)
                 and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
                 and isinstance(correction, dict)
                 and type(correction.get("run_id")) is int and type(correction.get("sha")) is str,
@@ -209,14 +209,14 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         require(len(old_plan_jobs) == 1 and type(old_plan_jobs[0].get("id")) is int,
                 "Test-correction source has no unique plan job.")
         old_plan = plan_from_log(gh.log(source["id"], old_plan_jobs[0]["id"]), source["head_sha"])
-        require(old_plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+        require(old_plan.get("scope") == plan.get("scope")
                 and old_plan.get("required_jobs") == list(required)
                 and old_plan.get("evidence_run_id") is None,
                 "Test-correction source did not run the same required check graph.")
-        ui_name = planner.lane_job(planner.LOST_CAT_UX_SCOPE, "app-ui")
+        ui_name = planner.lane_job(plan["scope"], "app-ui")
         current_jobs = executed_jobs_for(gh, current)
         require(planner.covers_jobs(current_jobs, (ui_name,), sha, now=now),
-                "All three owning app UI cases must pass in the new candidate's normal job.")
+                "All required owning app UI cases must pass in the new candidate's normal job.")
         # Skipped reused jobs are expected, but a duplicate/misrouted execution is not.
         require(not any(job.get("name") in {entry["name"] for entry in correction["jobs"]}
                         and job.get("conclusion") != "skipped" for job in current_jobs),
@@ -353,14 +353,15 @@ def check_duplicates(gh: GitHub, build: str, cache: dict[int, int]) -> int:
 
 
 def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
-            cache: dict[int, int]) -> dict:
+            cache: dict[int, int], *, preservation_pilot: bool = False) -> dict:
+    require(type(preservation_pilot) is bool, "Internal preservation pilot must be an explicit boolean.")
     require(isinstance(build, str) and BUILD.fullmatch(build) is not None,
             "--build-number must be an explicit positive integer without leading zeros.")
     require(type(run_id) is int and run_id > 0, "--main-ci-run must be a positive run ID.")
     check_checkout(gh, sha)
     evidence = check_ci(gh, sha, run_id, now)
     highest = check_duplicates(gh, build, cache)
-    return {
+    plan = {
         "repository": REPOSITORY, "sha": sha, "previous_reserved_build": highest, "ci": evidence,
         "inputs": {
             "expected_main_sha": sha, "build_number": build, "release_mode": "media-staging",
@@ -368,6 +369,9 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
             "upload_to_testflight": "true", "retain_signed_artifacts": "true",
         },
     }
+    if preservation_pilot:
+        plan["inputs"]["preservation_pilot"] = "true"
+    return plan
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,11 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
+    parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled.")
     args = parser.parse_args(argv)
     os.chdir(ROOT)  # The reused planner's git checks must inspect this checkout.
     gh, cache = GitHub(), {}
     try:
-        plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache)
+        plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache,
+                       preservation_pilot=args.preservation_pilot)
         if args.dispatch:
             # Recheck main and the live release index immediately before POST.
             # expected_main_sha also closes a subsequent ref race in workflow.

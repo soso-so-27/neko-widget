@@ -5,7 +5,7 @@ import ImageIO
 struct ManagedPreservationConfiguration: Sendable {
     let origin: URL?
     let membershipAudience: String?
-    var isEnabled: Bool { origin != nil }
+    var isEnabled: Bool { origin != nil && membershipAudience != nil }
 
     /// Bundle/build configuration only. Never accept a user, deep-link or server supplied origin.
     init(isEnabled: Bool = false, origin: URL? = nil, membershipAudience: String? = nil) {
@@ -25,7 +25,10 @@ struct ManagedPreservationConfiguration: Sendable {
     }
 
     static var current: Self {
-        Self(isEnabled: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationEnabled") as? Bool == true,
+        let enabledValue = Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationEnabled")
+        let enabled = (enabledValue as? NSNumber)?.boolValue == true
+            || (enabledValue as? String)?.uppercased() == "YES"
+        return Self(isEnabled: enabled,
              origin: (Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationOrigin") as? String)
                 .flatMap(URL.init(string:)),
              membershipAudience: Bundle.main.object(forInfoDictionaryKey: "ManagedPreservationMembershipAudience") as? String)
@@ -38,12 +41,14 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipRequired, consentRequired, conflict, notFound, unavailable, interrupted
     case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure, accountingUnavailable
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
+    case pilotRegistrationPending(String)
 
     var errorDescription: String? {
         switch self {
         case .disabled: "この保管先はまだ利用できません。"
         case .authenticationRequired: "保管用の本人確認をやり直してください。"
         case .authenticationFailed: "本人確認を完了できませんでした。もう一度お試しください。"
+        case .pilotRegistrationPending(let reference): "内部テストの登録確認待ちです。登録番号：\(reference)"
         case .staleSession: "本人確認の状態が変わりました。記録を読み込み直してください。"
         case .secureStorage: "本人確認情報を安全に保存・削除できませんでした。端末のロック解除後にお試しください。"
         case .invalidRecord: "写真またはメモの形式・大きさを確認してください。"
@@ -207,9 +212,20 @@ struct ManagedPreservationChallenge: Sendable {
 
 struct ManagedPreservationMembership: Codable, Equatable, Sendable {
     enum Status: String, Codable, Sendable { case active, grace, expired, unknown }
+    enum Access: String, Codable, Sendable { case pilot }
     let linked: Bool
     let status: Status
-    var canSave: Bool { linked && (status == .active || status == .grace) }
+    let access: Access?
+    let pilotEndsAt: Int64?
+    init(linked: Bool, status: Status, access: Access? = nil, pilotEndsAt: Int64? = nil) {
+        self.linked = linked; self.status = status; self.access = access; self.pilotEndsAt = pilotEndsAt
+    }
+    var canSave: Bool {
+        if access == .pilot {
+            return !linked && status == .unknown && (pilotEndsAt ?? 0) > Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        return linked && (status == .active || status == .grace)
+    }
 }
 
 struct ManagedPreservationNoticeContact: Decodable, Equatable, Sendable {
@@ -387,7 +403,7 @@ actor ManagedPreservationClient {
     }
     private struct Mutation: Decodable { let recordId: UUID; let revision: Int }
     private struct Failure: Decodable {
-        struct Code: Decodable { let code: String }
+        struct Code: Decodable { let code: String; let registrationReference: String? }
         let error: Code
     }
 
@@ -434,6 +450,10 @@ actor ManagedPreservationClient {
         let data = try await authenticated("GET", path: "/v1/membership", maximumBytes: 4096)
         let result: ManagedPreservationMembership = try decode(data)
         guard result.linked || result.status == .unknown else { throw ManagedPreservationError.invalidResponse }
+        if result.access == .pilot {
+            guard !result.linked, result.status == .unknown, let end = result.pilotEndsAt,
+                  end > 0, end < 253_402_300_800_000 else { throw ManagedPreservationError.invalidResponse }
+        } else if result.pilotEndsAt != nil { throw ManagedPreservationError.invalidResponse }
         return result
     }
 
@@ -697,8 +717,14 @@ actor ManagedPreservationClient {
                 throw ManagedPreservationError.invalidResponse
             }
             guard (200...299).contains(http.statusCode) else {
-                let code = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error.code
+                let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
+                let code = failure?.code
                 switch code {
+                case "PILOT_REGISTRATION_PENDING":
+                    guard let reference = failure?.registrationReference, UUID(uuidString: reference) != nil else {
+                        throw ManagedPreservationError.invalidResponse
+                    }
+                    throw ManagedPreservationError.pilotRegistrationPending(reference)
                 case "MEMBERSHIP_LINK_CONFLICT": throw ManagedPreservationError.membershipLinkConflict
                 case "LINK_CHALLENGE_INVALID", "INVALID_LINK_CHALLENGE": throw ManagedPreservationError.membershipLinkExpired
                 case "BILLING_PROOF_UNCONFIRMED", "MEMBERSHIP_UNCONFIRMED", "MEMBERSHIP_NOT_CONFIGURED": throw ManagedPreservationError.accessUnconfirmed
