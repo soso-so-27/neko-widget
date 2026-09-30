@@ -1635,7 +1635,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["photo-memory-note-save"].tap()
         XCTAssertTrue(catPicker.waitForNonExistence(timeout: 5))
         firstCat.tap()
-        XCTAssertTrue(app.buttons["vet-pick-records"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["診察メモ"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).count, 0)
         let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
         XCTAssertTrue(["", "家で気付いたこと"].contains(observations.value as? String ?? ""))
@@ -1659,10 +1659,12 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("vet-saved-cat-weight-in-person-display")
         app.terminate(); app.launch()
         XCTAssertTrue(firstCat.waitForExistence(timeout: 10)); firstCat.tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.waitForExistence(timeout: 5))
+        let retainedRecord = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
+        revealVetElement(retainedRecord, app: app)
+        XCTAssertTrue(retainedRecord.exists)
         app.navigationBars["診察メモ"].buttons["閉じる"].tap()
         XCTAssertTrue(sameNameOtherCat.waitForExistence(timeout: 5)); sameNameOtherCat.tap()
-        XCTAssertTrue(app.buttons["vet-pick-records"].waitForExistence(timeout: 5))
+        revealVetElement(app.buttons["vet-pick-records"], app: app)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
         revealVetElement(app.buttons["vet-pick-records"], app: app); app.buttons["vet-pick-records"].tap()
         XCTAssertFalse(measuredSource.waitForExistence(timeout: 3), "Same name must not reuse the other cat's weight")
