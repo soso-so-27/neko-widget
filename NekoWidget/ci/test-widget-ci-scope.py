@@ -536,13 +536,12 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
     def setUpClass(cls):
         cls.base = "938200fff53efe109e0435e29a0a4cdf79dbc7b4"
         cls.head = "ce498f50c3fd66f972c07c9313fa9698d5754f10"
-        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0")
-                     if path and not scope.is_handoff(path)]
+        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0") if path]
         cls.changes = {path: (planner.git("show", f"{cls.base}:{path}"), planner.git("show", f"{cls.head}:{path}"))
-                       for path in cls.paths}
+                       for path in cls.paths if not scope.is_handoff(path)}
 
     def test_real_candidate_selects_only_vet_weight_cases_and_required_boundaries(self):
-        self.assertEqual(set(self.paths), scope.VET_SAVED_CAT_PATHS)
+        self.assertEqual(set(self.changes), scope.VET_SAVED_CAT_PATHS)
         self.assertEqual(scope.select_scope(self.changes), scope.VET_SAVED_CAT_SCOPE)
         with patch.object(planner, "comparison_base", return_value=self.base):
             self.assertEqual(planner.runtime_scope(self.paths, {}, {"GITHUB_SHA": self.head}), scope.VET_SAVED_CAT_SCOPE)
@@ -557,7 +556,7 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
         self.assertFalse(any("gallery" in job for job in required))
 
     def test_no_unknown_product_or_control_input_can_borrow_review(self):
-        for path in self.paths:
+        for path in self.changes:
             for side in (0, 1):
                 altered = dict(self.changes); pair = list(altered[path]); pair[side] += "\n// unreviewed"
                 altered[path] = tuple(pair)
