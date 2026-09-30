@@ -534,9 +534,10 @@ class LostCatSavedInfoBoundaryTests(unittest.TestCase):
 class VetSavedCatBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.base = "201c757500ce4427a5a5f81f17ee8c9a28143d89"
-        cls.head = "075fd0b3beefb080c84fe13ccf5508f962f1d410"
-        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0") if path]
+        cls.base = "938200fff53efe109e0435e29a0a4cdf79dbc7b4"
+        cls.head = "ce498f50c3fd66f972c07c9313fa9698d5754f10"
+        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0")
+                     if path and not scope.is_handoff(path)]
         cls.changes = {path: (planner.git("show", f"{cls.base}:{path}"), planner.git("show", f"{cls.head}:{path}"))
                        for path in cls.paths}
 

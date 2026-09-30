@@ -55,6 +55,16 @@
   ],
   "observations": [
     {
+      "scope": "reviewed-vet-saved-cat-ui-v1",
+      "candidate_minutes": 7.083,
+      "run_id": 36746067370,
+      "outcome": "failure",
+      "runner_minutes": 20.283,
+      "source_sha": "a16414b6f6d529d4f5686304454d76884b52bd73",
+      "first_product_candidate_at": "2026-09-30T16:09:50Z",
+      "note": "All four native jobs stopped before UI execution on VeterinaryVisitView.swift:143 compiler expression type-check budget. Split the six array groups into typed sequential appends without changing order, IDs, data or disclosure. No XCTest failed method or successful native evidence. This is failed graph cost, not a forecast for a completed three-case graph. Closest prior CI19m17s and upload14m45s are separate planning references; retain integration and build230 serialization wait in end-to-end time."
+    },
+    {
       "scope": "reviewed-tool-cat-autofill-v1",
       "candidate_minutes": 26.733,
       "run_id": 36656742166,
