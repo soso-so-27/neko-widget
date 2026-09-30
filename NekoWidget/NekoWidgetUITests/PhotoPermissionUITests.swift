@@ -1609,6 +1609,70 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["memory-note-body"].label, "食べる量が少なかった。")
         XCTAssertEqual(app.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
         app.terminate()
+
+        // Real tool stores, no registered profiles: shared IDs coalesce, while
+        // two cats named むぎ stay separate. Only an explicit choice assigns weight.
+        app.launchArguments = ["--evacuation-ui-fixture", "--ux-large-text",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_EVACUATION_FIXTURE_KEY"] = UUID().uuidString
+        app.launchEnvironment["NEKO_EVACUATION_VET"] = "1"
+        app.launch()
+        let boundary = app.staticTexts["vet-saved-cat-boundary"]
+        XCTAssertTrue(boundary.waitForExistence(timeout: 15)); XCTAssertEqual(boundary.label, "境界検証成功")
+        let firstCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000001"]
+        let sameNameOtherCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000002"]
+        XCTAssertTrue(firstCat.waitForExistence(timeout: 5)); XCTAssertTrue(sameNameOtherCat.exists)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-cat-")).count, 2)
+        capture("vet-saved-cats-same-name-large-text")
+        app.buttons["vet-saved-cat-edit-memo"].tap()
+        let catPicker = app.descendants(matching: .any).matching(identifier: "memo-weight-cat-picker").firstMatch
+        XCTAssertTrue(catPicker.waitForExistence(timeout: 5)); revealVetElement(catPicker, app: app)
+        XCTAssertTrue(catPicker.label.contains("未指定") || (catPicker.value as? String)?.contains("未指定") == true)
+        catPicker.tap()
+        let choice = app.buttons["むぎ · 預けるとき・避難に備える"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.tap()
+        capture("weight-cat-explicit-tool-selection")
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(catPicker.waitForNonExistence(timeout: 5))
+        firstCat.tap()
+        XCTAssertTrue(app.navigationBars["診察メモ"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).count, 0)
+        let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
+        XCTAssertTrue(["", "家で気付いたこと"].contains(observations.value as? String ?? ""))
+        revealVetElement(app.buttons["vet-pick-records"], app: app)
+        XCTAssertTrue(app.staticTexts["見せる記録 · 0件"].exists)
+        app.buttons["vet-pick-records"].tap()
+        let measuredSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "vet-source-", "食べる量が少なかった。")).firstMatch
+        XCTAssertTrue(measuredSource.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
+        measuredSource.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); XCTAssertFalse(add.isEnabled)
+        setVetToggle(confirm, to: "1", app: app); revealVetElement(add, app: app); add.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        revealVetElement(show, app: app); show.tap()
+        let reading = app.scrollViews["vet-reading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5))
+        revealVetElement(reading.staticTexts["memory-note-weight"], app: app)
+        XCTAssertEqual(reading.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
+        XCTAssertTrue(reading.staticTexts["むぎ · 測定日 不明"].exists)
+        XCTAssertFalse(reading.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
+        capture("vet-saved-cat-weight-in-person-display")
+        app.terminate(); app.launch()
+        XCTAssertTrue(firstCat.waitForExistence(timeout: 10)); firstCat.tap()
+        let retainedRecord = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
+        revealVetElement(retainedRecord, app: app)
+        XCTAssertTrue(retainedRecord.exists)
+        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        XCTAssertTrue(sameNameOtherCat.waitForExistence(timeout: 5)); sameNameOtherCat.tap()
+        revealVetElement(app.buttons["vet-pick-records"], app: app)
+        XCTAssertTrue(app.staticTexts["見せる記録 · 0件"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
+        revealVetElement(app.buttons["vet-pick-records"], app: app); app.buttons["vet-pick-records"].tap()
+        XCTAssertFalse(measuredSource.waitForExistence(timeout: 3), "Same name must not reuse the other cat's weight")
+        capture("vet-same-name-other-cat-keeps-separate-records")
+        app.terminate()
     }
 
     @MainActor
