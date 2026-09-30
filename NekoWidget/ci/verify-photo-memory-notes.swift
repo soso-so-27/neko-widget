@@ -7,6 +7,8 @@ import Foundation
 @main
 enum PhotoMemoryNoteVerifier {
     static func main() async throws {
+        try verifiesWeightValues()
+        if CommandLine.arguments.contains("--portable-only") { print("Weight value boundaries passed (no Apple persistence claims)"); return }
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("photo-memory-notes-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -20,7 +22,38 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesMigrationFailureAndRetry(at: root.appendingPathComponent("migration-failure/state.json"))
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
+        try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesWeightValues() throws {
+        try require(PhotoMemoWeightValue.grams(from: "4.205") == 4205 && PhotoMemoWeightValue.grams(from: "4,2") == 4200, "kg conversion changed a measurement")
+        for input in ["0", "0.0001", "-4", "101", "nan", "4e2", "4.2000"] { try require(PhotoMemoWeightValue.grams(from: input) == nil, "invalid kg accepted") }
+        try require(PhotoMemoWeightValue.validDay("2024-02-29") && !PhotoMemoWeightValue.validDay("2026-02-29")
+            && !PhotoMemoWeightValue.validDay("2026-09-31"), "civil day rolled over")
+        let value = PhotoMemoWeightValue(grams: 4200, measuredOn: nil, catName: nil)
+        try value.validate()
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as! [String: Any]
+        try require(Set(json.keys) == ["grams", "measuredOn", "catName"] && json["measuredOn"] is NSNull && json["catName"] is NSNull, "portable value omitted unknowns or leaked identity")
+        try require(value.kilogramsText == "4.2", "measurement display rounded incorrectly")
+    }
+
+    private static func verifiesWeightPersistence(at url: URL) async throws {
+        let store = PhotoMemoryNoteStore(fileURL: url), owner = UUID()
+        let weight = PhotoMemoWeight(value: PhotoMemoWeightValue(grams: 4200, measuredOn: nil, catName: "むぎ"), catID: owner)
+        guard let first = try await store.save(text: "", for: "weight-only", expectedRevision: nil, weightChange: .set(weight)) else { throw Failure.failed("weight-only memo deleted") }
+        let reopened = PhotoMemoryNoteStore(fileURL: url)
+        let loaded = try await reopened.note(for: "weight-only")
+        try require(loaded == first, "measurement not persisted")
+        guard let textEdit = try await reopened.save(text: "家で測った", recordID: first.id, expectedRevision: first.revision) else { throw Failure.failed("text edit lost weight") }
+        try require(textEdit.note.weight == weight, "unchanged default dropped measurement")
+        guard let cleared = try await reopened.save(text: textEdit.note.text, recordID: first.id, expectedRevision: textEdit.note.revision, weightChange: .set(nil)) else { throw Failure.failed("clearing weight deleted text") }
+        try require(cleared.note.weight == nil, "explicit clear failed")
+        let state = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        try require(state["schemaVersion"] as? Int == 4, "clear downgraded record for an old writer")
+        try await reopened.delete(id: first.id, expectedRevision: cleared.note.revision)
+        let remaining = try await reopened.records()
+        try require(remaining.isEmpty, "explicit delete retained measurement")
     }
 
     private static func verifiesReopenAndEditing(at url: URL) async throws {

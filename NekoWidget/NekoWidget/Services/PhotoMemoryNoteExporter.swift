@@ -12,6 +12,7 @@ struct PhotoMemoryNoteBulkEntry: Sendable {
     let updatedAt: Date?
     let catNames: [String]
     let jpegData: Data?
+    var weight: PhotoMemoWeightValue? = nil
 }
 
 struct PhotoMemoryNoteExportPayload: Identifiable, Sendable {
@@ -142,9 +143,10 @@ enum PhotoMemoryNoteExporter {
         let updatedAt: String
         let capturedAt: String?
         let cats: [PortableCat]
+        let weight: PhotoMemoWeightValue?
 
         private enum CodingKeys: String, CodingKey {
-            case exportID, text, writtenAt, updatedAt, capturedAt, cats
+            case exportID, text, writtenAt, updatedAt, capturedAt, cats, weight
         }
 
         func encode(to encoder: Encoder) throws {
@@ -156,25 +158,27 @@ enum PhotoMemoryNoteExporter {
             try values.encode(updatedAt, forKey: .updatedAt)
             try values.encode(capturedAt, forKey: .capturedAt)
             try values.encode(cats, forKey: .cats)
+            try values.encodeIfPresent(weight, forKey: .weight)
         }
     }
 
     private struct Document: Encodable {
-        let formatVersion = 1
+        let formatVersion: Int
         let records: [PortableRecord]
     }
 
     private struct ArchiveDocument: Encodable {
-        let formatVersion = 1
+        var formatVersion: Int { weight == nil ? 1 : 2 }
         let text: String
         let capturedAt: String?
         let writtenAt: String?
         let updatedAt: String?
         let catNames: [String]
         let photoFile: String?
+        let weight: PhotoMemoWeightValue?
 
         private enum CodingKeys: String, CodingKey {
-            case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile
+            case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight
         }
 
         func encode(to encoder: Encoder) throws {
@@ -186,6 +190,7 @@ enum PhotoMemoryNoteExporter {
             try values.encode(updatedAt, forKey: .updatedAt)
             try values.encode(catNames, forKey: .catNames)
             try values.encode(photoFile, forKey: .photoFile)
+            try values.encodeIfPresent(weight, forKey: .weight)
         }
     }
 
@@ -232,7 +237,7 @@ enum PhotoMemoryNoteExporter {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             return try StoredZIP.archive([
-                (name: "memories.json", data: encoder.encode(Document(records: portable))),
+                (name: "memories.json", data: encoder.encode(Document(formatVersion: portable.contains { $0.weight != nil } ? 2 : 1, records: portable))),
                 (name: "memories.txt", data: Data(readableText(portable).utf8))
             ])
         }
@@ -248,13 +253,14 @@ enum PhotoMemoryNoteExporter {
         updatedAt: Date?,
         catNames: [String],
         jpegData: Data?,
+        weight: PhotoMemoWeightValue? = nil,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         fileManager: FileManager = .default
     ) throws -> PhotoMemoryNoteExportPayload {
         try Task.checkCancellation()
         return try createPayload(temporaryDirectory: temporaryDirectory, fileManager: fileManager) {
             try StoredZIP.archive(archiveFiles(text: text, capturedAt: capturedAt,
-                writtenAt: writtenAt, updatedAt: updatedAt, catNames: catNames, jpegData: jpegData))
+                writtenAt: writtenAt, updatedAt: updatedAt, catNames: catNames, jpegData: jpegData, weight: weight))
         }
     }
 
@@ -305,7 +311,7 @@ enum PhotoMemoryNoteExporter {
                 let prefix = "records/" + entry.recordID.uuidString.lowercased() + "/"
                 let files = try archiveFiles(text: entry.text, capturedAt: entry.capturedAt,
                     writtenAt: entry.writtenAt, updatedAt: entry.updatedAt,
-                    catNames: entry.catNames, jpegData: entry.jpegData)
+                    catNames: entry.catNames, jpegData: entry.jpegData, weight: entry.weight)
                 for file in files { try archiveWriter.append(name: prefix + file.name, data: file.data) }
                 let photoHash = entry.jpegData.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
                 manifest.append(.init(recordID: entry.recordID, revision: entry.revision,
@@ -344,11 +350,12 @@ enum PhotoMemoryNoteExporter {
         writtenAt: Date?,
         updatedAt: Date?,
         catNames: [String],
-        jpegData: Data?
+        jpegData: Data?, weight: PhotoMemoWeightValue?
     ) throws -> [(name: String, data: Data)] {
         let maximumJPEGBytes = 20 * 1_024 * 1_024
         let maximumMetadataBytes = 2 * 1_024 * 1_024
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jpegData != nil else {
+        do { try weight?.validate() } catch { throw PhotoMemoryNoteExportError.invalidMetadata }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jpegData != nil || weight != nil else {
             throw PhotoMemoryNoteExportError.emptyRecords
         }
         // Match the archive's accepted text/name/JPEG bounds without depending
@@ -372,17 +379,17 @@ enum PhotoMemoryNoteExporter {
         }
         let document = try ArchiveDocument(text: text, capturedAt: capturedAt.map(dateText),
             writtenAt: writtenAt.map(dateText), updatedAt: updatedAt.map(dateText),
-            catNames: catNames, photoFile: jpegData == nil ? nil : "photo.jpg")
+            catNames: catNames, photoFile: jpegData == nil ? nil : "photo.jpg", weight: weight)
         if let jpegData { try validateJPEG(jpegData) }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let json = try encoder.encode(document)
-        let readable = "ねこのまど — 保管したメモ\n書式バージョン: 1\n"
+        let readable = "ねこのまど — 保管したメモ\n書式バージョン: \(document.formatVersion)\n"
             + (jpegData == nil ? "メモのみの書き出しです。写真は含まれません。\n"
                : "保管した写真コピー: photo.jpg（写真アプリの原本ではありません）\n")
             + "日時はUTC（Z）です。\n書いた日: \(document.writtenAt ?? "不明")\n"
             + "更新日: \(document.updatedAt ?? "不明")\n撮影日: \(document.capturedAt ?? "不明")\n"
-            + "猫: \(catNames.isEmpty ? "未指定" : catNames.joined(separator: "、"))\n\n\(text)\n"
+            + "猫: \(catNames.isEmpty ? "未指定" : catNames.joined(separator: "、"))\n" + weightText(weight) + "\n\(text)\n"
         let txt = Data(readable.utf8)
         guard json.count + txt.count <= maximumMetadataBytes else { throw PhotoMemoryNoteExportError.tooLarge }
         var files = [(name: "memory.json", data: json), (name: "memory.txt", data: txt)]
@@ -484,6 +491,7 @@ enum PhotoMemoryNoteExporter {
         return try records.map { record in
             try Task.checkCancellation()
             let note = record.note
+            do { try note.weight?.value.validate() } catch { throw PhotoMemoryNoteExportError.invalidMetadata }
             let cats = (note.context?.cats ?? []).map { cat in
                 let exportID = catExportIDs[cat.id] ?? UUID()
                 catExportIDs[cat.id] = exportID
@@ -493,13 +501,13 @@ enum PhotoMemoryNoteExporter {
                 exportID: UUID(), text: note.text,
                 writtenAt: try note.writtenAt.map(dateText),
                 updatedAt: try dateText(note.updatedAt),
-                capturedAt: try note.context?.capturedAt.map(dateText), cats: cats
+                capturedAt: try note.context?.capturedAt.map(dateText), cats: cats, weight: note.weight?.value
             )
         }
     }
 
     private static func readableText(_ records: [PortableRecord]) throws -> String {
-        var result = "ねこのまど — 思い出のメモ\n書式バージョン: 1\n"
+        var result = "ねこのまど — 思い出のメモ\n書式バージョン: \(records.contains { $0.weight != nil } ? 2 : 1)\n"
             + "メモと日時・猫名の書き出しです。写真は含まれません。日時はUTC（Z）です。\n"
         for (index, record) in records.enumerated() {
             try Task.checkCancellation()
@@ -507,9 +515,14 @@ enum PhotoMemoryNoteExporter {
             result += "書いた日: \(record.writtenAt ?? "不明")\n更新日: \(record.updatedAt)\n"
             result += "撮影日: \(record.capturedAt ?? "不明")\n"
             result += "猫: \(record.cats.isEmpty ? "未指定" : record.cats.map(\.name).joined(separator: "、"))\n\n"
-            result += record.text + "\n"
+            result += weightText(record.weight) + record.text + "\n"
         }
         return result
+    }
+
+    private static func weightText(_ weight: PhotoMemoWeightValue?) -> String {
+        guard let weight else { return "" }
+        return "体重: \(weight.kilogramsText) kg\n測定日: \(weight.measuredOn ?? "不明")（現地の日付）\n測定対象: \(weight.catName ?? "未指定")\n"
     }
 }
 

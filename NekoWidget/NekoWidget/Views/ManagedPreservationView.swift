@@ -302,6 +302,7 @@ struct ManagedPreservationView: View {
                     .accessibilityLabel("今回保管する写真のコピー")
             }
             if !draft.document.text.isEmpty { Text(draft.document.text) }
+            if let weight = draft.document.weight { PhotoMemoWeightLabel(weight: weight) }
             Toggle("この保管方法に同意する", isOn: $coordinator.consentToNewSave)
             Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
                 .font(.footnote).foregroundStyle(.secondary)
@@ -361,6 +362,7 @@ struct ManagedPreservationView: View {
                 }
                 TextEditor(text: $coordinator.editedText)
                     .frame(minHeight: 120).accessibilityLabel("保管コピーのメモ")
+                if let weight = snapshot.document.weight { PhotoMemoWeightLabel(weight: weight) }
                 Text("\(coordinator.editedText.count) / 500文字")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("保管コピーのメモを更新") { coordinator.saveEditedNote() }
@@ -475,9 +477,9 @@ struct ManagedPreservationPhotoView: View {
             guard token == attempt, access.photo(for: identifier) != nil, current == note else {
                 throw ManagedPreservationError.conflict
             }
-            let document = ManagedPreservationDocument(text: note?.text ?? "",
+            let document = ManagedPreservationDocument(formatVersion: note?.weight == nil ? 1 : 2, text: note?.text ?? "",
                 capturedAt: context.capturedAt, writtenAt: note?.writtenAt, updatedAt: note?.updatedAt,
-                catNames: context.cats.map(\.name), photoFile: "photo.jpg")
+                catNames: context.cats.map(\.name), photoFile: "photo.jpg", weight: note?.weight?.value)
             draft = ManagedPreservationDraft(recordID: draftID,
                 document: try document.validated(), jpegData: jpeg)
         } catch is CancellationError {

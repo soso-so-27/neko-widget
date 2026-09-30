@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000002 /* VeterinaryVisitStore.swift */; };
+        D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000004 /* VeterinaryVisitView.swift */; };
 		C02609290000000000000011 /* CareHandoffPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000012 /* CareHandoffPlan.swift */; };
 		C02609290000000000000013 /* CareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000014 /* CareHandoffStore.swift */; };
 		C02609290000000000000015 /* CareHandoffExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000016 /* CareHandoffExporter.swift */; };
@@ -281,6 +283,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        D02609300000000000000002 /* VeterinaryVisitStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitStore.swift; sourceTree = "<group>"; };
+        D02609300000000000000004 /* VeterinaryVisitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitView.swift; sourceTree = "<group>"; };
 		C02609290000000000000012 /* CareHandoffPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffPlan.swift; sourceTree = "<group>"; };
 		C02609290000000000000014 /* CareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffStore.swift; sourceTree = "<group>"; };
 		C02609290000000000000016 /* CareHandoffExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffExporter.swift; sourceTree = "<group>"; };
@@ -711,6 +715,7 @@
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A19300000000000000000011 /* PhotoMemoCoordinator.swift */,
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
+                D02609300000000000000002 /* VeterinaryVisitStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				A18500000000000000000201 /* PersonalArchiveStore.swift */,
 				A20300000000000000000203 /* ManagedPreservationCoordinator.swift */,
@@ -812,6 +817,7 @@
 				E02609290000000000000018 /* EvacuationPreparationView.swift */,
 				E0260929000000000000001A /* EvacuationFixtureView.swift */,
 				C02609290000000000000018 /* CareHandoffView.swift */,
+                D02609300000000000000004 /* VeterinaryVisitView.swift */,
 				C0260929000000000000001A /* CareHandoffFixtureView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
@@ -1109,6 +1115,8 @@
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
 				A19300000000000000000001 /* PhotoMemoCoordinator.swift in Sources */,
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
+                D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */,
+                D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */,
 				A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */,

@@ -25,7 +25,7 @@ enum ManagedPreservationExport {
         }
         return try PhotoMemoryNoteExporter.createArchive(text: document.text,
             capturedAt: document.capturedAt, writtenAt: document.writtenAt,
-            updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData)
+            updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
     }
 
     @MainActor static func prepareAll(client: ManagedPreservationClient,
@@ -102,7 +102,7 @@ enum ManagedPreservationExport {
                 return PhotoMemoryNoteBulkEntry(recordID: listed.id, revision: listed.revision,
                     text: document.text, capturedAt: document.capturedAt,
                     writtenAt: document.writtenAt, updatedAt: document.updatedAt,
-                    catNames: document.catNames, jpegData: snapshot.jpegData)
+                    catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
             }, progress: progress)
         do {
             try Task.checkCancellation()

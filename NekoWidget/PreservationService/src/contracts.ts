@@ -1,11 +1,12 @@
 export interface ArchiveDocument {
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   text: string;
   capturedAt: string | null;
   writtenAt: string | null;
   updatedAt: string | null;
   catNames: string[];
   photoFile: 'photo.jpg' | null;
+  weight?: { grams: number; measuredOn: string | null; catName: string | null };
 }
 export interface VerifiedIdentity { issuer: string; subject: string; refreshToken: string; verifiedEmail?: string; }
 export const contactEmailValid = (email: unknown): email is string => typeof email === 'string'

@@ -42,17 +42,22 @@ struct PersonalArchiveRecord: Identifiable, Equatable, Sendable {
     let revision: String
     let conflictingText: String?
     let conflictingRevision: String?
+    let conflictingContext: PersonalArchiveContext?
+    let memoSchema: Int
     let isDeletionPending: Bool
 
     init(id: UUID, text: String, createdAt: Date, capturedAt: Date?, jpegData: Data?,
          state: PersonalArchiveRecordState, issue: PersonalArchiveError?,
          context: PersonalArchiveContext? = nil, revision: String = "", conflictingText: String? = nil,
-         isDeletionPending: Bool = false, conflictingRevision: String? = nil) {
+         isDeletionPending: Bool = false, conflictingRevision: String? = nil,
+         conflictingContext: PersonalArchiveContext? = nil, memoSchema: Int = 1) {
         self.id = id; self.text = text; self.createdAt = createdAt; self.capturedAt = capturedAt
         self.jpegData = jpegData; self.state = state; self.issue = issue
         self.context = context; self.revision = revision; self.conflictingText = conflictingText
         self.isDeletionPending = isDeletionPending
         self.conflictingRevision = conflictingRevision
+        self.conflictingContext = conflictingContext
+        self.memoSchema = memoSchema
     }
 }
 
@@ -60,8 +65,10 @@ struct PersonalArchiveContext: Codable, Equatable, Sendable {
     let writtenAt: Date?
     let updatedAt: Date?
     let catNames: [String]
+    var weight: PhotoMemoWeightValue? = nil
 
     func validate() throws {
+        do { try weight?.validate() } catch { throw PersonalArchiveError.corruptedState }
         guard writtenAt.map(PersonalArchivePayload.validDate) ?? true,
               updatedAt.map(PersonalArchivePayload.validDate) ?? true,
               catNames.count <= 100,
@@ -131,6 +138,10 @@ struct PersonalArchivePayload: Codable, Equatable, Sendable {
     var context: PersonalArchiveContext? = nil
     var changeID: UUID? = nil
     var deletedAt: Date? = nil
+    /// Never downgrade after clearing a measurement: old clients must not edit
+    /// a record whose extended fields they cannot preserve.
+    var memoSchema: Int? = nil
+    var cloudSchema: Int { memoSchema ?? 1 }
     var isDeleted: Bool { deletedAt != nil }
 
     func validate() throws {
@@ -139,9 +150,10 @@ struct PersonalArchivePayload: Codable, Equatable, Sendable {
               jpegByteCount >= 0, jpegByteCount <= PersonalArchiveStore.maximumJPEGBytes,
               (jpegSHA256 == nil) == (jpegByteCount == 0),
               jpegSHA256.map(PersonalArchiveFiles.isDigest) ?? true,
-              deletedAt.map(Self.validDate) ?? true,
+              deletedAt.map(Self.validDate) ?? true, memoSchema == nil || memoSchema == 2,
+              context?.weight == nil || memoSchema == 2,
               isDeleted ? (text.isEmpty && jpegSHA256 == nil && capturedAt == nil && context == nil && changeID != nil)
-                        : (!text.isEmpty || jpegSHA256 != nil) else { throw PersonalArchiveError.corruptedState }
+                        : (!text.isEmpty || jpegSHA256 != nil || context?.weight != nil) else { throw PersonalArchiveError.corruptedState }
         try context?.validate()
     }
 
@@ -155,7 +167,7 @@ struct PersonalArchivePayload: Codable, Equatable, Sendable {
                      capturedAt.map { String($0.timeIntervalSince1970) } ?? "",
                      jpegSHA256 ?? "", String(jpegByteCount)]
         // Keep the exact legacy fingerprint for pre-context records and pending retries.
-        if context == nil && changeID == nil && deletedAt == nil {
+        if context == nil && changeID == nil && deletedAt == nil && memoSchema == nil {
             return PersonalArchiveFiles.digest((try? JSONEncoder().encode(parts)) ?? Data())
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -339,12 +351,14 @@ actor PersonalArchiveStore {
     /// Actual payload metadata, not local JPEG availability, determines whether
     /// deleting words leaves a photo or removes a genuinely text-only record.
     func deleteWords(id: UUID, operationID: UUID, expectedRevision: String,
-                     expectedAccount: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil) async throws -> PersonalArchiveRecord {
+                     expectedAccount: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil,
+                     replacementContext: PersonalArchiveContext? = nil, replacesContext: Bool = false) async throws -> PersonalArchiveRecord {
         let account = try await checkedAccount(expectedAccount)
         guard let entry = try readState(account).entries[id.uuidString] else { throw PersonalArchiveError.conflict }
-        if entry.payload.jpegSHA256 != nil {
+        let context = replacesContext ? replacementContext : entry.payload.context
+        if entry.payload.jpegSHA256 != nil || context?.weight != nil {
             return try await update(id: id, operationID: operationID, expectedRevision: expectedRevision,
-                text: "", capturedAt: entry.payload.capturedAt, context: entry.payload.context,
+                text: "", capturedAt: entry.payload.capturedAt, context: context,
                 expectedAccount: expectedAccount, sourceSnapshot: sourceSnapshot)
         }
         _ = try await delete(id: id, operationID: operationID, expectedRevision: expectedRevision, expectedAccount: expectedAccount)
@@ -425,7 +439,8 @@ actor PersonalArchiveStore {
             var payload = PersonalArchivePayload(id: id, text: normalized,
                 createdAt: existing?.payload.createdAt ?? Self.wholeSecond(Date()), capturedAt: capturedAt.map(Self.wholeSecond),
                 jpegSHA256: jpegData.map(PersonalArchiveFiles.digest), jpegByteCount: jpegData?.count ?? 0,
-                context: context, changeID: existing?.payload.changeID)
+                context: context, changeID: existing?.payload.changeID,
+                memoSchema: context?.weight != nil ? 2 : existing?.payload.memoSchema)
             try payload.validate()
             if let existing, existing.payload == payload {
                 guard existing.state != .conflict else { throw PersonalArchiveError.conflict }
@@ -463,10 +478,11 @@ actor PersonalArchiveStore {
             let base = sourceLink?.payload.flatMap { $0.fingerprint == expectedRevision ? $0 : nil } ?? existing.payload
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
-            guard !normalized.isEmpty || base.jpegSHA256 != nil else { throw PersonalArchiveError.emptyRecord }
+            guard !normalized.isEmpty || base.jpegSHA256 != nil || context?.weight != nil else { throw PersonalArchiveError.emptyRecord }
             let payload = PersonalArchivePayload(id: id, text: normalized, createdAt: base.createdAt,
                 capturedAt: capturedAt.map(Self.wholeSecond), jpegSHA256: base.jpegSHA256,
-                jpegByteCount: base.jpegByteCount, context: context, changeID: operationID)
+                jpegByteCount: base.jpegByteCount, context: context, changeID: operationID,
+                memoSchema: context?.weight != nil ? 2 : base.memoSchema)
             try payload.validate()
             if existing.payload.changeID == operationID {
                 guard existing.payload == payload, existing.state != .conflict else { throw PersonalArchiveError.conflict }
@@ -509,7 +525,7 @@ actor PersonalArchiveStore {
             expected.insert(existing.payload.fingerprint)
             let payload = PersonalArchivePayload(id: id, text: "", createdAt: existing.payload.createdAt,
                 capturedAt: nil, jpegSHA256: nil, jpegByteCount: 0,
-                changeID: operationID, deletedAt: Self.wholeSecond(Date()))
+                changeID: operationID, deletedAt: Self.wholeSecond(Date()), memoSchema: existing.payload.memoSchema)
             state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
                 precondition: PersonalArchivePrecondition(expectedRevisions: expected, allowsCreation: true),
                 previousPayload: existing.payload)
@@ -525,7 +541,7 @@ actor PersonalArchiveStore {
     /// Explicit choice between two observed versions. The server CAS still
     /// rejects another device changing it after the confirmation was shown.
     func validateMemoConflict(id: UUID, localRevision: String, remoteRevision: String,
-                              text: String, expectedAccount: String) async throws {
+                              text: String, expectedAccount: String, weight: PhotoMemoWeightValue? = nil) async throws {
         let account = try await checkedAccount(expectedAccount)
         guard let entry = try readState(account).entries[id.uuidString], entry.state == .conflict,
               entry.payload.fingerprint == localRevision, let remote = entry.conflictingPayload,
@@ -533,28 +549,33 @@ actor PersonalArchiveStore {
               entry.payload.jpegSHA256 == remote.jpegSHA256 else { throw PersonalArchiveError.conflict }
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
-        guard !normalized.isEmpty || entry.payload.jpegSHA256 != nil else { throw PersonalArchiveError.conflict }
+        try weight?.validate()
+        guard !normalized.isEmpty || entry.payload.jpegSHA256 != nil || weight != nil else { throw PersonalArchiveError.conflict }
         try await assertCurrent(account)
     }
 
     func resolveMemoConflict(id: UUID, operationID: UUID, localRevision: String, remoteRevision: String,
                              text: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil,
-                             expectedAccount: String) async throws -> PersonalArchiveRecord {
+                             expectedAccount: String, replacementContext: PersonalArchiveContext? = nil,
+                             replacesContext: Bool = false) async throws -> PersonalArchiveRecord {
         let account = try await checkedAccount(expectedAccount)
         try update(account) { state, _ in
             guard let entry = state.entries[id.uuidString] else { throw PersonalArchiveError.conflict }
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if entry.payload.changeID == operationID {
-                guard entry.payload.text == normalized, entry.state != .conflict else { throw PersonalArchiveError.conflict }
+                guard entry.payload.text == normalized, entry.state != .conflict,
+                      !replacesContext || entry.payload.context == replacementContext else { throw PersonalArchiveError.conflict }
                 return
             }
             guard entry.state == .conflict, entry.payload.fingerprint == localRevision,
                   let remote = entry.conflictingPayload, remote.fingerprint == remoteRevision,
                   !entry.payload.isDeleted, !remote.isDeleted,
                   entry.payload.jpegSHA256 == remote.jpegSHA256 else { throw PersonalArchiveError.conflict }
+            let chosenContext = replacesContext ? replacementContext : entry.payload.context
             let payload = PersonalArchivePayload(id: id, text: normalized, createdAt: entry.payload.createdAt,
                 capturedAt: entry.payload.capturedAt, jpegSHA256: entry.payload.jpegSHA256,
-                jpegByteCount: entry.payload.jpegByteCount, context: entry.payload.context, changeID: operationID)
+                jpegByteCount: entry.payload.jpegByteCount, context: chosenContext, changeID: operationID,
+                memoSchema: chosenContext?.weight != nil || entry.payload.memoSchema == 2 || remote.memoSchema == 2 ? 2 : nil)
             try payload.validate()
             state.entries[id.uuidString] = Entry(payload: payload, state: .pending,
                 precondition: PersonalArchivePrecondition(expectedRevisions: [remoteRevision], allowsCreation: false),
@@ -578,7 +599,7 @@ actor PersonalArchiveStore {
     private func validatedText(_ text: String, jpegData: Data?, capturedAt: Date?, context: PersonalArchiveContext?) throws -> String {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
-        guard !normalized.isEmpty || jpegData != nil else { throw PersonalArchiveError.emptyRecord }
+        guard !normalized.isEmpty || jpegData != nil || context?.weight != nil else { throw PersonalArchiveError.emptyRecord }
         if let jpegData, !PersonalArchiveFiles.validJPEG(jpegData) { throw PersonalArchiveError.invalidJPEG }
         guard capturedAt.map(PersonalArchivePayload.validDate) ?? true else { throw PersonalArchiveError.corruptedState }
         try context?.validate()
@@ -695,6 +716,16 @@ actor PersonalArchiveStore {
                 let existing = state.entries[key]
                 // A result started before a local edit/delete is not its acknowledgement.
                 if existing?.payload.fingerprint != before.entries[key]?.payload.fingerprint { continue }
+                if let existing, existing.state == .pending,
+                   existing.precondition?.expectedRevisions.contains(remote.payload.fingerprint) == true {
+                    continue // The expected old server version is normal, including a first schema upgrade.
+                }
+                if existing?.payload.memoSchema == 2, remote.payload.cloudSchema == 1 {
+                    // Legacy absence is not consent to clear a newer value.
+                    state.entries[key]?.state = .conflict; state.entries[key]?.issue = .conflict
+                    state.entries[key]?.conflictingPayload = remote.payload
+                    continue
+                }
                 if remote.payload.isDeleted {
                     for sourceKey in Array((state.sources ?? [:]).keys) where state.sources?[sourceKey]?.recordID == remote.payload.id {
                         state.sources?[sourceKey]?.payload = nil
@@ -709,10 +740,6 @@ actor PersonalArchiveStore {
                 }
                 if let existing, existing.payload.fingerprint != remote.payload.fingerprint,
                    existing.state == .pending || existing.state == .conflict || existing.payload.isDeleted {
-                    if existing.state == .pending,
-                       existing.precondition?.expectedRevisions.contains(remote.payload.fingerprint) == true {
-                        continue // The old server version is normal while an explicit operation is pending.
-                    }
                     state.entries[key]?.state = .conflict
                     state.entries[key]?.issue = .conflict
                     state.entries[key]?.conflictingPayload = remote.payload
@@ -847,7 +874,8 @@ actor PersonalArchiveStore {
                 state: missing && entry.state == .stored ? .partial : entry.state,
                 issue: missing ? .corruptedState : entry.issue, context: payload.context,
                 revision: payload.fingerprint, conflictingText: entry.conflictingPayload?.text,
-                isDeletionPending: entry.payload.isDeleted, conflictingRevision: entry.conflictingPayload?.fingerprint)
+                isDeletionPending: entry.payload.isDeleted, conflictingRevision: entry.conflictingPayload?.fingerprint,
+                conflictingContext: entry.conflictingPayload?.context, memoSchema: payload.cloudSchema)
         }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }
 
@@ -879,12 +907,13 @@ actor PersonalArchiveStore {
         }
         do {
             let state = try JSONDecoder().decode(State.self, from: data)
-            guard state.schema == 1, state.accountKey == account.key,
+            guard (1...2).contains(state.schema), state.accountKey == account.key,
                   state.zoneConfirmed == (state.zoneGeneration != nil),
                   state.zoneGeneration != nil || state.entries.values.allSatisfy({ $0.state == .pending }) else {
                 throw PersonalArchiveError.corruptedState
             }
             for (key, entry) in state.entries {
+                guard state.schema == 2 || [entry.payload, entry.previousPayload, entry.conflictingPayload].compactMap({ $0 }).allSatisfy({ $0.memoSchema == nil }) else { throw PersonalArchiveError.corruptedState }
                 guard key == entry.payload.id.uuidString else { throw PersonalArchiveError.corruptedState }
                 try entry.payload.validate()
                 try entry.previousPayload?.validate()
@@ -911,6 +940,7 @@ actor PersonalArchiveStore {
         let folder = try accountFolder(account)
         var state = try load(account, folder: folder)
         let result = try body(&state, folder)
+        if state.entries.values.contains(where: { [$0.payload, $0.previousPayload, $0.conflictingPayload].compactMap({ $0 }).contains(where: { $0.memoSchema == 2 }) }) { state.schema = 2 }
         do { try PersonalArchiveFiles.write(JSONEncoder().encode(state), to: folder.appendingPathComponent("state.json")) }
         catch { throw PersonalArchiveError.storageUnavailable }
         return result

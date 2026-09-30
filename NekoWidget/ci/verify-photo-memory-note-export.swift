@@ -32,6 +32,17 @@ enum PhotoMemoryNoteExportVerifier {
             writtenAt: nil, context: PhotoMemoryNoteContext(capturedAt: nil, cats: [catA])
         ))
         let records = [first, migrated]
+        let weight = PhotoMemoWeight(value: PhotoMemoWeightValue(grams: 4200, measuredOn: nil, catName: "ミケ"), catID: catA.id)
+        let measured = PhotoMemoryNoteRecord(photoIdentifier: first.photoIdentifier, note: PhotoMemoryNote(
+            text: "", updatedAt: date, revision: UUID().uuidString, weight: weight))
+        let weightExport = try PhotoMemoryNoteExporter.create(records: [measured], temporaryDirectory: root)
+        let weightFiles = try readStoredZIP(Data(contentsOf: weightExport.fileURL))
+        let weightJSON = String(decoding: weightFiles["memories.json"]!, as: UTF8.self)
+        let weightTXT = String(decoding: weightFiles["memories.txt"]!, as: UTF8.self)
+        try require(weightJSON.contains("4200") && weightJSON.contains("measuredOn") && weightTXT.contains("4.2 kg")
+            && weightTXT.contains("測定日: 不明") && !weightJSON.contains(catA.id.uuidString)
+            && !weightJSON.contains(first.photoIdentifier), "portable measurement lost unknown date or leaked local identity")
+        try weightExport.cleanup()
         let payload = try PhotoMemoryNoteExporter.create(records: records, temporaryDirectory: root)
         let bytes = try Data(contentsOf: payload.fileURL)
         let members = try readStoredZIP(bytes)

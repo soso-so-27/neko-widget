@@ -1471,6 +1471,123 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    private func launchWeightMemo(extra: [String] = []) -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-weight",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"] + extra
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "WeightMemoUITest.\(UUID())"
+        app.launch()
+        let section = app.buttons["photos-section-notes"]
+        XCTAssertTrue(section.waitForExistence(timeout: 15)); section.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "memory-note-row-", "食べる量が少なかった")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        XCTAssertTrue(app.staticTexts["memory-note-weight"].waitForExistence(timeout: 5))
+        return app
+    }
+
+    @MainActor
+    private func revealVetElement(_ element: XCUIElement, app: XCUIApplication) {
+        for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
+    }
+
+    @MainActor
+    func testWeightOnlyMemoRemainsReadableAndEditable() {
+        let app = launchWeightMemo()
+        app.buttons["memory-note-edit"].tap()
+        let input = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap()
+        input.press(forDuration: 1.2)
+        let selectAll = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5)); selectAll.tap()
+        input.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertEqual(input.value as? String, "")
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(input.waitForNonExistence(timeout: 5), "Weight alone is a record, not a deletion request")
+        XCTAssertEqual(app.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
+        XCTAssertFalse(app.staticTexts["memory-note-body"].exists)
+        capture("weight-only-memo-detail")
+        app.navigationBars.buttons.firstMatch.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "memory-note-row-", "4.2 kg")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
+        app.buttons["memory-note-edit"].tap()
+        let weight = app.textFields["memo-weight-input"]
+        revealVetElement(weight, app: app)
+        XCTAssertEqual(weight.value as? String, "4.2")
+        let date = app.switches["memo-weight-date-toggle"]; revealVetElement(date, app: app)
+        XCTAssertEqual(date.value as? String, "1")
+        capture("weight-only-memo-editor")
+        app.terminate()
+    }
+
+    @MainActor
+    func testVeterinarySelectionIsExplicitAndRemovalKeepsSource() {
+        let app = launchWeightMemo()
+        let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
+        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
+        let confirm = app.switches["vet-confirm-target"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
+        let add = app.buttons["vet-add-confirmed"]
+        XCTAssertFalse(add.isEnabled)
+        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        capture("vet-selected-source-confirmation")
+        confirm.tap(); revealVetElement(add, app: app); add.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
+        XCTAssertTrue(app.scrollViews["vet-reading"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
+        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        capture("vet-selected-record-in-person-display")
+        app.navigationBars["診察で見せる"].buttons["閉じる"].tap()
+        let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
+        for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(remove.isHittable); remove.tap()
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        capture("vet-record-removed-source-kept")
+        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
+        XCTAssertTrue(app.staticTexts["memory-note-body"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["memory-note-body"].label, "食べる量が少なかった。")
+        XCTAssertEqual(app.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
+        app.terminate()
+    }
+
+    @MainActor
+    func testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText() {
+        let app = launchWeightMemo(extra: ["--memory-library-no-photo", "--photo-window-large"])
+        app.buttons["memory-note-edit"].tap()
+        let date = app.switches["memo-weight-date-toggle"]; revealVetElement(date, app: app); date.tap()
+        XCTAssertEqual(date.value as? String, "0")
+        capture("weight-input-unknown-day-largest-text")
+        app.buttons["photo-memory-note-save"].tap()
+        XCTAssertTrue(date.waitForNonExistence(timeout: 5))
+        let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
+        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
+        let confirm = app.switches["vet-confirm-target"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
+        XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].exists)
+        confirm.tap()
+        let add = app.buttons["vet-add-confirmed"]; revealVetElement(add, app: app); add.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
+        let weight = app.staticTexts["memory-note-weight"]
+        revealVetElement(weight, app: app)
+        XCTAssertEqual(weight.label, "体重 4.2 kg")
+        XCTAssertTrue(app.staticTexts["むぎ · 測定日 不明"].exists)
+        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        XCTAssertLessThanOrEqual(weight.frame.maxX, app.frame.maxX)
+        capture("vet-text-weight-without-photo-largest-text")
+        app.terminate()
+    }
+
+    @MainActor
     func testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1984,17 +2101,17 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
             capture("tools-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
-            let preview = app.buttons["tools-vet-preview-open"]
-            for _ in 0..<6 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+            let preview = app.buttons["tools-vet-open"]
+            for _ in 0..<6 where !preview.isHittable { app.swipeDown(velocity: .slow) }
             XCTAssertTrue(preview.isHittable)
-            XCTAssertTrue(preview.label.contains("準備中"))
-            capture("tools-hub-upcoming-\(appearance)")
+            XCTAssertFalse(preview.label.contains("準備中"))
+            capture("tools-hub-veterinary-\(appearance)")
             preview.tap()
             XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.staticTexts["このツールはまだ使えません"].exists)
-            let close = app.buttons["tools-vet-preview-close"]
+            let close = app.navigationBars.buttons.element(boundBy: 0)
             XCTAssertTrue(close.isHittable)
-            capture("tools-vet-preview-\(appearance)")
+            XCTAssertTrue(app.buttons["vet-new-cat"].exists)
+            capture("tools-vet-entry-\(appearance)")
             close.tap()
             XCTAssertTrue(preview.waitForExistence(timeout: 5))
             app.terminate()
