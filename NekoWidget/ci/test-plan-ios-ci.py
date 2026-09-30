@@ -25,6 +25,74 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_tool_cat_autofill_requires_complete_frozen_sources_and_six_real_tests(self):
+        paths = sorted(scope.TOOL_CAT_AUTOFILL_PATHS)
+        self.assertEqual(len(paths), 9)
+        self.assertEqual(len(scope.TOOL_CAT_AUTOFILL_TESTS), 6)
+        self.assertEqual(len(set(scope.TOOL_CAT_AUTOFILL_TESTS)), 6)
+        changes = {path: ("before " + path, "after " + path) for path in paths}
+        declarations = "final class SoloMemoriesUITests: XCTestCase {\n" + "".join(
+            "    func " + name.rsplit("/", 1)[1] + "() {}\n" for name in scope.TOOL_CAT_AUTOFILL_TESTS) + "}\n"
+        changes[scope.MEMORY_TEST_PATH] = ("old tests", declarations)
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        with patch.object(scope, "TOOL_CAT_AUTOFILL_DIGESTS", bindings):
+            self.assertEqual(scope.select_scope(changes), scope.TOOL_CAT_AUTOFILL_SCOPE)
+            for path in paths:
+                missing = dict(changes); del missing[path]
+                self.assertNotEqual(scope.select_scope(missing), scope.TOOL_CAT_AUTOFILL_SCOPE)
+                for side in (0, 1):
+                    changed = dict(changes); pair = list(changed[path]); pair[side] += " changed"
+                    changed[path] = tuple(pair)
+                    self.assertEqual(scope.select_scope(changed), scope.FULL_SCOPE, (path, side))
+            for extra in ("NekoWidget/Shared/Storage/AtomicJSON.swift", ".github/workflows/ios-build.yml",
+                          "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", "NekoWidget/ci/ios_ci_scope.py"):
+                self.assertEqual(scope.select_scope(dict(changes, **{extra: ("old", "new")})), scope.FULL_SCOPE)
+            # A hash declaration cannot turn absent/commented tests into evidence.
+            for test in scope.TOOL_CAT_AUTOFILL_TESTS:
+                changed = copy.deepcopy(changes)
+                changed[scope.MEMORY_TEST_PATH] = ("old tests", declarations.replace(
+                    "    func " + test.rsplit("/", 1)[1], "    // func " + test.rsplit("/", 1)[1]))
+                rebound = dict(bindings); rebound[scope.MEMORY_TEST_PATH] = list(map(scope.source_digest, changed[scope.MEMORY_TEST_PATH]))
+                with patch.object(scope, "TOOL_CAT_AUTOFILL_DIGESTS", rebound):
+                    self.assertEqual(scope.select_scope(changed), scope.FULL_SCOPE)
+            base = "b" * 40
+            def selected(modes=None, status="M", extras=""):
+                modes = modes or {}
+                def git(*args):
+                    if args[0] == "diff":
+                        return "".join(f"{modes.get(path, ':100644 100644')} {'c' * 40} {'d' * 40} {status}\0{path}\0"
+                                       for path in paths) + extras
+                    if args[0] == "show":
+                        ref, path = args[1].split(":", 1)
+                        return changes[path][0 if ref == base else 1]
+                    return self.sha
+                with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                    return planner.runtime_scope(paths, {}, self.env)
+            self.assertEqual(selected(), scope.TOOL_CAT_AUTOFILL_SCOPE)
+            for path in paths:
+                for modes in (":100644 100755", ":100644 120000", ":000000 100644", ":100644 000000"):
+                    self.assertEqual(selected({path: modes}), scope.FULL_SCOPE)
+            for status in ("A", "D", "T", "R100", "C100"):
+                self.assertEqual(selected(status=status), scope.FULL_SCOPE)
+            self.assertEqual(selected(extras=f":100644 100644 {'c' * 40} {'d' * 40} M\0{paths[0]}\0"), scope.FULL_SCOPE)
+        expected = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.TOOL_CAT_AUTOFILL_SCOPE)
+        self.assertEqual(planner.required_jobs(paths, scope.TOOL_CAT_AUTOFILL_SCOPE), expected)
+        self.assertEqual(scope.lanes(scope.TOOL_CAT_AUTOFILL_SCOPE), ("runtime", "app-ui"))
+        self.assertEqual(scope.smoke_tests(scope.TOOL_CAT_AUTOFILL_SCOPE),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        self.assertEqual(scope.lane_tests(scope.TOOL_CAT_AUTOFILL_SCOPE, "app-ui"), scope.TOOL_CAT_AUTOFILL_TESTS)
+        for gallery in scope.LANES[2:]:
+            with self.assertRaises(ValueError):
+                scope.lane_tests(scope.TOOL_CAT_AUTOFILL_SCOPE, gallery)
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in expected]
+        self.assertTrue(planner.covers_jobs(jobs, expected, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, expected, "d" * 40))
+        for index in range(len(jobs)):
+            for conclusion in ("failure", "skipped", "cancelled", None):
+                wrong = copy.deepcopy(jobs); wrong[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(wrong, expected, self.sha))
+
     def test_window_hub_requires_frozen_product_and_complete_ci_boundary(self):
         product = dict(scope.WINDOW_HUB_BLOBS)
         pairs = {path: ("before " + path, "after " + path) for path in scope.WINDOW_HUB_COMPANIONS}
