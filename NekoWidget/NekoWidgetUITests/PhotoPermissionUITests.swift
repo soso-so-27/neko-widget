@@ -1625,18 +1625,24 @@ final class SoloMemoriesUITests: XCTestCase {
         let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
         XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
         let confirm = app.switches["vet-confirm-target"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
-        XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].exists)
+        XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].waitForExistence(timeout: 5))
+        // At the largest size the confirmation thumb is below the first screen.
+        // Verify the missing-photo explanation before scrolling it offscreen.
+        revealVetElement(confirm, app: app)
         setVetToggle(confirm, to: "1", app: app)
         let add = app.buttons["vet-add-confirmed"]; revealVetElement(add, app: app)
         XCTAssertTrue(add.isEnabled); add.tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
-        let weight = app.staticTexts["memory-note-weight"]
+        // Presented sheets can leave the source memo's accessibility tree alive.
+        // Assert the actual in-person reading surface, not every stacked view.
+        let reading = app.scrollViews["vet-reading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5))
+        let weight = reading.staticTexts["memory-note-weight"]
         revealVetElement(weight, app: app)
         XCTAssertEqual(weight.label, "体重 4.2 kg")
-        XCTAssertTrue(app.staticTexts["むぎ · 測定日 不明"].exists)
-        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        XCTAssertTrue(reading.staticTexts["むぎ · 測定日 不明"].exists)
+        XCTAssertFalse(reading.staticTexts["選んでいない別の猫の記録"].exists)
         XCTAssertLessThanOrEqual(weight.frame.maxX, app.frame.maxX)
         capture("vet-text-weight-without-photo-largest-text")
         app.terminate()

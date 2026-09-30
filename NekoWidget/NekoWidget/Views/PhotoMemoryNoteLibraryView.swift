@@ -642,6 +642,7 @@ struct PhotoMemoryNoteDetailView: View {
     private let archiveEnabled: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var record: PhotoMemoryNoteRecord?
     @State private var loaded = false
@@ -755,6 +756,7 @@ struct PhotoMemoryNoteDetailView: View {
                     VeterinaryVisitsView(photos: photos, noteStore: store, store: veterinaryStore, initialRecord: record)
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { addsToVet = false } } }
                 }
+                .environment(\.dynamicTypeSize, typeSize)
             }
         }
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {

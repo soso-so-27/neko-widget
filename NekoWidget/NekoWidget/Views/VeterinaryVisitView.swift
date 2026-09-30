@@ -7,6 +7,7 @@ struct VeterinaryVisitsView: View {
     var noteStore: PhotoMemoryNoteStore = .shared
     var store: VeterinaryVisitStore = .shared
     var initialRecord: PhotoMemoryNoteRecord? = nil
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visits: [VeterinaryVisit] = []
     @State private var cats: [PhotoMemoryNoteCat] = []
     @State private var selected: VeterinaryVisit?
@@ -64,6 +65,7 @@ struct VeterinaryVisitsView: View {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
                     store: store, initialRecord: initialRecord)
             }
+            .environment(\.dynamicTypeSize, typeSize)
         }
     }
     private func open(_ cat: PhotoMemoryNoteCat) async {
@@ -96,6 +98,7 @@ private struct VeterinaryConsultationView: View {
     let store: VeterinaryVisitStore
     let initialRecord: PhotoMemoryNoteRecord?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visit: VeterinaryVisit?
     @State private var observations = ""
     @State private var questions = ""
@@ -192,17 +195,21 @@ private struct VeterinaryConsultationView: View {
             if initialVisit.completedAt == nil { chosen = initialRecord }
         }
         .sheet(isPresented: $picking, onDismiss: { chosen = pendingSource; pendingSource = nil }) {
-            if let visit { VeterinaryRecordPicker(visit: visit, photos: photos, noteStore: noteStore) { pendingSource = $0; picking = false } }
+            if let visit {
+                VeterinaryRecordPicker(visit: visit, photos: photos, noteStore: noteStore) { pendingSource = $0; picking = false }
+                    .environment(\.dynamicTypeSize, typeSize)
+            }
         }
         .sheet(item: $chosen) { source in
             if let visit {
                 VeterinaryRecordConfirmation(source: source, visit: visit, photos: photos, noteStore: noteStore, store: store) { updated in
                     self.visit = updated; chosen = nil
                 }
+                .environment(\.dynamicTypeSize, typeSize)
             }
         }
         .fullScreenCover(isPresented: $showing) {
-            if let visit { VeterinaryReadView(visit: visit, store: store) }
+            if let visit { VeterinaryReadView(visit: visit, store: store).environment(\.dynamicTypeSize, typeSize) }
         }
         .confirmationDialog("保存せずに閉じますか？", isPresented: $discarding, titleVisibility: .visible) {
             Button("変更を破棄", role: .destructive) { dismiss() }; Button("編集を続ける", role: .cancel) {}
