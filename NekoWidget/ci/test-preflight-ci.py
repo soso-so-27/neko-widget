@@ -24,6 +24,20 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_private_data_exclusion_explains_kept_checks_without_claiming_unmeasured_speed(self):
+        paths = ["NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"]
+        with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=paths), \
+                patch.object(planner, "runtime_scope", return_value=scope.APP_DATA_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, True, self.history)
+        self.assertEqual(len(result["required_jobs"]), 5)
+        self.assertFalse(any("gallery" in name for name in result["required_jobs"]))
+        self.assertIn("storage/privacy/migration", result["reason"])
+        self.assertIn("Widget source membership/render inputs unchanged", result["reason"])
+        self.assertEqual(result["cost"]["status"], "unmeasured")
+        self.assertFalse(result["ready"])
+
     def test_ui_test_and_release_note_plan_keeps_full_app_checks_without_widget_gallery(self):
         paths = [scope.MEMORY_TEST_PATH, "NekoWidget/ci/release-candidates/2026-09-25-showcase-ia.md"]
         history = {**self.history, "observations": self.history["observations"] + [

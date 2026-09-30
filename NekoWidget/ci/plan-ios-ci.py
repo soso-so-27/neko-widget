@@ -16,7 +16,8 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
+from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_PATHS, APP_DATA_NEW_PATHS,
+                          APP_DATA_PROJECT, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           LOST_CAT_UX_SCOPE, LOST_CAT_PHOTO_TEST_NAMES,
                           EVACUATION_PATHS, EVACUATION_NEW_PATHS,
                           CARE_HANDOFF_PATHS, CARE_HANDOFF_NEW_PATHS,
@@ -463,7 +464,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
 def smoke_job(scope: str) -> str:
     if scope not in SCOPES:
         raise ValueError("Unknown iOS runtime scope")
-    return SMOKE if scope in (FULL_SCOPE, APP_VIEW_SCOPE) else BOOTSTRAP_SMOKE
+    return SMOKE if scope in (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE) else BOOTSTRAP_SMOKE
 
 
 def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
@@ -689,6 +690,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         delivery_membership_only = sources == (DELIVERY_MEMBERSHIP_PATHS | DELIVERY_MEMBERSHIP_COMPANION_PATHS | {REVIEW_MANIFEST})
         window_support_only = sources == (WINDOW_SUPPORT_PATHS | WINDOW_SUPPORT_COMPANION_PATHS | {REVIEW_MANIFEST})
         managed_preservation_only = sources == (MANAGED_PRESERVATION_PATHS | MANAGED_PRESERVATION_COMPANION_PATHS | {REVIEW_MANIFEST})
+        app_data_only = bool(sources and sources <= APP_DATA_PATHS)
         if ci_only:
             # A stale branch is not proof that the product is unchanged from
             # current main. Every branch input still has to be accounted for.
@@ -720,6 +722,9 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 ))
             else:
                 valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
+                if app_data_only and path in APP_DATA_NEW_PATHS and fields[0:2] == [":000000", "100644"] and fields[4] == "A":
+                    valid = True
+                    added_sources.add(path)
                 if evacuation_only and path in EVACUATION_NEW_PATHS:
                     valid = fields[0:2] == [":000000", "100644"] and fields[4] == "A"
                     if valid:
@@ -774,7 +779,13 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         memory_tests = None
         if (reviewed_memory_changes(changes) or reviewed_memory_changes(changes, family=True)) and MEMORY_TEST_PATH not in changes:
             memory_tests = git("show", f"{head}:{MEMORY_TEST_PATH}")
-        return select_scope(changes, memory_test_source=memory_tests)
+        selected = select_scope(changes, memory_test_source=memory_tests)
+        if selected == FULL_SCOPE and app_data_only and APP_DATA_PROJECT not in changes:
+            # Do not add project dependencies to existing UI/test-only routes.
+            # Read target membership only for a new private-data classification.
+            project_source = git("show", f"{head}:{APP_DATA_PROJECT}")
+            return select_scope(changes, memory_test_source=memory_tests, project_source=project_source)
+        return selected
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return FULL_SCOPE
 
