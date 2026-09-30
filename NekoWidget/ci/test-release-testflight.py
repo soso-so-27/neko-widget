@@ -364,6 +364,26 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(self.gh.dispatches, [])
             self.assertEqual(release.ROOT, previous_root)
 
+    def test_external_cli_rejects_dirty_or_other_sha_source_before_dispatch(self):
+        previous_root = release.ROOT
+        original_git = release.git
+        with tempfile.TemporaryDirectory() as directory:
+            selected = Path(directory).resolve()
+            args = ["--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected), "--dispatch"]
+            for bad_args, value in (
+                (("rev-parse", "HEAD"), "b" * 40),
+                (("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none"), " M source.swift"),
+            ):
+                def checked_git(*command):
+                    if release.ROOT == selected and command == bad_args:
+                        return value
+                    return original_git(*command)
+                with patch.object(release, "GitHub", return_value=self.gh), patch.object(release, "git", side_effect=checked_git), \
+                        patch.object(release.os, "chdir"), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(release.main(args), 1)
+                self.assertEqual(self.gh.dispatches, [])
+                self.assertEqual(release.ROOT, previous_root)
+
     def test_duplicate_lower_and_any_active_release_are_blocked(self):
         for build in ("164", "100"):
             with self.assertRaises(release.Blocked):
