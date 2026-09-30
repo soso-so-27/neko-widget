@@ -1493,6 +1493,49 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
     }
 
+    // The real PhotoKit request can arrive while the fixture's source-confirmation
+    // sheet is visible. Grant access only to the imported public test photos;
+    // XCTest's default interruption handler otherwise denies and consumes a tap.
+    @MainActor
+    @discardableResult
+    private func dismissVetPhotosPromptIfPresent() -> Bool {
+        let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        guard alert.waitForExistence(timeout: 2) else { return false }
+        let labels = ["Allow Full Access", "Allow Access to All Photos",
+                      "フルアクセスを許可", "すべての写真へのアクセスを許可"]
+        guard let fullAccess = labels.map({ alert.buttons[$0] }).first(where: { $0.exists }) else {
+            XCTFail("Unexpected system alert; do not dismiss unrelated permissions: \(alert.debugDescription)")
+            return false
+        }
+        fullAccess.tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 10))
+        return true
+    }
+
+    @MainActor
+    private func setVetToggle(_ toggle: XCUIElement, to value: String, app: XCUIApplication) {
+        revealVetElement(toggle, app: app)
+        dismissVetPhotosPromptIfPresent()
+        if toggle.value as? String == value { return }
+        // SwiftUI exposes both the whole labelled row and its native UISwitch.
+        // Tap the thumb, not the row's center (which can be inert at large text).
+        let thumb = toggle.switches.firstMatch
+        XCTAssertTrue(thumb.exists, "A real switch thumb must be exposed: \(toggle.debugDescription)")
+        thumb.tap()
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+        if XCTWaiter.wait(for: [changed], timeout: 3) == .completed { return }
+        // Retry only when a newly arrived, positively identified Photos prompt
+        // consumed that interaction, never to conceal an unresponsive control.
+        guard dismissVetPhotosPromptIfPresent() else {
+            capture("vet-toggle-did-not-change")
+            XCTFail("Switch did not reach \(value): \(toggle.debugDescription)")
+            return
+        }
+        if toggle.value as? String != value { thumb.tap() }
+        let afterPermission = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [afterPermission], timeout: 5), .completed)
+    }
+
     @MainActor
     func testWeightOnlyMemoRemainsReadableAndEditable() {
         let app = launchWeightMemo()
@@ -1533,11 +1576,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
         let confirm = app.switches["vet-confirm-target"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
+        dismissVetPhotosPromptIfPresent()
         let add = app.buttons["vet-add-confirmed"]
         XCTAssertFalse(add.isEnabled)
         XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-source-confirmation")
-        confirm.tap(); revealVetElement(add, app: app); add.tap()
+        setVetToggle(confirm, to: "1", app: app)
+        revealVetElement(add, app: app); XCTAssertTrue(add.isEnabled); add.tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
         XCTAssertTrue(app.scrollViews["vet-reading"].waitForExistence(timeout: 5))
@@ -1570,7 +1615,8 @@ final class SoloMemoriesUITests: XCTestCase {
     func testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText() {
         let app = launchWeightMemo(extra: ["--memory-library-no-photo", "--photo-window-large"])
         app.buttons["memory-note-edit"].tap()
-        let date = app.switches["memo-weight-date-toggle"]; revealVetElement(date, app: app); date.tap()
+        let date = app.switches["memo-weight-date-toggle"]
+        setVetToggle(date, to: "0", app: app)
         XCTAssertEqual(date.value as? String, "0")
         capture("weight-input-unknown-day-largest-text")
         app.buttons["photo-memory-note-save"].tap()
@@ -1581,8 +1627,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let confirm = app.switches["vet-confirm-target"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
         XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].exists)
-        confirm.tap()
-        let add = app.buttons["vet-add-confirmed"]; revealVetElement(add, app: app); add.tap()
+        setVetToggle(confirm, to: "1", app: app)
+        let add = app.buttons["vet-add-confirmed"]; revealVetElement(add, app: app)
+        XCTAssertTrue(add.isEnabled); add.tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
         let weight = app.staticTexts["memory-note-weight"]
