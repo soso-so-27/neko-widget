@@ -78,3 +78,21 @@ it('rechecks participant removal, cost threshold, missing row and clock rollback
   await db.prepare('DELETE FROM pa_pilot_control').run();
   await expect(control().admitMutation(owners[0]!)).rejects.toMatchObject(paused);
 });
+
+it('keeps verified pending registrations separate from owners and sessions, expiring in ten minutes', async () => {
+  const pending = new PilotControl(db, () => base, 'YES', undefined, true);
+  await expect(pending.createOwner(owners[0]!, keys[0]!, base))
+    .rejects.toMatchObject({ code: 'PILOT_REGISTRATION_PENDING', status: 403 });
+  const first = await db.prepare('SELECT reference,expires_at FROM pa_pilot_registrations WHERE identity_key=?')
+    .bind(keys[0]!).first<{ reference: string; expires_at: number }>();
+  expect(first?.expires_at).toBe(base + 600_000);
+  expect((await db.prepare('SELECT count(*) total FROM pa_owners').first())?.total).toBe(0);
+  expect((await db.prepare('SELECT count(*) total FROM pa_sessions').first())?.total).toBe(0);
+  await expect(pending.createOwner(owners[0]!, keys[0]!, base))
+    .rejects.toMatchObject({ registrationReference: first!.reference });
+  const later = new PilotControl(db, () => base + 600_000, 'YES', undefined, true);
+  await expect(later.createOwner(owners[0]!, keys[0]!, base))
+    .rejects.toMatchObject({ code: 'PILOT_REGISTRATION_PENDING' });
+  expect((await db.prepare('SELECT reference FROM pa_pilot_registrations WHERE identity_key=?')
+    .bind(keys[0]!).first())?.reference).not.toBe(first!.reference);
+});

@@ -382,6 +382,12 @@ def validate_enabled_release(
     if media_enabled:
         required_collections.update(MEDIA_COLLECTIONS)
         required_collections.update(MEDIA_INTERACTION_COLLECTIONS)
+    if truthy(info.get("ManagedPreservationEnabled")):
+        required_collections.update({
+            "NSPrivacyCollectedDataTypeEmailAddress",
+            "NSPrivacyCollectedDataTypePurchaseHistory",
+            "NSPrivacyCollectedDataTypeOtherUserContent",
+        })
     validate_privacy_manifest(
         privacy,
         required_collections,

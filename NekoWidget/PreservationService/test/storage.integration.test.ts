@@ -9,6 +9,7 @@ import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import type { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import worker, { route, type Services, type Env } from '../src/index';
+import { PilotControl } from '../src/pilot-control';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const photo = new Uint8Array([255, 216, 255, 217]); // Synthetic, injected validator; not a real JPEG test.
@@ -45,6 +46,53 @@ async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number
   return { auth, authOptions, identity, session, archive, options, request,
     setState(value: typeof state) { state = value; }, setNow(value: number) { now = value; } };
 }
+
+async function pilotFixture() {
+  const f = await fixture();
+  const identity = await binding.DB.prepare('SELECT identity_key FROM pa_owners WHERE owner_id=?')
+    .bind(f.session.ownerId).first<{ identity_key: string }>();
+  const now = f.options.now();
+  await binding.DB.prepare(`UPDATE pa_pilot_control SET enabled=1,starts_at=?,ends_at=?,
+    reviewed_at=?,valid_until=?,forecast_yen=1718 WHERE singleton=1`)
+    .bind(now, now + 7 * 86_400_000, now, now + 86_400_000).run();
+  const pilot = new PilotControl(binding.DB, f.options.now, 'YES', JSON.stringify([identity!.identity_key]));
+  let billingCalls = 0;
+  const options = { ...f.options, pilotStorageAccess: pilot, recovery: syntheticRecovery(f.options.keys).recovery,
+    membership: { status: async (): Promise<'unknown'> => { billingCalls++; throw new Error('Apple purchase unavailable'); } } };
+  return { ...f, pilot, options, archive: new ArchiveStore(options), billingCalls: () => billingCalls };
+}
+
+it('saves and restores for the same approved pilot identity without creating billing rights', async () => {
+  const f = await pilotFixture(); const id = crypto.randomUUID();
+  expect(await f.archive.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  await f.auth.revokeSession(f.session.token);
+  const fresh = await f.auth.establish(f.identity);
+  expect(fresh.ownerId).toBe(f.session.ownerId);
+  const restored = await f.archive.read(fresh.token, id);
+  expect(restored.document).toEqual(document);
+  expect(restored.photoBase64).toBe(encodePhoto(photo));
+  expect(f.billingCalls()).toBe(0);
+  expect((await binding.DB.prepare('SELECT count(*) total FROM pa_membership_links').first())?.total).toBe(0);
+  const stranger = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+  await expect(f.archive.read(stranger.token, id)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+  await expect(f.archive.put(stranger.token, crypto.randomUUID(), f.request())).rejects.toThrow('Apple purchase unavailable');
+});
+
+it('stops a pilot save atomically if the operator pauses intake during object storage', async () => {
+  const f = await pilotFixture(); const id = crypto.randomUUID();
+  const bucket = new Proxy(binding.ARCHIVE, { get(target, property) {
+    if (property === 'put') return async (...args: Parameters<R2Bucket['put']>) => {
+      const saved = await target.put(...args);
+      await binding.DB.prepare('UPDATE pa_pilot_control SET enabled=0 WHERE singleton=1').run();
+      return saved;
+    };
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  await expect(new ArchiveStore({ ...f.options, bucket }).put(f.session.token, id, f.request()))
+    .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE record_id=?').bind(id).first()).toBeNull();
+  expect(f.billingCalls()).toBe(0);
+});
 
 function syntheticRecovery(keys: KeyCustody) {
   const objects = new Map<string, Uint8Array>();

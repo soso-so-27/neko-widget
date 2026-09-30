@@ -17,6 +17,7 @@ final class PreservationFixtureKeys: @unchecked Sendable {
 enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
+    case copyResultLost, copyNotCommitted
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
@@ -34,6 +35,7 @@ actor PreservationFixtureServer {
     var completes = 0
     var reads = 0
     var saves = 0
+    var savedDocument: ManagedPreservationDocument?
     var challenge: ManagedPreservationLinkChallenge?
     var seenNonces = Set<String>()
     var signedBodies: [Data] = []
@@ -113,7 +115,9 @@ actor PreservationFixtureServer {
         if request.httpMethod == "GET", url.path == "/v1/membership" {
             if linked && scenario == .changedKeyDuringStatus { keys.replace(nil) }
             if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
-            if scenario == .saveRejected { return try json(["linked": true, "status": "active"]) }
+            if scenario == .saveRejected || scenario == .copyResultLost || scenario == .copyNotCommitted {
+                return try json(["linked": true, "status": "active"])
+            }
             return try json(["linked": linked, "status": linked ? "expired" : "unknown"])
         }
         if request.httpMethod == "GET", url.path == "/v1/usage" {
@@ -156,11 +160,24 @@ actor PreservationFixtureServer {
         }
         if request.httpMethod == "GET", url.path == "/v1/records/" + Self.recordID.uuidString.lowercased() {
             reads += 1
+            if scenario == .copyNotCommitted { return try fail("RECORD_NOT_FOUND", status: 404) }
             return try json(["recordId": Self.recordID.uuidString.lowercased(), "revision": 1,
-                "document": JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(document)),
+                "document": JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(savedDocument ?? document)),
                 "photoBase64": NSNull(), "photoSHA256": NSNull()])
         }
-        if request.httpMethod == "PUT" { saves += 1; return try fail("NEW_SAVE_REQUIRES_MEMBERSHIP", status: 403) }
+        if request.httpMethod == "PUT" {
+            saves += 1
+            if scenario == .copyResultLost || scenario == .copyNotCommitted {
+                if scenario == .copyResultLost {
+                    guard let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any],
+                          let stored = body["document"] else { throw ManagedPreservationError.invalidResponse }
+                    savedDocument = try ManagedPreservationWire.decoder().decode(ManagedPreservationDocument.self,
+                        from: JSONSerialization.data(withJSONObject: stored))
+                }
+                throw URLError(.networkConnectionLost)
+            }
+            return try fail("NEW_SAVE_REQUIRES_MEMBERSHIP", status: 403)
+        }
         throw ManagedPreservationError.invalidResponse // never fall back to network
     }
 }
@@ -9928,7 +9945,15 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     @MainActor
-    private static func testManagedPreservationMembershipBoundary() async throws {
+    static func testManagedPreservationMembershipBoundary() async throws {
+        let pilotUntil = Int64(Date().timeIntervalSince1970 * 1000) + 60_000
+        let pilot = try ManagedPreservationWire.decoder().decode(ManagedPreservationMembership.self,
+            from: Data("{\"linked\":false,\"status\":\"unknown\",\"access\":\"pilot\",\"pilotEndsAt\":\(pilotUntil)}".utf8))
+        guard pilot.canSave,
+              !ManagedPreservationMembership(linked: true, status: .active, access: .pilot, pilotEndsAt: pilotUntil).canSave,
+              !ManagedPreservationMembership(linked: false, status: .unknown, access: .pilot, pilotEndsAt: 0).canSave,
+              ManagedPreservationMembership(linked: true, status: .active).canSave
+        else { throw ManagedPreservationError.invalidResponse }
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),
@@ -10057,6 +10082,46 @@ actor SharingRuntimeSelfTestRunner {
         }
         coordinator.stop()
 
+        // A lost PUT response is not a failure. Verify its ID/content (including
+        // Date() sub-millisecond rounding) before enabling a manual retry.
+        for scenario in [PreservationFixtureScenario.copyResultLost, .copyNotCommitted] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            var copyDocument = document; copyDocument.writtenAt = Date()
+            let copyUI = ManagedPreservationCoordinator(configuration: fixture.configuration,
+                draft: .init(recordID: PreservationFixtureServer.recordID, document: copyDocument, jpegData: nil),
+                client: fixture.client)
+            func settleCopy() async throws {
+                let deadline = Date().addingTimeInterval(5)
+                while copyUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+                guard !copyUI.isBusy else { throw ManagedPreservationError.interrupted }
+            }
+            copyUI.start(); try await settleCopy()
+            copyUI.checkMembership(); try await settleCopy()
+            copyUI.consentToNewSave = true
+            copyUI.saveSelectedCopy(); try await settleCopy()
+            guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
+            copyUI.saveSelectedCopy(); try await settleCopy()
+            guard await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+            let other = ManagedPreservationSessionStore.Credential(token: String(repeating: "c", count: 43),
+                ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
+            guard try fixture.store.save(other, replacing: fixture.session) else { throw ManagedPreservationError.staleSession }
+            // Compare-and-replace uses the persisted wire value, whose Date is
+            // millisecond-normalized. The pre-encoding Date() is not that value.
+            guard let persistedOther = try fixture.store.load(),
+                  persistedOther.token == other.token, persistedOther.ownerId == other.ownerId else {
+                throw ManagedPreservationError.secureStorage
+            }
+            copyUI.start(); try await settleCopy()
+            guard copyUI.copyState == .deviceOnly, copyUI.records.isEmpty else { throw ManagedPreservationError.staleSession }
+            guard try fixture.store.save(fixture.session, replacing: persistedOther) else { throw ManagedPreservationError.staleSession }
+            copyUI.start(); try await settleCopy()
+            guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
+            copyUI.confirmCopyResult(); try await settleCopy()
+            guard copyUI.copyState == (scenario == .copyResultLost ? .stored : .failed),
+                  await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+            copyUI.stop()
+        }
+
         // A bad accounting response must not turn the successful record list
         // into an empty archive or a fabricated amount of free space.
         let invalid = try PreservationNativeFixture.make(.malformedUsage); defer { try? invalid.cleanup() }
@@ -10084,6 +10149,30 @@ actor SharingRuntimeSelfTestRunner {
             throw ManagedPreservationError.staleSession
         }
         switchedUI.stop()
+
+        // Exercise the durable-draft failure path without a private Keychain hook:
+        // the store rejects this oversized local edit before writing any item.
+        let local = try PreservationNativeFixture.make(); defer { try? local.cleanup() }
+        let localUI = ManagedPreservationCoordinator(configuration: local.configuration, client: local.client)
+        func settleLocal() async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while localUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !localUI.isBusy else { throw ManagedPreservationError.interrupted }
+        }
+        localUI.start(); try await settleLocal()
+        guard let record = localUI.records.first else { throw ManagedPreservationError.invalidResponse }
+        localUI.open(record); try await settleLocal()
+        localUI.editedText = String(repeating: "a", count: 262_145)
+        localUI.retainUnsentEdit()
+        guard localUI.hasUnsecuredMemo, localUI.draftRecoveryWarning != nil else { throw ManagedPreservationError.invalidResponse }
+        localUI.closeDetail()
+        guard localUI.selected != nil else { throw ManagedPreservationError.invalidResponse }
+        localUI.stop(); localUI.start(); try await settleLocal()
+        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.count == 1 else { throw ManagedPreservationError.invalidResponse }
+        localUI.signOut(); try await settleLocal()
+        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.isEmpty else { throw ManagedPreservationError.staleSession }
+        localUI.discardUnsecuredMemos()
+        guard !localUI.hasUnsecuredMemo, await local.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
     }
 
     private static func opaque(_ byte: UInt8) -> String {
