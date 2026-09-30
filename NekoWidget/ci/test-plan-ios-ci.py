@@ -2823,6 +2823,9 @@ class TestCorrectionReuseTests(unittest.TestCase):
     def test_managed_pilot_correction_excludes_product_and_fixture_changes(self):
         self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
+    def test_vet_correction_excludes_product_fixture_other_methods_and_unmerged_controls(self):
+        self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.VET_SAVED_CAT_SCOPE)
+
     def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2840,7 +2843,9 @@ class TestCorrectionReuseTests(unittest.TestCase):
                 return git("rev-parse", "HEAD")
             git("init", "-q")
             names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"]
-                     if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else sorted(scope.LOST_CAT_PHOTO_TEST_NAMES))
+                     if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
+                     ["testVeterinarySelectionIsExplicitAndRemovalKeepsSource"] if selected_scope == scope.VET_SAVED_CAT_SCOPE else
+                     sorted(scope.LOST_CAT_PHOTO_TEST_NAMES))
             before = ("final class SoloMemoriesUITests: XCTestCase {\n"
                       + "".join(f"    func {name}() {{\n        XCTAssertTrue(true)\n    }}\n"
                                 for name in names) + "}\n")
@@ -2857,8 +2862,20 @@ class TestCorrectionReuseTests(unittest.TestCase):
                 write(test_path, after)
                 write(control, "new\n")
                 head = commit()
+                if selected_scope == scope.VET_SAVED_CAT_SCOPE:
+                    git("update-ref", "refs/remotes/origin/main", head)
                 self.assertTrue(planner.test_correction_inputs(source, head, selected_scope))
-                for path in (product, workflow):
+                if selected_scope == scope.VET_SAVED_CAT_SCOPE:
+                    write(control, "unmerged control\n")
+                    self.assertFalse(planner.test_correction_inputs(source, commit(), selected_scope))
+                    for replacement in (after.replace("\n}\n", "\n    func testUnrelated() {}\n}\n", 1),
+                                        after.replace("\n}\n", "\n    private func helper() {}\n}\n", 1)):
+                        git("checkout", "--detach", "-q", source)
+                        write(test_path, replacement)
+                        self.assertFalse(planner.test_correction_inputs(source, commit(), selected_scope))
+                forbidden = (product, workflow) + (("NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift",
+                    "NekoWidget/NekoWidget/Views/VeterinaryVisitView.swift") if selected_scope == scope.VET_SAVED_CAT_SCOPE else ())
+                for path in forbidden:
                     git("checkout", "--detach", "-q", source)
                     write(test_path, after)
                     write(path, "new\n")
@@ -2869,6 +2886,9 @@ class TestCorrectionReuseTests(unittest.TestCase):
 
     def test_managed_pilot_failed_source_requires_each_successful_native_job(self):
         self.test_failed_source_reuses_only_three_successful_jobs(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+
+    def test_vet_failed_source_requires_each_successful_native_job(self):
+        self.test_failed_source_reuses_only_three_successful_jobs(scope.VET_SAVED_CAT_SCOPE)
 
     def test_failed_source_reuses_only_three_successful_jobs(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
         now = dt.datetime.now(dt.timezone.utc)
