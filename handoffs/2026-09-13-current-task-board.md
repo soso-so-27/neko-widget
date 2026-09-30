@@ -7,6 +7,15 @@
 - 実owner/recordは0、pilot/intakeはOFF。次は本人のiPhoneで初回Apple確認→登録番号を照合→限定保管枠を開く→実写真の保存・新確認で復元・ZIP。サービス完成とは扱わない。
 - [実配備・再開手順・失敗と時間の記録](2026-09-30-preservation-internal-live.md)。現在turnから配布まで約136分、修正UI13.4分/配布12.8分だけを総所要時間として報告しない。
 
+## 2026-10-01 迷子ツール：候補入力を本線反映、229アップロード済み
+
+- 着手時main `a7b85a3` から専用checkout、並行の内部保管228反映後は `212233c` へ統合。既存の迷子下書きと旧形式の明示空欄は維持し、新規だけ名前・特徴・独立JPEGコピーを候補として転記する。猫はprofile ID／共通tool UUIDで区別し、同名で推測しない。連絡先・場所日時・薬・お世話は転記しない。公開・課金・保管・Widgetは変更しない。
+- 初回製品候補 `3b6ef5f` は2026-09-30 22:22:57 JST。独立レビューで指摘された旧空欄上書きと写真失敗の部分確定を修正。制御Python12組146.8秒、制御用companionは別途151.0秒で成功。privacy12成功／Apple専用1skip。変更していない制御入力は再実行せず、最終候補の差分に関係する2組だけ再確認した。
+- CI登録はPR114を独立レビュー・merge commitで反映。Store全文のbefore/after一致だけを既存 `lost-cat-photo-ui-v3` へ登録し、未知差分に流用しない。製品候補 `ffb8a75` の[CI36733536812](https://github.com/soso-so-27/neko-widget/actions/runs/36733536812)で必須4job成功。迷子3操作は0失敗、両OS runtime・Photos bootstrap・Buildも成功。全アプリUI・Widget Gallery・実機Widget確認は起動していない。
+- 標準の猫選択から、AX3の大きな文字で薄字の実候補を編集し、公開プレビューと再起動後へ反映することをnative操作と撮影結果で確認。同名別猫の分離、旧形式の明示空欄保持、独立写真コピー、転記元の写真欠損時の未確定、連絡先・お世話等の非転記もfixture成功。撮影結果は `C:/dev/neko-evidence/lost-cat-saved-info-20260930/app-ui/ios-26-2/composer-screenshots/`。添付された2件のUIKit階層警告はXCTest失敗ではなく、実行3件・0失敗をログで確認した。
+- PR115をmerge commit `8db4726` でmainへ反映。同じ検証済み候補から[内部TestFlight229](https://github.com/soso-so-27/neko-widget/actions/runs/36736476587)を2026-10-01 00:39:00 JSTにAppleへアップロード成功（`UPLOAD SUCCEEDED with no errors`）。署名・App Group・内部限定export・privacyの検査も成功。前の内部228と同じ保管pilot設定を維持し、課金・一般公開・保管受付は変更していない。Apple処理完了・iPhone表示は未確認。
+- native CIは19分17秒（1157秒）、配布runは14分45秒（885秒）。初回候補からupload成功まで136分3秒。レビュー修正・並行main統合・CI登録・待機も含め、CIとuploadの約34分だけを総所要時間として報告しない。記録だけの追記では製品・CI入力不変をgit差分で確認し、成功済み検査や配布を繰り返さない。
+
 ## 2026-09-30 体重メモ・病院で見せる：227アップロード済み
 
 - PR109の候補`a06d304`をmerge commitでmainへ反映。写真メモに任意の体重・測定日・対象猫を残し、明示的に選んだ記録を診察用の控えへ追加する。測定日不明を別の日付で補わず、控えから外しても元の写真・メモを消さない。
