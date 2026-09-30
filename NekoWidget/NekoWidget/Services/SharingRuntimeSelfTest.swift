@@ -4,6 +4,7 @@ import Foundation
 import Security
 import UIKit
 import CryptoKit
+import AuthenticationServices
 
 /// Synthetic transport shared by runtime and UI checks; never mounted in Release.
 final class PreservationFixtureKeys: @unchecked Sendable {
@@ -9964,7 +9965,77 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     @MainActor
+    private static func testManagedPreservationSignInFeedback() async throws {
+        actor Requests {
+            var exchanges = 0
+            func respond(_ request: URLRequest) throws -> (Data, URLResponse) {
+                guard let url = request.url, request.httpMethod == "POST" else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+                let body: [String: Any]
+                let status: Int
+                if url.path == "/v1/auth/challenges" {
+                    body = ["challengeId": "synthetic-challenge", "challengeProof": "synthetic-proof",
+                            "nonce": "synthetic-nonce", "expiresAt": try ManagedPreservationWire.string(Date().addingTimeInterval(300))]
+                    status = 200
+                } else if url.path == "/v1/auth/sessions" {
+                    exchanges += 1
+                    body = ["error": ["code": "PILOT_REGISTRATION_PENDING",
+                                      "registrationReference": "1b639e35-dd44-46a7-a888-94b33c15b803"]]
+                    status = 403
+                } else { throw ManagedPreservationError.invalidResponse }
+                return (try JSONSerialization.data(withJSONObject: body),
+                        HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
+                                        headerFields: ["Content-Type": "application/json"])!)
+            }
+        }
+        let requests = Requests()
+        let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".preservation-auth-fixture.invalid")!
+        let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin,
+            membershipAudience: "preservation.native-fixture")
+        let client = ManagedPreservationClient(configuration: configuration,
+            requestOverride: { request, _ in try await requests.respond(request) })
+        _ = try await client.prepareSignIn()
+        do {
+            try await client.finishSignIn(state: "wrong-state", identityToken: Data("synthetic-token".utf8),
+                                          authorizationCode: Data("synthetic-code".utf8))
+            throw ManagedPreservationError.invalidResponse
+        } catch ManagedPreservationError.authenticationStepFailed(.state) { }
+        guard await requests.exchanges == 0, try await !client.hasSession() else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let challenge = try await client.prepareSignIn()
+        do {
+            try await client.finishSignIn(state: challenge.state, identityToken: Data("synthetic-token".utf8),
+                                          authorizationCode: Data("synthetic-code".utf8))
+            throw ManagedPreservationError.invalidResponse
+        } catch ManagedPreservationError.pilotRegistrationPending { }
+        guard await requests.exchanges == 1, try await !client.hasSession() else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let coordinator = ManagedPreservationCoordinator(configuration: configuration, client: client)
+        func settle() async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while coordinator.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !coordinator.isBusy else { throw ManagedPreservationError.interrupted }
+        }
+        coordinator.prepareSignIn(); try await settle()
+        coordinator.completeSignIn(.failure(ASAuthorizationError(.failed))); try await settle()
+        guard coordinator.errorMessage == ManagedPreservationError.appleAuthorizationFailed(1004).errorDescription else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        coordinator.prepareSignIn(); try await settle()
+        coordinator.completeSignIn(.failure(ASAuthorizationError(.canceled))); try await settle()
+        guard coordinator.errorMessage == nil, coordinator.statusMessage != nil,
+              !coordinator.isSignedIn, await requests.exchanges == 1 else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        coordinator.stop()
+    }
+
+    @MainActor
     static func testManagedPreservationMembershipBoundary() async throws {
+        try await testManagedPreservationSignInFeedback()
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),

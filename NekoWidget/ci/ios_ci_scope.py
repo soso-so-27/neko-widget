@@ -636,50 +636,15 @@ RECORD_PORTABILITY_COMPANION_DIGESTS = {
 }
 
 MANAGED_PRESERVATION_NEW_PATHS = frozenset({
-    'NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql',
-    'NekoWidget/ci/preservation-pilot-release.py',
-    'NekoWidget/ci/test-preservation-pilot-release.py',
 })
 MANAGED_PRESERVATION_PATHS = frozenset({
-    '.github/workflows/testflight.yml',
-    'NekoWidget/Config.xcconfig',
-    'NekoWidget/NekoWidget/Info.plist',
-    'NekoWidget/NekoWidget/NekoWidget.entitlements',
     'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift',
     'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift',
     'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift',
-    'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift',
-    'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift',
-    'NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql',
-    'NekoWidget/PreservationService/src/aws-kms-key-wrapper.ts',
-    'NekoWidget/PreservationService/src/contracts.ts',
-    'NekoWidget/PreservationService/src/index.ts',
-    'NekoWidget/PreservationService/src/membership-links.ts',
-    'NekoWidget/PreservationService/src/pilot-control.ts',
-    'NekoWidget/PreservationService/src/s3-recovery-copy.ts',
-    'NekoWidget/PreservationService/src/storage.ts',
-    'NekoWidget/PreservationService/test/aws-kms-key-wrapper.test.ts',
-    'NekoWidget/PreservationService/test/membership-links.test.ts',
-    'NekoWidget/PreservationService/test/pilot-control.test.ts',
-    'NekoWidget/PreservationService/test/s3-recovery-copy.test.ts',
-    'NekoWidget/PreservationService/test/storage.integration.test.ts',
-    'NekoWidget/PreservationService/wrangler.jsonc',
-    'NekoWidget/PreservationService/wrangler.kms.staging.jsonc',
-    'NekoWidget/ci/preservation-pilot-release.py',
-    'NekoWidget/ci/release-testflight.py',
-    'NekoWidget/ci/test-preservation-pilot-release.py',
-    'NekoWidget/ci/test-release-testflight.py',
-    'NekoWidget/ci/test-validate-sharing-runtime-self-test.py',
-    'NekoWidget/ci/validate-sharing-release.py',
-    'NekoWidget/ci/validate-sharing-runtime-self-test.py',
 })
 MANAGED_PRESERVATION_COMPANION_PATHS = frozenset({
     'NekoWidget/ci/ios_ci_scope.py',
-    'NekoWidget/ci/plan-ios-ci.py',
-    'NekoWidget/ci/preflight-ci.py',
-    'NekoWidget/ci/test-ci-lanes.py',
     'NekoWidget/ci/test-plan-ios-ci.py',
-    'NekoWidget/ci/test-preflight-ci.py',
 })
 MANAGED_PRESERVATION_DATA_REVIEW = "internal-pilot-apple-owner-storage-restore-export-boundary"
 MANAGED_PRESERVATION_RUNTIME_CASES = (
@@ -690,159 +655,31 @@ MANAGED_PRESERVATION_RUNTIME_CASES = (
 # Exact source, signature/privacy/release changes and six CI companions are reviewed separately.
 # Empty maps deliberately select full until that complete review is frozen.
 MANAGED_PRESERVATION_DIGESTS = {
-    ".github/workflows/testflight.yml": (
-        "f959e56e9b171147d2e4fca3903d0d9ff85d81f8496bd5bd1cd2511e0b1e5178",
-        "df85c78c718266c926c00feb140bc9e136f53f56b49d92475d7bdf54c4eda3de"
-    ),
-    "NekoWidget/Config.xcconfig": (
-        "4dc0d4b562ee159dab51bf9c3b46a50b56b8d295c946fe833aa5a829c2fc2fd7",
-        "353902272bb61031b50454ddf7894f3a5ff81162d1f98d2a46886fd1237899dc"
-    ),
-    "NekoWidget/NekoWidget/Info.plist": (
-        "8afd80c49cf7457cf20bd5a73a98d5b744e8159e9980f92e1df812d801878730",
-        "76768429e49463f352054fdcb74b9edcea4a0dced5a3ef5b21ec07a85d3a5b5c"
-    ),
-    "NekoWidget/NekoWidget/NekoWidget.entitlements": (
-        "fa9d92661ab5981e23f4729d3385110b102207b2a2cb423a162d80dd4d4b6f4d",
-        "0432a825749b4ab8d16fb388b67b28f6e6b6bfc6699b21543f087966f2683597"
-    ),
     "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": (
-        "0cf818de4172176b7510e3de3c623b8bf4997fac1eaf3d12721e60247ad94ab8",
-        "edb772a2d91a465b2854721664891c41e2ca6b696383f6064fa6eab9b9535dcf"
+        "edb772a2d91a465b2854721664891c41e2ca6b696383f6064fa6eab9b9535dcf",
+        "1c9d1547142b366fabbfcffb14c736a32f573e1ce7279d9e4262b298364a8a4a"
     ),
     "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": (
-        "9d0691e6a174a55c2f19cfb49bbc0998b1659f6feb42dc0804465b6971e6d0b7",
-        "dc4a004a82d12bedda7477b138c30030661cfe9da3a36096fa103a441ee33fa0"
+        "dc4a004a82d12bedda7477b138c30030661cfe9da3a36096fa103a441ee33fa0",
+        "3c1ffa4c79dc21af022c19f5a5a6fd38e762d68d27d280f9dd81b8ea20802de5"
     ),
     "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": (
-        "9b5bfdf2911e1a3b6cb2bea8c2faae1c8b7cbea082fd32729131f48111047325",
-        "04c67ef8fa17a3dfc3d545d9ccc83835685cf4671b07a39865a06f303994d68a"
-    ),
-    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": (
-        "fd67f79466df15e06c822315806bb40629aaae99711b543f10837a75c486ee13",
-        "98ad5102a3d3debac4e4172647f32b7ee93399d4f3d9b8064b06a97fdc2e2cfc"
-    ),
-    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
-        "c42a8eb2cdf0f582d465414e22167a85e53ad0a7f65da1255232eeedf571f403",
-        "5697c86788a3ced9e6fa85faeeee47a8933f3ae10251313c671c7aac531dd098"
-    ),
-    "NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql": (
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "9378b11005c524a8a9181e6594dd979556673fbaf1aa041e0c499ecfa6214365"
-    ),
-    "NekoWidget/PreservationService/src/aws-kms-key-wrapper.ts": (
-        "d216c6042cdddd6c1c14fc55fa887d18ce3d8c66302550d4ae080eba5f546340",
-        "962eda97b701b886e0a236bb6ff7f38a084557e72693e98a9a9e781898979472"
-    ),
-    "NekoWidget/PreservationService/src/contracts.ts": (
-        "5439ae21d262c9eb2ae276e27a47b17249ab2295a879fbd401583733784a17d0",
-        "f827d5bc8d4e87d6de528ac29559d06889f6ea278431f1c3dbdb5eb83587705f"
-    ),
-    "NekoWidget/PreservationService/src/index.ts": (
-        "42fe926f2d2e6d319768b5746fb39c6c02eb566de650c59af98d3656d44615ac",
-        "11a813694adec0e2d699d203fc37d10b9b974099905e220a8f745effb399b225"
-    ),
-    "NekoWidget/PreservationService/src/membership-links.ts": (
-        "38176e4139541facc07923fcf818e0e09b52289f38f1cd029dc5cb66da34ceea",
-        "91ab77569fd23a451df1c8c3f6504a712dc24c951152c273038b08d41a8594d2"
-    ),
-    "NekoWidget/PreservationService/src/pilot-control.ts": (
-        "fe393deb19e780fea48db8c2d66688103ed4f7d8979ff53024c3b2b98272eaf5",
-        "09ecb31c8de5d5a8a6c38a704db3d1bcaab9c8b8e33b4590b328cbedc2e09a8f"
-    ),
-    "NekoWidget/PreservationService/src/s3-recovery-copy.ts": (
-        "6da22d5de85356bcda8ac49372ef64bb38a8e04dbc91cda448fdd26fe27a86fd",
-        "87df426809196013910a3af9bf1625ee223f801bf6d781a9677b01608538d971"
-    ),
-    "NekoWidget/PreservationService/src/storage.ts": (
-        "3c2a30ad67bbdaf0920cdb382700d69026b8ff0d30c8e091658f1c7f26fb4a25",
-        "3dcbfc4a5ddb7c47452d7fd12b8e6f7e7413b15a7629e95195a5795d74fcb167"
-    ),
-    "NekoWidget/PreservationService/test/aws-kms-key-wrapper.test.ts": (
-        "f6f835b4cb7dbef11a25798292faedd29269f82ba92e8578b2fc095d7a754457",
-        "6d688dd13ec895846e4d3dd7b6e8a17e7e1f935bbd32dfa83c0619d72743e750"
-    ),
-    "NekoWidget/PreservationService/test/membership-links.test.ts": (
-        "7f18aff48bd21f3d3e13621b6214be5ab4f92b4633e78cbba580619217249dfc",
-        "6360af83482d32f8ff4040e336f14f35586e1ec2dbf7eafab8fdc2ac65a428be"
-    ),
-    "NekoWidget/PreservationService/test/pilot-control.test.ts": (
-        "b88613e057bfe89c3ea589cf11c095605669369fa3d9b609987f5f5ef3bdba8c",
-        "bafa5dae424c7c7daf528cd5c3c5108ce55921cb499d704422fc78b10b5f30c9"
-    ),
-    "NekoWidget/PreservationService/test/s3-recovery-copy.test.ts": (
-        "83b18de150abc71e69d908e62c3b929a4ccea98a2e2cfd6a545aa1fb20c3280b",
-        "968d95b3960b1988a50401e83d175ee07e8ddc44e9934fefb321bd838cf71b8d"
-    ),
-    "NekoWidget/PreservationService/test/storage.integration.test.ts": (
-        "5f8d8037800888534e6180b7867118a607c34b403f0a41221dbf3127a63167f0",
-        "4e4ecc1a88b9370cdf8891f3eff8ff12c8e095eddc3fafbd2601b3a733481a56"
-    ),
-    "NekoWidget/PreservationService/wrangler.jsonc": (
-        "214eb8664913582eafad9e498ffc17f8dea0d9dde18242dd8896d69eb04afef9",
-        "790c08f65037b3d9f52b356744f6cde446f6668f3b7c86f1ac9d2e2f4d18022b"
-    ),
-    "NekoWidget/PreservationService/wrangler.kms.staging.jsonc": (
-        "b81a05ccf1c408d74bb9fa3a4d5ba51d69d868c729c7491688d6240befd5ccef",
-        "da5add0aa4322c7a4a39b8d9c6d5a26ecc0a597d0565ac10e121ff666180235a"
-    ),
-    "NekoWidget/ci/preservation-pilot-release.py": (
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "78b4ba4107e4e4632c2ee87485862a55adddf166d9ee5d601ceef192b6308903"
-    ),
-    "NekoWidget/ci/release-testflight.py": (
-        "5466ac97a6d1bf5d522cafa37979a3c6e2568bdb85f7e901474af55805158179",
-        "0218ab4345f74c38c8d753916faf36c5201013a30f1736fadd3e4f1d41647561"
-    ),
-    "NekoWidget/ci/test-preservation-pilot-release.py": (
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "6800c34ca5ab5f2a3d3227aaad6b6c9ccce119d380705cdb0f7ad9f7be54ba78"
-    ),
-    "NekoWidget/ci/test-release-testflight.py": (
-        "f56ba97012de91738b8f797de9a30e1c0328448b7d188e061ab11b05f4b24d56",
-        "8059e6b18db93b125783eaf3df817a2631a3e77181c784b0b0db5a817e29d7ed"
-    ),
-    "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": (
-        "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4",
-        "40404ae275036625cfa1dd5a8f4bcd3d519ce38026569f5bc744eed33534b96c"
-    ),
-    "NekoWidget/ci/validate-sharing-release.py": (
-        "37f7a91a94643e8d94f0712e03113fbee1d6d504f45b9cb36636965667da380f",
-        "523ca7ba383b44c356b0b0b72d3a5d368694e528ffd6aee5f3d60a4c6a68a8a6"
-    ),
-    "NekoWidget/ci/validate-sharing-runtime-self-test.py": (
-        "7fb475e5b127f407e959be6150e2c209a833695267271a466c3b6e71686f3fa7",
-        "bb751a60728eca856a18f88b31446b81cb9e6069ef55c24b8f8d937c9023efbe"
+        "04c67ef8fa17a3dfc3d545d9ccc83835685cf4671b07a39865a06f303994d68a",
+        "54e9a082be7b859f9c48a0b46159f8e7a8344fd1f5f1cd2b6fc2fcdbf368e4f8"
     )
 }
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "a3557235bd7c3d00b93b4fdc827c949506c7a39a69f585961bc1e6144b10e2b5",
-        "9782474983fea5510940478dde2070e781532ec7d49e1c18d9b12468d2c7a158"
-    ],
-    "NekoWidget/ci/plan-ios-ci.py": [
-        "2a0e3991d060d63e56e63c95ebb2f93443db69ffccb58d1b188ede9d9bcb2333",
-        "f357a717b850eab944da3c386b203a505249f1ae246dd41ec4765c8aae02cf0a"
-    ],
-    "NekoWidget/ci/preflight-ci.py": [
-        "2b3f303c0e6ebe8114bc4e55cc2db631c2b6f1d78235f0c325e55de5d60945df",
-        "0de217b939e009f9327f73cafcfa1bca9107c0ac99f343eb16ef65f0c30bb366"
+        "1cdd2bf576c940a032c5b216b4f777d700662efbdea95d8423810f7a0d1b4edd",
+        "48140343eed4729918e2de41724c8c8a80758f61f13b98624cec7c8ebd60ff3a"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
-        "bc0560bde5e25c8d60cb5eff8c93f407f838c2edff1e015b85a7b6407cd738ff",
-        "978ebc7ac31ba4457f499a8077f352864b94c39d381bb74ac018306176f7b54e"
-    ],
-    "NekoWidget/ci/test-ci-lanes.py": [
-        "8e03e1b49c38a4e3eb27407293459847097176e9d2a661783a8716d6c0f0e037",
-        "d237797aa7772ceecbf1fac5ea94ecd788624f6c09f0b4c6c4f9305387e57642"
+        "978ebc7ac31ba4457f499a8077f352864b94c39d381bb74ac018306176f7b54e",
+        "01c34e688a4b96f6daf388bb918c87f87278accfb9568f2a98d5cbb6c2d6ff80"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "1985cee6bd50e808d9d354f91e31d41fcf5fd26a0a094ab85b35a7075ef39370",
-        "4e2fa6a126b5807d2d35d3e4ca04e13773fff2d678f67c80f9e6962a8a09d50d"
-    ],
-    "NekoWidget/ci/test-preflight-ci.py": [
-        "8443731b59055bb87a75c8b1e2650f5114a4b1959ee3613491d6cb152953f2d1",
-        "ad5d436c9f70b1848b710424a92a3a32a837b4acf8b29eaa4f6259718baf6545"
+        "4e2fa6a126b5807d2d35d3e4ca04e13773fff2d678f67c80f9e6962a8a09d50d",
+        "cc0e195af3ed4663cf7cb6873a16123624a91d964882d81a0ef84f4637757676"
     ]
 }
 
@@ -2720,6 +2557,20 @@ def presentation_only(changes: dict[str, tuple[str, str]]) -> bool:
     return True
 
 
+def managed_validation_source(changes: dict[str, tuple[str, str]], path: str) -> str:
+    # A closed diff already rejects modifications outside the frozen product set.
+    # Read unchanged, tracked test inventory from the candidate checkout instead
+    # of requiring a no-op edit merely to include it in the review manifest.
+    if path in changes:
+        return changes[path][1]
+    if path not in (MEMORY_TEST_PATH, "NekoWidget/ci/validate-sharing-runtime-self-test.py"):
+        return ""
+    try:
+        return (Path(__file__).resolve().parents[2] / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+
+
 def select_scope(changes: dict[str, tuple[str, str]] | None, *,
                  memory_test_source: str | None = None, project_source: str | None = None) -> str:
     # The planner first proves existing regular source files, modification-only
@@ -2757,10 +2608,10 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return ARCHIVE_PICKER_SCOPE
     if reviewed_delivery_membership_changes(changes, managed=True):
         runtime = changes["NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"][1]
-        validator = changes["NekoWidget/ci/validate-sharing-runtime-self-test.py"][1]
+        validator = managed_validation_source(changes, "NekoWidget/ci/validate-sharing-runtime-self-test.py")
         return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 2
                 and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 2
-                and memory_tests_available(changes[MEMORY_TEST_PATH][1], REVIEWED_MANAGED_PRESERVATION_TESTS)
+                and memory_tests_available(managed_validation_source(changes, MEMORY_TEST_PATH), REVIEWED_MANAGED_PRESERVATION_TESTS)
                 and len(MANAGED_PRESERVATION_RUNTIME_CASES) == 3
                 and len(set(MANAGED_PRESERVATION_RUNTIME_CASES)) == 3
                 and all(f'runAsync("{case}")' in runtime and f'"{case}",' in validator

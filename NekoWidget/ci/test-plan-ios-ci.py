@@ -717,7 +717,8 @@ class PlanTests(unittest.TestCase):
                 ("NekoWidget/ci/validate-sharing-runtime-self-test.py",
                  'REQUIRED_CASES = {' + ''.join(f'"{case}",' for case in scope.MANAGED_PRESERVATION_RUNTIME_CASES) + '}'),
             ):
-                changes[path] = (changes[path][0], source)
+                if path in changes:
+                    changes[path] = (changes[path][0], source)
         project = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
         if project in changes:
             frozen = "\t\tA00000000000000000000025 /* Sources */ = {\n\t\t\tfiles = (unchanged);\n\t\t};\n"
@@ -792,13 +793,17 @@ class PlanTests(unittest.TestCase):
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
         ))
         self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v3')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 31)
-        self.assertIn('NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql', scope.MANAGED_PRESERVATION_NEW_PATHS)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 3)
+        self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertNotIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
-        self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 2)
+        self.assertTrue(scope.memory_tests_available(scope.managed_validation_source(changes, scope.MEMORY_TEST_PATH), tests))
+        with patch.object(scope, "managed_validation_source", return_value=""):
+            with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
+                 patch.object(scope, "MANAGED_PRESERVATION_COMPANION_DIGESTS", companions):
+                self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
 
     def test_managed_preservation_raw_modifications_and_four_safety_jobs(self):
         changes, product, companions = self.delivery_membership_changes(managed=True)
