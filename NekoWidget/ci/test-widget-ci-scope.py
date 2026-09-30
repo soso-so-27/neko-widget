@@ -497,5 +497,39 @@ class WidgetScopeTests(unittest.TestCase):
             self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
 
 
+class LostCatSavedInfoBoundaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.base = "212233c5793bf7962baf1a4305ae3fe36bf0d749"
+        cls.head = "d2f84181229bd8e751e027f2d9784866b662cf27"
+        paths = planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0")
+        cls.changes = {path: (planner.git("show", f"{cls.base}:{path}"),
+                              planner.git("show", f"{cls.head}:{path}"))
+                       for path in paths if path and not scope.is_handoff(path)}
+
+    def test_reviewed_store_keeps_existing_lost_cat_checks_without_gallery(self):
+        self.assertEqual(scope.select_scope(self.changes), scope.LOST_CAT_UX_SCOPE)
+        self.assertEqual(set(self.changes), {scope.LOST_CAT_STORE_PATH, scope.LOST_CAT_PHOTO_PATH, scope.MEMORY_TEST_PATH})
+        self.assertEqual(scope.native_tests(scope.LOST_CAT_UX_SCOPE), scope.LOST_CAT_PHOTO_TESTS)
+        required = planner.required_jobs(list(self.changes), scope.LOST_CAT_UX_SCOPE)
+        self.assertEqual(len(required), 4)
+        self.assertEqual(required[:2], (planner.BUILD, planner.smoke_job(scope.LOST_CAT_UX_SCOPE)))
+        self.assertEqual(scope.lanes(scope.LOST_CAT_UX_SCOPE), ("runtime", "app-ui"))
+        self.assertFalse(any("gallery" in job for job in required))
+
+    def test_unknown_store_input_or_mixed_companion_cannot_borrow_review(self):
+        modified = dict(self.changes)
+        before, after = modified[scope.LOST_CAT_STORE_PATH]
+        modified[scope.LOST_CAT_STORE_PATH] = (before, after + "\n// unreviewed\n")
+        self.assertNotEqual(scope.select_scope(modified), scope.LOST_CAT_UX_SCOPE)
+        for path in ("NekoWidget/NekoWidget/Services/EvacuationStore.swift",
+                     "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                     "NekoWidget/NekoWidgetWidget/NekoWidget.swift"):
+            with self.subTest(path=path):
+                mixed = dict(self.changes); mixed[path] = ("before", "after")
+                self.assertNotEqual(scope.select_scope(mixed), scope.LOST_CAT_UX_SCOPE)
+        self.assertFalse(scope.lost_cat_store_changes(before + "\n// unknown input\n", after))
+
+
 if __name__ == "__main__":
     unittest.main()
