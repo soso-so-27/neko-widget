@@ -666,17 +666,21 @@ MANAGED_PRESERVATION_PATHS = frozenset({
     'NekoWidget/PreservationService/wrangler.kms.staging.jsonc',
     'NekoWidget/ci/preservation-pilot-release.py',
     'NekoWidget/ci/release-testflight.py',
+    'NekoWidget/ci/test-ci-smoke-scope.py',
     'NekoWidget/ci/test-preservation-pilot-release.py',
     'NekoWidget/ci/test-release-testflight.py',
     'NekoWidget/ci/test-validate-sharing-runtime-self-test.py',
+    'NekoWidget/ci/test-widget-ci-scope.py',
     'NekoWidget/ci/validate-sharing-release.py',
     'NekoWidget/ci/validate-sharing-runtime-self-test.py',
 })
 MANAGED_PRESERVATION_COMPANION_PATHS = frozenset({
     'NekoWidget/ci/ios_ci_scope.py',
     'NekoWidget/ci/plan-ios-ci.py',
+    'NekoWidget/ci/preflight-ci.py',
     'NekoWidget/ci/test-ci-lanes.py',
     'NekoWidget/ci/test-plan-ios-ci.py',
+    'NekoWidget/ci/test-preflight-ci.py',
 })
 MANAGED_PRESERVATION_DATA_REVIEW = "internal-pilot-apple-owner-storage-restore-export-boundary"
 MANAGED_PRESERVATION_RUNTIME_CASES = (
@@ -684,7 +688,7 @@ MANAGED_PRESERVATION_RUNTIME_CASES = (
     "managed-preservation-pilot-boundary",
 )
 # One frozen v3 internal pilot batch, not a general product/CI allowance.
-# Exact source, signature/privacy/release changes and four CI companions are reviewed separately.
+# Exact source, signature/privacy/release changes and six CI companions are reviewed separately.
 # Empty maps deliberately select full until that complete review is frozen.
 MANAGED_PRESERVATION_DIGESTS = {
     ".github/workflows/testflight.yml": (
@@ -721,7 +725,7 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": (
         "c42a8eb2cdf0f582d465414e22167a85e53ad0a7f65da1255232eeedf571f403",
-        "094e76cf959e21d37eb11ce1e903ae10313b50104b4792217bda1b8351e6b8a7"
+        "5697c86788a3ced9e6fa85faeeee47a8933f3ae10251313c671c7aac531dd098"
     ),
     "NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -789,7 +793,11 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/ci/release-testflight.py": (
         "5466ac97a6d1bf5d522cafa37979a3c6e2568bdb85f7e901474af55805158179",
-        "51f25999dc2d24961bb2e163db10edef76aef510c25e2bae1cb1246256d357b5"
+        "5e6c41d9f54671576917004397c370466b465a784a4c583b4b8a5ed3013a7802"
+    ),
+    "NekoWidget/ci/test-ci-smoke-scope.py": (
+        "224ba9a81ca95222cfbf36261da829256004c64475b735da0d1a83edcfc3575d",
+        "74a7aedc23b55f79e25cf77469c8c90565504a092fc9d061bf1025a3b4eca20b"
     ),
     "NekoWidget/ci/test-preservation-pilot-release.py": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -797,11 +805,15 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/ci/test-release-testflight.py": (
         "f56ba97012de91738b8f797de9a30e1c0328448b7d188e061ab11b05f4b24d56",
-        "73b5b7ac5ab70a878c3f2574176c736d91c2c4db02d2734d44c8195cc25f10ad"
+        "6fa7aba034c81d9f98df1149877fcdb45ef390005f23142bb61befc07e0128e1"
     ),
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": (
         "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4",
         "40404ae275036625cfa1dd5a8f4bcd3d519ce38026569f5bc744eed33534b96c"
+    ),
+    "NekoWidget/ci/test-widget-ci-scope.py": (
+        "13983a858a9288be41e5db62c998df7b7e5a77bcd02d47a465a759c6a9b00892",
+        "b5723df1f6b7ea45cee60f4113fe918577e6507294b3824dae220f55b28fca5f"
     ),
     "NekoWidget/ci/validate-sharing-release.py": (
         "37f7a91a94643e8d94f0712e03113fbee1d6d504f45b9cb36636965667da380f",
@@ -814,16 +826,20 @@ MANAGED_PRESERVATION_DIGESTS = {
 }
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "d90fea6cc810ae99a5698a88257a0fd676f0d0307b49c3e452d3f3b8f1bc3ae8",
-        "3f96f800c0bef797689c60f50104cdaf6ac50b3a09f8e9ae5e84579f95544ead"
+        "a3557235bd7c3d00b93b4fdc827c949506c7a39a69f585961bc1e6144b10e2b5",
+        "d28dfd8b332fe020fb6785db8b611623ee24b71974ff3e429945563011d3ca3e"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
-        "dbed9dd9ec6fa29c268e3354e26b426c7f1fbb2b28691153f2c35ce48bece71e",
-        "147fdfdf70acdcd74e930d86e5680434797610050c1b137479c8985a38b07a0f"
+        "2a0e3991d060d63e56e63c95ebb2f93443db69ffccb58d1b188ede9d9bcb2333",
+        "559fe8093130174c1f4ff3d3c223ce68b60407e115650dcb01aac8f2d5a604e9"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "2b3f303c0e6ebe8114bc4e55cc2db631c2b6f1d78235f0c325e55de5d60945df",
+        "621dcd0c52f2f570b1b93450b806ae88d2884e74becae63acc05f91aa7340cb5"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "bc0560bde5e25c8d60cb5eff8c93f407f838c2edff1e015b85a7b6407cd738ff",
-        "f9a9c179684c91904776fd85d88452192f4264802eb0eada33e4a6c82c9e5aca"
+        "e4eec8028d150eba5cf75cf2a18ed38c7784dceaee3e508efa8c631177e2f9e1"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "8e03e1b49c38a4e3eb27407293459847097176e9d2a661783a8716d6c0f0e037",
@@ -831,7 +847,11 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "1985cee6bd50e808d9d354f91e31d41fcf5fd26a0a094ab85b35a7075ef39370",
-        "d3b680721cc5adb0d21dddbe7708cf29283cf896f0a8fe470dc3155be497d9e4"
+        "d0644a97e0d211f0e1abdfb3235d4f9f9bbcab565655e5fb2c1117a38bcd3ace"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "8443731b59055bb87a75c8b1e2650f5114a4b1959ee3613491d6cb152953f2d1",
+        "d08e4933f3ebc3a3a50c66817db6965cf4faa8cbdbda97195e1c162cf3893bf6"
     ]
 }
 

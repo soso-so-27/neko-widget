@@ -188,7 +188,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
     if correction is not None:
-        require(plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE)
                 and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
                 and isinstance(correction, dict)
                 and type(correction.get("run_id")) is int and type(correction.get("sha")) is str,
@@ -209,14 +209,14 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         require(len(old_plan_jobs) == 1 and type(old_plan_jobs[0].get("id")) is int,
                 "Test-correction source has no unique plan job.")
         old_plan = plan_from_log(gh.log(source["id"], old_plan_jobs[0]["id"]), source["head_sha"])
-        require(old_plan.get("scope") == planner.LOST_CAT_UX_SCOPE
+        require(old_plan.get("scope") == plan.get("scope")
                 and old_plan.get("required_jobs") == list(required)
                 and old_plan.get("evidence_run_id") is None,
                 "Test-correction source did not run the same required check graph.")
-        ui_name = planner.lane_job(planner.LOST_CAT_UX_SCOPE, "app-ui")
+        ui_name = planner.lane_job(plan["scope"], "app-ui")
         current_jobs = executed_jobs_for(gh, current)
         require(planner.covers_jobs(current_jobs, (ui_name,), sha, now=now),
-                "All three owning app UI cases must pass in the new candidate's normal job.")
+                "All required owning app UI cases must pass in the new candidate's normal job.")
         # Skipped reused jobs are expected, but a duplicate/misrouted execution is not.
         require(not any(job.get("name") in {entry["name"] for entry in correction["jobs"]}
                         and job.get("conclusion") != "skipped" for job in current_jobs),

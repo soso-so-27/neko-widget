@@ -2393,9 +2393,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["preservation-copy-save"].exists)
         capture("preservation-copy-result-unknown")
         tap("preservation-copy-confirm", scrollUp: false)
-        let status = app.descendants(matching: .any)["preservation-copy-status"].firstMatch
-        let stored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "サービスに保管済み"), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [stored], timeout: 8), .completed)
+        XCTAssertTrue(app.staticTexts["サービスに保管済み"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["preservation-copy-confirm"].exists)
         capture("preservation-copy-stored")
         app.terminate()
     }

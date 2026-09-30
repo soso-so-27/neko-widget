@@ -771,6 +771,12 @@ class PlanTests(unittest.TestCase):
                     continue
                 if extra in scope.MANAGED_PRESERVATION_PATHS:
                     continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
+                if extra in scope.MANAGED_PRESERVATION_PATHS:
+                    continue
                 altered = dict(changes, **{extra: ("before", "after")})
                 self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
                 self.assertEqual(planner.required_jobs(list(altered), scope.REVIEWED_MANAGED_PRESERVATION_SCOPE), planner.FULL)
@@ -796,12 +802,12 @@ class PlanTests(unittest.TestCase):
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
         ))
         self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v3')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 31)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 33)
         self.assertIn('NekoWidget/PreservationService/migrations/0028_pilot_registrations.sql', scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 4)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
         self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
 
     def test_managed_preservation_raw_modifications_and_four_safety_jobs(self):
@@ -2819,7 +2825,10 @@ class TestCorrectionReuseTests(unittest.TestCase):
             self.assertEqual(record["test_correction_evidence"], correction)
             self.assertEqual(record["required_jobs"], list(planner.required_jobs_from_scope(planner.LOST_CAT_UX_SCOPE)))
 
-    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self):
+    def test_managed_pilot_correction_excludes_product_and_fixture_changes(self):
+        self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+
+    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def git(*args):
@@ -2835,7 +2844,8 @@ class TestCorrectionReuseTests(unittest.TestCase):
                     "commit", "-qm", "fixture")
                 return git("rev-parse", "HEAD")
             git("init", "-q")
-            names = sorted(scope.LOST_CAT_PHOTO_TEST_NAMES)
+            names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"]
+                     if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else sorted(scope.LOST_CAT_PHOTO_TEST_NAMES))
             before = ("final class SoloMemoriesUITests: XCTestCase {\n"
                       + "".join(f"    func {name}() {{\n        XCTAssertTrue(true)\n    }}\n"
                                 for name in names) + "}\n")
@@ -2852,20 +2862,23 @@ class TestCorrectionReuseTests(unittest.TestCase):
                 write(test_path, after)
                 write(control, "new\n")
                 head = commit()
-                self.assertTrue(planner.test_correction_inputs(source, head))
+                self.assertTrue(planner.test_correction_inputs(source, head, selected_scope))
                 for path in (product, workflow):
                     git("checkout", "--detach", "-q", source)
                     write(test_path, after)
                     write(path, "new\n")
-                    self.assertFalse(planner.test_correction_inputs(source, commit()))
+                    self.assertFalse(planner.test_correction_inputs(source, commit(), selected_scope))
                 git("checkout", "--detach", "-q", source)
                 write(test_path, before.replace("final class", "public final class"))
-                self.assertFalse(planner.test_correction_inputs(source, commit()))
+                self.assertFalse(planner.test_correction_inputs(source, commit(), selected_scope))
 
-    def test_failed_source_reuses_only_three_successful_jobs(self):
+    def test_managed_pilot_failed_source_requires_each_successful_native_job(self):
+        self.test_failed_source_reuses_only_three_successful_jobs(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+
+    def test_failed_source_reuses_only_three_successful_jobs(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
         now = dt.datetime.now(dt.timezone.utc)
         head, source = "a" * 40, "b" * 40
-        required = planner.required_jobs_from_scope(planner.LOST_CAT_UX_SCOPE)
+        required = planner.required_jobs_from_scope(selected_scope)
         run = {"id": 10, "workflow_id": 5, "head_sha": source, "head_branch": "codex/lost-cat",
                "event": "push", "status": "completed", "conclusion": "failure",
                "updated_at": now.isoformat(), "repository": {"full_name": "owner/repo"},

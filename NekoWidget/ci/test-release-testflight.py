@@ -131,10 +131,13 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(release.Blocked):
             self.prepare()
 
-    def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self):
-        required = release.planner.required_jobs_from_scope(release.planner.LOST_CAT_UX_SCOPE)
+    def test_managed_pilot_correction_requires_old_native_jobs_and_new_ui(self):
+        self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+
+    def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self, selected_scope=release.planner.LOST_CAT_UX_SCOPE):
+        required = release.planner.required_jobs_from_scope(selected_scope)
         self.run["head_branch"] = "codex/lost-cat"
-        self.plan.update(scope=release.planner.LOST_CAT_UX_SCOPE, required_jobs=list(required))
+        self.plan.update(scope=selected_scope, required_jobs=list(required))
         source_sha = "b" * 40
         evidence = {"run_id": 10, "sha": source_sha,
                     "jobs": [{"name": name, "job_id": 302 + index}
@@ -154,7 +157,7 @@ class ReleaseTests(unittest.TestCase):
         self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"] = {
             "total_count": len(old_jobs), "jobs": old_jobs}
         old_plan = {"schema_version": 1, "repository": release.REPOSITORY, "head_sha": source_sha,
-                    "scope": release.planner.LOST_CAT_UX_SCOPE, "required_jobs": list(required),
+                    "scope": selected_scope, "required_jobs": list(required),
                     "evidence_run_id": None, "evidence_sha": None}
         self.gh.logs[(10, 301)] = release.PLAN_MARKER + json.dumps(old_plan)
         with patch.object(release.planner, "test_correction_inputs", return_value=True):
