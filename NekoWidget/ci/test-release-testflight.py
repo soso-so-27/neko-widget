@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -334,6 +335,34 @@ class ReleaseTests(unittest.TestCase):
         comparison.update(status="ahead", merge_base_commit={"sha": "c" * 40})
         with self.assertRaises(release.Blocked):
             self.prepare()
+
+    def test_external_source_checkout_requires_absolute_path_and_merged_clean_tool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected = Path(directory).resolve()
+            self.assertEqual(release.verified_candidate_root(self.gh, selected), selected)
+            for invalid in (Path("relative-checkout"), selected / "missing"):
+                with self.assertRaises(release.Blocked):
+                    release.verified_candidate_root(self.gh, invalid)
+            self.git_values[("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none")] = " M release-testflight.py"
+            with self.assertRaises(release.Blocked):
+                release.verified_candidate_root(self.gh, selected)
+
+    def test_external_cli_still_checks_tool_and_source_then_defaults_to_dry_run(self):
+        previous_root = release.ROOT
+        roots = []
+        original = release.check_checkout
+        def checked(gh, sha):
+            roots.append(release.ROOT)
+            return original(gh, sha)
+        with tempfile.TemporaryDirectory() as directory:
+            selected = Path(directory).resolve()
+            args = ["--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected)]
+            with patch.object(release, "GitHub", return_value=self.gh), patch.object(release, "check_checkout", side_effect=checked), \
+                    patch.object(release.os, "chdir"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(release.main(args), 0)
+            self.assertEqual(roots, [previous_root, selected])
+            self.assertEqual(self.gh.dispatches, [])
+            self.assertEqual(release.ROOT, previous_root)
 
     def test_duplicate_lower_and_any_active_release_are_blocked(self):
         for build in ("164", "100"):

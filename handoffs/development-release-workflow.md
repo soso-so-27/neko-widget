@@ -61,6 +61,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - 軽微な修正ごとに配布せず、関連修正を一つのrelease candidateへまとめる。
 - 内部TestFlightは `NekoWidget/ci/release-testflight.py` のdry-runで対象SHA・成功CI・build番号・重複を確認してから同じ引数に `--dispatch` を付ける。毎回workflowのフラグを手入力しない。アプリを変更していない開発基盤だけの修正は、検証のために新しいTestFlightを作らない。
 - 対象SHAがmainに含まれていれば、mainの最新SHAと一致する必要はない。候補のcheckoutから `--sha <候補の完全SHA> --ci-run <その候補の成功run> --build-number <未使用番号>` を使う。配布workflowはそのSHAをcheckoutし、署名metadataも同じSHAへ結び付ける。候補以降にtestflight.yml自体が変わった場合は混在させず停止する。この経路の導入前SHAの再配布には使わない。
+- 並行mainの制御更新で過去の検証済み候補を照合するときは、既にmainへ反映されたcleanな配布ツールから `--checkout <候補の絶対ディレクトリ>` を指定できる。ツール自身と候補のrepo・clean・main祖先関係を両方確認し、候補SHA/CI/重複/署名/内部設定の条件は維持する。Vetの制御承認は候補と現mainのmerge-baseへ完全一致しなければならず、未反映の制御差分は拒否する。可変main tipへの追従で検証済みnative入力を無効化せず、候補ソースや検証履歴を加工しない。
 - 配布runが `waiting` の場合は、そのrunの `pending_deployments` を確認する。既に承認された内部配布の対象SHA・buildに一致する場合に、そのrunの `testflight` 環境を承認する。環境の保護ルール自体は変更しない。対象や許可範囲が異なる操作へ流用しない。
 - Appleへのアップロード成功とエラーの有無を基本の完了証拠とし、毎回のApp Store Connect画面確認・再ログインを次の開発の前提にしない。配布が見えない、処理エラーなどの問題がある場合にだけ画面を確認する。アップロード成功と内部配布画面の確認済みは区別して記録する（2026-09-13ユーザー指定）。
 
