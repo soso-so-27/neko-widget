@@ -1,9 +1,13 @@
 {
-  "as_of": "2026-09-29",
+  "as_of": "2026-09-30",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.483,
   "upload_run": 36502758642,
   "upload_observations": [
+    {
+      "run_id": 36661985758,
+      "minutes": 9.833
+    },
     {
       "run_id": 36535759050,
       "minutes": 11.633
@@ -50,6 +54,32 @@
     }
   ],
   "observations": [
+    {
+      "scope": "reviewed-tool-cat-autofill-v1",
+      "candidate_minutes": 26.733,
+      "run_id": 36656742166,
+      "outcome": "failure",
+      "runner_minutes": 68.25,
+      "note": "First normal nine-file/six-case graph. Build/security, Photos bootstrap and actual scan, both-OS runtime and five UI cases passed. One existing unregistered Care test failed an obsolete standalone summary-label assertion. Corrected only that test to reopen the actual saved field and assert exact value. Retain failed cost; not release evidence."
+    },
+    {
+      "scope": "reviewed-tool-cat-autofill-v1",
+      "candidate_minutes": 17.917,
+      "run_id": 36660318094,
+      "outcome": "success",
+      "runner_minutes": 52.983,
+      "source_sha": "6e6981146c1bedf5b695468b35bef680eeb6fe89",
+      "diagnostic_run_ids": [36649212162, 36651098512, 36652685706, 36655219812, 36659052893],
+      "first_product_candidate_at": "2026-09-30T00:11:25Z",
+      "main_merge_sha": "70283e486efc1a7f7a4a793f10033edbce639a88",
+      "upload_run_id": 36661985758,
+      "build_number": 226,
+      "upload_minutes": 9.833,
+      "upload_runner_minutes": 8.933,
+      "apple_upload_succeeded_at": "2026-09-30T03:04:11.519917Z",
+      "first_product_source_to_apple_upload_minutes": 172.775,
+      "note": "All four required native jobs and six UI cases passed at fixed candidate. Actual before/edited/restarted values and untouched output inspected; exact saved unregistered input at AX3 verified. Eight implementation/fixture files unchanged since first candidate60c5c20. Failed diagnostics and first failed normal run retained; 17.917 minutes is CI graph duration, not end-to-end task time or a promised speedup. Original120/150-minute estimates were exceeded due test assumptions, with later240-minute allowance and measured176.7-minute planning projection. Apple reported UPLOAD SUCCEEDED with no errors. Processing/device availability not verified; no public release."
+    },
     {
       "scope": "reviewed-window-hub-ui-v1",
       "candidate_minutes": 18.217,
