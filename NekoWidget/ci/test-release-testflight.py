@@ -134,6 +134,9 @@ class ReleaseTests(unittest.TestCase):
     def test_managed_pilot_correction_requires_old_native_jobs_and_new_ui(self):
         self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
+    def test_vet_correction_requires_old_native_jobs_and_new_ui(self):
+        self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.VET_SAVED_CAT_SCOPE)
+
     def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self, selected_scope=release.planner.LOST_CAT_UX_SCOPE):
         required = release.planner.required_jobs_from_scope(selected_scope)
         self.run["head_branch"] = "codex/lost-cat"
