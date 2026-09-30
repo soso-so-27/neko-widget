@@ -83,7 +83,7 @@ class ReleaseTests(unittest.TestCase):
              "conclusion": "success", "completed_at": self.now.isoformat()}
             for index, name in enumerate(self.plan["required_jobs"])
         ]
-        self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"] = {"total_count": len(jobs), "jobs": jobs}
+        self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
 
     def prepare(self, build="165", sha=None):
         return release.prepare(self.gh, sha or self.sha, build, 20, self.now, {})
@@ -92,9 +92,9 @@ class ReleaseTests(unittest.TestCase):
         self.plan.update(evidence_run_id=10, evidence_sha=self.sha)
         self.set_plan()
         self.gh.values["actions/runs/10"] = dict(self.run, id=10, head_branch="codex/candidate")
-        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"] = copy.deepcopy(
-            self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"])
-        for job in self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]["jobs"][1:]:
+        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100&page=1"] = copy.deepcopy(
+            self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"])
+        for job in self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]["jobs"][1:]:
             job["conclusion"] = "skipped"
 
     def test_fixed_inputs_and_full_plan_are_verified_without_dispatch(self):
@@ -127,7 +127,7 @@ class ReleaseTests(unittest.TestCase):
     def test_skipped_main_jobs_require_real_referenced_candidate_jobs(self):
         self.candidate()
         self.assertEqual(self.prepare()["ci"]["tested_run"], 10)
-        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"]["jobs"][1]["conclusion"] = "skipped"
+        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100&page=1"]["jobs"][1]["conclusion"] = "skipped"
         with self.assertRaises(release.Blocked):
             self.prepare()
 
@@ -144,7 +144,7 @@ class ReleaseTests(unittest.TestCase):
                              for index, name in enumerate(required[:3])]}
         self.plan["test_correction_evidence"] = evidence
         self.set_plan()
-        current = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]["jobs"]
+        current = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]["jobs"]
         for job in current[1:4]:
             job["conclusion"] = "skipped"
         source = dict(self.run, id=10, head_sha=source_sha, conclusion="failure")
@@ -154,7 +154,7 @@ class ReleaseTests(unittest.TestCase):
              "status": "completed", "conclusion": "failure" if index == 3 else "success",
              "completed_at": self.now.isoformat()}
             for index, name in enumerate(required)]
-        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"] = {
+        self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100&page=1"] = {
             "total_count": len(old_jobs), "jobs": old_jobs}
         old_plan = {"schema_version": 1, "repository": release.REPOSITORY, "head_sha": source_sha,
                     "scope": selected_scope, "required_jobs": list(required),
@@ -174,7 +174,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_reused_main_accepts_duplicate_skipped_matrix_placeholders(self):
         self.candidate()
-        result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]
+        result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]
         placeholder = "Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]"
         result["jobs"].extend({
             "id": 400 + index, "name": placeholder, "head_sha": self.sha,
@@ -238,7 +238,7 @@ class ReleaseTests(unittest.TestCase):
     def test_missing_failed_duplicate_wrong_sha_or_truncated_jobs_reject(self):
         for kind in ("missing", "failed", "duplicate", "wrong-sha", "truncated"):
             self.set_plan()
-            result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]
+            result = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]
             if kind == "missing":
                 result["jobs"].pop()
             elif kind == "failed":
@@ -254,7 +254,7 @@ class ReleaseTests(unittest.TestCase):
     def test_partial_candidate_retry_keeps_siblings_and_requires_latest_success(self):
         self.candidate()
         self.gh.values["actions/runs/10"]["run_attempt"] = 2
-        jobs = copy.deepcopy(self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"]["jobs"])
+        jobs = copy.deepcopy(self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100&page=1"]["jobs"])
         for job in jobs:
             job.update(run_id=10, run_attempt=1)
         retried = dict(jobs[-1], id=900, run_attempt=2)
@@ -270,7 +270,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_partial_main_retry_uses_successful_plan_from_earlier_attempt(self):
         self.run["run_attempt"] = 2
-        jobs = copy.deepcopy(self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100"]["jobs"])
+        jobs = copy.deepcopy(self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]["jobs"])
         for job in jobs:
             job.update(run_id=20, run_attempt=1)
         jobs.append(dict(jobs[-1], id=900, run_attempt=2))
@@ -282,7 +282,7 @@ class ReleaseTests(unittest.TestCase):
     def test_today_retry_cannot_refresh_a_two_day_old_successful_sibling(self):
         self.candidate()
         self.gh.values["actions/runs/10"]["run_attempt"] = 2
-        jobs = copy.deepcopy(self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100"]["jobs"])
+        jobs = copy.deepcopy(self.gh.values["actions/runs/10/jobs?filter=latest&per_page=100&page=1"]["jobs"])
         for job in jobs:
             job.update(run_id=10, run_attempt=1)
         jobs[1]["completed_at"] = (self.now - dt.timedelta(days=2)).isoformat()
@@ -366,7 +366,7 @@ class ReleaseTests(unittest.TestCase):
     def test_legacy_failure_is_not_proof_of_no_upload(self):
         self.previous.update(display_title="old title", conclusion="failure")
         step = {"name": "Validate and upload IPA to TestFlight", "status": "completed", "conclusion": "failure"}
-        self.gh.values["actions/runs/30/jobs?filter=latest&per_page=100"] = {
+        self.gh.values["actions/runs/30/jobs?filter=latest&per_page=100&page=1"] = {
             "total_count": 1, "jobs": [{"steps": [step]}],
         }
         with self.assertRaises(release.Blocked):

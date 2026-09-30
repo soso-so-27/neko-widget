@@ -127,7 +127,7 @@ def workflow(gh: GitHub, filename: str) -> dict:
 
 
 def jobs_for(gh: GitHub, run_id: int) -> list[dict]:
-    result = gh.get(f"actions/runs/{run_id}/jobs?filter=latest&per_page=100")
+    result = gh.get(f"actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1")
     jobs = result.get("jobs")
     require(isinstance(jobs, list) and type(result.get("total_count")) is int
             and result["total_count"] == len(jobs), "Job evidence is incomplete.")

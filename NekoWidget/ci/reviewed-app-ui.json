@@ -107,7 +107,7 @@
     },
     "NekoWidget/ci/release-testflight.py": {
       "before": "5466ac97a6d1bf5d522cafa37979a3c6e2568bdb85f7e901474af55805158179",
-      "after": "5e6c41d9f54671576917004397c370466b465a784a4c583b4b8a5ed3013a7802"
+      "after": "0218ab4345f74c38c8d753916faf36c5201013a30f1736fadd3e4f1d41647561"
     },
     "NekoWidget/ci/test-preservation-pilot-release.py": {
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -115,7 +115,7 @@
     },
     "NekoWidget/ci/test-release-testflight.py": {
       "before": "f56ba97012de91738b8f797de9a30e1c0328448b7d188e061ab11b05f4b24d56",
-      "after": "6fa7aba034c81d9f98df1149877fcdb45ef390005f23142bb61befc07e0128e1"
+      "after": "8059e6b18db93b125783eaf3df817a2631a3e77181c784b0b0db5a817e29d7ed"
     },
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
       "before": "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4",

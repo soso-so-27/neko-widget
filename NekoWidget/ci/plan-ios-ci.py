@@ -1044,7 +1044,7 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
         raise ValueError("Invalid workflow attempt")
     prefix = f"/repos/{repository}/actions/runs/{int(run['id'])}/jobs"
     if attempt == 1:
-        result = api(prefix + "?filter=latest&per_page=100")
+        result = api(prefix + "?filter=latest&per_page=100&page=1")
         if result["total_count"] != len(result["jobs"]):
             raise ValueError("Incomplete job response")
         return result["jobs"]

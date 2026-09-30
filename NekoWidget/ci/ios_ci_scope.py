@@ -792,7 +792,7 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/ci/release-testflight.py": (
         "5466ac97a6d1bf5d522cafa37979a3c6e2568bdb85f7e901474af55805158179",
-        "5e6c41d9f54671576917004397c370466b465a784a4c583b4b8a5ed3013a7802"
+        "0218ab4345f74c38c8d753916faf36c5201013a30f1736fadd3e4f1d41647561"
     ),
     "NekoWidget/ci/test-preservation-pilot-release.py": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -800,7 +800,7 @@ MANAGED_PRESERVATION_DIGESTS = {
     ),
     "NekoWidget/ci/test-release-testflight.py": (
         "f56ba97012de91738b8f797de9a30e1c0328448b7d188e061ab11b05f4b24d56",
-        "6fa7aba034c81d9f98df1149877fcdb45ef390005f23142bb61befc07e0128e1"
+        "8059e6b18db93b125783eaf3df817a2631a3e77181c784b0b0db5a817e29d7ed"
     ),
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": (
         "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4",
@@ -818,11 +818,11 @@ MANAGED_PRESERVATION_DIGESTS = {
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "a3557235bd7c3d00b93b4fdc827c949506c7a39a69f585961bc1e6144b10e2b5",
-        "8d03315573e78e5863952718f5b94fde310e0844884ee1763f123e56fd9ec527"
+        "9782474983fea5510940478dde2070e781532ec7d49e1c18d9b12468d2c7a158"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "2a0e3991d060d63e56e63c95ebb2f93443db69ffccb58d1b188ede9d9bcb2333",
-        "2fb3847a75eceffc6544ddecd2c95522d0a7b6017d692877e134f9e88201e797"
+        "f357a717b850eab944da3c386b203a505249f1ae246dd41ec4765c8aae02cf0a"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "2b3f303c0e6ebe8114bc4e55cc2db631c2b6f1d78235f0c325e55de5d60945df",
@@ -830,7 +830,7 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "bc0560bde5e25c8d60cb5eff8c93f407f838c2edff1e015b85a7b6407cd738ff",
-        "1f16c8b6499e5505d1e1a6848f9b5afe5044de2be331d31e8cdcb89b98faa576"
+        "978ebc7ac31ba4457f499a8077f352864b94c39d381bb74ac018306176f7b54e"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "8e03e1b49c38a4e3eb27407293459847097176e9d2a661783a8716d6c0f0e037",
@@ -838,7 +838,7 @@ MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "1985cee6bd50e808d9d354f91e31d41fcf5fd26a0a094ab85b35a7075ef39370",
-        "58d41cec6891668e47f75d99552154b22dd96139d69d993cf0b2ddf05924e72e"
+        "91991ef8f22b01a784f441daddc1de534f734b6039799019a506af276ee9f449"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "8443731b59055bb87a75c8b1e2650f5114a4b1959ee3613491d6cb152953f2d1",
