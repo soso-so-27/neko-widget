@@ -224,7 +224,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 guard let apple = authorization.credential as? ASAuthorizationAppleIDCredential,
                       let token = apple.identityToken, let code = apple.authorizationCode else {
                     await self.client.cancelSignIn()
-                    throw ManagedPreservationError.authenticationFailed
+                    throw ManagedPreservationError.authenticationStepFailed(.credential)
                 }
                 try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code)
                 try self.check(ticket)
@@ -236,8 +236,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 try await self.loadFirstPage(ticket)
             case .failure(let error):
                 await self.client.cancelSignIn()
-                if (error as? ASAuthorizationError)?.code == .canceled { throw CancellationError() }
-                throw ManagedPreservationError.authenticationFailed
+                if (error as? ASAuthorizationError)?.code == .canceled {
+                    self.statusMessage = "本人確認をキャンセルしました。写真やメモは送信していません。"
+                    return
+                }
+                if let appleError = error as? ASAuthorizationError {
+                    // Only a bounded system code, never the error's message or userInfo.
+                    let code = appleError.code.rawValue
+                    throw ManagedPreservationError.appleAuthorizationFailed((1000...1006).contains(code) ? code : 1099)
+                }
+                throw ManagedPreservationError.authenticationStepFailed(.appleResponse)
             }
         }
     }

@@ -36,7 +36,12 @@ struct ManagedPreservationConfiguration: Sendable {
 }
 
 enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
+    enum AuthenticationStep: String, Sendable {
+        case appleResponse = "A01", credential = "A02", challenge = "A03", state = "A04"
+        case challengeExpired = "A05", payload = "A06", sessionExpired = "A07"
+    }
     case disabled, authenticationRequired, authenticationFailed, staleSession
+    case authenticationStepFailed(AuthenticationStep), appleAuthorizationFailed(Int)
     case secureStorage, invalidRecord, invalidResponse, responseTooLarge
     case membershipRequired, consentRequired, conflict, notFound, unavailable, interrupted
     case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure, accountingUnavailable
@@ -48,6 +53,8 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .disabled: "この保管先はまだ利用できません。"
         case .authenticationRequired: "保管用の本人確認をやり直してください。"
         case .authenticationFailed: "本人確認を完了できませんでした。もう一度お試しください。"
+        case .authenticationStepFailed(let step): "本人確認を完了できませんでした（\(step.rawValue)）。"
+        case .appleAuthorizationFailed(let code): "Appleの本人確認を完了できませんでした（Apple \(code)）。"
         case .pilotRegistrationPending(let reference): "内部テストの登録確認待ちです。登録番号：\(reference)"
         case .staleSession: "本人確認の状態が変わりました。記録を読み込み直してください。"
         case .secureStorage: "本人確認情報を安全に保存・削除できませんでした。端末のロック解除後にお試しください。"
@@ -554,14 +561,17 @@ actor ManagedPreservationClient {
     }
 
     func finishSignIn(state: String?, identityToken: Data, authorizationCode: Data) async throws {
-        guard let pending = challenge else { throw ManagedPreservationError.authenticationFailed }
+        guard let pending = challenge else { throw ManagedPreservationError.authenticationStepFailed(.challenge) }
         challenge = nil // one attempt, including failed/cancelled exchanges
         try ensureEpoch(pending.epoch)
-        guard state == pending.state, pending.wire.expiresAt > Date(),
-              identityToken.count <= 32_768, authorizationCode.count <= 8192,
+        guard state == pending.state else { throw ManagedPreservationError.authenticationStepFailed(.state) }
+        guard pending.wire.expiresAt > Date() else {
+            throw ManagedPreservationError.authenticationStepFailed(.challengeExpired)
+        }
+        guard identityToken.count <= 32_768, authorizationCode.count <= 8192,
               let token = String(data: identityToken, encoding: .utf8), !token.isEmpty,
               let code = String(data: authorizationCode, encoding: .utf8), !code.isEmpty else {
-            throw ManagedPreservationError.authenticationFailed
+            throw ManagedPreservationError.authenticationStepFailed(.payload)
         }
         let payload = Exchange(challengeId: pending.wire.challengeId, challengeProof: pending.wire.challengeProof,
                                identityToken: token, authorizationCode: code)
@@ -570,7 +580,9 @@ actor ManagedPreservationClient {
         try ensureEpoch(pending.epoch)
         let value: ManagedPreservationSessionStore.Credential = try decode(data)
         _ = try value.validated()
-        guard value.expiresAt > Date() else { throw ManagedPreservationError.authenticationFailed }
+        guard value.expiresAt > Date() else {
+            throw ManagedPreservationError.authenticationStepFailed(.sessionExpired)
+        }
         guard try store.save(value, replacing: pending.replacing) else {
             throw ManagedPreservationError.staleSession
         }
