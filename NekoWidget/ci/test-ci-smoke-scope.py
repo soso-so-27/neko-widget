@@ -96,7 +96,7 @@ source "$1"
                 continue
             with self.subTest(scope=selected_scope):
                 result, metadata, arguments, heavy = self.run_smoke(selected_scope)
-                expected_tests = FULL_TESTS if selected_scope == scope.APP_VIEW_SCOPE else (BOOTSTRAP,)
+                expected_tests = FULL_TESTS if selected_scope in (scope.APP_VIEW_SCOPE, scope.APP_DATA_SCOPE) else (BOOTSTRAP,)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(metadata["scope"], selected_scope)
                 self.assertEqual(metadata["lane"], "smoke")

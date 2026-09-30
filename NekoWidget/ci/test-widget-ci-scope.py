@@ -22,6 +22,130 @@ spec.loader.exec_module(planner)
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
+    """Replay the shipped incident, with no Xcode, CI, network or new release."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = "58ce6d9688c160384607d03d8ff3d357cdc45216"
+        cls.head = "a06d30432900e8b27709046d0a6c53250d2cc736"
+        cls.paths = [path for path in planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0") if path]
+        cls.raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", cls.base, cls.head)
+        records = cls.raw.split("\0")
+        cls.added = {records[i + 1] for i in range(0, len(records) - 1, 2) if records[i].split()[4] == "A"}
+        cls.changes = {path: ("" if path in cls.added else planner.git("show", f"{cls.base}:{path}"),
+                              planner.git("show", f"{cls.head}:{path}"))
+                       for path in cls.paths if not scope.is_handoff(path)}
+        cls.project = cls.changes[scope.APP_DATA_PROJECT][1]
+
+    def replay(self, raw=None):
+        original_git = planner.git
+        def git(*args):
+            return raw if args[0] == "diff" and raw is not None else original_git(*args)
+        with patch.object(planner, "comparison_base", return_value=self.base), patch.object(planner, "git", side_effect=git):
+            return planner.runtime_scope(self.paths, {}, {"GITHUB_SHA": self.head})
+
+    def test_actual_weight_and_veterinary_batch_omits_only_gallery(self):
+        self.assertEqual(self.replay(), scope.APP_DATA_SCOPE)
+        self.assertEqual(scope.select_scope(self.changes), scope.APP_DATA_SCOPE)
+        required = planner.required_jobs(self.paths, scope.APP_DATA_SCOPE)
+        self.assertEqual(len(required), 5)
+        self.assertEqual(required[:2], (planner.BUILD, planner.SMOKE))
+        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE), ("runtime", "app-ui-solo", "app-ui-other"))
+        self.assertEqual(scope.native_tests(scope.APP_DATA_SCOPE),
+                         tuple(test for test in scope.native_tests(scope.FULL_SCOPE) if test != scope.GALLERY_TEST))
+        self.assertEqual(scope.smoke_tests(scope.APP_DATA_SCOPE), scope.smoke_tests(scope.FULL_SCOPE))
+        for lane in scope.LANES[2:]:
+            with self.assertRaises(ValueError):
+                scope.lane_tests(scope.APP_DATA_SCOPE, lane)
+
+    def test_later_private_store_edit_needs_project_proof_not_frozen_product_hashes(self):
+        path = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
+        changes = {path: (self.changes[path][1], self.changes[path][1] + "\n// private storage change\n")}
+        self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        self.assertEqual(scope.select_scope(changes, project_source=self.project), scope.APP_DATA_SCOPE)
+        self.assertFalse(scope.app_data_changes(changes, project_source="unparseable project"))
+
+    def test_render_cache_shared_model_startup_and_unknown_inputs_cannot_borrow_exclusion(self):
+        for path in (
+            "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+            "NekoWidget/Shared/Models/WidgetRenderPlan.swift",
+            "NekoWidget/Shared/Storage/PersonalRediscoveryStore.swift",
+            "NekoWidget/NekoWidget/Services/CanonicalPreviewBuilder.swift",
+            "NekoWidget/NekoWidget/Services/WidgetCacheBuilder.swift",
+            "NekoWidget/NekoWidget/Services/PersonalWidgetBackgroundRefresh.swift",
+            "NekoWidget/NekoWidget/App/NekoWidgetApp.swift",
+            "NekoWidget/NekoWidget/Services/AppStoreScreenshotFixture.swift",
+            "NekoWidget/NekoWidget/Services/NewPrivateStore.swift",
+            "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift",
+            "NekoWidget/ci/run-sharing-runtime-matrix.sh", ".github/workflows/testflight.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(scope.select_scope(self.changes | {path: ("before", "after")}), scope.FULL_SCOPE)
+
+    def test_app_registration_does_not_allow_widget_settings_aliases_or_framework_changes(self):
+        before, after = self.changes[scope.APP_DATA_PROJECT]
+        self.assertTrue(scope.app_data_project_unchanged(before, after))
+        for changed in (
+            after.replace('SWIFT_VERSION = 5.0', 'SWIFT_VERSION = 6.0', 1),
+            after.replace('isa = PBXFrameworksBuildPhase', 'isa = ChangedFrameworksBuildPhase', 1),
+            after.replace('fileRef = F00000000000000000000314', 'fileRef = D02609300000000000000002', 1),
+            after.replace('path = VeterinaryVisitView.swift', 'path = NekoWidgetView.swift', 1),
+            after.replace('A00000000000000000000025 /* Sources */ = {',
+                          'A00000000000000000000025 /* Sources */ = {\n// unreviewed registration'),
+        ):
+            self.assertNotEqual(after, changed)
+            self.assertFalse(scope.app_data_project_unchanged(before, changed))
+            changes = self.changes | {scope.APP_DATA_PROJECT: (before, changed)}
+            self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+
+    def test_widget_membership_is_resolved_from_ids_not_filename_comments(self):
+        path = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
+        changes = {path: self.changes[path]}
+        # Keep the misleading Widget-view comment, point the build entry at a
+        # private store. Gallery must run even when the comment was not edited.
+        changed = self.project.replace('fileRef = F00000000000000000000314',
+                                       'fileRef = D02609300000000000000002', 1)
+        self.assertNotEqual(self.project, changed)
+        self.assertEqual(scope.select_scope(changes, project_source=changed), scope.FULL_SCOPE)
+
+    def test_workflow_exception_is_additive_model_check_only(self):
+        before, after = self.changes[scope.CI_WORKFLOW]
+        for changed in (after.replace('contents: read', 'contents: write', 1),
+                        after.replace('ci/verify-photo-memory-notes.swift', 'ci/unreviewed.swift', 1),
+                        after.replace(scope.APP_DATA_MODEL_CHECK, ''),
+                        after + '\n# other workflow change\n'):
+            self.assertFalse(scope.app_data_changes(self.changes | {scope.CI_WORKFLOW: (before, changed)}))
+        diagnostic = self.changes[scope.APP_DATA_DIAGNOSTIC][1]
+        self.assertFalse(scope.app_data_changes(self.changes | {scope.APP_DATA_DIAGNOSTIC: ('', diagnostic + '\n# changed\n')}))
+
+    def test_raw_modes_additions_deletions_and_hidden_extra_files_fail_closed(self):
+        records = self.raw.split("\0")
+        for i in range(0, len(records) - 1, 2):
+            path = records[i + 1]
+            if scope.is_handoff(path):
+                continue
+            for modes, status in ((":100644 100755", "M"), (":100644 120000", "T"),
+                                  (":100644 000000", "D"), (":100644 100644", "R100")):
+                changed = list(records)
+                fields = changed[i].split()
+                changed[i] = f"{modes} {fields[2]} {fields[3]} {status}"
+                with self.subTest(path=path, modes=modes, status=status):
+                    self.assertEqual(self.replay("\0".join(changed)), scope.FULL_SCOPE)
+        extra = f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0"
+        self.assertEqual(self.replay(self.raw + extra), scope.FULL_SCOPE)
+
+    def test_limited_success_does_not_cover_full_or_skipped_storage_build_checks(self):
+        required = planner.required_jobs_from_scope(scope.APP_DATA_SCOPE)
+        jobs = [dict(name=name, head_sha=self.head, status="completed", conclusion="success") for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, self.head))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.head))
+        for index in range(len(jobs)):
+            for conclusion in ("skipped", "failure", "cancelled"):
+                changed = copy.deepcopy(jobs); changed[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(changed, required, self.head))
+
+
 class DiagnosticRouteBoundaryTests(unittest.TestCase):
     def test_window_diagnostic_selects_only_existing_requested_methods(self):
         source = (ROOT / "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8")
@@ -320,10 +444,10 @@ class WidgetScopeTests(unittest.TestCase):
                 self.assertEqual(required, (planner.ICON_BUILD,))
                 continue
             self.assertIn(planner.smoke_job(selected), required)
-            if selected not in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE):
+            if selected not in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE, scope.APP_DATA_SCOPE):
                 self.assertEqual(scope.smoke_tests(selected), bootstrap)
                 self.assertEqual(planner.smoke_job(selected), planner.BOOTSTRAP_SMOKE)
-        for selected in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE):
+        for selected in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE, scope.APP_DATA_SCOPE):
             self.assertEqual(scope.smoke_tests(selected),
                              bootstrap + scope.OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",))
             self.assertEqual(planner.smoke_job(selected), planner.SMOKE)
