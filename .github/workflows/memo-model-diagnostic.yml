@@ -3,6 +3,17 @@ name: Private memo model diagnostic
 on:
   push:
     branches: ['diagnostic/memo-veterinary-*']
+    paths:
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift'
+      - 'NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift'
+      - 'NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift'
+      - 'NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift'
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoCoordinator.swift'
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift'
+      - 'NekoWidget/ci/verify-photo-memory-notes.swift'
+      - 'NekoWidget/ci/verify-veterinary-visits.swift'
+      - 'NekoWidget/ci/verify-personal-archive.swift'
+      - 'NekoWidget/ci/verify-photo-memory-note-export.swift'
 
 permissions:
   contents: read
