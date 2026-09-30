@@ -214,9 +214,11 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         blockers.append("ci_already_running")
     correction_cases = ({"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
                         if result.get("scope") == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
+                        {"SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource"}
+                        if result.get("scope") == scope.VET_SAVED_CAT_SCOPE else
                         {"SoloMemoriesUITests/" + name for name in scope.LOST_CAT_PHOTO_TEST_NAMES})
     correction_run = (correction_evidence["run_id"] if correction_evidence is not None
-                      and result.get("scope") in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
+                      and result.get("scope") in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE)
                       else None)
     # Only the proven source attempt is awaiting the normal candidate UI retry.
     # A subsequent run or diagnostic failure must remain a blocking failure.
