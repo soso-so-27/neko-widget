@@ -86,5 +86,11 @@ App Store Connectの契約一覧を再読取すると無料アプリ契約のみ
 - Billing strict typecheck +設定/Redis 15件が約8秒で成功、production build成功。公式CAを一時ファイルへ置く正のconfig-loadも成功。これはRedis TLS接続の証拠ではない。
 - 保管期限・通知送信・delivery eventの3file/20件が約13秒で成功。実メールや実billingの証拠ではない。
 - 独立レビューで当初の3点（ログイン解除で閉じる保護解除、Date精度で照合不一致、本人切替で未確定書込状態消失）を修正後、追加の修正必須指摘なし。static reviewである。
-- WindowsではSwift/Xcode描画を直接実行できない。既存のfocused diagnostic routeで、同じcandidateのSoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredStateを1件実行する。このDEBUG fixtureは既存保管membership boundaryの追加シナリオも先に実行する。端末同意・応答消失・同ID読戻し・stored表示、owner切替と日時精度を確認する。全Widgetや全CI、TestFlightは起動しない。
+- WindowsではSwift/Xcode描画を直接実行できない。既存のfocused diagnostic routeで、同じcandidateのSoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredStateを1件実行する。このrouteはビルド後に既存runtime fixture 41件を準備確認し、Widget関連の内部ケースも含む。Widgetの画面操作job、全件CI、TestFlightは起動しない。端末同意・応答消失・同ID読戻し・stored表示、owner切替と日時精度を確認する。
 - 過去focused diagnosticの所要時間は約14〜21分。通常pushの広域CIと混同せずdiagnostic/**を使う。これは配布証拠には使えない。描画・native挙動は結果が出るまで未検証。実Keychain障害、実保管復元・別端末・ZIPは依然未達。
+
+### focused diagnosticのテスト修正
+
+候補 `8e420b4` のrun `36662428729` は約9分でnative runtime準備に失敗。41件中40件成功、失敗はmanaged-preservation-membership-boundaryで、画面操作には到達していない。追加した本人切替テストが、Date()を含む保存前のCredentialをcompare-and-replaceの期待値へ使っていた。SessionStoreはwire encoderで日時をミリ秒に正規化し、読戻したCredentialとの完全一致を要求するため、この期待値は一致しない。テストは保存後の本人・tokenを照合した読戻し値を期待値に使うよう修正。製品の本人確認や保存方式は変更しない。
+
+再検証は同じUI1件のdiagnosticのみとし、成功済みbackend・TLS・dry-run・開発ツール検査は入力不変のため再実行しない。予想は過去実測14〜21分、初回失敗9分を含むMac累計は23〜30分。調査・実装・レビューを含む候補全体は30分を超過しており、当初目標内の完了と報告しない。追加の失敗では再実行せず、まず最初の原因を特定する。

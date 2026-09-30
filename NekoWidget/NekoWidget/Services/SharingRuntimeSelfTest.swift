@@ -10097,9 +10097,15 @@ actor SharingRuntimeSelfTestRunner {
             let other = ManagedPreservationSessionStore.Credential(token: String(repeating: "c", count: 43),
                 ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
             guard try fixture.store.save(other, replacing: fixture.session) else { throw ManagedPreservationError.staleSession }
+            // Compare-and-replace uses the persisted wire value, whose Date is
+            // millisecond-normalized. The pre-encoding Date() is not that value.
+            guard let persistedOther = try fixture.store.load(),
+                  persistedOther.token == other.token, persistedOther.ownerId == other.ownerId else {
+                throw ManagedPreservationError.secureStorage
+            }
             copyUI.start(); try await settleCopy()
             guard copyUI.copyState == .deviceOnly, copyUI.records.isEmpty else { throw ManagedPreservationError.staleSession }
-            guard try fixture.store.save(fixture.session, replacing: other) else { throw ManagedPreservationError.staleSession }
+            guard try fixture.store.save(fixture.session, replacing: persistedOther) else { throw ManagedPreservationError.staleSession }
             copyUI.start(); try await settleCopy()
             guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
             copyUI.confirmCopyResult(); try await settleCopy()
