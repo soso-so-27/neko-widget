@@ -19,7 +19,7 @@ struct VeterinaryVisitsView: View {
     var body: some View {
         List {
             if ready {
-                Section("診察する猫") {
+                Section {
                     ForEach(cats, id: \.id) { cat in
                         Button { Task { await open(cat) } } label: {
                             HStack {
@@ -34,7 +34,8 @@ struct VeterinaryVisitsView: View {
                     }
                     Button("猫の名前を入力して作る", systemImage: "plus") { newName = ""; addsCat = true }
                         .accessibilityIdentifier("vet-new-cat")
-                } footer: { Text("気になった写真やメモを選んで、診察で伝える内容をまとめます。診断は行いません。") }
+                } header: { Text("診察する猫") }
+                  footer: { Text("気になった写真やメモを選んで、診察で伝える内容をまとめます。診断は行いません。") }
                 if !visits.filter({ $0.completedAt != nil }).isEmpty {
                     Section("これまでの診察メモ") {
                         ForEach(visits.filter { $0.completedAt != nil }.reversed()) { visit in
@@ -123,14 +124,15 @@ private struct VeterinaryConsultationView: View {
                     if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                 }
                 if visit.completedAt == nil {
-                    Section("今回伝えること") {
+                    Section {
                         TextField("家で気付いたこと", text: $observations, axis: .vertical).lineLimit(3...8)
                             .accessibilityIdentifier("vet-observations")
                         Toggle("いつからかを記録", isOn: $hasStartedDay)
                         if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
                         TextField("先生に聞きたいこと", text: $questions, axis: .vertical).lineLimit(2...8)
                             .accessibilityIdentifier("vet-questions")
-                    } footer: { Text("それぞれ500文字まで。以前の薬やお世話情報は自動で入りません。") }
+                    } header: { Text("今回伝えること") }
+                      footer: { Text("それぞれ500文字まで。以前の薬やお世話情報は自動で入りません。") }
                 } else {
                     Section("伝えたこと") {
                         if !visit.observations.isEmpty { Text(visit.observations) }
@@ -138,7 +140,7 @@ private struct VeterinaryConsultationView: View {
                         if !visit.questions.isEmpty { Text(visit.questions) }
                     }
                 }
-                Section("見せる記録 · \(visit.entries.count)件") {
+                Section {
                     ForEach(visit.orderedEntries) { entry in
                         VStack(alignment: .leading, spacing: 8) {
                             VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
@@ -155,7 +157,8 @@ private struct VeterinaryConsultationView: View {
                         Button("写真・メモを選ぶ", systemImage: "plus") { picking = true }
                             .accessibilityIdentifier("vet-pick-records")
                     }
-                } footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
+                } header: { Text("見せる記録 · \(visit.entries.count)件") }
+                  footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
                 Section {
                     Button("この内容を見せる", systemImage: "rectangle.inset.filled") { showing = true }
                         .accessibilityIdentifier("vet-show").disabled(changes)
@@ -346,15 +349,20 @@ private struct VeterinaryRecordConfirmation: View {
             guard try await sourceIsCurrent() else { throw VeterinaryVisitError.changed }
             let identifier = source.photoIdentifier
             let hasPhoto = access.photo(for: identifier) != nil
-            let bytes = await Task.detached(priority: .userInitiated) { () -> Data? in
-                guard hasPhoto, !Task.isCancelled else { return nil }
+            var fixtureBytes: Data?
 #if DEBUG
-                if CommandLine.arguments.contains("--memory-library-fixture"), let image = AppStoreScreenshotFixture.image(for: identifier) {
-                    return image.jpegData(compressionQuality: 0.85)
-                }
+            if hasPhoto, CommandLine.arguments.contains("--memory-library-fixture") {
+                fixtureBytes = AppStoreScreenshotFixture.image(for: identifier)?.jpegData(compressionQuality: 0.85)
+            }
 #endif
-                return PhotoImageLoader().image(localIdentifier: identifier, targetSize: CGSize(width: 2048, height: 2048), contentMode: .aspectFit)?.jpegData(compressionQuality: 0.85)
-            }.value
+            let bytes: Data?
+            if let fixtureBytes { bytes = fixtureBytes }
+            else {
+                bytes = await Task.detached(priority: .userInitiated) { () -> Data? in
+                    guard hasPhoto, !Task.isCancelled else { return nil }
+                    return PhotoImageLoader().image(localIdentifier: identifier, targetSize: CGSize(width: 2048, height: 2048), contentMode: .aspectFit)?.jpegData(compressionQuality: 0.85)
+                }.value
+            }
             try Task.checkCancellation(); access.refresh()
             guard try await sourceIsCurrent(),
                   !hasPhoto || (bytes != nil && access.photo(for: identifier) != nil) else { throw VeterinaryVisitError.changed }
