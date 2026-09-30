@@ -829,12 +829,15 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
         controls = TEST_CORRECTION_CONTROL_PATHS | (frozenset({
             "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/reviewed-app-ui.json",
             "NekoWidget/ci/test-ci-lanes.py"}) if managed else frozenset())
+        main_tests = frozenset({"NekoWidget/ci/test-widget-ci-scope.py", "NekoWidget/ci/test-ci-smoke-scope.py"}) if managed else frozenset()
         changed = set()
         for index in range(0, len(parts), 2):
             fields, path = parts[index].split(), parts[index + 1]
             if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
-                    or path in changed or (path not in controls | {MEMORY_TEST_PATH} and not (managed and is_handoff(path)))
+                    or path in changed or (path not in controls | main_tests | {MEMORY_TEST_PATH} and not (managed and is_handoff(path)))
                     or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            if path in main_tests and git("show", f"{head}:{path}") != git("show", f"origin/main:{path}"):
                 return False
             changed.add(path)
         if MEMORY_TEST_PATH not in changed:

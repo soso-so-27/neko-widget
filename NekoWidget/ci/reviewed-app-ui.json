@@ -109,10 +109,6 @@
       "before": "5466ac97a6d1bf5d522cafa37979a3c6e2568bdb85f7e901474af55805158179",
       "after": "5e6c41d9f54671576917004397c370466b465a784a4c583b4b8a5ed3013a7802"
     },
-    "NekoWidget/ci/test-ci-smoke-scope.py": {
-      "before": "224ba9a81ca95222cfbf36261da829256004c64475b735da0d1a83edcfc3575d",
-      "after": "74a7aedc23b55f79e25cf77469c8c90565504a092fc9d061bf1025a3b4eca20b"
-    },
     "NekoWidget/ci/test-preservation-pilot-release.py": {
       "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "after": "6800c34ca5ab5f2a3d3227aaad6b6c9ccce119d380705cdb0f7ad9f7be54ba78"
@@ -124,10 +120,6 @@
     "NekoWidget/ci/test-validate-sharing-runtime-self-test.py": {
       "before": "014fb963cf5e7f169dfb5db4a4b88c0f915620494725d524bc63ad993a53e6d4",
       "after": "40404ae275036625cfa1dd5a8f4bcd3d519ce38026569f5bc744eed33534b96c"
-    },
-    "NekoWidget/ci/test-widget-ci-scope.py": {
-      "before": "13983a858a9288be41e5db62c998df7b7e5a77bcd02d47a465a759c6a9b00892",
-      "after": "b5723df1f6b7ea45cee60f4113fe918577e6507294b3824dae220f55b28fca5f"
     },
     "NekoWidget/ci/validate-sharing-release.py": {
       "before": "37f7a91a94643e8d94f0712e03113fbee1d6d504f45b9cb36636965667da380f",
