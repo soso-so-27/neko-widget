@@ -1,37 +1,37 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-managed-preservation-app-v4",
-  "purpose": "Preservation entry and recovery: automatic read-only eligibility, explicit owner-safe secure-session reload, fixed failure codes and unknown-write confirmation. No automatic linking, save, account transfer or deletion. Add memo-detail entry and retain legacy iCloud read/export. Build, Photos bootstrap, both OS runtime boundaries and four existing UI operations remain required; Widget inputs, service, signing and billing authority are unchanged. Rendered UI remains pending native observation.",
+  "scope": "reviewed-managed-preservation-app-v5",
+  "purpose": "Retire new iCloud saves; explicitly prepare the selected existing copy for service preservation and retain legacy editing/export/deletion",
   "visualReview": "native-ui-required",
   "dataReview": "internal-pilot-apple-owner-storage-restore-export-boundary",
   "files": {
-    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
-      "before": "98ad5102a3d3debac4e4172647f32b7ee93399d4f3d9b8064b06a97fdc2e2cfc",
-      "after": "0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895"
-    },
-    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "8d9f0b41438a83bcd6a981a126a9a614fad35f4e391982cd42d764b3991cc732",
-      "after": "7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7"
-    },
-    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": {
-      "before": "3c1ffa4c79dc21af022c19f5a5a6fd38e762d68d27d280f9dd81b8ea20802de5",
-      "after": "8830b922038147feaffa54a837c6d40aadb7a8dc0ea9cf96c29106952d2f046b"
-    },
     "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "54e9a082be7b859f9c48a0b46159f8e7a8344fd1f5f1cd2b6fc2fcdbf368e4f8",
-      "after": "87941966bfed6314adc92d5c6e83134b8cfd3e30bbed2c9129dc8ef95c29866f"
-    },
-    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
-      "before": "1c9d1547142b366fabbfcffb14c736a32f573e1ce7279d9e4262b298364a8a4a",
-      "after": "2b2f498ea23894900a20cced27da58ec2dea6564cda126df8993a5fcb7c9c99f"
-    },
-    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
-      "before": "d8efaf3148a138e5abf4c298e4f76437d8e72bf7083186348ef97b53b6b000b7",
-      "after": "fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5"
+      "before": "87941966bfed6314adc92d5c6e83134b8cfd3e30bbed2c9129dc8ef95c29866f",
+      "after": "cbf51bb695be8631a01867fbb46377ec289599756bc6da990176435aa3c51668"
     },
     "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "c2796146c4815d1701066ecc967551f8bd8a8bd20de78de37641cfe188f491f1",
-      "after": "65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224"
+      "before": "65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224",
+      "after": "958994a7ed7a893d61b99e70b0e5e9a87a5c1e63276bc6db8a8bc74741e1b089"
+    },
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
+      "before": "0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895",
+      "after": "b9991ddd4e859bfaa97f5a05dd80c466502323d867d7e52a01beb961fe3dd6a0"
+    },
+    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
+      "before": "d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540",
+      "after": "01c865de1c7025a8b8a45c2e265b753541b2272457819fa67293bdcfbd8a58f8"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
+      "before": "fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5",
+      "after": "42456aba5dac9ee9e48f6ccb1f2530c2526632563488c9952beb7e7c9392f537"
+    },
+    "NekoWidget/NekoWidget/Views/SettingsView.swift": {
+      "before": "c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06",
+      "after": "1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd"
+    },
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
+      "before": "7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7",
+      "after": "c15da79e907788ff28d32ad6db95ada6da5d3bd69012038ad232d79ee6a08b84"
     }
   }
 }
