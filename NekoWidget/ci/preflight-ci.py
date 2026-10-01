@@ -213,7 +213,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     blockers = []
     if active:
         blockers.append("ci_already_running")
-    correction_cases = ({"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
+    correction_cases = ({"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+                         "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"}
                         if result.get("scope") == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
                         {"SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource"}
                         if result.get("scope") == scope.VET_SAVED_CAT_SCOPE else

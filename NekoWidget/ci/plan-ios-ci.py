@@ -1001,7 +1001,8 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
         before, after = git("show", f"{source}:{MEMORY_TEST_PATH}"), git("show", f"{head}:{MEMORY_TEST_PATH}")
         if managed or vet:
             names = {"testVeterinarySelectionIsExplicitAndRemovalKeepsSource"} if vet else {
-                "testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"}
+                "testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+                "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"}
             old = family_window_test_methods(before, owner_class="SoloMemoriesUITests", required_names=names)
             new = family_window_test_methods(after, owner_class="SoloMemoriesUITests", required_names=names)
             if old is None or new is None or old.keys() != new.keys():

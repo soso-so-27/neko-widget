@@ -944,7 +944,7 @@ class PlanTests(unittest.TestCase):
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
         self.assertIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 3)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
         self.assertTrue(scope.memory_tests_available(scope.managed_validation_source(changes, scope.MEMORY_TEST_PATH), tests))
         with patch.object(scope, "managed_validation_source", return_value=""):
             with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
@@ -2969,10 +2969,14 @@ class TestCorrectionReuseTests(unittest.TestCase):
     def test_managed_pilot_correction_excludes_product_and_fixture_changes(self):
         self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
+    def test_managed_deletion_correction_excludes_product_and_fixture_changes(self):
+        self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(
+            scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes")
+
     def test_vet_correction_excludes_product_fixture_other_methods_and_unmerged_controls(self):
         self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.VET_SAVED_CAT_SCOPE)
 
-    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
+    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE, body_method=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def git(*args):
@@ -2988,14 +2992,16 @@ class TestCorrectionReuseTests(unittest.TestCase):
                     "commit", "-qm", "fixture")
                 return git("rev-parse", "HEAD")
             git("init", "-q")
-            names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"]
+            names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+                      "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"]
                      if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
                      ["testVeterinarySelectionIsExplicitAndRemovalKeepsSource"] if selected_scope == scope.VET_SAVED_CAT_SCOPE else
                      sorted(scope.LOST_CAT_PHOTO_TEST_NAMES))
             before = ("final class SoloMemoriesUITests: XCTestCase {\n"
                       + "".join(f"    func {name}() {{\n        XCTAssertTrue(true)\n    }}\n"
                                 for name in names) + "}\n")
-            after = before.replace("XCTAssertTrue(true)", "XCTAssertTrue(false)", 1)
+            needle = f"func {body_method or names[0]}() {{\n        XCTAssertTrue(true)"
+            after = before.replace(needle, needle.replace("XCTAssertTrue(true)", "XCTAssertTrue(false)"), 1)
             test_path = scope.MEMORY_TEST_PATH
             control = "NekoWidget/ci/plan-ios-ci.py"
             product = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"

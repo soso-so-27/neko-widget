@@ -374,12 +374,17 @@ class PreflightTests(unittest.TestCase):
     def test_managed_pilot_test_correction_preserves_elapsed_and_failed_case_gates(self):
         self.test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
+    def test_managed_deletion_test_correction_preserves_elapsed_and_failed_case_gates(self):
+        self.test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(
+            scope.REVIEWED_MANAGED_PRESERVATION_SCOPE,
+            "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes")
+
     def test_vet_test_correction_preserves_elapsed_and_failed_case_gates(self):
         self.test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(scope.VET_SAVED_CAT_SCOPE)
 
-    def test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
+    def test_proven_lost_cat_test_correction_runs_normal_ui_without_duplicate_diagnosis(self, selected_scope=scope.LOST_CAT_UX_SCOPE, requested_case=None):
         now = dt.datetime(2026, 9, 20, 12, tzinfo=dt.timezone.utc)
-        case = ("SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"
+        case = requested_case or ("SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"
                 if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
                 "SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource"
                 if selected_scope == scope.VET_SAVED_CAT_SCOPE else
