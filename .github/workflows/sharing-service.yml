@@ -53,6 +53,8 @@ jobs:
 
   billing-verifier-check:
     name: Typecheck, test, and build Apple transaction verifier
+    needs: plan
+    if: needs.plan.outputs.scope != 'billing-private-service-v2'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -93,7 +95,7 @@ jobs:
   private-billing-caller:
     name: Validate private billing caller
     needs: plan
-    if: needs.plan.outputs.scope == 'billing-private-service-v1'
+    if: needs.plan.outputs.scope == 'billing-private-service-v2'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -107,14 +109,14 @@ jobs:
         working-directory: NekoWidget/SharingService
       - run: npm run typecheck
         working-directory: NekoWidget/SharingService
-      - run: npx --no-install vitest run test/billing-verifier-client.test.ts
+      - run: node --test test/billing-gateway.node-tests.mjs gateway/*.test.mjs
         working-directory: NekoWidget/SharingService
-      - run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/billing-caller"
+      - run: npx --no-install esbuild src/billing-gateway.ts --bundle --format=esm --platform=neutral --conditions=workerd,worker,browser --external:cloudflare:workers --external:node:* --outfile="$RUNNER_TEMP/billing-gateway.mjs"
         working-directory: NekoWidget/SharingService
 
   moderation-keygen-windows-policy:
     needs: plan
-    if: needs.plan.outputs.scope != 'billing-private-service-v1'
+    if: needs.plan.outputs.scope != 'billing-private-service-v2'
     name: Windows moderation key, drill, and report policy fixtures
     runs-on: windows-2022
     timeout-minutes: 10
@@ -176,7 +178,7 @@ jobs:
 
   check:
     needs: plan
-    if: needs.plan.outputs.scope != 'billing-private-service-v1'
+    if: needs.plan.outputs.scope != 'billing-private-service-v2'
     name: Typecheck, test, and bundle Worker
     runs-on: ubuntu-24.04
     timeout-minutes: 20

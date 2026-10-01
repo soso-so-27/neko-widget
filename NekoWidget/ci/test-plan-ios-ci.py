@@ -308,6 +308,8 @@ class PlanTests(unittest.TestCase):
     def test_private_billing_backend_requires_all_frozen_dependencies_and_workflows(self):
         path = next(iter(planner.BILLING_PATHS))
         changed = [path]
+        self.assertEqual(planner.BILLING_SCOPE, "billing-private-service-v2")
+        self.assertNotIn(planner.BILLING_JOB, planner.required_jobs(list(planner.BILLING_PATHS), planner.BILLING_SCOPE))
         snapshot = dict(planner.BILLING_REVIEWED_TREES)
         def frozen_git(*args):
             if args[0] == "rev-parse":
@@ -328,7 +330,7 @@ class PlanTests(unittest.TestCase):
             with patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", "wrong"):
                 self.assertFalse(planner.billing_backend_only(changed, "base", "head"))
         self.assertEqual(planner.required_jobs(changed, planner.BILLING_SCOPE),
-                         (planner.BILLING_JOB, planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
+                         (planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
         for unknown in ("NekoWidget/NekoWidget/Views/PhotoView.swift", "NekoWidget/Config.xcconfig",
                         "NekoWidget/BillingVerificationService/src/unknown.ts"):
             self.assertFalse(planner.billing_paths_only(changed + [unknown]))

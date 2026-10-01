@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "worker": "neko-window-sharing-staging",
+  "cloudflareAccount": "829a34ef925a39d81b0e9e08800d7c7f",
+  "activeVersionBeforeHmacRotation": "1db76c5e-1c33-4566-accd-ec5aef510aa4",
+  "moduleSha256": "1007ddf74044922ef7dcd2ec34c858d6f31cb53cea374be6c14645bb28ac68c6",
+  "moduleBytes": 362790,
+  "sourceCheckout": "C:/dev/neko-family-worker-policy2-20260927",
+  "sourceCommit": "9a5a4a4e727f51fab52edf554202d97b0d65b615",
+  "rebuiltSourceByteEqualityVerified": false,
+  "exports": [
+    "default",
+    "route"
+  ],
+  "sourceRole": "Immutable deployed family input; do not replace it with a main rebuild without equality evidence",
+  "runtimeChange": "Only billing URL dispatch through private binding; every other request and schedule uses this frozen input"
+}

@@ -260,3 +260,22 @@ GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しま�
 [`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。ただし、このexampleだけではApple通知を有効化できません。まず専用stagingへ`0001`〜`0025`の25 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`と、bootstrap・取引受付・Apple通知・Apple通知履歴復旧・再照合・実効権限・課金鍵復旧・まど支援の8つの課金runtimeは既定`NO`のままにします。migration、private verifier、非公開bucket、moderation運用、rate limit、client release gateを全て確認した隔離環境だけで、必要なものを個別に`YES`へ変更します。D1側にも独立した8つの課金下限gateがあり、対応する上限・下限の両方がONでなければ処理しません。通常の`billing-control-on`候補でも履歴復旧はOFFのままです。専用訓練で凍結期間・cursor・停止復旧を確認するまで有効化しません。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
 
 両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。
+# Deployed family gateway (2026-10-01)
+
+`gateway/family-entry.mjs` preserves the exact downloaded family v5 module and
+routes only `/v1/billing` and its child paths to the named private `BillingGateway`.
+All other fetches, public health headers and scheduled callbacks remain with that
+immutable module. Provenance and SHA-256 are in `family-v5-frozen.json`; equality
+with a rebuild of the historical TypeScript source is not established.
+
+`gateway/render-live-config.mjs` takes a fresh read-only Cloudflare snapshot and
+creates an OFF-only private Sandbox billing worker and the family wrapper config.
+It retains the actual family database, buckets, rate limits, flags and schedules.
+Before deployment, compare the fresh active configuration with that snapshot;
+secrets are retained by Wrangler and are never copied into generated vars.
+The private worker gets the billing database and verifier binding, not photo
+buckets. Its public default is 404; workers.dev and preview URLs stay disabled.
+Billing health is `/v1/billing/health`, separately from the existing `/health`.
+Backend connection and signed negative probes are not evidence of a real Apple
+purchase, restore, expiry or native release.
+
