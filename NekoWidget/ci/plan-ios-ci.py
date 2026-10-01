@@ -307,6 +307,34 @@ PRESERVATION_COMPANION_DIGESTS = {
 }
 
 
+BILLING_SCOPE = "billing-private-service-v1"
+BILLING_JOB = "Typecheck, test, and build Apple transaction verifier"
+BILLING_CALLER_JOB = "Validate private billing caller"
+BILLING_WORKFLOW = ".github/workflows/sharing-service.yml"
+BILLING_JOB_TIMEOUT_MINUTES = 10
+BILLING_PATHS = frozenset(('NekoWidget/BillingVerificationService/.dockerignore', 'NekoWidget/BillingVerificationService/Dockerfile.cloudflare', 'NekoWidget/BillingVerificationService/README.md', 'NekoWidget/BillingVerificationService/container/.gitignore', 'NekoWidget/BillingVerificationService/container/README.md', 'NekoWidget/BillingVerificationService/container/local-drill.mjs', 'NekoWidget/BillingVerificationService/container/nonce-ledger-core.mjs', 'NekoWidget/BillingVerificationService/container/nonce-ledger.mjs', 'NekoWidget/BillingVerificationService/container/package-lock.json', 'NekoWidget/BillingVerificationService/container/package.json', 'NekoWidget/BillingVerificationService/container/remote-probe.mjs', 'NekoWidget/BillingVerificationService/container/runtime-config.mjs', 'NekoWidget/BillingVerificationService/container/test.mjs', 'NekoWidget/BillingVerificationService/container/worker.mjs', 'NekoWidget/BillingVerificationService/container/wrangler.jsonc', 'NekoWidget/BillingVerificationService/src/config.ts', 'NekoWidget/BillingVerificationService/src/container-index.ts', 'NekoWidget/BillingVerificationService/src/durable-nonce-store.ts', 'NekoWidget/BillingVerificationService/src/server.ts', 'NekoWidget/BillingVerificationService/test/config.test.ts', 'NekoWidget/BillingVerificationService/test/durable-nonce-store.test.ts', 'NekoWidget/SharingService/README.md', 'NekoWidget/SharingService/src/billing-verifier-client.ts', 'NekoWidget/SharingService/src/env.ts', 'NekoWidget/SharingService/test/billing-verifier-client.test.ts'))
+BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': 'fabbab40b3e9261d8906591213ea71ae3b1ce0c4', 'PreservationImageValidator': 'b6d89e568187fc23c49887fbb5ae259e54789212', 'PreservationService': '2938f8aef3762bdbf9e7708ccd39d80acab032e4'}
+BILLING_WORKFLOW_DIGEST = "708aa2f4d5e96a0537673c7f9a84ee36adf155399b3889b359af2b4b34d8bde7"
+BILLING_COMPANION_PATHS = JPEG_COMPANION_PATHS
+BILLING_COMPANION_DIGESTS = {
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "9e9cd1b4264307495e17bb18d06804daf369e01ca91101b7de10efd82ef65b92",
+        "6e1bfc1304978d4dfb3080eda650153c75b1fc5fd68b08eaafbb7ce2748023eb"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "fdb4833137e62c4038bcbbbe7273d4afd20391d601bb212de91a3928bef881d1",
+        "3411e990bbe4b196f9f3ef0e01e8c326350f82554780574b5e64dc5895c86bcd"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "3e1256cacf5de146d9a6bd7cf165db06ddcff1c421f5c62c84e3e91cd7077e5a",
+        "c66c5ccd622f28a572416d42224588b731f83652c2e59478c873e355f3f374bc"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "5647fd2574f710e4bfc99707fba90bea0be276470ad7f5d4a12e92e93c89b567",
+        "4ee461474648a6d87124e764996422da1a58063dae5ebb624fc9044eba91159f"
+    ]
+}
+
 def backend_paths_only(paths, product_paths, workflow, companion_paths):
     sources = source_paths(paths)
     companions = sources & companion_paths
@@ -369,6 +397,21 @@ def jpeg_backend_only(paths, base, head):
     return backend_only(paths, base, head, product_paths=JPEG_PATHS, workflow=JPEG_WORKFLOW,
                         workflow_digest=JPEG_WORKFLOW_DIGEST, companion_paths=JPEG_COMPANION_PATHS,
                         bindings=JPEG_COMPANION_DIGESTS, binding_name="JPEG_COMPANION_DIGESTS")
+
+
+def billing_paths_only(paths):
+    return backend_paths_only(paths, BILLING_PATHS, BILLING_WORKFLOW, BILLING_COMPANION_PATHS)
+
+
+def billing_backend_only(paths, base, head):
+    if any(git("rev-parse", f"{head}:NekoWidget/{tree}") != digest
+           for tree, digest in BILLING_REVIEWED_TREES.items()):
+        return False
+    if source_digest(git("show", f"{head}:{PRESERVATION_WORKFLOW}")) != PRESERVATION_WORKFLOW_DIGEST:
+        return False
+    return backend_only(paths, base, head, product_paths=BILLING_PATHS, workflow=BILLING_WORKFLOW,
+                        workflow_digest=BILLING_WORKFLOW_DIGEST, companion_paths=BILLING_COMPANION_PATHS,
+                        bindings=BILLING_COMPANION_DIGESTS, binding_name="BILLING_COMPANION_DIGESTS")
 
 
 def preservation_backend_only(paths, base, head):
@@ -448,6 +491,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
         return (JPEG_JOB,)
+    if runtime_scope == BILLING_SCOPE and billing_paths_only(paths):
+        return (BILLING_JOB, BILLING_CALLER_JOB, PRESERVATION_JOB)
     if runtime_scope == PRESERVATION_SCOPE and preservation_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
@@ -654,7 +699,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             pass
         return FULL_SCOPE
     for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
-                                       (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only)):
+                                       (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only),
+                                       (BILLING_SCOPE, billing_paths_only, billing_backend_only)):
         if not matches(paths):
             continue
         try:
@@ -1170,7 +1216,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -1185,7 +1231,8 @@ def main() -> None:
               "evidence_run_id": None, "evidence_sha": None}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
-                       PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW)}.get(selected_scope)
+                       PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       BILLING_SCOPE: (BILLING_JOB + ", " + BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             output.write(("## Backend-only verification\n\nRequired separately: " + backend[0]
                           + " in `" + backend[1] + "`. This plan does not certify that job's success. "
                           "Mac jobs are not requested. Not iOS release evidence.\n") if backend else

@@ -2,7 +2,13 @@
 
 Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼びません。repositoryの既定値とproduction用templateではPhase 3、まど名同期、旧共有、通知・通報受付と、bootstrapからまど支援までの全課金runtimeをOFFにし、productionのD1/R2作成、deploy、secret設定は行っていません。
 
-課金基盤は共有identityから分離しています。このWorkerはBillingAccountIDと正規化済み取引イベントを記録しますが、Apple JWSの証明書検証は実Node環境の[`BillingVerificationService`](../BillingVerificationService/README.md)が担当します。どちらも未deploy・runtime OFFで、購入UIやPlus権限はまだ有効になりません。
+課金基盤は共有identityから分離しています。このWorkerはBillingAccountIDと正規化済み取引イベントを記録しますが、Apple JWSの証明書検証は実Node環境の[`BillingVerificationService`](../BillingVerificationService/README.md)が担当します。repositoryの既定値はruntime OFFです。実環境の配備・接続と実商品の購入確認は別の完了条件で、設定の存在だけではPlus権限を有効にしません。
+
+### 非公開Sandbox verifierへの接続
+
+既存のHTTPS + Cloudflare Access方式を既定とし、`BILLING_VERIFIER_TRANSPORT=private-binding`を明示したlocal/stagingのSandboxだけ、`BILLING_VERIFIER_SERVICE`のHTTP service bindingを利用できます。内部の経路名は`https://billing-verifier.private.invalid`完全一致です。公開fetchへのfallbackはなく、binding欠落、混在したAccess secret、Productionや未知transportは設定不正として停止します。HMAC往復、署名対象のnonce、response上限、商品・bundle・環境の再照合は同じままです。bindingの接続先entrypoint、公開入口OFF、永続nonceと費用枠は配備側で別途照合します。
+
+月額商品は必須です。年額商品は実際に登録・設定した場合だけ許可し、`BILLING_ANNUAL_PRODUCT_ID`未設定なら月額のみを受理します。空文字・不正ID・月額との重複は拒否します。未登録の年額商品を推測で設定しません。各購入runtime gateをこの接続設定だけで開くことはありません。
 
 これとは分離した本人所有2台だけのpersonal stagingはdeploy済みで、2026-08-24現在は通常momentと暗号化まど名同期をON、旧共有をOFFで維持しています。日次監視とOFF候補のlocal検証だけを適用する個人例外であり、外部実停止の未整備は継続利用のblockerです。外部testerや一般利用者へ配るproduction環境ではありません。現在の運用境界は[`PERSONAL_STAGING_OPERATIONS.md`](PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 

@@ -96,6 +96,7 @@ export interface VerifiedAccountRecoveryEvidence {
 
 export interface VerifierConfig {
   origin: string;
+  transport: "https-access" | "private-binding";
   accessServiceToken: {
     clientId: string;
     clientSecret: string;
@@ -126,6 +127,21 @@ function requiredSetting(value: string | undefined): string {
 }
 
 export function loadVerifierConfig(env: Env): VerifierConfig {
+  const transport = env.BILLING_VERIFIER_TRANSPORT ?? "https-access";
+  const usesPrivateBinding = transport === "private-binding";
+  if (
+    (transport !== "https-access" && !usesPrivateBinding)
+    || (!usesPrivateBinding && env.BILLING_VERIFIER_SERVICE !== undefined)
+    || (usesPrivateBinding && (
+      env.BILLING_STORE_ENVIRONMENT !== "Sandbox"
+      || (env.ENVIRONMENT !== "local" && env.ENVIRONMENT !== "staging")
+      || typeof env.BILLING_VERIFIER_SERVICE?.fetch !== "function"
+      || env.BILLING_VERIFIER_ACCESS_CLIENT_ID !== undefined
+      || env.BILLING_VERIFIER_ACCESS_CLIENT_SECRET !== undefined
+    ))
+  ) {
+    throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
+  }
   const rawOrigin = requiredSetting(env.BILLING_VERIFIER_ORIGIN);
   let parsedOrigin: URL;
   try {
@@ -144,6 +160,7 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
     || parsedOrigin.pathname !== "/"
     || parsedOrigin.search !== ""
     || parsedOrigin.hash !== ""
+    || (usesPrivateBinding && rawOrigin !== "https://billing-verifier.private.invalid")
   ) {
     throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   }
@@ -160,7 +177,7 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
 
   const rawAccessClientId = env.BILLING_VERIFIER_ACCESS_CLIENT_ID;
   const rawAccessClientSecret = env.BILLING_VERIFIER_ACCESS_CLIENT_SECRET;
-  const permitsLocalAccessBypass = isLocalLoopback
+  const permitsLocalAccessBypass = (isLocalLoopback || usesPrivateBinding)
     && rawAccessClientId === undefined
     && rawAccessClientSecret === undefined;
   let accessServiceToken: VerifierConfig["accessServiceToken"] = null;
@@ -188,25 +205,30 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
   const environment = requiredSetting(env.BILLING_STORE_ENVIRONMENT);
   const subscriptionGroupId = requiredSetting(env.BILLING_SUBSCRIPTION_GROUP_ID);
   const monthlyProductId = requiredSetting(env.BILLING_MONTHLY_PRODUCT_ID);
-  const annualProductId = requiredSetting(env.BILLING_ANNUAL_PRODUCT_ID);
+  const annualProductId = env.BILLING_ANNUAL_PRODUCT_ID === undefined
+    ? undefined : requiredSetting(env.BILLING_ANNUAL_PRODUCT_ID);
   if (
     !bundleIdPattern.test(bundleId)
     || (environment !== "Sandbox" && environment !== "Production")
     || !subscriptionGroupPattern.test(subscriptionGroupId)
     || !productIdPattern.test(monthlyProductId)
-    || !productIdPattern.test(annualProductId)
-    || monthlyProductId === annualProductId
+    || (annualProductId !== undefined && (
+      !productIdPattern.test(annualProductId)
+      || monthlyProductId === annualProductId
+    ))
   ) {
     throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   }
   return {
     origin: parsedOrigin.origin,
+    transport,
     accessServiceToken,
     sharedSecret,
     bundleId,
     environment,
     subscriptionGroupId,
-    productIds: new Set([monthlyProductId, annualProductId]),
+    productIds: new Set(annualProductId === undefined
+      ? [monthlyProductId] : [monthlyProductId, annualProductId]),
   };
 }
 
@@ -583,7 +605,7 @@ export async function callBillingVerifierService(
 
   let response: Response;
   try {
-    response = await fetchImpl(`${config.origin}${path}`, {
+    const init: RequestInit = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -597,11 +619,20 @@ export async function callBillingVerifierService(
         "Neko-Billing-Signature": signature,
       },
       body,
-      redirect: "error",
+      // workerd rejects redirect="error". Manual never forwards HMAC/Access
+      // headers to another origin; any redirect is rejected below.
+      redirect: "manual",
       signal: AbortSignal.timeout(30_000),
-    });
+    };
+    const url = `${config.origin}${path}`;
+    response = config.transport === "private-binding"
+      ? await env.BILLING_VERIFIER_SERVICE!.fetch(new Request(url, init))
+      : await fetchImpl(url, init);
   } catch {
     throw new ApiError(503, "billing_verifier_unavailable", "Billing is temporarily unavailable.");
+  }
+  if (response.status >= 300 && response.status < 400) {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
   }
 
   const responseBody = await boundedResponseBody(

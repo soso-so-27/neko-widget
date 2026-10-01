@@ -48,6 +48,9 @@ export interface Env {
   WINDOW_DELIVERY_MEMBERSHIP_ENFORCED?: string;
   /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
   BILLING_VERIFIER_ORIGIN?: string;
+  /// Explicit private service binding transport; never falls back to public fetch.
+  BILLING_VERIFIER_TRANSPORT?: string;
+  BILLING_VERIFIER_SERVICE?: Fetcher;
   /// Cloudflare Access service-token credentials for the private verifier.
   /// Both values are secrets and must never be placed in Wrangler vars.
   BILLING_VERIFIER_ACCESS_CLIENT_ID?: string;
