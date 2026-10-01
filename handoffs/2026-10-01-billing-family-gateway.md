@@ -27,6 +27,13 @@ another server. General intake limits/mode remain a source-level preparation;
 public quota numbers, remote activation and deletion operations remain launch
 conditions. Automatic 12-month notice/deletion is deferred under user direction.
 
+The live signed caller→Gateway→Node purchase path has not run through all
+layers while the two gate levels are OFF. The direct Node negative probe is
+separate evidence. Reaching it through the app endpoint would require static
+and database activation plus a verified billing owner/key; do not temporarily
+open the public family endpoint to invent that evidence. Keep this full-path
+check with the required real Sandbox purchase/restore/expiry batch.
+
 The Gateway candidate began 19:48:31 JST; remote connection verification finished
 around 20:32 JST (about 44 minutes). Across the entire minimum-launch/backend
 work, the first product candidate was 18:29:38 JST (about 123 minutes through
