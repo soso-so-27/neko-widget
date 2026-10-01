@@ -1,5 +1,46 @@
 # Purchase connection: family adapter and private gateway
 
+## Completed connection
+
+PR146 merged as `b59e47c9583a8df472f6064f4a9bfea17d1d460c`.
+Candidate `d958a0a90727745ff0582dd2a180bf429db100a2` passed
+private-caller CI36855497146 (42 seconds), preservation CI36855497231
+(64 seconds), and selector CI36855497278 (24 seconds). No native/Widget check
+or TestFlight upload ran. The unchanged verifier's PR145 evidence is retained.
+
+Private Gateway deployed OFF; the same durable staging HMAC was installed from
+the CurrentUser-encrypted backup. Family wrapper version
+`6a391be4-85a3-4a76-ade6-75e8cc43a289` is active. Actual post-deployment reads
+confirmed all 22 former family bindings, including three secrets, plus one
+private binding; database/buckets/rate limits, compatibility, schedules, routes
+and public ingress settings are preserved. `/health` stays 200 with generation
+5, media/APNs ON and reports OFF. `/v1/billing/health` returns 200, generation
+0 and all eight operations OFF; account mutation returns 503 runtime-disabled.
+Gateway public ingress is absent, Sandbox-only, with no photo buckets.
+
+Authoritative external evidence:
+`C:/dev/neko-evidence/preservation-launch-minimum-20261001/family-billing-live-connection.json`
+and `verifier-live-connection-result.json`. The service is connected, but real
+Apple purchase/restore/expiry are not verified and Paid Apps Agreement/tax/bank
+completion is still a separate prerequisite. No user is asked to find or buy
+another server. General intake limits/mode remain a source-level preparation;
+public quota numbers, remote activation and deletion operations remain launch
+conditions. Automatic 12-month notice/deletion is deferred under user direction.
+
+The live signed caller→Gateway→Node purchase path has not run through all
+layers while the two gate levels are OFF. The direct Node negative probe is
+separate evidence. Reaching it through the app endpoint would require static
+and database activation plus a verified billing owner/key; do not temporarily
+open the public family endpoint to invent that evidence. Keep this full-path
+check with the required real Sandbox purchase/restore/expiry batch.
+
+The Gateway candidate began 19:48:31 JST; remote connection verification finished
+around 20:32 JST (about 44 minutes). Across the entire minimum-launch/backend
+work, the first product candidate was 18:29:38 JST (about 123 minutes through
+connection). Investigation started earlier. These totals include local fixture
+errors, reviews, dependency installation, source recovery, CI and deployment;
+they are not reduced to the final 42/64-second successful CI runs.
+
 ## Changed behavior
 
 The deployed family v5 Worker lacked billing routes. Its exact downloaded module
