@@ -104,14 +104,23 @@ struct ManagedPreservationView: View {
             if let status = coordinator.statusMessage {
                 Section { Text(status).foregroundStyle(.secondary) }
             }
+            if let code = coordinator.saveFailureCode {
+                Section {
+                    DisclosureGroup("エラーの詳細") {
+                        if let message = coordinator.saveFailureMessage { Text(message) }
+                        Text("保管エラー番号：\(code)").textSelection(.enabled)
+                            .accessibilityIdentifier("preservation-save-error-code")
+                    }.font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if !coordinator.isSignedIn { authenticationSection }
             else if coordinator.selected != nil { detailSection }
             else {
-                membershipSection
+                if let draft = coordinator.draft { newCopySection(draft) }
+                else { membershipSection }
                 noticeContactSection
                 if coordinator.membership?.access != .pilot { retentionSection }
                 usageSection
-                if let draft = coordinator.draft { newCopySection(draft) }
                 if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                 recordsSection
             }
@@ -167,8 +176,10 @@ struct ManagedPreservationView: View {
                     .frame(height: 48)
                     .signInWithAppleButtonStyle(.black)
                 Button("本人確認を準備し直す") { coordinator.prepareSignIn() }
+            } else if coordinator.isBusy {
+                ProgressView("Appleログインを準備しています…")
             } else {
-                Button("Appleで本人確認を準備") { coordinator.prepareSignIn() }
+                Button("Appleログインを準備し直す") { coordinator.prepareSignIn() }
             }
         } header: { Text("保管用の本人確認") }
         footer: {
@@ -183,6 +194,7 @@ struct ManagedPreservationView: View {
 
     private var membershipSection: some View {
         Section {
+            if coordinator.membershipLoading { ProgressView("保管できるか確認しています…") }
             if let membership = coordinator.membership {
                 if membership.access == .pilot, let end = membership.pilotEndsAt {
                     Text("内部テストの保管枠")
@@ -212,6 +224,7 @@ struct ManagedPreservationView: View {
                    : coordinator.membershipMessage == nil ? "会員情報を確認" : "接続状況を確認") {
                 coordinator.checkMembership()
             }.accessibilityIdentifier("preservation-membership-check")
+                .disabled(coordinator.membershipLoading)
             if let message = coordinator.membershipMessage {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
             }
@@ -350,11 +363,12 @@ struct ManagedPreservationView: View {
                   ? "checkmark.icloud" : "iphone")
                 .accessibilityIdentifier("preservation-copy-status")
             if coordinator.copyState == .needsConfirmation {
-                Text("通信が切れたため、保存できたか分かりません。元の写真とメモは端末に残っています。")
+                Text("保管できたか、まだ確認できません。元の写真とメモは端末に残っています。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("保管結果を確認") { coordinator.confirmCopyResult() }
                     .accessibilityIdentifier("preservation-copy-confirm")
             } else if !coordinator.draftWasSaved {
+                copyEligibility
                 Toggle("この保管方法に同意する", isOn: $coordinator.consentToNewSave)
                 Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -369,6 +383,30 @@ struct ManagedPreservationView: View {
             Text(coordinator.membership?.access == .pilot
                  ? "内部テスト中は購入なしで保管できます。期限後も保管済みの記録を開き、書き出せます。写真原本や端末の元メモは変更しません。"
                  : "新しい保管には会員資格が必要です。保管済みの記録の閲覧・メモ編集・削除・持ち出しに会員資格は必要ありません。写真原本や端末の元メモは変更しません。")
+        }
+    }
+
+    @ViewBuilder private var copyEligibility: some View {
+        if coordinator.membershipLoading {
+            ProgressView("保管できるか確認しています…")
+                .accessibilityIdentifier("preservation-eligibility-loading")
+        } else if coordinator.membership == nil {
+            Text(coordinator.membershipMessage ?? "保管先を確認できませんでした。")
+                .font(.footnote).foregroundStyle(.secondary)
+            Button("もう一度確認") { coordinator.checkMembership() }
+                .accessibilityIdentifier("preservation-eligibility-retry")
+        } else if coordinator.membership?.canSave != true {
+            if coordinator.membership?.linked == false {
+                Text("新しく保管するには、会員情報の接続が必要です。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("会員情報を接続") { confirmsMembershipLink = true }
+                    .accessibilityIdentifier("preservation-membership-connect")
+            } else {
+                Text("現在、新しい保管は利用できません。保管済みの記録は下の一覧から開けます。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("利用状況を確認し直す") { coordinator.checkMembership() }
+                    .accessibilityIdentifier("preservation-eligibility-retry")
+            }
         }
     }
 

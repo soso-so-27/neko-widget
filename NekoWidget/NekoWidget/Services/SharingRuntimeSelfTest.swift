@@ -22,6 +22,7 @@ enum PreservationFixtureScenario: Sendable {
     case malformedUsage, changedSessionDuringUsage, unavailableUsage
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
+    case requestRejected, saveTimedOut, unavailableMembership
 }
 
 actor PreservationFixtureServer {
@@ -114,13 +115,15 @@ actor PreservationFixtureServer {
             return try json(["linked": true])
         }
         if request.httpMethod == "GET", url.path == "/v1/membership" {
+            if scenario == .unavailableMembership { throw URLError(.networkConnectionLost) }
             if scenario == .pilotCopyResultLost {
                 return try json(["linked": false, "status": "unknown", "access": "pilot",
                                  "pilotEndsAt": Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1000)])
             }
             if linked && scenario == .changedKeyDuringStatus { keys.replace(nil) }
             if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
-            if scenario == .saveRejected || scenario == .copyResultLost || scenario == .copyNotCommitted {
+            if scenario == .saveRejected || scenario == .copyResultLost || scenario == .copyNotCommitted
+                || scenario == .requestRejected || scenario == .saveTimedOut {
                 return try json(["linked": true, "status": "active"])
             }
             return try json(["linked": linked, "status": linked ? "expired" : "unknown"])
@@ -165,13 +168,15 @@ actor PreservationFixtureServer {
         }
         if request.httpMethod == "GET", url.path == "/v1/records/" + Self.recordID.uuidString.lowercased() {
             reads += 1
-            if scenario == .copyNotCommitted { return try fail("RECORD_NOT_FOUND", status: 404) }
+            if scenario == .copyNotCommitted || scenario == .saveTimedOut { return try fail("RECORD_NOT_FOUND", status: 404) }
             return try json(["recordId": Self.recordID.uuidString.lowercased(), "revision": 1,
                 "document": JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(savedDocument ?? document)),
                 "photoBase64": NSNull(), "photoSHA256": NSNull()])
         }
         if request.httpMethod == "PUT" {
             saves += 1
+            if scenario == .requestRejected { return try fail("INVALID_REQUEST", status: 400) }
+            if scenario == .saveTimedOut { throw URLError(.timedOut) }
             if scenario == .copyResultLost || scenario == .copyNotCommitted || scenario == .pilotCopyResultLost {
                 if scenario == .copyResultLost || scenario == .pilotCopyResultLost {
                     guard let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any],
@@ -10127,8 +10132,8 @@ actor SharingRuntimeSelfTestRunner {
         let linkingUI = ManagedPreservationCoordinator(configuration: linking.configuration, client: linking.client)
         func settleLink() async throws {
             let deadline = Date().addingTimeInterval(5)
-            while linkingUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !linkingUI.isBusy else { throw ManagedPreservationError.interrupted }
+            while (linkingUI.isBusy || linkingUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !linkingUI.isBusy, !linkingUI.membershipLoading else { throw ManagedPreservationError.interrupted }
         }
         linkingUI.start(); try await settleLink()
         linkingUI.checkRetention(); try await settleLink()
@@ -10150,12 +10155,15 @@ actor SharingRuntimeSelfTestRunner {
             draft: .init(recordID: UUID(), document: document, jpegData: nil), client: rejected.client)
         func settle() async throws {
             let deadline = Date().addingTimeInterval(5)
-            while coordinator.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !coordinator.isBusy else { throw ManagedPreservationError.interrupted }
+            while (coordinator.isBusy || coordinator.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !coordinator.isBusy, !coordinator.membershipLoading else { throw ManagedPreservationError.interrupted }
         }
         coordinator.start(); try await settle()
-        coordinator.checkMembership(); try await settle()
         guard coordinator.membership?.canSave == true else { throw ManagedPreservationError.invalidResponse }
+        let automaticCounts = await rejected.server.counts()
+        guard automaticCounts.issues == 0, automaticCounts.completes == 0, automaticCounts.saves == 0 else {
+            throw ManagedPreservationError.invalidResponse
+        }
         coordinator.consentToNewSave = true
         coordinator.saveSelectedCopy(); try await settle()
         guard coordinator.membership == nil, !coordinator.draftWasSaved, coordinator.records.count == 1,
@@ -10163,6 +10171,62 @@ actor SharingRuntimeSelfTestRunner {
             throw ManagedPreservationError.invalidResponse
         }
         coordinator.stop()
+
+        // A cached client must reject a changed vault during a mutation, but an
+        // explicit entry/sign-in preparation can recover without making a new view.
+        let rebinding = try PreservationNativeFixture.make(); defer { try? rebinding.cleanup() }
+        _ = try await rebinding.client.hasSession()
+        let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "c", count: 43),
+            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
+        guard try rebinding.store.save(replacement, replacing: rebinding.session) else {
+            throw ManagedPreservationError.secureStorage
+        }
+        var refusedStale = false
+        do { _ = try await rebinding.client.hasSession() }
+        catch let error as ManagedPreservationError where error == .staleSession { refusedStale = true }
+        guard refusedStale else { throw ManagedPreservationError.invalidResponse }
+        try await rebinding.client.reloadSessionFromSecureStorage()
+        guard try await rebinding.client.sessionOwnerID() == replacement.ownerId,
+              await rebinding.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+
+        let outage = try PreservationNativeFixture.make(.unavailableMembership); defer { try? outage.cleanup() }
+        let outageUI = ManagedPreservationCoordinator(configuration: outage.configuration, client: outage.client)
+        outageUI.start()
+        let outageDeadline = Date().addingTimeInterval(5)
+        while (outageUI.isBusy || outageUI.membershipLoading) && Date() < outageDeadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        guard outageUI.records.count == 1, outageUI.errorMessage == nil, outageUI.membership == nil,
+              outageUI.membershipMessage != nil, !outageUI.membershipLoading,
+              await outage.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        outageUI.stop()
+
+        for (scenario, code) in [(PreservationFixtureScenario.requestRejected, "S01"), (.saveTimedOut, "S02")] {
+            let fixture = try PreservationNativeFixture.make(scenario); defer { try? fixture.cleanup() }
+            let copyUI = ManagedPreservationCoordinator(configuration: fixture.configuration,
+                draft: .init(recordID: PreservationFixtureServer.recordID, document: document, jpegData: nil),
+                client: fixture.client)
+            func settleFailure() async throws {
+                let deadline = Date().addingTimeInterval(5)
+                while (copyUI.isBusy || copyUI.membershipLoading) && Date() < deadline {
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                }
+                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw ManagedPreservationError.interrupted }
+            }
+            copyUI.start(); try await settleFailure()
+            guard copyUI.membership?.canSave == true else { throw ManagedPreservationError.invalidResponse }
+            copyUI.consentToNewSave = true
+            copyUI.saveSelectedCopy(); try await settleFailure()
+            guard copyUI.saveFailureCode == code,
+                  copyUI.copyState == (scenario == .requestRejected ? .failed : .needsConfirmation),
+                  await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+            if scenario == .saveTimedOut {
+                copyUI.confirmCopyResult(); try await settleFailure()
+                guard copyUI.copyState == .failed, copyUI.saveFailureCode == code,
+                      copyUI.errorMessage == nil else { throw ManagedPreservationError.invalidResponse }
+            }
+            copyUI.stop()
+        }
 
         // A lost PUT response is not a failure. Verify its ID/content (including
         // Date() sub-millisecond rounding) before enabling a manual retry.
@@ -10174,11 +10238,10 @@ actor SharingRuntimeSelfTestRunner {
                 client: fixture.client)
             func settleCopy() async throws {
                 let deadline = Date().addingTimeInterval(5)
-                while copyUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-                guard !copyUI.isBusy else { throw ManagedPreservationError.interrupted }
+                while (copyUI.isBusy || copyUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw ManagedPreservationError.interrupted }
             }
             copyUI.start(); try await settleCopy()
-            copyUI.checkMembership(); try await settleCopy()
             copyUI.consentToNewSave = true
             copyUI.saveSelectedCopy(); try await settleCopy()
             guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
@@ -10238,8 +10301,8 @@ actor SharingRuntimeSelfTestRunner {
         let localUI = ManagedPreservationCoordinator(configuration: local.configuration, client: local.client)
         func settleLocal() async throws {
             let deadline = Date().addingTimeInterval(5)
-            while localUI.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !localUI.isBusy else { throw ManagedPreservationError.interrupted }
+            while (localUI.isBusy || localUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+            guard !localUI.isBusy, !localUI.membershipLoading else { throw ManagedPreservationError.interrupted }
         }
         localUI.start(); try await settleLocal()
         guard let record = localUI.records.first else { throw ManagedPreservationError.invalidResponse }
