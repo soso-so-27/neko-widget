@@ -15,7 +15,7 @@
     },
     "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
       "before": "0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895",
-      "after": "b9991ddd4e859bfaa97f5a05dd80c466502323d867d7e52a01beb961fe3dd6a0"
+      "after": "28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360"
     },
     "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
       "before": "d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540",
@@ -31,7 +31,7 @@
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
       "before": "7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7",
-      "after": "c15da79e907788ff28d32ad6db95ada6da5d3bd69012038ad232d79ee6a08b84"
+      "after": "9aaaef9b5f855adeecee6ec9a9e256134ad3bf492e175517fa0e09ba888b99a7"
     }
   }
 }
