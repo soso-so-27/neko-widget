@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-owner-deletion-staging",
+  "main": "src/owner-deletion-worker.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "ENVIRONMENT": "staging",
+    "OWNER_DELETION_EXECUTOR_ENABLED": "NO",
+    "RECOVERY_COPY_ENABLED": "YES",
+    "RECOVERY_S3_REGION": "ap-northeast-1",
+    "RECOVERY_S3_BUCKET": "neko-preservation-staging-recovery-164892691568",
+    "RECOVERY_S3_ACCOUNT_ID": "164892691568"
+  },
+  "d1_databases": [{
+    "binding": "DB", "database_name": "neko-preservation-staging",
+    "database_id": "955a8530-9015-486c-8d0c-1b5a2c5b6d4f", "migrations_dir": "migrations"
+  }],
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "neko-preservation-staging-private" }],
+  "services": [{ "binding": "KEY_WRAPPER", "service": "neko-preservation-kms-staging-disabled",
+    "entrypoint": "PreservationKeyWrapper" },
+    { "binding": "RECOVERY_INVENTORY", "service": "neko-preservation-staging-disabled",
+      "entrypoint": "OwnerDeletionInventory" }],
+  "triggers": { "crons": ["*/5 * * * *"] }
+}

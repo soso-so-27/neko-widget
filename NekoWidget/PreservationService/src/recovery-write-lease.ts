@@ -8,10 +8,12 @@ const unavailable = () => new ServiceError('RECOVERY_WRITE_FENCED', 503);
  * silently bypasses it.
  */
 export class RecoveryWriteLease {
-  constructor(private readonly db: D1Database, private readonly now: () => number) {}
+  constructor(private readonly db: D1Database, private readonly now: () => number,
+    private readonly ownerDeletion?: { assertNotRequested(ownerId: string): Promise<void> }) {}
 
   async withOwnerWrite<T>(ownerId: string, action: () => Promise<T>): Promise<T> {
     if (!uuid.test(ownerId)) throw unavailable();
+    await this.ownerDeletion?.assertNotRequested(ownerId);
     const writeId = crypto.randomUUID();
     const startedAt = this.now();
     if (!Number.isSafeInteger(startedAt) || startedAt < 1) throw unavailable();

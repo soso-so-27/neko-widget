@@ -20,9 +20,12 @@ export class OwnerQuarantineRestore {
     private readonly db: D1Database,
     private readonly bucket: R2Bucket,
     private readonly purgeIntents: Pick<S3PurgeIntentStore,
-      'listOwnerVersionsPage' | 'referenceForListedVersion' | 'readExact'>) {}
+      'listOwnerVersionsPage' | 'referenceForListedVersion' | 'readExact'>,
+    private readonly ownerDeletion?: { assertNotRequested(ownerId: string): Promise<void> }) {}
 
   private async requireNoPurgeIntent(ownerId: string): Promise<void> {
+    if (!this.ownerDeletion) throw unavailable();
+    await this.ownerDeletion.assertNotRequested(ownerId);
     if (await loadOwnerPurgeReplay(this.purgeIntents, ownerId) !== 'clear') throw unavailable();
   }
 

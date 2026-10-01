@@ -1,11 +1,12 @@
 import { env } from 'cloudflare:workers';
-import { expect, it } from 'vitest';
+import { beforeAll, expect, it } from 'vitest';
 import worker, { configuredServices, type Env } from '../src/index';
 import { randomToken, sha256 } from '../src/contracts';
 import { RetentionLedger } from '../src/retention-ledger';
 import { vi } from 'vitest';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
+beforeAll(async () => { await binding.ARCHIVE.put('__owner_deletion/v1/format.json', '{"version":1}'); });
 
 function generalEnv(): Env {
   const provider={fetch:async()=>{throw new Error('must not call');}} as unknown as Fetcher;

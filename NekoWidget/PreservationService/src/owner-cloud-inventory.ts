@@ -20,7 +20,7 @@ export type OwnerCloudInventory = {
  * include owner IDs missing from the caller's catalog, request charges,
  * delete-marker overhead, or a stable snapshot while writes are running.
  */
-export async function inventoryOwnerCloudStorage(bucket: R2Bucket, s3: S3RecoveryCopy,
+export async function inventoryOwnerCloudStorage(bucket: R2Bucket, s3: Pick<S3RecoveryCopy, 'listOwnerVersionsPage'>,
   ownerId: string): Promise<OwnerCloudInventory> {
   try {
     const r2Objects: OwnerPhoto[] = [];

@@ -1,0 +1,9 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DeleteRecoveryVersionsInStaging",
+    "Effect": "Allow",
+    "Action": "s3:DeleteObjectVersion",
+    "Resource": "arn:aws:s3:::neko-preservation-staging-recovery-164892691568/recovery/v1/*"
+  }]
+}
