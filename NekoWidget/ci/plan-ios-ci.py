@@ -307,31 +307,31 @@ PRESERVATION_COMPANION_DIGESTS = {
 }
 
 
-BILLING_SCOPE = "billing-private-service-v1"
+BILLING_SCOPE = "billing-private-service-v2"
 BILLING_JOB = "Typecheck, test, and build Apple transaction verifier"
 BILLING_CALLER_JOB = "Validate private billing caller"
 BILLING_WORKFLOW = ".github/workflows/sharing-service.yml"
-BILLING_JOB_TIMEOUT_MINUTES = 10
-BILLING_PATHS = frozenset(('NekoWidget/BillingVerificationService/.dockerignore', 'NekoWidget/BillingVerificationService/Dockerfile.cloudflare', 'NekoWidget/BillingVerificationService/README.md', 'NekoWidget/BillingVerificationService/container/.gitignore', 'NekoWidget/BillingVerificationService/container/README.md', 'NekoWidget/BillingVerificationService/container/local-drill.mjs', 'NekoWidget/BillingVerificationService/container/nonce-ledger-core.mjs', 'NekoWidget/BillingVerificationService/container/nonce-ledger.mjs', 'NekoWidget/BillingVerificationService/container/package-lock.json', 'NekoWidget/BillingVerificationService/container/package.json', 'NekoWidget/BillingVerificationService/container/remote-probe.mjs', 'NekoWidget/BillingVerificationService/container/runtime-config.mjs', 'NekoWidget/BillingVerificationService/container/test.mjs', 'NekoWidget/BillingVerificationService/container/worker.mjs', 'NekoWidget/BillingVerificationService/container/wrangler.jsonc', 'NekoWidget/BillingVerificationService/src/config.ts', 'NekoWidget/BillingVerificationService/src/container-index.ts', 'NekoWidget/BillingVerificationService/src/durable-nonce-store.ts', 'NekoWidget/BillingVerificationService/src/server.ts', 'NekoWidget/BillingVerificationService/test/config.test.ts', 'NekoWidget/BillingVerificationService/test/durable-nonce-store.test.ts', 'NekoWidget/SharingService/README.md', 'NekoWidget/SharingService/src/billing-verifier-client.ts', 'NekoWidget/SharingService/src/env.ts', 'NekoWidget/SharingService/test/billing-verifier-client.test.ts'))
-BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': 'fabbab40b3e9261d8906591213ea71ae3b1ce0c4', 'PreservationImageValidator': 'b6d89e568187fc23c49887fbb5ae259e54789212', 'PreservationService': '2938f8aef3762bdbf9e7708ccd39d80acab032e4'}
-BILLING_WORKFLOW_DIGEST = "708aa2f4d5e96a0537673c7f9a84ee36adf155399b3889b359af2b4b34d8bde7"
+BILLING_JOB_TIMEOUT_MINUTES = 5
+BILLING_PATHS = frozenset(('NekoWidget/SharingService/README.md', 'NekoWidget/SharingService/gateway/.gitattributes', 'NekoWidget/SharingService/gateway/family-entry.mjs', 'NekoWidget/SharingService/gateway/family-router.mjs', 'NekoWidget/SharingService/gateway/family-router.test.mjs', 'NekoWidget/SharingService/gateway/family-runtime.test.mjs', 'NekoWidget/SharingService/gateway/family-v5-frozen.json', 'NekoWidget/SharingService/gateway/family-v5-frozen.mjs', 'NekoWidget/SharingService/gateway/render-live-config.mjs', 'NekoWidget/SharingService/gateway/render-live-config.test.mjs', 'NekoWidget/SharingService/src/billing-gateway.ts', 'NekoWidget/SharingService/test/billing-gateway.node-tests.mjs'))
+BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': '77fb64e39fe827a7f88a24db16419aaf1695f7aa', 'PreservationImageValidator': 'b6d89e568187fc23c49887fbb5ae259e54789212', 'PreservationService': '2938f8aef3762bdbf9e7708ccd39d80acab032e4'}
+BILLING_WORKFLOW_DIGEST = "492e25862dc87f5c329ba99cc3b602bf3cc1baa7bc257851c55ab0788596e6fd"
 BILLING_COMPANION_PATHS = JPEG_COMPANION_PATHS
 BILLING_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
-        "9e9cd1b4264307495e17bb18d06804daf369e01ca91101b7de10efd82ef65b92",
-        "6e1bfc1304978d4dfb3080eda650153c75b1fc5fd68b08eaafbb7ce2748023eb"
+        "d1b903fb3a70537739b03fa76b387674799cacc4f1194209cc05c3e71df0af8f",
+        "9879b910b431d432120069f3fdbc012313d08879f8b1f4cab2e7873ea86a3e57"
     ],
     "NekoWidget/ci/preflight-ci.py": [
-        "fdb4833137e62c4038bcbbbe7273d4afd20391d601bb212de91a3928bef881d1",
-        "3411e990bbe4b196f9f3ef0e01e8c326350f82554780574b5e64dc5895c86bcd"
+        "3411e990bbe4b196f9f3ef0e01e8c326350f82554780574b5e64dc5895c86bcd",
+        "798c1d27137968853fc21c420ece860a6fad7e062ec8b5ccb701ce59ccc23350"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "3e1256cacf5de146d9a6bd7cf165db06ddcff1c421f5c62c84e3e91cd7077e5a",
-        "c66c5ccd622f28a572416d42224588b731f83652c2e59478c873e355f3f374bc"
+        "c66c5ccd622f28a572416d42224588b731f83652c2e59478c873e355f3f374bc",
+        "198a4fb732e8a057ded6e5c8769372065821795c53837ffee6bcf06bf3fed5b8"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
-        "5647fd2574f710e4bfc99707fba90bea0be276470ad7f5d4a12e92e93c89b567",
-        "4ee461474648a6d87124e764996422da1a58063dae5ebb624fc9044eba91159f"
+        "4ee461474648a6d87124e764996422da1a58063dae5ebb624fc9044eba91159f",
+        "a6bf767e36240718273758109352458e9caedc1b5ed8213bc7b98c858c0016db"
     ]
 }
 
@@ -492,7 +492,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
         return (JPEG_JOB,)
     if runtime_scope == BILLING_SCOPE and billing_paths_only(paths):
-        return (BILLING_JOB, BILLING_CALLER_JOB, PRESERVATION_JOB)
+        return (BILLING_CALLER_JOB, PRESERVATION_JOB)
     if runtime_scope == PRESERVATION_SCOPE and preservation_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
@@ -1232,7 +1232,7 @@ def main() -> None:
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
-                       BILLING_SCOPE: (BILLING_JOB + ", " + BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
+                       BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             output.write(("## Backend-only verification\n\nRequired separately: " + backend[0]
                           + " in `" + backend[1] + "`. This plan does not certify that job's success. "
                           "Mac jobs are not requested. Not iOS release evidence.\n") if backend else

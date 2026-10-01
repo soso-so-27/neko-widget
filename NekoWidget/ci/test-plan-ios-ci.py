@@ -308,6 +308,8 @@ class PlanTests(unittest.TestCase):
     def test_private_billing_backend_requires_all_frozen_dependencies_and_workflows(self):
         path = next(iter(planner.BILLING_PATHS))
         changed = [path]
+        self.assertEqual(planner.BILLING_SCOPE, "billing-private-service-v2")
+        self.assertNotIn(planner.BILLING_JOB, planner.required_jobs(list(planner.BILLING_PATHS), planner.BILLING_SCOPE))
         snapshot = dict(planner.BILLING_REVIEWED_TREES)
         def frozen_git(*args):
             if args[0] == "rev-parse":
