@@ -30,6 +30,7 @@ LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
+TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
@@ -74,7 +75,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v3"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1081,6 +1082,36 @@ def reviewed_tool_cat_autofill_changes(changes: dict[str, tuple[str, str]]) -> b
                     for path in TOOL_CAT_AUTOFILL_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CAT_AUTOFILL_TESTS))
 
+
+# Text candidate refresh against main 252642b; exactly ten reviewed app-only
+# sources and three existing owning cases. Photos, manually edited/cleared or
+# checked records and immutable public copies remain unchanged. This is not a
+# generic storage allowance; control files must be merged separately first.
+TOOL_CANDIDATE_REFRESH_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/CareHandoffPlan.swift": ["086a37e76a380633ec274f78f7d35d3e9776ca73236a28189d8b0ad92929221b","a36ad9cdf6d238b6bd7a0f2838a89358df885ff51f789d6d299cc7eccd5e2743"],
+    "NekoWidget/NekoWidget/Services/CareHandoffStore.swift": ["513db4e3dcb9bd131d25a8e88ba2e5696538e120c2ab684f1a3345000288ea99","99813dceb50471f50602f59c3c3a377092588e7b20c504487f92e6190b197384"],
+    "NekoWidget/NekoWidget/Services/CatPreparednessStore.swift": ["a92e7d7a49be45e0334310b3c520e6af5893d63fcedfa93b2f111fe54a6d5a59","d4494fd8751086c7f5b7a030ae9a3cfd8e516c0a1dcd738bde2063929394bc8c"],
+    "NekoWidget/NekoWidget/Services/EvacuationStore.swift": ["69d4f1653c54f7ec02c5fd0ae5321ce7b251a620f0ba24a888c1b9423dd75d61","2dee7a1ea5e42a1d885a932c7733c3e18c6a2fc5f3739a0479c58f806a39a766"],
+    "NekoWidget/NekoWidget/Views/CareHandoffFixtureView.swift": ["30f3b00bf7ddca9b6e78fc73aafc30abd91d7765125d714e31c6fbd534c3d18b","c7deb6a4b7381bb956c39bf5945da5ddebbafa95252d5488141ca36e3790d019"],
+    "NekoWidget/NekoWidget/Views/CareHandoffView.swift": ["2f88925559fc7d2f7f7838f722b7cec7e423d8b9371902018ffe27c819faa8c2","ff57b6fefca8351b771494eebf5c6a83ba4e6ac9f60bc10528a021b8a9b24012"],
+    "NekoWidget/NekoWidget/Views/CatPreparednessView.swift": ["59329e7d5f6730cb68d2a79a044320cf6a95f18572e7519fa01d8c8ecad3e6fb","ee114ca278eed61fdbc38b97c1faface9c0e0147440252eb37863c324c882399"],
+    "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["24afb79a9832d638b693cb2d502b633c9abd5f9a7917ef498af145327727e150","f832d5bb7b26df3df15f86546cdc22c773990b71283c3e1ec608b3092d57000d"],
+    "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": ["4d531748502840a71c343611b720bfada66a82ac2043ddb5b6e7122c54186106","2f2e6251d4ffec24778232ce9937e365b2e7376a83d9c39d3865c7b6b99e0eab"],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["02d7a9a7434586d344f07eb4d26c12bf7f9fca95786bc7c2b4c5395bfbe049c3","8d9f0b41438a83bcd6a981a126a9a614fad35f4e391982cd42d764b3991cc732"],
+}
+TOOL_CANDIDATE_REFRESH_PATHS = frozenset(TOOL_CANDIDATE_REFRESH_DIGESTS)
+TOOL_CANDIDATE_REFRESH_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart",
+    "testEvacuationAutofillKeepsMealDetailsAndIndependentPhotoAtLargeText",
+    "testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF",
+))
+
+
+def reviewed_tool_candidate_refresh_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == TOOL_CANDIDATE_REFRESH_PATHS
+            and all(list(map(source_digest, changes[path])) == TOOL_CANDIDATE_REFRESH_DIGESTS[path]
+                    for path in TOOL_CANDIDATE_REFRESH_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CANDIDATE_REFRESH_TESTS))
 
 # Exact app-only identity/weight chooser batch against main 201c757.
 # No model, migration, Widget, registration or workflow changes are admitted.
@@ -2228,6 +2259,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
+        return sources == TOOL_CANDIDATE_REFRESH_PATHS
     if scope == MEMBERSHIP_COPY_SCOPE:
         return sources == MEMBERSHIP_COPY_PATHS
     if scope == APP_DATA_SCOPE:
@@ -2401,6 +2434,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
+        return TOOL_CANDIDATE_REFRESH_TESTS
     if scope == MEMBERSHIP_COPY_SCOPE:
         return MEMBERSHIP_COPY_TESTS
     if scope == VET_SAVED_CAT_SCOPE:
@@ -2639,6 +2674,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_tool_candidate_refresh_changes(changes):
+        return TOOL_CANDIDATE_REFRESH_SCOPE
     if reviewed_tool_cat_autofill_changes(changes):
         return TOOL_CAT_AUTOFILL_SCOPE
     if reviewed_membership_copy_changes(changes):
