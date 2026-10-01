@@ -22,8 +22,18 @@ Python12suiteは265.8秒で成功。mainの制御変更統合後は影響するt
 
 ## 最終確認と配布
 
-focused Memory診断36828453069 attempt1は992秒でテストRunnerがXCTest接続前にsignal killとなり、操作0件・描画添付0件で終了した。アプリ/テストのビルドは完了しており、製品失敗とは確定しない。同じSHA・同じ1メソッドを新しいrunnerでattempt2として再実行し、失敗と累計時間を保持する。通常候補・内部TestFlight結果は完了後に追記する。Apple upload成功と処理完了/実機表示を区別する。
+focused Memory診断36828453069 attempt1は991秒でRunnerがXCTest接続前にsignal killとなり、操作0件・描画添付0件で終了した。アプリ/テストのビルドは完了しており、製品失敗とは確定しない。同SHA・同1メソッドをfresh runnerで再実行したattempt2は809秒で成功。メソッド全体159.224秒、選択JPEG/文章・同意ON1保存有効/OFF0保存不可・元写真と一覧への復帰を実際に確認した。失敗の時間は消さない。
+
+通常候補[CI36831876667](https://github.com/soso-so-27/neko-widget/actions/runs/36831876667)は全4必須job成功。native7件を全実行、0失敗・0skip（629.480秒）。保管runtime3境界の両OS、Build、Photos bootstrapも成功。実描画で旧コピーのサービス入口・JPEG/文章・同意OFF、端末メモの同じサービス入口を確認した。
+
+[PR141](https://github.com/soso-so-27/neko-widget/pull/141)を2026-10-01 17:10:40 JSTに本線へmerge（636dfa6bf75be2997477bbdc1ac249e475adb8a1）。main CI36834705579は候補31a04fcとCI36831876667の成功証拠を再利用し、Mac再検証はしなかった。
+
+内部[build235/run36834987212](https://github.com/soso-so-27/neko-widget/actions/runs/36834987212)を同じ候補で1回だけdispatchし、**2026-10-01 17:25:39 JSTにAppleアップロード成功**。実ログの `UPLOAD SUCCEEDED with no errors`（08:25:39.225442 UTC）を確認した。製品sourceは31a04fc、workflow/mainは636dfa6。日常3ツールの会員境界とメモ/旧iCloud導線の両方を含む。既存のtestflight環境承認だけを適用し、保護設定・公開・実課金・保管サーバー・pilot期限は変更していない。
+
+Apple側の処理完了、235の実機表示は未確認。一般提供の保持期限・事前通知・期限消去・販売の運用が完成したという意味ではない。既に利用者が成功した実写真保管・同本人での再確認/復元・ZIPの結果を保持し、今回の導線整理のために再要求しない。
 
 ## 時間
 
-最初の調査04:34 UTCは概算。初回製品候補04:47:20.136587 UTCから、compile/UI失敗、訂正、cancel、main統合、制御binding訂正、最終確認とuploadを含める。当初45〜60分の見込みを大きく超えた。最後のgreen runだけを所要時間としない。旧full-route最大を計画参照したことは、本scopeの実測やWidget検証を実行したことを意味しない。
+最初の調査04:34 UTCは概算。初回製品候補04:47:20.136587 UTCからAppleアップロード成功まで**218.3分（約3時間38分）**。失敗、訂正、cancel、main統合、制御binding訂正、最終確認とuploadを含む。当初45〜60分を大きく超過した。
+
+通常成功CIは23.4分、upload runは12.183分であり、この2 runだけを総時間としない。CI runner75.467分、upload runner10.567分は実行資源の時間で、請求額やCodex token数ではない。途中で旧full-route最大を計画参照したことは、Widget検証を実行したことでも、このscopeの実績でもない。失敗した通常run29.7分とcompile/診断/cancelの個別時間も計測台帳へ保持した。
