@@ -38,7 +38,7 @@ struct PersonalArchiveSettingsLink: View {
 
     var body: some View {
         NavigationLink { PersonalArchiveView(store: store, noteStore: noteStore) } label: {
-            Label("iCloudの保管と復元", systemImage: "icloud")
+            Label("以前のiCloud保管", systemImage: "icloud")
         }
         .accessibilityIdentifier("settings-personal-archive")
     }

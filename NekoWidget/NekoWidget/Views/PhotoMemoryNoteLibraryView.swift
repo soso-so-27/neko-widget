@@ -648,7 +648,6 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var loaded = false
     @State private var failed = false
     @State private var editing = false
-    @State private var preserving = false
     @State private var confirmsDelete = false
     @State private var deleting = false
     @State private var error: String?
@@ -717,7 +716,7 @@ struct PhotoMemoryNoteDetailView: View {
                         if archivedRecord != nil {
                             Button("保管状況を確認") { showsArchiveDetails = true }
                         } else {
-                            Button("保管状況を確認") { preserving = true }
+                            Button("保管状況を確認") { Task { await reload() } }
                         }
                     }
                 }
@@ -730,7 +729,7 @@ struct PhotoMemoryNoteDetailView: View {
 
     var body: some View {
         detailContent
-        .navigationTitle("")
+        .navigationTitle("メモ")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { detailToolbar }
         .sheet(isPresented: $editing, onDismiss: { Task { await reload() } }) {
@@ -739,12 +738,6 @@ struct PhotoMemoryNoteDetailView: View {
                                       archiveStore: archiveStore) {
                     Task { await reload() }
                 }
-            }
-        }
-        .sheet(isPresented: $preserving, onDismiss: { Task { await reload() } }) {
-            if let record {
-                PhotoMemoryNoteArchiveView(record: record, photos: photos,
-                                           noteStore: store, archiveStore: archiveStore)
             }
         }
         .sheet(isPresented: $showsArchiveDetails, onDismiss: { Task { await reload() } }) {
@@ -816,11 +809,6 @@ struct PhotoMemoryNoteDetailView: View {
                             }
                             .disabled(record.map { access.photo(for: $0.photoIdentifier) == nil } ?? true)
                             .accessibilityIdentifier("memory-note-managed-preserve")
-                        } else if archiveEnabled {
-                            Button { preserving = true } label: {
-                                Label("iCloudに保管", systemImage: "icloud.and.arrow.up")
-                            }
-                            .accessibilityIdentifier("memory-note-preserve")
                         }
                         Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
                     } label: { Image(systemName: "ellipsis") }
@@ -1055,6 +1043,15 @@ struct PhotoMemoryNoteLibraryFixture: View {
                     _ = try await Self.archiveStore.save(id: UUID(), jpegData: jpeg,
                         text: "はじめてのおふろ。タオルにくるまって、やっとひと安心。",
                         capturedAt: Date(timeIntervalSince1970: 1_700_000_000), expectedAccount: account)
+                }
+                if CommandLine.arguments.contains("--memory-library-linked-archive"),
+                   try await Self.archiveStore.records().isEmpty,
+                   let existing = try await Self.store.records().first {
+                    let account = try await Self.archiveStore.accountContext()
+                    let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")?
+                        .jpegData(compressionQuality: 0.85)
+                    _ = try await PhotoMemoCoordinator(noteStore: Self.store, archiveStore: Self.archiveStore)
+                        .enableUpdates(for: existing, jpegData: jpeg, expectedAccount: account)
                 }
                 await selection.resolveInitialSelection(noteStore: Self.store, archiveStore: Self.archiveStore)
                 ready = true

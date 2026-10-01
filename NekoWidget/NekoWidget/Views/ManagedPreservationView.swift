@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import CloudKit
 import ImageIO
 
 /// Standalone, default-OFF entry. The host must explicitly supply a selected copy;
@@ -14,10 +15,13 @@ struct ManagedPreservationView: View {
     @State private var confirmsMembershipLink = false
     @State private var confirmsDraftDiscard = false
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
+    private let allowsRecordBrowsing: Bool
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
+         allowsRecordBrowsing: Bool = true,
          onUnsecuredMemoChange: ((Bool) -> Void)? = nil) {
+        self.allowsRecordBrowsing = allowsRecordBrowsing
         self.onUnsecuredMemoChange = onUnsecuredMemoChange
         let exporter = RecordExportController()
         _exporter = StateObject(wrappedValue: exporter)
@@ -121,8 +125,12 @@ struct ManagedPreservationView: View {
                 noticeContactSection
                 if coordinator.membership?.access != .pilot { retentionSection }
                 usageSection
-                if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
-                recordsSection
+                // A selected-copy entry must not become a second route for
+                // editing unrelated records. The settings entry retains browsing.
+                if allowsRecordBrowsing {
+                    if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
+                    recordsSection
+                }
             }
             if coordinator.isBusy {
                 Section {
@@ -356,6 +364,7 @@ struct ManagedPreservationView: View {
                 ManagedPreservationPhotoPreview(data: photo, maximumHeight: 220)
                     .id(draft.recordID)
                     .accessibilityLabel("今回保管する写真のコピー")
+                    .accessibilityIdentifier("preservation-copy-photo")
             }
             if !draft.document.text.isEmpty { Text(draft.document.text) }
             if let weight = draft.document.weight { PhotoMemoWeightLabel(weight: weight) }
@@ -514,13 +523,44 @@ struct ManagedPreservationMembershipFixture: View {
 }
 #endif
 
-/// A single explicitly selected asset. Failure never falls back to uploading only
-/// the text, and the prepared ID/content survive retry and authentication changes.
+/// Prepares one existing iCloud copy without enabling reflection, refreshing the
+/// cloud, changing the original, or sending anything to the service.
+@MainActor
+enum ManagedPreservationCopyPreparation {
+    static func archive(recordID: UUID, store: PersonalArchiveStore,
+                        expectedAccount: String, copyID: UUID) async throws -> ManagedPreservationDraft {
+        let before = try await store.readingSnapshot(expectedAccount: expectedAccount)
+        guard let selected = before.records.first(where: { $0.id == recordID }),
+              !selected.isDeletionPending, selected.state != .conflict,
+              let raw = selected.jpegData else { throw ManagedPreservationError.invalidRecord }
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try PersonalArchiveImage.jpeg(from: raw)
+        }
+        let jpeg = try await withTaskCancellationHandler { try await worker.value }
+            onCancel: { worker.cancel() }
+        try Task.checkCancellation()
+        let after = try await store.readingSnapshot(expectedAccount: expectedAccount)
+        guard after.records.first(where: { $0.id == recordID }) == selected else {
+            throw ManagedPreservationError.conflict
+        }
+        let document = ManagedPreservationDocument(formatVersion: selected.context?.weight == nil ? 1 : 2,
+            text: selected.text, capturedAt: selected.capturedAt,
+            writtenAt: selected.context?.writtenAt, updatedAt: selected.context?.updatedAt,
+            catNames: selected.context?.catNames ?? [], photoFile: "photo.jpg", weight: selected.context?.weight)
+        return ManagedPreservationDraft(recordID: copyID, document: try document.validated(), jpegData: jpeg)
+    }
+}
+
+/// One selected photo and memo, whether its source is Photos or an existing
+/// iCloud copy. The prepared ID/content survive retry and authentication changes.
 @MainActor
 struct ManagedPreservationPhotoView: View {
-    let photo: PhotoPresentation
-    let context: PhotoMemoryNoteContext
-    let noteStore: PhotoMemoryNoteStore
+    private enum Source {
+        case photo(PhotoPresentation, PhotoMemoryNoteContext, PhotoMemoryNoteStore)
+        case archive(UUID, PersonalArchiveStore, String)
+    }
+    private let source: Source
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
@@ -529,14 +569,51 @@ struct ManagedPreservationPhotoView: View {
     @State private var errorMessage: String?
     @State private var attempt = UUID()
     @State private var hasUnsecuredMemo = false
+#if DEBUG
+    @State private var fixture: PreservationNativeFixture?
+#endif
+
+    init(photo: PhotoPresentation, context: PhotoMemoryNoteContext, noteStore: PhotoMemoryNoteStore) {
+        source = .photo(photo, context, noteStore)
+    }
+
+    init(archiveRecordID: UUID, archiveStore: PersonalArchiveStore, expectedAccount: String) {
+        source = .archive(archiveRecordID, archiveStore, expectedAccount)
+    }
+
+    private var usesEntryFixture: Bool {
+#if DEBUG
+        CommandLine.arguments.contains("--memory-service-preservation-entry-fixture")
+#else
+        false
+#endif
+    }
+
+    private var configuration: ManagedPreservationConfiguration {
+#if DEBUG
+        if let fixture { return fixture.configuration }
+#endif
+        return .current
+    }
+
+    @ViewBuilder private var preparedCopy: some View {
+        if let draft {
+#if DEBUG
+            ManagedPreservationView(configuration: configuration, draft: draft, client: fixture?.client,
+                allowsRecordBrowsing: false, onUnsecuredMemoChange: { hasUnsecuredMemo = $0 })
+#else
+            ManagedPreservationView(draft: draft, allowsRecordBrowsing: false, onUnsecuredMemoChange: { hasUnsecuredMemo = $0 })
+#endif
+        }
+    }
 
     var body: some View {
         NavigationStack {
             Group {
-                if !ManagedPreservationConfiguration.current.isEnabled {
+                if !configuration.isEnabled && !usesEntryFixture {
                     ContentUnavailableView("保管先は準備中です", systemImage: "externaldrive")
-                } else if let draft {
-                    ManagedPreservationView(draft: draft, onUnsecuredMemoChange: { hasUnsecuredMemo = $0 })
+                } else if draft != nil {
+                    preparedCopy
                 } else if let errorMessage {
                     ContentUnavailableView {
                         Label("写真を準備できませんでした", systemImage: "photo")
@@ -553,46 +630,71 @@ struct ManagedPreservationPhotoView: View {
                 if phase == .background && draft == nil { attempt = UUID() }
                 if phase == .active && draft == nil { attempt = UUID() }
             }
-            .onDisappear { access.stop() }
+            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+                .receive(on: DispatchQueue.main)) { _ in
+                if case .archive = source {
+                    attempt = UUID()
+                    draft = nil
+                    errorMessage = PersonalArchiveError.accountChanged.errorDescription
+                }
+            }
+            .onDisappear {
+                access.stop()
+#if DEBUG
+                try? fixture?.cleanup()
+#endif
+            }
         }
         .interactiveDismissDisabled(hasUnsecuredMemo)
     }
 
     private func prepare() async {
-        guard ManagedPreservationConfiguration.current.isEnabled, draft == nil,
+        guard (configuration.isEnabled || usesEntryFixture), draft == nil,
               scenePhase != .background else { return }
         let token = attempt
         errorMessage = nil
-        access.start(photos: [photo])
         do {
-            guard access.photo(for: photo.localIdentifier) != nil else {
-                throw ManagedPreservationError.invalidRecord
-            }
-            let identifier = photo.localIdentifier
-            let note = try await noteStore.note(for: identifier)
-            let worker = Task.detached(priority: .userInitiated) {
+#if DEBUG
+            if usesEntryFixture && fixture == nil { fixture = try PreservationNativeFixture.make(.pilotCopyResultLost) }
+#endif
+            switch source {
+            case let .archive(recordID, store, expectedAccount):
+                let prepared = try await ManagedPreservationCopyPreparation.archive(recordID: recordID,
+                    store: store, expectedAccount: expectedAccount, copyID: draftID)
                 try Task.checkCancellation()
-                guard let raw = PhotoImageLoader().image(localIdentifier: identifier,
-                    targetSize: CGSize(width: 4096, height: 4096), contentMode: .aspectFit)?
-                    .jpegData(compressionQuality: 0.96) else { throw ManagedPreservationError.invalidRecord }
+                guard token == attempt else { return }
+                draft = prepared
+            case let .photo(photo, context, noteStore):
+                access.start(photos: [photo])
+                guard access.photo(for: photo.localIdentifier) != nil else {
+                    throw ManagedPreservationError.invalidRecord
+                }
+                let identifier = photo.localIdentifier
+                let note = try await noteStore.note(for: identifier)
+                let worker = Task.detached(priority: .userInitiated) {
+                    try Task.checkCancellation()
+                    guard let raw = PhotoImageLoader().image(localIdentifier: identifier,
+                        targetSize: CGSize(width: 4096, height: 4096), contentMode: .aspectFit)?
+                        .jpegData(compressionQuality: 0.96) else { throw ManagedPreservationError.invalidRecord }
+                    try Task.checkCancellation()
+                    return try PersonalArchiveImage.jpeg(from: raw)
+                }
+                let jpeg = try await withTaskCancellationHandler { try await worker.value }
+                    onCancel: { worker.cancel() }
+                let current = try await noteStore.note(for: identifier)
                 try Task.checkCancellation()
-                return try PersonalArchiveImage.jpeg(from: raw)
+                access.refresh()
+                guard token == attempt, access.photo(for: identifier) != nil, current == note else {
+                    throw ManagedPreservationError.conflict
+                }
+                let document = ManagedPreservationDocument(formatVersion: note?.weight == nil ? 1 : 2, text: note?.text ?? "",
+                    capturedAt: context.capturedAt, writtenAt: note?.writtenAt, updatedAt: note?.updatedAt,
+                    catNames: context.cats.map(\.name), photoFile: "photo.jpg", weight: note?.weight?.value)
+                draft = ManagedPreservationDraft(recordID: draftID,
+                    document: try document.validated(), jpegData: jpeg)
             }
-            let jpeg = try await withTaskCancellationHandler { try await worker.value }
-                onCancel: { worker.cancel() }
-            let current = try await noteStore.note(for: identifier)
-            try Task.checkCancellation()
-            access.refresh()
-            guard token == attempt, access.photo(for: identifier) != nil, current == note else {
-                throw ManagedPreservationError.conflict
-            }
-            let document = ManagedPreservationDocument(formatVersion: note?.weight == nil ? 1 : 2, text: note?.text ?? "",
-                capturedAt: context.capturedAt, writtenAt: note?.writtenAt, updatedAt: note?.updatedAt,
-                catNames: context.cats.map(\.name), photoFile: "photo.jpg", weight: note?.weight?.value)
-            draft = ManagedPreservationDraft(recordID: draftID,
-                document: try document.validated(), jpegData: jpeg)
         } catch is CancellationError {
-            // No service request has been made, and the local source is untouched.
+            // No service request has been made, and the selected source is untouched.
         } catch {
             guard token == attempt else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription
