@@ -2705,6 +2705,84 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testMembershipDailyToolsKeepExistingRecordsAccessible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-access-ui-fixture", "--photo-window-ui-fixture",
+            "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let existing = app.buttons["membership-existing"]
+        XCTAssertTrue(existing.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: existing)], timeout: 5), .completed)
+        app.buttons["membership-care"].tap()
+        let cat = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
+        XCTAssertTrue(cat.waitForExistence(timeout: 5))
+        cat.tap()
+        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Existing care memo remains editable")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["care-add-cat"].tap()
+        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
+        capture("membership-care-new-only")
+        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).count, 1)
+        XCTAssertTrue(app.buttons["care-disclosure-open"].isHittable, "Existing output remains available")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["membership-veterinary"].tap()
+        let visit = app.buttons["vet-cat-AB000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(visit.waitForExistence(timeout: 5)); visit.tap()
+        XCTAssertTrue(app.textFields["vet-questions"].waitForExistence(timeout: 5)
+            || app.textViews["vet-questions"].waitForExistence(timeout: 5), "Existing draft remains editable")
+        app.navigationBars.buttons["閉じる"].tap()
+        app.buttons["vet-new-cat"].tap()
+        app.alerts.textFields.firstMatch.typeText("新しい猫")
+        app.alerts.buttons["作る"].tap()
+        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
+        capture("membership-veterinary-new-only")
+        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["membership-unknown"].tap()
+        app.buttons["membership-care"].tap()
+        app.buttons["care-add-cat"].tap()
+        XCTAssertTrue(app.buttons["購入を確認する"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["membership-beta"].tap()
+        app.buttons["membership-care"].tap()
+        app.buttons["care-add-cat"].tap()
+        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Beta creation remains unrestricted")
+        app.terminate()
+    }
+
+    @MainActor
+    func testMembershipShowcaseBoundaryKeepsEmergencyToolsFree() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-access-ui-fixture", "--photo-window-ui-fixture",
+            "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let tools = app.buttons["membership-tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 10)); tools.tap()
+        let tab = app.buttons["main-tab-tools"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 5)); tab.tap()
+        app.buttons["tools-showcase-open"].tap()
+        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
+        capture("membership-showcase-boundary")
+        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        let lost = app.buttons["tools-lost-cat-open"]
+        for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
+        lost.tap()
+        XCTAssertTrue(app.navigationBars["迷子のとき"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let evacuation = app.buttons["tools-evacuation-open"]
+        for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
+        evacuation.tap()
+        XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testMembershipOfferExplainsExpiryWithoutChangingThePlan() {
         for largeText in [false, true] {
             let app = XCUIApplication()

@@ -306,6 +306,8 @@ struct MainTabView: View {
     @StateObject private var showcaseStore = ShowcasePhotoStore()
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
+    @Environment(\.membershipActions) private var showcaseAccess
+    @State private var showcaseMembershipNotice: MembershipAccessDecision?
     @State private var showsShowcasePreparation = false
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
@@ -403,8 +405,10 @@ struct MainTabView: View {
             .tag(AppTab.tools)
         }
         .environment(\.showcaseOpenOne, { identifier in
+            guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
+        .membershipActionNotice($showcaseMembershipNotice)
         .environment(\.showcaseAddPhoto, { identifier in
             showcaseAddPhotoIdentifier = identifier
         })
@@ -736,6 +740,7 @@ struct MainTabView: View {
     }
 
     private func openPreparedShowcase(scopeID: String? = nil) {
+        guard allowShowcaseOpening() else { return }
         let targetScopeID = scopeID ?? effectiveShowcaseScopeID
 #if DEBUG && targetEnvironment(simulator)
         if ShowcasePhotoView.layoutFixtureItems != nil {
@@ -757,6 +762,7 @@ struct MainTabView: View {
     }
 
     private func prepareShowcaseIfNeeded(openAfter: Bool, scopeID: String? = nil) {
+        guard allowShowcaseOpening() else { return }
         let scopeID = scopeID ?? effectiveShowcaseScopeID
         // A saved set opens as-is; recommendation runs only before this scope's first set.
         if !showcaseStore.availableEntries(in: scopeID).isEmpty {
@@ -784,11 +790,16 @@ struct MainTabView: View {
                 excluding: showcaseStore.excludedIdentifiers(in: scopeID)
             )
             do {
+                guard allowShowcaseOpening() else {
+                    preparingShowcaseScopes.remove(scopeID); showcaseWaitingToOpen = nil
+                    return
+                }
                 try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
                 preparingShowcaseScopes.remove(scopeID)
                 guard showcaseWaitingToOpen == scopeID,
                       selectedTab == .tools else { return }
                 showcaseWaitingToOpen = nil
+                guard allowShowcaseOpening() else { return }
                 showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
             } catch {
                 preparingShowcaseScopes.remove(scopeID)
@@ -797,6 +808,15 @@ struct MainTabView: View {
                 showcasePreparationError = true
             }
         }
+    }
+
+    private func allowShowcaseOpening() -> Bool {
+        let decision = showcaseAccess.decision(for: .presentCatPhotos)
+        guard decision == .allowed else {
+            showcaseMembershipNotice = decision
+            return false
+        }
+        return true
     }
 
     private func showcaseCandidatesForScope(_ scopeID: String) -> [PhotoPresentation] {

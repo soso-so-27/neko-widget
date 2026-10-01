@@ -9,6 +9,8 @@ struct CareHandoffView: View {
     @ObservedObject var reuseStore: EvacuationStore = .shared
     @State private var newCatID: UUID?
     @State private var opensNewCat = false
+    @Environment(\.membershipActions) private var actionAccess
+    @State private var membershipNotice: MembershipAccessDecision?
 
     var body: some View {
         Group {
@@ -40,9 +42,7 @@ struct CareHandoffView: View {
                         }
                         ForEach(availableSavedCats) { cat in
                             Button {
-                                if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
-                                    newCatID = id; opensNewCat = true
-                                }
+                                addCat(sourceCatID: cat.id)
                             } label: {
                                 HStack(spacing: 12) {
                                     CarePhoto(image: reuseStore.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]))
@@ -91,9 +91,16 @@ struct CareHandoffView: View {
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $opensNewCat) { if let newCatID { editor(newCatID) } }
         .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+        .membershipActionNotice($membershipNotice)
     }
-    private func addCat(profileID: String? = nil, name: String = "") {
-        if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) { newCatID = id; opensNewCat = true }
+    private func addCat(profileID: String? = nil, name: String = "", sourceCatID: UUID? = nil) {
+        if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,
+            sourceCatID: sourceCatID, access: actionAccess) {
+            newCatID = id; opensNewCat = true
+        } else {
+            let decision = actionAccess.decision(for: .createCareMemo)
+            if decision != .allowed { membershipNotice = decision }
+        }
     }
     private var availableSavedCats: [EvacuationCat] {
         guard reuseStore.loadError == nil, reuseStore.saveError == nil else { return [] }
