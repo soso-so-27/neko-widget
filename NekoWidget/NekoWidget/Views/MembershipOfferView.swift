@@ -42,17 +42,23 @@ struct MembershipOfferView: View {
                 photoHeader
 
                 VStack(alignment: .leading, spacing: 14) {
-                    benefit("毎日の一枚", detail: "ウィジェットで、ふと再会。", symbol: "photo")
-                    benefit("猫らしいアルバム", detail: "いつものしぐさや成長を、見返す。", symbol: "rectangle.stack")
-                    benefit("写真に添えるメモ", detail: "写真だけでは残らないことも。", symbol: "square.and.pencil")
+                    benefit("毎日の一枚", detail: "自分の猫写真を、ホーム画面に日替わりで。", symbol: "photo")
+                    benefit("猫だけのアルバム", detail: "ほかの写真に埋もれた猫写真も、まとめて見返す。", symbol: "rectangle.stack")
+                    benefit("写真に添えるメモ", detail: "出来事や体重を残して、病院で見せる控えにも。", symbol: "square.and.pencil")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("招待相手は無料。最大3つのまどで送り合えます。")
+                Text("まどは最大3つ。招待相手の会員加入は不要です。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("membership-offer-invitation")
+
+                Text("迷子・避難のツールは、会員でなくても使えます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("membership-offer-free-tools")
 
                 offerDetails
                 actions
@@ -99,10 +105,11 @@ struct MembershipOfferView: View {
                     .accessibilityHidden(true)
             }
 
-            Text("うちの子との毎日を、\nまた楽しむ。")
+            Text("撮った猫写真を、\n毎日の楽しみと記録に。")
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("membership-offer-heading")
         }
     }
 
@@ -197,15 +204,15 @@ struct MembershipOfferView: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("無料で使えること").fontWeight(.semibold)
-                    Text("写真・お気に入りの閲覧、保存済みのメモの閲覧・編集・書き出しは、会員でなくても利用できます。")
+                    Text("迷子・避難のツール、写真・お気に入りの閲覧、保存済みメモの閲覧・編集・書き出しは、会員でなくても利用できます。")
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("会員の有効期間が終わると").fontWeight(.semibold)
-                    Text("自動アルバム、ウィジェットの写真更新、新しいメモ・まどの作成は利用できなくなります。")
+                    Text("自動アルバム、ウィジェットの写真更新、新しいメモ・まどの作成は利用できなくなります。会員期間が終わっても、保存済みのメモは削除されません。")
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("招待相手への影響").fontWeight(.semibold)
-                    Text("まどを支えている会員の有効期間が終わると、お互いに新しい写真を送れなくなります。受信済みの写真は、通常の保存期間内で引き続き見られます。")
+                    Text("まどを支える会員が有効な間は、招待相手も無料で写真を送り返せます。期間が終わると、新しい写真の送信は停止します。受信済みの写真は、通常の保存期間内で引き続き見られます。")
                 }
             }
             .foregroundStyle(.secondary)
