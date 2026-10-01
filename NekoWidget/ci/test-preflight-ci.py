@@ -24,6 +24,41 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_deletion_diagnosis_admits_only_fixed_footer_and_keeps_new_failures(self):
+        method = "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"
+        fixed = "778da52e3218feb467988d3d3c627df3943f024b"
+        source = "53ece8f24da61baee7b27902aef4c153927f3313"
+        view = "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift"
+        old = "保管記録や会員契約は削除・解約されません。別の本人として使う前に解除してください。"
+        new = "ログインを解除しても保管記録は残ります。アカウントを削除すると、サービスに保管したコピーはすべて消えます。定期購読は別途Appleで解約してください。"
+        run = {"id": 36893711423, "head_sha": source, "status": "completed", "conclusion": "failure",
+               "event": "push", "path": ".github/workflows/ios-build.yml", "failed_tests": [method],
+               "created_at": "2026-10-01T16:40:07Z"}
+        result = {"scope": scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, "head": "a" * 40,
+                  "cost": {"status": "observed", "with_upload_minutes": [38, 38]},
+                  "target_minutes": 95, "ready": True}
+        def diagnosis(responses, runs=None):
+            with patch.object(planner, "git", side_effect=responses):
+                return preflight.known_deletion_test_diagnosis(result, runs or [run])
+        proof = diagnosis([fixed, view, old, new, "same test", "same test"])
+        self.assertIsNotNone(proof)
+        self.assertFalse(proof["reuses_successful_jobs"])
+        for responses in (["b" * 40], [fixed, view + "\nunknown.swift"],
+                          [fixed, view, old, new + "product change"],
+                          [fixed, view, old, new, "same test", "changed test"]):
+            self.assertIsNone(diagnosis(responses))
+        for mutation in ({"head_sha": "b" * 40}, {"failed_tests": [method, "SoloMemoriesUITests/testOther"]},
+                         {"conclusion": "cancelled"}, {"unsupported_failed_tests": ["Other/testUnknown"]}):
+            self.assertIsNone(diagnosis([], [{**run, **mutation}]))
+        now = dt.datetime.fromisoformat("2026-10-01T17:25:00+00:00")
+        admitted = preflight.apply_task_gate(dict(result), [run], now=now, diagnosed_failure=proof)
+        self.assertTrue(admitted["ready"])
+        self.assertIsNone(admitted["task"]["test_correction_evidence"])
+        later = {**run, "id": 36899999999, "created_at": "2026-10-01T17:20:00Z"}
+        rejected = preflight.apply_task_gate(dict(result), [run, later], now=now, diagnosed_failure=proof)
+        self.assertFalse(rejected["ready"])
+        self.assertEqual(rejected["task"]["missing_diagnostic_tests"], [method])
+
     def test_internal_release_preparation_plan_cannot_authorize_upload(self):
         paths = sorted(planner.RELEASE_PREP_PATHS)
         for upload in (False, True):

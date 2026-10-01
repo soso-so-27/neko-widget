@@ -193,7 +193,55 @@ def read_diagnostic_evidence(run, head):
             "started_at": job["started_at"], "results": results}
 
 
-def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None):
+def known_deletion_test_diagnosis(result, runs):
+    """Admit the owning retry; this supplies no successful/reusable CI evidence.
+
+    The failed run's AX tree proves iOS 26 uses PopoverDismissRegion. The
+    reviewed test fix is frozen at corrected; the only subsequent product
+    change allowed here clarifies the destructive-action footer. All four
+    native jobs must execute because the view input changed.
+    """
+    source = "53ece8f24da61baee7b27902aef4c153927f3313"
+    corrected = "778da52e3218feb467988d3d3c627df3943f024b"
+    run_id = 36893711423
+    method = "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"
+    view = "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift"
+    old = "保管記録や会員契約は削除・解約されません。別の本人として使う前に解除してください。"
+    new = "ログインを解除しても保管記録は残ります。アカウントを削除すると、サービスに保管したコピーはすべて消えます。定期購読は別途Appleで解約してください。"
+    if result.get("scope") != scope.REVIEWED_MANAGED_PRESERVATION_SCOPE:
+        return None
+    matches = [r for r in runs if r.get("id") == run_id]
+    if len(matches) != 1:
+        return None
+    run = matches[0]
+    if (run.get("head_sha") != source or run.get("status") != "completed"
+            or run.get("conclusion") != "failure"
+            or run.get("event") != "push" or run.get("path") != ".github/workflows/ios-build.yml"
+            or set(run.get("failed_tests", [])) != {method}
+            or run.get("unsupported_failed_tests")):
+        return None
+    try:
+        head = result["head"]
+        if planner.git("merge-base", corrected, head) != corrected:
+            return None
+        allowed = {view, "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/reviewed-app-ui.json",
+                   "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py"}
+        paths = set(planner.git("diff", "--name-only", corrected, head).splitlines())
+        if view not in paths or not paths <= allowed:
+            return None
+        before = planner.git("show", f"{corrected}:{view}")
+        after = planner.git("show", f"{head}:{view}")
+        if before.count(old) != 1 or before.replace(old, new) != after:
+            return None
+        if planner.git("show", f"{corrected}:{scope.MEMORY_TEST_PATH}") != planner.git("show", f"{head}:{scope.MEMORY_TEST_PATH}"):
+            return None
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return None
+    return {"run_id": run_id, "source_sha": source, "test": method,
+            "reviewed_test_fix": corrected, "reuses_successful_jobs": False}
+
+
+def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -226,7 +274,9 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     # A subsequent run or diagnostic failure must remain a blocking failure.
     failed_tests = sorted({test if "/" in test else "MomentDeliveryComposerUITests/" + test
                            for run in failed for test in run.get("failed_tests", [])
-                           if not (run.get("id") == correction_run and test in correction_cases)})
+                           if not (run.get("id") == correction_run and test in correction_cases)
+                           and not (diagnosed_failure is not None and run.get("id") == diagnosed_failure["run_id"]
+                                    and test == diagnosed_failure["test"])})
     latest = {}
     for run in sorted(diagnostics, key=lambda item: (
             parse(item["diagnostic_evidence"]["started_at"]), item["id"], item["diagnostic_evidence"]["run_attempt"])):
@@ -260,6 +310,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
                       "test_correction_evidence": correction_evidence,
+                      "known_test_failure_diagnosis": diagnosed_failure,
                       "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
                       "projected_total_minutes": projected, "blockers": blockers}
@@ -413,7 +464,8 @@ def main(argv=None):
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/")), dt.datetime.now(dt.timezone.utc))
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
-                                     correction_evidence=correction)
+                                     correction_evidence=correction,
+                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs))
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
