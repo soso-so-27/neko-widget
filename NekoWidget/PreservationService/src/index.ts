@@ -19,6 +19,7 @@ import { PilotControl } from './pilot-control';
 import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
+export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;

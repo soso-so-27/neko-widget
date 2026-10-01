@@ -21,6 +21,8 @@
   }],
   "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "neko-preservation-staging-private" }],
   "services": [{ "binding": "KEY_WRAPPER", "service": "neko-preservation-kms-staging-disabled",
-    "entrypoint": "PreservationKeyWrapper" }],
+    "entrypoint": "PreservationKeyWrapper" },
+    { "binding": "RECOVERY_INVENTORY", "service": "neko-preservation-staging-disabled",
+      "entrypoint": "OwnerDeletionInventory" }],
   "triggers": { "crons": ["*/5 * * * *"] }
 }

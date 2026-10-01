@@ -102,29 +102,44 @@ export class OwnerDeletionJournal {
     return { state: completed ? 'completed' : 'processing' };
   }
 
-  /** Scan only opaque receipts. Full pagination avoids starving a later
-   * pending request behind earlier completed ones; callers bound actual work.
+  async markAttempt(ownerId: string): Promise<void> {
+    await this.requireAvailable();
+    this.key(ownerId, 'request');
+    await this.bucket.put(`${prefix}scan-after`, ownerId);
+  }
+
+  /** Round-robin across opaque receipts, including permanently blocked ones.
+   * The cursor is scheduling state only; it never grants deletion authority.
    */
   async pending(limit = 10): Promise<OwnerDeletionRequest[]> {
     await this.requireAvailable();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw unavailable();
     const requests: OwnerDeletionRequest[] = [];
-    let cursor: string | undefined;
+    const last = await this.read(`${prefix}scan-after`, 128);
+    if (last !== null && !uuid.test(last)) throw unavailable();
+    const boundary = last ? this.key(last, 'request') : null;
     const seen = new Set<string>();
+    for (const wrapped of boundary ? [false, true] : [false]) {
+    let cursor: string | undefined;
     do {
       const page = await this.bucket.list({ prefix: `${prefix}request/`, limit: 1000,
+        ...(!wrapped && boundary ? { startAfter: boundary } : {}),
         ...(cursor ? { cursor } : {}) });
       for (const object of page.objects) {
+        if (wrapped && boundary && object.key > boundary) return requests;
         const ownerId = object.key.slice(`${prefix}request/`.length, -5);
         const request = await this.request(ownerId);
         if (!request) throw unavailable();
         if (!await this.stage(request, 'completed')) requests.push(request);
         if (requests.length >= limit) return requests;
       }
-      if (!page.truncated) return requests;
+      if (!page.truncated) break;
       if (!page.cursor || seen.has(page.cursor)) throw unavailable();
       cursor = page.cursor;
       seen.add(cursor);
     } while (seen.size < 100);
-    throw unavailable();
+    if (seen.size >= 100) throw unavailable();
+    }
+    return requests;
   }
 }

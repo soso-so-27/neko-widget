@@ -49,6 +49,21 @@ async function finish(executor: OwnerDeletionExecutor, ownerId: string) {
 }
 
 describe('explicit owner-requested deletion', () => {
+  it('visits later requests when the first batch remains blocked', async () => {
+    const f = await fixture();
+    for (let i = 0; i < 12; i++) {
+      await f.journal.prepare({ version: 1, ownerId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+        receiptHash: await sha256(randomToken()), ownerEpoch: 1, requestedAt: now() });
+    }
+    const first = await f.journal.pending(10);
+    expect(first).toHaveLength(10);
+    for (const request of first) await f.journal.markAttempt(request.ownerId);
+    const next = await f.journal.pending(10);
+    const visited = new Set([...first, ...next].map(r => r.ownerId));
+    expect(visited.size).toBe(12);
+    expect(new Set(next.map(r => r.ownerId)).size).toBe(next.length);
+  });
+
   it('requires explicit confirmation and derives ownership from a session, not a submitted ID', async () => {
     const f = await fixture();
     const services = { auth: f.auth, ownerDeletion: f.requests } as Parameters<typeof route>[1];

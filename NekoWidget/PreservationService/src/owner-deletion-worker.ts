@@ -1,4 +1,5 @@
-import { type Env, configuredS3 } from './index';
+import { type Env } from './index';
+import { boundDeletionInventory } from './owner-deletion-inventory';
 import { OwnerDeletionExecutor } from './owner-deletion';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { S3VersionPurge } from './s3-version-purge';
@@ -9,6 +10,7 @@ import { boundKeyWrapper } from './providers';
 import { ServiceError } from './contracts';
 
 interface DeletionEnv extends Env {
+  RECOVERY_INVENTORY?: Fetcher;
   OWNER_DELETION_EXECUTOR_ENABLED?: string;
   ERASER_S3_ACCESS_KEY_ID?: string;
   ERASER_S3_SECRET_ACCESS_KEY?: string;
@@ -23,7 +25,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: DeletionEnv): Promise<void> {
     if (env.OWNER_DELETION_EXECUTOR_ENABLED !== 'YES') return;
     if (!env.DB || !env.ARCHIVE || !env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET
-      || !env.APPLE_CREDENTIALS_JSON) throw new ServiceError('OWNER_DELETION_NOT_CONFIGURED', 503);
+      || !env.APPLE_CREDENTIALS_JSON || !env.RECOVERY_INVENTORY) throw new ServiceError('OWNER_DELETION_NOT_CONFIGURED', 503);
     const now = () => Date.now();
     const credentials = JSON.parse(env.APPLE_CREDENTIALS_JSON) as {
       teamId: string; keyId: string; clientId: string; privateKey: string };
@@ -31,7 +33,10 @@ export default {
       getClientSecret: () => createAppleClientSecret({ ...credentials, now }) });
     const journal = new OwnerDeletionJournal(env.ARCHIVE);
     const executor = new OwnerDeletionExecutor({ enabled: true, db: env.DB,
-      bucket: env.ARCHIVE, journal, now, recovery: configuredS3(env),
+      bucket: env.ARCHIVE, journal, now,
+      recovery: boundDeletionInventory(env.RECOVERY_INVENTORY, env.KEY_WRAPPER_CALLER_SECRET,
+        { region: env.RECOVERY_S3_REGION ?? '', bucket: env.RECOVERY_S3_BUCKET ?? '',
+          accountId: env.RECOVERY_S3_ACCOUNT_ID ?? '' }),
       keys: envelopeKeyCustody({ enabled: true,
         wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) }),
       revokeRefreshToken: token => revoker.revokeRefreshToken(token),
@@ -53,6 +58,9 @@ export default {
       }
     }
     for (const request of await journal.pending(10)) {
+      // Advance before work: crashes and permanently blocked owners must not
+      // monopolize the front of the queue on every scheduled invocation.
+      await journal.markAttempt(request.ownerId);
       try {
         for (let step = 0; step < 48 && now() - started < 25_000; step++) {
           const result = await executor.step(request.ownerId);

@@ -82,7 +82,7 @@ export async function installOwnerDeletionFence(db: D1Database, r: OwnerDeletion
 }
 
 type ExecutorDependencies = Base & {
-  enabled?: boolean; bucket: R2Bucket; recovery: S3RecoveryCopy;
+  enabled?: boolean; bucket: R2Bucket; recovery: Pick<S3RecoveryCopy, 'listOwnerVersionsPage'>;
   versionPurge: Pick<S3VersionPurge, 'requestExactVersionDeletion'>;
   keys: KeyCustody; revokeRefreshToken: (token: string) => Promise<void>;
 };
