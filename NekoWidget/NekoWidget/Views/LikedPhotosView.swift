@@ -2602,7 +2602,7 @@ struct PhotoBrowserView: View {
                         }
                         .accessibilityIdentifier("photo-browser-managed-preserve")
                     }
-                    if PersonalArchiveStore.isConfigured,
+                    if !ManagedPreservationConfiguration.current.isEnabled, PersonalArchiveStore.isConfigured,
                        let note = personalNote.note(for: selectedPhotoIdentifier) {
                         Button {
                             preservingNote = PhotoMemoryNoteRecord(photoIdentifier: selectedPhotoIdentifier, note: note)

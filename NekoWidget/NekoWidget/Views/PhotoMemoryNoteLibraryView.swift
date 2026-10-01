@@ -658,6 +658,14 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var reflection: PhotoMemoReflectionState = .localOnly
     @State private var showsArchiveDetails = false
     @State private var addsToVet = false
+    @State private var preservingWithService = false
+
+    private var servicePreservationEnabled: Bool {
+#if DEBUG
+        if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture") { return true }
+#endif
+        return ManagedPreservationConfiguration.current.isEnabled
+    }
 
     init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          archiveStore: PersonalArchiveStore? = nil) {
@@ -759,6 +767,13 @@ struct PhotoMemoryNoteDetailView: View {
                 .environment(\.dynamicTypeSize, typeSize)
             }
         }
+        .sheet(isPresented: $preservingWithService) {
+            if let record, let photo = access.photo(for: record.photoIdentifier) {
+                ManagedPreservationPhotoView(photo: photo,
+                    context: record.note.context ?? PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: []),
+                    noteStore: store)
+            }
+        }
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
@@ -795,7 +810,13 @@ struct PhotoMemoryNoteDetailView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        if archiveEnabled {
+                        if servicePreservationEnabled {
+                            Button { preservingWithService = true } label: {
+                                Label("サービスに保管", systemImage: "externaldrive.badge.plus")
+                            }
+                            .disabled(record.map { access.photo(for: $0.photoIdentifier) == nil } ?? true)
+                            .accessibilityIdentifier("memory-note-managed-preserve")
+                        } else if archiveEnabled {
                             Button { preserving = true } label: {
                                 Label("iCloudに保管", systemImage: "icloud.and.arrow.up")
                             }

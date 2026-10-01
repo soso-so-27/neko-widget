@@ -47,9 +47,32 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case capacityReached, accessUnconfirmed, photoReplacement, rateLimited, integrityFailure, accountingUnavailable
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
+    case requestRejected, uploadTimedOut, servicePaused
+
+    /// Fixed support codes only: never include a URL, owner, token or raw error.
+    var preservationSupportCode: String {
+        switch self {
+        case .requestRejected: "S01"
+        case .uploadTimedOut: "S02"
+        case .unavailable: "S03"
+        case .invalidResponse: "S04"
+        case .interrupted: "S05"
+        case .staleSession: "S06"
+        case .authenticationRequired: "S07"
+        case .servicePaused: "S08"
+        case .invalidRecord, .responseTooLarge: "S09"
+        case .conflict: "S10"
+        case .capacityReached, .accountingUnavailable: "S11"
+        case .membershipRequired, .accessUnconfirmed: "S12"
+        default: "S99"
+        }
+    }
 
     var errorDescription: String? {
         switch self {
+        case .requestRejected: "保管先で送信データを受け付けられませんでした。元の写真とメモは端末に残っています。"
+        case .uploadTimedOut: "保管先の応答が時間内に届きませんでした。保管結果を確認してください。"
+        case .servicePaused: "保管先の受付が一時停止しています。保管済みの記録は引き続き開けます。"
         case .disabled: "この保管先はまだ利用できません。"
         case .authenticationRequired: "保管用の本人確認をやり直してください。"
         case .authenticationFailed: "本人確認を完了できませんでした。もう一度お試しください。"
@@ -589,6 +612,13 @@ actor ManagedPreservationClient {
         credential = value; loaded = true; epoch &+= 1
     }
 
+    /// Rebind only at an explicit screen entry or sign-in preparation. Mutations
+    /// still reject a changed credential; they never silently switch owners.
+    func reloadSessionFromSecureStorage() throws {
+        let current = try store.load()?.validated()
+        credential = current; challenge = nil; loaded = true; epoch &+= 1
+    }
+
     /// Locally forget first even if revocation is unavailable. Never deletes archive records.
     func signOut() async throws {
         let previous: ManagedPreservationSessionStore.Credential?
@@ -751,6 +781,9 @@ actor ManagedPreservationClient {
                 case "ARCHIVE_ACCOUNTING_UNAVAILABLE": throw ManagedPreservationError.accountingUnavailable
                 case "INVALID_RECORD", "INVALID_RECORD_ID", "INVALID_REVISION", "INVALID_JPEG",
                      "ARCHIVE_TOO_LARGE", "REQUEST_TOO_LARGE": throw ManagedPreservationError.invalidRecord
+                case "INVALID_REQUEST": throw ManagedPreservationError.requestRejected
+                case "PILOT_WRITES_PAUSED", "PRESERVATION_INTAKE_PAUSED", "PRESERVATION_DISABLED":
+                    throw ManagedPreservationError.servicePaused
                 case "RATE_LIMITED": throw ManagedPreservationError.rateLimited
                 case "SESSION_INVALID", "unauthorized": throw ManagedPreservationError.authenticationRequired
                 default:
@@ -770,6 +803,7 @@ actor ManagedPreservationClient {
         } catch is CancellationError { throw CancellationError() }
         catch let error as ManagedPreservationError { throw error }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
+        catch let error as URLError where error.code == .timedOut { throw ManagedPreservationError.uploadTimedOut }
         catch { throw ManagedPreservationError.unavailable }
     }
 
