@@ -4286,8 +4286,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         for _ in 0..<6 where !preparedSave.exists { app.swipeUp() }
         XCTAssertTrue(preparedSave.waitForExistence(timeout: 10))
         XCTAssertFalse(preparedSave.isEnabled)
-        for _ in 0..<6 where !consent.isHittable { app.swipeDown() }
+        // Hittable can remain true while a Form row is behind the translucent
+        // navigation bar. Keep the actual switch hit point inside the content.
+        let serviceBar = app.navigationBars["サービスに保管"]
+        for _ in 0..<6 where !consent.isHittable || consent.frame.minY < serviceBar.frame.maxY + 16 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60)))
+        }
+        XCTAssertGreaterThanOrEqual(consent.frame.minY, serviceBar.frame.maxY + 16)
         consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(consent.value as? String, "1")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"), object: preparedSave)], timeout: 10), .completed,
             "The synthetic pilot must be usable; a failed fixture must not masquerade as consent protection.")
