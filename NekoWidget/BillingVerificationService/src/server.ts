@@ -616,6 +616,7 @@ export async function listen(
   dependencies: BillingVerifierRuntimeDependencies,
   transactionVerifier: TransactionVerifier = new AppleTransactionVerifier(config),
   suppliedServices: BillingAppleServices = {},
+  listenHost: "127.0.0.1" | "0.0.0.0" = BILLING_VERIFIER_LISTEN_HOST,
 ): Promise<{ close: () => Promise<void>; host: string; port: number }> {
   const server = createBillingVerificationServer(
     config,
@@ -625,11 +626,11 @@ export async function listen(
   );
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(config.port, BILLING_VERIFIER_LISTEN_HOST, resolve);
+    server.listen(config.port, listenHost, resolve);
   });
   const address = server.address() as AddressInfo;
   return {
-    host: BILLING_VERIFIER_LISTEN_HOST,
+    host: listenHost,
     port: address.port,
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => error === undefined ? resolve() : reject(error));

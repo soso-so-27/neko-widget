@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Environment } from "@apple/app-store-server-library";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, loadContainerConfig } from "../src/config.js";
 
 function environment(): NodeJS.ProcessEnv {
   return {
@@ -30,6 +30,22 @@ test("loads only an explicit Sandbox verifier configuration", () => {
   assert.equal(result.accountRecoveryVerificationEnabled, false);
   assert.equal(result.serverAPI, undefined);
   assert.equal(result.nonceRedisURL, "rediss://billing-nonce.invalid:6380/0");
+});
+
+test("supports monthly-only products and rejects empty, invalid or duplicate annual IDs", () => {
+  const monthly = environment(); delete monthly.BILLING_ANNUAL_PRODUCT_ID;
+  assert.deepEqual([...loadConfig(monthly).productIds], ["jp.nekowidget.plus.monthly"]);
+  for (const annual of ["", " bad ", "jp.nekowidget.plus.monthly"]) {
+    assert.throws(() => loadConfig({ ...monthly, BILLING_ANNUAL_PRODUCT_ID: annual }), /product identity/u);
+  }
+});
+
+test("requires isolated container mode and refuses mixing Redis credentials", () => {
+  const isolated = environment(); delete isolated.BILLING_NONCE_REDIS_URL;
+  isolated.BILLING_VERIFIER_CONTAINER_RUNTIME_ENABLED = "YES";
+  assert.equal(loadContainerConfig(isolated).environment, Environment.SANDBOX);
+  assert.throws(() => loadContainerConfig({ ...isolated, BILLING_VERIFIER_CONTAINER_RUNTIME_ENABLED: "NO" }), /Isolated/u);
+  assert.throws(() => loadContainerConfig({ ...isolated, BILLING_NONCE_REDIS_URL: "rediss://unrelated.invalid" }), /Isolated/u);
 });
 
 test("requires a TLS Redis nonce store without URL options", () => {

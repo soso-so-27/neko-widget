@@ -305,6 +305,38 @@ class PlanTests(unittest.TestCase):
             bindings = {}
         return changes, bindings
 
+    def test_private_billing_backend_requires_all_frozen_dependencies_and_workflows(self):
+        path = next(iter(planner.BILLING_PATHS))
+        changed = [path]
+        snapshot = dict(planner.BILLING_REVIEWED_TREES)
+        def frozen_git(*args):
+            if args[0] == "rev-parse":
+                return snapshot[args[1].split(":NekoWidget/", 1)[1]]
+            if args[0] == "show":
+                return "frozen preservation workflow"
+            raise AssertionError(args)
+        digest = scope.source_digest("frozen preservation workflow")
+        with patch.object(planner, "git", side_effect=frozen_git), \
+                patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", digest), \
+                patch.object(planner, "backend_only", return_value=True) as boundary:
+            self.assertTrue(planner.billing_backend_only(changed, "base", "head"))
+            self.assertEqual(boundary.call_args.kwargs["binding_name"], "BILLING_COMPANION_DIGESTS")
+            for dependency in planner.BILLING_REVIEWED_TREES:
+                wrong = dict(planner.BILLING_REVIEWED_TREES); wrong[dependency] = "0" * 40
+                with patch.object(planner, "BILLING_REVIEWED_TREES", wrong):
+                    self.assertFalse(planner.billing_backend_only(changed, "base", "head"))
+            with patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", "wrong"):
+                self.assertFalse(planner.billing_backend_only(changed, "base", "head"))
+        self.assertEqual(planner.required_jobs(changed, planner.BILLING_SCOPE),
+                         (planner.BILLING_JOB, planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
+        for unknown in ("NekoWidget/NekoWidget/Views/PhotoView.swift", "NekoWidget/Config.xcconfig",
+                        "NekoWidget/BillingVerificationService/src/unknown.ts"):
+            self.assertFalse(planner.billing_paths_only(changed + [unknown]))
+            self.assertEqual(planner.required_jobs(changed + [unknown], planner.BILLING_SCOPE), planner.FULL)
+        self.assertFalse(planner.billing_paths_only(changed + [next(iter(planner.BILLING_COMPANION_PATHS))]))
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(planner.BILLING_SCOPE)
+
     def test_preservation_backend_requires_frozen_introduction_and_rejects_mixed_or_unsafe_inputs(self):
         original, bindings = self.jpeg_changes(profile="PRESERVATION")
         migration = "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"
@@ -337,8 +369,9 @@ class PlanTests(unittest.TestCase):
             "src/intake-control.ts", "src/pilot-control.ts",
             "test/intake-control.test.ts", "test/pilot-control.test.ts", "test/pilot-wiring.test.ts",
         )
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 162)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v22")
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 163)
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v23")
+        self.assertIn("NekoWidget/PreservationService/migrations/0029_general_admission.sql", planner.PRESERVATION_PATHS)
         self.assertTrue(all("NekoWidget/PreservationService/" + path in planner.PRESERVATION_PATHS
                             for path in pilot_new_paths))
         self.assertEqual(select(original), planner.PRESERVATION_SCOPE)
@@ -374,7 +407,7 @@ class PlanTests(unittest.TestCase):
                              planner.PRESERVATION_SCOPE)
         self.assertEqual(select(original, ancestor=False), scope.FULL_SCOPE)
         # Same filenames with any different service content (including an
-        # in-place sender, Queue binding, or deletion) must not use v22.
+        # in-place sender, Queue binding, or deletion) must not use v23.
         self.assertEqual(select(original, tree_ok=False), scope.FULL_SCOPE)
         for extra in ("NekoWidget/PreservationService/src/new.ts",
                       "NekoWidget/PreservationService/src/notice-sender.ts",
