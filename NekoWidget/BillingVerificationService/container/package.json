@@ -1,0 +1,7 @@
+{
+  "name": "neko-billing-private-container",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node test.mjs", "dry-run": "wrangler deploy --dry-run" },
+  "devDependencies": { "@cloudflare/containers": "0.3.7", "wrangler": "4.136.3" }
+}

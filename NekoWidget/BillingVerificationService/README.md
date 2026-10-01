@@ -2,12 +2,12 @@
 
 ねこのまど Plus向けに、StoreKit 2の`Transaction.jwsRepresentation`、App Store Server Notifications V2、Subscription Status API内のJWSをAppleの公式Node libraryで検証する、隔離したNode.js 22 serviceです。Cloudflare Worker互換を仮定せず、証明書chain・オンライン失効確認を実Node runtimeで行います。
 
-現時点ではsourceとtestだけです。deployされておらず、runtimeも既定OFFです。App Store Connectの商品、購入UI、Plus権限、sponsorshipは有効になりません。
+非公開Sandbox用Cloudflare Containerは2026-09-30に配備され、2026-10-01の読取確認でも既定OFFです。未統合だったContainerソースをここへ回収しました。実購入の接続確認は未完で、商品・購入UI・会員権限を有効にしたとは扱いません。[Container構成](container/README.md)。
 
 ## 境界
 
 - 入力はWorkerからの署名済みinternal requestだけです。
-- 外部入口はCloudflare TunnelとAccessの`Service Auth` policyで保護し、Workerだけがservice tokenを送ります。Access認証後も、アプリ層HMAC、時刻、共有Redis nonceを必須にします。
+- Cloudflare Container経路は非公開named service bindingのみ。外部hostを利用する従来経路はTunnelとAccessの`Service Auth` policyを必須にします。どちらもHMAC・時刻・永続nonceを検証します。
 - HMAC transcriptにはprotocol version、時刻、nonce、request body SHA-256を含めます。
 - responseもrequest nonce、HTTP status、response body SHA-256へHMAC署名します。
 - Apple JWSは検証中だけmemoryへ置き、log・D1・responseへ残しません。

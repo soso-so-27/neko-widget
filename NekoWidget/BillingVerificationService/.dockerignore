@@ -1,0 +1,10 @@
+node_modules
+dist
+test
+operations
+container
+.dev.vars*
+*.env
+*.env.*
+*.pem
+*.p8

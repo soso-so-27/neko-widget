@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-billing-verifier-disabled",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "BILLING_VERIFIER_CONTAINER_ENABLED": "NO",
+    "BILLING_STORE_ENVIRONMENT": "Sandbox",
+    "BILLING_BUNDLE_ID": "jp.nekowidget.app",
+    "BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED": "NO",
+    "BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED": "NO",
+    "BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED": "NO",
+    "BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED": "NO"
+  },
+  "containers": [{
+    "class_name": "BillingVerifierContainer",
+    "image": "../Dockerfile.cloudflare",
+    "image_build_context": "..",
+    "max_instances": 1,
+    "instance_type": "basic"
+  }],
+  "durable_objects": { "bindings": [
+    { "name": "BILLING_CONTAINER", "class_name": "BillingVerifierContainer" },
+    { "name": "NONCE_LEDGER", "class_name": "BillingNonceLedger" }
+  ] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BillingVerifierContainer", "BillingNonceLedger"] }]
+}
