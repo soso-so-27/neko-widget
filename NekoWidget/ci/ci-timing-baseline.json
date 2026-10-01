@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-30",
+  "as_of": "2026-10-01",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 11.483,
   "upload_run": 36502758642,
@@ -54,6 +54,31 @@
     }
   ],
   "observations": [
+    {
+      "scope": "reviewed-membership-copy-ui-v1",
+      "candidate_minutes": 44.717,
+      "run_id": 36797275013,
+      "run_attempt": 2,
+      "outcome": "success",
+      "runner_minutes": 74.367,
+      "final_graph_runner_minutes": 63.6,
+      "source_sha": "5b3085a61dd5f62fcd5aab8b1d4f7e0518b17b20",
+      "first_product_edit_at": "2026-10-01T00:16:12Z",
+      "first_product_candidate_at": "2026-10-01T00:17:12Z",
+      "note": "Elapsed from the original run creation through completion after replaying only the failed Photos job at the identical frozen SHA. Build/safety, runtime and the single standard/AX5 reading case retain their first-attempt success; no new Widget Gallery or purchase/restore operation. Photos full-access and zero-cat onboarding passed; simctl addmedia wrapper timed out without a duplicate import, then the final baseline-relative snapshot confirmed all three imported fixture assets and scan/Widget output. Runner total adds the replayed job's20m37s to the original53.75 runner minutes, rather than double-counting copied successful jobs. Underlying first snapshot-hang cause remains unproven. Default monitor backoff delayed observing the first completion; the active monitor was resumed with a60-second maximum (only monitoring restarted, not CI or the cumulative timer)."
+    },
+    {
+      "scope": "reviewed-membership-copy-ui-v1",
+      "candidate_minutes": 20.983,
+      "run_id": 36797275013,
+      "run_attempt": 1,
+      "outcome": "failure",
+      "runner_minutes": 53.75,
+      "source_sha": "5b3085a61dd5f62fcd5aab8b1d4f7e0518b17b20",
+      "first_product_edit_at": "2026-10-01T00:16:12Z",
+      "first_product_candidate_at": "2026-10-01T00:17:12Z",
+      "note": "Build/safety, both-OS runtime and the single existing membership reading case passed; standard/AX5 screenshots were inspected. Photos bootstrap failed at the unchanged zero-cat query on an XCTest snapshot timeout after full access was granted (TCC and app logs agree). Simulator logs also show CoreFS/Metal cache errors, but the underlying hang cause is not proven. Preserve the three successful jobs and frozen product/test sources; one controlled replay of only the failed job uses the same SHA. Retain this failed graph, control validation, parallel-main wait and delayed completion observation in end-to-end cost. The original 45-60 minute plan was revised to approximately75 minutes, not reported as achieved. No Widget Gallery, purchase or restore operation was added."
+    },
     {
       "scope": "reviewed-vet-saved-cat-ui-v1",
       "candidate_minutes": 24.717,
