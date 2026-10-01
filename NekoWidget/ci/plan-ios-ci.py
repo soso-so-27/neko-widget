@@ -490,7 +490,7 @@ RELEASE_PREP_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "798c1d27137968853fc21c420ece860a6fad7e062ec8b5ccb701ce59ccc23350",
-        "290793cba7f2c69332b045dfa3a7f7f420ec69f264761efc8c612ad476c335f6"
+        "210e7aae95ec610f903c4deb37bd97427f536aebc84dd2aec6cd5065379f28f2"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "1f7702b4237bb3924bcc5ec7611921a56ea15299fba61d95ce1bcd4b4ca84f0b",
@@ -498,7 +498,7 @@ RELEASE_PREP_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "a6bf767e36240718273758109352458e9caedc1b5ed8213bc7b98c858c0016db",
-        "6bbc645737a5d764c47db738493fb996696698fafc1cbaf6507a6b48d749731e"
+        "2cd6a707e8605dbf6cb4a7a34420086a37831f25227934a305826d288be1920c"
     ]
 }
 

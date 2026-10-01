@@ -401,7 +401,8 @@ def main(argv=None):
     try:
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
-        if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE}:
+        if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE,
+                                   planner.RELEASE_PREP_SCOPE}:
             runs = read_task_runs(result["head"])
             correction = None
             if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE):

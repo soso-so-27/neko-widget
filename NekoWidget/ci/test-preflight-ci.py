@@ -36,6 +36,10 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(result["ready"], not upload)
             self.assertFalse(result["release_evidence"])
             self.assertIn("no Mac/archive/upload evidence", result["reason"])
+            with patch.object(preflight, "candidate_plan", return_value=result), \
+                    patch.object(preflight, "read_task_runs", side_effect=AssertionError("No native cost gate")), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(preflight.main([]), 3 if upload else 0)
         with self.assertRaises(ValueError):
             preflight.observe_cost(planner.RELEASE_PREP_SCOPE, self.history, True)
 
