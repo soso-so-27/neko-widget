@@ -73,7 +73,7 @@ REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
-REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v5"
+REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
@@ -642,11 +642,13 @@ RECORD_PORTABILITY_COMPANION_DIGESTS = {
 MANAGED_PRESERVATION_NEW_PATHS = frozenset({
 })
 MANAGED_PRESERVATION_PATHS = frozenset({
+    'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift',
+    'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift',
+    'NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift',
     'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift',
-    'NekoWidget/NekoWidget/Views/LikedPhotosView.swift',
+    'NekoWidget/NekoWidget/Views/FamilyRecordView.swift',
     'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift',
-    'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift',
-    'NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift',
+    'NekoWidget/NekoWidget/Views/PairingView.swift',
     'NekoWidget/NekoWidget/Views/SettingsView.swift',
     'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift',
 })
@@ -655,43 +657,47 @@ MANAGED_PRESERVATION_COMPANION_PATHS = frozenset({
     'NekoWidget/ci/test-plan-ios-ci.py',
     'NekoWidget/ci/test-ci-lanes.py',
 })
-MANAGED_PRESERVATION_DATA_REVIEW = "internal-pilot-apple-owner-storage-restore-export-boundary"
+MANAGED_PRESERVATION_DATA_REVIEW = "owner-deletion-receipt-and-membership-entry-boundary"
 MANAGED_PRESERVATION_RUNTIME_CASES = (
     "managed-preservation-export-boundary", "managed-preservation-membership-boundary",
     "managed-preservation-pilot-boundary",
 )
-# One frozen v5 legacy-copy and unified-entry batch. Exact product and CI
+# One frozen v6 account-deletion and membership-entry batch. Exact product and CI
 # before/after bindings exclude unrelated Widget, signing and service changes.
-MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('87941966bfed6314adc92d5c6e83134b8cfd3e30bbed2c9129dc8ef95c29866f',
-                                                                 'cbf51bb695be8631a01867fbb46377ec289599756bc6da990176435aa3c51668'),
- 'NekoWidget/NekoWidget/Views/LikedPhotosView.swift': ('65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224',
-                                                       '958994a7ed7a893d61b99e70b0e5e9a87a5c1e63276bc6db8a8bc74741e1b089'),
- 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895',
-                                                               '28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360'),
- 'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift': ('d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540',
-                                                           '5e837a6a4c50a0f646a1cd347406cbca89ca207c4e7db81de4d71a833141385e'),
- 'NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift': ('fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5',
-                                                                  'ae379c1dfdd47d88a9a32341c9482d38599d4c3ffaa4c896a385b2d8026d89a1'),
- 'NekoWidget/NekoWidget/Views/SettingsView.swift': ('c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06',
-                                                    '1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd'),
- 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('50384f1e84dc9c28df1296a70c9c4e01ad1d99344c5c47f560316330ff5f03e4',
-                                                               '7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda')}
+MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift': ('2b2f498ea23894900a20cced27da58ec2dea6564cda126df8993a5fcb7c9c99f',
+                                                                    'a67a83c01db86ef168fd3fa83aec95ffc0da300ff17409ef228ddf14772c9539'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift': ('8830b922038147feaffa54a837c6d40aadb7a8dc0ea9cf96c29106952d2f046b',
+                                                                         '53c7d26e1bf06aa256f342e9ada56769e21b5e1f363651613d9f43d506a0100c'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift': ('15d4664391fec705aa54bd79b37e29dbe4e07b3df208c1adeeded191286cd05e',
+                                                                          '2deb5d5fe4d43327b7c4439f7bbd285b9d4bc980d1f5b7769c6bc3687cff666b'),
+ 'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('cbf51bb695be8631a01867fbb46377ec289599756bc6da990176435aa3c51668',
+                                                                 'ff60014cc19c5cc54267352bf12160fff6dc0ee00244842ce09d58b7a41edaf0'),
+ 'NekoWidget/NekoWidget/Views/FamilyRecordView.swift': ('561297a3a8f16058b12b3926728815d56dee288e461663b4cf5da0e61dd48a0c',
+                                                        'c27206b64feae006ef08ec4ab5ee818273044874ecbe7cf63d29442de626b828'),
+ 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360',
+                                                               '2aed48760baf63e0ab404e4422df83805a51feb9bb4e53ff41d71e4e9752454d'),
+ 'NekoWidget/NekoWidget/Views/PairingView.swift': ('c1d3e05fe2bee6ba79c9462a7ab6d17f8ae8b605b976b580cdf764317172d25f',
+                                                   'e7af66f832525a7d918dfaba80ec594112075524ba7fc1d5c54fa4f7c3fde69a'),
+ 'NekoWidget/NekoWidget/Views/SettingsView.swift': ('1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd',
+                                                    '7df80ce7b72761e5fd2590ef82548dae1799cf5e7074d7c5c3c030d0ceb87577'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda',
+                                                               '6f33fc1de6f4a4ede67a0882579163c1ec7e7dbafdeb6b7b6988de6d4f4a5ecf')}
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "90f89ac5ffafc7abc51aa3a377e6b3e0d99af20f4173500952e7b24ec7eea3a1",
-        "168b69f0f10ed82302796cef2fc1b135bdce01626bc41f41b497d362e6869f63"
+        "54846c4f490686840064c33793f636a188a278a9371441734408b3e277e1a5c4",
+        "b44e199df3188409ef372d431aaec21316a6176cc0555f43512064a291d04b74"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
-        "733ec45fe974f0a4505263738223fd7d428dc9d581e0f24d759d781ae6e8fc2a",
-        "90f8782618128dbb20e05a2b3af2c058174ceff8070a8419c1c15dc87d917565"
+        "90f8782618128dbb20e05a2b3af2c058174ceff8070a8419c1c15dc87d917565",
+        "0da144ec2dabbf5da5de4b045ada0d3bec3372d7e3af3fa486d20f609ea6af0e"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
-        "acfbdb8a98eecb982ba2baa36a54d8e5b91b4d0a723e50775ca9bbdb16b148e3",
-        "837880fe3b94358cbb9479c5f2b488f4f11e20451cac9a0fe4a754212f892691"
+        "837880fe3b94358cbb9479c5f2b488f4f11e20451cac9a0fe4a754212f892691",
+        "c7dd916991b684a00652a969bff3f38501ee6bf02d84530ad5500df332f6a9ad"
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
-        "0f0d8ff7f55ed0f01005638aa13a9c474e5279b0dc878ed36ceed271025babf4",
-        "09435a810fea234cf1cf9760e2a2ebfc0d89820a85d1a06342543d32cc6a4b67"
+        "79cf1143709fa5070a7aa5efb46b40668f6c577a59a81c9d93d70726d34a5734",
+        "7848f1a6a172e2997bcc1447a7b9c00f93e96aa5aadb210f19b689582bcd2c7b"
     ]
 }
 
@@ -2491,10 +2497,8 @@ REVIEWED_MANAGED_PRESERVATION_TESTS = (
     'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries',
     'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState',
     'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry',
-    'NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto',
-    'NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion',
-    'NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText',
-    'NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource',
+    'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes',
+    'NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferExplainsExpiryWithoutChangingThePlan',
 )
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
@@ -2813,8 +2817,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     if reviewed_delivery_membership_changes(changes, managed=True):
         runtime = changes["NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"][1]
         validator = managed_validation_source(changes, "NekoWidget/ci/validate-sharing-runtime-self-test.py")
-        return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 7
-                and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 7
+        return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 5
+                and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 5
                 and memory_tests_available(managed_validation_source(changes, MEMORY_TEST_PATH), REVIEWED_MANAGED_PRESERVATION_TESTS)
                 and len(MANAGED_PRESERVATION_RUNTIME_CASES) == 3
                 and len(set(MANAGED_PRESERVATION_RUNTIME_CASES)) == 3

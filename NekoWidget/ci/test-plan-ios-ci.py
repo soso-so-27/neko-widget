@@ -931,20 +931,18 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ('{}', json.dumps(old_review))})), scope.FULL_SCOPE)
         tests = scope.native_tests(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
         self.assertEqual(tests, (
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
-            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
-            "NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes',
+            'NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferExplainsExpiryWithoutChangingThePlan',
         ))
-        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v5')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 7)
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v6')
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 9)
         self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 3)
         self.assertTrue(scope.memory_tests_available(scope.managed_validation_source(changes, scope.MEMORY_TEST_PATH), tests))
         with patch.object(scope, "managed_validation_source", return_value=""):
@@ -993,7 +991,7 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
-        legacy_jobs = [dict(job, name=job['name'].replace('-app-v5]', '-app-v4]')) for job in jobs]
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v6]', '-app-v5]')) for job in jobs]
         self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
