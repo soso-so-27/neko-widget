@@ -15,6 +15,37 @@ async function permit(now = base) {
     daily_attempt_limit=2,monthly_attempt_limit=3,monthly_bytes_limit=30 WHERE singleton=1`)
     .bind(now, now + 86_400_000).run();
 }
+it('stops all general admissions on missing or excessive cost evidence without resetting counters', async () => {
+  await permit();
+  const ownerId = crypto.randomUUID();
+  await db.prepare('INSERT INTO pa_owners(owner_id,identity_key,created_at) VALUES(?,?,?)')
+    .bind(ownerId, crypto.randomUUID().replaceAll('-', '').repeat(2), base).run();
+  const count = (await db.prepare('SELECT count(*) AS n FROM pa_owners').first<{n:number}>())!.n;
+  await db.prepare(`UPDATE pa_intake_control SET maximum_owners=?,daily_registration_limit=10,
+    daily_mutation_limit=10,monthly_mutation_limit=10`).bind(count+10).run();
+  const control = new IntakeControl(db, () => base, { requireCostEvidence: true });
+  const denied = async () => {
+    await expect(control.admit(1)).rejects.toMatchObject(failure);
+    await expect(control.admitMutation(ownerId)).rejects.toMatchObject(failure);
+    await expect(control.createOwner(crypto.randomUUID(), crypto.randomUUID().replaceAll('-', '').repeat(2), base))
+      .rejects.toMatchObject(failure);
+  };
+  await denied(); // No evidence and no stop point.
+  await db.prepare('UPDATE pa_intake_control SET forecast_yen=1773').run();
+  await denied(); // Forecast alone does not open admission.
+  await db.prepare('UPDATE pa_intake_control SET pause_forecast_yen=2200,forecast_yen=2200').run();
+  await denied(); // Equality is a stop, too.
+  await db.prepare('UPDATE pa_intake_control SET forecast_yen=2201').run();
+  await denied();
+  expect(await db.prepare('SELECT daily_attempts,daily_mutations,daily_registrations FROM pa_intake_control').first())
+    .toEqual({daily_attempts:0,daily_mutations:0,daily_registrations:0});
+  await db.prepare('UPDATE pa_intake_control SET forecast_yen=2199').run();
+  await control.admit(1);
+  await control.admitMutation(ownerId);
+  await control.createOwner(crypto.randomUUID(), crypto.randomUUID().replaceAll('-', '').repeat(2), base);
+  await db.prepare('UPDATE pa_intake_control SET valid_until=?').bind(base).run();
+  await denied(); // A low forecast cannot renew expired evidence.
+});
 it('keeps general registration and mutation closed until their explicit limits are configured', async () => {
   const control = new IntakeControl(db, () => base);
   await permit();
