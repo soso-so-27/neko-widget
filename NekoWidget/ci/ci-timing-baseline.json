@@ -1,9 +1,16 @@
 {
   "as_of": "2026-10-01",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
-  "upload_minutes": 12.917,
-  "upload_run": 36811777939,
+  "upload_minutes": 8.217,
+  "upload_run": 36813594029,
   "upload_observations": [
+    {
+      "run_id": 36813594029,
+      "minutes": 8.217,
+      "build_number": 234,
+      "source_sha": "7a9e582a7ef8f5c73033da31ffaef583f89ae69e",
+      "apple_upload_succeeded_at": "2026-10-01T04:14:55.9309170Z"
+    },
     {
       "run_id": 36811777939,
       "minutes": 12.917,
@@ -68,6 +75,44 @@
     }
   ],
   "observations": [
+    {
+      "scope": "reviewed-managed-preservation-app-v4",
+      "candidate_minutes": 16.367,
+      "run_id": 36812108506,
+      "outcome": "success",
+      "runner_minutes": 54.15,
+      "source_sha": "7a9e582a7ef8f5c73033da31ffaef583f89ae69e",
+      "first_product_candidate_at": "2026-10-01T02:33:00Z",
+      "first_product_candidate_time_approximate": true,
+      "main_merge_sha": "d29fd4451655be22eaae239adb3c899d9d343e1e",
+      "upload_run_id": 36813594029,
+      "build_number": 234,
+      "upload_minutes": 8.217,
+      "apple_upload_succeeded_at": "2026-10-01T04:14:55.9309170Z",
+      "first_candidate_to_apple_upload_minutes": 101.932,
+      "batch_start_to_apple_upload_minutes": 111.932,
+      "diagnostic_observations": [
+        {
+          "run_id": 36808175325,
+          "minutes": 12.933,
+          "outcome": "success",
+          "case": "copy confirmation and automatic read-only eligibility"
+        },
+        {
+          "run_id": 36808183422,
+          "minutes": 11.7,
+          "outcome": "failure",
+          "cause": "Test tried a navigation static text absent while the native menu was open; rendered service entry assertions passed."
+        },
+        {
+          "run_id": 36809786628,
+          "minutes": 15.5,
+          "outcome": "success",
+          "case": "Only the same memory-entry method was repeated after correcting menu dismissal; product unchanged."
+        }
+      ],
+      "note": "Four required Build/Photos/both-OS runtime/app-ui jobs and all four UI methods passed. Widget Gallery/normal-display UI not executed. Failed diagnostic and its test-only correction, local controls, independent review and one parallel-main integration wait remain in total task time. Initial remaining forecast 40-60m was missed; revised 110m target is not an original-target success. Runner minutes shown are this normal candidate only, not full task charges or Codex tokens. Actual human photo/memo save/readback/fresh same-Apple authentication/ZIP already passed; historical first upload failure cause unresolved. Internal pilot preserved, no server deadline, public or billing change."
+    },
     {
       "scope": "reviewed-tool-candidate-refresh-v1",
       "candidate_minutes": 20.617,
@@ -174,7 +219,13 @@
       "outcome": "success",
       "runner_minutes": 52.983,
       "source_sha": "6e6981146c1bedf5b695468b35bef680eeb6fe89",
-      "diagnostic_run_ids": [36649212162, 36651098512, 36652685706, 36655219812, 36659052893],
+      "diagnostic_run_ids": [
+        36649212162,
+        36651098512,
+        36652685706,
+        36655219812,
+        36659052893
+      ],
       "first_product_candidate_at": "2026-09-30T00:11:25Z",
       "main_merge_sha": "70283e486efc1a7f7a4a793f10033edbce639a88",
       "upload_run_id": 36661985758,
@@ -228,8 +279,16 @@
       "apple_upload_succeeded_at": "2026-09-29T03:32:45Z",
       "build_number": 223,
       "diagnostic_observations": [
-        {"run_id": 36511431307, "minutes": 21.05, "outcome": "failure"},
-        {"run_id": 36513611018, "minutes": 16.45, "outcome": "success"}
+        {
+          "run_id": 36511431307,
+          "minutes": 21.05,
+          "outcome": "failure"
+        },
+        {
+          "run_id": 36513611018,
+          "minutes": 16.45,
+          "outcome": "success"
+        }
       ],
       "note": "First exact tools-hub scope. Four mandatory Build/Photos/both-OS runtime/app-ui jobs and three owning UI cases passed. Initial diagnostic failed a test assumption about the zero-cat fixture's destination, not product behavior; corrected expectation passed. Failed diagnosis, preparation and trigger recovery remain in total time. New ref at an already-pushed diagnostic SHA produced CreateEvent only; creating a separate candidate ref at base then fast-forwarding the same SHA started push CI, without changing inputs or resetting the task clock. 18.85m is candidate CI only, not total delivery. First candidate was 2026-09-29T02:08:57Z. Runner minutes are neither charges nor Codex tokens."
     },
