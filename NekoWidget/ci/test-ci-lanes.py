@@ -29,6 +29,79 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_membership_copy_requires_exact_sources_raw_modes_and_reading_case(self):
+        selected = scope.MEMBERSHIP_COPY_SCOPE
+        method = scope.MEMBERSHIP_COPY_TESTS[0].rsplit("/", 1)[1]
+        tests = f"final class SoloMemoriesUITests: XCTestCase {{\n    func {method}() {{}}\n}}"
+        changes = {path: ("before", tests if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.MEMBERSHIP_COPY_PATHS}
+        digests = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        base, head = "a" * 40, "b" * 40
+
+        def raw_scope(override=None, extra=False):
+            records = []
+            for path in sorted(changes):
+                modes, status = (":100644 100644", "M")
+                if override and override[0] == path:
+                    modes, status = override[1:]
+                records.append(f"{modes} {'c' * 40} {'d' * 40} {status}\0{path}\0")
+            if extra:
+                records.append(f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0")
+
+            def git(*args):
+                if args[0] == "diff":
+                    return "".join(records)
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return head
+
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(sorted(changes), {}, {"GITHUB_SHA": head})
+
+        with patch.object(scope, "MEMBERSHIP_COPY_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), selected)
+            self.assertEqual(raw_scope(), selected)
+            self.assertEqual(raw_scope(extra=True), scope.FULL_SCOPE)
+            for path in changes:
+                self.assertNotEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}), selected)
+                for index in (0, 1):
+                    altered = dict(changes)
+                    pair = list(altered[path]); pair[index] += "unreviewed"
+                    altered[path] = tuple(pair)
+                    self.assertNotEqual(scope.select_scope(altered), selected)
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":000000 100644", "A"),
+                                      (":100644 100644", "R100")):
+                    self.assertEqual(raw_scope((path, modes, status)), scope.FULL_SCOPE)
+            for path in ("NekoWidget/Shared/MembershipAccessPolicy.swift",
+                         "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift",
+                         "NekoWidget/NekoWidget/Info.plist", ".github/workflows/ios-build.yml"):
+                self.assertEqual(scope.select_scope(changes | {path: ("old", "new")}), scope.FULL_SCOPE)
+            without_case = dict(changes)
+            without_case[scope.MEMORY_TEST_PATH] = ("before", tests.replace(method, "testUnrelated"))
+            with patch.object(scope, "MEMBERSHIP_COPY_DIGESTS", {
+                    path: list(map(scope.source_digest, pair)) for path, pair in without_case.items()}):
+                self.assertNotEqual(scope.select_scope(without_case), selected)
+
+        self.assertEqual(len(scope.MEMBERSHIP_COPY_PATHS), 2)
+        self.assertEqual(len(scope.MEMBERSHIP_COPY_TESTS), 1)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.MEMBERSHIP_COPY_TESTS)
+        self.assertEqual(scope.smoke_tests(selected),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        required = planner.required_jobs_from_scope(selected)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
+        self.assertTrue(scope.accepts_paths(selected, list(changes) + ["handoffs/record.md"]))
+        self.assertFalse(scope.accepts_paths(selected, list(changes) + ["NekoWidget/Shared/MembershipAccessPolicy.swift"]))
+        jobs = [dict(name=name, head_sha=head, status="completed", conclusion="success") for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, head))
+        for index in range(len(jobs)):
+            missing = jobs[:index] + jobs[index + 1:]
+            self.assertFalse(planner.covers_jobs(missing, required, head))
+            skipped = copy.deepcopy(jobs); skipped[index]["conclusion"] = "skipped"
+            self.assertFalse(planner.covers_jobs(skipped, required, head))
+
     def test_care_handoff_frozen_sources_modes_and_evidence(self):
         selected = scope.CARE_HANDOFF_SCOPE
         methods = "\n".join("    func " + test.rsplit("/", 1)[1] + "() {}"
@@ -489,9 +562,9 @@ final class UnrelatedUITests: XCTestCase {
                     self.assertIn("    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", jobs["sharing-app-ui"])
                 self.assertLessEqual(maximum_running, 5)
                 self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
-                    4 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.VET_SAVED_CAT_SCOPE) else
+                    4 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE) else
                     4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
-                if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.VET_SAVED_CAT_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
+                if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")
