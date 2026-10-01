@@ -22,6 +22,7 @@ export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
+  GENERAL_STORAGE_MODE?: string;
   APPLE_AUTH_DIAGNOSTICS_UNTIL?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
@@ -186,6 +187,14 @@ export function configuredServices(env: Env): Services {
     throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   }
   const pilot = new PilotControl(env.DB, now, env.PILOT_MODE, env.PILOT_IDENTITY_KEYS_JSON, registration);
+  // General registration must be intentional. An absent/misspelled flag keeps
+  // the original closed pilot gates; losing pilot settings never opens writes.
+  const general = env.GENERAL_STORAGE_MODE === 'YES';
+  if (general && (env.PILOT_MODE !== 'NO' || internalPilot || registration
+      || !['staging', 'production'].includes(env.ENVIRONMENT ?? ''))) {
+    throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+  }
+  const admission = general ? new IntakeControl(env.DB, now) : pilot;
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   let recovery: RecordRecoveryCopy | undefined;
@@ -199,7 +208,7 @@ export function configuredServices(env: Env): Services {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now,
-    ownerAdmission: pilot,
+    ownerAdmission: admission,
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
@@ -214,7 +223,7 @@ export function configuredServices(env: Env): Services {
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
     requireGlobalAdmissionLimit: true,
     intakeControl: new IntakeControl(env.DB, now), requireIntakeControl: true,
-    mutationAdmission: pilot,
+    mutationAdmission: admission,
     ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
@@ -327,7 +336,9 @@ export default {
         || env.PRESERVATION_ENABLED !== 'YES')) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
     if (!env.DB) {
       if (env.CLEANUP_ENABLED === 'YES' || env.RECOVERY_BACKFILL_ENABLED === 'YES'
-        || env.PRESERVATION_ENABLED === 'YES') throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+        || env.PRESERVATION_ENABLED === 'YES' || env.RETENTION_TRACKING_ENABLED === 'YES') {
+        throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
+      }
       return;
     }
     let maintenanceFailures = 0;
@@ -350,6 +361,16 @@ export default {
         }
         const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());
         maintenanceFailures += owners.failed;
+      } catch { maintenanceFailures++; }
+    }
+    // Observe the retention clock independently of cleanup. Launching with
+    // automatic deletion disabled must still record verified membership expiry.
+    // This does not submit notices, claim deletion or erase any copy.
+    if (env.RETENTION_TRACKING_ENABLED === 'YES') {
+      if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+      try {
+        await configuredNoticeServices(env).retention
+          .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
       } catch { maintenanceFailures++; }
     }
     // Backup repair continues when public sign-in and cleanup are off. A
@@ -375,15 +396,6 @@ export default {
           (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
       ]);
     } catch { maintenanceFailures++; }
-    // Billing outages pause the clock. This only records status; notification
-    // and irreversible deletion remain separately gated and disabled.
-    if (env.RETENTION_TRACKING_ENABLED === 'YES') {
-      if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
-      try {
-        await configuredNoticeServices(env).retention
-          .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
-      } catch { maintenanceFailures++; }
-    }
     if (env.NOTICE_EVENTS_ENABLED === 'YES') {
       if (env.RETENTION_TRACKING_ENABLED !== 'YES') throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
       const services = configuredNoticeServices(env);

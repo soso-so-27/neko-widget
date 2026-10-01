@@ -15,6 +15,48 @@ async function permit(now = base) {
     daily_attempt_limit=2,monthly_attempt_limit=3,monthly_bytes_limit=30 WHERE singleton=1`)
     .bind(now, now + 86_400_000).run();
 }
+it('keeps general registration and mutation closed until their explicit limits are configured', async () => {
+  const control = new IntakeControl(db, () => base);
+  await permit();
+  await expect(control.createOwner(crypto.randomUUID(), 'a'.repeat(64), base)).rejects.toMatchObject(failure);
+  await expect(control.admitMutation(crypto.randomUUID())).rejects.toMatchObject(failure);
+});
+
+it('serializes general registrations at the owner limit without a seven-day pilot grant', async () => {
+  await permit();
+  const before = (await db.prepare('SELECT count(*) AS count FROM pa_owners').first<{ count: number }>())!.count;
+  await db.prepare(`UPDATE pa_intake_control SET maximum_owners=?,daily_registration_limit=10`)
+    .bind(before+1).run();
+  const control = new IntakeControl(db, () => base);
+  const keys = [crypto.randomUUID(), crypto.randomUUID()].map(x => x.replaceAll('-', '').repeat(2));
+  const attempts = await Promise.allSettled(keys.map(key => control.createOwner(crypto.randomUUID(), key, base)));
+  expect(attempts.filter(x => x.status === 'fulfilled')).toHaveLength(1);
+  expect((await db.prepare('SELECT count(*) AS count FROM pa_owners').first<{ count: number }>())!.count).toBe(before+1);
+  await db.prepare('UPDATE pa_intake_control SET enabled=0').run();
+  await expect(control.createOwner(crypto.randomUUID(), 'b'.repeat(64), base)).rejects.toMatchObject(failure);
+});
+
+it('caps general PUT attempts including retries across daily and monthly boundaries', async () => {
+  await permit();
+  const ownerId=crypto.randomUUID(), identity=crypto.randomUUID().replaceAll('-', '').repeat(2);
+  await db.prepare('INSERT INTO pa_owners(owner_id,identity_key,created_at) VALUES(?,?,?)').bind(ownerId,identity,base).run();
+  await db.prepare('UPDATE pa_intake_control SET daily_mutation_limit=1,monthly_mutation_limit=2').run();
+  let now=base;
+  const control=new IntakeControl(db,()=>now);
+  const attempts=await Promise.allSettled([control.admitMutation(ownerId),control.admitMutation(ownerId)]);
+  expect(attempts.filter(x=>x.status==='fulfilled')).toHaveLength(1);
+  now+=86_400_000;
+  await permit(now);
+  await control.admitMutation(ownerId);
+  now+=86_400_000;
+  await permit(now);
+  await expect(control.admitMutation(ownerId)).rejects.toMatchObject(failure);
+  // Neither disabled nor caller-invented owners may consume a mutation grant.
+  await db.prepare('UPDATE pa_intake_control SET monthly_mutation_limit=10').run();
+  await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?').bind(ownerId).run();
+  await expect(control.admitMutation(ownerId)).rejects.toMatchObject(failure);
+  await expect(control.admitMutation(crypto.randomUUID())).rejects.toMatchObject(failure);
+});
 it('defaults closed and refuses missing, expired or implausibly long operator review', async () => {
   const control = new IntakeControl(db, () => base);
   await expect(control.admit(10)).rejects.toMatchObject(failure);
