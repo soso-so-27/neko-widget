@@ -2695,6 +2695,19 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
             app.buttons["membership-preview-open"].tap()
+            XCTAssertTrue(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 5))
+            let overview = XCTAttachment(screenshot: app.screenshot())
+            overview.name = "membership-overview-\(largeText ? "largest" : "standard")"
+            overview.lifetime = .keepAlways
+            add(overview)
+            let freeTools = app.staticTexts["membership-offer-free-tools"]
+            for _ in 0..<10 { if freeTools.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(freeTools.isHittable, "Free emergency tools must be readable before opening membership details")
+            XCTAssertEqual(freeTools.label, "迷子・避難のツールは、会員でなくても使えます。")
+            let freeToolsCapture = XCTAttachment(screenshot: app.screenshot())
+            freeToolsCapture.name = "membership-free-tools-\(largeText ? "largest" : "standard")"
+            freeToolsCapture.lifetime = .keepAlways
+            add(freeToolsCapture)
             let details = app.buttons["membership-offer-details"]
             for _ in 0..<10 { if details.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(details.isHittable)
