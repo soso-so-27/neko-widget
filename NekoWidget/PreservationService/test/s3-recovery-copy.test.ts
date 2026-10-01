@@ -12,6 +12,28 @@ const digest = async (value: Uint8Array) => base64(new Uint8Array(
   await crypto.subtle.digest('SHA-256', value as BufferSource)));
 
 describe('private, versioned S3 recovery-object transport', () => {
+  it('keeps a receiver-sensitive fetch transport unbound through save and restore', async () => {
+    const checksum = await digest(data);
+    // Cloudflare's native fetch rejects an adapter instance as its `this` receiver.
+    const transport = async function(this: void, input: RequestInfo | URL, init?: RequestInit) {
+      expect(this).toBeUndefined();
+      const url = new URL(String(input));
+      expect(url.origin).toBe('https://neko-preservation-recovery.s3.ap-northeast-1.amazonaws.com');
+      expect(url.pathname).toBe(`/${key}`);
+      if (init?.method === 'PUT') return new Response(null, { status: 200,
+        headers: { 'x-amz-checksum-sha256': checksum, 'x-amz-version-id': 'native-v1' } });
+      expect(url.searchParams.get('versionId')).toBe('native-v1');
+      if (init?.method === 'HEAD') return new Response(null, { status: 200,
+        headers: { 'x-amz-checksum-sha256': checksum, 'x-amz-checksum-type': 'FULL_OBJECT',
+          'content-length': String(data.length), 'x-amz-version-id': 'native-v1' } });
+      return new Response(data as BodyInit, { status: 200,
+        headers: { 'x-amz-version-id': 'native-v1' } });
+    };
+    const copy = new S3RecoveryCopy(config, transport);
+    const saved = await copy.putVersioned(key, data);
+    expect(await copy.getVerified(saved)).toEqual(data);
+  });
+
   it('does not pin an expiring CLI session into the always-on recovery Worker', () => {
     expect(() => new S3RecoveryCopy({ ...config, sessionToken: 'temporary-session' }))
       .toThrowError(/RECOVERY_COPY_UNAVAILABLE/);
