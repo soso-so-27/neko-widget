@@ -112,7 +112,7 @@ struct CareHandoffView: View {
             + unregisteredPhotos.map { CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
-        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store)
+        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore)
     }
 }
 
@@ -160,8 +160,11 @@ private struct CareCatEditor: View {
     let ownPhotos: [CatProfilePhotoPresentation]
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: CareHandoffStore
+    @ObservedObject var reuseStore: EvacuationStore
     @State private var showsPhotoPicker = false
     @State private var deleteRequested = false
+    @State private var refreshedCandidates = false
+    @State private var candidateRefreshError = false
     @Environment(\.dismiss) private var dismiss
     private var cat: CareCat? { store.plan.cats.first { $0.id == id } }
     private func text(_ key: WritableKeyPath<CareCat, String>) -> Binding<String> {
@@ -178,7 +181,8 @@ private struct CareCatEditor: View {
         Form {
             if let cat {
                 Section {
-                    CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80)
+                    CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
+                              isPrefilled: cat.prefilledFields?.contains("name") == true)
                     Button { showsPhotoPicker = true } label: {
                         HStack(spacing: 16) {
                             CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
@@ -189,6 +193,10 @@ private struct CareCatEditor: View {
                     if cat.photoName != nil {
                         Button("このメモの写真を外す", role: .destructive) { store.editCat(id) { $0.photoName = nil } }
                     }
+                }
+                if candidateRefreshError {
+                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
@@ -241,6 +249,12 @@ private struct CareCatEditor: View {
             }
         }
         .navigationTitle("お世話メモを編集").navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard !refreshedCandidates else { return }
+            refreshedCandidates = true
+            do { try store.refreshCandidates(id, using: reuseStore) }
+            catch { candidateRefreshError = true }
+        }
         .scrollDismissesKeyboard(.interactively)
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("入力を閉じる") {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)

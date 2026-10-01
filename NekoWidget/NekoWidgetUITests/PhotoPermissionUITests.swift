@@ -1750,10 +1750,17 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("care-autofill-output-without-editing")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.terminate()
+        app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
+        app.launch()
         let cat = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
+        XCTAssertTrue(cat.waitForExistence(timeout: 10))
         for _ in 0..<5 where !cat.isHittable { app.swipeDown(velocity: .slow) }
         cat.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "更新したフード 25g"), object: food)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
+        capture("care-refreshed-unedited-candidate")
         food.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         // Verify app-owned editing/persistence, not the OS selection-menu geometry.
@@ -1764,8 +1771,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: food)
         XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
         let editedValue = food.value as? String ?? ""
-        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "いつものフード 20g")
-        XCTAssertEqual(editedValue.count, "いつものフード 20g".count + entered.count)
+        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "更新したフード 25g")
+        XCTAssertEqual(editedValue.count, "更新したフード 25g".count + entered.count)
+        app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "3"
         app.terminate(); app.launch()
         let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
         XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
@@ -1803,6 +1811,7 @@ final class SoloMemoriesUITests: XCTestCase {
         preview.tap()
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("evacuation-autofill-output-without-editing-large-text")
+        app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
         app.terminate(); app.launch()
         app.buttons["evacuation-cats-open"].tap()
         let restored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-cat-")).firstMatch
@@ -1810,7 +1819,10 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["evacuation-cat-edit"].tap()
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].exists)
         for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertEqual(food.value as? String, value)
+        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "30g"), object: food)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
+        XCTAssertTrue((food.value as? String ?? "").contains("朝8時") && (food.value as? String ?? "").contains("むぎ専用フード"))
+        capture("evacuation-refreshed-candidate-large-text")
         app.terminate()
     }
 
@@ -2104,6 +2116,14 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["lost-cat-face-actions"].exists)
         XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・しっぽが長い")
         capture("lost-cat-saved-candidates-large-text")
+        app.terminate()
+        app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
+        app.launch()
+        XCTAssertTrue(app.buttons["lost-cat-saved-\(firstKey)"].waitForExistence(timeout: 8))
+        app.buttons["lost-cat-saved-\(firstKey)"].tap()
+        lastFieldIndex = 0
+        XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・右耳に印・しっぽが長い")
+        capture("lost-cat-refreshed-candidate-large-text")
         let candidateFeatures = field("lost-cat-features")
         candidateFeatures.tap(); candidateFeatures.press(forDuration: 1.2)
         let candidateSelectAll = app.descendants(matching: .any).matching(
@@ -2124,6 +2144,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(publicText.contains("public@example.test"))
         XCTAssertFalse(publicText.contains("非公開"))
         capture("lost-cat-saved-candidates-public-preview")
+        app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "3"
         app.terminate(); app.launch()
         XCTAssertTrue(app.buttons["lost-cat-saved-\(firstKey)"].waitForExistence(timeout: 8))
         app.buttons["lost-cat-saved-\(firstKey)"].tap()

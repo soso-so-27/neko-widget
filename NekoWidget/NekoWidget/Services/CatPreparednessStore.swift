@@ -142,6 +142,8 @@ struct LostCatSavedInformation {
     var features = ""
     var facePhoto: Data?
     var bodyPhoto: Data?
+    var identityKey: String?
+    var refreshableFields: Set<String> = []
 }
 
 @MainActor
@@ -245,6 +247,23 @@ final class LostCatDraftStore: ObservableObject {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
         drafts = next
+    }
+
+    /// Text-only refresh is separate from initial photo copying. Existing local
+    /// drafts remain readable even when a source photo was removed or corrupted.
+    func refreshCandidateText(for key: String, information: LostCatSavedInformation) throws -> LostCatDraft {
+        guard !manifestUnreadable, let before = drafts[key] else { throw CocoaError(.fileReadCorruptFile) }
+        guard information.identityKey == key else { return before }
+        var next = before
+        if next.prefilledFields?.contains("name") == true, information.refreshableFields.contains("name") {
+            next.name = information.name
+        }
+        if next.prefilledFields?.contains("features") == true, information.refreshableFields.contains("features") {
+            next.features = information.features
+        }
+        guard next != before else { return before }
+        try save(next, for: key)
+        return drafts[key] ?? next
     }
 
     func replacePhoto(_ data: Data, role: CatPreparednessStore.PhotoRole,

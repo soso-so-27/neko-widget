@@ -31,6 +31,10 @@ struct CareHandoffFixtureView: View {
                 try? reuse.replacePhoto(data, catID: cat.id, role: .face)
             }
         }
+        if let phase = ProcessInfo.processInfo.environment["NEKO_TOOL_REFRESH_PHASE"],
+           phase == "2" || phase == "3" {
+            reuse.editCat(Self.mugi) { $0.food = phase == "2" ? "更新したフード 25g" : "さらに更新したフード 30g" }
+        }
         if store.plan.cats.isEmpty && ProcessInfo.processInfo.environment["NEKO_CARE_EMPTY"] != "1" {
             var mugi = CareCat(); mugi.id = Self.mugi; mugi.name = "むぎ"
             mugi.meals[0].time = "朝8時"; mugi.meals[0].food = "むぎ専用フード"; mugi.meals[0].amount = "20g"
@@ -82,8 +86,8 @@ struct CareHandoffFixtureView: View {
     @MainActor
     private static func verifyAutofill() throws {
         enum Failure: Error { case assertion(String) }
-        func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
-            if !condition() { throw Failure.assertion(message) }
+        func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+            if !(try condition()) { throw Failure.assertion(message) }
         }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("autofill-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -110,7 +114,25 @@ struct CareHandoffFixtureView: View {
         try require(output.contains(a.food) && !output.contains("private-") && !output.contains(b.food), "untouched values output for selected cat")
         try require(photo != evacuation.plan.cats[0].photos["face"], "destination owns a distinct photo")
         try require(evacuation.addCat(using: care, sourceCatID: id) == a.id, "legacy unregistered identity reopens in reverse direction")
+        let frozen = try care.shareRecord(CareHandoffDisclosure(catIDs: [id]))
+        evacuation.editCat(a.id) { $0.name = "更新した猫"; $0.food = "更新したフード 25g"; $0.handling = "更新した接し方" }
+        try require(care.plan.cats[0] == copied, "source edit and read-only preview do not update target")
+        _ = try care.shareRecord(CareHandoffDisclosure(catIDs: [id]))
+        try require(care.plan.cats[0] == copied, "preview does not refresh")
+        try require(try care.refreshCandidates(id, using: evacuation), "explicit editor refresh changes candidates")
+        let refreshed = care.plan.cats[0]
+        try require(refreshed.name == "更新した猫" && refreshed.usualFood == "更新したフード 25g"
+            && refreshed.handling == "更新した接し方" && refreshed.prefilledFields == copied.prefilledFields
+            && refreshed.photoName == photo, "text changes preserve marks and independent photo")
+        try require(frozen.cats[0].name == copied.name && frozen.cats[0].fields.map { $0.1 }.joined().contains(a.food), "previous copy frozen")
+        try require(!(try care.refreshCandidates(id, using: evacuation)), "unchanged source does not recommit")
+        care.editCat(id) { $0.meals[0].time = "朝9時" }
+        try require(care.plan.cats[0].prefilledFields?.contains("food") != true
+            && care.plan.cats[0].prefilledUsualFood == true && care.plan.cats[0].foodForCandidateRefresh == nil,
+            "a mixed meal edit does not authorize the imported paragraph in reverse")
         care.editCat(id) { $0.usualFood = ""; $0.handling = "今回の接し方" }
+        evacuation.editCat(a.id) { $0.food = "もっと新しいフード"; $0.handling = "別の接し方" }
+        _ = try care.refreshCandidates(id, using: evacuation)
         try require(care.addCat(using: evacuation, sourceCatID: a.id) == id, "same identity reopens instead of importing again")
         let restarted = CareHandoffStore(directory: careDirectory)
         try require(restarted.plan.cats[0].usualFood == "" && restarted.plan.cats[0].handling == "今回の接し方", "cleared and edited fields survive restart")
@@ -128,7 +150,23 @@ struct CareHandoffFixtureView: View {
         try require(reverse.food.contains("朝8時") && reverse.food.contains("20g") && reverse.handling == c.handling, "structured meal information retained")
         try require(reverse.medicalStatus == .unknown && reverse.medicalDetails.isEmpty && reverse.photos["face"] == nil, "no medical or invented photo role")
         try require(care.addCat(profileID: c.profileID, using: evacuation) == c.id, "legacy identity does not create duplicate")
+        let frozenEvacuation = try evacuation.shareRecord(catID: reverseID, disclosure: EvacuationDisclosure())
+        care.editCat(c.id) { $0.meals[0].amount = "30g"; $0.handling = "新しい接し方" }
+        try require(evacuation.plan.cats.first(where: { $0.id == reverseID }) == reverse, "stored evacuation unaffected by source edit")
+        try require(try evacuation.refreshCandidates(reverseID, using: care), "structured meal candidate refresh")
+        try require(evacuation.plan.cats.first(where: { $0.id == reverseID })?.food.contains("30g") == true
+            && frozenEvacuation.fields.map { $0.1 }.joined().contains("20g"), "new candidate and old snapshot separate")
+        let refreshedReverse = evacuation.plan.cats.first(where: { $0.id == reverseID })!
+        // Owner confirmation protects every candidate, not only the date.
+        evacuation.update { plan in
+            let index = plan.cats.firstIndex(where: { $0.id == reverseID })!
+            plan.cats[index].reviewedAt = Date(); plan.cats[index].prefilledFields = []
+        }
+        care.editCat(c.id) { $0.meals[0].amount = "35g" }
+        try require(!(try evacuation.refreshCandidates(reverseID, using: care))
+            && evacuation.plan.cats.first(where: { $0.id == reverseID })?.food == refreshedReverse.food, "checked record frozen")
         evacuation.editCat(reverseID) { $0.food = ""; $0.handling = "今回だけの配慮" }
+        _ = try evacuation.refreshCandidates(reverseID, using: care)
         _ = evacuation.addCat(profileID: c.profileID, using: care)
         try require(evacuation.plan.cats.first(where: { $0.id == reverseID })?.food == "", "existing cleared value not repopulated")
         care.update { $0.cats.removeAll { $0.id == c.id } }
@@ -140,10 +178,13 @@ struct CareHandoffFixtureView: View {
         let oldCare = try JSONEncoder().encode(legacy)
         let decodedCare = try JSONDecoder().decode(CareCat.self, from: oldCare)
         try require(decodedCare == legacy, "legacy care optional metadata")
+        var mixedLegacy = CareCat(); mixedLegacy.usualFood = "来歴不明の既存の文章"
+        try require(mixedLegacy.foodForCandidateRefresh == nil, "unknown paragraph provenance not promoted to authority")
         var legacyEvacuation = EvacuationCat(); legacyEvacuation.name = "旧記録"
         let oldEvacuation = try JSONEncoder().encode(legacyEvacuation)
         let decodedEvacuation = try JSONDecoder().decode(EvacuationCat.self, from: oldEvacuation)
         try require(decodedEvacuation == legacyEvacuation, "legacy evacuation optional metadata")
+        try verifyRefreshFailures(directory: directory.appendingPathComponent("refresh-failures"))
         // Source failures must never create a partly copied record or fall back to another cat.
         let failureTarget = CareHandoffStore(directory: directory.appendingPathComponent("failure-target"))
         guard let brokenPhoto = evacuation.plan.cats.first(where: { $0.id == reverseID })?.photos["reference"] else {
@@ -158,6 +199,43 @@ struct CareHandoffFixtureView: View {
         let freshTarget = CareHandoffStore(directory: directory.appendingPathComponent("corrupt-source-target"))
         try require(brokenSource.loadError != nil && freshTarget.addCat(using: brokenSource, sourceCatID: reverseID) == nil
             && freshTarget.plan.cats.isEmpty && evacuation.plan == sourceBefore, "unreadable source fails without changing records")
+    }
+
+    @MainActor
+    private static func verifyRefreshFailures(directory: URL) throws {
+        enum Failure: Error { case invariant }
+        func require(_ value: Bool) throws { if !value { throw Failure.invariant } }
+        let careDirectory = directory.appendingPathComponent("care")
+        let source = EvacuationStore(directory: directory.appendingPathComponent("source"))
+        var a = EvacuationCat(); a.profileID = "a"; a.name = "同名"; a.food = "元のフード"
+        var b = EvacuationCat(); b.profileID = "b"; b.name = "同名"; b.food = "別猫のフード"
+        try require(source.update { $0.cats = [a, b] })
+        let target = CareHandoffStore(directory: careDirectory)
+        guard let id = target.addCat(using: source, sourceCatID: a.id) else { throw Failure.invariant }
+        let before = target.plan
+        source.editCat(b.id) { $0.food = "別猫の更新" }
+        try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)
+        var duplicate = a; duplicate.id = UUID(); duplicate.food = "曖昧な情報"
+        try require(source.update { $0.cats.append(duplicate) })
+        try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)
+        try require(source.update { $0.cats.removeAll { $0.id == duplicate.id } })
+        source.editCat(a.id) { $0.food = "新しいフード" }
+        let manifest = careDirectory.appendingPathComponent("plan.json")
+        let held = careDirectory.appendingPathComponent("held.json")
+        try FileManager.default.moveItem(at: manifest, to: held)
+        try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+        var failed = false
+        do { _ = try target.refreshCandidates(id, using: source) } catch { failed = true }
+        try require(failed && target.plan == before)
+        try FileManager.default.removeItem(at: manifest)
+        try FileManager.default.moveItem(at: held, to: manifest)
+        try require(CareHandoffStore(directory: careDirectory).plan == before)
+        source.update { $0.cats[0].prefilledFields = ["food"] }
+        try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)
+        target.update { $0.cats[0].prefilledFields = nil }
+        let legacy = target.plan
+        source.editCat(a.id) { $0.food = "旧記録を上書きしない" }
+        try require(!(try target.refreshCandidates(id, using: source)) && target.plan == legacy)
     }
 
     private static func verifyBoundaries() throws -> [UIImage] {

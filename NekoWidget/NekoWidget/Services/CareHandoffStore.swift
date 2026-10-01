@@ -55,6 +55,7 @@ final class CareHandoffStore: ObservableObject {
             if before.usualFood != plan.cats[index].usualFood || before.meals != plan.cats[index].meals {
                 plan.cats[index].prefilledFields?.remove("food")
             }
+            if before.usualFood != plan.cats[index].usualFood { plan.cats[index].prefilledUsualFood = false }
             if before.handling != plan.cats[index].handling { plan.cats[index].prefilledFields?.remove("handling") }
             if before.photoName != plan.cats[index].photoName { plan.cats[index].prefilledFields?.remove("photo") }
             plan.cats[index].updatedAt = Date()
@@ -85,7 +86,7 @@ final class CareHandoffStore: ObservableObject {
                 cat.profileID = previous.profileID
                 if name.isEmpty { cat.name = previous.name; cat.prefilledFields?.insert("name") }
                 if !previous.food.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    cat.usualFood = previous.food; cat.prefilledFields?.insert("food")
+                    cat.usualFood = previous.food; cat.prefilledFields?.insert("food"); cat.prefilledUsualFood = true
                 }
                 if !previous.handling.isEmpty { cat.handling = previous.handling; cat.prefilledFields?.insert("handling") }
                 // Never silently select a photo explicitly classified as including the owner.
@@ -104,6 +105,40 @@ final class CareHandoffStore: ObservableObject {
             saveError = "猫の情報を保存できませんでした。元の記録は残っています。保存を再試行してから、もう一度この子を選んでください。"
             return nil
         }
+    }
+    /// Called once at an explicit editing entry, never by a list or renderer.
+    /// Text only; photos, private fields and already edited/legacy values stay put.
+    @discardableResult
+    func refreshCandidates(_ id: UUID, using source: EvacuationStore) throws -> Bool {
+        guard loadError == nil, saveError == nil, let repository,
+              source.loadError == nil, source.saveError == nil,
+              let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
+        let before = plan.cats[index]
+        func matches(_ profile: String?, _ tool: UUID) -> Bool {
+            if let a = before.profileID, let b = profile { return a == b }
+            return (before.toolCatID ?? before.id) == tool
+        }
+        guard plan.cats.filter({ matches($0.profileID, $0.toolCatID ?? $0.id) }).count == 1 else { return false }
+        let sources = source.plan.cats.filter { matches($0.profileID, $0.toolCatID ?? $0.id) }
+        guard sources.count == 1, let previous = sources.first else { return false }
+        var cat = before
+        if cat.prefilledFields?.contains("name") == true, previous.prefilledFields?.contains("name") != true {
+            cat.name = previous.name
+        }
+        if cat.prefilledFields?.contains("food") == true, previous.prefilledFields?.contains("food") != true {
+            cat.usualFood = previous.food
+            cat.prefilledUsualFood = true
+        }
+        if cat.prefilledFields?.contains("handling") == true, previous.prefilledFields?.contains("handling") != true {
+            cat.handling = previous.handling
+        }
+        guard cat != before else { return false }
+        cat.updatedAt = Date()
+        var next = plan; next.cats[index] = cat
+        // Publish only after commit; a failed automatic refresh keeps old values.
+        try repository.commit(next)
+        plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+        return true
     }
     func photoData(_ name: String) throws -> Data {
         guard loadError == nil, saveError == nil, let repository else { throw CareHandoffError.unreadable }

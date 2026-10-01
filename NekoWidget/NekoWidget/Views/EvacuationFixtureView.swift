@@ -44,6 +44,10 @@ struct EvacuationFixtureView: View {
                 try? reuse.replacePhoto(data, catID: cat.id)
             }
         }
+        if let phase = ProcessInfo.processInfo.environment["NEKO_TOOL_REFRESH_PHASE"],
+           phase == "2" || phase == "3" {
+            reuse.editCat(Self.mugi) { $0.meals[0].amount = phase == "2" ? "30g" : "35g" }
+        }
         if store.plan.cats.isEmpty && ProcessInfo.processInfo.environment["NEKO_EVACUATION_EMPTY"] != "1" {
             var mugi = EvacuationCat(); mugi.id = Self.mugi; mugi.name = "むぎ"
             mugi.features = "茶白・足先が白い"; mugi.food = "むぎ専用フード"

@@ -116,6 +116,37 @@ final class EvacuationStore: ObservableObject {
             return nil
         }
     }
+    /// Only unedited candidate text is refreshed when its editor is entered.
+    @discardableResult
+    func refreshCandidates(_ id: UUID, using source: CareHandoffStore) throws -> Bool {
+        guard loadError == nil, saveError == nil, let repository,
+              source.loadError == nil, source.saveError == nil,
+              let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
+        let before = plan.cats[index]
+        // A record explicitly checked by its owner is no longer a draft candidate.
+        guard before.reviewedAt == nil else { return false }
+        func matches(_ profile: String?, _ tool: UUID) -> Bool {
+            if let a = before.profileID, let b = profile { return a == b }
+            return (before.toolCatID ?? before.id) == tool
+        }
+        guard plan.cats.filter({ matches($0.profileID, $0.toolCatID ?? $0.id) }).count == 1 else { return false }
+        let sources = source.plan.cats.filter { matches($0.profileID, $0.toolCatID ?? $0.id) }
+        guard sources.count == 1, let previous = sources.first else { return false }
+        var cat = before
+        if cat.prefilledFields?.contains("name") == true, previous.prefilledFields?.contains("name") != true {
+            cat.name = previous.name
+        }
+        if cat.prefilledFields?.contains("food") == true, let food = previous.foodForCandidateRefresh { cat.food = food }
+        if cat.prefilledFields?.contains("handling") == true, previous.prefilledFields?.contains("handling") != true {
+            cat.handling = previous.handling
+        }
+        guard cat != before else { return false }
+        cat.updatedAt = Date()
+        var next = plan; next.cats[index] = cat
+        try repository.commit(next)
+        plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+        return true
+    }
     func photoData(_ name: String) throws -> Data {
         guard loadError == nil, saveError == nil, let repository else { throw EvacuationStorageError.unreadable }
         return try Data(contentsOf: repository.photoURL(name))
