@@ -48,7 +48,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
     case requestRejected, uploadTimedOut, servicePaused
-    case deletionNotReceived, deletionPending
+    case deletionNotReceived, deletionPending, deletionNotAccepted
 
     /// Fixed support codes only: never include a URL, owner, token or raw error.
     var preservationSupportCode: String {
@@ -73,6 +73,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         switch self {
         case .deletionNotReceived: "削除依頼の受付がまだ確認できません。受付結果を再確認するか、同じ依頼を再送してください。"
         case .deletionPending: "この保管先は削除処理中です。削除状況を確認してください。"
+        case .deletionNotAccepted: "削除依頼は受け付けられませんでした。この操作では削除は始まっていません。"
         case .requestRejected: "保管先で送信データを受け付けられませんでした。元の写真とメモは端末に残っています。"
         case .uploadTimedOut: "保管先の応答が時間内に届きませんでした。保管結果を確認してください。"
         case .servicePaused: "保管先の受付が一時停止しています。保管済みの記録は引き続き開けます。"
@@ -475,6 +476,7 @@ actor ManagedPreservationClient {
     }
 
     func requestAccountDeletion() async throws {
+        try Task.checkCancellation()
         let checkpoint = try captureSessionCheckpoint()
         let existing = try store.deletionReceipt()
         guard existing == nil || (existing?.ownerId == checkpoint.credential.ownerId
@@ -485,10 +487,28 @@ actor ManagedPreservationClient {
         }))
         let receipt = existing ?? .init(ownerId: checkpoint.credential.ownerId,
                                         token: token, state: .unconfirmed)
-        if existing == nil { try store.saveDeletionReceipt(receipt, replacing: nil) }
         let body = try JSONEncoder().encode(["confirmation": "delete-service-account", "receipt": receipt.token])
-        _ = try await request("POST", path: "/v1/account-deletion", body: body,
-                              token: checkpoint.credential.token, maximumBytes: 2048, expectedStatus: 202)
+        do {
+            _ = try await request("POST", path: "/v1/account-deletion", body: body,
+                                  token: checkpoint.credential.token, maximumBytes: 2048, expectedStatus: 202,
+                                  beforeDispatch: {
+                if existing == nil { try self.store.saveDeletionReceipt(receipt, replacing: nil) }
+            })
+        } catch ManagedPreservationError.deletionNotAccepted {
+            // A rejected retry cannot settle an older request still in flight.
+            if existing == nil { try store.clearRejectedDeletion(receipt) }
+            throw ManagedPreservationError.deletionNotAccepted
+        } catch ManagedPreservationError.deletionPending {
+            // Persist the proof before the next network hop, so a lost status
+            // response/restart does not turn another device's request into 404 limbo.
+            var pending = receipt; pending.state = .resolvingPending
+            try store.saveDeletionReceipt(pending, replacing: receipt)
+            _ = try await checkAccountDeletion()
+            if try store.clear(ifMatching: checkpoint.credential) {
+                credential = nil; loaded = true; challenge = nil; epoch &+= 1
+            }
+            return
+        }
         var accepted = receipt; accepted.state = .processing
         try store.saveDeletionReceipt(accepted, replacing: receipt)
         // Forget only the login that issued this request; keep the receipt.
@@ -500,11 +520,22 @@ actor ManagedPreservationClient {
     func checkAccountDeletion() async throws -> ManagedPreservationSessionStore.DeletionReceipt.State {
         guard let receipt = try store.deletionReceipt() else { throw ManagedPreservationError.staleSession }
         struct Result: Decodable { let state: String }
-        let data = try await request("GET", path: "/v1/account-deletion/" + receipt.ownerId.lowercased(),
+        let data: Data
+        do {
+            data = try await request("GET", path: "/v1/account-deletion/" + receipt.ownerId.lowercased(),
                                      token: receipt.token, maximumBytes: 2048, expectedStatus: 200)
+        } catch ManagedPreservationError.deletionNotReceived where receipt.state == .resolvingPending {
+            var elsewhere = receipt; elsewhere.state = .requestedElsewhere
+            try store.saveDeletionReceipt(elsewhere, replacing: receipt)
+            if let login = try store.load(), login.ownerId == receipt.ownerId,
+               try store.clear(ifMatching: login) {
+                credential = nil; loaded = true; challenge = nil; epoch &+= 1
+            }
+            return .requestedElsewhere
+        }
         let result: Result = try decode(data)
         guard let state = ManagedPreservationSessionStore.DeletionReceipt.State(rawValue: result.state),
-              state != .unconfirmed else { throw ManagedPreservationError.invalidResponse }
+              state == .processing || state == .completed else { throw ManagedPreservationError.invalidResponse }
         var updated = receipt; updated.state = state
         try store.saveDeletionReceipt(updated, replacing: receipt)
         return state
@@ -779,7 +810,7 @@ actor ManagedPreservationClient {
 
     private func request(_ method: String, path: String, query: [URLQueryItem] = [], body: Data? = nil,
                          token: String? = nil, revision: Int? = nil, maximumBytes: Int = 65_536,
-                         expectedStatus: Int? = nil) async throws -> Data {
+                         expectedStatus: Int? = nil, beforeDispatch: (() throws -> Void)? = nil) async throws -> Data {
         try Task.checkCancellation()
         guard let origin = configuration.origin,
               var parts = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -797,6 +828,7 @@ actor ManagedPreservationClient {
         if let revision { request.setValue(String(revision), forHTTPHeaderField: "If-Match") }
         do {
             let (data, response): (Data, URLResponse)
+            try beforeDispatch?()
             if let requestOverride { (data, response) = try await requestOverride(request, maximumBytes) }
             else { (data, response) = try await transport.data(for: request, maximumBytes: maximumBytes) }
             try Task.checkCancellation()
@@ -806,6 +838,10 @@ actor ManagedPreservationClient {
             guard (200...299).contains(http.statusCode) else {
                 let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
                 let code = failure?.code
+                if method == "POST", path == "/v1/account-deletion",
+                   ["OWNER_DELETION_DISABLED", "PRESERVATION_DISABLED", "INVALID_REQUEST", "SESSION_INVALID", "unauthorized"].contains(code ?? "") {
+                    throw ManagedPreservationError.deletionNotAccepted
+                }
                 switch code {
                 case "OWNER_DELETION_NOT_FOUND": throw ManagedPreservationError.deletionNotReceived
                 case "OWNER_DELETION_PENDING": throw ManagedPreservationError.deletionPending

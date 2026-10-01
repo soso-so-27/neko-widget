@@ -209,7 +209,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             self.clearAccountPresentation()
             self.accountDeletionState = try await self.client.savedDeletionState()
             if self.accountDeletionState != nil {
-                if self.accountDeletionState != .completed {
+                if self.accountDeletionState != .completed && self.accountDeletionState != .requestedElsewhere {
                     do { self.accountDeletionState = try await self.client.checkAccountDeletion() }
                     catch ManagedPreservationError.deletionNotReceived {
                         try await self.client.reloadSessionFromSecureStorage()
@@ -294,7 +294,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 try await self.client.requestAccountDeletion()
                 try self.check(ticket)
                 self.clearAccountPresentation()
-                self.accountDeletionState = .processing
+                self.accountDeletionState = try await self.client.savedDeletionState()
             } catch {
                 self.accountDeletionState = try? await self.client.savedDeletionState()
                 throw error

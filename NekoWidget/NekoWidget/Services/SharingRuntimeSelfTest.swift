@@ -23,7 +23,7 @@ enum PreservationFixtureScenario: Sendable {
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
     case requestRejected, saveTimedOut, unavailableMembership
-    case deletionResultLost
+    case deletionResultLost, deletionDisabled, deletionUnauthorized, deletionElsewhere, deletionElsewhereLost
 }
 
 actor PreservationFixtureServer {
@@ -83,11 +83,16 @@ actor PreservationFixtureServer {
                 throw ManagedPreservationError.invalidResponse
             }
             deletionToken = token
+            if scenario == .deletionDisabled { return try fail("OWNER_DELETION_DISABLED", status: 503) }
+            if scenario == .deletionUnauthorized { return try fail("unauthorized", status: 401) }
+            if scenario == .deletionElsewhere || scenario == .deletionElsewhereLost { return try fail("OWNER_DELETION_PENDING", status: 409) }
             if scenario == .deletionResultLost { throw URLError(.networkConnectionLost) }
             return try json(["ownerId": session.ownerId, "state": "processing"], code: 202)
         }
         if deletionStatus {
             deletionChecks += 1
+            if scenario == .deletionElsewhereLost && deletionChecks == 1 { throw URLError(.networkConnectionLost) }
+            if scenario == .deletionElsewhere || scenario == .deletionElsewhereLost { return try fail("OWNER_DELETION_NOT_FOUND", status: 404) }
             return try json(["state": deletionChecks < 2 ? "processing" : "completed"])
         }
         if request.httpMethod == "DELETE", url.path == "/v1/auth/session" { return try reply(Data(), code: 204) }
@@ -244,7 +249,10 @@ struct PreservationNativeFixture: Sendable {
     func cleanup() throws {
         // This exact newly generated fixture origin cannot address a real account.
         if let current = try store.load() { _ = try store.clear(ifMatching: current) }
-        if try store.deletionReceipt()?.state == .completed { try store.dismissCompletedDeletion() }
+        if let receipt = try store.deletionReceipt() {
+            if receipt.state == .unconfirmed { try store.clearRejectedDeletion(receipt) }
+            else if receipt.state == .completed || receipt.state == .requestedElsewhere { try store.dismissCompletedDeletion() }
+        }
     }
 }
 
@@ -10107,6 +10115,7 @@ actor SharingRuntimeSelfTestRunner {
 
     @MainActor
     static func testManagedPreservationMembershipBoundary() async throws {
+        try await testManagedPreservationDeletionReceiptBoundary()
         try await testManagedPreservationArchiveCopySource()
         try await testManagedPreservationSignInFeedback()
         guard !ManagedPreservationConfiguration.current.isEnabled,
@@ -10386,6 +10395,52 @@ actor SharingRuntimeSelfTestRunner {
         guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.isEmpty else { throw ManagedPreservationError.staleSession }
         localUI.discardUnsecuredMemos()
         guard !localUI.hasUnsecuredMemo, await local.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+    }
+
+    @MainActor
+    private static func testManagedPreservationDeletionReceiptBoundary() async throws {
+        let cancelled = try PreservationNativeFixture.make(); defer { try? cancelled.cleanup() }
+        let attempt = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await cancelled.client.requestAccountDeletion()
+        }
+        do { try await attempt.value; throw ManagedPreservationError.invalidResponse }
+        catch is CancellationError { }
+        guard try cancelled.store.deletionReceipt() == nil else { throw ManagedPreservationError.invalidResponse }
+        for scenario in [PreservationFixtureScenario.deletionDisabled, .deletionUnauthorized] {
+            let f = try PreservationNativeFixture.make(scenario); defer { try? f.cleanup() }
+            do { try await f.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+            catch ManagedPreservationError.deletionNotAccepted { }
+            guard try f.store.deletionReceipt() == nil, try f.store.load() == f.session else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+        let lost = try PreservationNativeFixture.make(.deletionResultLost); defer { try? lost.cleanup() }
+        do { try await lost.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+        catch ManagedPreservationError.unavailable { }
+        guard let receipt = try lost.store.deletionReceipt(), receipt.state == .unconfirmed else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        _ = try lost.store.clear(ifMatching: lost.session)
+        let resumed = ManagedPreservationClient(configuration: lost.configuration,
+            requestOverride: { request, maximum in try await lost.server.request(request, maximum: maximum) })
+        guard try await resumed.checkAccountDeletion() == .processing,
+              try await resumed.checkAccountDeletion() == .completed else { throw ManagedPreservationError.invalidResponse }
+        let other = try PreservationNativeFixture.make(.deletionElsewhere); defer { try? other.cleanup() }
+        try await other.client.requestAccountDeletion()
+        guard try other.store.deletionReceipt()?.state == .requestedElsewhere,
+              try other.store.load() == nil else { throw ManagedPreservationError.invalidResponse }
+        try await other.client.dismissCompletedDeletion()
+        guard try other.store.deletionReceipt() == nil else { throw ManagedPreservationError.invalidResponse }
+        let interrupted = try PreservationNativeFixture.make(.deletionElsewhereLost); defer { try? interrupted.cleanup() }
+        do { try await interrupted.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+        catch ManagedPreservationError.unavailable { }
+        guard try interrupted.store.deletionReceipt()?.state == .resolvingPending else { throw ManagedPreservationError.invalidResponse }
+        _ = try interrupted.store.clear(ifMatching: interrupted.session)
+        let again = ManagedPreservationClient(configuration: interrupted.configuration,
+            requestOverride: { request, maximum in try await interrupted.server.request(request, maximum: maximum) })
+        guard try await again.checkAccountDeletion() == .requestedElsewhere else { throw ManagedPreservationError.invalidResponse }
+        try await again.dismissCompletedDeletion()
     }
 
     private static func opaque(_ byte: UInt8) -> String {

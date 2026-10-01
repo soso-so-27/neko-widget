@@ -26,7 +26,7 @@ struct ManagedPreservationSessionStore: Sendable {
     let origin: String
 
     struct DeletionReceipt: Codable, Equatable, Sendable {
-        enum State: String, Codable, Equatable, Sendable { case unconfirmed, processing, completed }
+        enum State: String, Codable, Equatable, Sendable { case unconfirmed, resolvingPending, processing, completed, requestedElsewhere }
         let ownerId: String
         let token: String
         var state: State
@@ -81,7 +81,19 @@ struct ManagedPreservationSessionStore: Sendable {
 
     func dismissCompletedDeletion() throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
-        guard try readDeletionReceipt()?.state == .completed else { throw ManagedPreservationError.staleSession }
+        guard let state = try readDeletionReceipt()?.state,
+              state == .completed || state == .requestedElsewhere else { throw ManagedPreservationError.staleSession }
+        let status = SecItemDelete(deletionQuery as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw ManagedPreservationError.secureStorage }
+    }
+
+    /// Only the caller with proof of rejection before acceptance may clear an
+    /// unconfirmed receipt. A status 404 or transport error is not that proof.
+    func clearRejectedDeletion(_ expected: DeletionReceipt) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard expected.state == .unconfirmed, try readDeletionReceipt() == expected else {
+            throw ManagedPreservationError.staleSession
+        }
         let status = SecItemDelete(deletionQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw ManagedPreservationError.secureStorage }
     }

@@ -193,12 +193,12 @@ struct ManagedPreservationView: View {
     private func accountDeletionSection(_ state: ManagedPreservationSessionStore.DeletionReceipt.State) -> some View {
         Section {
             switch state {
-            case .unconfirmed:
+            case .unconfirmed, .resolvingPending:
                 Text("削除の受付を確認しています")
                 Text("通信が途切れたため、受付結果を確認してください。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("受付結果を確認") { coordinator.checkAccountDeletion() }
-                if coordinator.isSignedIn {
+                if state == .unconfirmed && coordinator.isSignedIn {
                     Button("削除依頼を再送", role: .destructive) { coordinator.deleteServiceAccount() }
                 }
             case .processing:
@@ -209,6 +209,11 @@ struct ManagedPreservationView: View {
             case .completed:
                 Label("保管サービスのアカウントを削除しました", systemImage: "checkmark.circle")
                 Button("閉じる") { coordinator.dismissCompletedDeletion() }
+            case .requestedElsewhere:
+                Text("別の端末で削除を受け付けています")
+                Text("削除を依頼した端末で、処理状況を確認してください。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("この端末の表示を閉じる") { coordinator.dismissCompletedDeletion() }
             }
             Link("Appleのサブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
         } footer: {
