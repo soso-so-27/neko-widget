@@ -76,6 +76,15 @@
   ],
   "observations": [
     {
+      "scope": "reviewed-managed-preservation-app-v5",
+      "candidate_minutes": 29.7,
+      "run_id": 36823283166,
+      "outcome": "failure",
+      "source_sha": "e28573e98cb9155436eaec32f103be0e3a517c4d",
+      "native_ui_methods": 6,
+      "note": "Complete four-job graph: Build/Photos/three runtime both OS passed; one UI harness hit-point failure. Later integrated profile adds one affected veterinary method; not a duration guarantee."
+    },
+    {
       "scope": "reviewed-membership-tools-v1",
       "candidate_minutes": 20.483,
       "run_id": 36822696936,
@@ -790,6 +799,58 @@
         }
       ],
       "note": "All four required jobs passed, owning lost-cat UI3; no Widget gallery. Product code unchanged from first candidate09:12:16 JST through native verification, with Care main integrated. Native preparation took15m40 then21m28 before cases, including shared runtime41-case preparation. Original40-45 minute plan was exceeded; diagnostic failures and preparation cost must be retained, not reported as an18-minute end-to-end release."
+    }
+  ],
+  "rework_observations": [
+    {
+      "task": "preservation-unified-memo-20261001",
+      "run_id": 36818401015,
+      "attempt": 1,
+      "outcome": "failure",
+      "total_seconds": 201.0,
+      "source_sha": "bc830e79dadceb1661fe97fe27985d0bd94a03a0",
+      "executed_tests": null,
+      "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
+    },
+    {
+      "task": "preservation-unified-memo-20261001",
+      "run_id": 36819156095,
+      "attempt": 1,
+      "outcome": "failure",
+      "total_seconds": 1316.0,
+      "source_sha": "d1a3784809c7d57df9ebe95d39a2242383ca7491",
+      "executed_tests": null,
+      "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
+    },
+    {
+      "task": "preservation-unified-memo-20261001",
+      "run_id": 36822682643,
+      "attempt": 1,
+      "outcome": "cancelled",
+      "total_seconds": 248.0,
+      "source_sha": "98a9629dec3005946205c20466e56b24b1ef778c",
+      "executed_tests": null,
+      "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
+    },
+    {
+      "task": "preservation-unified-memo-20261001",
+      "run_id": 36828453069,
+      "attempt": 1,
+      "outcome": "failure",
+      "total_seconds": 991.0,
+      "source_sha": "31a04fc8d5045e2f67c5e1b46c30019a94e7dbeb",
+      "executed_tests": 0,
+      "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
+    },
+    {
+      "task": "preservation-unified-memo-20261001",
+      "run_id": 36828453069,
+      "attempt": 2,
+      "outcome": "success",
+      "total_seconds": 809.0,
+      "source_sha": "31a04fc8d5045e2f67c5e1b46c30019a94e7dbeb",
+      "executed_tests": 1,
+      "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
     }
   ]
 }
