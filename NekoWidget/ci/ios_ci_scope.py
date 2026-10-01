@@ -1094,7 +1094,7 @@ TOOL_CANDIDATE_REFRESH_DIGESTS = {
     "NekoWidget/NekoWidget/Services/EvacuationStore.swift": ["69d4f1653c54f7ec02c5fd0ae5321ce7b251a620f0ba24a888c1b9423dd75d61","2dee7a1ea5e42a1d885a932c7733c3e18c6a2fc5f3739a0479c58f806a39a766"],
     "NekoWidget/NekoWidget/Views/CareHandoffFixtureView.swift": ["30f3b00bf7ddca9b6e78fc73aafc30abd91d7765125d714e31c6fbd534c3d18b","c7deb6a4b7381bb956c39bf5945da5ddebbafa95252d5488141ca36e3790d019"],
     "NekoWidget/NekoWidget/Views/CareHandoffView.swift": ["2f88925559fc7d2f7f7838f722b7cec7e423d8b9371902018ffe27c819faa8c2","ff57b6fefca8351b771494eebf5c6a83ba4e6ac9f60bc10528a021b8a9b24012"],
-    "NekoWidget/NekoWidget/Views/CatPreparednessView.swift": ["59329e7d5f6730cb68d2a79a044320cf6a95f18572e7519fa01d8c8ecad3e6fb","ee114ca278eed61fdbc38b97c1faface9c0e0147440252eb37863c324c882399"],
+    "NekoWidget/NekoWidget/Views/CatPreparednessView.swift": ["59329e7d5f6730cb68d2a79a044320cf6a95f18572e7519fa01d8c8ecad3e6fb","cf35f622234c079b71f0921830a277264aaa5527eefce9c1ac2d476b7e858675"],
     "NekoWidget/NekoWidget/Views/EvacuationFixtureView.swift": ["24afb79a9832d638b693cb2d502b633c9abd5f9a7917ef498af145327727e150","f832d5bb7b26df3df15f86546cdc22c773990b71283c3e1ec608b3092d57000d"],
     "NekoWidget/NekoWidget/Views/EvacuationPreparationView.swift": ["4d531748502840a71c343611b720bfada66a82ac2043ddb5b6e7122c54186106","2f2e6251d4ffec24778232ce9937e365b2e7376a83d9c39d3865c7b6b99e0eab"],
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["02d7a9a7434586d344f07eb4d26c12bf7f9fca95786bc7c2b4c5395bfbe049c3","8d9f0b41438a83bcd6a981a126a9a614fad35f4e391982cd42d764b3991cc732"],
