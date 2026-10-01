@@ -2509,10 +2509,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, identifier)
             button.tap()
         }
-        XCTAssertTrue(app.buttons["preservation-membership-check"].waitForExistence(timeout: 15))
-        tap("preservation-membership-check", scrollUp: false)
-        XCTAssertTrue(app.descendants(matching: .any)["preservation-pilot-access"].firstMatch
-            .waitForExistence(timeout: 8))
+        XCTAssertTrue(app.switches["この保管方法に同意する"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["preservation-membership-check"].exists,
+                       "A selected copy must check eligibility without a manual membership action.")
         XCTAssertFalse(app.buttons["preservation-membership-connect"].exists)
         let consent = app.switches["この保管方法に同意する"]
         for _ in 0..<10 where !consent.isHittable { app.swipeUp() }
@@ -2522,6 +2521,7 @@ final class SoloMemoriesUITests: XCTestCase {
         consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         let agreed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: consent)
         XCTAssertEqual(XCTWaiter.wait(for: [agreed], timeout: 5), .completed, "consent must be on before saving")
+        capture("preservation-copy-automatic-eligibility")
         tap("preservation-copy-save")
         XCTAssertTrue(app.buttons["preservation-copy-confirm"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["preservation-copy-save"].exists)
@@ -4230,6 +4230,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let preferenceSuite = "PhotoLibrarySelectionUITest.\(UUID().uuidString)"
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite
         app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-cloud",
+                               "--memory-service-preservation-entry-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["photos-section-notes"]
@@ -4276,6 +4277,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         XCTAssertTrue(body.label.contains("小さな寝息"))
+        let memoBodyFrame = body.frame
+        app.buttons["memory-note-menu"].tap()
+        XCTAssertTrue(app.buttons["memory-note-managed-preserve"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["memory-note-managed-preserve"].isEnabled)
+        XCTAssertFalse(app.buttons["memory-note-preserve"].exists)
+        attach(app, name: "memory-library-service-preservation-entry")
+        // The native menu hides navigation accessibility on iOS 26. Tap the
+        // already observed memo text, outside the menu, to dismiss it.
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: memoBodyFrame.midX, dy: memoBodyFrame.midY)).tap()
         let photo = app.buttons["memory-note-photo"]
         XCTAssertTrue(photo.isHittable)
         attach(app, name: "memory-library-photo-detail")

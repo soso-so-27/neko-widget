@@ -1,21 +1,37 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-managed-preservation-app-v3",
-  "purpose": "Authentication failure feedback only: preserve exact state, nonce, challenge expiry, credentials and owner/session admission checks. Show bounded Apple SDK codes and fixed failure stages without tokens, subjects, addresses or raw error text. Cancelled Apple authentication sends no photo or memo. Runtime probes prove incorrect state is rejected before exchange and pending registration never becomes a session. Build, Photos bootstrap, both runtime OS versions and the two existing preservation UI operations remain required. Native Apple callback behavior still requires the next real-device result. Widget inputs are unchanged.",
+  "scope": "reviewed-managed-preservation-app-v4",
+  "purpose": "Preservation entry and recovery: automatic read-only eligibility, explicit owner-safe secure-session reload, fixed failure codes and unknown-write confirmation. No automatic linking, save, account transfer or deletion. Add memo-detail entry and retain legacy iCloud read/export. Build, Photos bootstrap, both OS runtime boundaries and four existing UI operations remain required; Widget inputs, service, signing and billing authority are unchanged. Rendered UI remains pending native observation.",
   "visualReview": "native-ui-required",
   "dataReview": "internal-pilot-apple-owner-storage-restore-export-boundary",
   "files": {
-    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
-      "before": "edb772a2d91a465b2854721664891c41e2ca6b696383f6064fa6eab9b9535dcf",
-      "after": "1c9d1547142b366fabbfcffb14c736a32f573e1ce7279d9e4262b298364a8a4a"
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
+      "before": "98ad5102a3d3debac4e4172647f32b7ee93399d4f3d9b8064b06a97fdc2e2cfc",
+      "after": "0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895"
+    },
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
+      "before": "8d9f0b41438a83bcd6a981a126a9a614fad35f4e391982cd42d764b3991cc732",
+      "after": "7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7"
     },
     "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": {
-      "before": "dc4a004a82d12bedda7477b138c30030661cfe9da3a36096fa103a441ee33fa0",
-      "after": "3c1ffa4c79dc21af022c19f5a5a6fd38e762d68d27d280f9dd81b8ea20802de5"
+      "before": "3c1ffa4c79dc21af022c19f5a5a6fd38e762d68d27d280f9dd81b8ea20802de5",
+      "after": "8830b922038147feaffa54a837c6d40aadb7a8dc0ea9cf96c29106952d2f046b"
     },
     "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "04c67ef8fa17a3dfc3d545d9ccc83835685cf4671b07a39865a06f303994d68a",
-      "after": "54e9a082be7b859f9c48a0b46159f8e7a8344fd1f5f1cd2b6fc2fcdbf368e4f8"
+      "before": "54e9a082be7b859f9c48a0b46159f8e7a8344fd1f5f1cd2b6fc2fcdbf368e4f8",
+      "after": "87941966bfed6314adc92d5c6e83134b8cfd3e30bbed2c9129dc8ef95c29866f"
+    },
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
+      "before": "1c9d1547142b366fabbfcffb14c736a32f573e1ce7279d9e4262b298364a8a4a",
+      "after": "2b2f498ea23894900a20cced27da58ec2dea6564cda126df8993a5fcb7c9c99f"
+    },
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
+      "before": "d8efaf3148a138e5abf4c298e4f76437d8e72bf7083186348ef97b53b6b000b7",
+      "after": "fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5"
+    },
+    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
+      "before": "c2796146c4815d1701066ecc967551f8bd8a8bd20de78de37641cfe188f491f1",
+      "after": "65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224"
     }
   }
 }

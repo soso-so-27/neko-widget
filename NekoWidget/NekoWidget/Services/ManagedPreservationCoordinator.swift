@@ -157,6 +157,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var hasUnsecuredMemo = false
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
+    @Published private(set) var membershipLoading = false
+    @Published private(set) var saveFailureCode: String?
+    @Published private(set) var saveFailureMessage: String?
     @Published private(set) var noticeContact: ManagedPreservationNoticeContact?
     @Published private(set) var retention: ManagedPreservationRetention?
     @Published private(set) var usage: ManagedPreservationUsage?
@@ -173,6 +176,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private var task: Task<Void, Never>?
     private var usageTask: Task<Void, Never>?
     private var usageRequestID = UUID()
+    private var membershipTask: Task<Void, Never>?
+    private var membershipRequestID = UUID()
     private var viewEpoch = UUID()
     private var nextCursor: String?
     private var listingGeneration: Int?
@@ -200,15 +205,23 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func start() {
         guard isEnabled else { return }
         run { ticket in
+            self.clearAccountPresentation()
+            try await self.client.reloadSessionFromSecureStorage()
             let authenticated = try await self.client.hasSession()
             try self.check(ticket)
             self.isSignedIn = authenticated
             if authenticated { try await self.loadFirstPage(ticket) }
+            else {
+                let challenge = try await self.client.prepareSignIn()
+                try self.check(ticket)
+                self.preparedSignIn = challenge
+            }
         }
     }
 
     func prepareSignIn() {
         run { ticket in
+            try await self.client.reloadSessionFromSecureStorage()
             let challenge = try await self.client.prepareSignIn()
             try self.check(ticket)
             self.preparedSignIn = challenge
@@ -269,17 +282,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
         loadUsage(viewEpoch, owner: owner)
     }
 
-    /// Explicit actions only. Listing and export never wait for the billing service.
+    /// Eligibility is read-only and independent of listing/export. Linking is
+    /// still an explicit, separately consented operation.
     func checkMembership() {
-        guard isSignedIn, !isBusy else { return }
-        membership = nil; membershipMessage = nil
-        retention = nil
-        run { ticket in
-            let owner = try await self.requireCurrentOwner(ticket)
-            let result = try await self.client.membership()
-            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
-            self.membership = result
-        }
+        guard isSignedIn, !isBusy, let owner = authenticatedOwnerID else { return }
+        loadMembership(viewEpoch, owner: owner)
     }
 
     func checkNoticeContact() {
@@ -310,6 +317,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     func connectMembership(consent: Bool) {
         guard isSignedIn, consent, !isBusy else { return }
+        membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
         membership = nil; membershipMessage = "接続結果が不明な場合は「接続状況を確認」で確かめられます。"
         retention = nil
         run { ticket in
@@ -362,8 +370,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func saveSelectedCopy() {
         guard let draft, !isBusy, copyState == .deviceOnly || copyState == .failed,
               consentToNewSave, membership?.canSave == true else { return }
+        saveFailureCode = nil; saveFailureMessage = nil
         run { ticket in
-            let owner = try await self.requireCurrentOwner(ticket)
+            let owner: String
+            do { owner = try await self.requireCurrentOwner(ticket) }
+            catch { try self.check(ticket); self.rememberSaveFailure(error); throw error }
             self.setCopyState(.saving, owner: owner)
             do {
                 _ = try await self.client.put(draft, consent: true)
@@ -376,9 +387,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 // A missing response does not prove that the server rejected the write.
                 // Re-read this ID before permitting another PUT; never overwrite on conflict.
                 let known = error as? ManagedPreservationError
+                self.rememberSaveFailure(error)
                 let rejected = known.map {
                     [ManagedPreservationError.membershipRequired, .accessUnconfirmed, .consentRequired,
-                     .invalidRecord, .capacityReached, .rateLimited, .accountingUnavailable].contains($0)
+                     .invalidRecord, .requestRejected, .capacityReached, .rateLimited, .accountingUnavailable].contains($0)
                 } ?? false
                 self.setCopyState(rejected ? .failed : .needsConfirmation, owner: owner)
                 if let known = error as? ManagedPreservationError,
@@ -390,6 +402,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             }
             try self.check(ticket)
             self.setCopyState(.stored, owner: owner)
+            self.saveFailureCode = nil; self.saveFailureMessage = nil
             self.statusMessage = "選んだ記録のコピーを保管しました。元の写真・メモは変更していません。"
             try await self.loadFirstPage(ticket)
         }
@@ -415,10 +428,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
                     throw ManagedPreservationError.conflict
                 }
                 self.setCopyState(.stored, owner: owner)
+                self.saveFailureCode = nil; self.saveFailureMessage = nil
                 self.statusMessage = "選んだ写真とメモが保管済みであることを確認しました。"
                 try await self.loadFirstPage(ticket)
             } catch {
                 try self.check(ticket)
+                if self.copyState != .stored, (error as? ManagedPreservationError) == .notFound {
+                    self.setCopyState(.failed, owner: owner)
+                    self.statusMessage = "この記録は保管されていませんでした。元の写真とメモは端末に残っています。もう一度保管できます。"
+                    return
+                }
                 if self.copyState != .stored {
                     self.setCopyState((error as? ManagedPreservationError) == .notFound ? .failed : .needsConfirmation,
                                       owner: owner)
@@ -531,6 +550,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         nextCursor = nil; listingGeneration = nil; hasMore = false
         consentToNewSave = false
         membership = nil; membershipMessage = nil
+        saveFailureCode = nil; saveFailureMessage = nil
         noticeContact = nil
         retention = nil
         usage = nil; usageLoading = false; usageMessage = nil
@@ -570,6 +590,47 @@ final class ManagedPreservationCoordinator: ObservableObject {
         pendingMemoDrafts = ownDrafts.values.sorted { $0.id.uuidString < $1.id.uuidString }
         hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
         loadUsage(ticket, owner: owner)
+        loadMembership(ticket, owner: owner)
+    }
+
+    private func rememberSaveFailure(_ error: Error) {
+        let known = error as? ManagedPreservationError
+        saveFailureCode = error is CancellationError ? "S05" : known?.preservationSupportCode ?? "S99"
+        saveFailureMessage = error is CancellationError ? ManagedPreservationError.interrupted.errorDescription
+            : known?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription
+    }
+
+    private func loadMembership(_ ticket: UUID, owner: String) {
+        membershipTask?.cancel(); membershipRequestID = UUID()
+        let requestID = membershipRequestID
+        membership = nil; membershipMessage = nil; membershipLoading = true; retention = nil
+        membershipTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.viewEpoch == ticket && self.authenticatedOwnerID == owner
+                    && self.membershipRequestID == requestID {
+                    self.membershipLoading = false; self.membershipTask = nil
+                }
+            }
+            do {
+                let result = try await self.client.membership()
+                try self.check(ticket)
+                guard try await self.client.sessionOwnerID() == owner,
+                      self.authenticatedOwnerID == owner else { throw ManagedPreservationError.staleSession }
+                guard self.membershipRequestID == requestID else { return }
+                self.membership = result
+            } catch {
+                guard self.viewEpoch == ticket, self.authenticatedOwnerID == owner,
+                      self.membershipRequestID == requestID, !(error is CancellationError) else { return }
+                if let known = error as? ManagedPreservationError,
+                   known == .authenticationRequired || known == .staleSession {
+                    self.clearAccountPresentation()
+                    return
+                }
+                self.membershipMessage = (error as? ManagedPreservationError)?.errorDescription
+                    ?? ManagedPreservationError.unavailable.errorDescription
+            }
+        }
     }
 
     /// Usage must not hold the record list or old-photo access hostage to a
@@ -734,12 +795,15 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private func cancelCurrentWork() {
         viewEpoch = UUID(); task?.cancel(); task = nil; usageTask?.cancel(); usageTask = nil
         usageRequestID = UUID(); isBusy = false
+        membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
         errorMessage = nil; statusMessage = nil
     }
 
     private func clearAccountPresentation() {
         retainUnsentEdit()
+        saveFailureCode = nil; saveFailureMessage = nil
         usageTask?.cancel(); usageTask = nil; usageRequestID = UUID()
+        membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
         isSignedIn = false; preparedSignIn = nil; selected = nil; editedText = ""
         records = []; nextCursor = nil; listingGeneration = nil; hasMore = false
         // Keep a possibly committed write bound to its owner until that owner can re-read it.
