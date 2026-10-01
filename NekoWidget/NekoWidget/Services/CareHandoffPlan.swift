@@ -23,6 +23,9 @@ struct CareCat: Codable, Equatable, Identifiable {
     var photoName: String?
     // Preserve free-form food information without guessing meal times or doses.
     var usualFood: String?
+    // Separate from the whole food section: editing a meal must not turn an
+    // untouched imported paragraph into an authoritative source in reverse.
+    var prefilledUsualFood: Bool?
     var meals = [CareMeal()]
     var water = ""
     var toilet = ""
@@ -40,6 +43,13 @@ struct CareCat: Codable, Equatable, Identifiable {
             if !fields.isEmpty { parts.append(fields.map { "\($0.0)：\($0.1)" }.joined(separator: "\n")) }
         }
         return parts.joined(separator: "\n\n")
+    }
+    var foodForCandidateRefresh: String? {
+        guard prefilledFields?.contains("food") != true else { return nil }
+        // Older mixed records have no paragraph-level provenance. Keep them
+        // local rather than guessing that the remaining paragraph was typed.
+        if let usualFood, !usualFood.isEmpty, prefilledUsualFood != false { return nil }
+        return reusableFood
     }
     var healthText: String {
         switch healthStatus {

@@ -38,6 +38,19 @@ private struct LostCatSavedCat: Identifiable {
         if result.facePhoto == nil, let photo = care?.photoName { result.facePhoto = try careStore.photoData(photo) }
         return result
     }
+
+    func textForCandidateRefresh() -> LostCatSavedInformation {
+        var result = LostCatSavedInformation(identityKey: id)
+        if let evacuation, evacuation.prefilledFields?.contains("name") != true {
+            result.name = evacuation.name; result.refreshableFields.insert("name")
+        } else if let care, care.prefilledFields?.contains("name") != true {
+            result.name = care.name; result.refreshableFields.insert("name")
+        }
+        if let evacuation {
+            result.features = evacuation.features; result.refreshableFields.insert("features")
+        }
+        return result
+    }
 }
 
 // Both the profile and the Tools card open the same private editor.
@@ -175,6 +188,7 @@ struct LostCatDraftView: View {
     @State private var photoBusy = false
     @State private var photoError: String?
     @State private var saveError = false
+    @State private var candidateRefreshError = false
     @State private var showsPreview = false
     @State private var previewDraft: LostCatPublicDraft?
     @State private var showsGuide = false
@@ -194,6 +208,12 @@ struct LostCatDraftView: View {
             catSection.disabled(!loaded)
             incidentSection.disabled(!loaded)
             contactSection.disabled(!loaded)
+            if candidateRefreshError {
+                Section {
+                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if saveError {
                 Section {
                     Button("保存できませんでした。再試行") {
@@ -567,13 +587,20 @@ struct LostCatDraftView: View {
         catch { saveError = true }
     }
     private func load(_ identity: String, name: String) {
+        candidateRefreshError = false
         do {
             let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
                 .filter { $0.id == identity }
             // Existing drafts need no source access, even if its copy is now unavailable.
-            let information = !store.hasPreparedRecord(for: identity) && candidates.count == 1
+            let alreadyPrepared = store.hasPreparedRecord(for: identity)
+            let information = !alreadyPrepared && candidates.count == 1
                 ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
-            let saved = try store.draft(for: identity, profileName: name, savedInformation: information)
+            var saved = try store.draft(for: identity, profileName: name, savedInformation: information)
+            if alreadyPrepared, candidates.count == 1 {
+                // Failure must not block an already saved emergency draft.
+                do { saved = try store.refreshCandidateText(for: identity, information: candidates[0].textForCandidateRefresh()) }
+                catch { candidateRefreshError = true }
+            }
             key = identity
             draft = saved
             faceImage = store.image(saved.faceFileName) ?? store.image(saved.bodyFileName)
@@ -1023,11 +1050,22 @@ struct LostCatDraftFixtureView: View {
         guard let first = candidates.first(where: { $0.id == "guest-tool-\(toolID.uuidString)" }),
               let other = candidates.first(where: { $0.id == "guest-tool-\(otherID.uuidString)" }) else { throw Failure.invariant }
         let info = try first.information(evacuation: evacuation, care: care)
-        try require(info.features == "茶白・しっぽが長い" && info.facePhoto != nil && info.bodyPhoto != nil)
+        try require(info.facePhoto != nil && info.bodyPhoto != nil)
         try require(try other.information(evacuation: evacuation, care: care).facePhoto == nil)
-        // Subsequent UI launches retain the edited real draft. The boundary
-        // checks already ran on this exact fixture/input before its creation.
-        if !lost.drafts.isEmpty { return (evacuation, care, lost) }
+        // Relaunch changes only the source. The owning UI case must then prove
+        // refresh of an untouched candidate and protection after manual editing.
+        if !lost.drafts.isEmpty {
+            if let phase = ProcessInfo.processInfo.environment["NEKO_TOOL_REFRESH_PHASE"],
+               phase == "2" || phase == "3" {
+                evacuation.editCat(toolID) {
+                    $0.features = phase == "2" ? "茶白・右耳に印・しっぽが長い" : "元情報の新しい特徴"
+                }
+            }
+            return (evacuation, care, lost)
+        }
+        // The initial source value belongs to first preparation only. Later
+        // launches deliberately retain the changed source for refresh checks.
+        try require(info.features == "茶白・しっぽが長い")
         let boundary = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
         var refusedInvalidPhoto = false
         do { _ = try boundary.draft(for: "bad-photo", savedInformation: .init(facePhoto: Data("not a JPEG".utf8))) }
@@ -1038,11 +1076,22 @@ struct LostCatDraftFixtureView: View {
             && draft.approachAdvice.isEmpty && draft.collar.isEmpty && draft.lastSeenNear.isEmpty && draft.lastSeenAt == nil)
         try require(draft.prefilledFields == ["name", "features", "face", "body"])
         try require(draft.faceFileName != evacuation.plan.cats[0].photos["face"])
-        draft.name = "編集した名前"; draft.features = ""; draft.prefilledFields?.remove("features")
+        var fresh = LostCatSavedInformation(name: "更新した名前", features: "更新した特徴", identityKey: "boundary",
+            refreshableFields: ["name", "features"])
+        let snapshot = draft
+        draft = try boundary.refreshCandidateText(for: "boundary", information: fresh)
+        try require(draft.name == fresh.name && draft.features == fresh.features && draft.faceFileName == snapshot.faceFileName
+            && draft.bodyFileName == snapshot.bodyFileName && snapshot.features == info.features)
+        fresh.identityKey = "別の猫"
+        try require(try boundary.refreshCandidateText(for: "boundary", information: fresh) == draft)
+        draft.name = "編集した名前"; draft.features = ""
+        draft.prefilledFields?.remove("name"); draft.prefilledFields?.remove("features")
         try boundary.save(draft, for: "boundary")
         let reopened = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
         let retained = try reopened.draft(for: "boundary", savedInformation: .init(name: "違う名前", features: "違う特徴"))
         try require(retained.name == "編集した名前" && retained.features.isEmpty)
+        fresh.identityKey = "boundary"
+        try require(try reopened.refreshCandidateText(for: "boundary", information: fresh) == retained)
         _ = try reopened.removePhoto(role: .body, draft: retained, for: "boundary")
         try require(evacuation.plan.cats[0].photos["body"].flatMap { try? evacuation.photoData($0) } != nil)
         let oldJSON = Data("{\"schemaVersion\":1,\"name\":\"旧下書き\",\"features\":\"\",\"collar\":\"\",\"approachAdvice\":\"\",\"contact\":\"\",\"lastSeenNear\":\"\",\"updatedAt\":0}".utf8)
@@ -1054,6 +1103,11 @@ struct LostCatDraftFixtureView: View {
         try legacy.save(CatPreparednessRecord(), for: "legacy-empty")
         let empty = try boundary.draft(for: "legacy-empty", profileName: "登録名", savedInformation: info)
         try require(empty.name.isEmpty && empty.features.isEmpty && empty.faceFileName == nil && empty.bodyFileName == nil)
+        fresh.identityKey = "legacy-empty"
+        // draft() returns the migration value; save() stamps a later updatedAt.
+        // Compare the committed record to prove that refresh never rewrites it.
+        let committedEmpty = boundary.drafts["legacy-empty"]
+        try require(try boundary.refreshCandidateText(for: "legacy-empty", information: fresh) == committedEmpty)
         let ambiguous = EvacuationStore(directory: directory.appendingPathComponent("ambiguous"))
         var a = EvacuationCat(); a.profileID = "duplicate-profile"
         var b = EvacuationCat(); b.profileID = a.profileID

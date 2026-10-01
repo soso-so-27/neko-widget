@@ -281,7 +281,7 @@ private struct EvacuationCatsView: View {
         }
     }
     private func destination(_ id: UUID) -> some View {
-        EvacuationCatView(id: id, profiles: profiles, otherPhotos: otherPhotos, store: store)
+        EvacuationCatView(id: id, profiles: profiles, otherPhotos: otherPhotos, store: store, reuseStore: reuseStore)
     }
 }
 
@@ -290,6 +290,7 @@ private struct EvacuationCatView: View {
     let profiles: [CatProfilePresentation]
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
+    @ObservedObject var reuseStore: CareHandoffStore
     @State private var disclosure = EvacuationDisclosure()
     @State private var preview: EvacuationPreviewItem?
     @State private var error: String?
@@ -313,7 +314,7 @@ private struct EvacuationCatView: View {
                     NavigationLink {
                         EvacuationCatEditor(id: id,
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
-                            otherPhotos: otherPhotos, store: store)
+                            otherPhotos: otherPhotos, store: store, reuseStore: reuseStore)
                     } label: { Label("写真やこの子の情報を編集", systemImage: "pencil") }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 }
@@ -340,7 +341,10 @@ private struct EvacuationCatView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("この子の内容を確認した") {
                         store.update { plan in
-                            if let index = plan.cats.firstIndex(where: { $0.id == id }) { plan.cats[index].reviewedAt = Date() }
+                            if let index = plan.cats.firstIndex(where: { $0.id == id }) {
+                                plan.cats[index].reviewedAt = Date()
+                                plan.cats[index].prefilledFields = []
+                            }
                         }
                     }
                     Button("この子の備えを削除", role: .destructive) { deleteRequested = true }
@@ -362,7 +366,10 @@ private struct EvacuationCatEditor: View {
     let ownPhotos: [CatProfilePhotoPresentation]
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
+    @ObservedObject var reuseStore: CareHandoffStore
     @State private var photoRole: EvacuationCat.PhotoRole?
+    @State private var refreshedCandidates = false
+    @State private var candidateRefreshError = false
     private var cat: EvacuationCat? { store.plan.cats.first { $0.id == id } }
     private func text(_ key: WritableKeyPath<EvacuationCat, String>) -> Binding<String> {
         Binding(get: { cat?[keyPath: key] ?? "" }, set: { new in store.editCat(id) { $0[keyPath: key] = new } })
@@ -370,8 +377,13 @@ private struct EvacuationCatEditor: View {
     var body: some View {
         Form {
             if let cat {
+                if candidateRefreshError {
+                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("写真と名前") {
                     TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
+                        .foregroundStyle(cat.prefilledFields?.contains("name") == true ? Color.secondary : Color.primary)
                     ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
                         Button { photoRole = role } label: {
                             HStack {
@@ -436,6 +448,12 @@ private struct EvacuationCatEditor: View {
                 }
             }
         }.navigationTitle("この子の情報を編集")
+            .task {
+                guard !refreshedCandidates else { return }
+                refreshedCandidates = true
+                do { try store.refreshCandidates(id, using: reuseStore) }
+                catch { candidateRefreshError = true }
+            }
             .sheet(item: $photoRole) { role in
                 NavigationStack {
                     EvacuationPhotoPicker(catID: id, role: role, ownPhotos: ownPhotos, otherPhotos: otherPhotos, store: store)
