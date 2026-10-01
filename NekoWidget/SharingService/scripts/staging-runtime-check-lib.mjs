@@ -166,7 +166,9 @@ const EXPECTATIONS = Object.freeze({
   // A read-only admission check for the explicitly approved internal build.
   // This proves gate readiness, not an Apple purchase or verifier connection.
   "internal-purchase-sandbox": Object.freeze([
-    Object.freeze({ ...BASE_EXPECTATIONS.on[0], billing: Object.freeze({
+    BASE_EXPECTATIONS.on[0],
+    Object.freeze({ name: "billing-health", path: "/v1/billing/health", status: 200,
+      body: Object.freeze({ status: "ok", protocolVersion: 1 }), billing: Object.freeze({
       "neko-runtime-billing-account-bootstrap": "ON",
       "neko-runtime-billing-transaction-ingestion": "ON",
       "neko-runtime-billing-apple-notification-ingestion": "ON",
@@ -292,7 +294,7 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
         || !Number.isSafeInteger(Number(generation))
         || response.headers.get("neko-runtime-billing-apple-notification-rate-limiter") !== "READY"
         || Object.entries(expectation.billing).some(([name, value]) => response.headers.get(name) !== value)) {
-        throw new Error("health returned an unexpected internal billing runtime state");
+        throw new Error(`${expectation.name} returned an unexpected internal billing runtime state`);
       }
     }
     if (expectation.runtime !== undefined) {
