@@ -78,7 +78,7 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-guide")
             } footer: {
-                Text("写真の「…」から、選んだ写真とメモを保管できます。自分のiCloud容量を使います。")
+                Text("以前iCloudに保管した写真とメモを読み込めます。新しい保管は「サービスに保管」から行います。")
             }
 
             if isLoading || isWorking {
@@ -105,7 +105,7 @@ struct PersonalArchiveView: View {
                 }
             } else if !isLoading && errorMessage == nil {
                 ContentUnavailableView("保管した写真はありません", systemImage: "photo.on.rectangle",
-                    description: Text("メモを付けた写真の「…」から、iCloudに保管できます。"))
+                    description: Text("以前保管した写真とメモを、iCloudから読み込めます。"))
             }
         }
         .navigationTitle("iCloudの保管と復元")
@@ -263,7 +263,7 @@ private struct PersonalArchiveGuideView: View {
     var body: some View {
         List {
             Section {
-                guideRow("保管するもの", "自分で選んだ写真の閲覧用コピーとメモ。記録にある撮影日・書いた日・猫名も含みます。")
+                guideRow("以前の保管", "この画面では、以前iCloudに保管した写真とメモを開けます。新しい保管は、メモの「…」から「サービスに保管」を選びます。")
                 guideRow("容量と画質", "自分のiCloud容量を使います。容量不足や通信エラーの間は未完了です。写真の原本・動画・Live Photosの動きは保管しません。")
                 DisclosureGroup("写真のサイズ") {
                     Text("写真は長辺最大4,096px・1枚20MB以下のJPEGに変換します。原本は写真アプリなどに残してください。")
@@ -326,6 +326,14 @@ struct PersonalArchiveRecordView: View {
     @State private var localNoteText: String?
     @State private var localNoteWeight: PhotoMemoWeightValue?
     @State private var resolving = false
+    @State private var preservingWithService = false
+
+    private var servicePreservationEnabled: Bool {
+#if DEBUG
+        if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture") { return true }
+#endif
+        return ManagedPreservationConfiguration.current.isEnabled
+    }
 
     var body: some View {
         Group {
@@ -373,7 +381,7 @@ struct PersonalArchiveRecordView: View {
             }
             }
         }
-        .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { editing = true } label: { Image(systemName: "square.and.pencil") }
@@ -383,7 +391,14 @@ struct PersonalArchiveRecordView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Text(record.state.archiveLabel)
+                    if servicePreservationEnabled {
+                        Button { preservingWithService = true } label: {
+                            Label("サービスに保管", systemImage: "externaldrive.badge.plus")
+                        }
+                        .disabled(record.jpegData == nil || record.isDeletionPending || record.state == .conflict)
+                        .accessibilityIdentifier("memory-note-managed-preserve")
+                        Divider()
+                    }
                     Button(record.jpegData == nil ? "メモのみを書き出す" : "写真とメモを書き出す",
                            systemImage: "square.and.arrow.up") { exportRecord() }
                         .disabled(record.isDeletionPending || record.state == .conflict ||
@@ -412,7 +427,7 @@ struct PersonalArchiveRecordView: View {
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
             .receive(on: DispatchQueue.main)) { _ in
                 exporter.invalidate()
-                account = nil; editing = false; dismiss()
+                account = nil; editing = false; preservingWithService = false; dismiss()
             }
         .sheet(item: $exporter.payload) { value in
             RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
@@ -423,6 +438,12 @@ struct PersonalArchiveRecordView: View {
             if phase == .active { exporter.retryCleanup() }
         }
         .onDisappear { exporter.cancelPreparation() }
+        .sheet(isPresented: $preservingWithService) {
+            if let account {
+                ManagedPreservationPhotoView(archiveRecordID: record.id, archiveStore: store,
+                                             expectedAccount: account)
+            }
+        }
         .sheet(isPresented: $editing, onDismiss: { Task { await reloadAfterEdit() } }) {
             if let account {
                 PhotoMemoryNoteEditor(archiveRecord: record, archiveStore: store,

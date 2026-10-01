@@ -10039,7 +10039,52 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     @MainActor
+    private static func testManagedPreservationArchiveCopySource() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PreservationArchiveSourceFixture/\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersonalArchiveStore(directory: directory, transport: PersonalArchiveFixtureTransport())
+        let account = try await store.accountContext()
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 48)).image { renderer in
+            UIColor.orange.setFill(); renderer.fill(CGRect(x: 0, y: 0, width: 32, height: 48))
+        }
+        guard let jpeg = image.jpegData(compressionQuality: 0.9) else { throw ManagedPreservationError.invalidRecord }
+        let photoID = UUID(), copyID = UUID()
+        let captured = Date(timeIntervalSince1970: 1_720_000_000)
+        let selected = try await store.save(id: photoID, jpegData: jpeg, text: "以前保管した選択中のメモ",
+                                            capturedAt: captured, expectedAccount: account)
+        let before = try await store.readingSnapshot(expectedAccount: account)
+        let draft = try await ManagedPreservationCopyPreparation.archive(recordID: photoID, store: store,
+            expectedAccount: account, copyID: copyID)
+        let after = try await store.readingSnapshot(expectedAccount: account)
+        guard draft.recordID == copyID, draft.document.text == selected.text,
+              draft.document.capturedAt == captured, draft.document.photoFile == "photo.jpg",
+              draft.jpegData != nil, before.records == after.records,
+              draft.document.writtenAt == selected.context?.writtenAt,
+              draft.document.updatedAt == selected.context?.updatedAt,
+              draft.document.catNames == (selected.context?.catNames ?? []) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        var rejected = false
+        do {
+            _ = try await ManagedPreservationCopyPreparation.archive(recordID: photoID, store: store,
+                expectedAccount: account + ".changed", copyID: copyID)
+        } catch { rejected = true }
+        guard rejected else { throw ManagedPreservationError.invalidResponse }
+        let wordsID = UUID()
+        _ = try await store.save(id: wordsID, jpegData: nil, text: "写真のない記録",
+                                 capturedAt: nil, expectedAccount: account)
+        rejected = false
+        do {
+            _ = try await ManagedPreservationCopyPreparation.archive(recordID: wordsID, store: store,
+                expectedAccount: account, copyID: copyID)
+        } catch { rejected = true }
+        guard rejected else { throw ManagedPreservationError.invalidResponse }
+    }
+
+    @MainActor
     static func testManagedPreservationMembershipBoundary() async throws {
+        try await testManagedPreservationArchiveCopySource()
         try await testManagedPreservationSignInFeedback()
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),

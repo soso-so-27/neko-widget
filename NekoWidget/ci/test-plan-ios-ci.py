@@ -855,8 +855,11 @@ class PlanTests(unittest.TestCase):
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
             "NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
+            "NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
+            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
+            "NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
         ))
-        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v4')
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v5')
         self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 7)
         self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
@@ -910,7 +913,7 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
-        legacy_jobs = [dict(job, name=job['name'].replace('-app-v4]', '-app-v3]')) for job in jobs]
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v5]', '-app-v4]')) for job in jobs]
         self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))

@@ -2552,6 +2552,7 @@ final class SoloMemoriesUITests: XCTestCase {
         menu.tap()
         XCTAssertTrue(photoApp.buttons["photo-browser-same-day"].waitForExistence(timeout: 5))
         XCTAssertFalse(photoApp.buttons["photo-browser-managed-preserve"].exists)
+        XCTAssertFalse(photoApp.buttons["photo-browser-preserve-note"].exists)
         capture("managed-preservation-disabled-photo-menu")
         photoApp.terminate()
     }
@@ -4339,6 +4340,49 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         archived.tap()
         XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["memory-note-body"].label, "はじめてのおふろ。タオルにくるまって、やっとひと安心。")
+        XCTAssertTrue(app.navigationBars["メモ"].exists)
+        app.buttons["personal-archive-record-menu"].tap()
+        let archivePreserve = app.buttons["memory-note-managed-preserve"]
+        XCTAssertTrue(archivePreserve.waitForExistence(timeout: 5))
+        XCTAssertTrue(archivePreserve.isEnabled)
+        attach(app, name: "memory-library-cloud-service-entry")
+        archivePreserve.tap()
+        XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].waitForExistence(timeout: 10))
+        let preparedPhoto = app.descendants(matching: .any).matching(identifier: "preservation-copy-photo").firstMatch
+        XCTAssertTrue(preparedPhoto.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "loaded"), object: preparedPhoto)], timeout: 15), .completed)
+        attach(app, name: "memory-library-cloud-selected-service-copy")
+        let consent = app.switches["この保管方法に同意する"]
+        for _ in 0..<6 where !consent.isHittable { app.swipeUp() }
+        XCTAssertTrue(consent.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: consent)], timeout: 10), .completed)
+        XCTAssertEqual(consent.value as? String, "0", "Opening an existing copy must not grant upload consent.")
+        let preparedSave = app.buttons["preservation-copy-save"]
+        for _ in 0..<6 where !preparedSave.exists { app.swipeUp() }
+        XCTAssertTrue(preparedSave.waitForExistence(timeout: 10))
+        XCTAssertFalse(preparedSave.isEnabled)
+        // Hittable can remain true while a Form row is behind the translucent
+        // navigation bar. Keep the actual switch hit point inside the content.
+        let serviceBar = app.navigationBars["サービスに保管"]
+        for _ in 0..<6 where !consent.isHittable || consent.frame.minY < serviceBar.frame.maxY + 16 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60)))
+        }
+        XCTAssertGreaterThanOrEqual(consent.frame.minY, serviceBar.frame.maxY + 16)
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(consent.value as? String, "1")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: preparedSave)], timeout: 10), .completed,
+            "The synthetic pilot must be usable; a failed fixture must not masquerade as consent protection.")
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(consent.value as? String, "0")
+        XCTAssertFalse(preparedSave.isEnabled)
+        attach(app, name: "memory-library-cloud-explicit-consent-only")
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(app.navigationBars["メモ"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
@@ -4355,6 +4399,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         XCTAssertTrue(body.label.contains("小さな寝息"))
+        XCTAssertTrue(app.navigationBars["メモ"].exists)
         let memoBodyFrame = body.frame
         app.buttons["memory-note-menu"].tap()
         XCTAssertTrue(app.buttons["memory-note-managed-preserve"].waitForExistence(timeout: 5))
@@ -4553,7 +4598,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     @MainActor
     func testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion() {
         let app = XCUIApplication()
-        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-linked-archive",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let entry = app.buttons["photos-section-notes"]
@@ -4563,23 +4608,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         let original = body.label
+        let observedBodyFrame = body.frame
         app.buttons["memory-note-menu"].tap()
-        app.buttons["memory-note-preserve"].tap()
-        let save = app.buttons["memory-note-archive-save"]
-        XCTAssertTrue(save.waitForExistence(timeout: 10))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true"), object: save)], timeout: 15), .completed)
-        XCTAssertEqual(app.staticTexts["memory-note-archive-preview"].label, original)
-        XCTAssertFalse(app.textViews["photo-memory-note-text"].exists, "Do not ask to retype an existing note.")
-        XCTAssertTrue(app.staticTexts["この写真とメモを自分のiCloudに保管します。これからのメモの変更も反映します。"].exists)
-        attach(app, name: "memory-archive-prefilled-confirmation")
-        save.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: save)], timeout: 10), .completed)
-        XCTAssertTrue(body.waitForExistence(timeout: 10))
-        XCTAssertEqual(body.label, original)
-        // The consent above enables reflection. Editing the same local memo
-        // must update its existing archive record, not create a second memo.
+        XCTAssertFalse(app.buttons["memory-note-preserve"].exists, "New iCloud preservation is retired even when the service is disabled.")
+        attach(app, name: "memory-legacy-copy-no-new-icloud-entry")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: observedBodyFrame.midX, dy: observedBodyFrame.midY)).tap()
+        // This fixture represents an existing, previously opted-in archive.
+        // Editing must still update that record without creating another copy.
         app.buttons["memory-note-edit"].tap()
         let input = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))

@@ -2295,7 +2295,6 @@ struct PhotoBrowserView: View {
     @State private var showsRediscoveryHistory = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
-    @State private var preservingNote: PhotoMemoryNoteRecord?
     @State private var managedPreservationPhoto: PhotoPresentation?
 
     init(
@@ -2602,14 +2601,6 @@ struct PhotoBrowserView: View {
                         }
                         .accessibilityIdentifier("photo-browser-managed-preserve")
                     }
-                    if !ManagedPreservationConfiguration.current.isEnabled, PersonalArchiveStore.isConfigured,
-                       let note = personalNote.note(for: selectedPhotoIdentifier) {
-                        Button {
-                            preservingNote = PhotoMemoryNoteRecord(photoIdentifier: selectedPhotoIdentifier, note: note)
-                        } label: { Label("iCloudに保管", systemImage: "icloud.and.arrow.up") }
-                        .accessibilityIdentifier("photo-browser-preserve-note")
-                        Divider()
-                    }
                     Button { showsRediscoveryHistory = true } label: {
                         Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
                     }
@@ -2716,10 +2707,6 @@ struct PhotoBrowserView: View {
                 Task { await personalNote.load(for: selectedPhotoIdentifier) }
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
-        }
-        .sheet(item: $preservingNote) { record in
-            PhotoMemoryNoteArchiveView(record: record, photos: libraryPhotos,
-                                       noteStore: personalNote.store, archiveStore: .shared)
         }
         .sheet(item: $managedPreservationPhoto) { photo in
             ManagedPreservationPhotoView(photo: photo, context: memoryNoteContext(for: photo),
