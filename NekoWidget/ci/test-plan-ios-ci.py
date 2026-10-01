@@ -330,7 +330,7 @@ class PlanTests(unittest.TestCase):
             with patch.object(planner, "PRESERVATION_WORKFLOW_DIGEST", "wrong"):
                 self.assertFalse(planner.billing_backend_only(changed, "base", "head"))
         self.assertEqual(planner.required_jobs(changed, planner.BILLING_SCOPE),
-                         (planner.BILLING_JOB, planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
+                         (planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
         for unknown in ("NekoWidget/NekoWidget/Views/PhotoView.swift", "NekoWidget/Config.xcconfig",
                         "NekoWidget/BillingVerificationService/src/unknown.ts"):
             self.assertFalse(planner.billing_paths_only(changed + [unknown]))

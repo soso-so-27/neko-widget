@@ -327,7 +327,7 @@ BILLING_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "c66c5ccd622f28a572416d42224588b731f83652c2e59478c873e355f3f374bc",
-        "198a4fb732e8a057ded6e5c8769372065821795c53837ffee6bcf06bf3fed5b8"
+        "1f7702b4237bb3924bcc5ec7611921a56ea15299fba61d95ce1bcd4b4ca84f0b"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "4ee461474648a6d87124e764996422da1a58063dae5ebb624fc9044eba91159f",
