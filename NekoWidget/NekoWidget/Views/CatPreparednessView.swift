@@ -1101,7 +1101,10 @@ struct LostCatDraftFixtureView: View {
         let empty = try boundary.draft(for: "legacy-empty", profileName: "登録名", savedInformation: info)
         try require(empty.name.isEmpty && empty.features.isEmpty && empty.faceFileName == nil && empty.bodyFileName == nil)
         fresh.identityKey = "legacy-empty"
-        try require(try boundary.refreshCandidateText(for: "legacy-empty", information: fresh) == empty)
+        // draft() returns the migration value; save() stamps a later updatedAt.
+        // Compare the committed record to prove that refresh never rewrites it.
+        let committedEmpty = boundary.drafts["legacy-empty"]
+        try require(try boundary.refreshCandidateText(for: "legacy-empty", information: fresh) == committedEmpty)
         let ambiguous = EvacuationStore(directory: directory.appendingPathComponent("ambiguous"))
         var a = EvacuationCat(); a.profileID = "duplicate-profile"
         var b = EvacuationCat(); b.profileID = a.profileID

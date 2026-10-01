@@ -22,3 +22,9 @@
 - CI登録は別companionで、全10ファイルの完全before/after・通常mode・3件の実宣言に一致する場合だけ。未知/欠落/共有モデル/Widget/project/workflow/CI混在を拒否する。
 - Widget、Gallery、購入/課金、保管backend/runtime/secrets、CloudKit、一般公開は変更せず無関係な画面検証を追加しない。内部配布の `--preservation-pilot` を維持する。
 - 実画面/CI/配布は完了時に結果と累計時間を追記する。署名/upload成功を通常の終点とし、Apple処理完了やiPhone表示を確認済みとはしない。
+
+## 初回focused診断と修正
+
+- diagnostic `36805474184`（`086ce7ba0b7f4d4ca95e8ead8851019e5e8ee7c8`）は17分08秒、Mac runner16.9分。3件中Care/Evacは成功し、実際の候補更新を撮影。Lostは追加した保存境界fixtureで止まり、新しい更新操作の確認には到達していない。
+- native AXの `lost-cat-fixture-error` は「入力候補の保存境界が成立しません」。新しいlegacy-emptyの比較が、`draft()` のmigration返却値（save前のupdatedAt）と、`save()` が時刻を付けた保存済み値を全体比較していた。製品の内容変更ではなく、fixture比較対象の誤り。保存済みの同一値をbeforeにして「更新されない」を検証する。名前/特徴/独立写真/空欄の条件は弱めない。
+- 製品挙動は変えずDEBUG fixtureの比較3行だけ修正。Lostだけfocused診断を行い、新SHAの通常CIでは既存3件すべて必須。旧SHAの成功を新しい配布証拠へ転用しない。失敗/修正/別companion/待機を累計から除かない。
