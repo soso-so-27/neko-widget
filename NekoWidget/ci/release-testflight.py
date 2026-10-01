@@ -360,8 +360,10 @@ def check_duplicates(gh: GitHub, build: str, cache: dict[int, int]) -> int:
 
 
 def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
-            cache: dict[int, int], *, preservation_pilot: bool = False) -> dict:
+            cache: dict[int, int], *, preservation_pilot: bool = False, billing_sandbox: bool = False) -> dict:
     require(type(preservation_pilot) is bool, "Internal preservation pilot must be an explicit boolean.")
+    require(type(billing_sandbox) is bool, "Internal billing Sandbox must be an explicit boolean.")
+    require(not billing_sandbox or preservation_pilot, "Billing Sandbox requires the internal preservation pilot.")
     require(isinstance(build, str) and BUILD.fullmatch(build) is not None,
             "--build-number must be an explicit positive integer without leading zeros.")
     require(type(run_id) is int and run_id > 0, "--main-ci-run must be a positive run ID.")
@@ -378,6 +380,8 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
     }
     if preservation_pilot:
         plan["inputs"]["preservation_pilot"] = "true"
+    if billing_sandbox:
+        plan["inputs"]["billing_sandbox"] = "true"
     return plan
 
 
@@ -389,7 +393,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
     parser.add_argument("--checkout", type=Path, help="Qualify a fixed source checkout with this already-main clean tool; source SHA/CI/release checks remain mandatory.")
-    parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled.")
+    parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled unless --billing-sandbox is explicitly requested.")
+    parser.add_argument("--billing-sandbox", action="store_true", help="Request a separately approved, internal-only StoreKit Sandbox build; requires --preservation-pilot.")
     args = parser.parse_args(argv)
     tool_root = ROOT
     os.chdir(ROOT)  # The reused planner's git checks must inspect this checkout.
@@ -399,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             ROOT = verified_candidate_root(gh, args.checkout)
             os.chdir(ROOT)
         plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache,
-                       preservation_pilot=args.preservation_pilot)
+                       preservation_pilot=args.preservation_pilot, billing_sandbox=args.billing_sandbox)
         if args.dispatch:
             # Recheck main and the live release index immediately before POST.
             # expected_main_sha also closes a subsequent ref race in workflow.

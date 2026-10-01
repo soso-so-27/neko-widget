@@ -33,6 +33,7 @@ function runtimeFetch({
   healthReportRuntime = "OFF",
   legacyStatus = 503,
   legacyCode = "legacy_sharing_runtime_disabled",
+  billingHeaders = {},
 }) {
   const resolvedWindowNameStatus = windowNameStatus ?? momentStatus;
   const resolvedWindowNameCode = windowNameCode
@@ -52,6 +53,7 @@ function runtimeFetch({
           "Neko-Runtime-Media": mediaRuntime,
           "Neko-Runtime-Apns": mediaRuntime,
           "Neko-Runtime-Report-Ingestion": healthReportRuntime,
+          ...billingHeaders,
         });
       case "/v2/moments/changes":
         assert.equal(options.method, "GET");
@@ -141,6 +143,30 @@ test("accepts limited external beta when health is OFF and report routes stay au
     { name: "report-commit", status: 401, code: "invalid_authentication" },
     { name: "legacy", status: 503, code: "legacy_sharing_runtime_disabled" },
   ]);
+});
+
+test("internal purchase build requires exact billing readiness without altering ordinary beta", async () => {
+  const billingHeaders = {
+    "neko-runtime-billing-gate-generation": "8",
+    "neko-runtime-billing-apple-notification-rate-limiter": "READY",
+    ...Object.fromEntries(["account-bootstrap", "transaction-ingestion", "apple-notification-ingestion",
+      "subscription-reconciliation", "effective-entitlement", "window-sponsorship", "account-recovery"]
+      .map(name => [`neko-runtime-billing-${name}`, "ON"])),
+    "neko-runtime-billing-apple-notification-history-recovery": "OFF",
+  };
+  const run = (headers, expected = "internal-purchase-sandbox") => checkStagingRuntime({ origin, expected,
+    fetchImpl: runtimeFetch({ momentStatus: 401, momentCode: "invalid_authentication", billingHeaders: headers }),
+  });
+  assert.equal((await run(billingHeaders)).checks.length, 12);
+  for (const key of Object.keys(billingHeaders)) {
+    const missing = { ...billingHeaders }; delete missing[key];
+    await assert.rejects(run(missing), /unexpected internal billing runtime state/u);
+    await assert.rejects(run({ ...billingHeaders, [key]: "invalid" }), /unexpected internal billing runtime state/u);
+  }
+  await assert.rejects(run({ ...billingHeaders, "neko-runtime-billing-gate-generation": "01" }), /internal billing/u);
+  await assert.rejects(run({ ...billingHeaders, "neko-runtime-billing-gate-generation": "9007199254740992" }), /internal billing/u);
+  // Existing beta still uses the same sharing-only readiness rule.
+  assert.equal((await run({}, "limited-external-beta")).checks.length, 12);
 });
 
 test("rejects limited external beta if report ingestion becomes reachable", async () => {

@@ -163,6 +163,23 @@ const EXPECTATIONS = Object.freeze({
     ...REPORT_AUTH_BOUNDARY_EXPECTATIONS,
     BASE_EXPECTATIONS.on.at(-1),
   ]),
+  // A read-only admission check for the explicitly approved internal build.
+  // This proves gate readiness, not an Apple purchase or verifier connection.
+  "internal-purchase-sandbox": Object.freeze([
+    Object.freeze({ ...BASE_EXPECTATIONS.on[0], billing: Object.freeze({
+      "neko-runtime-billing-account-bootstrap": "ON",
+      "neko-runtime-billing-transaction-ingestion": "ON",
+      "neko-runtime-billing-apple-notification-ingestion": "ON",
+      "neko-runtime-billing-subscription-reconciliation": "ON",
+      "neko-runtime-billing-effective-entitlement": "ON",
+      "neko-runtime-billing-window-sponsorship": "ON",
+      "neko-runtime-billing-account-recovery": "ON",
+      "neko-runtime-billing-apple-notification-history-recovery": "OFF",
+    }) }),
+    ...BASE_EXPECTATIONS.on.slice(1, -1),
+    ...REPORT_AUTH_BOUNDARY_EXPECTATIONS,
+    BASE_EXPECTATIONS.on.at(-1),
+  ]),
 });
 
 function isPlainObject(value) {
@@ -269,6 +286,15 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
   const body = parseJson(bodyText, expectation.name);
   if (expectation.body !== undefined) {
     assertExactObject(body, expectation.body, expectation.name);
+    if (expectation.billing !== undefined) {
+      const generation = response.headers.get("neko-runtime-billing-gate-generation");
+      if (generation === null || !/^(?:0|[1-9][0-9]*)$/u.test(generation)
+        || !Number.isSafeInteger(Number(generation))
+        || response.headers.get("neko-runtime-billing-apple-notification-rate-limiter") !== "READY"
+        || Object.entries(expectation.billing).some(([name, value]) => response.headers.get(name) !== value)) {
+        throw new Error("health returned an unexpected internal billing runtime state");
+      }
+    }
     if (expectation.runtime !== undefined) {
       const generation = response.headers.get("neko-runtime-gate-generation");
       if (generation === null || !/^(?:0|[1-9][0-9]*)$/u.test(generation)
@@ -310,7 +336,7 @@ export async function checkStagingRuntime({
   const expectations = EXPECTATIONS[expected];
   if (expectations === undefined) {
     throw new Error(
-      "expected runtime state must be 'on', 'limited-external-beta', 'moment-on-window-name-off', or 'off'",
+      "expected runtime state must be 'on', 'limited-external-beta', 'internal-purchase-sandbox', 'moment-on-window-name-off', or 'off'",
     );
   }
   if (typeof fetchImpl !== "function") {

@@ -125,6 +125,18 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(release.Blocked):
                 release.prepare(self.gh, self.sha, "165", 20, self.now, {}, preservation_pilot=value)
 
+    def test_billing_sandbox_is_explicit_requires_pilot_and_does_not_dispatch(self):
+        self.assertNotIn("billing_sandbox", self.prepare()["inputs"])
+        result = release.prepare(self.gh, self.sha, "165", 20, self.now, {},
+                                 preservation_pilot=True, billing_sandbox=True)
+        self.assertEqual(result["inputs"]["billing_sandbox"], "true")
+        self.assertEqual(result["inputs"]["preservation_pilot"], "true")
+        self.assertEqual(self.gh.dispatches, [])
+        for pilot, requested in ((False, True), (True, "true"), (True, 1), (True, None)):
+            with self.subTest(pilot=pilot, requested=requested), self.assertRaises(release.Blocked):
+                release.prepare(self.gh, self.sha, "165", 20, self.now, {},
+                                preservation_pilot=pilot, billing_sandbox=requested)
+
     def test_skipped_main_jobs_require_real_referenced_candidate_jobs(self):
         self.candidate()
         self.assertEqual(self.prepare()["ci"]["tested_run"], 10)
