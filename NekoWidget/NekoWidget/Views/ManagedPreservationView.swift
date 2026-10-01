@@ -183,7 +183,7 @@ struct ManagedPreservationView: View {
                             .accessibilityIdentifier("preservation-account-delete")
                     }
                 } footer: {
-                    Text("保管記録や会員契約は削除・解約されません。別の本人として使う前に解除してください。")
+                    Text("ログインを解除しても保管記録は残ります。アカウントを削除すると、サービスに保管したコピーはすべて消えます。定期購読は別途Appleで解約してください。")
                 }
             }
         }
