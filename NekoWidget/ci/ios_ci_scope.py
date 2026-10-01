@@ -31,6 +31,7 @@ EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
+MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
@@ -73,7 +74,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v3"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, VET_SAVED_CAT_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1102,6 +1103,32 @@ def reviewed_vet_saved_cat_changes(changes: dict[str, tuple[str, str]]) -> bool:
             and all(list(map(source_digest, changes[path])) == VET_SAVED_CAT_DIGESTS[path]
                     for path in VET_SAVED_CAT_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], VET_SAVED_CAT_TESTS))
+
+
+# Fixed presentation-only offer batch against main f52764e, product 49a6a65.
+# Prices, eligibility, purchase/restore, triggers, policy and release flags are
+# unchanged. One existing reading case covers both standard and AX5 text.
+# Whole sources pin the XCTest additions to that case; no arbitrary helper,
+# other-test, framework, registration, model or control changes are admitted.
+MEMBERSHIP_COPY_DIGESTS = {
+    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": [
+        "c35bb3c64234e448de25ffae636525b0de5d1bf0be1e812cfe4a44546a489655",
+        "f0b2d8073e3a0c3dc2284fa22f24f5f1c0a246c00213d5286b1e166be600ec75"],
+    MEMORY_TEST_PATH: [
+        "bdeff8b9a2d3899af790de67be0325c9816563548d3555ad55746b5283497fa1",
+        "02d7a9a7434586d344f07eb4d26c12bf7f9fca95786bc7c2b4c5395bfbe049c3"],
+}
+MEMBERSHIP_COPY_PATHS = frozenset(MEMBERSHIP_COPY_DIGESTS)
+MEMBERSHIP_COPY_TESTS = (
+    "NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferExplainsExpiryWithoutChangingThePlan",
+)
+
+
+def reviewed_membership_copy_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == MEMBERSHIP_COPY_PATHS
+            and all(list(map(source_digest, changes[path])) == MEMBERSHIP_COPY_DIGESTS[path]
+                    for path in MEMBERSHIP_COPY_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_COPY_TESTS))
 
 
 # Exact reviewed presentation/assets in product 78a2c45 against main a178f8b,
@@ -2201,6 +2228,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == MEMBERSHIP_COPY_SCOPE:
+        return sources == MEMBERSHIP_COPY_PATHS
     if scope == APP_DATA_SCOPE:
         return bool(sources & APP_DATA_PRODUCT_PATHS and sources <= APP_DATA_PATHS)
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
@@ -2372,6 +2401,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == MEMBERSHIP_COPY_SCOPE:
+        return MEMBERSHIP_COPY_TESTS
     if scope == VET_SAVED_CAT_SCOPE:
         return VET_SAVED_CAT_TESTS
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
@@ -2610,6 +2641,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return FULL_SCOPE
     if reviewed_tool_cat_autofill_changes(changes):
         return TOOL_CAT_AUTOFILL_SCOPE
+    if reviewed_membership_copy_changes(changes):
+        return MEMBERSHIP_COPY_SCOPE
     if reviewed_vet_saved_cat_changes(changes):
         return VET_SAVED_CAT_SCOPE
     if reviewed_care_handoff_changes(changes):
