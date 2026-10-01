@@ -666,7 +666,7 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
  'NekoWidget/NekoWidget/Views/LikedPhotosView.swift': ('65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224',
                                                        '958994a7ed7a893d61b99e70b0e5e9a87a5c1e63276bc6db8a8bc74741e1b089'),
  'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895',
-                                                               'b9991ddd4e859bfaa97f5a05dd80c466502323d867d7e52a01beb961fe3dd6a0'),
+                                                               '28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360'),
  'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift': ('d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540',
                                                            '01c865de1c7025a8b8a45c2e265b753541b2272457819fa67293bdcfbd8a58f8'),
  'NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift': ('fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5',
@@ -674,15 +674,15 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
  'NekoWidget/NekoWidget/Views/SettingsView.swift': ('c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06',
                                                     '1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd'),
  'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7',
-                                                               'c15da79e907788ff28d32ad6db95ada6da5d3bd69012038ad232d79ee6a08b84')}
+                                                               '9aaaef9b5f855adeecee6ec9a9e256134ad3bf492e175517fa0e09ba888b99a7')}
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "7e714118fe37eea8f29ea3b5726792323129b5907309a73a6de3be41159f952d",
-        "a150deb6779fdcb1e8b253ed887ba825e6d4156ebe93aba0b8f4c955ec2016fb"
+        "00476c4df861a713a5c716957034bd2c47c9e13069da294604848a77fe8d109f"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "733ec45fe974f0a4505263738223fd7d428dc9d581e0f24d759d781ae6e8fc2a",
-        "326da5d0d18ada064fc451cc3379bcf55b83d2ce87c5ecd78d4246821ddd6106"
+        "016057ab4b4cfd8f5f8e961d63e7cd73fabdc0e4ce70ab04638d90f30865c4bf"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "161dda88e2add0bb60e2a2726fa849735d39add7d46cb19d55ad3e896c2d85e4",
