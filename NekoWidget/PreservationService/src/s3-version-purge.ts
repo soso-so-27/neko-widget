@@ -63,7 +63,8 @@ export class S3VersionPurge {
         ...(this.c.sessionToken ? { sessionToken: this.c.sessionToken } : {}), allHeaders: true,
         headers: { 'x-amz-expected-bucket-owner': this.c.expectedAccountId } });
       const signed = await signer.sign();
-      const reply = await this.fetcher(signed.url, { method: 'DELETE', headers: signed.headers,
+      const send = this.fetcher;
+      const reply = await send(signed.url, { method: 'DELETE', headers: signed.headers,
         redirect: 'manual', signal: AbortSignal.timeout(30_000) });
       const marker = reply.headers.get('x-amz-delete-marker');
       if (reply.status !== 204 || reply.headers.get('x-amz-version-id') !== item.versionId
