@@ -4256,14 +4256,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let body = app.staticTexts["memory-note-body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         XCTAssertTrue(body.label.contains("小さな寝息"))
+        let memoBodyFrame = body.frame
         app.buttons["memory-note-menu"].tap()
         XCTAssertTrue(app.buttons["memory-note-managed-preserve"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["memory-note-managed-preserve"].isEnabled)
         XCTAssertFalse(app.buttons["memory-note-preserve"].exists)
         attach(app, name: "memory-library-service-preservation-entry")
-        let dismissMenu = app.otherElements["PopoverDismissRegion"]
-        if dismissMenu.exists { dismissMenu.tap() }
-        else { app.navigationBars.staticTexts.firstMatch.tap() }
+        // The native menu hides navigation accessibility on iOS 26. Tap the
+        // already observed memo text, outside the menu, to dismiss it.
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: memoBodyFrame.midX, dy: memoBodyFrame.midY)).tap()
         let photo = app.buttons["memory-note-photo"]
         XCTAssertTrue(photo.isHittable)
         attach(app, name: "memory-library-photo-detail")
