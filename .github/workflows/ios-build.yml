@@ -59,6 +59,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 NekoWidget/ci/plan-ios-ci.py
 
+      - name: Validate internal Sandbox release preparation
+        if: steps.scope.outputs.runtime_scope == 'internal-billing-release-prep-v1'
+        run: |
+          set -euo pipefail
+          python3 NekoWidget/ci/test-preservation-pilot-release.py
+          python3 NekoWidget/ci/test-limited-external-beta-reporting.py
+          node --test NekoWidget/SharingService/test/staging-runtime-check.node-tests.mjs
+
   build-without-signing:
     name: ${{ needs.plan.outputs.build_name }}
     needs: plan

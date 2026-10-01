@@ -339,6 +339,50 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             planner.required_jobs_from_scope(planner.BILLING_SCOPE)
 
+    def test_internal_release_preparation_is_frozen_and_never_native_evidence(self):
+        changed = {path: ("before " + path, "after " + path)
+                   for path in planner.RELEASE_PREP_PATHS}
+        changed[planner.RELEASE_PREP_WORKFLOW] = ("old CI", "frozen plan CI")
+        product_digests = {path: list(map(scope.source_digest, pair))
+                           for path, pair in changed.items() if path in planner.RELEASE_PREP_PATHS}
+        workflow_digest = scope.source_digest("frozen plan CI")
+        def select(candidate, ancestor=True):
+            def git(*args):
+                if args[0] == "merge-base":
+                    if not ancestor:
+                        raise subprocess.CalledProcessError(1, "git")
+                    return ""
+                if args[0] == "show":
+                    ref, path = args[1].split(":", 1)
+                    return candidate[path][1 if ref == self.sha else 0]
+                if args[0] == "diff":
+                    return "".join(f":100644 100644 {'c' * 40} {'d' * 40} M\0{path}\0"
+                                   for path in sorted(candidate))
+                raise AssertionError(args)
+            with patch.object(planner, "comparison_base", return_value="base"), \
+                    patch.object(planner, "git", side_effect=git), \
+                    patch.object(planner, "RELEASE_PREP_PRODUCTS", product_digests), \
+                    patch.object(planner, "RELEASE_PREP_WORKFLOW_DIGEST", workflow_digest):
+                return planner.runtime_scope(sorted(candidate), {}, self.env)
+        self.assertEqual(select(changed), planner.RELEASE_PREP_SCOPE)
+        self.assertEqual(planner.required_jobs(sorted(changed), planner.RELEASE_PREP_SCOPE),
+                         (planner.PLAN_JOB, planner.RELEASE_PREP_BACKEND_PLAN_JOB))
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/sharing-service.yml").read_text(encoding="utf-8")
+        guarded = "if: needs.plan.outputs.scope != 'billing-private-service-v2' && needs.plan.outputs.scope != 'internal-billing-release-prep-v1'"
+        self.assertEqual(workflow.count(guarded), 3)
+        for path in planner.RELEASE_PREP_PATHS | {planner.RELEASE_PREP_WORKFLOW}:
+            mutated = dict(changed); mutated[path] = (mutated[path][0], mutated[path][1] + " drift")
+            self.assertEqual(select(mutated), scope.FULL_SCOPE)
+        for unknown in ("NekoWidget/NekoWidget/Views/SettingsView.swift", "NekoWidget/Config.xcconfig",
+                        "NekoWidget/Shared/Models/Photo.swift", "NekoWidget/NekoWidget/Info.plist"):
+            mixed = dict(changed); mixed[unknown] = ("old", "new")
+            self.assertEqual(select(mixed), scope.FULL_SCOPE)
+        mixed = dict(changed); mixed[next(iter(planner.RELEASE_PREP_COMPANION_PATHS))] = ("old", "new")
+        self.assertEqual(select(mixed), scope.FULL_SCOPE)
+        self.assertEqual(select(changed, ancestor=False), scope.FULL_SCOPE)
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(planner.RELEASE_PREP_SCOPE)
+
     def test_preservation_backend_requires_frozen_introduction_and_rejects_mixed_or_unsafe_inputs(self):
         original, bindings = self.jpeg_changes(profile="PRESERVATION")
         migration = "NekoWidget/PreservationService/migrations/0004_upload_owner_index.sql"

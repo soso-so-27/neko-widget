@@ -444,6 +444,91 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
     return True
 
 
+RELEASE_PREP_SCOPE = "internal-billing-release-prep-v1"
+RELEASE_PREP_BACKEND_PLAN_JOB = "Select backend checks"
+RELEASE_PREP_WORKFLOW = ".github/workflows/ios-build.yml"
+RELEASE_PREP_WORKFLOW_DIGEST = "7c7eb13f1fa409ec13f145fe548da762920185f03f4d210786a450358fddb9e6"
+RELEASE_PREP_PRODUCTS = {
+    ".github/workflows/sharing-service.yml": [
+        "492e25862dc87f5c329ba99cc3b602bf3cc1baa7bc257851c55ab0788596e6fd",
+        "34371131700b6b69278ec8122fde2d0bba187e9b463697d2b994b60acd8cb466"
+    ],
+    ".github/workflows/testflight.yml": [
+        "df85c78c718266c926c00feb140bc9e136f53f56b49d92475d7bdf54c4eda3de",
+        "7b409904c3f0fa4c09661d81d160cfb5de7d0780c7c42cb6d5a753908ad33f95"
+    ],
+    "NekoWidget/SharingService/scripts/check-staging-runtime.mjs": [
+        "38c8e5fd4be3193bb9ebb03dd3596c0b600cd570ebb26fc07c665745a816c3ca",
+        "9820f5dc0eebba3496f25859b0e8fc4da88da3ebe5776c7e532198775ae98f56"
+    ],
+    "NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs": [
+        "7e78058bccb9e74b3843e6559bd8e3aef2b474e4fd0220735c8d2e9d8a25b37c",
+        "af228eed927505d956209647052b7cca55b5da515bbc9ce41038e520982ce4d9"
+    ],
+    "NekoWidget/SharingService/test/staging-runtime-check.node-tests.mjs": [
+        "c2a98a62e5efa4fea56c4e7bd525f75852962ba3321a630ff3d5c78b3951d3c0",
+        "d1de9a3cfcc6c30e988b6a12becd6acc83bc7bf369fa472086c72a8e93a06d4d"
+    ],
+    "NekoWidget/ci/preservation-pilot-release.py": [
+        "78b4ba4107e4e4632c2ee87485862a55adddf166d9ee5d601ceef192b6308903",
+        "db582ba0e52c50cca2b8a6d9019a79c46a017bff94581454f3e8b4293a4a43fd"
+    ],
+    "NekoWidget/ci/release-testflight.py": [
+        "36503d75bea77b217e4737c2ea75d7e3599d4b428274e692621444aa26ff3224",
+        "97fdf85c435323d601da2bffefb1fba25d3203849a582d7ba8ae17066ec5bc4d"
+    ],
+    "NekoWidget/ci/test-preservation-pilot-release.py": [
+        "6800c34ca5ab5f2a3d3227aaad6b6c9ccce119d380705cdb0f7ad9f7be54ba78",
+        "189d3b92b1bd85b02068f5c7300af5c6e480c0e5f24486c3f872417c93d1ef96"
+    ],
+    "NekoWidget/ci/test-release-testflight.py": [
+        "0f3747ef867f97c8a757e13bc0c54db4c27bb7a4317f6384d9dabcde76f8a83a",
+        "903a31f0e24cc4c6d45e0fbf877a95169c15056cc74ea8c48b41046a0a4c1086"
+    ]
+}
+RELEASE_PREP_PATHS = frozenset(RELEASE_PREP_PRODUCTS)
+RELEASE_PREP_COMPANION_PATHS = JPEG_COMPANION_PATHS
+RELEASE_PREP_COMPANION_DIGESTS = {
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "0abebe8af2236122938f9eba6fd8e704530e50f5f83d9321d9b7178c2ec18fde",
+        "9db359a99403e51d766d1560200123d0a102636efe551e1e0ba417e0c4e3c3fb"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "798c1d27137968853fc21c420ece860a6fad7e062ec8b5ccb701ce59ccc23350",
+        "210e7aae95ec610f903c4deb37bd97427f536aebc84dd2aec6cd5065379f28f2"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "1f7702b4237bb3924bcc5ec7611921a56ea15299fba61d95ce1bcd4b4ca84f0b",
+        "116d4c43c35cedb41252fadb94d25cbd24cea2e24819c547205a82511d570437"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "a6bf767e36240718273758109352458e9caedc1b5ed8213bc7b98c858c0016db",
+        "d1038d56f245e8f522b7a2cde6a4bf29d83f00e169fb3fc08497766e211f05f0"
+    ]
+}
+
+
+def release_prep_paths_only(paths):
+    return backend_paths_only(paths, RELEASE_PREP_PATHS, RELEASE_PREP_WORKFLOW,
+                              RELEASE_PREP_COMPANION_PATHS)
+
+
+def release_prep_only(paths, base, head):
+    # One frozen preparation batch, not native/archive/StoreKit evidence.
+    # The exact full release workflow and helpers are independently reviewed.
+    # No Swift, plist, project, signing credentials or other product may mix in.
+    if not RELEASE_PREP_PRODUCTS:
+        return False
+    for path, pair in RELEASE_PREP_PRODUCTS.items():
+        if list(map(source_digest, (git("show", f"{ref}:{path}") for ref in (base, head)))) != pair:
+            return False
+    return backend_only(paths, base, head, product_paths=RELEASE_PREP_PATHS,
+                        workflow=RELEASE_PREP_WORKFLOW, workflow_digest=RELEASE_PREP_WORKFLOW_DIGEST,
+                        companion_paths=RELEASE_PREP_COMPANION_PATHS,
+                        bindings=RELEASE_PREP_COMPANION_DIGESTS,
+                        binding_name="RELEASE_PREP_COMPANION_DIGESTS")
+
+
 def orchestration_only(paths, base, head):
     """Python control-plane changes run Python tests, never native UI tests.
 
@@ -487,6 +572,8 @@ def orchestration_only(paths, base, head):
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
+    if runtime_scope == RELEASE_PREP_SCOPE and release_prep_paths_only(paths):
+        return (PLAN_JOB, RELEASE_PREP_BACKEND_PLAN_JOB)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
@@ -700,7 +787,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         return FULL_SCOPE
     for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
                                        (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only),
-                                       (BILLING_SCOPE, billing_paths_only, billing_backend_only)):
+                                       (BILLING_SCOPE, billing_paths_only, billing_backend_only),
+                                       (RELEASE_PREP_SCOPE, release_prep_paths_only, release_prep_only)):
         if not matches(paths):
             continue
         try:
@@ -1216,7 +1304,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,

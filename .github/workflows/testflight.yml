@@ -33,6 +33,11 @@ on:
         required: true
         default: false
         type: boolean
+      billing_sandbox:
+        description: "実商品の内部Sandbox通し確認。通常配布には使わず、別のprotected承認とpreservation_pilotが必要"
+        required: true
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -691,6 +696,9 @@ jobs:
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
           PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
+          BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
+          BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
+          BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
         run: |
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py" \
@@ -698,8 +706,13 @@ jobs:
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${PRESERVATION_APPROVAL:-}" \
             --scope "${PRESERVATION_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --billing-approval "${BILLING_APPROVAL:-}" \
+            --billing-scope "${BILLING_SCOPE:-}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --env-file "$GITHUB_ENV" \
+            --app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
+            --widget-source-info-plist "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist" \
             --privacy-manifest "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
 
       - name: Validate limited external beta reporting boundary
@@ -753,8 +766,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
-            node scripts/check-staging-runtime.mjs --expected limited-external-beta
+          if [[ "$RELEASE_PLUS_BILLING_CLIENT_ENABLED" == "YES" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox
+          else
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected limited-external-beta
+          fi
 
       - name: Validate required secrets
         shell: bash
@@ -1202,6 +1220,9 @@ jobs:
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
           PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
+          BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
+          BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
+          BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
         run: |
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
@@ -1212,8 +1233,12 @@ jobs:
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${PRESERVATION_APPROVAL:-}" \
             --scope "${PRESERVATION_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --billing-approval "${BILLING_APPROVAL:-}" \
+            --billing-scope "${BILLING_SCOPE:-}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
+            --widget-info-plist "$widget_path/Info.plist" \
             --app-info-plist "$app_path/Info.plist"
           python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" archive \
             --app-info-plist "$app_path/Info.plist" \
@@ -1339,6 +1364,9 @@ jobs:
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
           PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
+          BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
+          BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
+          BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
         run: |
           set -euo pipefail
           sed \
@@ -1356,6 +1384,9 @@ jobs:
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${PRESERVATION_APPROVAL:-}" \
             --scope "${PRESERVATION_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --billing-approval "${BILLING_APPROVAL:-}" \
+            --billing-scope "${BILLING_SCOPE:-}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"

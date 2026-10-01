@@ -19,6 +19,7 @@ class PreservationReleaseTests(unittest.TestCase):
         values = pilot.settings(True, "media-staging", "YES", "internal")
         info = {pilot.INFO_KEYS[key]: value for key, value in values.items()}
         info["SharingReleaseMode"] = "media-staging"
+        info["MembershipAccessEnforced"] = False
         return values, info, pilot.add_privacy(self.privacy())
 
     def test_ordinary_release_stays_off_even_with_stale_approval(self):
@@ -78,6 +79,65 @@ class PreservationReleaseTests(unittest.TestCase):
         pilot.verify_export_options(original, values)
         with self.assertRaises(ValueError):
             pilot.prepare_export_options({"testFlightInternalTestingOnly": True}, values)
+
+    def test_billing_requires_both_pilot_and_separate_internal_approval(self):
+        for requested, mode, approval, scope, billing_approval, billing_scope in [
+            (False, "media-staging", "YES", "internal", "YES", "internal"),
+            (True, "disabled", "YES", "internal", "YES", "internal"),
+            (True, "media-staging", "", "internal", "YES", "internal"),
+            (True, "media-staging", "YES", "internal", "", "internal"),
+            (True, "media-staging", "YES", "internal", "YES", "external"),
+        ]:
+            with self.subTest(mode=mode, billing_scope=billing_scope), self.assertRaises(ValueError):
+                pilot.settings(requested, mode, approval, scope, billing_requested=True,
+                               billing_approval=billing_approval, billing_scope=billing_scope)
+
+    def test_billing_uses_fixed_monthly_product_private_backend_and_real_boundaries(self):
+        values = pilot.settings(True, "media-staging", "YES", "internal", billing_requested=True,
+                                billing_approval="YES", billing_scope="internal")
+        self.assertEqual(values["PLUS_MONTHLY_PRODUCT_ID"], "jp.nekowidget.plus.monthly")
+        self.assertEqual(values["PLUS_ANNUAL_PRODUCT_ID"], "")
+        self.assertEqual(values["PLUS_BILLING_API_BASE_URL"], pilot.BILLING_ORIGIN)
+        self.assertEqual(values["PLUS_STOREFRONT_ENABLED"], "YES")
+        self.assertEqual(values["PLUS_BILLING_RECOVERY_ENABLED"], "YES")
+        info = {pilot.INFO_KEYS[key]: value for key, value in values.items()}
+        info.update(SharingReleaseMode="media-staging", MembershipAccessEnforced=True)
+        widget = pilot.prepare_membership_info({"MembershipAccessEnforced": False, "Other": "unchanged"}, values)
+        self.assertEqual(widget, {"MembershipAccessEnforced": True, "Other": "unchanged"})
+        privacy = pilot.add_privacy(self.privacy())
+        pilot.verify(info, values, privacy, widget)
+        options = pilot.prepare_export_options({"method": "app-store-connect"}, values)
+        self.assertIs(options["testFlightInternalTestingOnly"], True)
+        for invalid in (None, {"MembershipAccessEnforced": False}, {"MembershipAccessEnforced": "YES"}):
+            with self.subTest(widget=invalid), self.assertRaises(ValueError):
+                pilot.verify(info, values, privacy, invalid)
+        with self.assertRaises(ValueError):
+            pilot.verify({**info, "MembershipAccessEnforced": False}, values, privacy, widget)
+
+    def test_stale_billing_approval_does_not_activate_ordinary_or_preservation_only(self):
+        for requested in (False, True):
+            values = pilot.settings(requested, "media-staging", "YES", "internal",
+                                    billing_approval="YES", billing_scope="internal")
+            self.assertEqual(values["PLUS_BILLING_CLIENT_ENABLED"], "NO")
+            original = {"MembershipAccessEnforced": False}
+            self.assertEqual(pilot.prepare_membership_info(original, values), original)
+            for bad in ({}, {"MembershipAccessEnforced": True}, {"MembershipAccessEnforced": "NO"}):
+                with self.subTest(source=bad), self.assertRaises(ValueError):
+                    pilot.prepare_membership_info(bad, values)
+
+    def test_workflow_passes_same_approval_to_prepare_archive_and_export(self):
+        source = Path(__file__).resolve().parents[2].joinpath(".github/workflows/testflight.yml").read_text(encoding="utf-8")
+        self.assertIn("      billing_sandbox:", source)
+        for value in ("BILLING_REQUESTED: ${{ inputs.billing_sandbox }}",
+                      "BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}",
+                      "BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}",
+                      '--billing-requested "${BILLING_REQUESTED:-false}"',
+                      '--billing-approval "${BILLING_APPROVAL:-}"',
+                      '--billing-scope "${BILLING_SCOPE:-}"'):
+            self.assertEqual(source.count(value), 3)
+        self.assertIn('--app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist"', source)
+        self.assertIn('--widget-source-info-plist "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist"', source)
+        self.assertIn('--widget-info-plist "$widget_path/Info.plist"', source)
 
 
 if __name__ == "__main__":
