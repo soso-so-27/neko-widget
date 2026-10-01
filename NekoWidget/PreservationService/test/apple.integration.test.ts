@@ -26,6 +26,7 @@ interface Overrides {
   nativeClaims?: JWTPayload;
   exchangeClaims?: JWTPayload;
   status?: number;
+  keysStatus?: number;
   oauthError?: string;
   huge?: 'keys' | 'token';
   responseFields?: Record<string, unknown>;
@@ -47,11 +48,13 @@ async function setup(overrides: Overrides = {}) {
     now: () => time, takeChallenge: (value) => auth.takeChallenge(value), getClientSecret: async () => 'synthetic-client-secret',
     fetchImpl: async (url, init) => {
       calls.push(url);
-      expect(init.redirect).toBe('error');
+      expect(init.redirect).toBe('manual');
       expect(init.cache).toBe('no-store');
       expect(init.signal).toBeDefined();
       if (url === APPLE_KEYS_URL) {
         expect(init.method).toBe('GET');
+        if (overrides.keysStatus) return Response.json(jwks, { status: overrides.keysStatus,
+          headers: { location: 'https://invalid.example/foreign-keys' } });
         return overrides.huge === 'keys' ? new Response('x'.repeat(65_537)) : Response.json(jwks);
       }
       expect(url).toBe(APPLE_TOKEN_URL);
@@ -74,6 +77,18 @@ async function setup(overrides: Overrides = {}) {
 }
 
 describe('Apple adapter production-candidate port', () => {
+  it('rejects redirects at either fixed Apple endpoint without following a foreign location', async () => {
+    const keys = await setup({ enabled: true, keysStatus: 302 });
+    await expect(keys.adapter.verifyNativeAuthorization(keys.request)).rejects.toMatchObject({
+      code: 'APPLE_IDENTITY_UNCONFIRMED', status: 401,
+    });
+    expect(keys.calls).toEqual([APPLE_KEYS_URL]);
+    const token = await setup({ enabled: true, status: 302 });
+    await expect(token.adapter.verifyNativeAuthorization(token.request)).rejects.toMatchObject({
+      code: 'APPLE_RESPONSE_INVALID', status: 502,
+    });
+    expect(token.calls).toEqual([APPLE_KEYS_URL, APPLE_TOKEN_URL]);
+  });
   it('imports a server PKCS8 key and creates the short ES256 client secret', async () => {
     const pair = await generateKeyPair('ES256', { extractable: true });
     const token = await createAppleClientSecret({ teamId: 'SYNTHETIC1', keyId: 'SYNTHETIC2', clientId,
