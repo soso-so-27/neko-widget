@@ -91,7 +91,8 @@ export class AppleIdentityVerifier implements IdentityVerifier {
       timeoutDuration: 5000, cooldownDuration: 30_000, cacheMaxAge: 600_000,
       [customFetch]: async (url, init) => {
         if (url !== APPLE_KEYS_URL) return fail('APPLE_CONFIGURATION_ERROR');
-        const response = await this.fetchImpl(url, { ...init, redirect: 'error', cache: 'no-store' });
+        // Workers supports manual redirects; the fixed-endpoint status check rejects 3xx without following it.
+        const response = await this.fetchImpl(url, { ...init, redirect: 'manual', cache: 'no-store' });
         if (response.status !== 200) return fail('APPLE_IDENTITY_UNCONFIRMED');
         return new Response(await boundedBody(response), { status: 200,
           headers: { 'content-type': 'application/json' } });
@@ -137,7 +138,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     let response: Response;
     let body: unknown;
     try {
-      response = await this.fetchImpl(APPLE_TOKEN_URL, { method: 'POST', redirect: 'error', cache: 'no-store',
+      response = await this.fetchImpl(APPLE_TOKEN_URL, { method: 'POST', redirect: 'manual', cache: 'no-store',
         headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
         body: form.toString(), signal: AbortSignal.timeout(5000) });
       if (response.status >= 500 || response.status === 429) return fail('APPLE_UNAVAILABLE');
