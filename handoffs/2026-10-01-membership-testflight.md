@@ -36,7 +36,9 @@ App Store Connectで月額商品と初回無料体験は登録を確認済み。
 - [候補CI36822696936](https://github.com/soso-so-27/neko-widget/actions/runs/36822696936)はBuild・Photos bootstrap/scan・iOS18.5/26.2 runtime・関連5UIを実行し全成功、5UIは0失敗。写真メモ、Care既存編集/実出力/再起動、Vet既存編集/選択/元データ保持、新規のみの制限、確認不能、βの制限OFF、無料迷子/避難を確認した。Widget Galleryは選んでいない。
 - 撮影されたCare/Vet/見せるの会員案内を直接確認し、閉じる/会員プランへの導線がシート内に表示されている。証拠は `C:/dev/neko-evidence/membership-daily-tools-20261001/ios-26-2/composer-screenshots/`。これは実購入の成功証拠ではない。
 - CI実測20分29秒、全jobの未加重runner合計63.217分。最初の製品作成14:41:23からmain反映までは43分11秒で、調査・レビュー・制御反映・ローカル確認・待機を含む。最終CI時間だけを全体の時間としない。
-- TestFlightのdispatchはまだ行っていない。並行の保管/メモ修正PR141と配布順を調整し、後の配布で片方の製品差分を戻さないことが残る。235を予約・使用済みとは扱わない。
+- 並行PR141の保管/メモ導線を取り込んだ固定統合候補 `31a04fc8d5045e2f67c5e1b46c30019a94e7dbeb` を本線反映（636dfa6）。独立した依存確認で不変の会員UI4件は上の成功証拠を保持し、変更したメモ詳細に依存する診察メモ選択1件だけを[統合CI36831876667](https://github.com/soso-so-27/neko-widget/actions/runs/36831876667)の関連7UIへ加えた。7件全実行・0失敗、保管3 runtime（両OS）・Build・Photos bootstrapも成功。Widget Galleryの追加はない。
+- 内部[build235/run36834987212](https://github.com/soso-so-27/neko-widget/actions/runs/36834987212)を1回だけdispatchし、2026-10-01 17:25:39 JSTにAppleへアップロード成功（実際の `UPLOAD SUCCEEDED with no errors`）。日常3ツールの会員境界とメモ/旧iCloud導線の両方を含む。βの制限OFF・実課金未接続を維持し、実購入/復元の成功とは扱わない。Apple処理完了と235の実機表示は未確認。
+- 本会員バッチの初回製品作成14:41:23 JSTからApple成功までは164分16秒。保管バッチの初回候補から218.3分という時間とは起点が違う。後続通常CI23.4分やupload12.183分だけを総時間としない。[統合確認と失敗・時間の詳細](2026-10-01-preservation-unified-memo.md)。
 
 ## 実環境設定について確認できたこと
 
