@@ -29,6 +29,8 @@ struct AppRootView: View {
     @State private var onboardingScanErrorMessage: String?
     @StateObject private var widgetShowcaseStore = ShowcasePhotoStore()
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
+    @Environment(\.membershipActions) private var showcaseAccess
+    @State private var showcaseMembershipNotice: MembershipAccessDecision?
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
@@ -204,8 +206,14 @@ struct AppRootView: View {
                 }
             }
             .environment(\.showcaseOpenOne, { identifier in
+                let decision = showcaseAccess.decision(for: .presentCatPhotos)
+                guard decision == .allowed else {
+                    showcaseMembershipNotice = decision
+                    return
+                }
                 widgetShowcasePhoto = WidgetShowcasePhoto(photoIdentifier: identifier)
             })
+            .membershipActionNotice($showcaseMembershipNotice)
             .fullScreenCover(item: $widgetShowcasePhoto) { selected in
                 ShowcasePhotoView(
                     store: widgetShowcaseStore,

@@ -11,9 +11,23 @@ import CoreGraphics
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = VeterinaryVisitStore(directory: root), owner = UUID(), otherOwner = UUID()
-        let first = try await store.current(catID: owner, catName: "同じ名前")
-        let other = try await store.current(catID: otherOwner, catName: "同じ名前")
+        let first = try await store.current(catID: owner, catName: "同じ名前") { try $0() }
+        let other = try await store.current(catID: otherOwner, catName: "同じ名前") { try $0() }
         try require(first.id != other.id, "same names merged cats")
+        let existing = try await store.current(catID: owner, catName: "同じ名前") { _ in
+            throw Failure(message: "Creation denied")
+        }
+        try require(existing == first, "Expiry blocked an existing draft")
+        do {
+            let before = try await store.visits()
+            do {
+                _ = try await store.current(catID: UUID(), catName: "新しい猫") { _ in
+                    throw Failure(message: "Creation denied")
+                }
+                throw Failure(message: "Denied creation saved a new draft")
+            } catch let denied as Failure { try require(denied.message == "Creation denied", "Creation boundary not invoked") }
+            try require(try await store.visits() == before, "Denied creation changed records")
+        }
         let value = PhotoMemoWeightValue(grams: 4200, measuredOn: "2026-09-29", catName: "同じ名前")
         let note = PhotoMemoryNote(text: "選んだ記録だけ", updatedAt: Date(), revision: UUID().uuidString,
             weight: PhotoMemoWeight(value: value, catID: owner))
@@ -44,11 +58,11 @@ import CoreGraphics
         try require(removed.entries.isEmpty && source.note == note, "removal affected source")
         var completed = removed; completed.questions = "聞きたいこと"; completed.completedAt = Date()
         let saved = try await store.save(completed, expectedRevision: removed.revision)
-        let next = try await store.current(catID: owner, catName: "同じ名前")
+        let next = try await store.current(catID: owner, catName: "同じ名前") { try $0() }
         try require(next.id != saved.id && next.entries.isEmpty && next.questions.isEmpty, "old consultation copied into next")
         let bytes = try Data(contentsOf: root.appendingPathComponent("state.json"))
         let corrupt = Data("{bad".utf8); try corrupt.write(to: root.appendingPathComponent("state.json"))
-        do { _ = try await store.current(catID: owner, catName: "same"); throw Failure(message: "corrupt state replaced") }
+        do { _ = try await store.current(catID: owner, catName: "same") { try $0() }; throw Failure(message: "corrupt state replaced") }
         catch VeterinaryVisitError.corrupted { }
         try require(try Data(contentsOf: root.appendingPathComponent("state.json")) == corrupt, "corrupt bytes were overwritten")
         try bytes.write(to: root.appendingPathComponent("state.json"))
@@ -60,7 +74,7 @@ import CoreGraphics
 
     private static func verifiesOwnedPhotoCleanup(_ root: URL) async throws {
         let store = VeterinaryVisitStore(directory: root)
-        let visit = try await store.current(catID: UUID(), catName: "むぎ")
+        let visit = try await store.current(catID: UUID(), catName: "むぎ") { try $0() }
         let note = PhotoMemoryNote(text: "", updatedAt: Date(), revision: UUID().uuidString)
         let source = PhotoMemoryNoteRecord(photoIdentifier: "original-photo-not-a-file", note: note)
         let jpeg: Data
@@ -89,7 +103,7 @@ import CoreGraphics
         try await store.delete(visitID: visit.id, expectedRevision: replaced.revision)
         try require(!FileManager.default.fileExists(atPath: root.appendingPathComponent(replaced.entries[0].photoFile!).path)
             && FileManager.default.fileExists(atPath: external.path), "delete escaped consultation-owned photo")
-        let next = try await store.current(catID: UUID(), catName: "そら")
+        let next = try await store.current(catID: UUID(), catName: "そら") { try $0() }
         let url = root.appendingPathComponent("state.json")
         var state = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         state["retiredPhotoFiles"] = (0..<2000).map { _ in UUID().uuidString + ".jpg" }

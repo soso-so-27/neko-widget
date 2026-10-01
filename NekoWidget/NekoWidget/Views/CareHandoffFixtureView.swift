@@ -105,7 +105,7 @@ struct CareHandoffFixtureView: View {
         guard let bytes = image.pngData() else { throw Failure.assertion("synthetic photo") }
         try evacuation.replacePhoto(bytes, catID: a.id, role: .face)
         try evacuation.replacePhoto(bytes, catID: b.id, role: .withOwner)
-        guard let id = care.addCat(using: evacuation, sourceCatID: a.id),
+        guard let id = care.addCat(using: evacuation, sourceCatID: a.id, access: .beta),
               let copied = care.plan.cats.first(where: { $0.id == id }), let photo = copied.photoName
         else { throw Failure.assertion("automatic creation") }
         try require(copied.usualFood == a.food && copied.handling == a.handling, "actual food and handling values")
@@ -133,10 +133,20 @@ struct CareHandoffFixtureView: View {
         care.editCat(id) { $0.usualFood = ""; $0.handling = "今回の接し方" }
         evacuation.editCat(a.id) { $0.food = "もっと新しいフード"; $0.handling = "別の接し方" }
         _ = try care.refreshCandidates(id, using: evacuation)
-        try require(care.addCat(using: evacuation, sourceCatID: a.id) == id, "same identity reopens instead of importing again")
+        try require(care.addCat(using: evacuation, sourceCatID: a.id, access: .beta) == id, "same identity reopens instead of importing again")
+        let expired = MembershipActionAccess(enforcementEnabled: true, personal: .inactive)
+        let beforeDeniedCreation = care.plan
+        try require(care.addCat(using: evacuation, sourceCatID: a.id, access: expired) == id,
+                    "expiry keeps existing saved identity accessible")
+        try require(care.addCat(using: evacuation, sourceCatID: b.id, access: expired) == nil,
+                    "expiry blocks new saved identity")
+        try require(care.addCat(profileID: UUID().uuidString, name: "新規", access: expired) == nil,
+                    "expiry blocks new profile")
+        try require(care.addCat(access: expired) == nil && care.plan == beforeDeniedCreation && care.saveError == nil,
+                    "denied blank creation neither saves nor becomes a storage error")
         let restarted = CareHandoffStore(directory: careDirectory)
         try require(restarted.plan.cats[0].usualFood == "" && restarted.plan.cats[0].handling == "今回の接し方", "cleared and edited fields survive restart")
-        guard let secondID = care.addCat(using: evacuation, sourceCatID: b.id) else { throw Failure.assertion("second same-name cat") }
+        guard let secondID = care.addCat(using: evacuation, sourceCatID: b.id, access: .beta) else { throw Failure.assertion("second same-name cat") }
         try require(care.plan.cats.count == 2 && care.plan.cats.first(where: { $0.id == secondID })?.photoName == nil, "distinct identity; owner-only photo excluded")
         // Reverse direction retains structured meal values as text, without guessing.
         var c = CareCat(); c.name = "新しい猫"; c.profileID = "profile-c"
@@ -149,7 +159,7 @@ struct CareHandoffFixtureView: View {
         else { throw Failure.assertion("reverse autofill") }
         try require(reverse.food.contains("朝8時") && reverse.food.contains("20g") && reverse.handling == c.handling, "structured meal information retained")
         try require(reverse.medicalStatus == .unknown && reverse.medicalDetails.isEmpty && reverse.photos["face"] == nil, "no medical or invented photo role")
-        try require(care.addCat(profileID: c.profileID, using: evacuation) == c.id, "legacy identity does not create duplicate")
+        try require(care.addCat(profileID: c.profileID, using: evacuation, access: .beta) == c.id, "legacy identity does not create duplicate")
         let frozenEvacuation = try evacuation.shareRecord(catID: reverseID, disclosure: EvacuationDisclosure())
         care.editCat(c.id) { $0.meals[0].amount = "30g"; $0.handling = "新しい接し方" }
         try require(evacuation.plan.cats.first(where: { $0.id == reverseID }) == reverse, "stored evacuation unaffected by source edit")
@@ -191,13 +201,13 @@ struct CareHandoffFixtureView: View {
             throw Failure.assertion("failure source photo")
         }
         try FileManager.default.removeItem(at: evacuationDirectory.appendingPathComponent(brokenPhoto))
-        try require(failureTarget.addCat(using: evacuation, sourceCatID: reverseID) == nil
+        try require(failureTarget.addCat(using: evacuation, sourceCatID: reverseID, access: .beta) == nil
             && failureTarget.plan.cats.isEmpty && failureTarget.saveError != nil, "missing source photo refuses partial creation")
         let sourceBefore = evacuation.plan
         try Data("not-json".utf8).write(to: evacuationDirectory.appendingPathComponent("plan.json"))
         let brokenSource = EvacuationStore(directory: evacuationDirectory)
         let freshTarget = CareHandoffStore(directory: directory.appendingPathComponent("corrupt-source-target"))
-        try require(brokenSource.loadError != nil && freshTarget.addCat(using: brokenSource, sourceCatID: reverseID) == nil
+        try require(brokenSource.loadError != nil && freshTarget.addCat(using: brokenSource, sourceCatID: reverseID, access: .beta) == nil
             && freshTarget.plan.cats.isEmpty && evacuation.plan == sourceBefore, "unreadable source fails without changing records")
     }
 
@@ -211,7 +221,7 @@ struct CareHandoffFixtureView: View {
         var b = EvacuationCat(); b.profileID = "b"; b.name = "同名"; b.food = "別猫のフード"
         try require(source.update { $0.cats = [a, b] })
         let target = CareHandoffStore(directory: careDirectory)
-        guard let id = target.addCat(using: source, sourceCatID: a.id) else { throw Failure.invariant }
+        guard let id = target.addCat(using: source, sourceCatID: a.id, access: .beta) else { throw Failure.invariant }
         let before = target.plan
         source.editCat(b.id) { $0.food = "別猫の更新" }
         try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)

@@ -77,14 +77,20 @@ actor VeterinaryVisitStore {
         return try load().visits
     }
 
-    func current(catID: UUID, catName: String) throws -> VeterinaryVisit {
+    /// The UI supplies a live membership boundary around a new commit. This
+    /// Foundation-only store does not depend on SwiftUI or grant membership.
+    /// Returning an existing draft never invokes the creation boundary.
+    func current(catID: UUID, catName: String,
+                 create: @Sendable (_ commit: () throws -> Void) throws -> Void) throws -> VeterinaryVisit {
         Self.lock.lock(); defer { Self.lock.unlock() }
         var state = try load()
         if let existing = state.visits.first(where: { $0.catID == catID && $0.completedAt == nil }) { return existing }
         guard Self.validName(catName), state.visits.count < 100 else { throw VeterinaryVisitError.tooLarge }
         let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
-        state.visits.append(visit); try commit(state)
+        try create {
+            state.visits.append(visit); try commit(state)
+        }
         return visit
     }
 

@@ -23,7 +23,7 @@ private struct MembershipAccessVerifier {
         ]
         let personalOperations: [MembershipOperation] = [
             .automaticAlbums, .refreshPersonalWidget, .createPersonalMemo,
-            .createWindow
+            .createWindow, .presentCatPhotos, .createCareMemo, .createVeterinaryVisit
         ]
         require(
             Set(free + personalOperations + [.addSharedContent])
@@ -96,12 +96,34 @@ private struct MembershipAccessVerifier {
             ("invalid cached date", .indeterminate(lastVerifiedUntil: invalid), .verificationRequired)
         ]
         for (label, state, expected) in personalCases {
+            for operation in personalOperations {
             require(
-                decision(.createPersonalMemo, personal: state,
+                decision(operation, personal: state,
                          window: .verified(validUntil: future)) == expected,
-                "Personal boundary failed: \(label)"
+                "Personal boundary failed: \(operation) / \(label)"
             )
+            }
         }
+
+        // A reference held before an async wait observes later revocation;
+        // denial must not run a creation/commit callback.
+        let live = MembershipActionAccess(enforcementEnabled: true,
+            personal: .verified(validUntil: Date.now.addingTimeInterval(60)))
+        require(live.decision(for: .createCareMemo) == .allowed, "Live grant not observed")
+        live.update(enforcementEnabled: true, personal: .inactive)
+        var commits = 0
+        for operation in [MembershipOperation.presentCatPhotos, .createCareMemo, .createVeterinaryVisit] {
+            do {
+                try live.perform(for: operation) { commits += 1 }
+                fatalError("Revocation admitted \(operation)")
+            } catch let denied as MembershipActionDenied {
+                require(denied.decision == .membershipRequired, "Revocation classification")
+            } catch { fatalError("Unexpected membership error") }
+        }
+        require(commits == 0, "Denied membership mutated data")
+        live.update(enforcementEnabled: false, personal: .checking)
+        try! live.perform(for: .createCareMemo) { commits += 1 }
+        require(commits == 1, "Beta commit blocked")
 
         // Each party uses the same window authority: paying personally is neither
         // sufficient nor required for adding content to a supported window.

@@ -79,7 +79,15 @@ private struct MembershipAccessEnvironmentKey: EnvironmentKey {
     static let defaultValue = MembershipAccessContext(enforcementEnabled: MembershipAccessContext.enforcementConfigured)
 }
 
+private struct MembershipActionsEnvironmentKey: EnvironmentKey {
+    static let defaultValue = MembershipActionAccess(enforcementEnabled: MembershipAccessContext.enforcementConfigured)
+}
+
 extension EnvironmentValues {
+    var membershipActions: MembershipActionAccess {
+        get { self[MembershipActionsEnvironmentKey.self] }
+        set { self[MembershipActionsEnvironmentKey.self] = newValue }
+    }
     var membershipAccess: MembershipAccessContext {
         get { self[MembershipAccessEnvironmentKey.self] }
         set { self[MembershipAccessEnvironmentKey.self] = newValue }
@@ -171,6 +179,21 @@ private struct MembershipFeatureGate: ViewModifier {
 }
 
 extension View {
+    func membershipActionNotice(_ decision: Binding<MembershipAccessDecision?>) -> some View {
+        sheet(isPresented: Binding(get: { decision.wrappedValue != nil },
+            set: { if !$0 { decision.wrappedValue = nil } })) {
+            NavigationStack {
+                if let value = decision.wrappedValue {
+                    MembershipAccessNotice(decision: value)
+                        .navigationTitle("会員プラン").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) {
+                            Button("閉じる") { decision.wrappedValue = nil }
+                        } }
+                }
+            }
+        }
+    }
+
     func membershipFeature(_ operation: MembershipOperation, hasContent: Bool = true) -> some View {
         modifier(MembershipFeatureGate(operation: operation, hasContent: hasContent))
     }
@@ -188,6 +211,14 @@ struct MembershipAccessFixture: View {
     @State private var editingNew = false
     @State private var state: MembershipPersonalState = .inactive
     @State private var beta = false
+    private let actions = MembershipActionAccess(enforcementEnabled: true, personal: .inactive)
+    private let care = CareHandoffStore(directory: FileManager.default.temporaryDirectory
+        .appendingPathComponent("membership-care-\(UUID().uuidString)"))
+    private let evacuation = EvacuationStore(directory: FileManager.default.temporaryDirectory
+        .appendingPathComponent("membership-evacuation-\(UUID().uuidString)"))
+    private let veterinary = VeterinaryVisitStore(directory: FileManager.default.temporaryDirectory
+        .appendingPathComponent("membership-veterinary-\(UUID().uuidString)"))
+    private let catID = UUID(uuidString: "AB000000-0000-0000-0000-000000000001")!
     private var context: MembershipAccessContext {
         .init(enforcementEnabled: !beta, personal: state)
     }
@@ -195,13 +226,28 @@ struct MembershipAccessFixture: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink("お世話メモの確認") {
+                    CareHandoffView(profiles: [], unregisteredPhotos: [], store: care, reuseStore: evacuation)
+                }.accessibilityIdentifier("membership-care")
+                NavigationLink("診察メモの確認") {
+                    VeterinaryVisitsView(photos: [], noteStore: store, store: veterinary,
+                        careStore: care, evacuationStore: evacuation)
+                }.accessibilityIdentifier("membership-veterinary")
+                NavigationLink("ツール一覧の確認") { AppStoreScreenshotFixtureRootView() }
+                    .accessibilityIdentifier("membership-tools")
                 Button("既存メモを編集") { editingExisting = true }
                     .disabled(record == nil).accessibilityIdentifier("membership-existing")
                 Button("新しいメモ") { editingNew = true }
                     .accessibilityIdentifier("membership-new")
-                Button("確認不能") { state = .checking }
+                Button("確認不能") {
+                    state = .checking
+                    actions.update(enforcementEnabled: !beta, personal: state)
+                }
                     .accessibilityIdentifier("membership-unknown")
-                Button("現在のβ") { beta = true }
+                Button("現在のβ") {
+                    beta = true
+                    actions.update(enforcementEnabled: false, personal: state)
+                }
                     .accessibilityIdentifier("membership-beta")
                 Text(record?.note.text ?? "準備中")
                     .accessibilityIdentifier("membership-existing-text")
@@ -220,8 +266,13 @@ struct MembershipAccessFixture: View {
                 }
         }
         .environment(\.membershipAccess, context)
+        .environment(\.membershipActions, actions)
         .task {
             guard record == nil else { return }
+            if care.plan.cats.isEmpty {
+                _ = care.addCat(profileID: catID.uuidString, name: "ミケ", access: .beta)
+            }
+            _ = try? await veterinary.current(catID: catID, catName: "ミケ") { try $0() }
             if let note = try? await store.save(text: "窓辺で眠った日", for: "membership-existing-photo", expectedRevision: nil) {
                 record = try? await store.record(id: note.id)
             }

@@ -196,7 +196,14 @@ private enum PlusPurchaseRecordingFailure: Error {
 final class PlusPurchaseStore: ObservableObject {
     @Published private(set) var products: [Product] = []
     @Published private(set) var productAvailability: PlusProductAvailability
-    @Published private(set) var entitlementState: PlusEntitlementState
+    @Published private(set) var entitlementState: PlusEntitlementState {
+        didSet {
+            let access = MembershipAccessContext(entitlement: entitlementState)
+            membershipActions.update(enforcementEnabled: access.enforcementEnabled, personal: access.personal)
+        }
+    }
+    /// Updated synchronously with authority, independent of View lifetimes.
+    let membershipActions = MembershipActionAccess(enforcementEnabled: MembershipAccessContext.enforcementConfigured)
     @Published private(set) var isPurchasing = false
     @Published private(set) var isRestoring = false
     @Published private(set) var pendingProductID: String?
