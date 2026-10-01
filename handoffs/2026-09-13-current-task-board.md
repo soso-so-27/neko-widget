@@ -1,12 +1,15 @@
 # 現在のタスクと優先順位
 
-## 2026-10-01 会員案内：できること・無料範囲・終了後を明確化（進行中）
+## 2026-10-01 会員案内：できること・無料範囲・終了後を明確化（本線反映、内部232アップロード済み）
 
 - 最新main `f52764e` の別branch/clean checkoutから着手。初回製品コード作成は09:16:12 JST、初回候補 `49a6a65` は09:17:12 JST。会員案内の内容と、既存の読取テスト本文の撮影/可視確認だけを変更。表示契機、StoreKit商品/価格/無料期間、購入/復元、権利、保存、Widget、課金・一般公開・保管受付は変更しない。
 - 日替わりの一枚、猫写真をまとめて見返す、出来事/体重を残し病院用控えへ使う、の3つに便益を絞る。迷子・避難は折りたたみの外にも無料と表示。既存メモの閲覧/編集/書き出し、会員終了時の非削除、まどを支える会員の有効期間と招待相手の条件を現行実装へ照合。保管は別担当の実接続が未完であり、利用可能な会員特典へ追加しない。
-- 直接根拠は実装済み機能とMembershipAccessPolicy/既定OFF/購入モデルの不変diff。WindowsではSwiftUIを直接描画できず、追加文の折り返し・AX5の読み取り/閉じる・非申込の維持はまだ未確認。nativeで標準/AX5を撮影し、読取1操作を実行して確認する。購入完了/復元や他画面・Widgetの入力は変えないため、その操作一式を再実行しない。
+- 実装済み機能とMembershipAccessPolicy/既定OFF/購入モデルの不変diffへ照合。独立レビューに確定P1/P2なし。候補 `5b3085a61dd5f62fcd5aab8b1d4f7e0518b17b20` の[CI36797275013](https://github.com/soso-so-27/neko-widget/actions/runs/36797275013)で、既存 `testMembershipOfferExplainsExpiryWithoutChangingThePlan` 1メソッドが標準/AX5の両方を実行し、0失敗。native撮影を直接確認し、追加文の折り返し、無料範囲、終了後/招待条件の続き、スクロールと閉じる、非申込を確認。撮影結果は `C:/dev/neko-evidence/membership-copy-native-app-ui-20261001/ios-26-2/composer-screenshots/`。確認用プレビューの価格を実商品の購入検証とは扱わない。購入完了/復元や無関係な画面操作は再実行していない。
 - 制御用CI登録は別worktreeで独立レビューし先にmainへ反映する。製品2ファイル全文before/after・通常raw mode/typeと1メソッドの存在を固定し、Build/既存安全検査・Photos bootstrap・両OSruntimeを維持。未知差分や別テストへこの限定範囲を使わない。制御用成功をnative成功としない。
-- 時間計画は初回コード作成から45〜60分が目安。近い会員native描画17分58秒、直前upload11分53秒を参考とするが、新しい1操作範囲の実測ではない。レビュー/制御確認/失敗/並行main/配布待機を含めて記録。完了条件は実描画・必要CI・本線反映・内部TestFlightのAppleアップロード。Apple処理完了/実機表示、課金開始・保管完成とは区別する。
+- 制御PR126は別候補でローカル12suiteとUbuntu planのみ成功し、先にmainへ反映。初期の単体検証期待値と全scopeの4job期待値漏れを修正した後、製品2ファイルの完全4digest・既存1メソッドを独立レビュー。並行mainの制御更新は依存する安価な検証だけ再確認し、入力不変の成功済み検証を繰り返さなかった。
+- 最初のnative attemptは20分59秒でPhotos bootstrapだけ失敗。権限はTCC/製品ログともauthorizedだったが、未変更のゼロ猫表示取得でXCTest snapshot timeout。CoreFS/Metal cache errorも観測したものの根本のhang原因は未確定。同SHAで失敗したPhotos jobだけ一度再実行し、Build/既存安全検査・iOS18.5/26.2 runtime・案内UIの成功を保持。2回目は実権限と初回案内に成功し、`simctl addmedia`の終了通知timeout後も二重取り込みせず、最終snapshotで3枚すべての新規fixtureとscan/生成物を確認して成功。Galleryは起動していない。初回CI開始から最終成功まで44分43秒で、失敗分を除いた短い成功時間へ読み替えない。
+- PR128をmerge commit `47a7b17623706b008257a3f3937b52cbf5c9c777` でmainへ反映。並行の保管サーバー修正の反映区間と調整し、候補SHAをmainのancestorに維持。dry-runで232が未使用、同SHAの成功CIと内部設定を確認し、同じ候補SHAの[内部TestFlight232](https://github.com/soso-so-27/neko-widget/actions/runs/36801521785)を2026-10-01 10:40:57 JSTにAppleへアップロード成功（実際の `UPLOAD SUCCEEDED with no errors` を確認）。archive・export・privacy・署名/App Group・内部runtime境界の検査も成功。配布run全体は9分24秒。既存の `--preservation-pilot` を維持し、一般公開・課金開始・保管サーバー設定/秘密値は変更しない。Apple処理完了・iPhone表示は未確認。
+- 当初の45〜60分は未達。権限確認の再実行時に約75分へ見直したが、その目安も超過した。初回コード作成09:16:12 JSTからApple成功まで84分45秒、初回commit09:17:12 JSTから83分45秒。レビュー/制御確認・局所修正・並行main・最初の失敗・同SHAの再実行・観測/配布待機を全て含み、CI開始からは61分20秒。監視の最大間隔を180秒から60秒へ変更して終了観測の遅延を抑えたが、CI/累計時刻はリセットしていない。完了条件はAppleアップロード成功で、Apple処理完了/実機表示、課金開始・保管完成とは区別する。完了記録はその後に反映し、記録だけの更新でnative/配布を繰り返さない。
 
 ## 2026-10-01 病院・体重：保存済みの猫を選ぶ（本線反映、231アップロード済み）
 
