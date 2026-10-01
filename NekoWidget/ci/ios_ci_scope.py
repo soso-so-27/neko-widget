@@ -678,7 +678,7 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
                                                                '7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda')}
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "d49048aea6fc15f4662e9683890764020f2fff0b3b89dcff331779955152cdb5",
+        "90f89ac5ffafc7abc51aa3a377e6b3e0d99af20f4173500952e7b24ec7eea3a1",
         "168b69f0f10ed82302796cef2fc1b135bdce01626bc41f41b497d362e6869f63"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
