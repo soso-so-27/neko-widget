@@ -278,7 +278,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
         raise ValueError("Full baseline reference is limited to the reviewed app UI profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
-    # A new backend allowlist (including preservation v22) is unmeasured even when its unchanged
+    # A new backend allowlist (including preservation v23) is unmeasured even when its unchanged
     # job has observations under an older scope (for example service v1/v2).
     if not samples:
         if use_full_baseline:
