@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export function renderLiveConfigs(snapshot, projectDirectory) {
   const settings = snapshot.settings;
@@ -15,6 +16,8 @@ export function renderLiveConfigs(snapshot, projectDirectory) {
   if (!Array.isArray(bindings) || bindings.some(b => !['secret_text', 'plain_text', 'd1', 'r2_bucket', 'ratelimit'].includes(b.type))) {
     throw new Error('Unmapped binding type; never discard an existing binding');
   }
+  if (new Set(bindings.map(b => b.name)).size !== bindings.length
+    || bindings.filter(b => b.type === 'd1').length !== 1) throw new Error('Unexpected or duplicate database binding');
   const db = bindings.find(b => b.name === 'DB' && b.type === 'd1');
   if (db?.id !== 'cb3b2386-3a6f-4253-b918-8aafed9ff735') throw new Error('Unexpected staging database');
   const vars = Object.fromEntries(bindings.filter(b => b.type === 'plain_text').map(b => [b.name, b.text]));
@@ -51,14 +54,14 @@ export function renderLiveConfigs(snapshot, projectDirectory) {
     services: [{ binding: 'BILLING_VERIFIER_SERVICE', service: 'neko-billing-verifier-disabled', entrypoint: 'BillingVerificationService' }],
     ratelimits: [
       { name: 'BILLING_RATE_LIMITER', namespace_id: '710004', simple: { limit: 10, period: 60 } },
-      { name: 'BILLING_APPLE_NOTIFICATION_RATE_LIMITER', namespace_id: '710005', simple: { limit: 120, period: 60 } },
+      { name: 'BILLING_APPLE_NOTIFICATION_RATE_LIMITER', namespace_id: '710005', simple: { limit: 30, period: 60 } },
     ],
     triggers: { crons: ['*/5 * * * *'] },
   };
   return { family, gateway };
 }
 
-if (process.argv[1] && import.meta.url === new URL('file:///' + resolve(process.argv[1]).replaceAll('\\', '/')).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [snapshotFile, projectDirectory, outputDirectory] = process.argv.slice(2);
   const configs = renderLiveConfigs(JSON.parse(await readFile(snapshotFile, 'utf8')), resolve(projectDirectory));
   for (const [name, config] of Object.entries(configs)) {

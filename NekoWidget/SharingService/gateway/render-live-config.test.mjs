@@ -40,6 +40,8 @@ test('family resources remain identical; private billing is Sandbox-only and ent
 
 test('unknown bindings, different account resources or partial deployment require investigation', () => {
   for (const change of [s => s.settings.bindings.push({type:'queue',name:'new'}),
+    s => s.settings.bindings.push({type:'d1',name:'other',id:'other'}),
+    s => s.settings.bindings.push({...s.settings.bindings[0]}),
     s => s.settings.bindings[4].id = 'wrong-account-db', s => s.subdomain.previews_enabled = true,
     s => s.deployments.deployments[0].versions[0].percentage = 50, s => s.routes.push({pattern:'new-route'})]) {
     const state = snapshot(); change(state); assert.throws(() => renderLiveConfigs(state, '/workspace'));
