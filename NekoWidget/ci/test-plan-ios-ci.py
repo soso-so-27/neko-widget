@@ -791,14 +791,16 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(tests, (
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+            "NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
         ))
-        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v3')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 3)
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v4')
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 7)
         self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 2)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 3)
         self.assertTrue(scope.memory_tests_available(scope.managed_validation_source(changes, scope.MEMORY_TEST_PATH), tests))
         with patch.object(scope, "managed_validation_source", return_value=""):
             with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
@@ -846,7 +848,7 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
-        legacy_jobs = [dict(job, name=job['name'].replace('-app-v3]', '-app-v2]')) for job in jobs]
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v4]', '-app-v3]')) for job in jobs]
         self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
