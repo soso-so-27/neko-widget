@@ -668,7 +668,7 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
  'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895',
                                                                '28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360'),
  'NekoWidget/NekoWidget/Views/PersonalArchiveView.swift': ('d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540',
-                                                           '01c865de1c7025a8b8a45c2e265b753541b2272457819fa67293bdcfbd8a58f8'),
+                                                           '5e837a6a4c50a0f646a1cd347406cbca89ca207c4e7db81de4d71a833141385e'),
  'NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift': ('fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5',
                                                                   'ae379c1dfdd47d88a9a32341c9482d38599d4c3ffaa4c896a385b2d8026d89a1'),
  'NekoWidget/NekoWidget/Views/SettingsView.swift': ('c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06',
@@ -678,11 +678,11 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "7e714118fe37eea8f29ea3b5726792323129b5907309a73a6de3be41159f952d",
-        "00476c4df861a713a5c716957034bd2c47c9e13069da294604848a77fe8d109f"
+        "74a6ffef72d5e91224edff34e623ce468047c50037df6cc59fd9ad573de185cc"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "733ec45fe974f0a4505263738223fd7d428dc9d581e0f24d759d781ae6e8fc2a",
-        "016057ab4b4cfd8f5f8e961d63e7cd73fabdc0e4ce70ab04638d90f30865c4bf"
+        "3dc7aa744e857fc2cada642ffb8c0ce491f7f54938285ba5f59b80d4c784b737"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "161dda88e2add0bb60e2a2726fa849735d39add7d46cb19d55ad3e896c2d85e4",
