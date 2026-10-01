@@ -88,8 +88,14 @@ struct SettingsView: View {
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
+    @State private var showsMembershipOffer = false
     @State private var showsMembershipPreview = false
     @State private var showsWindowSupportPreview = false
+
+    private var canOpenMembershipOffer: Bool {
+        PlusPurchaseConfiguration.current.isConfigured
+            && BillingClientConfiguration.current.isConfigured
+    }
 
     init(
         settings: SettingsPresentation,
@@ -276,14 +282,27 @@ struct SettingsView: View {
                 Text("プライバシーとサポート")
             }
 
-            if MembershipOfferPreviewAvailability.isAvailable {
+            if canOpenMembershipOffer {
                 Section {
                     Button {
-                        showsMembershipPreview = true
+                        showsMembershipOffer = true
                     } label: {
-                        Label("会員プランのプレビュー", systemImage: "sparkles")
+                        Label("会員プラン", systemImage: "sparkles")
                     }
-                    .accessibilityIdentifier("settings-membership-preview")
+                    .accessibilityIdentifier("settings-membership-offer")
+                }
+            }
+
+            if MembershipOfferPreviewAvailability.isAvailable {
+                Section {
+                    if !canOpenMembershipOffer {
+                        Button {
+                            showsMembershipPreview = true
+                        } label: {
+                            Label("会員プランのプレビュー", systemImage: "sparkles")
+                        }
+                        .accessibilityIdentifier("settings-membership-preview")
+                    }
                     Button {
                         showsWindowSupportPreview = true
                     } label: {
@@ -319,6 +338,13 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("設定")
+        .sheet(isPresented: $showsMembershipOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+        }) {
+            MembershipOfferSheet(model: .live()) { _ in
+                showsMembershipOffer = false
+            }
+        }
         .sheet(isPresented: $showsMembershipPreview) {
             MembershipOfferSheet(model: .preview()) { _ in
                 showsMembershipPreview = false
