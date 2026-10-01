@@ -48,6 +48,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
     case requestRejected, uploadTimedOut, servicePaused
+    case deletionNotReceived, deletionPending
 
     /// Fixed support codes only: never include a URL, owner, token or raw error.
     var preservationSupportCode: String {
@@ -70,6 +71,8 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .deletionNotReceived: "削除依頼の受付がまだ確認できません。受付結果を再確認するか、同じ依頼を再送してください。"
+        case .deletionPending: "この保管先は削除処理中です。削除状況を確認してください。"
         case .requestRejected: "保管先で送信データを受け付けられませんでした。元の写真とメモは端末に残っています。"
         case .uploadTimedOut: "保管先の応答が時間内に届きませんでした。保管結果を確認してください。"
         case .servicePaused: "保管先の受付が一時停止しています。保管済みの記録は引き続き開けます。"
@@ -467,6 +470,48 @@ actor ManagedPreservationClient {
         return SessionCheckpoint(epoch: epoch, credential: credential)
     }
 
+    func savedDeletionState() throws -> ManagedPreservationSessionStore.DeletionReceipt.State? {
+        try store.deletionReceipt()?.state
+    }
+
+    func requestAccountDeletion() async throws {
+        let checkpoint = try captureSessionCheckpoint()
+        let existing = try store.deletionReceipt()
+        guard existing == nil || (existing?.ownerId == checkpoint.credential.ownerId
+            && existing?.state == .unconfirmed) else { throw ManagedPreservationError.staleSession }
+        var generator = SystemRandomNumberGenerator()
+        let token = BillingProtocolCodec.base64URLEncode(Data((0..<32).map { _ in
+            UInt8.random(in: .min ... .max, using: &generator)
+        }))
+        let receipt = existing ?? .init(ownerId: checkpoint.credential.ownerId,
+                                        token: token, state: .unconfirmed)
+        if existing == nil { try store.saveDeletionReceipt(receipt, replacing: nil) }
+        let body = try JSONEncoder().encode(["confirmation": "delete-service-account", "receipt": receipt.token])
+        _ = try await request("POST", path: "/v1/account-deletion", body: body,
+                              token: checkpoint.credential.token, maximumBytes: 2048, expectedStatus: 202)
+        var accepted = receipt; accepted.state = .processing
+        try store.saveDeletionReceipt(accepted, replacing: receipt)
+        // Forget only the login that issued this request; keep the receipt.
+        if try store.clear(ifMatching: checkpoint.credential) {
+            credential = nil; loaded = true; challenge = nil; epoch &+= 1
+        }
+    }
+
+    func checkAccountDeletion() async throws -> ManagedPreservationSessionStore.DeletionReceipt.State {
+        guard let receipt = try store.deletionReceipt() else { throw ManagedPreservationError.staleSession }
+        struct Result: Decodable { let state: String }
+        let data = try await request("GET", path: "/v1/account-deletion/" + receipt.ownerId.lowercased(),
+                                     token: receipt.token, maximumBytes: 2048, expectedStatus: 200)
+        let result: Result = try decode(data)
+        guard let state = ManagedPreservationSessionStore.DeletionReceipt.State(rawValue: result.state),
+              state != .unconfirmed else { throw ManagedPreservationError.invalidResponse }
+        var updated = receipt; updated.state = state
+        try store.saveDeletionReceipt(updated, replacing: receipt)
+        return state
+    }
+
+    func dismissCompletedDeletion() throws { try store.dismissCompletedDeletion() }
+
     func requireSessionCheckpoint(_ checkpoint: SessionCheckpoint) throws {
         try ensureEpoch(checkpoint.epoch)
         guard try hasSession(), credential == checkpoint.credential,
@@ -762,6 +807,8 @@ actor ManagedPreservationClient {
                 let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
                 let code = failure?.code
                 switch code {
+                case "OWNER_DELETION_NOT_FOUND": throw ManagedPreservationError.deletionNotReceived
+                case "OWNER_DELETION_PENDING": throw ManagedPreservationError.deletionPending
                 case "PILOT_REGISTRATION_PENDING":
                     guard let reference = failure?.registrationReference, UUID(uuidString: reference) != nil else {
                         throw ManagedPreservationError.invalidResponse

@@ -23,6 +23,7 @@ enum PreservationFixtureScenario: Sendable {
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
     case requestRejected, saveTimedOut, unavailableMembership
+    case deletionResultLost
 }
 
 actor PreservationFixtureServer {
@@ -38,6 +39,8 @@ actor PreservationFixtureServer {
     var reads = 0
     var saves = 0
     var savedDocument: ManagedPreservationDocument?
+    var deletionToken: String?
+    var deletionChecks = 0
     var challenge: ManagedPreservationLinkChallenge?
     var seenNonces = Set<String>()
     var signedBodies: [Data] = []
@@ -55,8 +58,12 @@ actor PreservationFixtureServer {
         guard try store.save(other, replacing: session) else { throw ManagedPreservationError.staleSession }
     }
     func request(_ request: URLRequest, maximum: Int) async throws -> (Data, URLResponse) {
-        guard let url = request.url, url.host?.hasSuffix(".preservation-fixture.invalid") == true,
-              request.value(forHTTPHeaderField: "Authorization") == "Bearer " + session.token else {
+        guard let url = request.url, url.host?.hasSuffix(".preservation-fixture.invalid") == true else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let deletionStatus = request.httpMethod == "GET" && url.path == "/v1/account-deletion/" + session.ownerId
+        let expectedToken = deletionStatus ? deletionToken : session.token
+        guard let expectedToken, request.value(forHTTPHeaderField: "Authorization") == "Bearer " + expectedToken else {
             throw ManagedPreservationError.invalidResponse
         }
         func reply(_ data: Data, code: Int = 200) throws -> (Data, URLResponse) {
@@ -68,6 +75,21 @@ actor PreservationFixtureServer {
             try reply(JSONSerialization.data(withJSONObject: body), code: code)
         }
         func fail(_ code: String, status: Int) throws -> (Data, URLResponse) { try json(["error": ["code": code]], code: status) }
+        if request.httpMethod == "POST", url.path == "/v1/account-deletion" {
+            let input = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String]
+            guard input?.keys.sorted() == ["confirmation", "receipt"],
+                  input?["confirmation"] == "delete-service-account", let token = input?["receipt"],
+                  token.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            deletionToken = token
+            if scenario == .deletionResultLost { throw URLError(.networkConnectionLost) }
+            return try json(["ownerId": session.ownerId, "state": "processing"], code: 202)
+        }
+        if deletionStatus {
+            deletionChecks += 1
+            return try json(["state": deletionChecks < 2 ? "processing" : "completed"])
+        }
         if request.httpMethod == "DELETE", url.path == "/v1/auth/session" { return try reply(Data(), code: 204) }
         if request.httpMethod == "POST", url.path == "/v1/membership/challenges" {
             issues += 1
@@ -222,6 +244,7 @@ struct PreservationNativeFixture: Sendable {
     func cleanup() throws {
         // This exact newly generated fixture origin cannot address a real account.
         if let current = try store.load() { _ = try store.clear(ifMatching: current) }
+        if try store.deletionReceipt()?.state == .completed { try store.dismissCompletedDeletion() }
     }
 }
 

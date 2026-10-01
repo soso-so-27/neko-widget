@@ -2493,6 +2493,39 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testManagedPreservationAccountDeletionRetainsReceiptAndCompletes() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--managed-preservation-membership-ui-fixture",
+            "--preservation-account-deletion-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        func tap(_ label: String) {
+            let button = app.buttons.matching(identifier: label).firstMatch
+            for _ in 0..<10 where !button.isHittable { app.swipeUp() }
+            XCTAssertTrue(button.waitForExistence(timeout: 8), label)
+            XCTAssertTrue(button.isHittable, label)
+            button.tap()
+        }
+        XCTAssertTrue(app.buttons["preservation-membership-connect"].waitForExistence(timeout: 15))
+        tap("preservation-account-delete")
+        XCTAssertTrue(app.buttons["preservation-account-delete-confirm"].waitForExistence(timeout: 5))
+        app.buttons["キャンセル"].tap()
+        XCTAssertFalse(app.buttons["受付結果を確認"].exists)
+        tap("preservation-account-delete")
+        tap("preservation-account-delete-confirm")
+        XCTAssertTrue(app.buttons["受付結果を確認"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["保管サービスのアカウントを削除しました"].exists)
+        capture("preservation-account-delete-response-lost")
+        tap("受付結果を確認")
+        XCTAssertTrue(app.staticTexts["アカウントを削除しています"].waitForExistence(timeout: 8))
+        tap("削除状況を確認")
+        XCTAssertTrue(app.staticTexts["保管サービスのアカウントを削除しました"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["preservation-account-delete"].exists)
+        capture("preservation-account-delete-completed")
+        app.terminate()
+    }
+
+    @MainActor
     func testManagedPreservationLostCopyResultShowsConfirmationAndStoredState() {
         continueAfterFailure = false
         let app = XCUIApplication()

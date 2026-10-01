@@ -11,6 +11,7 @@ struct ManagedPreservationView: View {
     @StateObject private var exporter: RecordExportController
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmsDeletion = false
+    @State private var confirmsAccountDeletion = false
     @State private var needsResume = false
     @State private var confirmsMembershipLink = false
     @State private var confirmsDraftDiscard = false
@@ -84,6 +85,14 @@ struct ManagedPreservationView: View {
         } message: {
             Text("この保管先からは取り戻せません。端末の元の写真・メモは削除しません。")
         }
+        .confirmationDialog("保管サービスのアカウントを削除しますか？",
+                            isPresented: $confirmsAccountDeletion, titleVisibility: .visible) {
+            Button("アカウントと保管したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }
+                .accessibilityIdentifier("preservation-account-delete-confirm")
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("サービスに保管した写真・メモと復旧用コピーをすべて削除し、Appleとの連携を解除します。取り消せません。必要な記録は先に書き出してください。端末の写真・メモ、以前のiCloud保管、まどの写真は残ります。会員の定期購読は別途Appleで解約してください。")
+        }
         .confirmationDialog("この保管先に会員情報を接続しますか？",
                             isPresented: $confirmsMembershipLink, titleVisibility: .visible) {
             Button("確認して接続する") { coordinator.connectMembership(consent: true) }
@@ -117,7 +126,11 @@ struct ManagedPreservationView: View {
                     }.font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if !coordinator.isSignedIn { authenticationSection }
+            if let deletion = coordinator.accountDeletionState {
+                accountDeletionSection(deletion)
+                if deletion == .unconfirmed && !coordinator.isSignedIn { authenticationSection }
+            }
+            else if !coordinator.isSignedIn { authenticationSection }
             else if coordinator.selected != nil { detailSection }
             else {
                 if let draft = coordinator.draft { newCopySection(draft) }
@@ -160,16 +173,48 @@ struct ManagedPreservationView: View {
                     }
                 }
             }
-            if coordinator.isSignedIn {
+            if coordinator.isSignedIn && coordinator.accountDeletionState == nil {
                 Section {
                     Button("この端末の保管用ログインを解除", role: .destructive) { coordinator.signOut() }
                         .disabled(coordinator.isBusy)
+                    if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
+                        Button("保管サービスのアカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
+                            .disabled(coordinator.hasUnsecuredMemo)
+                            .accessibilityIdentifier("preservation-account-delete")
+                    }
                 } footer: {
                     Text("保管記録や会員契約は削除・解約されません。別の本人として使う前に解除してください。")
                 }
             }
         }
         .disabled(coordinator.isBusy || exporter.preparing || exporter.payload != nil)
+    }
+
+    private func accountDeletionSection(_ state: ManagedPreservationSessionStore.DeletionReceipt.State) -> some View {
+        Section {
+            switch state {
+            case .unconfirmed:
+                Text("削除の受付を確認しています")
+                Text("通信が途切れたため、受付結果を確認してください。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("受付結果を確認") { coordinator.checkAccountDeletion() }
+                if coordinator.isSignedIn {
+                    Button("削除依頼を再送", role: .destructive) { coordinator.deleteServiceAccount() }
+                }
+            case .processing:
+                Text("アカウントを削除しています")
+                Text("保管した写真・メモと復旧用コピーを削除しています。この画面を閉じても処理は続きます。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("削除状況を確認") { coordinator.checkAccountDeletion() }
+            case .completed:
+                Label("保管サービスのアカウントを削除しました", systemImage: "checkmark.circle")
+                Button("閉じる") { coordinator.dismissCompletedDeletion() }
+            }
+            Link("Appleのサブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+        } footer: {
+            Text("端末の写真・メモ、以前のiCloud保管、まどの写真は残ります。会員の定期購読はこの操作では解約されません。")
+        }
+        .accessibilityIdentifier("preservation-account-deletion-status")
     }
 
     private var authenticationSection: some View {
@@ -494,6 +539,7 @@ struct ManagedPreservationMembershipFixture: View {
     @State private var fixture: PreservationNativeFixture?
     @State private var failure: String?
     private var testsCopyResult: Bool { CommandLine.arguments.contains("--preservation-copy-result-ui-fixture") }
+    private var testsAccountDeletion: Bool { CommandLine.arguments.contains("--preservation-account-deletion-ui-fixture") }
 
     private var fixtureDraft: ManagedPreservationDraft? {
         guard testsCopyResult else { return nil }
@@ -514,7 +560,8 @@ struct ManagedPreservationMembershipFixture: View {
             guard fixture == nil else { return }
             do {
                 if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
-                fixture = try PreservationNativeFixture.make(testsCopyResult ? .pilotCopyResultLost : .firstFailure)
+                fixture = try PreservationNativeFixture.make(testsAccountDeletion ? .deletionResultLost
+                    : testsCopyResult ? .pilotCopyResultLost : .firstFailure)
             }
             catch { failure = "試験用の保管画面を準備できませんでした。" }
         }
