@@ -534,6 +534,7 @@ final class UnrelatedUITests: XCTestCase {
             'NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto',
             'NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion',
             'NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText',
+            'NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource',
         ))
         self.assertEqual(planner.required_jobs_from_scope(selected), (
             planner.BUILD, planner.BOOTSTRAP_SMOKE,

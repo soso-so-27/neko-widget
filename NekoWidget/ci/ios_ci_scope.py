@@ -674,24 +674,24 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/SharingRuntimeSe
                                                                   'ae379c1dfdd47d88a9a32341c9482d38599d4c3ffaa4c896a385b2d8026d89a1'),
  'NekoWidget/NekoWidget/Views/SettingsView.swift': ('c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06',
                                                     '1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd'),
- 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7',
-                                                               '9aaaef9b5f855adeecee6ec9a9e256134ad3bf492e175517fa0e09ba888b99a7')}
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('50384f1e84dc9c28df1296a70c9c4e01ad1d99344c5c47f560316330ff5f03e4',
+                                                               '7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda')}
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "7e714118fe37eea8f29ea3b5726792323129b5907309a73a6de3be41159f952d",
-        "74a6ffef72d5e91224edff34e623ce468047c50037df6cc59fd9ad573de185cc"
+        "d49048aea6fc15f4662e9683890764020f2fff0b3b89dcff331779955152cdb5",
+        "168b69f0f10ed82302796cef2fc1b135bdce01626bc41f41b497d362e6869f63"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "0f0d8ff7f55ed0f01005638aa13a9c474e5279b0dc878ed36ceed271025babf4",
+        "09435a810fea234cf1cf9760e2a2ebfc0d89820a85d1a06342543d32cc6a4b67"
+    ],
+    "NekoWidget/ci/test-ci-lanes.py": [
+        "acfbdb8a98eecb982ba2baa36a54d8e5b91b4d0a723e50775ca9bbdb16b148e3",
+        "837880fe3b94358cbb9479c5f2b488f4f11e20451cac9a0fe4a754212f892691"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "733ec45fe974f0a4505263738223fd7d428dc9d581e0f24d759d781ae6e8fc2a",
-        "3dc7aa744e857fc2cada642ffb8c0ce491f7f54938285ba5f59b80d4c784b737"
-    ],
-    "NekoWidget/ci/test-ci-lanes.py": [
-        "161dda88e2add0bb60e2a2726fa849735d39add7d46cb19d55ad3e896c2d85e4",
-        "6867d351bf4cc7af645b4f86ef450f297ca07a42e245e7cd8d25cdf4e4d0c7ef"
-    ],
-    "NekoWidget/ci/test-plan-ios-ci.py": [
-        "dd153b8a638e10ccce7a9c74d02930a9d71067b3d0862a8e40c2777e3cb2ea84",
-        "ffbbb3d4c58999e36f346396873a318efe98ab98f6442eb7d505b5b4e978ef78"
+        "90f8782618128dbb20e05a2b3af2c058174ceff8070a8419c1c15dc87d917565"
     ]
 }
 
@@ -2494,6 +2494,7 @@ REVIEWED_MANAGED_PRESERVATION_TESTS = (
     'NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto',
     'NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion',
     'NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText',
+    'NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource',
 )
 ARCHIVE_PICKER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
     "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
@@ -2812,8 +2813,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     if reviewed_delivery_membership_changes(changes, managed=True):
         runtime = changes["NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"][1]
         validator = managed_validation_source(changes, "NekoWidget/ci/validate-sharing-runtime-self-test.py")
-        return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 6
-                and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 6
+        return (REVIEWED_MANAGED_PRESERVATION_SCOPE if len(REVIEWED_MANAGED_PRESERVATION_TESTS) == 7
+                and len(set(REVIEWED_MANAGED_PRESERVATION_TESTS)) == 7
                 and memory_tests_available(managed_validation_source(changes, MEMORY_TEST_PATH), REVIEWED_MANAGED_PRESERVATION_TESTS)
                 and len(MANAGED_PRESERVATION_RUNTIME_CASES) == 3
                 and len(set(MANAGED_PRESERVATION_RUNTIME_CASES)) == 3

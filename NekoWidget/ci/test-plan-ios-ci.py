@@ -857,6 +857,7 @@ class PlanTests(unittest.TestCase):
             "NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
             "NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
             "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
+            "NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
         ))
         self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v5')
         self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 7)
