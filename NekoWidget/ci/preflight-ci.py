@@ -343,10 +343,12 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                 "decision": "Handoff paths do not trigger iOS CI", "ready": True}
     selected = planner.runtime_scope(paths, event, env)
     required = planner.required_jobs(paths, selected)
-    if selected == planner.ORCHESTRATION_SCOPE:
+    if selected in (planner.ORCHESTRATION_SCOPE, planner.RELEASE_PREP_SCOPE):
         return {"head": head, "base": comparison, "changed_files": paths,
                 "scope": selected, "required_jobs": list(required),
-                "reason": "CI control plane only; Python checks, no Mac jobs or upload",
+                "reason": ("Frozen internal Sandbox release preparation; Python and mocked runtime checks only, no Mac/archive/upload evidence"
+                           if selected == planner.RELEASE_PREP_SCOPE else
+                           "CI control plane only; Python checks, no Mac jobs or upload"),
                 "ready": not include_upload, "release_evidence": False,
                 "note": "The plan job has a 5 minute execution limit; queue time is separate. Not a measured release duration."}
     if required == (planner.BUILD,) and selected != "app-icon-v1":

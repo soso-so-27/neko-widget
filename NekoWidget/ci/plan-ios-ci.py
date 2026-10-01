@@ -444,6 +444,36 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
     return True
 
 
+RELEASE_PREP_SCOPE = "internal-billing-release-prep-v1"
+RELEASE_PREP_WORKFLOW = ".github/workflows/ios-build.yml"
+RELEASE_PREP_WORKFLOW_DIGEST = ""
+RELEASE_PREP_PRODUCTS = {}
+RELEASE_PREP_PATHS = frozenset(RELEASE_PREP_PRODUCTS)
+RELEASE_PREP_COMPANION_PATHS = JPEG_COMPANION_PATHS
+RELEASE_PREP_COMPANION_DIGESTS = {}
+
+
+def release_prep_paths_only(paths):
+    return backend_paths_only(paths, RELEASE_PREP_PATHS, RELEASE_PREP_WORKFLOW,
+                              RELEASE_PREP_COMPANION_PATHS)
+
+
+def release_prep_only(paths, base, head):
+    # One frozen preparation batch, not native/archive/StoreKit evidence.
+    # The exact full release workflow and helpers are independently reviewed.
+    # No Swift, plist, project, signing credentials or other product may mix in.
+    if not RELEASE_PREP_PRODUCTS:
+        return False
+    for path, pair in RELEASE_PREP_PRODUCTS.items():
+        if list(map(source_digest, (git("show", f"{ref}:{path}") for ref in (base, head)))) != pair:
+            return False
+    return backend_only(paths, base, head, product_paths=RELEASE_PREP_PATHS,
+                        workflow=RELEASE_PREP_WORKFLOW, workflow_digest=RELEASE_PREP_WORKFLOW_DIGEST,
+                        companion_paths=RELEASE_PREP_COMPANION_PATHS,
+                        bindings=RELEASE_PREP_COMPANION_DIGESTS,
+                        binding_name="RELEASE_PREP_COMPANION_DIGESTS")
+
+
 def orchestration_only(paths, base, head):
     """Python control-plane changes run Python tests, never native UI tests.
 
@@ -487,6 +517,8 @@ def orchestration_only(paths, base, head):
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
+    if runtime_scope == RELEASE_PREP_SCOPE and release_prep_paths_only(paths):
+        return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
@@ -700,7 +732,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         return FULL_SCOPE
     for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
                                        (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only),
-                                       (BILLING_SCOPE, billing_paths_only, billing_backend_only)):
+                                       (BILLING_SCOPE, billing_paths_only, billing_backend_only),
+                                       (RELEASE_PREP_SCOPE, release_prep_paths_only, release_prep_only)):
         if not matches(paths):
             continue
         try:
@@ -1216,7 +1249,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
