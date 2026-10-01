@@ -96,7 +96,8 @@ export class S3PurgeManifestStore {
       headers: { 'x-amz-expected-bucket-owner': this.c.expectedAccountId, ...headers },
       ...(body ? { body: body as BodyInit } : {}) });
     const signed = await signer.sign();
-    return this.fetcher(signed.url, { method: signed.method, headers: signed.headers,
+    const send = this.fetcher;
+    return send(signed.url, { method: signed.method, headers: signed.headers,
       body: signed.body ?? null, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
   }
 
@@ -226,7 +227,8 @@ export class S3PurgeManifestStore {
         ...(this.c.sessionToken ? { sessionToken: this.c.sessionToken } : {}), allHeaders: true,
         headers: { 'x-amz-expected-bucket-owner': this.c.expectedAccountId } });
       const signed = await signer.sign();
-      const response = await this.fetcher(signed.url, { method: 'GET', headers: signed.headers,
+      const send = this.fetcher;
+      const response = await send(signed.url, { method: 'GET', headers: signed.headers,
         redirect: 'manual', signal: AbortSignal.timeout(30_000) });
       if (response.status !== 200 || !response.body) throw unavailable();
       const xml = new TextDecoder('utf-8', { fatal: true }).decode(
