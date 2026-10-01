@@ -144,6 +144,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     let canExport: Bool
     @Published private(set) var isSignedIn = false
     @Published private(set) var isBusy = false
+    @Published private(set) var accountDeletionState: ManagedPreservationSessionStore.DeletionReceipt.State?
     @Published private(set) var errorMessage: String?
     @Published private(set) var statusMessage: String?
     @Published private(set) var preparedSignIn: ManagedPreservationChallenge?
@@ -206,6 +207,19 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard isEnabled else { return }
         run { ticket in
             self.clearAccountPresentation()
+            self.accountDeletionState = try await self.client.savedDeletionState()
+            if self.accountDeletionState != nil {
+                if self.accountDeletionState != .completed && self.accountDeletionState != .requestedElsewhere {
+                    do { self.accountDeletionState = try await self.client.checkAccountDeletion() }
+                    catch ManagedPreservationError.deletionNotReceived {
+                        try await self.client.reloadSessionFromSecureStorage()
+                        self.isSignedIn = try await self.client.hasSession()
+                        if !self.isSignedIn { self.preparedSignIn = try await self.client.prepareSignIn() }
+                        throw ManagedPreservationError.deletionNotReceived
+                    }
+                }
+                return
+            }
             try await self.client.reloadSessionFromSecureStorage()
             let authenticated = try await self.client.hasSession()
             try self.check(ticket)
@@ -270,6 +284,39 @@ final class ManagedPreservationCoordinator: ObservableObject {
             try await self.client.signOut()
             try self.check(ticket)
             self.statusMessage = "この端末の保管用ログインを解除しました。保管記録は削除していません。"
+        }
+    }
+
+    func deleteServiceAccount() {
+        guard !isBusy, !hasUnsecuredMemo else { return }
+        run { ticket in
+            do {
+                try await self.client.requestAccountDeletion()
+                try self.check(ticket)
+                self.clearAccountPresentation()
+                self.accountDeletionState = try await self.client.savedDeletionState()
+            } catch {
+                self.accountDeletionState = try? await self.client.savedDeletionState()
+                throw error
+            }
+        }
+    }
+
+    func checkAccountDeletion() {
+        run { ticket in
+            let state = try await self.client.checkAccountDeletion()
+            try self.check(ticket)
+            self.clearAccountPresentation()
+            self.accountDeletionState = state
+        }
+    }
+
+    func dismissCompletedDeletion() {
+        run { ticket in
+            try await self.client.dismissCompletedDeletion()
+            try self.check(ticket)
+            self.accountDeletionState = nil
+            self.preparedSignIn = try await self.client.prepareSignIn()
         }
     }
 

@@ -932,21 +932,19 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(scope.select_scope(dict(changes, **{scope.REVIEW_MANIFEST: ('{}', json.dumps(old_review))})), scope.FULL_SCOPE)
         tests = scope.native_tests(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
         self.assertEqual(tests, (
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries",
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
-            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
-            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
-            "NekoWidgetUITests/SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationDisabledHidesEntries',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry',
+            'NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes',
+            'NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferExplainsExpiryWithoutChangingThePlan',
         ))
-        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v5')
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 7)
+        self.assertEqual(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 'reviewed-managed-preservation-app-v6')
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_PATHS), 9)
         self.assertFalse(scope.MANAGED_PRESERVATION_NEW_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/Services/BillingClientCore.swift", scope.MANAGED_PRESERVATION_PATHS)
         self.assertNotIn("NekoWidget/NekoWidget/NekoWidget.entitlements", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertNotIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
-        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 3)
+        self.assertIn("NekoWidget/NekoWidget/Views/FamilyRecordView.swift", scope.MANAGED_PRESERVATION_PATHS)
+        self.assertEqual(len(scope.MANAGED_PRESERVATION_COMPANION_PATHS), 6)
         self.assertTrue(scope.memory_tests_available(scope.managed_validation_source(changes, scope.MEMORY_TEST_PATH), tests))
         with patch.object(scope, "managed_validation_source", return_value=""):
             with patch.object(scope, "MANAGED_PRESERVATION_DIGESTS", product), \
@@ -994,7 +992,7 @@ class PlanTests(unittest.TestCase):
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
         self.assertFalse(planner.covers_jobs(jobs, required, base))
-        legacy_jobs = [dict(job, name=job['name'].replace('-app-v5]', '-app-v4]')) for job in jobs]
+        legacy_jobs = [dict(job, name=job['name'].replace('-app-v6]', '-app-v5]')) for job in jobs]
         self.assertFalse(planner.covers_jobs(legacy_jobs, required, self.sha))
         for index in range(len(jobs)):
             self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, self.sha))
@@ -2971,10 +2969,14 @@ class TestCorrectionReuseTests(unittest.TestCase):
     def test_managed_pilot_correction_excludes_product_and_fixture_changes(self):
         self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.REVIEWED_MANAGED_PRESERVATION_SCOPE)
 
+    def test_managed_deletion_correction_excludes_product_and_fixture_changes(self):
+        self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(
+            scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes")
+
     def test_vet_correction_excludes_product_fixture_other_methods_and_unmerged_controls(self):
         self.test_only_existing_owned_test_bodies_and_ci_controls_may_change(scope.VET_SAVED_CAT_SCOPE)
 
-    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE):
+    def test_only_existing_owned_test_bodies_and_ci_controls_may_change(self, selected_scope=scope.LOST_CAT_UX_SCOPE, body_method=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def git(*args):
@@ -2990,14 +2992,16 @@ class TestCorrectionReuseTests(unittest.TestCase):
                     "commit", "-qm", "fixture")
                 return git("rev-parse", "HEAD")
             git("init", "-q")
-            names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState"]
+            names = (["testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+                      "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"]
                      if selected_scope == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
                      ["testVeterinarySelectionIsExplicitAndRemovalKeepsSource"] if selected_scope == scope.VET_SAVED_CAT_SCOPE else
                      sorted(scope.LOST_CAT_PHOTO_TEST_NAMES))
             before = ("final class SoloMemoriesUITests: XCTestCase {\n"
                       + "".join(f"    func {name}() {{\n        XCTAssertTrue(true)\n    }}\n"
                                 for name in names) + "}\n")
-            after = before.replace("XCTAssertTrue(true)", "XCTAssertTrue(false)", 1)
+            needle = f"func {body_method or names[0]}() {{\n        XCTAssertTrue(true)"
+            after = before.replace(needle, needle.replace("XCTAssertTrue(true)", "XCTAssertTrue(false)"), 1)
             test_path = scope.MEMORY_TEST_PATH
             control = "NekoWidget/ci/plan-ios-ci.py"
             product = "NekoWidget/NekoWidget/Views/CatPreparednessView.swift"

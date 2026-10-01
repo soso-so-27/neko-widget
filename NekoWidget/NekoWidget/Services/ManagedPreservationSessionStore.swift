@@ -25,6 +25,79 @@ struct ManagedPreservationSessionStore: Sendable {
 
     let origin: String
 
+    struct DeletionReceipt: Codable, Equatable, Sendable {
+        enum State: String, Codable, Equatable, Sendable { case unconfirmed, resolvingPending, processing, completed, requestedElsewhere }
+        let ownerId: String
+        let token: String
+        var state: State
+
+        func validated() throws -> Self {
+            guard UUID(uuidString: ownerId) != nil,
+                  token.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
+                throw ManagedPreservationError.secureStorage
+            }
+            return self
+        }
+    }
+
+    private var deletionQuery: [CFString: Any] {
+        var item = query
+        item[kSecAttrService] = "jp.nekowidget.managed-preservation.deletion-receipt.v1"
+        return item
+    }
+
+    func deletionReceipt() throws -> DeletionReceipt? {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return try readDeletionReceipt()
+    }
+
+    private func readDeletionReceipt() throws -> DeletionReceipt? {
+        var request = deletionQuery
+        request[kSecReturnData] = true; request[kSecMatchLimit] = kSecMatchLimitOne
+        var value: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &value)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = value as? Data, data.count <= 4096 else {
+            throw ManagedPreservationError.secureStorage
+        }
+        return try JSONDecoder().decode(DeletionReceipt.self, from: data).validated()
+    }
+
+    /// Persist before sending the irreversible request. A lost response or an
+    /// expired login must not lose the ability to check this request's result.
+    func saveDeletionReceipt(_ receipt: DeletionReceipt, replacing expected: DeletionReceipt?) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard try readDeletionReceipt() == expected else { throw ManagedPreservationError.staleSession }
+        let data = try JSONEncoder().encode(receipt.validated())
+        let attributes: [CFString: Any] = [kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        let status = SecItemUpdate(deletionQuery as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { throw ManagedPreservationError.secureStorage }
+        var item = deletionQuery
+        attributes.forEach { item[$0.key] = $0.value }
+        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw ManagedPreservationError.secureStorage }
+    }
+
+    func dismissCompletedDeletion() throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard let state = try readDeletionReceipt()?.state,
+              state == .completed || state == .requestedElsewhere else { throw ManagedPreservationError.staleSession }
+        let status = SecItemDelete(deletionQuery as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw ManagedPreservationError.secureStorage }
+    }
+
+    /// Only the caller with proof of rejection before acceptance may clear an
+    /// unconfirmed receipt. A status 404 or transport error is not that proof.
+    func clearRejectedDeletion(_ expected: DeletionReceipt) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard expected.state == .unconfirmed, try readDeletionReceipt() == expected else {
+            throw ManagedPreservationError.staleSession
+        }
+        let status = SecItemDelete(deletionQuery as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw ManagedPreservationError.secureStorage }
+    }
+
     /// No photograph or session token is copied into this owner-bound recovery item.
     struct PendingMemo: Codable, Identifiable, Sendable {
         let id: UUID

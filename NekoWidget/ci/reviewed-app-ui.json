@@ -1,37 +1,45 @@
 {
   "schemaVersion": 1,
-  "scope": "reviewed-managed-preservation-app-v5",
-  "purpose": "Retire new iCloud saves; explicitly prepare the selected existing copy for service preservation and retain legacy editing/export/deletion",
+  "scope": "reviewed-managed-preservation-app-v6",
+  "purpose": "Owner-requested deletion with durable receipt and explicit confirmation; live-config gated membership entry",
   "visualReview": "native-ui-required",
-  "dataReview": "internal-pilot-apple-owner-storage-restore-export-boundary",
+  "dataReview": "owner-deletion-receipt-and-membership-entry-boundary",
   "files": {
-    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
-      "before": "87941966bfed6314adc92d5c6e83134b8cfd3e30bbed2c9129dc8ef95c29866f",
-      "after": "cbf51bb695be8631a01867fbb46377ec289599756bc6da990176435aa3c51668"
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": {
+      "before": "2b2f498ea23894900a20cced27da58ec2dea6564cda126df8993a5fcb7c9c99f",
+      "after": "a67a83c01db86ef168fd3fa83aec95ffc0da300ff17409ef228ddf14772c9539"
     },
-    "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": {
-      "before": "65f97f337768e732f276f8c4b312374be3f0720b15b870893f948cb4923cb224",
-      "after": "958994a7ed7a893d61b99e70b0e5e9a87a5c1e63276bc6db8a8bc74741e1b089"
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": {
+      "before": "8830b922038147feaffa54a837c6d40aadb7a8dc0ea9cf96c29106952d2f046b",
+      "after": "53c7d26e1bf06aa256f342e9ada56769e21b5e1f363651613d9f43d506a0100c"
+    },
+    "NekoWidget/NekoWidget/Services/ManagedPreservationSessionStore.swift": {
+      "before": "15d4664391fec705aa54bd79b37e29dbe4e07b3df208c1adeeded191286cd05e",
+      "after": "2deb5d5fe4d43327b7c4439f7bbd285b9d4bc980d1f5b7769c6bc3687cff666b"
+    },
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": {
+      "before": "cbf51bb695be8631a01867fbb46377ec289599756bc6da990176435aa3c51668",
+      "after": "ff60014cc19c5cc54267352bf12160fff6dc0ee00244842ce09d58b7a41edaf0"
+    },
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": {
+      "before": "561297a3a8f16058b12b3926728815d56dee288e461663b4cf5da0e61dd48a0c",
+      "after": "c27206b64feae006ef08ec4ab5ee818273044874ecbe7cf63d29442de626b828"
     },
     "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": {
-      "before": "0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895",
-      "after": "28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360"
+      "before": "28cebd71d237fdaf50b7dc326346de0abd420d7980933497b1a9dd492c2eb360",
+      "after": "3801364b07b3a9b534c6151f6a4327be18e40133fc5fcd8ac2854e24f11549b7"
     },
-    "NekoWidget/NekoWidget/Views/PersonalArchiveView.swift": {
-      "before": "d1c2141f30c54064e9240fe47b980fbfc4ea2fa75cf5fc8a201811ac741ce540",
-      "after": "5e837a6a4c50a0f646a1cd347406cbca89ca207c4e7db81de4d71a833141385e"
-    },
-    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift": {
-      "before": "fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5",
-      "after": "ae379c1dfdd47d88a9a32341c9482d38599d4c3ffaa4c896a385b2d8026d89a1"
+    "NekoWidget/NekoWidget/Views/PairingView.swift": {
+      "before": "c1d3e05fe2bee6ba79c9462a7ab6d17f8ae8b605b976b580cdf764317172d25f",
+      "after": "e7af66f832525a7d918dfaba80ec594112075524ba7fc1d5c54fa4f7c3fde69a"
     },
     "NekoWidget/NekoWidget/Views/SettingsView.swift": {
-      "before": "c8ef00a70940ebd8b5d1e13022c50f47fc45436e29a93aebe8ba5e253fab2f06",
-      "after": "1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd"
+      "before": "1020846a398fc917f7e36ff65dceae9a1fbbdede7066ee85e623255357e9e7dd",
+      "after": "7df80ce7b72761e5fd2590ef82548dae1799cf5e7074d7c5c3c030d0ceb87577"
     },
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": {
-      "before": "50384f1e84dc9c28df1296a70c9c4e01ad1d99344c5c47f560316330ff5f03e4",
-      "after": "7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda"
+      "before": "7159e3e76da95f72ed457721f351fb3837199b5775cd3b3d9ac684b9c6279bda",
+      "after": "967e9cb9d51fc7da7740f47bcfc0415e0d49003c0a5436cfbe9218233ba77825"
     }
   }
 }
