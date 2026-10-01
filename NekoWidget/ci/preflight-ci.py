@@ -360,7 +360,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.JPEG_SCOPE else
               "Disabled preservation backend at one reviewed tree with frozen Node workflow; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_SCOPE else
-              "Private Sandbox purchase verifier/caller, frozen backend trees and Node workflow; no native or release evidence"
+              "Private Sandbox billing entrypoint and frozen deployed family adapter; unchanged verifier tree retained, no native or release evidence"
               if selected == planner.BILLING_SCOPE else
               "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else

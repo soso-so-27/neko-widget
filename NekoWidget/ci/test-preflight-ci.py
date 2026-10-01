@@ -57,7 +57,7 @@ class PreflightTests(unittest.TestCase):
     def test_private_billing_backend_cannot_authorize_native_upload(self):
         cost = preflight.observe_cost(planner.BILLING_SCOPE, self.history, False)
         self.assertEqual(cost["status"], "unmeasured")
-        self.assertEqual(cost["measurement_job_timeout_minutes"], 10)
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 5)
         for options in ({"include_upload": True}, {"include_upload": False, "use_full_baseline": True}):
             with self.assertRaises(ValueError):
                 preflight.observe_cost(planner.BILLING_SCOPE, self.history, **options)
