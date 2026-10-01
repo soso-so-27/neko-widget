@@ -17,12 +17,15 @@ import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { IntakeControl } from './intake-control';
 import { PilotControl } from './pilot-control';
 import { RecoveryWriteLease } from './recovery-write-lease';
+import { OwnerDeletionJournal } from './owner-deletion-journal';
+import { OwnerDeletionRequests } from './owner-deletion';
 
 export interface Env {
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
   GENERAL_STORAGE_MODE?: string;
+  OWNER_DELETION_ENABLED?: string;
   APPLE_AUTH_DIAGNOSTICS_UNTIL?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
@@ -43,6 +46,7 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  ownerDeletion?: OwnerDeletionRequests;
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
 interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
   ownerRecovery: OwnerRecoveryCopy;
@@ -74,7 +78,7 @@ const bearer = (request: Request) => {
   return match[1];
 };
 
-function configuredS3(env: Env): S3RecoveryCopy {
+export function configuredS3(env: Env): S3RecoveryCopy {
   if (!env.DB) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   return new S3RecoveryCopy({ enabled: env.RECOVERY_COPY_ENABLED ?? '',
     region: env.RECOVERY_S3_REGION ?? '', bucket: env.RECOVERY_S3_BUCKET ?? '',
@@ -82,7 +86,7 @@ function configuredS3(env: Env): S3RecoveryCopy {
     accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '',
     secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '',
     ...(env.RECOVERY_S3_SESSION_TOKEN ? { sessionToken: env.RECOVERY_S3_SESSION_TOKEN } : {}),
-  }, fetch, new RecoveryWriteLease(env.DB, () => Date.now()));
+  }, fetch, new RecoveryWriteLease(env.DB, () => Date.now(), new OwnerDeletionJournal(env.ARCHIVE)));
 }
 
 // Local tests inject dependencies. The public Worker always checks the gate.
@@ -105,6 +109,19 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  if (request.method === 'POST' && path === '/v1/account-deletion') {
+    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
+    const input = await body(request, 1024);
+    if (Object.keys(input).sort().join(',') !== 'confirmation,receipt'
+      || input.confirmation !== 'delete-service-account') throw new ServiceError('INVALID_REQUEST');
+    return response(await services.ownerDeletion.request(token, input.receipt), 202);
+  }
+  const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
+  if (request.method === 'GET' && deletionOwner) {
+    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
+    // This bearer is the device's deletion receipt, not an expired login.
+    return response(await services.ownerDeletion.status(deletionOwner, token));
+  }
   if (request.method === 'GET' && path === '/v1/notice-contact') {
     return response({ version: 1, ...await services.auth.noticeContact(token) });
   }
@@ -208,7 +225,9 @@ export function configuredServices(env: Env): Services {
   } catch {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
+  const deletionJournal = new OwnerDeletionJournal(env.ARCHIVE);
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now,
+    ownerDeletion: deletionJournal,
     ownerAdmission: admission,
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
@@ -218,6 +237,7 @@ export function configuredServices(env: Env): Services {
     ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
+    ownerWriteLease: new RecoveryWriteLease(env.DB, now, deletionJournal),
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS),
     ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
@@ -230,7 +250,10 @@ export function configuredServices(env: Env): Services {
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
     ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
-  return { auth, archive, verifier, membership, ...(retention ? { retention } : {}),
+  return { auth, archive, verifier, membership,
+    ...(env.OWNER_DELETION_ENABLED === 'YES' ? { ownerDeletion: new OwnerDeletionRequests({
+      db: env.DB, journal: deletionJournal, auth, now }) } : {}),
+    ...(retention ? { retention } : {}),
     ...(ownerRecovery ? { ownerRecovery } : {}) };
 }
 
