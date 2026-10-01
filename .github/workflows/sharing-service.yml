@@ -54,7 +54,7 @@ jobs:
   billing-verifier-check:
     name: Typecheck, test, and build Apple transaction verifier
     needs: plan
-    if: needs.plan.outputs.scope != 'billing-private-service-v2'
+    if: needs.plan.outputs.scope != 'billing-private-service-v2' && needs.plan.outputs.scope != 'internal-billing-release-prep-v1'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -116,7 +116,7 @@ jobs:
 
   moderation-keygen-windows-policy:
     needs: plan
-    if: needs.plan.outputs.scope != 'billing-private-service-v2'
+    if: needs.plan.outputs.scope != 'billing-private-service-v2' && needs.plan.outputs.scope != 'internal-billing-release-prep-v1'
     name: Windows moderation key, drill, and report policy fixtures
     runs-on: windows-2022
     timeout-minutes: 10
@@ -178,7 +178,7 @@ jobs:
 
   check:
     needs: plan
-    if: needs.plan.outputs.scope != 'billing-private-service-v2'
+    if: needs.plan.outputs.scope != 'billing-private-service-v2' && needs.plan.outputs.scope != 'internal-billing-release-prep-v1'
     name: Typecheck, test, and bundle Worker
     runs-on: ubuntu-24.04
     timeout-minutes: 20

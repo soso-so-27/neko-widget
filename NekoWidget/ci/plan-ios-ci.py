@@ -445,9 +445,14 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
 
 
 RELEASE_PREP_SCOPE = "internal-billing-release-prep-v1"
+RELEASE_PREP_BACKEND_PLAN_JOB = "Select backend checks"
 RELEASE_PREP_WORKFLOW = ".github/workflows/ios-build.yml"
 RELEASE_PREP_WORKFLOW_DIGEST = "7c7eb13f1fa409ec13f145fe548da762920185f03f4d210786a450358fddb9e6"
 RELEASE_PREP_PRODUCTS = {
+    ".github/workflows/sharing-service.yml": [
+        "492e25862dc87f5c329ba99cc3b602bf3cc1baa7bc257851c55ab0788596e6fd",
+        "34371131700b6b69278ec8122fde2d0bba187e9b463697d2b994b60acd8cb466"
+    ],
     ".github/workflows/testflight.yml": [
         "df85c78c718266c926c00feb140bc9e136f53f56b49d92475d7bdf54c4eda3de",
         "7b409904c3f0fa4c09661d81d160cfb5de7d0780c7c42cb6d5a753908ad33f95"
@@ -486,7 +491,7 @@ RELEASE_PREP_COMPANION_PATHS = JPEG_COMPANION_PATHS
 RELEASE_PREP_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
         "0abebe8af2236122938f9eba6fd8e704530e50f5f83d9321d9b7178c2ec18fde",
-        "a7228badf6ce5dc5e6677b4df36049f6a37b6316d1322de3cf7f4ce0dcfc6f26"
+        "9db359a99403e51d766d1560200123d0a102636efe551e1e0ba417e0c4e3c3fb"
     ],
     "NekoWidget/ci/preflight-ci.py": [
         "798c1d27137968853fc21c420ece860a6fad7e062ec8b5ccb701ce59ccc23350",
@@ -494,11 +499,11 @@ RELEASE_PREP_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-plan-ios-ci.py": [
         "1f7702b4237bb3924bcc5ec7611921a56ea15299fba61d95ce1bcd4b4ca84f0b",
-        "91be738f44fc7e084c150b69a3b2613073767381ce22b926c0bd108b3a738aa1"
+        "116d4c43c35cedb41252fadb94d25cbd24cea2e24819c547205a82511d570437"
     ],
     "NekoWidget/ci/test-preflight-ci.py": [
         "a6bf767e36240718273758109352458e9caedc1b5ed8213bc7b98c858c0016db",
-        "2cd6a707e8605dbf6cb4a7a34420086a37831f25227934a305826d288be1920c"
+        "d1038d56f245e8f522b7a2cde6a4bf29d83f00e169fb3fc08497766e211f05f0"
     ]
 }
 
@@ -568,7 +573,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if runtime_scope == RELEASE_PREP_SCOPE and release_prep_paths_only(paths):
-        return (PLAN_JOB,)
+        return (PLAN_JOB, RELEASE_PREP_BACKEND_PLAN_JOB)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):

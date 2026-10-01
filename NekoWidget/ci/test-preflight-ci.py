@@ -32,7 +32,7 @@ class PreflightTests(unittest.TestCase):
                     patch.object(planner, "changed_paths", return_value=paths), \
                     patch.object(planner, "runtime_scope", return_value=planner.RELEASE_PREP_SCOPE):
                 result = preflight.candidate_plan("origin/main", 30, upload, self.history)
-            self.assertEqual(result["required_jobs"], [planner.PLAN_JOB])
+            self.assertEqual(result["required_jobs"], [planner.PLAN_JOB, planner.RELEASE_PREP_BACKEND_PLAN_JOB])
             self.assertEqual(result["ready"], not upload)
             self.assertFalse(result["release_evidence"])
             self.assertIn("no Mac/archive/upload evidence", result["reason"])
