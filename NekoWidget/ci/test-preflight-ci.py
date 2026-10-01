@@ -24,6 +24,21 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_internal_release_preparation_plan_cannot_authorize_upload(self):
+        paths = sorted(planner.RELEASE_PREP_PATHS)
+        for upload in (False, True):
+            with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
+                    patch.object(planner, "comparison_base", return_value="b" * 40), \
+                    patch.object(planner, "changed_paths", return_value=paths), \
+                    patch.object(planner, "runtime_scope", return_value=planner.RELEASE_PREP_SCOPE):
+                result = preflight.candidate_plan("origin/main", 30, upload, self.history)
+            self.assertEqual(result["required_jobs"], [planner.PLAN_JOB])
+            self.assertEqual(result["ready"], not upload)
+            self.assertFalse(result["release_evidence"])
+            self.assertIn("no Mac/archive/upload evidence", result["reason"])
+        with self.assertRaises(ValueError):
+            preflight.observe_cost(planner.RELEASE_PREP_SCOPE, self.history, True)
+
     def test_private_data_exclusion_explains_kept_checks_without_claiming_unmeasured_speed(self):
         paths = ["NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"]
         with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \

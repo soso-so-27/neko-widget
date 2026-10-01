@@ -272,7 +272,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE, planner.RELEASE_PREP_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):

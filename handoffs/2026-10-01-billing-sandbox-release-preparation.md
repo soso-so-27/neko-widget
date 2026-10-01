@@ -24,6 +24,10 @@
 
 ## 次の実行順序
 
+### 本線へ入れる準備用CIの候補
+
+2026-10-01 20:37 JST頃にCI経路の候補を作成。製品側の最初の候補からの経過はリセットしない。`internal-billing-release-prep-v1`は配布workflowと8 helper/testの完全before/after、plan workflow全文、4 companionを固定した一回限りの準備用分類。Swift・Info.plist・Config・project・署名鍵・他製品の変更は含めず、混在時は拒否する。既存planのPython確認と追加のpilot設定・通常beta境界・mocked runtime確認をUbuntuで実行し、Mac・Widget gallery・archive・uploadは起動しない。既存74件の成功と追加したscope/配布不可の2件を直接証拠にし、このCI成功をnativeや実購入の証拠には使わない。Linux上の新しいplan経路は未計測、実行timeoutは5分（queue時間や完了保証ではない）。Settingsのlive会員入口は別のnative候補24e0f72に保存し、この準備用候補へ混ぜない。
+
 1. 本線担当のGateway＋既存familyを保持する外側wrapperを先に統合し、通常の呼出経路の接続・署名・nonce・停止を確認する。担当は既存チャット「ねこのまど本線開発を開始」。Gateway候補は83fbee2d98bb0db6ec8aa5aa27bc894bcf6aafb2。実配備familyには旧billing client自体が無いため、従来の2関数修正だけでは接続できないことを確認した。2026-10-01 19:42頃、非公開Node単独probeの署名付き不正JWS拒否・nonce再送拒否・最終OFFは実環境で成功済みだが、これは通常caller接続やApple実購入の成功ではない。新規ホストは不要。
 2. 本候補をその最新mainへ追従させる。配布helper/runtime入力の変更に必要なCIを別候補で固定し、未知分類だから全Widget/UIを走らせる方法は採らない。native成功の入力不変を証明できない場合は未確認として必要な経路を選ぶ。既存成功を無条件に流用しない。
 3. サーバーreadinessとApple有料契約が揃った後、protected設定と固定SHA/未使用build/必要CIを照合し、CLIの`--preservation-pilot --billing-sandbox`でdry-run→内部版1回の配布。
