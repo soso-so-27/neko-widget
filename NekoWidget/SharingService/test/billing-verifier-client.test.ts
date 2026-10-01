@@ -10,6 +10,7 @@ import {
 } from "../src/billing-verifier-protocol";
 import {
   type VerifiedBillingTransaction,
+  loadVerifierConfig,
   verifyAppleTransactionViaService,
 } from "../src/billing-verifier-client";
 import type { Env } from "../src/env";
@@ -63,7 +64,7 @@ function verifierFetch(
       "http://127.0.0.1:8080/internal/v1/apple-transactions/verify",
     );
     expect(init?.method).toBe("POST");
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     const headers = new Headers(init?.headers);
     expect(headers.get("cf-access-client-id")).toBe("staging-verifier.access");
     expect(headers.get("cf-access-client-secret")).toBe("staging-access-secret");
@@ -106,6 +107,118 @@ function verifierFetch(
 }
 
 describe("Worker to Apple verifier client", () => {
+  function privateEnv(fetchBinding: (request: Request) => Promise<Response>): Env {
+    return {
+      ...testEnv,
+      ENVIRONMENT: "staging",
+      BILLING_VERIFIER_TRANSPORT: "private-binding",
+      BILLING_VERIFIER_ORIGIN: "https://billing-verifier.private.invalid",
+      BILLING_VERIFIER_SERVICE: { fetch: fetchBinding } as unknown as Fetcher,
+      BILLING_VERIFIER_ACCESS_CLIENT_ID: undefined,
+      BILLING_VERIFIER_ACCESS_CLIENT_SECRET: undefined,
+      BILLING_ANNUAL_PRODUCT_ID: undefined,
+    } as unknown as Env;
+  }
+
+  it("uses only the explicit private binding and accepts only the configured monthly product", async () => {
+    let publicCalls = 0;
+    let privateCalls = 0;
+    const expected = transaction();
+    const configured = privateEnv(async (request) => {
+      privateCalls += 1;
+      expect(request.url).toBe("https://billing-verifier.private.invalid/internal/v1/apple-transactions/verify");
+      expect(request.headers.has("cf-access-client-id")).toBe(false);
+      expect(request.headers.has("cf-access-client-secret")).toBe(false);
+      expect(request.redirect).toBe("manual");
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      expect(await verifyBillingVerifierTranscript(
+        secret,
+        request.headers.get("neko-billing-signature") ?? "",
+        billingVerifierRequestTranscript(
+          Number(request.headers.get("neko-billing-timestamp")),
+          request.headers.get("neko-billing-nonce") ?? "",
+          await bodySHA256(bytes),
+        ),
+      )).toBe(true);
+      const body = new TextEncoder().encode(JSON.stringify(expected));
+      const signature = await signBillingVerifierTranscript(secret,
+        billingVerifierResponseTranscript(request.headers.get("neko-billing-nonce") ?? "", 200, await bodySHA256(body)));
+      return new Response(body, { headers: { "Neko-Billing-Response-Signature": signature } });
+    });
+    const { protocolVersion: _ignored, ...normalized } = expected;
+    expect(await verifyAppleTransactionViaService("header.payload.signature", configured, async () => {
+      publicCalls += 1;
+      throw new Error("must never use public transport");
+    })).toEqual(normalized);
+    expect(loadVerifierConfig(configured).productIds).toEqual(new Set([testEnv.BILLING_MONTHLY_PRODUCT_ID]));
+    expect(privateCalls).toBe(1);
+    expect(publicCalls).toBe(0);
+  });
+
+  it("fails closed for missing bindings, wrong environments, ambiguous settings and binding failures", async () => {
+    let privateCalls = 0;
+    let publicCalls = 0;
+    const configured = privateEnv(async () => {
+      privateCalls += 1;
+      throw new Error("private service unavailable");
+    });
+    const publicFetch: typeof fetch = async () => {
+      publicCalls += 1;
+      throw new Error("must not fall back");
+    };
+    for (const overrides of [
+      { BILLING_VERIFIER_SERVICE: undefined },
+      { BILLING_VERIFIER_TRANSPORT: "PRIVATE-BINDING" },
+      { BILLING_VERIFIER_TRANSPORT: undefined },
+      { ENVIRONMENT: "production" },
+      { BILLING_STORE_ENVIRONMENT: "Production" },
+      { BILLING_VERIFIER_ORIGIN: "https://another-host.invalid" },
+      { BILLING_VERIFIER_ACCESS_CLIENT_ID: "unexpected" },
+      { BILLING_VERIFIER_ACCESS_CLIENT_SECRET: "unexpected" },
+      { BILLING_ANNUAL_PRODUCT_ID: "" },
+      { BILLING_ANNUAL_PRODUCT_ID: testEnv.BILLING_MONTHLY_PRODUCT_ID },
+    ]) {
+      await expect(verifyAppleTransactionViaService("header.payload.signature", { ...configured, ...overrides } as Env,
+        publicFetch)).rejects.toMatchObject({ code: "billing_configuration_unavailable", status: 503 });
+    }
+    expect(privateCalls).toBe(0);
+    await expect(verifyAppleTransactionViaService("header.payload.signature", configured, publicFetch))
+      .rejects.toMatchObject({ code: "billing_verifier_unavailable", status: 503 });
+    expect(privateCalls).toBe(1);
+    expect(publicCalls).toBe(0);
+  });
+
+  it("does not trust unsigned private responses or accept an unconfigured annual product", async () => {
+    const configured = privateEnv(async () => Response.json(transaction()));
+    await expect(verifyAppleTransactionViaService("header.payload.signature", configured))
+      .rejects.toMatchObject({ code: "billing_verifier_invalid_response", status: 503 });
+    const annual = privateEnv(async (request) => {
+      const body = new TextEncoder().encode(JSON.stringify(transaction({ productId: testEnv.BILLING_ANNUAL_PRODUCT_ID! })));
+      const signature = await signBillingVerifierTranscript(secret,
+        billingVerifierResponseTranscript(request.headers.get("neko-billing-nonce") ?? "", 200, await bodySHA256(body)));
+      return new Response(body, { headers: { "Neko-Billing-Response-Signature": signature } });
+    });
+    await expect(verifyAppleTransactionViaService("header.payload.signature", annual))
+      .rejects.toMatchObject({ code: "billing_verifier_invalid_response", status: 503 });
+  });
+
+  it("rejects redirects without forwarding private credentials or trusting a signed redirect", async () => {
+    for (const status of [301, 302, 307, 308]) {
+      let privateCalls = 0;
+      const configured = privateEnv(async (request) => {
+        privateCalls += 1;
+        expect(request.redirect).toBe("manual");
+        return new Response(null, { status, headers: { Location: "https://another-host.invalid" } });
+      });
+      await expect(verifyAppleTransactionViaService("header.payload.signature", configured))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response", status: 503 });
+      expect(privateCalls).toBe(1);
+      await expect(verifyAppleTransactionViaService("header.payload.signature", testEnv,
+        verifierFetch(transaction(), { status })))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response", status: 503 });
+    }
+  });
+
   it("authenticates both directions and revalidates normalized identity", async () => {
     const expected = transaction();
     const { protocolVersion: _ignored, ...normalized } = expected;
