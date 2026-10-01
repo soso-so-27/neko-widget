@@ -787,7 +787,6 @@ struct PhotoMemoryNoteDetailView: View {
             archivedRecord = nil
             archivedAccount = nil
             showsArchiveDetails = false
-            preserving = false
         }
         .onDisappear { access.stop() }
     }
