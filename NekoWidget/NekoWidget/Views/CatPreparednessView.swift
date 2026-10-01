@@ -1050,7 +1050,7 @@ struct LostCatDraftFixtureView: View {
         guard let first = candidates.first(where: { $0.id == "guest-tool-\(toolID.uuidString)" }),
               let other = candidates.first(where: { $0.id == "guest-tool-\(otherID.uuidString)" }) else { throw Failure.invariant }
         let info = try first.information(evacuation: evacuation, care: care)
-        try require(info.features == "茶白・しっぽが長い" && info.facePhoto != nil && info.bodyPhoto != nil)
+        try require(info.facePhoto != nil && info.bodyPhoto != nil)
         try require(try other.information(evacuation: evacuation, care: care).facePhoto == nil)
         // Relaunch changes only the source. The owning UI case must then prove
         // refresh of an untouched candidate and protection after manual editing.
@@ -1063,6 +1063,9 @@ struct LostCatDraftFixtureView: View {
             }
             return (evacuation, care, lost)
         }
+        // The initial source value belongs to first preparation only. Later
+        // launches deliberately retain the changed source for refresh checks.
+        try require(info.features == "茶白・しっぽが長い")
         let boundary = LostCatDraftStore(directory: directory.appendingPathComponent("boundary"), legacy: legacy)
         var refusedInvalidPhoto = false
         do { _ = try boundary.draft(for: "bad-photo", savedInformation: .init(facePhoto: Data("not a JPEG".utf8))) }
