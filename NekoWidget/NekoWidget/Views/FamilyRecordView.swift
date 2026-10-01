@@ -831,7 +831,7 @@ struct FamilyRecordView: View {
                 $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
             }
             if photos.isEmpty && currentEntryID != nil {
-                Section { Text("この写真の共有メモは開けません。写真の詳細に戻って、もう一度お試しください。") }
+                Section { Text("この写真のメモを開けません。写真の詳細に戻って、もう一度お試しください。") }
             } else if photos.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
