@@ -194,7 +194,8 @@ export function configuredServices(env: Env): Services {
       || !['staging', 'production'].includes(env.ENVIRONMENT ?? ''))) {
     throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
   }
-  const admission = general ? new IntakeControl(env.DB, now) : pilot;
+  const intakeControl = new IntakeControl(env.DB, now, { requireCostEvidence: general });
+  const admission = general ? intakeControl : pilot;
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   let recovery: RecordRecoveryCopy | undefined;
@@ -222,7 +223,7 @@ export function configuredServices(env: Env): Services {
     ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
     requireGlobalAdmissionLimit: true,
-    intakeControl: new IntakeControl(env.DB, now), requireIntakeControl: true,
+    intakeControl, requireIntakeControl: true,
     mutationAdmission: admission,
     ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
