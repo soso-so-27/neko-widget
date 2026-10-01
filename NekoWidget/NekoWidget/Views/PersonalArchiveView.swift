@@ -78,7 +78,7 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-guide")
             } footer: {
-                Text("写真の「…」から、選んだ写真とメモを保管できます。自分のiCloud容量を使います。")
+                Text("以前iCloudに保管した写真とメモを読み込めます。新しい保管は「サービスに保管」から行います。")
             }
 
             if isLoading || isWorking {
