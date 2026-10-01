@@ -2509,7 +2509,19 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["preservation-membership-connect"].waitForExistence(timeout: 15))
         tap("preservation-account-delete")
         XCTAssertTrue(app.buttons["preservation-account-delete-confirm"].waitForExistence(timeout: 5))
-        app.buttons["キャンセル"].tap()
+        capture("preservation-account-delete-confirmation")
+        let cancel = app.buttons["キャンセル"].firstMatch
+        if cancel.exists { cancel.tap() }
+        else {
+            // iOS 26 presents this confirmation as a popover. Its native
+            // dismissal region replaces the separate cancel row.
+            let dismissRegion = app.otherElements["PopoverDismissRegion"]
+            XCTAssertTrue(dismissRegion.waitForExistence(timeout: 5))
+            dismissRegion.tap()
+        }
+        let confirmation = app.buttons.matching(identifier: "preservation-account-delete-confirm").firstMatch
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: confirmation)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         XCTAssertFalse(app.buttons["受付結果を確認"].exists)
         tap("preservation-account-delete")
         tap("preservation-account-delete-confirm")
