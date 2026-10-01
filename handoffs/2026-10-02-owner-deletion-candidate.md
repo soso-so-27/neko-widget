@@ -1,4 +1,32 @@
-# 本人削除：接続候補（未配備）
+# 本人削除：非公開接続・アプリ検証完了、内部236アップロード成功
+
+## 現在の状態（2026-10-02 03:06 JST）
+
+以下の旧「未配備」「承認待ち」は作業経緯。現在は利用者の明示承認と1名の独立レビューを受け、PR151をmainへmerge済み。
+
+- 個人AWS `164892691568` に `neko-preservation-staging-version-eraser` を作成。権限は既存bucketの `recovery/v1/*` に対する `s3:DeleteObjectVersion` のみ。既存writerを変更せず、秘密値は暗号化保管し非公開executorだけに接続。
+- schema31、外部削除台帳sentinel、公開保管Worker `5284e6ae-f486-4a61-ac2d-5517b9cdc26d`、非公開executor `ea593aed-e713-4b8a-a149-c0a002a3e8e5` を配備。executorはURL/previewなし、HTTP404、5分ごとの実scheduled実行成功を観測。一般受付と実課金はOFFのまま。
+- 合成ownerのS3全世代削除・別owner保持を実AWSで確認。その後、実private inventory/KMS・S3・R2・D1へ接続した合成削除でcompleted、全対象不在、既存実記録1件不変を確認。Apple token失効のみ合成callbackであり、実本人のApple連携を試験解除していない。
+- backend候補 `985716a`、専用CI `36892637846` は75秒で成功。PR151 merge `2c811c2`。アプリはPR152。初回CI `36893711423` は26.3分でBuild/Photos/runtime成功、5UI中4成功。取消行のないiOS 26 popoverをテストが誤認したため、実AXを根拠に当該テスト本文を修正した。
+- 中間候補 `778da52` のUIだけ再実行 `36898215490` は7分14秒で取消。アプリのログイン解除と永久削除に同じ「記録は削除されません」のfooterが掛かっていると確認したため。Build成功直後・XCTest開始前で、テスト成功証拠は増えていない。footerを両操作の違いが明確な1文字列へ修正した最終候補 `2ae7df6ad1c2a105454cf1ed29ccec8bd53559d8` で通常v6の4job/5UIを実行する。製品入力が変わったので中間候補の成功3job再利用はしない。Widget galleryは対象外。
+- 旧失敗は固定run/SHA/1テスト/レビュー済み修正祖先と完全差分で「原因確認済み」と判定するだけで、診断成功・CI成功としない。後続失敗は引き続き停止し、配布には最終候補の全4job成功を要求する。新preflightは40件成功。`app-final-preflight.json` はready=true、旧失敗・取消を含むCI開始後46.8分と、次CI26.3分＋upload12.2分を記録。
+- 実ユーザーに残る旧失敗write lease2行は、session作成から253ms/242ms後、旧raw-fetch経路の送信前例外、診断previewの開始前/停止後という履歴を独立照合。01:56 JSTにexact write_id/owner_id/started_atで当該2行だけ解除した。lease 2→0、owner1/record1不変、object削除0。旧bundleの暗号学的一致は再取得できておらず、これは当時の配備・コード・実行記録を合わせた照合である。一般のlease保持条件は変えていない。
+- Apple契約ページの現在値はログイン期限切れで未取得。内部アップロードの妨げにはせず、実Sandbox購入・復元・期限切れの確認は別の未完事項として保持。
+- 購入Gatewayの7受付gateとprotected `BILLING_SANDBOX_ENABLED/SCOPE` はまだ準備段階。購入ON版の必須readinessを満たしたとは扱わない。本人削除を先に `--preservation-pilot` だけの内部版へ反映する。会員入口は構成が揃った版のみ有効になるため、この配布を実購入入口の配布完了とは報告しない。
+
+最終候補のCI：`36899697286`（開始02:28:59 JST）は22分6秒で成功。Build/Photos/両OS runtime/app-uiの4jobを実行成功し、UIは5件・失敗0件。削除の確認・通信切断時の受付・完了の実画像を確認した。1名の独立レビュアーが最終候補の製品・制御・全ハッシュ一致と、全4jobを維持することを確認済み。PR152をmerge commit `069548cfcfcf76501ea812718d920e7516b75b81` で本線反映し、候補のmain祖先関係を確認した。
+
+内部236の[run 36902663038](https://github.com/soso-so-27/neko-widget/actions/runs/36902663038)を1回だけdispatchし、03:02:59 JSTに実際の `UPLOAD SUCCEEDED with no errors` を確認した。runは03:03:05 JSTにsuccess、作成から10分13秒。配布元は固定候補 `2ae7df6`、CI証拠は上のrun。`--preservation-pilot` のみで、購入ONの `--billing-sandbox` は指定していない。既存の内部配布許可に基づき当該runのtestflight環境だけ承認した。Apple処理完了・236の実機表示・実Apple token失効は未確認。
+
+初回本人削除候補00:24:40からアップロード成功まで158.3分。会員入口候補10月1日22:37からは266.0分、保管完成作業全体の初回10月1日18:29:38からは513.4分。初回UI失敗26.3分、中間取消7分14秒、最終CI22分6秒、配布10分13秒と、その間の調査・修正・準備を含む。最終CIだけを総工数や時間短縮実績にしない。runner分は課金額ではない。
+
+残件は実Sandbox購入・購入復元・期限切れ、購入Gatewayの受付/protected設定、一般提供の容量と人数の確定。Apple契約の現在確認はApp Store Connectログイン切れで、再ログインを1回依頼済み。容量は[比較案](2026-10-02-preservation-capacity-comparison.md)を準備したが決定・配備していない。今回の本人削除完了を保管サービス全体の一般提供完了とは扱わない。
+
+証拠：`C:/dev/neko-evidence/owner-deletion-20261002/` 内の `cloud-connection-readback.json`、`executor-cron.json`、`live-deletion-chain.json`、`legacy-lease-reconciliation.json`、`app-final-preflight.json`、`app-final-ci.json`、`testflight-236.json`、`testflight-236-diagnostics/altool-upload.log`。削除UIの実画像は `app-final-ui/ios-26-2/composer-screenshots/manifest.json` に対応。実本人の写真を消す追試は依頼しない。
+
+## 以下は時点別の作業履歴
+
+現在の完了・残件は上段を優先する。以下の「未配備」「承認待ち」「lease残存」は当時の状態。
 
 ## 依頼と現在の境界
 
