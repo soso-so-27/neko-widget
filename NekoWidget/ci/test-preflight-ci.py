@@ -54,6 +54,14 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["unmapped_files"], [])
         self.assertTrue(result["ready"])
 
+    def test_private_billing_backend_cannot_authorize_native_upload(self):
+        cost = preflight.observe_cost(planner.BILLING_SCOPE, self.history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 10)
+        for options in ({"include_upload": True}, {"include_upload": False, "use_full_baseline": True}):
+            with self.assertRaises(ValueError):
+                preflight.observe_cost(planner.BILLING_SCOPE, self.history, **options)
+
     def test_preservation_cost_is_scope_specific_and_first_measurement_only(self):
         history = {**self.history, "observations": self.history["observations"] + [
             {"scope": planner.JPEG_SCOPE, "candidate_minutes": 0.8, "run_id": 3, "outcome": "success"},

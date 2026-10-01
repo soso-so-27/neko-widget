@@ -272,7 +272,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
@@ -308,8 +308,9 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                     "note": "Full-route historical maximum used for planning; this profile is unmeasured and this is not a runtime guarantee."}
         # Each exact service-tree profile (including v22's native S3 transport correction) measures its
         # own first run; earlier backend timings are not reused as evidence.
-        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE):
+        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
+                       else planner.BILLING_JOB_TIMEOUT_MINUTES if selected == planner.BILLING_SCOPE
                        else planner.PRESERVATION_JOB_TIMEOUT_MINUTES)
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeout_minutes": timeout,
@@ -357,6 +358,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.JPEG_SCOPE else
               "Disabled preservation backend at one reviewed tree with frozen Node workflow; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_SCOPE else
+              "Private Sandbox purchase verifier/caller, frozen backend trees and Node workflow; no native or release evidence"
+              if selected == planner.BILLING_SCOPE else
               "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else
               "Unmapped inputs require full checks" if selected == scope.FULL_SCOPE and unmatched else

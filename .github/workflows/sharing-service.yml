@@ -35,6 +35,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Select backend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.plan.outputs.runtime_scope }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python NekoWidget/ci/plan-ios-ci.py
+
   billing-verifier-check:
     name: Typecheck, test, and build Apple transaction verifier
     runs-on: ubuntu-24.04
@@ -63,7 +79,42 @@ jobs:
         shell: bash
         run: npm run check
 
+      - name: Install private Container and workerd test dependencies
+        run: |
+          npm ci --ignore-scripts --prefix NekoWidget/PreservationService
+          npm ci --ignore-scripts --prefix NekoWidget/BillingVerificationService/container
+      - name: Verify durable nonce and capability credential boundaries
+        working-directory: NekoWidget/BillingVerificationService/container
+        run: npm test
+      - name: Build nonroot Node image and private Worker without publishing
+        working-directory: NekoWidget/BillingVerificationService/container
+        run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/billing-container"
+
+  private-billing-caller:
+    name: Validate private billing caller
+    needs: plan
+    if: needs.plan.outputs.scope == 'billing-private-service-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts
+        working-directory: NekoWidget/SharingService
+      - run: npm run typecheck
+        working-directory: NekoWidget/SharingService
+      - run: npx --no-install vitest run test/billing-verifier-client.test.ts
+        working-directory: NekoWidget/SharingService
+      - run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/billing-caller"
+        working-directory: NekoWidget/SharingService
+
   moderation-keygen-windows-policy:
+    needs: plan
+    if: needs.plan.outputs.scope != 'billing-private-service-v1'
     name: Windows moderation key, drill, and report policy fixtures
     runs-on: windows-2022
     timeout-minutes: 10
@@ -124,6 +175,8 @@ jobs:
           npm run check:moderation-tool
 
   check:
+    needs: plan
+    if: needs.plan.outputs.scope != 'billing-private-service-v1'
     name: Typecheck, test, and bundle Worker
     runs-on: ubuntu-24.04
     timeout-minutes: 20
