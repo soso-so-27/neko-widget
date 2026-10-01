@@ -1,9 +1,16 @@
 {
   "as_of": "2026-10-01",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
-  "upload_minutes": 9.4,
-  "upload_run": 36801521785,
+  "upload_minutes": 12.917,
+  "upload_run": 36811777939,
   "upload_observations": [
+    {
+      "run_id": 36811777939,
+      "minutes": 12.917,
+      "build_number": 233,
+      "source_sha": "80ab1c1455700e73cdf852ceb7ad4faf07da76c8",
+      "apple_upload_succeeded_at": "2026-10-01T03:55:40Z"
+    },
     {
       "run_id": 36801521785,
       "minutes": 9.4,
@@ -61,6 +68,44 @@
     }
   ],
   "observations": [
+    {
+      "scope": "reviewed-tool-candidate-refresh-v1",
+      "candidate_minutes": 20.617,
+      "run_id": 36809836668,
+      "outcome": "success",
+      "runner_minutes": 63.95,
+      "source_sha": "80ab1c1455700e73cdf852ceb7ad4faf07da76c8",
+      "first_product_edit_at": "2026-10-01T02:02:35Z",
+      "first_product_candidate_at": "2026-10-01T02:15:55Z",
+      "main_merge_sha": "7f08643af982e431f167f716612da60cc82a133c",
+      "upload_run_id": 36811777939,
+      "build_number": 233,
+      "upload_minutes": 12.917,
+      "apple_upload_succeeded_at": "2026-10-01T03:55:40Z",
+      "first_edit_to_apple_upload_minutes": 113.083,
+      "first_candidate_to_apple_upload_minutes": 99.75,
+      "first_ci_to_apple_upload_minutes": 93.933,
+      "investigation_to_apple_upload_minutes_approx": 125.667,
+      "diagnostic_observations": [
+        {
+          "run_id": 36805474184,
+          "source_sha": "086ce7ba0b7f4d4ca95e8ead8851019e5e8ee7c8",
+          "minutes": 17.133,
+          "runner_minutes": 16.9,
+          "outcome": "failure",
+          "reason": "Added legacy-empty fixture compared the pre-save migration result with save-stamped updatedAt; Care/Evac native passed but this is not new-SHA release evidence."
+        },
+        {
+          "run_id": 36807771420,
+          "source_sha": "ea4192e589ea5d3d42e9f6cc778bd2bec6616aa4",
+          "minutes": 17.567,
+          "runner_minutes": 17.35,
+          "outcome": "failure",
+          "reason": "Updated source and manually edited public preview were captured, but relaunch fixture still required the initial source features after phase2 had changed them. Initial baseline assertion moved to first preparation only."
+        }
+      ],
+      "note": "First normal exact-ten-source graph. All four required native jobs passed; three owning UI cases executed with zero failures and both-OS runtime JSONs passed. Source-entry refresh, edited restart values, AX3 and independent photos/public exports were directly observed. Two prior failed diagnostics and three control companions remain in cumulative elapsed/cost; the20m37s normal graph alone is not end-to-end time. After the second fixture defect, no third17-minute focused probe was added: the mandatory normal three-case graph directly established the remaining relaunch behavior. Product/UI test bodies were unchanged by that DEBUG preparation correction. No Widget Gallery, purchase, backend/runtime/secrets or general release changes. Apple actual UPLOAD SUCCEEDED with no errors at03:55:40Z, same tested source SHA, internal media-staging and preservation pilot retained. Archive/export/privacy/signature/App Group/runtime boundary checks passed. Apple processing/device availability unverified. The90-120 minute implementation-to-upload plan took113m05s from first code edit,99m45s from first candidate. Investigation started about01:50Z, so whole-turn upload elapsed is approximately126min and is not represented as within120min. Records maintenance follows upload without repeating native or upload."
+    },
     {
       "scope": "reviewed-membership-copy-ui-v1",
       "candidate_minutes": 44.717,
