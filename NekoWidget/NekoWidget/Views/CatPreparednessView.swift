@@ -1041,7 +1041,7 @@ struct LostCatDraftFixtureView: View {
             try evacuation.replacePhoto(jpeg, catID: toolID, role: .face)
             try evacuation.replacePhoto(jpeg, catID: toolID, role: .body)
             try evacuation.replacePhoto(jpeg, catID: otherID, role: .withOwner)
-            guard let careID = care.addCat(using: evacuation, sourceCatID: toolID) else { throw Failure.invariant }
+            guard let careID = care.addCat(using: evacuation, sourceCatID: toolID, access: .beta) else { throw Failure.invariant }
             try require(care.update { $0.cats[0].important = "非公開の玄関の暗証番号"; $0.contact = "非公開の電話" })
             try require(care.plan.cats[0].id == careID)
         }

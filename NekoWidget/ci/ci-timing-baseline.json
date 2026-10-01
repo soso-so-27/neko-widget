@@ -76,6 +76,16 @@
   ],
   "observations": [
     {
+      "scope": "reviewed-membership-tools-v1",
+      "candidate_minutes": 20.483,
+      "run_id": 36822696936,
+      "outcome": "success",
+      "runner_minutes": 63.217,
+      "source_sha": "b1101234adabce2da4e16b33aa7a2a20a6ecd7cc",
+      "first_candidate_to_main_minutes": 43.183,
+      "note": "First fixed membership-tools graph: all four native jobs and five owning UI operations passed without retry. Care/Vet/showcase sheet screenshots directly inspected; existing records, unknown state, beta OFF and free emergency tools remain accessible. Widget Gallery was not selected. CI20m29s is not the43m11s implementation-to-main elapsed. TestFlight dispatch is pending parallel-preservation integration/order; no real purchase, tax submission or runtime activation."
+    },
+    {
       "scope": "reviewed-managed-preservation-app-v4",
       "candidate_minutes": 16.367,
       "run_id": 36812108506,

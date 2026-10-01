@@ -33,6 +33,7 @@ TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
+MEMBERSHIP_TOOLS_SCOPE = "reviewed-membership-tools-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
@@ -75,7 +76,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v5"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1344,7 +1345,91 @@ def app_data_changes(changes, *, project_source=None) -> bool:
     return True
 
 
-MAPPED_PATHS = (APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+# Fixed daily-tool membership batch against main 59de0a6. The complete
+# sources are independently reviewed; no rollout, product IDs, StoreKit,
+# Widget rotation/rendering, migration, server or workflow inputs change.
+# This is not a generic permission/storage exception. Control is merged
+# separately, and unknown/partial/mode/type changes retain full selection.
+MEMBERSHIP_TOOLS_DIGESTS = {
+    "NekoWidget/NekoWidget/App/AppRootView.swift": [
+        "67e6a7e150be3e061bef92dd63feae9f9ca1dff95e82b9b62c3a7e4611a247ae",
+        "3ac5424ddaf8cfbc1cf34a3c9038279b845118f41c948c8365244e6c679813d8"
+    ],
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": [
+        "8d2f1f301013c69d95bd5938d12ca45aa0d59fb13875dd10471b42520ffb884e",
+        "4ebc545e0d6fb5554ae1d7ebf9781944970b238f17b9edf3ad59ec90e6349093"
+    ],
+    "NekoWidget/NekoWidget/Services/CareHandoffStore.swift": [
+        "99813dceb50471f50602f59c3c3a377092588e7b20c504487f92e6190b197384",
+        "dd1a6eb44ab4ce55e3aed338db35f2c7bda20538d94dc7d7036297350c33e08d"
+    ],
+    "NekoWidget/NekoWidget/Services/MembershipAccessContext.swift": [
+        "0690f24faaa43234946953d2775cbc576cdd848959f0b68948debe38a99bb2f3",
+        "1130a1024591e002746ccc3ad412dd6b9e9890d1b485aade9f315cf5ceb1736b"
+    ],
+    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": [
+        "cd65fc08544973df139a3fc9a35e0ddb6827624001abbcc71b25cf0ec0e5f0a0",
+        "3a471ebfcbfa36a341e9808dd0bb457b86833c12cd6514c7753632c23547f4bb"
+    ],
+    "NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift": [
+        "4fbbd23ceb57600df7dadf001b92bc32e494972f2e4fad9eb7a2476d6dd82909",
+        "f5726e8b0781ca13d507cc7ad3e329a427b7e4fe10b2261429f8e52fa8af49cb"
+    ],
+    "NekoWidget/NekoWidget/Views/CareHandoffFixtureView.swift": [
+        "c7deb6a4b7381bb956c39bf5945da5ddebbafa95252d5488141ca36e3790d019",
+        "600c72d52ddd6a9ad5661b44b2edad4daff169c976996a9d296011bb911e0da8"
+    ],
+    "NekoWidget/NekoWidget/Views/CareHandoffView.swift": [
+        "ff57b6fefca8351b771494eebf5c6a83ba4e6ac9f60bc10528a021b8a9b24012",
+        "8ad08bb2c6df1338a47f2529ab3ec71fe80aa9ab2ce1b567755f8c84f10bc259"
+    ],
+    "NekoWidget/NekoWidget/Views/CatPreparednessView.swift": [
+        "9b85b12e80672facd0a23a3bdb8c2f4a3ba95816605847b34407a2d2651cc4ea",
+        "56a961baa035cb80bb10280d51fce4bbeb79a13fb8d733b199befe7c8ac42bff"
+    ],
+    "NekoWidget/NekoWidget/Views/MainTabView.swift": [
+        "6d6ea71b40a71708bfbb7ca3ea54a137ad961f2c8f38248d246fdad5454b408e",
+        "aa8e55091969edd238689ee4ad48a094020a1141bfef5552409de956ea115626"
+    ],
+    "NekoWidget/NekoWidget/Views/VeterinaryVisitView.swift": [
+        "9969a6d280886b6e4224d1a57bd41494728c47becf4bb74deb274de3197cf3d9",
+        "77568b9dbfd9714061f66ab716e8c4d1f9911be34d98976217911b0a0482672b"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7",
+        "50384f1e84dc9c28df1296a70c9c4e01ad1d99344c5c47f560316330ff5f03e4"
+    ],
+    "NekoWidget/Shared/MembershipAccessPolicy.swift": [
+        "df932aa88492e21407386dda36153991c7b5f4b63c769dbf203fc8847dd30a33",
+        "8e70178e1439e46bb02fce1db83f2ba5e78900de07ea9ade0802cda465d6cc4a"
+    ],
+    "NekoWidget/ci/verify-membership-access.swift": [
+        "c4d249ce17932482f218d3eb124de9b0439ab27521270f90711cee67f67472e4",
+        "9b1abc7405fe334c292d6ad3ba939ec4388d74ef23ea8645876c91340a97899f"
+    ],
+    "NekoWidget/ci/verify-veterinary-visits.swift": [
+        "bb98c00def1175edac683da2167237f4c8151d874c8cb3eea5a94988026ddc68",
+        "f4f86828329949883e9a4fe5fe56edd311c96ffee90cdd6d8360def4bb3a8d06"
+    ]
+}
+MEMBERSHIP_TOOLS_PATHS = frozenset(MEMBERSHIP_TOOLS_DIGESTS)
+MEMBERSHIP_TOOLS_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testMembershipDailyToolsKeepExistingRecordsAccessible",
+    "testMembershipShowcaseBoundaryKeepsEmergencyToolsFree",
+    "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
+    "testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart",
+    "testVeterinarySelectionIsExplicitAndRemovalKeepsSource",
+))
+
+
+def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == MEMBERSHIP_TOOLS_PATHS
+            and all(list(map(source_digest, changes[path])) == MEMBERSHIP_TOOLS_DIGESTS[path]
+                    for path in MEMBERSHIP_TOOLS_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
+
+
+MAPPED_PATHS = (MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2267,6 +2352,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == MEMBERSHIP_TOOLS_SCOPE:
+        return sources == MEMBERSHIP_TOOLS_PATHS
     if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
         return sources == TOOL_CANDIDATE_REFRESH_PATHS
     if scope == MEMBERSHIP_COPY_SCOPE:
@@ -2446,6 +2533,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == MEMBERSHIP_TOOLS_SCOPE:
+        return MEMBERSHIP_TOOLS_TESTS
     if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
         return TOOL_CANDIDATE_REFRESH_TESTS
     if scope == MEMBERSHIP_COPY_SCOPE:
@@ -2686,6 +2775,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_membership_tools_changes(changes):
+        return MEMBERSHIP_TOOLS_SCOPE
     if reviewed_tool_candidate_refresh_changes(changes):
         return TOOL_CANDIDATE_REFRESH_SCOPE
     if reviewed_tool_cat_autofill_changes(changes):

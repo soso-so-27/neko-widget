@@ -25,6 +25,68 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_daily_tool_membership_requires_exact_sources_and_owning_ui(self):
+        paths = sorted(scope.MEMBERSHIP_TOOLS_PATHS)
+        self.assertEqual(len(paths), 15)
+        self.assertEqual(len(scope.MEMBERSHIP_TOOLS_TESTS), 5)
+        changes = {path: ("before " + path, "after " + path) for path in paths}
+        declarations = "final class SoloMemoriesUITests: XCTestCase {\n" + "".join(
+            "    func " + name.rsplit("/", 1)[1] + "() {}\n" for name in scope.MEMBERSHIP_TOOLS_TESTS) + "}\n"
+        changes[scope.MEMORY_TEST_PATH] = ("old tests", declarations)
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        with patch.object(scope, "MEMBERSHIP_TOOLS_DIGESTS", bindings):
+            self.assertEqual(scope.select_scope(changes), scope.MEMBERSHIP_TOOLS_SCOPE)
+            for path in paths:
+                missing = dict(changes); del missing[path]
+                self.assertNotEqual(scope.select_scope(missing), scope.MEMBERSHIP_TOOLS_SCOPE)
+                for side in (0, 1):
+                    changed = dict(changes); pair = list(changed[path]); pair[side] += " changed"
+                    changed[path] = tuple(pair)
+                    self.assertEqual(scope.select_scope(changed), scope.FULL_SCOPE, (path, side))
+            for extra in ("NekoWidget/NekoWidget/Info.plist", ".github/workflows/ios-build.yml",
+                          "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", "NekoWidget/ci/ios_ci_scope.py",
+                          "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift"):
+                self.assertEqual(scope.select_scope(dict(changes, **{extra: ("old", "new")})), scope.FULL_SCOPE)
+            for test in scope.MEMBERSHIP_TOOLS_TESTS:
+                changed = copy.deepcopy(changes)
+                changed[scope.MEMORY_TEST_PATH] = ("old tests", declarations.replace(
+                    "    func " + test.rsplit("/", 1)[1], "    // func " + test.rsplit("/", 1)[1]))
+                rebound = dict(bindings); rebound[scope.MEMORY_TEST_PATH] = list(map(scope.source_digest, changed[scope.MEMORY_TEST_PATH]))
+                with patch.object(scope, "MEMBERSHIP_TOOLS_DIGESTS", rebound):
+                    self.assertEqual(scope.select_scope(changed), scope.FULL_SCOPE)
+            base = "b" * 40
+            def selected(modes=None, status="M", extra_raw=""):
+                modes = modes or {}
+                def git(*args):
+                    if args[0] == "diff":
+                        return "".join(f"{modes.get(path, ':100644 100644')} {'c' * 40} {'d' * 40} {status}\0{path}\0"
+                                       for path in paths) + extra_raw
+                    if args[0] == "show":
+                        ref, path = args[1].split(":", 1)
+                        return changes[path][0 if ref == base else 1]
+                    return self.sha
+                with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                    return planner.runtime_scope(paths, {}, self.env)
+            self.assertEqual(selected(), scope.MEMBERSHIP_TOOLS_SCOPE)
+            for path in paths:
+                for modes in (":100644 100755", ":100644 120000", ":000000 100644", ":100644 000000"):
+                    self.assertEqual(selected({path: modes}), scope.FULL_SCOPE)
+            for status in ("A", "D", "T", "R100", "C100"):
+                self.assertEqual(selected(status=status), scope.FULL_SCOPE)
+            self.assertEqual(selected(extra_raw=f":100644 100644 {'c' * 40} {'d' * 40} M\0{paths[0]}\0"), scope.FULL_SCOPE)
+        expected = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.MEMBERSHIP_TOOLS_SCOPE)
+        self.assertEqual(planner.required_jobs(paths, scope.MEMBERSHIP_TOOLS_SCOPE), expected)
+        self.assertEqual(scope.lanes(scope.MEMBERSHIP_TOOLS_SCOPE), ("runtime", "app-ui"))
+        self.assertEqual(scope.smoke_tests(scope.MEMBERSHIP_TOOLS_SCOPE),
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+        self.assertEqual(scope.lane_tests(scope.MEMBERSHIP_TOOLS_SCOPE, "app-ui"), scope.MEMBERSHIP_TOOLS_TESTS)
+        for gallery in scope.LANES[2:]:
+            with self.assertRaises(ValueError): scope.lane_tests(scope.MEMBERSHIP_TOOLS_SCOPE, gallery)
+        jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in expected]
+        self.assertTrue(planner.covers_jobs(jobs, expected, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
+        self.assertFalse(planner.covers_jobs(jobs, expected, "d" * 40))
+
     def test_tool_cat_autofill_requires_complete_frozen_sources_and_six_real_tests(self):
         paths = sorted(scope.TOOL_CAT_AUTOFILL_PATHS)
         self.assertEqual(len(paths), 9)

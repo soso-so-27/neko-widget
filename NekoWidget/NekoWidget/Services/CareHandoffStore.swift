@@ -62,7 +62,8 @@ final class CareHandoffStore: ObservableObject {
         }
     }
     func addCat(profileID: String? = nil, name: String = "",
-                using source: EvacuationStore? = nil, sourceCatID: UUID? = nil) -> UUID? {
+                using source: EvacuationStore? = nil, sourceCatID: UUID? = nil,
+                access: MembershipActionAccess) -> UUID? {
         if let profileID, let found = plan.cats.first(where: { $0.profileID == profileID }) { return found.id }
         guard plan.cats.count < 20, loadError == nil, saveError == nil, let repository else { return nil }
         // A selected saved cat, or one unambiguous profile ID. Names are not identity.
@@ -77,6 +78,7 @@ final class CareHandoffStore: ObservableObject {
             ($0.toolCatID ?? $0.id) == (previous.toolCatID ?? previous.id)
                 && ($0.profileID == nil || previous.profileID == nil || $0.profileID == previous.profileID)
         }) { return found.id }
+        guard access.decision(for: .createCareMemo) == .allowed else { return nil }
         var cat = CareCat(); cat.profileID = profileID; cat.name = name
         cat.toolCatID = previous?.toolCatID ?? previous?.id ?? cat.id
         cat.prefilledFields = []
@@ -98,10 +100,11 @@ final class CareHandoffStore: ObservableObject {
                 }
             }
             var next = plan; next.cats.append(cat)
-            try repository.commit(next, newPhotos: photos)
+            try access.perform(for: .createCareMemo) { try repository.commit(next, newPhotos: photos) }
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return cat.id
         } catch {
+            if error is MembershipActionDenied { return nil }
             saveError = "猫の情報を保存できませんでした。元の記録は残っています。保存を再試行してから、もう一度この子を選んでください。"
             return nil
         }

@@ -14,6 +14,9 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case refreshPersonalWidget
     case createPersonalMemo
     case createWindow
+    case presentCatPhotos
+    case createCareMemo
+    case createVeterinaryVisit
     case addSharedContent
     case continueAcceptedDelivery
 }
@@ -68,7 +71,7 @@ enum MembershipAccessPolicy {
              .continueAcceptedDelivery:
             return .allowed
         case .automaticAlbums, .refreshPersonalWidget, .createPersonalMemo,
-             .createWindow:
+             .createWindow, .presentCatPhotos, .createCareMemo, .createVeterinaryVisit:
             guard now.timeIntervalSinceReferenceDate.isFinite else {
                 return .verificationRequired
             }
@@ -119,5 +122,44 @@ enum MembershipAccessPolicy {
               until.timeIntervalSinceReferenceDate.isFinite,
               now < until else { return .verificationRequired }
         return .allowed
+    }
+}
+
+struct MembershipActionDenied: Error {
+    let decision: MembershipAccessDecision
+}
+
+/// A live local membership requirement, not ownership or a server grant.
+/// Update the same instance when authority changes; suspended work must not
+/// keep an earlier Bool/snapshot as permission to create. A synchronous commit
+/// is serialized with updates and checks the current clock. Existing records
+/// are returned before this boundary.
+final class MembershipActionAccess: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled: Bool
+    private var personal: MembershipPersonalState
+
+    init(enforcementEnabled: Bool = true, personal: MembershipPersonalState = .checking) {
+        enabled = enforcementEnabled; self.personal = personal
+    }
+    static var beta: MembershipActionAccess { .init(enforcementEnabled: false) }
+
+    func update(enforcementEnabled: Bool, personal: MembershipPersonalState) {
+        lock.lock(); defer { lock.unlock() }
+        enabled = enforcementEnabled; self.personal = personal
+    }
+    func decision(for operation: MembershipOperation, now: Date = .now) -> MembershipAccessDecision {
+        lock.lock(); defer { lock.unlock() }
+        return check(operation, now: now)
+    }
+    func perform<T>(for operation: MembershipOperation, _ commit: () throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        let decision = check(operation, now: .now)
+        guard decision == .allowed else { throw MembershipActionDenied(decision: decision) }
+        return try commit()
+    }
+    private func check(_ operation: MembershipOperation, now: Date) -> MembershipAccessDecision {
+        MembershipAccessPolicy.decision(for: operation, enforcementEnabled: enabled,
+            personal: personal, window: .inactive, now: now)
     }
 }
