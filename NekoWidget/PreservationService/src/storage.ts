@@ -32,6 +32,7 @@ interface Dependencies {
   ownerRecovery?: OwnerRecoveryCopy;
   requireRecovery?: boolean;
   requireOwnerRecovery?: boolean;
+  ownerWriteLease?: { withOwnerWrite<T>(ownerId: string, action: () => Promise<T>): Promise<T> };
 }
 const bytes = (value: unknown): ArrayBuffer => {
   if (value instanceof ArrayBuffer) return value;
@@ -544,7 +545,9 @@ export class ArchiveStore {
     if (!reserved) { await this.d.auth.requireSession(token); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
     try {
       if (sealedPhoto !== null) {
-        const stored = await this.d.bucket.put(key, bytes(sealedPhoto), { httpMetadata: { contentType: 'application/octet-stream' } });
+        const write = () => this.d.bucket.put(key, bytes(sealedPhoto), { httpMetadata: { contentType: 'application/octet-stream' } });
+        const stored = this.d.ownerWriteLease
+          ? await this.d.ownerWriteLease.withOwnerWrite(session.ownerId, write) : await write();
         if (!stored) throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
         if (this.d.recovery) {
           const confirmed = await this.d.bucket.get(key);

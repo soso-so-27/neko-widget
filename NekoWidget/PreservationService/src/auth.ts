@@ -72,6 +72,7 @@ export class DurableAuth {
         throw denied();
       }
       // Only the trusted verifier supplies identity. No email, device or billing ID is a lookup key.
+      await this.dependencies.ownerDeletion?.requireAvailable?.();
       const identityKey = await indexedOwnerIdentity(await this.indexKey,
         identity.issuer, identity.subject);
       const db = this.dependencies.db;
@@ -88,6 +89,7 @@ export class DurableAuth {
         'SELECT owner_id, epoch, disabled FROM pa_owners WHERE identity_key = ?',
       ).bind(identityKey).first<OwnerRow>();
       if (!owner || owner.disabled !== 0) throw denied();
+      await this.dependencies.ownerDeletion?.assertNotRequested(owner.owner_id);
 
       const contactEmail = identity.issuer === 'https://appleid.apple.com' ? identity.verifiedEmail : undefined;
       if (contactEmail !== undefined && !contactEmailValid(contactEmail)) throw denied();
@@ -166,6 +168,7 @@ export class DurableAuth {
                 WHERE g.owner_id=owner.owner_id))`,
       ).bind(await sha256(token), this.now()).first<SessionRow>();
       if (!row) throw denied();
+      await this.dependencies.ownerDeletion?.assertNotRequested(row.owner_id);
       return { ownerId: row.owner_id, sessionHash: row.session_hash, expiresAt: row.expires_at };
     } catch (error) { throw safeError(error); }
   }

@@ -31,6 +31,7 @@ export interface AuthDependencies {
   ownerRecovery?: { copyCurrent(db: D1Database, ownerId: string, now: number): Promise<unknown> };
   requireOwnerRecovery?: boolean;
   ownerAdmission?: { createOwner(ownerId: string, identityKey: string, now: number): Promise<void> };
+  ownerDeletion?: { assertNotRequested(ownerId: string): Promise<void>; requireAvailable?(): Promise<void> };
 }
 export class ServiceError extends Error {
   constructor(public code: string, public status = 400, public registrationReference?: string) { super(code); this.name = 'ServiceError'; }

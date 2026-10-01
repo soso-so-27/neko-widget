@@ -56,5 +56,8 @@ jobs:
       - name: Bundle the private authority without deployment or provisioning
         working-directory: NekoWidget/PreservationService
         run: npx --no-install wrangler deploy --dry-run --config wrangler.billing.disabled.jsonc --outdir "$RUNNER_TEMP/preservation-billing" --autoconfig=false --experimental-provision=false --experimental-auto-create=false
+      - name: Bundle the private owner deletion executor without deployment
+        working-directory: NekoWidget/PreservationService
+        run: npx --no-install wrangler deploy --dry-run --config wrangler.owner-deletion.jsonc --outdir "$RUNNER_TEMP/preservation-deletion" --autoconfig=false --experimental-provision=false --experimental-auto-create=false
       # Local synthetic tests only: no secrets, remote migrations or deployment.
       # This job is not native iOS release or TestFlight evidence.

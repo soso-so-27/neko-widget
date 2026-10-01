@@ -97,7 +97,7 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   } as S3PurgeIntentStore;
   const restore = new OwnerQuarantineRestore(
     new OwnerArchiveRecovery(s3, owners, records), records, binding.DB, binding.ARCHIVE,
-    purgeIntents);
+    purgeIntents, { async assertNotRequested() {} });
   omitted.add(marker.key);
   expect(await restore.restore(ownerId, 1_000)).toEqual({ status: 'quarantined' });
   expect(await binding.DB.prepare('SELECT count(*) AS count FROM pa_owners').first())
