@@ -673,16 +673,16 @@ MANAGED_PRESERVATION_DIGESTS = {'NekoWidget/NekoWidget/Services/ManagedPreservat
                                                                '0512f02ceff43e7f2616bf3bf6b6c678a46d970f19d660e13e50fdd318e01895'),
  'NekoWidget/NekoWidget/Views/PhotoMemoryNoteLibraryView.swift': ('d8efaf3148a138e5abf4c298e4f76437d8e72bf7083186348ef97b53b6b000b7',
                                                                   'fc4d6f92c9fcc021a4f7f5bb4f6976cb6783268102c78521607dce8732ad29a5'),
- 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('02d7a9a7434586d344f07eb4d26c12bf7f9fca95786bc7c2b4c5395bfbe049c3',
-                                                               'f043f136a19603ef2701a011413c88818448abc8af1368cda3e54671db06874a')}
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('8d9f0b41438a83bcd6a981a126a9a614fad35f4e391982cd42d764b3991cc732',
+                                                               '7fbea4d596a553cac44adb17ae1c6756249cbce52141f98e4381ade88503c8b7')}
 MANAGED_PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
-        "f4553b37ff0f06511256a1e82638b3d13677228a86c2fc5183e7d4156fe962cd",
-        "28ee4294d6a4e567209efab73b86ba7ebd14ff16e923a7a5a3a1a4b6eb10eaca"
+        "904c083c81a317fd34443fdb3ef495978824bf32f8bee3a035805eca7564e3cd",
+        "350012ee0f68a30883721015268cf72a8f0fa739d670aea2db9fb61009e2bcba"
     ],
     "NekoWidget/ci/reviewed-app-ui.json": [
         "01c34e688a4b96f6daf388bb918c87f87278accfb9568f2a98d5cbb6c2d6ff80",
-        "e4ed292804c3deb935c424c53d256a0f2b1c93cb2fb129e6dbd1a23e0dd152c2"
+        "733ec45fe974f0a4505263738223fd7d428dc9d581e0f24d759d781ae6e8fc2a"
     ],
     "NekoWidget/ci/test-ci-lanes.py": [
         "39d029b6a978636be60ea6bc31a3afddf7b6b5a160d85eaf0c4f4790ce1da120",
