@@ -2,8 +2,55 @@ import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
 import worker, { configuredServices, type Env } from '../src/index';
 import { randomToken, sha256 } from '../src/contracts';
+import { RetentionLedger } from '../src/retention-ledger';
+import { vi } from 'vitest';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
+
+function generalEnv(): Env {
+  const provider={fetch:async()=>{throw new Error('must not call');}} as unknown as Fetcher;
+  return {...binding, ENVIRONMENT:'staging', PILOT_MODE:'NO', GENERAL_STORAGE_MODE:'YES',
+    KEY_WRAPPER:provider,KEY_WRAPPER_CALLER_SECRET:randomToken(),MEMBERSHIP_AUTHORITY:provider,
+    PHOTO_VALIDATOR:provider,IDENTITY_INDEX_SECRET:randomToken(),
+    APPLE_CREDENTIALS_JSON:JSON.stringify({clientId:'test.neko.preservation'}),
+    PRESERVATION_LINK_AUDIENCE:'neko-general-test',REQUEST_LIMITER:{limit:async()=>({success:true})},
+    RECOVERY_COPY_ENABLED:'YES',RECOVERY_S3_REGION:'ap-northeast-1',
+    RECOVERY_S3_BUCKET:'neko-preservation-test',RECOVERY_S3_ACCOUNT_ID:'123456789012',
+    RECOVERY_S3_ACCESS_KEY_ID:'AKIA'+'A'.repeat(16),RECOVERY_S3_SECRET_ACCESS_KEY:'a'.repeat(40),
+    OWNER_QUOTA_BYTES:'1073741824',MAXIMUM_RECORDS:'200',GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES:'3221225472'};
+}
+
+it('requires an explicit non-pilot general mode and does not create an unrestricted owner', async()=>{
+  const settings=generalEnv();
+  const missingPilot={...settings}; delete missingPilot.PILOT_MODE;
+  const missingEnvironment={...settings}; delete missingEnvironment.ENVIRONMENT;
+  expect(()=>configuredServices(missingPilot)).toThrow('PRESERVATION_NOT_CONFIGURED');
+  expect(()=>configuredServices({...settings,PILOT_STORAGE_ACCESS_ENABLED:'YES'})).toThrow('PRESERVATION_NOT_CONFIGURED');
+  expect(()=>configuredServices(missingEnvironment)).toThrow('PRESERVATION_NOT_CONFIGURED');
+  const services=configuredServices(settings);
+  await expect(services.auth.establish({issuer:'https://appleid.apple.com',subject:crypto.randomUUID(),
+    refreshToken:randomToken()})).rejects.toMatchObject({code:'PRESERVATION_INTAKE_PAUSED'});
+});
+
+it('records retention with cleanup disabled without executing cleanup or sending notices',async()=>{
+  const settings=generalEnv();
+  let databaseCalls=0;
+  const db=new Proxy(binding.DB,{get(target,property){
+    if(property==='prepare') return (sql:string)=>{
+      databaseCalls++;
+      if(sql.includes('SELECT owner_snapshot_required')) return {first:async()=>({owner_snapshot_required:0})};
+      throw new Error('unexpected cleanup or write');
+    };
+    const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
+  }});
+  const refresh=vi.spyOn(RetentionLedger.prototype,'refreshBatch').mockResolvedValue(1);
+  try {
+    await worker.scheduled({} as ScheduledEvent,{...settings,DB:db,CLEANUP_ENABLED:'NO',RETENTION_TRACKING_ENABLED:'YES',
+      NOTICE_SEND_ENABLED:'NO',NOTICE_EVENTS_ENABLED:'NO'});
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(databaseCalls).toBe(1);
+  } finally {refresh.mockRestore();}
+});
 
 it('cannot bypass owner/write admission by omitting both environment and pilot mode', async () => {
   let externalCalls = 0;
