@@ -4271,10 +4271,30 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         archivePreserve.tap()
         XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "preservation-copy-photo").firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["preservation-copy-save"].exists)
-        XCTAssertFalse(app.buttons["preservation-copy-save"].isEnabled, "Opening an existing copy must not grant upload consent.")
+        let preparedPhoto = app.descendants(matching: .any).matching(identifier: "preservation-copy-photo").firstMatch
+        XCTAssertTrue(preparedPhoto.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "loaded"), object: preparedPhoto)], timeout: 15), .completed)
         attach(app, name: "memory-library-cloud-selected-service-copy")
+        let consent = app.switches["この保管方法に同意する"]
+        for _ in 0..<6 where !consent.isHittable { app.swipeUp() }
+        XCTAssertTrue(consent.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: consent)], timeout: 10), .completed)
+        XCTAssertEqual(consent.value as? String, "0", "Opening an existing copy must not grant upload consent.")
+        let preparedSave = app.buttons["preservation-copy-save"]
+        for _ in 0..<6 where !preparedSave.exists { app.swipeUp() }
+        XCTAssertTrue(preparedSave.waitForExistence(timeout: 10))
+        XCTAssertFalse(preparedSave.isEnabled)
+        for _ in 0..<6 where !consent.isHittable { app.swipeDown() }
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: preparedSave)], timeout: 10), .completed,
+            "The synthetic pilot must be usable; a failed fixture must not masquerade as consent protection.")
+        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(consent.value as? String, "0")
+        XCTAssertFalse(preparedSave.isEnabled)
+        attach(app, name: "memory-library-cloud-explicit-consent-only")
         app.buttons["閉じる"].tap()
         XCTAssertTrue(app.navigationBars["メモ"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()

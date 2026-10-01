@@ -638,12 +638,12 @@ struct ManagedPreservationPhotoView: View {
                     errorMessage = PersonalArchiveError.accountChanged.errorDescription
                 }
             }
-            .onDisappear {
-                access.stop()
+        }
+        .onDisappear {
+            access.stop()
 #if DEBUG
-                try? fixture?.cleanup()
+            try? fixture?.cleanup()
 #endif
-            }
         }
         .interactiveDismissDisabled(hasUnsecuredMemo)
     }
@@ -715,6 +715,9 @@ private struct ManagedPreservationPhotoPreview: View {
             else { Image(systemName: "photo").foregroundStyle(.secondary) }
         }
         .frame(maxHeight: maximumHeight)
+#if DEBUG
+        .accessibilityValue(image == nil ? "loading" : "loaded")
+#endif
         .task {
             guard image == nil, !Task.isCancelled,
                   let source = CGImageSourceCreateWithData(data as CFData, nil),
