@@ -2477,6 +2477,10 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<4 where !usage.exists { app.swipeUp() }
         XCTAssertTrue(usage.waitForExistence(timeout: 8))
         XCTAssertTrue(usage.label.contains("使用中"))
+        XCTAssertTrue(usage.label.contains("5 GB"), usage.label)
+        let recordUsage = app.staticTexts["preservation-record-usage"]
+        XCTAssertTrue(recordUsage.waitForExistence(timeout: 5))
+        XCTAssertEqual(recordUsage.label, "保管件数 1 / 200件")
         capture("preservation-membership-expired-read-available")
         tap("preservation-export-all", towardBottom: true)
         cancelRecordExportSheet(app, screenshot: "preservation-all-export-system-sheet")

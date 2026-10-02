@@ -3,7 +3,7 @@
 ## 2026-10-02 保管件数・容量表示：検証をbackendとnativeへ分離
 
 - 表示候補b9000f6のサーバー322件と既存保管UI1本・撮影画像は成功。まだmain/TestFlightには未反映。6製品ファイルの混在でfullになっていたため、別control候補でbackend v26とnative4全文固定の専用scopeを登録する。Widget Galleryを選ばず、既存Build・Photos・両OSruntime・保管UI1本を維持する。
-- controlの独立レビューは指摘なし。PythonとUbuntu planを確認してcontrolを先行統合し、backend3ファイルの通常Node候補を先にmainへ、その後native4ファイル候補を準備する。今回Mac/Simulator/新TestFlight/クラウド設定変更を起動しない。[候補と証拠・時間・続き](2026-10-02-preservation-usage-ci.md)。購入のfresh管理確認と実Sandbox購入/復元/期限切れは管理ログイン後。既確認の実写真保存/復元/ZIPを繰り返さない。
+- controlは独立レビュー指摘なし、Python12 suite全成功（459.5秒）・Ubuntu plan24秒でPR159を本線反映。backend3ファイルも同SHAの専用Node81秒・plan23秒でPR160を本線反映。main c744845からnative4ファイルだけのlocal候補を準備済み（製品入力は描画確認済みb9000f6と一致）。実Workerへは未配備、アプリは未push/通常nativeCI/新TestFlight。今回Mac/Simulator/クラウド設定変更は起動していない。[候補と証拠・時間・続き](2026-10-02-preservation-usage-ci.md)。購入のfresh管理確認と実Sandbox購入/復元/期限切れは管理ログイン後。既確認の実写真保存/復元/ZIPを繰り返さない。
 
 ## 2026-10-02 ログインなし残件：private購入操作CLI、圧縮導入、容量/表示条件
 

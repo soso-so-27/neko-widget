@@ -328,6 +328,8 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     struct Records: Decodable, Equatable, Sendable {
         let saved: Int64
         let pending: Int64
+        // Older deployed services do not include the record limit yet.
+        let maximumRecords: Int64?
         let creationLimitReached: Bool
     }
     let version: Int
@@ -341,13 +343,20 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
               space.usedBytes >= 0, space.reservedBytes >= 0,
               space.limitBytes > 0, space.availableBytes >= 0,
               space.usedBytes <= Int64.max - space.reservedBytes,
-              records.saved >= 0, records.pending >= 0 else {
+              records.saved >= 0, records.pending >= 0,
+              records.saved <= Int64.max - records.pending else {
             throw ManagedPreservationError.invalidResponse
         }
         let allocated = space.usedBytes + space.reservedBytes
         guard space.overLimit == (allocated > space.limitBytes),
               space.availableBytes == max(0, space.limitBytes - allocated) else {
             throw ManagedPreservationError.invalidResponse
+        }
+        if let limit = records.maximumRecords {
+            guard limit > 0,
+                  records.creationLimitReached == (records.saved + records.pending >= limit) else {
+                throw ManagedPreservationError.invalidResponse
+            }
         }
         return self
     }
