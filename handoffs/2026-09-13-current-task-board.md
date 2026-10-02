@@ -1,5 +1,12 @@
 # 現在のタスクと優先順位
 
+## 2026-10-02 ログインなし残件：private購入操作CLI、圧縮導入、容量/表示条件
+
+- 旧full family前提のCLIを現用private Gatewayへ当てない専用entryを追加。固定非公開Sandbox設定、fresh SELECTと通常caller `/v1/billing/health`、世代/8状態一致による1回CAS、更新後確認、結果不明時の非再試行を13テストと独立レビューで確認。実D1や上位flagは変更していない。下位OFF healthだけでは上位設定を証明できず、実settings/versionのfresh確認は残る。
+- 圧縮は再実装せず、既存新旧readerと所有者境界の現source17テスト成功。Worker全体の書込みflag1つだけを変更するレビュー資料を準備。全reader先行、旧世代不変更、dual readerを保つ復旧を明記。実配備と合成ownerによる実S3 canaryは未実施。
+- 容量/表示の契約を準備し、内部1GiB/200件と未承認の販売5GB/1,000件/最初3人を分離。usage APIに件数上限がない点、画面のbinary単位と十進販売案の不一致は購入版へまとめる具体要件にした。アプリ表示・実販売容量・受付は未変更。
+- CIはCLI3パスだけのUbuntu plan内Node確認を独立control候補で先行し、[PR156](https://github.com/soso-so-27/neko-widget/pull/156)を本線反映。候補run36956274492は24秒で成功、Mac/Widget画面/full backendは対象外。製品側の候補/結果と手順は[導入準備](2026-10-02-preservation-operator-readiness.md)。今日管理ログインや同じ実機保存試験を利用者へ要求しない。
+
 ## 2026-10-02 外出中のログインなし準備：済んだ実装を保持し、容量測定・購入候補・案内を補完
 
 - 購入サーバー接続、会員入口、旧称2か所、実写真の保存/復元/ZIPは再実装していない。現用family/billing healthは読取で正常・購入8操作OFFを確認。private Gatewayの上位7設定、世代と全状態一致を要求する下位7段階SQL、internal限定protected変数の候補を準備。remote変更0。D1管理読取は7403で失敗し、fresh設定/versionと下位stateの照合、Apple契約、実購入は残る。

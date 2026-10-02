@@ -8,6 +8,7 @@ import {
   billingRuntimeGateCommand,
   billingRuntimeGateConfigName,
   billingRuntimeGateManifestName,
+  privateBillingRuntimeGateConfigName,
   billingRuntimeGateStates,
   billingRuntimeGateStatusCommand,
   billingRuntimeGateUpdateSQL,
@@ -19,6 +20,8 @@ import {
   verifyBillingRuntimeGateOrigin,
 } from "../scripts/billing-staging-runtime-gate-lib.mjs";
 import { renderStagingConfig } from "../scripts/staging-config-lib.mjs";
+import { renderLiveConfigs } from "../gateway/render-live-config.mjs";
+import { billingControlEnabledFlags } from "../scripts/billing-control-staging-config-lib.mjs";
 
 const projectDirectory = join(import.meta.dirname, "..");
 const template = await readFile(
@@ -126,6 +129,92 @@ function readerFor(input) {
     throw new Error("unexpected file");
   };
 }
+
+function privateFixture() {
+  const { gateway } = renderLiveConfigs({
+    metadata: { script: { id: "neko-window-sharing-staging" } }, routes: [], domains: [],
+    subdomain: { enabled: true, previews_enabled: false },
+    deployments: { deployments: [{ versions: [{ percentage: 100 }] }] },
+    schedules: { schedules: [] },
+    settings: { compatibility_date: "2026-08-17", compatibility_flags: ["nodejs_compat"], bindings: [
+      { type: "d1", name: "DB", id: "cb3b2386-3a6f-4253-b918-8aafed9ff735" },
+      { type: "plain_text", name: "ENVIRONMENT", text: "staging" },
+      { type: "plain_text", name: "APNS_RUNTIME_ENABLED", text: "YES" },
+    ] },
+  }, "/safe/project");
+  for (const flag of billingControlEnabledFlags) gateway.vars[flag] = "YES";
+  const input = { ...manifest, accountId: gateway.account_id, databaseId: gateway.d1_databases[0].database_id };
+  return { gateway, input, reader: async path => {
+    if (path.endsWith(billingRuntimeGateManifestName)) return JSON.stringify(input);
+    if (path.endsWith(privateBillingRuntimeGateConfigName)) return JSON.stringify(gateway);
+    throw new Error("unexpected private control file");
+  } };
+}
+
+test("private plan accepts only the closed Sandbox gateway and never runs commands or fetch", async () => {
+  const { gateway, input } = privateFixture();
+  const runPlan = (config = gateway, chosen = input) => runBillingRuntimeGateControl(["--plan"], {
+    projectDirectory: "/safe/project", profile: "private-gateway",
+    readFileImpl: async path => JSON.stringify(path.endsWith(billingRuntimeGateManifestName) ? chosen : config),
+    runCommand: async () => assert.fail("plan performed command"),
+    fetchImpl: async () => assert.fail("plan performed fetch"),
+  });
+  assert.match(await runPlan(), /no D1 update or network request/u);
+  for (const mutate of [c => { c.workers_dev = true; }, c => { c.preview_urls = true; },
+    c => { c.vars.BILLING_STORE_ENVIRONMENT = "Production"; },
+    c => { c.vars.BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED = "YES"; },
+    c => { c.vars.ENVIRONMENT = "production"; }, c => { c.name = "neko-window-sharing-staging"; },
+    c => { c.services[0].service = "other-verifier"; }, c => { c.d1_databases[0].database_id = manifest.databaseId; },
+    c => { c.ratelimits[0].simple.limit = 1000; }, c => { c.vars.SECRET = "do-not-accept"; }]) {
+    const bad = structuredClone(gateway); mutate(bad);
+    await assert.rejects(runPlan(bad), /reviewed Sandbox target/u);
+  }
+  await assert.rejects(runPlan({ ...gateway, account_id: manifest.accountId }, { ...input, accountId: manifest.accountId }),
+    /reviewed Sandbox target/u);
+});
+
+test("private confirmation checks fresh lower state and caller health before a single CAS", async () => {
+  const { input, reader } = privateFixture();
+  const commands = [], urls = [];
+  const output = await runBillingRuntimeGateControl(["--confirm-bootstrap-only"], {
+    projectDirectory: "/safe/project", profile: "private-gateway", readFileImpl: reader,
+    runCommand: async command => {
+      commands.push(command);
+      if (command.args.at(-1) === "--version") return "wrangler 4.125.0";
+      assert.ok(command.args.includes(join("/safe/project", privateBillingRuntimeGateConfigName)));
+      return command.args.at(-1).startsWith("SELECT") ? statusOutput("all-off", 0) : updateOutput(input);
+    },
+    fetchImpl: async url => {
+      urls.push(url); return healthResponse(urls.length === 1 ? "all-off" : "bootstrap-only", urls.length - 1);
+    },
+  });
+  assert.match(output, /generation 1 verified/u);
+  assert.equal(commands.filter(c => c.args.at(-1).startsWith("UPDATE")).length, 1);
+  assert.deepEqual(urls, [input.origin + "/v1/billing/health", input.origin + "/v1/billing/health"]);
+  assert.ok(commands.every(c => !c.args.includes("deploy")));
+});
+
+test("private stale state or failed preflight causes no write; failed postflight is never retried", async () => {
+  const { input, reader } = privateFixture();
+  for (const failure of ["state", "preflight", "postflight"]) {
+    let writes = 0, fetches = 0;
+    await assert.rejects(runBillingRuntimeGateControl(["--confirm-bootstrap-only"], {
+      projectDirectory: "/safe/project", profile: "private-gateway", readFileImpl: reader,
+      runCommand: async command => {
+        if (command.args.at(-1) === "--version") return "wrangler 4.125.0";
+        if (command.args.at(-1).startsWith("SELECT")) return statusOutput("all-off", failure === "state" ? 1 : 0);
+        writes += 1; return updateOutput(input);
+      },
+      fetchImpl: async () => {
+        fetches += 1;
+        if (failure === "preflight" || (failure === "postflight" && fetches === 2)) return new Response("unavailable", { status: 503 });
+        return healthResponse("all-off", failure === "state" ? 1 : 0);
+      },
+    }), failure === "state" ? /live generation and state/u : /verification failed/u);
+    assert.equal(writes, failure === "postflight" ? 1 : 0);
+    assert.equal(fetches, failure === "postflight" ? 2 : 1);
+  }
+});
 
 test("defines eight cumulative states with one-bit adjacent transitions", () => {
   assert.deepEqual(stateNames, [
