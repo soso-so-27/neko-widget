@@ -63,6 +63,15 @@ jobs:
         if: steps.scope.outputs.runtime_scope == 'public-policy-docs-v1'
         run: python3 NekoWidget/ci/test-public-policy-site.py
 
+      - name: Prepare operator test runtime
+        if: steps.scope.outputs.runtime_scope == 'billing-operation-tools-v1'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+      - name: Validate private billing operation boundaries
+        if: steps.scope.outputs.runtime_scope == 'billing-operation-tools-v1'
+        run: node --test NekoWidget/SharingService/test/billing-staging-runtime-gate.node-tests.mjs
+
       - name: Validate internal Sandbox release preparation
         if: steps.scope.outputs.runtime_scope == 'internal-billing-release-prep-v1'
         run: |

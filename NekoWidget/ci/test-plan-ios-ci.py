@@ -25,6 +25,87 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_billing_operator_scope_is_closed_and_requires_owning_tests(self):
+        paths = sorted(planner.BILLING_OPERATOR_PATHS) + ["handoffs/operator.md"]
+        def selected(changed=paths, *, altered=None, duplicate=False, wired=True):
+            def git(*args):
+                if args[0] == "diff":
+                    rows = []
+                    for path in ([changed[0]] * len(changed) if duplicate else changed):
+                        modes, status = ((":000000 100644", "A") if path == planner.BILLING_OPERATOR_ENTRY
+                                         else (":100644 100644", "M"))
+                        if altered and path == altered[0]: modes, status = altered[1:]
+                        rows.append(f"{modes} {'c' * 40} {'d' * 40} {status}\0{path}\0")
+                    return "".join(rows)
+                if args[0] == "show":
+                    return (planner.BILLING_OPERATOR_WORKFLOW_STEP if "ios-build.yml" in args[1]
+                            else planner.SHARING_OPERATOR_GUARD * 3) if wired else "unwired"
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value="b" * 40), \
+                    patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(changed, {}, self.env)
+        self.assertEqual(selected(), planner.BILLING_OPERATOR_SCOPE)
+        for path in planner.BILLING_OPERATOR_PATHS:
+            self.assertEqual(selected([path]), planner.BILLING_OPERATOR_SCOPE)
+            for mode, status in ((":100644 100755", "M"), (":100644 120000", "T"),
+                                 (":100644 000000", "D"), (":100644 100644", "R100")):
+                self.assertEqual(selected(altered=(path, mode, status)), scope.FULL_SCOPE)
+            if path != planner.BILLING_OPERATOR_ENTRY:
+                self.assertEqual(selected(altered=(path, ":000000 100644", "A")), scope.FULL_SCOPE)
+        for extra in ("NekoWidget/SharingService/src/billing-gateway.ts", "NekoWidget/SharingService/package.json",
+                      "NekoWidget/SharingService/scripts/unknown.mjs", "NekoWidget/Shared/Models/Photo.swift",
+                      ".github/workflows/sharing-service.yml", "NekoWidget/ci/plan-ios-ci.py"):
+            self.assertEqual(selected(paths + [extra]), scope.FULL_SCOPE, extra)
+        self.assertEqual(selected(wired=False), scope.FULL_SCOPE)
+        self.assertEqual(selected(duplicate=True), scope.FULL_SCOPE)
+        self.assertEqual(selected(paths + [paths[0]]), scope.FULL_SCOPE)
+
+    def test_billing_operator_owning_tests_run_without_native_or_release_evidence(self):
+        paths = sorted(planner.BILLING_OPERATOR_PATHS)
+        self.assertEqual(planner.required_jobs(paths, planner.BILLING_OPERATOR_SCOPE), (planner.PLAN_JOB,))
+        self.assertEqual(planner.required_jobs(paths + ["unknown.swift"], planner.BILLING_OPERATOR_SCOPE), planner.FULL)
+        self.assertNotIn(planner.BILLING_OPERATOR_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.BILLING_OPERATOR_SCOPE)
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual((root / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+                         .count(planner.BILLING_OPERATOR_WORKFLOW_STEP), 1)
+        backend = (root / ".github/workflows/sharing-service.yml").read_text(encoding="utf-8")
+        self.assertEqual(backend.count(planner.SHARING_OPERATOR_GUARD), 3)
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory); (temp / "event.json").write_text("{}")
+            env = dict(self.env, GITHUB_EVENT_PATH=str(temp / "event.json"),
+                       GITHUB_OUTPUT=str(temp / "output"), GITHUB_STEP_SUMMARY=str(temp / "summary"))
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=paths), \
+                    patch.object(planner, "runtime_scope", return_value=planner.BILLING_OPERATOR_SCOPE), \
+                    patch.object(planner, "find_evidence") as lookup:
+                planner.main()
+            lookup.assert_not_called()
+            output = dict(line.split("=", 1) for line in (temp / "output").read_text().splitlines())
+            self.assertTrue(all(output[name] == "false" for name in ("build", "smoke", "sharing", "app_ui")))
+            self.assertEqual(output["matrix_lanes"], "[]")
+
+    def test_backend_orchestration_exemption_preserves_all_backend_commands(self):
+        path = ".github/workflows/sharing-service.yml"
+        after = (Path(__file__).resolve().parents[2] / path).read_text(encoding="utf-8")
+        before = after.replace(planner.SHARING_OPERATOR_GUARD, "")
+        def matches(new):
+            def git(*args):
+                if args[0] == "show": return before if args[1].startswith("base:") else new
+                return f":100644 100644 {'c' * 40} {'d' * 40} M\0{path}\0"
+            with patch.object(planner, "git", side_effect=git):
+                return planner.orchestration_only([path], "base", "head")
+        self.assertTrue(matches(after))
+        self.assertFalse(matches(after.replace(planner.SHARING_OPERATOR_GUARD, "", 1)))
+        self.assertFalse(matches(after.replace("node-version: \"22\"", "node-version: \"24\"", 1)))
+        self.assertFalse(matches(after.replace("npm run typecheck", "echo skipped", 1)))
+        moved_guard = after.replace(planner.SHARING_OPERATOR_GUARD, "", 1)
+        moved_guard = moved_guard.replace("npm run typecheck", "npm run typecheck" + planner.SHARING_OPERATOR_GUARD, 1)
+        self.assertFalse(matches(moved_guard))
+        self.assertFalse(matches(after.replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"'))
+                         if '"$GITHUB_SHA"' in after else matches(after + '\n      run: "$RELEASE_SOURCE_SHA"\n'))
+        self.assertFalse(matches(after.replace("needs.plan.outputs.scope == 'billing-private-service-v2'", "false")))
+        self.assertFalse(matches(after + "\n  unreviewed-job:\n    run: deploy\n"))
+
     def test_policy_docs_require_closed_paths_modes_and_owning_workflow_check(self):
         paths = ["docs/privacy/index.html", "docs/support/index.html", "handoffs/policy.md"]
         def selected(changed=paths, *, mode=":100644 100644", status="M", wired=True, duplicate=False):
