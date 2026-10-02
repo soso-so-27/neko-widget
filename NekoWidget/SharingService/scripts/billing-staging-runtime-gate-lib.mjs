@@ -1,6 +1,7 @@
 import process from "node:process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { runRuntimeGateCommand } from "./personal-staging-runtime-gate-lib.mjs";
 import { validateStagingConfig } from "./staging-config-lib.mjs";
@@ -10,6 +11,18 @@ export const billingRuntimeGateConfigName =
   "wrangler.billing-control-staging-on.jsonc";
 export const billingRuntimeGateManifestName =
   "billing-staging-runtime-gate-manifest.json";
+export const privateBillingRuntimeGateConfigName =
+  "wrangler.billing-private-gateway-staging-on.jsonc";
+
+function deploymentProfile(name) {
+  if (name === "legacy-family") return {
+    configName: billingRuntimeGateConfigName, healthPath: "/health",
+  };
+  if (name === "private-gateway") return {
+    configName: privateBillingRuntimeGateConfigName, healthPath: "/v1/billing/health",
+  };
+  throw new Error("Unknown billing operation deployment profile");
+}
 
 const databaseName = "neko-window-sharing-staging";
 const workerName = "neko-window-sharing-staging";
@@ -152,7 +165,40 @@ export function validateBillingRuntimeGateManifest(input) {
   });
 }
 
-function validateFixedConfig(config, manifest) {
+function validateFixedConfig(config, manifest, profile) {
+  if (profile === "private-gateway") {
+    // This command only controls D1; it never deploys/rebuilds family source.
+    // Preserve the closed, non-public Sandbox gateway and all existing limits.
+    const flags = ["ACCOUNT_BOOTSTRAP", "TRANSACTION_INGESTION", "APPLE_NOTIFICATION",
+      "SUBSCRIPTION_RECONCILIATION", "EFFECTIVE_ENTITLEMENT", "ACCOUNT_RECOVERY", "WINDOW_SPONSORSHIP"];
+    const expected = {
+      name: "neko-billing-gateway-staging-private", account_id: manifest.accountId,
+      main: config.main, compatibility_date: "2026-08-17", compatibility_flags: ["nodejs_compat"],
+      workers_dev: false, preview_urls: false, observability: { enabled: false },
+      limits: { cpu_ms: 30000, subrequests: 100 },
+      vars: {
+        ENVIRONMENT: "staging", BILLING_STORE_ENVIRONMENT: "Sandbox", BILLING_BUNDLE_ID: "jp.nekowidget.app",
+        BILLING_MONTHLY_PRODUCT_ID: "jp.nekowidget.plus.monthly", BILLING_SUBSCRIPTION_GROUP_ID: "22424520",
+        BILLING_VERIFIER_TRANSPORT: "private-binding", BILLING_VERIFIER_ORIGIN: "https://billing-verifier.private.invalid",
+        ...Object.fromEntries(flags.map(flag => [`BILLING_${flag}_RUNTIME_ENABLED`, "YES"])),
+        BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED: "NO",
+      },
+      d1_databases: [{ binding: "DB", database_id: manifest.databaseId, database_name: databaseName }],
+      services: [{ binding: "BILLING_VERIFIER_SERVICE", service: "neko-billing-verifier-disabled", entrypoint: "BillingVerificationService" }],
+      ratelimits: [
+        { name: "BILLING_RATE_LIMITER", namespace_id: "710004", simple: { limit: 10, period: 60 } },
+        { name: "BILLING_APPLE_NOTIFICATION_RATE_LIMITER", namespace_id: "710005", simple: { limit: 30, period: 60 } },
+      ],
+      triggers: { crons: ["*/5 * * * *"] },
+    };
+    if (manifest.accountId !== "829a34ef925a39d81b0e9e08800d7c7f"
+        || manifest.databaseId !== "cb3b2386-3a6f-4253-b918-8aafed9ff735"
+        || typeof config.main !== "string" || !/(?:^|[/\\])src[/\\]billing-gateway\.ts$/u.test(config.main)
+        || !isDeepStrictEqual(config, expected)) {
+      throw new Error("Private billing gateway config does not match the reviewed Sandbox target");
+    }
+    return;
+  }
   validateStagingConfig(config, {
     expectedMomentRuntime: "YES",
     expectedAPNSRuntime: "YES",
@@ -192,7 +238,7 @@ function wranglerEntry(projectDirectory) {
   return join(projectDirectory, "node_modules", "wrangler", "bin", "wrangler.js");
 }
 
-function d1Command(projectDirectory, manifest, sql) {
+function d1Command(projectDirectory, manifest, sql, profile) {
   return Object.freeze({
     executable: process.execPath,
     args: Object.freeze([
@@ -203,7 +249,7 @@ function d1Command(projectDirectory, manifest, sql) {
       "--remote",
       "--json",
       "--config",
-      join(projectDirectory, billingRuntimeGateConfigName),
+      join(projectDirectory, deploymentProfile(profile).configName),
       "--experimental-provision=false",
       "--experimental-auto-create=false",
       "--command",
@@ -214,21 +260,23 @@ function d1Command(projectDirectory, manifest, sql) {
   });
 }
 
-export function billingRuntimeGateCommand(projectDirectory, manifestInput) {
+export function billingRuntimeGateCommand(projectDirectory, manifestInput, profile = "legacy-family") {
   const manifest = validateBillingRuntimeGateManifest(manifestInput);
   return d1Command(
     projectDirectory,
     manifest,
     billingRuntimeGateUpdateSQL(manifest),
+    profile,
   );
 }
 
 export function billingRuntimeGateStatusCommand(
   projectDirectory,
   manifestInput,
+  profile = "legacy-family",
 ) {
   const manifest = validateBillingRuntimeGateManifest(manifestInput);
-  return d1Command(projectDirectory, manifest, statusSQL);
+  return d1Command(projectDirectory, manifest, statusSQL, profile);
 }
 
 function expectedResult(manifest) {
@@ -302,6 +350,7 @@ async function verifyOriginState(
   expected,
   fetchImpl,
   timeoutMilliseconds,
+  healthPath = "/health",
 ) {
   if (!Number.isSafeInteger(timeoutMilliseconds)
       || timeoutMilliseconds < 1
@@ -312,7 +361,7 @@ async function verifyOriginState(
   const timer = setTimeout(() => controller.abort(), timeoutMilliseconds);
   let response;
   try {
-    response = await fetchImpl(`${manifest.origin}/health`, {
+    response = await fetchImpl(`${manifest.origin}${healthPath}`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
       redirect: "manual",
@@ -358,7 +407,7 @@ async function verifyOriginState(
 export async function verifyBillingRuntimeGateOrigin(
   manifestInput,
   fetchImpl = fetch,
-  { timeoutMilliseconds = 15_000 } = {},
+  { timeoutMilliseconds = 15_000, profile = "legacy-family" } = {},
 ) {
   const manifest = validateBillingRuntimeGateManifest(manifestInput);
   await verifyOriginState(
@@ -366,6 +415,7 @@ export async function verifyBillingRuntimeGateOrigin(
     expectedResult(manifest),
     fetchImpl,
     timeoutMilliseconds,
+    deploymentProfile(profile).healthPath,
   );
 }
 
@@ -399,11 +449,13 @@ function versionCommand(projectDirectory, manifest) {
 
 export async function runBillingRuntimeGateControl(argv, {
   projectDirectory,
+  profile = "legacy-family",
   readFileImpl = readFile,
   runCommand = runRuntimeGateCommand,
   fetchImpl = fetch,
 } = {}) {
   const mode = parseBillingRuntimeGateArguments(argv);
+  const deployment = deploymentProfile(profile);
   let manifest;
   let config;
   try {
@@ -414,7 +466,7 @@ export async function runBillingRuntimeGateControl(argv, {
       ),
     ));
     config = JSON.parse(await readFileImpl(
-      join(projectDirectory, billingRuntimeGateConfigName),
+      join(projectDirectory, deployment.configName),
       "utf8",
     ));
   } catch (error) {
@@ -425,7 +477,7 @@ export async function runBillingRuntimeGateControl(argv, {
       "billing staging runtime gate files are unavailable or invalid",
     );
   }
-  validateFixedConfig(config, manifest);
+  validateFixedConfig(config, manifest, profile);
   if (mode.action === "plan") {
     const transition = isEmergencyAllOff(manifest)
       ? "emergency billing-all-off"
@@ -446,13 +498,13 @@ export async function runBillingRuntimeGateControl(argv, {
     .test(await runCommand(versionCommand(projectDirectory, manifest)))) {
     throw new Error(`reviewed Wrangler ${wranglerVersion} is required`);
   }
-  if (mode.action === "status") {
+  if (mode.action === "status" || profile === "private-gateway") {
     const snapshot = parseBillingRuntimeGateStatus(
       await runCommand(
-        billingRuntimeGateStatusCommand(projectDirectory, manifest),
+        billingRuntimeGateStatusCommand(projectDirectory, manifest, profile),
       ),
     );
-    await verifyOriginState(manifest, snapshot, fetchImpl, 15_000);
+    await verifyOriginState(manifest, snapshot, fetchImpl, 15_000, deployment.healthPath);
     if (snapshot.generation !== manifest.expectedGeneration
         || !exactState(
           snapshot,
@@ -462,13 +514,19 @@ export async function runBillingRuntimeGateControl(argv, {
         "billing runtime gate manifest does not match the live generation and state",
       );
     }
-    return `PASS billing runtime gate status generation ${snapshot.generation} ${manifest.expectedState}; manifest reconciled for adjacent ${manifest.desiredState}.`;
+    if (mode.action === "status") {
+      return `PASS billing runtime gate status generation ${snapshot.generation} ${manifest.expectedState}; manifest reconciled for adjacent ${manifest.desiredState}.`;
+    }
   }
   const output = await runCommand(
-    billingRuntimeGateCommand(projectDirectory, manifest),
+    billingRuntimeGateCommand(projectDirectory, manifest, profile),
   );
   parseBillingRuntimeGateUpdate(output, manifest);
-  await verifyBillingRuntimeGateOrigin(manifest, fetchImpl);
+  try {
+    await verifyBillingRuntimeGateOrigin(manifest, fetchImpl, { profile });
+  } catch {
+    throw new Error("billing same-origin runtime gate verification failed; D1 may already have changed. Read status before any further operation");
+  }
   const transition = isEmergencyAllOff(manifest)
     ? "emergency billing-all-off"
     : `${manifest.expectedState} -> ${manifest.desiredState}`;
