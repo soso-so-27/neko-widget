@@ -1,9 +1,12 @@
 # 現在のタスクと優先順位
 
-## 2026-10-02 保管件数・容量表示：検証をbackendとnativeへ分離
+## 2026-10-02 保管件数・容量表示：main・実サーバーへ反映
 
-- 表示候補b9000f6のサーバー322件と既存保管UI1本・撮影画像は成功。まだmain/TestFlightには未反映。6製品ファイルの混在でfullになっていたため、別control候補でbackend v26とnative4全文固定の専用scopeを登録する。Widget Galleryを選ばず、既存Build・Photos・両OSruntime・保管UI1本を維持する。
-- controlは独立レビュー指摘なし、Python12 suite全成功（459.5秒）・Ubuntu plan24秒でPR159を本線反映。backend3ファイルも同SHAの専用Node81秒・plan23秒でPR160を本線反映。main c744845からnative4ファイルだけのlocal候補を準備済み（製品入力は描画確認済みb9000f6と一致）。実Workerへは未配備、アプリは未push/通常nativeCI/新TestFlight。今回Mac/Simulator/クラウド設定変更は起動していない。[候補と証拠・時間・続き](2026-10-02-preservation-usage-ci.md)。購入のfresh管理確認と実Sandbox購入/復元/期限切れは管理ログイン後。既確認の実写真保存/復元/ZIPを繰り返さない。
+- control PR159、backend PR160、native PR161をmerge commitで本線反映。現在main `c9e189a`、native検証候補5a351d7はmain祖先。利用状況に実設定の件数上限・準備中件数・十進容量を表示する。旧応答は読める互換性を保ち、不正値・overflow・停止flag不一致を拒否する。
+- 実保管Workerはversion `ce8fbd21-d21d-401a-82bb-71a2c15c3534`。配備前の実codeとの差分はmaximumRecords1行だけ、配備後moduleはdry-runと全文一致。21vars/6secret名/DB/R2/services/rate/compat/公開設定/空scheduleを維持し、独立レビュー指摘なし。実DBの1本人・1記録・削除0、内部1GiB/200件、一般受付0、費用確認10月2日23:59とpilot終了10月8日09:44:57は維持。
+- 通常nativeCI36983313031は初回17分でBuild/Photos/runtime成功、保管UI1本のconfirm enabled/hittable待機だけ失敗。同じSHAの1ジョブだけ再実行し、UI1件成功・失敗0、最終必須4job成功。Widget Gallery・通常Widget描画テスト0件。初回失敗原因は未確定で、製品やテストの修正済みと扱わない。初回通常CIから49.4分・実runner稼働合計78.0分（失敗を含む）を記録し、新scopeのtiming baselineへ反映。既存成功3jobをもう一度走らせていない。
+- Cloudflare購入管理読取は現在成功。private Sandbox Gatewayの現versionとDBを確認、上位8NO・下位gen0/8項目0。Apple App Store Connectは個人Codexブラウザでログアウトを確認した。今日は利用者が外出中なので再ログインを求めず、契約・実商品・月額980円・7日体験と実Sandbox購入/復元/期限切れを残件として明確化した。一般公開・実課金は未開始。
+- 実内部版は236。件数表示だけの追加TestFlightを挟まず、購入対応構成へまとめる。既確認の実写真保存・同じApple本人での復元・ZIPを繰り返さない。現在設定・配備・候補・残件・時間は[購入版への統合候補](2026-10-02-preservation-purchase-integration.md)。
 
 ## 2026-10-02 ログインなし残件：private購入操作CLI、圧縮導入、容量/表示条件
 
