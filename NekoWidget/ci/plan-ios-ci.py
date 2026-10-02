@@ -74,6 +74,27 @@ POLICY_DOC_WORKFLOW_STEP = """      - name: Validate public policy pages
         run: python3 NekoWidget/ci/test-public-policy-site.py
 
 """
+# Local operator CLI only. These scripts never enter a Worker/iOS bundle.
+# The mocked Node boundary tests run in the plan job; live operations do not.
+BILLING_OPERATOR_SCOPE = "billing-operation-tools-v1"
+BILLING_OPERATOR_ENTRY = "NekoWidget/SharingService/scripts/billing-private-gateway-runtime-gate.mjs"
+BILLING_OPERATOR_PATHS = frozenset({
+    BILLING_OPERATOR_ENTRY,
+    "NekoWidget/SharingService/scripts/billing-staging-runtime-gate-lib.mjs",
+    "NekoWidget/SharingService/test/billing-staging-runtime-gate.node-tests.mjs",
+})
+BILLING_OPERATOR_WORKFLOW_STEP = """      - name: Prepare operator test runtime
+        if: steps.scope.outputs.runtime_scope == 'billing-operation-tools-v1'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+      - name: Validate private billing operation boundaries
+        if: steps.scope.outputs.runtime_scope == 'billing-operation-tools-v1'
+        run: node --test NekoWidget/SharingService/test/billing-staging-runtime-gate.node-tests.mjs
+
+"""
+SHARING_OPERATOR_GUARD = " && needs.plan.outputs.scope != 'ci-orchestration-v1' && needs.plan.outputs.scope != 'billing-operation-tools-v1'"
+SHARING_FULL_CHECK_CONDITION = "    if: needs.plan.outputs.scope != 'billing-private-service-v2' && needs.plan.outputs.scope != 'internal-billing-release-prep-v1'"
 DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "watch-ci-run.py", "test-watch-ci-run.py", "preflight-ci.py",
     "test-preflight-ci.py", "ci-timing-baseline.json",
@@ -82,7 +103,7 @@ ORCHESTRATION_PATHS = DEVELOPMENT_PATHS | frozenset("NekoWidget/ci/" + name for 
     "ios_ci_scope.py", "plan-ios-ci.py", "release-testflight.py", "check-development-flow.py",
     "test-plan-ios-ci.py", "test-ci-lanes.py", "test-widget-ci-scope.py", "test-ci-smoke-scope.py",
     "test-release-testflight.py", "test-testflight-release-evidence-workflow.py", "test-release-flow.py",
-)) | {".github/workflows/ios-build.yml", ".github/workflows/testflight.yml"}
+)) | {".github/workflows/ios-build.yml", ".github/workflows/testflight.yml", ".github/workflows/sharing-service.yml"}
 
 # A separate Node/Container-only service, never iOS or release evidence.
 # Keep an exact file allowlist: unknown files, modes or mixed products use FULL.
@@ -448,7 +469,7 @@ def preservation_backend_only(paths, base, head):
                         bindings=PRESERVATION_COMPANION_DIGESTS, binding_name="PRESERVATION_COMPANION_DIGESTS")
 
 
-def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
+def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS, allowed_additions=frozenset()):
     if not paths or not source_paths(paths) or not source_paths(paths) <= allowed:
         return False
     records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
@@ -462,7 +483,8 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
         if len(fields) != 5 or path not in paths or path in seen:
             return False
         seen.add(path)
-        if is_handoff(path) or (allowed == ORCHESTRATION_PATHS and Path(path).name.startswith("test-")):
+        if (is_handoff(path) or path in allowed_additions
+                or (allowed == ORCHESTRATION_PATHS and Path(path).name.startswith("test-"))):
             valid = (fields[0:2], fields[4]) in (([":100644", "100644"], "M"),
                                                ([":000000", "100644"], "A"))
         else:
@@ -568,12 +590,34 @@ def orchestration_only(paths, base, head):
     for path, boundary in (
         (".github/workflows/ios-build.yml", "\n  build-without-signing:"),
         (".github/workflows/testflight.yml", "      - name: Verify Xcode installation"),
+        (".github/workflows/sharing-service.yml", "\n  billing-verifier-check:"),
     ):
         if path not in paths:
             continue
         before, after = (git("show", f"{revision}:{path}") for revision in (base, head))
         if before.count(boundary) != 1 or after.count(boundary) != 1:
             return False
+        if path.endswith("sharing-service.yml"):
+            old_body = boundary + before.split(boundary, 1)[1]
+            new_body = boundary + after.split(boundary, 1)[1]
+            if old_body == new_body:
+                continue
+            expected = old_body
+            for job in ("billing-verifier-check", "moderation-keygen-windows-policy", "check"):
+                blocks = list(re.finditer(r"(?ms)^  " + re.escape(job) + r":\n.*?(?=^  \S|\Z)", expected))
+                if len(blocks) != 1:
+                    return False
+                block = blocks[0]
+                original = SHARING_FULL_CHECK_CONDITION + "\n"
+                if block.group().count(original) != 1:
+                    return False
+                changed = block.group().replace(original, SHARING_FULL_CHECK_CONDITION + SHARING_OPERATOR_GUARD + "\n", 1)
+                expected = expected[:block.start()] + changed + expected[block.end():]
+            # Exact job/if-line replacements only. No SHA normalization or
+            # guard-string removal may hide changes in commands or inputs.
+            if expected != new_body:
+                return False
+            continue
         if path.endswith("testflight.yml"):
             def native_job_header(source):
                 header = source.split("\njobs:\n", 1)[1].split("\n    steps:\n", 1)[0]
@@ -597,6 +641,17 @@ def orchestration_only(paths, base, head):
     return True
 
 
+def billing_operator_only(paths, base, head):
+    if (len(paths) != len(set(paths))
+            or not development_tools_only(paths, base, head, BILLING_OPERATOR_PATHS,
+                                          frozenset({BILLING_OPERATOR_ENTRY}))):
+        return False
+    ios = git("show", f"{head}:.github/workflows/ios-build.yml")
+    backend = git("show", f"{head}:.github/workflows/sharing-service.yml")
+    return (ios.count(BILLING_OPERATOR_WORKFLOW_STEP) == 1
+            and backend.count(SHARING_OPERATOR_GUARD) == 3)
+
+
 def policy_docs_only(paths, base, head):
     if len(paths) != len(set(paths)) or not development_tools_only(paths, base, head, POLICY_DOC_PATHS):
         return False
@@ -612,6 +667,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == RELEASE_PREP_SCOPE and release_prep_paths_only(paths):
         return (PLAN_JOB, RELEASE_PREP_BACKEND_PLAN_JOB)
     if runtime_scope == POLICY_DOC_SCOPE and source_paths(paths) and source_paths(paths) <= POLICY_DOC_PATHS:
+        return (PLAN_JOB,)
+    if runtime_scope == BILLING_OPERATOR_SCOPE and source_paths(paths) and source_paths(paths) <= BILLING_OPERATOR_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
@@ -798,6 +855,14 @@ def window_hub_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources <= BILLING_OPERATOR_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and billing_operator_only(paths, base, env["GITHUB_SHA"]):
+                return BILLING_OPERATOR_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
     if sources and sources <= POLICY_DOC_PATHS:
         try:
             base = comparison_base(event, env)
@@ -1352,7 +1417,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -1369,7 +1434,10 @@ def main() -> None:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
-            if selected_scope == POLICY_DOC_SCOPE:
+            if selected_scope == BILLING_OPERATOR_SCOPE:
+                summary = ("## Billing operator tools only\n\nThe mocked Node boundary checks run in this plan job. "
+                           "No live cloud operations or Mac jobs are requested. Not iOS release evidence.\n")
+            elif selected_scope == POLICY_DOC_SCOPE:
                 summary = ("## Public policy pages only\n\nThe owning HTML checks run in this plan job. "
                            "Mac jobs are not requested. Not iOS release evidence.\n")
             elif backend:
