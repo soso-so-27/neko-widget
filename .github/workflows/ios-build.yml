@@ -59,6 +59,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 NekoWidget/ci/plan-ios-ci.py
 
+      - name: Validate public policy pages
+        if: steps.scope.outputs.runtime_scope == 'public-policy-docs-v1'
+        run: python3 NekoWidget/ci/test-public-policy-site.py
+
       - name: Validate internal Sandbox release preparation
         if: steps.scope.outputs.runtime_scope == 'internal-billing-release-prep-v1'
         run: |

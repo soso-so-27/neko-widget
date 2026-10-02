@@ -60,6 +60,20 @@ TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
 DEVELOPMENT_SCOPE = "development-tools-v1"
 ORCHESTRATION_SCOPE = "ci-orchestration-v1"
 PLAN_JOB = "Select iOS checks and verify reusable evidence"
+# Published static HTML is not compiled into the app or Widget. Keep this
+# closed to existing policy pages; scripts, workflows and mixed products do
+# not inherit the exception. Its success is never native release evidence.
+POLICY_DOC_SCOPE = "public-policy-docs-v1"
+POLICY_DOC_PATHS = frozenset({
+    "docs/index.html", "docs/privacy/index.html", "docs/community/index.html",
+    "docs/support/index.html", "docs/app/index.html",
+    "docs/app/privacy/index.html", "docs/app/support/index.html",
+})
+POLICY_DOC_WORKFLOW_STEP = """      - name: Validate public policy pages
+        if: steps.scope.outputs.runtime_scope == 'public-policy-docs-v1'
+        run: python3 NekoWidget/ci/test-public-policy-site.py
+
+"""
 DEVELOPMENT_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "watch-ci-run.py", "test-watch-ci-run.py", "preflight-ci.py",
     "test-preflight-ci.py", "ci-timing-baseline.json",
@@ -442,10 +456,12 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
         records.pop()
     if len(records) != 2 * len(paths):
         return False
+    seen = set()
     for index in range(0, len(records), 2):
         fields, path = records[index].split(), records[index + 1]
-        if len(fields) != 5 or path not in paths:
+        if len(fields) != 5 or path not in paths or path in seen:
             return False
+        seen.add(path)
         if is_handoff(path) or (allowed == ORCHESTRATION_PATHS and Path(path).name.startswith("test-")):
             valid = (fields[0:2], fields[4]) in (([":100644", "100644"], "M"),
                                                ([":000000", "100644"], "A"))
@@ -453,7 +469,7 @@ def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS):
             valid = fields[0:2] == [":100644", "100644"] and fields[4] == "M"
         if not valid:
             return False
-    return True
+    return seen == set(paths)
 
 
 RELEASE_PREP_SCOPE = "internal-billing-release-prep-v1"
@@ -581,11 +597,22 @@ def orchestration_only(paths, base, head):
     return True
 
 
+def policy_docs_only(paths, base, head):
+    if len(paths) != len(set(paths)) or not development_tools_only(paths, base, head, POLICY_DOC_PATHS):
+        return False
+    # The required plan job must actually execute the owning HTML checks.
+    # Workflow changes cannot accompany this docs-only scope.
+    workflow = git("show", f"{head}:.github/workflows/ios-build.yml")
+    return workflow.count(POLICY_DOC_WORKFLOW_STEP) == 1
+
+
 def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if runtime_scope == RELEASE_PREP_SCOPE and release_prep_paths_only(paths):
         return (PLAN_JOB, RELEASE_PREP_BACKEND_PLAN_JOB)
+    if runtime_scope == POLICY_DOC_SCOPE and source_paths(paths) and source_paths(paths) <= POLICY_DOC_PATHS:
+        return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
@@ -771,6 +798,14 @@ def window_hub_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources <= POLICY_DOC_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and policy_docs_only(paths, base, env["GITHUB_SHA"]):
+                return POLICY_DOC_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
     if WINDOW_HUB_PATHS <= sources:
         try:
             base = comparison_base(event, env)
@@ -1317,7 +1352,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -1334,11 +1369,17 @@ def main() -> None:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
-            output.write(("## Backend-only verification\n\nRequired separately: " + backend[0]
-                          + " in `" + backend[1] + "`. This plan does not certify that job's success. "
-                          "Mac jobs are not requested. Not iOS release evidence.\n") if backend else
-                         "## CI maintenance only\n\nOrchestration tests executed. "
-                         "Mac jobs are not requested for this verified maintenance scope. Not iOS release evidence.\n")
+            if selected_scope == POLICY_DOC_SCOPE:
+                summary = ("## Public policy pages only\n\nThe owning HTML checks run in this plan job. "
+                           "Mac jobs are not requested. Not iOS release evidence.\n")
+            elif backend:
+                summary = ("## Backend-only verification\n\nRequired separately: " + backend[0]
+                           + " in `" + backend[1] + "`. This plan does not certify that job's success. "
+                           "Mac jobs are not requested. Not iOS release evidence.\n")
+            else:
+                summary = ("## CI maintenance only\n\nOrchestration tests executed. "
+                           "Mac jobs are not requested for this verified maintenance scope. Not iOS release evidence.\n")
+            output.write(summary)
         return
 
     try:
