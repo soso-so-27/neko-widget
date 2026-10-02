@@ -33,6 +33,7 @@ TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
+PRESERVATION_USAGE_SCOPE = "reviewed-preservation-usage-ui-v1"
 MEMBERSHIP_TOOLS_SCOPE = "reviewed-membership-tools-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
@@ -76,7 +77,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1192,6 +1193,37 @@ def reviewed_membership_copy_changes(changes: dict[str, tuple[str, str]]) -> boo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_COPY_TESTS))
 
 
+# Count/limit DTO validation and decimal capacity display, after the separately
+# validated backend has reached main. Full source pairs include the existing
+# runtime boundary helper and UI fixture; arbitrary client/test changes cannot
+# borrow this profile. No Widget or shared storage input changes.
+PRESERVATION_USAGE_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": [
+        "a67a83c01db86ef168fd3fa83aec95ffc0da300ff17409ef228ddf14772c9539",
+        "03d2c4fcfc825ef90a4f6f8f8b5ef081830178987ab0603dc20ad08c9f849ecb"],
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": [
+        "3801364b07b3a9b534c6151f6a4327be18e40133fc5fcd8ac2854e24f11549b7",
+        "d1498a3d96088dcbeb142448ffbb10ca57fb3d731ebf86ca01c9398e420dcfdc"],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": [
+        "ff60014cc19c5cc54267352bf12160fff6dc0ee00244842ce09d58b7a41edaf0",
+        "676387c98d6eb129b2b41680b678f506c7afb5d95091c81490d0159a02b0e971"],
+    MEMORY_TEST_PATH: [
+        "967e9cb9d51fc7da7740f47bcfc0415e0d49003c0a5436cfbe9218233ba77825",
+        "748f78e10fea47b0089696bd39968544c70aaf6c73ae7c9e47dca0d15812aeec"],
+}
+PRESERVATION_USAGE_PATHS = frozenset(PRESERVATION_USAGE_DIGESTS)
+PRESERVATION_USAGE_TESTS = (
+    "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+)
+
+
+def reviewed_preservation_usage_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == PRESERVATION_USAGE_PATHS
+            and all(list(map(source_digest, changes[path])) == PRESERVATION_USAGE_DIGESTS[path]
+                    for path in PRESERVATION_USAGE_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], PRESERVATION_USAGE_TESTS))
+
+
 # Exact reviewed presentation/assets in product 78a2c45 against main a178f8b,
 # with the evidence-based unregistered-cat XCTest expectation in 008dc43.
 # Git blob pairs include binary pixels; no arbitrary Assets or fixture allowance.
@@ -1450,7 +1482,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = (PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2373,6 +2405,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == PRESERVATION_USAGE_SCOPE:
+        return sources == PRESERVATION_USAGE_PATHS
     if scope == MEMBERSHIP_TOOLS_SCOPE:
         return sources == MEMBERSHIP_TOOLS_PATHS
     if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
@@ -2553,6 +2587,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == PRESERVATION_USAGE_SCOPE:
+        return PRESERVATION_USAGE_TESTS
     if scope == MEMBERSHIP_TOOLS_SCOPE:
         return MEMBERSHIP_TOOLS_TESTS
     if scope == TOOL_CANDIDATE_REFRESH_SCOPE:
@@ -2803,6 +2839,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
         return TOOL_CAT_AUTOFILL_SCOPE
     if reviewed_membership_copy_changes(changes):
         return MEMBERSHIP_COPY_SCOPE
+    if reviewed_preservation_usage_changes(changes):
+        return PRESERVATION_USAGE_SCOPE
     if reviewed_vet_saved_cat_changes(changes):
         return VET_SAVED_CAT_SCOPE
     if reviewed_care_handoff_changes(changes):
