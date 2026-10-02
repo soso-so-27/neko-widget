@@ -51,4 +51,4 @@
 
 証拠は `C:/dev/neko-evidence/preservation-offline-20261002/`。`version-growth.json` は製品source6ファイルのhashと測定条件、`capacity-recommendation.json` は再計算値、`billing-activation-readiness.json` は未完を保持した有効化候補、`current-health.json` / `current-billing-db-gates.json` は成功したhealthと失敗した管理読取を区別する。`policy-mobile.png` は実375px描画。
 
-初回の具体artifactは10:59:40ではなく**09:59:40 JST（00:59:40 UTC）**。その前に開始した照合時間も今回の作業に含むが、開始時刻は未採録。保管全体の初回製品候補10月1日18:29:38 JSTを新branchでリセットしない。最初の計測は合成index secretの非canonical base64で失敗したため、正しい乱数を使うfixtureだけを修正。準備scriptの最初の実行はWindows ESM importパスで失敗し、file URLへ修正した。未変更の製品や広いCIをやり直していない。Mac/Widget/新TestFlightは0回。
+初回の具体artifactは**09:59:40 JST（00:59:40 UTC）**。その前に開始した照合時間も今回の作業に含むが、開始時刻は未採録。保管全体の初回製品候補10月1日18:29:38 JSTを新branchでリセットしない。最初の計測は合成index secretの非canonical base64で失敗したため、正しい乱数を使うfixtureだけを修正。準備scriptの最初の実行はWindows ESM importパスで失敗し、file URLへ修正した。未変更の製品や広いCIをやり直していない。Mac/Widget/新TestFlightは0回。
