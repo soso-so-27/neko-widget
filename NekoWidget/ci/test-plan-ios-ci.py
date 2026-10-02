@@ -25,6 +25,56 @@ spec.loader.exec_module(planner)
 
 
 class PlanTests(unittest.TestCase):
+    def test_policy_docs_require_closed_paths_modes_and_owning_workflow_check(self):
+        paths = ["docs/privacy/index.html", "docs/support/index.html", "handoffs/policy.md"]
+        def selected(changed=paths, *, mode=":100644 100644", status="M", wired=True, duplicate=False):
+            def git(*args):
+                if args[0] == "diff":
+                    raw_paths = [changed[0]] * len(changed) if duplicate else changed
+                    return "".join(f"{mode} {'c' * 40} {'d' * 40} {status}\0{path}\0" for path in raw_paths)
+                if args[0] == "show":
+                    return planner.POLICY_DOC_WORKFLOW_STEP if wired else "no HTML check"
+                return self.sha
+            with patch.object(planner, "comparison_base", return_value="b" * 40), \
+                    patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(changed, {}, self.env)
+        for path in planner.POLICY_DOC_PATHS:
+            self.assertEqual(selected([path]), planner.POLICY_DOC_SCOPE)
+        self.assertEqual(selected(), planner.POLICY_DOC_SCOPE)
+        for extra in ("docs/unknown.html", "docs/privacy/script.js", "NekoWidget/ci/plan-ios-ci.py",
+                      ".github/workflows/ios-build.yml", "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                      "NekoWidget/NekoWidget/Views/HomeView.swift", "NekoWidget/Config.xcconfig"):
+            self.assertEqual(selected(paths + [extra]), scope.FULL_SCOPE, extra)
+        for mode, status in ((":000000 100644", "A"), (":100644 000000", "D"),
+                             (":100644 100755", "M"), (":100644 120000", "T"),
+                             (":100644 100644", "R100")):
+            self.assertEqual(selected(mode=mode, status=status), scope.FULL_SCOPE)
+        self.assertEqual(selected(wired=False), scope.FULL_SCOPE)
+        self.assertEqual(selected(duplicate=True), scope.FULL_SCOPE)
+        self.assertEqual(selected(paths + [paths[0]]), scope.FULL_SCOPE)
+
+    def test_policy_doc_success_cannot_become_native_release_evidence(self):
+        paths = ["docs/privacy/index.html"]
+        self.assertEqual(planner.required_jobs(paths, planner.POLICY_DOC_SCOPE), (planner.PLAN_JOB,))
+        self.assertEqual(planner.required_jobs(paths + ["unknown.swift"], planner.POLICY_DOC_SCOPE), planner.FULL)
+        self.assertNotIn(planner.POLICY_DOC_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(planner.POLICY_DOC_SCOPE)
+        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ios-build.yml"
+        self.assertEqual(workflow.read_text(encoding="utf-8").count(planner.POLICY_DOC_WORKFLOW_STEP), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event.json").write_text("{}")
+            env = dict(self.env, GITHUB_EVENT_PATH=str(root / "event.json"),
+                       GITHUB_OUTPUT=str(root / "output"), GITHUB_STEP_SUMMARY=str(root / "summary"))
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=paths), \
+                    patch.object(planner, "runtime_scope", return_value=planner.POLICY_DOC_SCOPE), \
+                    patch.object(planner, "find_evidence") as lookup:
+                planner.main()
+            lookup.assert_not_called()
+            output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertTrue(all(output[name] == "false" for name in ("build", "smoke", "sharing", "app_ui")))
+            self.assertEqual(output["matrix_lanes"], "[]")
+
     def test_daily_tool_membership_requires_exact_sources_and_owning_ui(self):
         paths = sorted(scope.MEMBERSHIP_TOOLS_PATHS)
         self.assertEqual(len(paths), 15)
