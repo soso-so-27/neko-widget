@@ -160,10 +160,10 @@ actor PreservationFixtureServer {
             if scenario == .unavailableUsage { return try fail("ARCHIVE_ACCOUNTING_UNAVAILABLE", status: 503) }
             return try json(["version": 1, "accounting": "encrypted-records-v1",
                 "storage": ["usedBytes": 1_048_576, "reservedBytes": 0,
-                            "limitBytes": 10_737_418_240,
-                            "availableBytes": scenario == .malformedUsage ? 10_737_418_240 : 10_736_369_664,
+                            "limitBytes": 5_000_000_000,
+                            "availableBytes": scenario == .malformedUsage ? 5_000_000_000 : 4_998_951_424,
                             "overLimit": false],
-                "records": ["saved": 1, "pending": 0, "creationLimitReached": false]])
+                "records": ["saved": 1, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
         }
         if request.httpMethod == "GET", url.path == "/v1/notice-contact" {
             if scenario == .changedSessionDuringNoticeContact { try replaceSession() }
@@ -10113,8 +10113,38 @@ actor SharingRuntimeSelfTestRunner {
         guard rejected else { throw ManagedPreservationError.invalidResponse }
     }
 
+    static func testManagedPreservationUsageBoundary() throws {
+        func read(_ records: [String: Any]) throws -> ManagedPreservationUsage {
+            let body: [String: Any] = ["version": 1, "accounting": "encrypted-records-v1",
+                "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 5_000_000_000,
+                            "availableBytes": 5_000_000_000, "overLimit": false], "records": records]
+            let data = try JSONSerialization.data(withJSONObject: body)
+            return try JSONDecoder().decode(ManagedPreservationUsage.self, from: data).validated()
+        }
+        let legacy = try read(["saved": 2, "pending": 0, "creationLimitReached": false])
+        guard legacy.records.maximumRecords == nil else { throw ManagedPreservationError.invalidResponse }
+        let reserved = try read(["saved": 0, "pending": 1, "maximumRecords": 1, "creationLimitReached": true])
+        guard reserved.records.maximumRecords == 1 else { throw ManagedPreservationError.invalidResponse }
+        // A later reduction may put existing records above the configured limit.
+        _ = try read(["saved": 2, "pending": 0, "maximumRecords": 1, "creationLimitReached": true])
+        let invalidRecords: [[String: Any]] = [
+            ["saved": 0, "pending": 0, "maximumRecords": 0, "creationLimitReached": false],
+            ["saved": 0, "pending": 0, "maximumRecords": -1, "creationLimitReached": false],
+            ["saved": 1, "pending": 1, "maximumRecords": 2, "creationLimitReached": false],
+            ["saved": 0, "pending": 0, "maximumRecords": 2, "creationLimitReached": true],
+            ["saved": Int64.max, "pending": 1, "creationLimitReached": true],
+            ["saved": 0, "pending": 0, "maximumRecords": "200", "creationLimitReached": false]
+        ]
+        for records in invalidRecords {
+            var rejected = false
+            do { _ = try read(records) } catch { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
+    }
+
     @MainActor
     static func testManagedPreservationMembershipBoundary() async throws {
+        try testManagedPreservationUsageBoundary()
         try await testManagedPreservationDeletionReceiptBoundary()
         try await testManagedPreservationArchiveCopySource()
         try await testManagedPreservationSignInFeedback()
@@ -10159,8 +10189,8 @@ actor SharingRuntimeSelfTestRunner {
         guard page.items.count == 1 else { throw ManagedPreservationError.invalidResponse }
         _ = try await f.client.detail(PreservationFixtureServer.recordID)
         let usage = try await f.client.usage()
-        guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 10_736_369_664,
-              usage.records.saved == 1 else { throw ManagedPreservationError.invalidResponse }
+        guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 4_998_951_424,
+              usage.records.saved == 1, usage.records.maximumRecords == 200 else { throw ManagedPreservationError.invalidResponse }
         let retention = try await f.client.retention()
         guard retention.status == .expired, retention.dueAt != nil,
               retention.finalNoticeDeliveredAt == nil else {

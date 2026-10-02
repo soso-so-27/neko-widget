@@ -315,6 +315,17 @@ struct ManagedPreservationView: View {
     private var usageSection: some View {
         Section {
             if let usage = coordinator.usage {
+                if let limit = usage.records.maximumRecords {
+                    Text("保管件数 \(usage.records.saved) / \(limit)件")
+                        .accessibilityIdentifier("preservation-record-usage")
+                } else {
+                    Text("保管件数 \(usage.records.saved)件")
+                        .accessibilityIdentifier("preservation-record-usage")
+                }
+                if usage.records.pending > 0 {
+                    Text("保管準備中 \(usage.records.pending)件")
+                        .font(.subheadline)
+                }
                 Text("使用中 \(Self.capacity(usage.storage.usedBytes)) / \(Self.capacity(usage.storage.limitBytes))")
                     .accessibilityIdentifier("preservation-usage-summary")
                 ProgressView(value: Double(min(usage.storage.usedBytes, usage.storage.limitBytes)),
@@ -379,7 +390,7 @@ struct ManagedPreservationView: View {
     }
 
     private static func capacity(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .decimal)
     }
 
     private static func deadline(_ milliseconds: Int64) -> String {
@@ -564,6 +575,7 @@ struct ManagedPreservationMembershipFixture: View {
         .task {
             guard fixture == nil else { return }
             do {
+                try SharingRuntimeSelfTestRunner.testManagedPreservationUsageBoundary()
                 if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
                 fixture = try PreservationNativeFixture.make(testsAccountDeletion ? .deletionResultLost
                     : testsCopyResult ? .pilotCopyResultLost : .firstFailure)
