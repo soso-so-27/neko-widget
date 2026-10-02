@@ -14,6 +14,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- `public-policy-docs-v1` は既存の公開説明HTML7ページだけ。通常modeの変更とhand-offの追加・変更に限定し、Ubuntu plan内で既存 `test-public-policy-site.py` を実行する。未知ファイル・追加/削除/型変更・native/backend/CIとの混在はfullへ戻す。選択処理の導入は文書の変更と別候補にし、独立レビューと `ci-orchestration-v1` を先に通す。Mac・Simulator・Widget・uploadは起動せず、この成功をiOS配布の証拠に使えない。HTMLの見た目は必要な描画確認を別に行う。
 - 制御用Python、対応する単体テスト、workflowの起動条件・配布SHA固定だけの変更は `ci-orchestration-v1`。Ubuntuのplan jobで検証し、Mac・Simulator・Widget画面検証は起動しない。native build/test/upload本体の変更や製品変更との混在はこの範囲に含めない。この成功はiOS製品・配布の検証証拠に使えない。
 - 既存のアプリViews内だけの動作変更は `app-view-ui-v1`。アプリ操作・Photos・runtime・buildを確認し、Widget galleryは起動しない。共有モデル・Widget・project・fixtureの変更を含む場合は別途判定する。既存の文字・余白だけの限定判定は維持する。
 - `app-private-data-ui-v1` は明示された写真メモ・個人保管・診察控えのapp専用保存／表示だけ。Widgetの実source ID→fileRef→pathを確認し、project差分は既知2ファイルのapp専用登録以外を全て拒否する。初回の保存検証追加は既存workflow不変＋1つの追加検証blockだけ。Build内の保存・migration・privacy確認、従来Photos／scan、両OS runtime、app UI両shardは維持し、Widget gallery3系統だけを除く。共有モデル・Widget描画／更新／cache・startup・画像fixture・未知ファイル・不明なmode／登録は対象外。選択処理だけの今回の修正は `ci-orchestration-v1` でPythonだけを検証し、Mac／Simulator／再配布を行わない。新scopeのnative所要時間は未計測で、除外した件数を実測の時間短縮や全件成功に読み替えない。

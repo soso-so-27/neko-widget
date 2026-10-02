@@ -325,7 +325,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE, planner.RELEASE_PREP_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
@@ -396,10 +396,12 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                 "decision": "Handoff paths do not trigger iOS CI", "ready": True}
     selected = planner.runtime_scope(paths, event, env)
     required = planner.required_jobs(paths, selected)
-    if selected in (planner.ORCHESTRATION_SCOPE, planner.RELEASE_PREP_SCOPE):
+    if selected in (planner.ORCHESTRATION_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE):
         return {"head": head, "base": comparison, "changed_files": paths,
                 "scope": selected, "required_jobs": list(required),
-                "reason": ("Frozen internal Sandbox release preparation; Python and mocked runtime checks only, no Mac/archive/upload evidence"
+                "reason": ("Existing static policy HTML only; owning HTML checks in the plan job, no Mac/archive/upload evidence"
+                           if selected == planner.POLICY_DOC_SCOPE else
+                           "Frozen internal Sandbox release preparation; Python and mocked runtime checks only, no Mac/archive/upload evidence"
                            if selected == planner.RELEASE_PREP_SCOPE else
                            "CI control plane only; Python checks, no Mac jobs or upload"),
                 "ready": not include_upload, "release_evidence": False,
@@ -455,7 +457,7 @@ def main(argv=None):
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
         if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE,
-                                   planner.RELEASE_PREP_SCOPE}:
+                                   planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE}:
             runs = read_task_runs(result["head"])
             correction = None
             if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE):
