@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-10-01",
+  "as_of": "2026-10-02",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 12.183,
   "upload_run": 36834987212,
@@ -821,6 +821,24 @@
         }
       ],
       "note": "All four required jobs passed, owning lost-cat UI3; no Widget gallery. Product code unchanged from first candidate09:12:16 JST through native verification, with Care main integrated. Native preparation took15m40 then21m28 before cases, including shared runtime41-case preparation. Original40-45 minute plan was exceeded; diagnostic failures and preparation cost must be retained, not reported as an18-minute end-to-end release."
+    },
+    {
+      "scope": "reviewed-preservation-usage-ui-v1",
+      "candidate_minutes": 17.3,
+      "run_id": 36983313031,
+      "attempt": 1,
+      "outcome": "failure",
+      "runner_minutes": 61.567,
+      "note": "Initial normal route: Build/Photos/runtime succeeded; one owning UI failed on confirm enabled/hittable wait. Not success/release evidence. No Widget rendering tests."
+    },
+    {
+      "scope": "reviewed-preservation-usage-ui-v1",
+      "candidate_minutes": 49.4,
+      "run_id": 36983313031,
+      "attempt": 2,
+      "outcome": "success",
+      "runner_minutes": 78.0,
+      "note": "Same SHA, no product/test changes; reran only failed owning app-ui job, preserving proven unchanged sibling successes. UI1 passed with 0 failures; all required jobs succeeded. Duration starts at initial CI and includes failure, investigation gap and retry; underlying XCTest cause remains unresolved."
     }
   ],
   "rework_observations": [
@@ -873,6 +891,16 @@
       "source_sha": "31a04fc8d5045e2f67c5e1b46c30019a94e7dbeb",
       "executed_tests": 1,
       "note": "Feedback/rework record; partial/cancelled/diagnostic duration is not a full normal CI timing sample."
+    },
+    {
+      "task": "preservation-usage-limits-20261002",
+      "run_id": 36983313031,
+      "attempt": 2,
+      "outcome": "success",
+      "total_seconds": 2964,
+      "source_sha": "5a351d72ae535a3a2c62eafd4e31904ce0fd4541",
+      "executed_tests": 1,
+      "note": "Initial native edit03:28Z; initial normal CI08:18:43Z. Task elapsed/native preparation exceeds CI duration. Previous diagnostic14m23 is not normal release evidence. Same-SHA single job retry succeeded; do not reset first-candidate clock or omit failed runner use."
     }
   ]
 }
