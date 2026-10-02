@@ -1,5 +1,10 @@
 # 現在のタスクと優先順位
 
+## 2026-10-02 保管件数・容量表示：検証をbackendとnativeへ分離
+
+- 表示候補b9000f6のサーバー322件と既存保管UI1本・撮影画像は成功。まだmain/TestFlightには未反映。6製品ファイルの混在でfullになっていたため、別control候補でbackend v26とnative4全文固定の専用scopeを登録する。Widget Galleryを選ばず、既存Build・Photos・両OSruntime・保管UI1本を維持する。
+- controlの独立レビューは指摘なし。PythonとUbuntu planを確認してcontrolを先行統合し、backend3ファイルの通常Node候補を先にmainへ、その後native4ファイル候補を準備する。今回Mac/Simulator/新TestFlight/クラウド設定変更を起動しない。[候補と証拠・時間・続き](2026-10-02-preservation-usage-ci.md)。購入のfresh管理確認と実Sandbox購入/復元/期限切れは管理ログイン後。既確認の実写真保存/復元/ZIPを繰り返さない。
+
 ## 2026-10-02 ログインなし残件：private購入操作CLI、圧縮導入、容量/表示条件
 
 - 旧full family前提のCLIを現用private Gatewayへ当てない専用entryを追加。固定非公開Sandbox設定、fresh SELECTと通常caller `/v1/billing/health`、世代/8状態一致による1回CAS、更新後確認、結果不明時の非再試行を13テストと独立レビューで確認。実D1や上位flagは変更していない。下位OFF healthだけでは上位設定を証明できず、実settings/versionのfresh確認は残る。
