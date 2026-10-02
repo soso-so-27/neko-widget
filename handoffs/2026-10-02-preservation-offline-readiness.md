@@ -43,7 +43,7 @@
 
 1. Apple有料契約の現在状態と実商品を確認する。
 2. 現用private Gatewayの設定/version、D1の下位gate状態とgenerationをfreshに読む。今日のD1読取はCloudflare認証7403で失敗した。healthの有効なOFFを、下位DB読取成功としない。保存済みgen0向け候補は状態が違えば廃棄して組み直す。
-3. 既存のbilling-control CLIはpublic family sourceとreport ONを前提にするため、現在のfrozen family＋private Gatewayへ無条件に使用しない。familyを再build/再配備せず、private Gatewayだけを設定し、既存の世代付きSQLの実行前後をDBと通常caller healthで照合する経路を仕上げる。2 protected変数は実準備が揃ってからinternal限定で設定する。
+3. 旧billing-control CLIはpublic family sourceとreport ONを前提にするため、現在のfrozen family＋private Gatewayへ無条件に使用しない。専用private操作CLIとfresh状態/caller health照合は[後続の修正と導入手順](2026-10-02-preservation-operator-readiness.md)で仕上げた。実操作前のGateway設定/version・D1読取と上位設定の配備は別工程。2 protected変数は実準備が揃ってからinternal限定で設定する。
 4. 実費/余裕を再確認して容量・人数の具体案を決定し、一般販売前に保管特典と提供可否を一致させる。実課金・一般受付は依然OFF。
 5. 既存236候補の必要証拠とarchive設定の不変を確認して、購入ONの内部版をまとめて1回配布。実Sandboxで購入/取消/復元/期限切れと保管可否を確認する。成功済みの実写真保存・復元・ZIPを再要求しない。
 
