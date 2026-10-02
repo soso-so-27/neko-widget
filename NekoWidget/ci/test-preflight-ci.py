@@ -24,6 +24,18 @@ class PreflightTests(unittest.TestCase):
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},
         {"scope": "full-v1", "candidate_minutes": 98, "run_id": 2, "outcome": "success-after-retry"}]}
 
+    def test_operator_tools_preflight_cannot_authorize_upload(self):
+        for include_upload in (False, True):
+            with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
+                    patch.object(planner, "comparison_base", return_value="b" * 40), \
+                    patch.object(planner, "changed_paths", return_value=sorted(planner.BILLING_OPERATOR_PATHS)), \
+                    patch.object(planner, "runtime_scope", return_value=planner.BILLING_OPERATOR_SCOPE):
+                result = preflight.candidate_plan("origin/main", 30, include_upload, self.history)
+            self.assertEqual(result["required_jobs"], [planner.PLAN_JOB])
+            self.assertFalse(result["release_evidence"])
+            self.assertEqual(result["ready"], not include_upload)
+        with self.assertRaises(ValueError): preflight.observe_cost(planner.BILLING_OPERATOR_SCOPE, self.history, True)
+
     def test_policy_docs_plan_cannot_authorize_upload(self):
         for include_upload in (False, True):
             with patch.object(planner, "git", side_effect=["", "a" * 40, "b" * 40]), \
