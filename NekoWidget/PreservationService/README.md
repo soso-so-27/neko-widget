@@ -70,7 +70,7 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 
 ## 使用量の確認
 
-本人の保管sessionで `GET /v1/usage`。query・所有者ID指定は不可、`Cache-Control: no-store`。会員資格・鍵の復号・写真ダウンロードには依存しない読み取りAPIです（本人の有効sessionとサービスの構成は必要）。アプリ表示への接続は別バッチです。
+本人の保管sessionで `GET /v1/usage`。query・所有者ID指定は不可、`Cache-Control: no-store`。会員資格・鍵の復号・写真ダウンロードには依存しない読み取りAPIです（本人の有効sessionとサービスの構成は必要）。アプリは保存済み件数・実際の上限・準備中件数と使用容量を表示します。容量表示は十進単位で、保存済みbyte会計は変更しません。
 
 追加migration `0004_upload_owner_index.sql` は予約表に所有者単位のcovering indexを作ります。旧migrationの変更やデータ変換はなく、全所有者の予約を走査しないことをローカルのquery planで確認しています。本番DBへは未適用です。
 
@@ -79,7 +79,7 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
   "version": 1,
   "accounting": "encrypted-records-v1",
   "storage": { "usedBytes": 1200, "reservedBytes": 800, "limitBytes": 10000, "availableBytes": 8000, "overLimit": false },
-  "records": { "saved": 1, "pending": 1, "creationLimitReached": false }
+  "records": { "saved": 1, "pending": 1, "maximumRecords": 200, "creationLimitReached": false }
 }
 ```
 
@@ -88,7 +88,8 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 - `usedBytes` は保管中の暗号化JPEG＋暗号化本文/メタデータ。元写真の容量やR2全体の実請求量ではありません。
 - `reservedBytes` は保存処理で確保した容量。期限切れでも清掃が完了するまでは含みます。コミット時に予約→保管済みへ移り、同一SQL snapshotで二重計上しません。
 - `availableBytes` は使用中＋予約中を引き、最小0。既存本文の編集や設定容量の引下げで超過しても、既存記録を削除/非表示にせず `overLimit` を返します。この値は新規保存の予約や成功保証ではありません。
-- `saved` は未削除の記録数（本文だけの記録も含む）、`pending` は未清掃の保存処理数。`creationLimitReached` はこの合計が件数上限に達したことを示します。削除済みIDは再送防止のため残しますが上限へ数えず、削除で枠が空きます。空き容量だけでは次の保存成功を保証しません。
+- `saved` は未削除の記録数（本文だけの記録も含む）、`pending` は未清掃の保存処理数。`maximumRecords` はサービスの実設定の件数上限です。`creationLimitReached` は保存済みと準備中の合計がこの上限に達したことを示します。削除済みIDは再送防止のため残しますが上限へ数えず、削除で枠が空きます。空き容量だけでは次の保存成功を保証しません。
+- 旧サーバーの応答に `maximumRecords` がない場合、アプリは件数だけを表示して上限を推測しません。追加されたfieldを旧アプリは無視できるため、段階導入が可能です。上限の引下げで既存件数が超過しても、既存記録の読取を妨げません。
 - 会計行の欠落/不一致は `ARCHIVE_ACCOUNTING_UNAVAILABLE` / 503。0件/空き容量として成功させず、記録を消して帳尻を合わせません。使用量はR2実体や復号可能性の検査結果ではありません。
 
 現行コードに解約連動の自動削除はありません。利用者指定の「期限切れ後12か月の持ち出し、事前通知後に消去」を実行するには、通知の送達確認、停止可能な最終消去、復旧コピー内の消去、復元訓練が別途必要です。それまでは無期限保持も期限消去も販売上の保証にしません。現行の明示削除は本文/参照を即時に消し、R2を清掃待ちへ移します。清掃の7日は遅延書込みへの再消去期間で、7日間の取消・ごみ箱ではありません。提供容量、誤削除の取消、運営終了時の持ち出し条件も提供開始前に決めます。

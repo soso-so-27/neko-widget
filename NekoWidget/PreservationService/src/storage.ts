@@ -354,7 +354,7 @@ export class ArchiveStore {
     return { version: 1, accounting: 'encrypted-records-v1',
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes: this.d.quotaBytes,
         availableBytes: Math.max(0, this.d.quotaBytes - allocated), overLimit: allocated > this.d.quotaBytes },
-      records: { saved: row.saved_records, pending: row.pending_records,
+      records: { saved: row.saved_records, pending: row.pending_records, maximumRecords: this.d.maximumRecords,
         // Keep tombstones for replay protection, but do not let lifetime deletions
         // exhaust the number of records a customer may currently keep.
         creationLimitReached: row.saved_records + row.pending_records >= this.d.maximumRecords } };
