@@ -578,7 +578,7 @@ it('usage starts empty without creating inventory and never queries membership, 
     keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable } });
   expect(await archive.usage(f.session.token)).toEqual({ version: 1, accounting: 'encrypted-records-v1',
     storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 100_000, availableBytes: 100_000, overLimit: false },
-    records: { saved: 0, pending: 0, creationLimitReached: false } });
+    records: { saved: 0, pending: 0, maximumRecords: 100, creationLimitReached: false } });
   expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();
 });
 
@@ -586,7 +586,7 @@ it('deleted IDs prevent replay without consuming a new active record slot', asyn
   const f = await fixture({ maximumRecords: 1 }); const id = crypto.randomUUID();
   await f.archive.put(f.session.token, id, f.request());
   const saved = await f.archive.usage(f.session.token);
-  expect(saved.records).toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+  expect(saved.records).toEqual({ saved: 1, pending: 0, maximumRecords: 1, creationLimitReached: true });
   expect(saved.storage.usedBytes).toBeGreaterThan(photo.length);
   expect(saved.storage.availableBytes).toBe(100_000 - saved.storage.usedBytes);
   f.setState('expired');
@@ -596,14 +596,14 @@ it('deleted IDs prevent replay without consuming a new active record slot', asyn
   await f.archive.remove(f.session.token, id, 2);
   const removed = await f.archive.usage(f.session.token);
   expect(removed.storage.usedBytes).toBe(0); expect(removed.storage.availableBytes).toBe(100_000);
-  expect(removed.records).toEqual({ saved: 0, pending: 0, creationLimitReached: false });
+  expect(removed.records).toEqual({ saved: 0, pending: 0, maximumRecords: 1, creationLimitReached: false });
   // Pending physical erasure is not customer quota, nor a seven-day undo period.
   expect(await binding.DB.prepare('SELECT 1 FROM pa_pending_deletes').first()).not.toBeNull();
   f.setState('active');
   const replacement = crypto.randomUUID();
   await f.archive.put(f.session.token, replacement, f.request());
   expect((await f.archive.usage(f.session.token)).records)
-    .toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+    .toEqual({ saved: 1, pending: 0, maximumRecords: 1, creationLimitReached: true });
   await expect(f.archive.put(f.session.token, id, f.request()))
     .rejects.toMatchObject({ code: 'RECORD_DELETED' });
   await expect(f.archive.put(f.session.token, crypto.randomUUID(), f.request()))
@@ -701,12 +701,12 @@ it('usage accounts for an in-flight upload exactly once before and after its ato
     const during = await archive.usage(f.session.token);
     reserved = during.storage.reservedBytes;
     expect(reserved).toBeGreaterThan(0); expect(during.storage.usedBytes).toBe(0);
-    expect(during.records).toEqual({ saved: 0, pending: 1, creationLimitReached: true });
+    expect(during.records).toEqual({ saved: 0, pending: 1, maximumRecords: 1, creationLimitReached: true });
     expect(during.storage.availableBytes).toBe(100_000 - reserved);
   } finally { release(); await upload; }
   const after = await archive.usage(f.session.token);
   expect(after.storage.usedBytes).toBe(reserved); expect(after.storage.reservedBytes).toBe(0);
-  expect(after.records).toEqual({ saved: 1, pending: 0, creationLimitReached: true });
+  expect(after.records).toEqual({ saved: 1, pending: 0, maximumRecords: 1, creationLimitReached: true });
 });
 
 it('expired reservations remain allocated until cleanup releases them, not merely until the clock passes', async () => {
