@@ -992,6 +992,23 @@ struct MainTabView: View {
         .id(localIdentifier)
     }
 
+    @ViewBuilder
+    func firstRunPhotoDestination(for localIdentifier: String) -> some View {
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+            if hasPhotoAccess, photoPresentationVersion.canPresent,
+               photoSourceStatus != .unavailable,
+               catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
+               !excludedCatCandidateIdentifiers.contains(localIdentifier) {
+                photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false)
+            } else {
+                ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                       description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
+                    .accessibilityIdentifier("unavailable-first-run-photo")
+            }
+        }
+        .id(localIdentifier)
+    }
+
     private func relatedAlbumsSheet(for route: PhotoRediscoveryRoute) -> some View {
         PhotoRelatedAlbumsSheet(
             root: route,

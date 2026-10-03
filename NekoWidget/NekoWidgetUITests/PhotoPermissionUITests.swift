@@ -1366,6 +1366,21 @@ final class PhotoPermissionUITests: XCTestCase {
                 }
                 captureMainlineScreen(scenario)
                 next.tap()
+                let closePhoto = app.buttons["first-run-photo-close"]
+                XCTAssertTrue(closePhoto.waitForExistence(timeout: 15))
+                XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
+                XCTAssertFalse(app.buttons["widget-placement-skip"].exists)
+                captureMainlineScreen("\(scenario)-first-photo")
+                closePhoto.tap()
+                XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
+
+                // Widget placement remains an explicit alternative, rather
+                // than interrupting the first photo the person wants to see.
+                app.terminate()
+                app.launch()
+                let widgetGuide = app.buttons["initial-scan-widget-guide"]
+                XCTAssertTrue(widgetGuide.waitForExistence(timeout: 15))
+                widgetGuide.tap()
                 let skipWidget = app.buttons["widget-placement-skip"]
                 XCTAssertTrue(skipWidget.waitForExistence(timeout: 15))
                 if scenario == "one" {
@@ -1375,6 +1390,8 @@ final class PhotoPermissionUITests: XCTestCase {
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "limited-zero":
                 XCTAssertTrue(app.staticTexts["猫の写真は見つかりませんでした"].waitForExistence(timeout: 15))
+                XCTAssertFalse(app.buttons["initial-scan-widget-guide"].exists)
+                XCTAssertFalse(app.buttons["first-run-photo-close"].exists)
                 captureMainlineScreen(scenario)
                 app.buttons["もっと写真を選ぶ"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-action-choose"].waitForExistence(timeout: 5))

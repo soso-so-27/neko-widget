@@ -1,8 +1,8 @@
 import Photos
 import SwiftUI
 
-/// The four-screen first-run experience described in
-/// `docs/オンボーディング原稿.md`.
+/// First-run permission and scan screens. Opening a result enters the app;
+/// Widget placement is an explicit alternative and can be replayed later.
 ///
 /// Navigation is intentionally driven through `page`: the owner can persist
 /// every transition without this view knowing about UserDefaults. The action
@@ -24,6 +24,7 @@ struct OnboardingView: View {
     let rescan: () -> Void
     let finishWithoutWidgetPhoto: () -> Void
     let finish: () -> Void
+    let openPhoto: (PhotoPresentation) -> Void
 
     var body: some View {
         Group {
@@ -107,12 +108,12 @@ struct OnboardingView: View {
                 isLimitedAccess: isLimitedAccess,
                 chooseMorePhotos: chooseMorePhotos,
                 rescan: rescan,
-                continueButtonTitleOverride: scan.displayedCatCount > 0
-                    ? "ウィジェットの置き方へ"
-                    : "次へ",
+                continueButtonTitleOverride: "写真を見る",
+                openPreviewPhoto: openPhoto,
+                widgetGuideAction: { page = .widgetGuide },
                 continueToApp: {
-                    if scan.displayedCatCount > 0 {
-                        page = .widgetGuide
+                    if scan.displayedCatCount > 0, let photo = resultPhotos.first {
+                        openPhoto(photo)
                     } else {
                         finishWithoutWidgetPhoto()
                     }

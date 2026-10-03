@@ -314,7 +314,7 @@ struct LostCatDraftView: View {
         Section {
             LabeledContent("名前") {
                 TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("任意"))
-                    .foregroundStyle(isPrefilled("name") ? Color.secondary : Color.primary)
+                    .foregroundStyle(Color.primary)
                     .accessibilityIdentifier("lost-cat-name")
                     .accessibilityLabel("猫の名前（任意）")
                     .focused($focus, equals: .name)
@@ -416,7 +416,7 @@ struct LostCatDraftView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
             TextField(example, text: text, axis: .vertical)
-                .foregroundStyle(isPrefilled(String(describing: field)) ? Color.secondary : Color.primary)
+                .foregroundStyle(Color.primary)
                 .lineLimit(minimumLines...8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(title)

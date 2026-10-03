@@ -24,6 +24,7 @@ struct AppRootView: View {
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
+    @State private var firstRunPhoto: PhotoPresentation?
     @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var officialWindowPresentationID = UUID()
     @State private var onboardingScanErrorMessage: String?
@@ -132,6 +133,17 @@ struct AppRootView: View {
                 onComplete: dismissWidgetPlacementGuide,
                 onSkip: dismissWidgetPlacementGuide
             )
+        }
+        .sheet(item: $firstRunPhoto) { photo in
+            NavigationStack {
+                mainTabContent.firstRunPhotoDestination(for: photo.localIdentifier)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("閉じる") { firstRunPhoto = nil }
+                                .accessibilityIdentifier("first-run-photo-close")
+                        }
+                    }
+            }
         }
         .sheet(item: $officialWindowRoute) { route in
             NavigationStack {
@@ -263,7 +275,17 @@ struct AppRootView: View {
                 Task { await viewModel.rescan() }
             },
             finishWithoutWidgetPhoto: completeOnboardingWithoutWidgetPhoto,
-            finish: completeOnboarding
+            finish: completeOnboarding,
+            openPhoto: { photo in
+                // Ignore queued taps after completion or a Widget-guide choice.
+                // A repeated tap must not replace the photo already presented.
+                guard onboardingState.currentPage == .scanResult,
+                      firstRunPhoto == nil else { return }
+                // Enter the app before presenting the ordinary photo browser.
+                // Widget placement remains available in Settings and Home.
+                completeOnboardingWithoutWidgetPhoto()
+                firstRunPhoto = photo
+            }
         )
     }
 
@@ -1148,6 +1170,8 @@ struct AppRootView: View {
     }
 
     private func completeOnboardingWithoutWidgetPhoto() {
+        // Also used when the person chooses to see a photo first and defers
+        // placement. Completion does not mark a Widget as installed.
         var state = onboardingState
         state.completeWithoutWidgetPhoto()
         persistOnboardingState(state)

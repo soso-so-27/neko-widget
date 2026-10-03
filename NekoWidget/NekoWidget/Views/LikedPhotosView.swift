@@ -2416,7 +2416,10 @@ struct PhotoBrowserView: View {
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
-                HStack {
+                let actionLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 8))
+                actionLayout {
                     photoActions(selectedPhoto)
                 }
                 .frame(maxWidth: .infinity)
@@ -2501,7 +2504,6 @@ struct PhotoBrowserView: View {
 
     @ViewBuilder
     private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
-        Spacer(minLength: 0)
         if confirmedMemorySavedStates[selectedPhoto.localIdentifier] ?? selectedPhoto.isLiked {
             Menu {
                 Button("お気に入りから外す", role: .destructive) {
@@ -2511,10 +2513,7 @@ struct PhotoBrowserView: View {
                     setMemorySaved(identifier, false)
                 }
             } label: {
-                Image(systemName: "bookmark.fill")
-                    .font(.title3)
-                    .imageScale(.small)
-                    .frame(width: 44, height: 44)
+                photoActionLabel("お気に入り", systemImage: "bookmark.fill")
             }
             .accessibilityLabel("お気に入りに追加済み")
             .accessibilityHint("お気に入りから外す操作を開きます")
@@ -2524,21 +2523,16 @@ struct PhotoBrowserView: View {
             Button {
                 setMemorySaved(selectedPhoto.localIdentifier, true)
             } label: {
-                Image(systemName: "bookmark")
-                    .font(.title3)
-                    .imageScale(.small)
-                    .frame(width: 44, height: 44)
+                photoActionLabel("お気に入り", systemImage: "bookmark")
             }
             .accessibilityLabel("お気に入りに追加")
             .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
             .disabled(isExportingMemoryPhoto)
         }
 
-        Spacer(minLength: 0)
         Button { personalNotePhoto = selectedPhoto } label: {
-            Image(systemName: "square.and.pencil")
-                .font(.title3)
-                .frame(width: 44, height: 44)
+            photoActionLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil
+                             ? "メモを書く" : "メモを編集", systemImage: "square.and.pencil")
         }
         .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
         .accessibilityHint("自分だけのメモです。相手には送られません")
@@ -2546,21 +2540,28 @@ struct PhotoBrowserView: View {
         .disabled(isExportingMemoryPhoto)
 
         if canDeliverToWindow {
-            Spacer(minLength: 0)
             Button {
                 // Freeze the visible photo before opening destination selection.
                 deliveryPhoto = selectedPhoto
             } label: {
-                Image(systemName: "paperplane")
-                    .font(.title3)
-                    .frame(width: 44, height: 44)
+                photoActionLabel("まどに追加", systemImage: "paperplane")
             }
             .accessibilityLabel("まどに送る")
             .accessibilityHint("共有先を選んでから、写真とメモを確認します")
             .accessibilityIdentifier("photo-browser-deliver")
             .disabled(isExportingMemoryPhoto)
         }
-        Spacer(minLength: 0)
+    }
+
+    private func photoActionLabel(_ title: String, systemImage: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage).font(.title3)
+            Text(title).font(.caption.weight(.medium))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     private var browserNavigation: some View {

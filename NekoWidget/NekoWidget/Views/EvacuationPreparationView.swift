@@ -383,7 +383,7 @@ private struct EvacuationCatEditor: View {
                 }
                 Section("写真と名前") {
                     TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
-                        .foregroundStyle(cat.prefilledFields?.contains("name") == true ? Color.secondary : Color.primary)
+                        .foregroundStyle(Color.primary)
                     ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
                         Button { photoRole = role } label: {
                             HStack {
@@ -413,7 +413,7 @@ private struct EvacuationCatEditor: View {
                         }
                         TextField("フード名・普段の量など", text: text(\.food), axis: .vertical)
                             .accessibilityIdentifier("evacuation-cat-food")
-                            .foregroundStyle(cat.prefilledFields?.contains("food") == true ? Color.secondary : Color.primary)
+                            .foregroundStyle(Color.primary)
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -424,7 +424,7 @@ private struct EvacuationCatEditor: View {
                         }
                         TextField("例：大きな音が苦手", text: text(\.handling), axis: .vertical)
                             .accessibilityIdentifier("evacuation-cat-handling")
-                            .foregroundStyle(cat.prefilledFields?.contains("handling") == true ? Color.secondary : Color.primary)
+                            .foregroundStyle(Color.primary)
                     }
                     DisclosureGroup("病歴・薬") {
                         Picker("病歴・薬の記録", selection: Binding(get: { cat.medicalStatus }, set: { new in

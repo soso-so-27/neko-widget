@@ -555,6 +555,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
     @State private var finished = false
     @State private var action = ""
     @State private var movieStatus = "working"
+    @State private var firstRunPhoto: PhotoPresentation?
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
@@ -613,8 +614,32 @@ private struct MainlineAcceptanceFixtureRootView: View {
                     requestPhotoAccess: { action = "request" }, skipPhotoAccess: { finished = true },
                     openPhotoSettings: { action = "settings" },
                     chooseMorePhotos: { action = "choose" }, rescan: { action = "rescan" },
-                    finishWithoutWidgetPhoto: { finished = true }, finish: { finished = true }
+                    finishWithoutWidgetPhoto: { finished = true }, finish: { finished = true },
+                    openPhoto: { photo in
+                        guard page == .scanResult, !finished,
+                              firstRunPhoto == nil else { return }
+                        finished = true
+                        firstRunPhoto = photo
+                    }
                 )
+            }
+        }
+        .sheet(item: $firstRunPhoto) { photo in
+            NavigationStack {
+                PhotoBrowserView(
+                    photos: [photo], libraryPhotos: photos, initialPhoto: photo,
+                    widgetShownAt: nil, showsWidgetTiming: false,
+                    setMemorySaved: { _, _ in }, excludedCatCandidateIdentifiers: [],
+                    excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
+                    profiles: [], assignmentsByPhotoIdentifier: [:],
+                    replaceProfileAssignments: { _ in true }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("閉じる") { firstRunPhoto = nil }
+                            .accessibilityIdentifier("first-run-photo-close")
+                    }
+                }
             }
         }
         .overlay(alignment: .topLeading) {
