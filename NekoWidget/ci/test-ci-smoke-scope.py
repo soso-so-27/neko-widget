@@ -134,9 +134,9 @@ source "$1"
     def test_checkpoint_survives_fixture_pruning_and_still_rejects_invalid_permission(self):
         source = (CI / "run-simulator-smoke.sh").read_text(encoding="utf-8")
         prefix = source[:source.index("# `simctl addmedia`")]
-        start = source.index("TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild")
+        start = source.index("# BEGIN CI_SMOKE_PERMISSION_PHASE")
         phase = source[start:source.index("\narchive_and_reset_permission_bootstrap", start)]
-        for mode in ("prune", "duplicate", "revoked"):
+        for mode in ("prune", "duplicate", "revoked", "preparation-fails", "no-preparation"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="neko checkpoint ") as directory:
                 root = Path(directory)
                 ci = root / "project/ci"; ci.mkdir(parents=True)
@@ -151,7 +151,7 @@ source "$1"
                 if mode == "duplicate":
                     entries.append(entries[0])
                 original = "".join(json.dumps(entry) + "\n" for entry in entries)
-                (logs / filename).write_text(original, encoding="utf-8")
+                (root / filename).write_text(original, encoding="utf-8")
                 data = root / "data/Documents/MainlineAcceptance"; data.mkdir(parents=True)
                 for name in ("opening.mp4", "opening.png"):
                     (data / name).write_bytes(b"fixture")
@@ -166,6 +166,7 @@ source "$1"
 python3() { "$NEKO_TEST_PYTHON" "$@"; }
 resolve_group_container() { printf '%s\n' "$RUNNER_TEMP/group"; }
 capture_tcc_state() {
+    test -f "$RUNNER_TEMP/permission-granted"
     local report="$RUNNER_TEMP/tcc-valid.json"
     if [[ "$1" == after-ui-test && "$CHECKPOINT_MODE" == revoked ]]; then
         report="$RUNNER_TEMP/tcc-revoked.json"
@@ -174,15 +175,26 @@ capture_tcc_state() {
 }
 xcodebuild() {
     local call=1
-    if [[ -f "$RUNNER_TEMP/calls" ]]; then call=2; fi
+    if [[ -f "$RUNNER_TEMP/calls" ]]; then call=$(( $(cat "$RUNNER_TEMP/calls") + 1 )); fi
     printf '%s\n' "$call" > "$RUNNER_TEMP/calls"
     printf '%s\0' "$@" > "$RUNNER_TEMP/arguments-$call"
-    if (( call == 2 )); then
+    local arguments=" $* "
+    if [[ "$arguments" == *'/OfficialWindowUITests '* ]]; then
+        # Mirror the preparation cases that resetAuthorizationStatus(.photos).
+        rm -f "$RUNNER_TEMP/permission-granted"
+        if [[ "$CHECKPOINT_MODE" == preparation-fails ]]; then return 65; fi
+    elif [[ "$arguments" == *'/testGrantFullPhotoLibraryAccess '* ]]; then
+        cp "$RUNNER_TEMP/app-1787507348233-22259-4d2db22bf65d.jsonl" "$RUNNER_TEMP/group/diagnostic-logs/"
+        touch "$RUNNER_TEMP/permission-granted"
+    elif [[ "$arguments" == *'/testMainlineAcceptanceScreensWithAuthorizedLibrary '* ]]; then
+        test -f "$RUNNER_TEMP/permission-granted"
         test -s "$ARTIFACT_DIRECTORY/permission-evidence/diagnostic-logs/app-1787507348233-22259-4d2db22bf65d.jsonl"
         rm "$RUNNER_TEMP/group/diagnostic-logs/"*.jsonl
         for session in 1 2 3 4; do
             printf '{}\n' > "$RUNNER_TEMP/group/diagnostic-logs/app-178750734900$session-22260-abcd$session.jsonl"
         done
+    else
+        return 93
     fi
 }
 xcrun() {
@@ -194,26 +206,44 @@ sleep() { return 0; }
 source "$1"
 ''', encoding="utf-8")
                 env = {**os.environ, "RUNNER_TEMP": root.as_posix(), "NEKO_TEST_PYTHON": Path(sys.executable).as_posix(),
-                       "CHECKPOINT_MODE": mode, "NEKO_IOS_RUNTIME_SCOPE": scope.FULL_SCOPE}
+                       "CHECKPOINT_MODE": mode,
+                       "NEKO_IOS_RUNTIME_SCOPE": scope.PHOTO_SCOPE if mode == "no-preparation" else scope.FULL_SCOPE}
                 result = subprocess.run([BASH, driver.as_posix(), script.as_posix()], env=env,
                                         capture_output=True, text=True, encoding="utf-8", timeout=20)
+                if mode == "preparation-fails":
+                    self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+                    self.assertEqual((root / "calls").read_text().strip(), "1")
+                    self.assertFalse((root / "permission-granted").exists())
+                    self.assertFalse((root / "neko-smoke-artifacts/permission-evidence").exists())
+                    continue
                 if mode == "duplicate":
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("exactly one", result.stdout + result.stderr)
-                    self.assertEqual((root / "calls").read_text().strip(), "1")
+                    self.assertEqual((root / "calls").read_text().strip(), "2")
                     continue
-                self.assertEqual((root / "calls").read_text().strip(), "2")
+                total_calls = 2 if mode == "no-preparation" else 3
+                self.assertEqual((root / "calls").read_text().strip(), str(total_calls))
                 checkpoint = root / "neko-smoke-artifacts/permission-evidence/diagnostic-logs" / filename
                 self.assertEqual(checkpoint.read_text(encoding="utf-8"), original)
                 self.assertFalse((logs / filename).exists(), "Regression must actually prune the source evidence")
-                first = (root / "arguments-1").read_bytes().decode().split("\0")
-                second = (root / "arguments-2").read_bytes().decode().split("\0")
-                self.assertEqual([arg for arg in first if arg.startswith("-only-testing:")], ["-only-testing:" + BOOTSTRAP])
-                self.assertEqual([arg for arg in second if arg.startswith("-only-testing:")],
-                                 ["-only-testing:" + name for name in FULL_TESTS[1:]])
-                self.assertIn("test-without-building", second)
-                self.assertEqual(result.returncode, 0 if mode == "prune" else 1, result.stdout + result.stderr)
-                self.assertEqual(result.stdout.count("PASS Photos permission bootstrap:"), 2 if mode == "prune" else 1)
+                calls = [(root / f"arguments-{number}").read_bytes().decode().split("\0")
+                         for number in range(1, total_calls + 1)]
+                if mode != "no-preparation":
+                    self.assertEqual([arg for arg in calls[0] if arg.startswith("-only-testing:")],
+                                     ["-only-testing:" + name for name in FULL_TESTS[2:]])
+                self.assertEqual([arg for arg in calls[-2] if arg.startswith("-only-testing:")],
+                                 ["-only-testing:" + BOOTSTRAP])
+                self.assertEqual([arg for arg in calls[-1] if arg.startswith("-only-testing:")],
+                                 ["-only-testing:" + ACCEPTANCE])
+                self.assertIn("test", calls[0])
+                for invocation in calls[1:]:
+                    self.assertIn("test-without-building", invocation)
+                    # The same build products and Simulator preserve real TCC state.
+                    for flag in ("-destination", "-derivedDataPath", "-xcconfig"):
+                        self.assertEqual(invocation[invocation.index(flag) + 1], calls[0][calls[0].index(flag) + 1])
+                valid = mode in ("prune", "no-preparation")
+                self.assertEqual(result.returncode, 0 if valid else 1, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.count("PASS Photos permission bootstrap:"), 2 if valid else 1)
 
 
 if __name__ == "__main__":
