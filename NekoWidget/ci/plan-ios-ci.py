@@ -1195,6 +1195,7 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
             # Not a generic failed-full escape hatch. The reviewed run must have
             # executed exactly this graph, with the solo shard as its only failure.
             if (run["id"] != ALBUM_CORRECTION_RUN or run["head_sha"] != ALBUM_CORRECTION_SOURCE
+                    or run.get("run_attempt", 1) != 1
                     or branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"
                     or len(jobs) != len(required) + 1
                     or {job.get("name") for job in jobs} != set(required) | {PLAN_JOB}
@@ -1209,7 +1210,11 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
             if not isinstance(log, str): return None
             records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1])
                        for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
-            if (len(records) != 1 or records[0].get("schema_version") != 1
+            # The plan job first runs selector tests, which print other fixture
+            # identities. Only this exact repository/source may certify the run.
+            records = [record for record in records if isinstance(record, dict)
+                       and record.get("repository") == repository and record.get("head_sha") == run["head_sha"]]
+            if (len(records) != 1 or type(records[0].get("schema_version")) is not int or records[0].get("schema_version") != 1
                     or records[0].get("repository") != repository
                     or records[0].get("head_sha") != run["head_sha"]
                     or records[0].get("scope") != FULL_SCOPE

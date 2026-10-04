@@ -3115,11 +3115,12 @@ class TestCorrectionReuseTests(unittest.TestCase):
         record = {"schema_version": 1, "repository": repo, "head_sha": source, "scope": scope.FULL_SCOPE,
                   "required_jobs": list(required), "evidence_run_id": None, "evidence_sha": None}
         def check(*, selected_jobs=jobs, selected_run=run, selected_record=record, double=False):
+            fixture = "IOS_CI_PLAN_JSON=" + json.dumps({**record, "repository": "owner/repo", "head_sha": "b" * 40})
             log = "IOS_CI_PLAN_JSON=" + json.dumps(selected_record)
             with patch.object(planner, "test_correction_inputs", return_value=True), \
                     patch.object(planner, "executed_jobs", return_value=selected_jobs):
                 return planner.correction_source(selected_run, "a" * 40, branch, repo, 5, required,
-                                                   lambda _: log + ("\n" + log if double else ""), now)
+                                                   lambda _: fixture + "\n" + log + ("\n" + log if double else ""), now)
         self.assertEqual([entry["name"] for entry in check()["jobs"]], [name for name in required if name != ui])
         for index, job in enumerate(jobs):
             for status in ("skipped", "failure"):
@@ -3128,6 +3129,7 @@ class TestCorrectionReuseTests(unittest.TestCase):
                 self.assertIsNone(check(selected_jobs=broken))
         self.assertIsNone(check(selected_jobs=jobs + [jobs[-1]]))
         for key, value in (("id", 1), ("head_sha", "b" * 40), ("event", "workflow_dispatch"),
+                           ("run_attempt", 2),
                            ("updated_at", (now - dt.timedelta(hours=25)).isoformat()), ("head_branch", "codex/other")):
             self.assertIsNone(check(selected_run={**run, key: value}))
         for key, value in (("required_jobs", list(required[:-1])), ("scope", "app-view-ui-v1"),
