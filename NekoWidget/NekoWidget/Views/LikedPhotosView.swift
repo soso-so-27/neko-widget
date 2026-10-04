@@ -2586,6 +2586,24 @@ struct PhotoBrowserView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                if openRelatedAlbum != nil,
+                   !(relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty {
+                    Menu {
+                        if let photo = selectedPhoto, let date = photo.creationDate,
+                           dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
+                            sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
+                                .accessibilityIdentifier("photo-browser-same-day")
+                        }
+                        relatedAlbumsMenu
+                    } label: {
+                        Label("見返す", systemImage: "photo.on.rectangle")
+                    }
+                    .accessibilityLabel("関連する写真")
+                    .accessibilityHint("同じ猫やテーマ、撮影した年の写真を探します")
+                    .accessibilityIdentifier("photo-browser-rediscover")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let showcaseOpenOne, let selectedPhoto {
                         Button {
@@ -2609,7 +2627,6 @@ struct PhotoBrowserView: View {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
                             .accessibilityIdentifier("photo-browser-same-day")
                     }
-                    relatedAlbumsMenu
                     if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
                         Button { managedPreservationPhoto = photo } label: {
                             Label("サービスに保管", systemImage: "externaldrive.badge.plus")
@@ -2674,6 +2691,7 @@ struct PhotoBrowserView: View {
                     Label("写真メニュー", systemImage: "ellipsis")
                 }
                 .accessibilityIdentifier("photo-browser-related")
+                .accessibilityLabel("写真のその他の操作")
             }
         }
     }
@@ -2697,6 +2715,8 @@ struct PhotoBrowserView: View {
                                     Text(link.title)
                                 }
                                 .accessibilityIdentifier(link.accessibilityIdentifier)
+                                .accessibilityLabel("\(group.rawValue)、\(link.title)")
+                                .accessibilityHint("関連する写真の一覧を開きます。閉じると元の写真に戻ります")
                             }
                         }
                     }

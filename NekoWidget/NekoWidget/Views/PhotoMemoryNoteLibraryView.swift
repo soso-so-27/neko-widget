@@ -307,6 +307,7 @@ struct PhotoMemoryNotesListView: View {
                 row(item)
             }
             .accessibilityIdentifier("memory-note-row-\(local.id.uuidString)")
+            .accessibilityHint("メモを開いて全文を読み返します")
             .accessibilityValue(item.preserved != nil ? "iCloudに保管済み" : "このiPhoneのメモ")
         } else if let copy = item.preserved {
             Button {
@@ -432,6 +433,7 @@ struct PhotoMemoryNotesListView: View {
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
         }.padding(.vertical, 6)
+            .accessibilityElement(children: .combine)
     }
 }
 

@@ -51,7 +51,7 @@ final class OfficialWindowUITests: XCTestCase {
         // must work without MainTabView.body's environment or navigation path.
         let sameDay = app.descendants(matching: .any).matching(identifier: "photo-browser-date")
         let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
-        try foreground(app.buttons.matching(identifier: "photo-browser-related")).tap()
+        try foreground(app.buttons.matching(identifier: "photo-browser-rediscover")).tap()
         try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
         try foreground(app.buttons.matching(
             identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"
@@ -72,7 +72,7 @@ final class OfficialWindowUITests: XCTestCase {
         _ = try foreground(app.images.matching(identifier: "photo-detail-zoom-surface"))
         XCTAssertEqual(try foreground(app.staticTexts.matching(identifier: "widget-photo-fixture-route")).label,
                        route.key)
-        _ = try foreground(app.buttons.matching(identifier: "photo-browser-related"))
+        _ = try foreground(app.buttons.matching(identifier: "photo-browser-rediscover"))
         capture("widget-url-personal-related-return", app)
         closeWidgetPhotoOnce(in: app)
     }
@@ -3738,12 +3738,13 @@ final class SoloMemoriesUITests: XCTestCase {
                 + (largeText ? ["--ux-large-text"] : [])
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "rediscovery"
             app.launch()
-            let related = app.buttons.matching(identifier: "photo-browser-related")
+            let related = app.buttons.matching(identifier: "photo-browser-rediscover")
             let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
             let secondDayPhoto = app.buttons.matching(identifier: "day-photos-photo-app-store-screenshot-fixture-2")
             let secondPage = app.staticTexts.matching(NSPredicate(format: "label == %@", "2 / 2"))
             let back = app.buttons.matching(identifier: "BackButton")
             _ = try foreground(related, timeout: 15)
+            XCTAssertEqual(try foreground(related).label, "関連する写真")
             capture(largeText ? "photo-related-largest-text" : "photo-related-widget-detail")
             try foreground(related).tap()
             let theme = app.buttons.matching(identifier: "photo-related-theme-close_up")
@@ -3751,6 +3752,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let year = app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")
             _ = try foreground(theme)
             _ = try foreground(cat)
+            XCTAssertEqual(try foreground(cat).label, "この猫、ミケ")
             _ = try foreground(year)
             _ = try hittableElements(app.buttons.matching(identifier: "photo-related-cat-fixture-cat-1"), count: 0)
             capture(largeText ? "photo-related-menu-largest-text" : "photo-related-menu")
@@ -4518,6 +4520,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertFalse(row.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       "Memo rows must expose their reading content as one accessible link.")
         let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
         XCTAssertTrue(archived.waitForExistence(timeout: 10), "Cloud-only records belong in the same reading list.")
         attach(app, name: "memory-library-list")
