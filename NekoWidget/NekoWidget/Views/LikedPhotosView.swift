@@ -2416,10 +2416,7 @@ struct PhotoBrowserView: View {
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
-                let actionLayout = dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(spacing: 8))
-                    : AnyLayout(HStackLayout(spacing: 8))
-                actionLayout {
+                HStack(spacing: 8) {
                     photoActions(selectedPhoto)
                 }
                 .frame(maxWidth: .infinity)
@@ -2554,11 +2551,10 @@ struct PhotoBrowserView: View {
     }
 
     private func photoActionLabel(_ title: String, systemImage: String) -> some View {
-        let labelLayout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(HStackLayout(spacing: 8))
-            : AnyLayout(VStackLayout(spacing: 4))
-        return labelLayout {
-            Image(systemName: systemImage).font(.title3)
+        VStack(spacing: 4) {
+            if !dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: systemImage).font(.title3)
+            }
             Text(title).font(.caption.weight(.medium))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
