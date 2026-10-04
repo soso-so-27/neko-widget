@@ -27,6 +27,7 @@ enum CatHouseholdIdentityVerifier {
         try verifiesRevisionPolicyRejectsStaleState()
         try verifiesCodableRoundTrip()
         try verifiesProfileTransferBoundaries()
+        try verifiesPortablePhotoTransferNeedsExplicitConfirmation()
         try await verifiesProfileTransferCommitConflict()
         try await verifiesProtectedAtomicStore()
         print("Cat household identity verifier passed")
@@ -980,6 +981,61 @@ enum CatHouseholdIdentityVerifier {
             _ = try CatProfileTransfer.decode(Data(repeating: 32, count: CatProfileTransfer.maximumBytes + 1))
             throw VerificationError.failed("oversized transfer was accepted")
         } catch CatProfileTransferError.invalidFile { }
+    }
+
+    private static func verifiesPortablePhotoTransferNeedsExplicitConfirmation() throws {
+        let cat = CatProfile(displayName: "Portable cat")
+        let metadata = CatProfileTransfer.PhotoMetadata(creationDate: Date(timeIntervalSince1970: 1234.987),
+            width: 2048, height: 1536, mediaType: 1, duration: 0)
+        let portableID = UUID()
+        let transfer = try CatProfileTransfer(profiles: [cat], photos: [
+            .init(id: portableID, metadata: metadata, profileIDs: [cat.id])
+        ])
+        let encoded = try transfer.encoded()
+        let decoded = try CatProfileTransfer.decode(encoded)
+        try require(decoded == transfer, "portable metadata did not round trip")
+        try require(decoded.photos?.first?.metadata.creationDate == Date(timeIntervalSince1970: 1234),
+                    "fractional PhotoKit dates did not normalize to portable seconds")
+        let text = String(decoding: encoded, as: UTF8.self)
+        try require(!text.contains("localIdentifier") && !text.contains("assetLocalIdentifier"),
+                    "portable file contains device-specific photo identifiers")
+        let empty = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
+        let profiles = try transfer.applying(to: empty, expectedRevision: empty.mutationRevision)
+        let candidates = [CatProfileTransferCandidate(localIdentifier: "new-device-photo", metadata: metadata),
+                          CatProfileTransferCandidate(localIdentifier: "ambiguous-other-photo", metadata: metadata)]
+        let notConfirmed = try transfer.applyingConfirmedPhotos(to: profiles, selections: [:], candidates: candidates)
+        try require(notConfirmed.memberships.isEmpty, "metadata or ambiguous matches assigned automatically")
+        let confirmed = try transfer.applyingConfirmedPhotos(to: profiles,
+            selections: [portableID: "new-device-photo"], candidates: candidates)
+        try require(confirmed.confirmedAssetIdentifiers(for: cat.id) == ["new-device-photo"],
+                    "explicit selection did not use the new device identifier")
+        let repeated = try transfer.applyingConfirmedPhotos(to: confirmed,
+            selections: [portableID: "new-device-photo"], candidates: candidates)
+        try require(repeated == confirmed, "repeated confirmation changed existing memberships")
+        do {
+            _ = try transfer.applyingConfirmedPhotos(to: profiles,
+                selections: [portableID: "new-device-photo"], candidates: [])
+            throw VerificationError.failed("missing or revoked photo was assigned")
+        } catch CatProfileTransferError.changedState { }
+        let secondID = UUID()
+        let duplicates = try CatProfileTransfer(profiles: [cat], photos: [
+            .init(id: portableID, metadata: metadata, profileIDs: [cat.id]),
+            .init(id: secondID, metadata: metadata, profileIDs: [cat.id])
+        ])
+        do {
+            _ = try duplicates.applyingConfirmedPhotos(to: profiles,
+                selections: [portableID: "new-device-photo", secondID: "new-device-photo"], candidates: candidates)
+            throw VerificationError.failed("two portable rows claimed the same local asset")
+        } catch CatProfileTransferError.invalidFile { }
+        var excluded = profiles
+        excluded.setManualMembership(assetLocalIdentifier: "new-device-photo", profileID: cat.id, decision: .excluded)
+        do {
+            _ = try transfer.applyingConfirmedPhotos(to: excluded,
+                selections: [portableID: "new-device-photo"], candidates: candidates)
+            throw VerificationError.failed("import overwrote an existing exclusion")
+        } catch CatProfileTransferError.existingSettings { }
+        try require(excluded.membershipDecision(for: "new-device-photo", profileID: cat.id) == .excluded,
+                    "failed import changed its input")
     }
 
     private static func verifiesProfileTransferCommitConflict() async throws {

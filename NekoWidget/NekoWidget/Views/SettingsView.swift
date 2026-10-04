@@ -185,6 +185,13 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings-cat-profiles")
+                NavigationLink {
+                    CatProfileTransferView(actions: catProfilesActions,
+                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+                } label: {
+                    Label("猫と写真の引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityIdentifier("settings-cat-profile-transfer")
 
             } header: {
                 Text("写真とねこ")

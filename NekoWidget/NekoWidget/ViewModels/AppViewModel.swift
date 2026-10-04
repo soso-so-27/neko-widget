@@ -1454,7 +1454,47 @@ final class AppViewModel: ObservableObject {
         guard catIdentityLoadState == .ready, let current = catHouseholdIdentity else {
             throw CatProfileTransferError.notReady
         }
-        return try CatProfileTransfer(profiles: current.profiles).encoded()
+        var memberships: [String: [UUID]] = [:]
+        for profile in current.profiles {
+            for identifier in current.confirmedAssetIdentifiers(for: profile.id) {
+                memberships[identifier, default: []].append(profile.id)
+            }
+        }
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(memberships.keys), options: nil)
+        var photos: [CatProfileTransfer.Photo] = []
+        assets.enumerateObjects { asset, _, _ in
+            guard let metadata = Self.transferMetadata(asset), let profiles = memberships[asset.localIdentifier] else { return }
+            photos.append(.init(id: UUID(), metadata: metadata, profileIDs: profiles))
+        }
+        return try CatProfileTransfer(profiles: current.profiles, photos: photos).encoded()
+    }
+
+    private static func transferMetadata(_ asset: PHAsset) -> CatProfileTransfer.PhotoMetadata? {
+        guard let date = asset.creationDate else { return nil }
+        let value = CatProfileTransfer.PhotoMetadata(creationDate: date, width: asset.pixelWidth,
+            height: asset.pixelHeight, mediaType: asset.mediaType.rawValue, duration: asset.duration)
+        return value.isValid ? value : nil
+    }
+
+    private func transferPhotoCandidates(_ transfer: CatProfileTransfer) -> [CatProfileTransferCandidate] {
+        let metadata = Set((transfer.photos ?? []).map(\.metadata))
+        guard !metadata.isEmpty else { return [] }
+        // PhotoKit filters metadata; no original photo is requested or uploaded.
+        let intervals = Set(metadata.map(\.creationDate)).sorted().map { date in
+            NSPredicate(format: "creationDate >= %@ AND creationDate < %@",
+                date as NSDate, date.addingTimeInterval(1) as NSDate)
+        }
+        var result: [CatProfileTransferCandidate] = []
+        for start in stride(from: 0, to: intervals.count, by: 100) {
+            let options = PHFetchOptions()
+            options.predicate = NSCompoundPredicate(orPredicateWithSubpredicates:
+                Array(intervals[start..<min(start + 100, intervals.count)]))
+            PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
+                guard let value = Self.transferMetadata(asset), metadata.contains(value) else { return }
+                result.append(.init(localIdentifier: asset.localIdentifier, metadata: value))
+            }
+        }
+        return result.sorted { $0.localIdentifier < $1.localIdentifier }
     }
 
     func previewCatProfileImport(_ data: Data) throws -> CatProfileImportPreview {
@@ -1469,12 +1509,16 @@ final class AppViewModel: ObservableObject {
             to: reconciled, expectedRevision: current.mutationRevision,
             legacyCuration: catCandidateCuration, legacyLifeReference: settings.catLifeReference
         )
+        let candidates = transferPhotoCandidates(transfer)
         return CatProfileImportPreview(
             transfer: transfer,
             expectedIdentityRevision: current.mutationRevision,
             expectedCurationRevision: catCandidateCuration.mutationRevision,
             expectedLegacyReference: settings.catLifeReference,
-            isUnchanged: proposed == reconciled
+            isUnchanged: proposed == reconciled,
+            photoCandidates: Dictionary(uniqueKeysWithValues: (transfer.photos ?? []).map { photo in
+                (photo.id, candidates.filter { $0.metadata == photo.metadata })
+            })
         )
     }
 
@@ -1493,11 +1537,14 @@ final class AppViewModel: ObservableObject {
                 let reconciled = current.reconcilingLegacyUnscoped(
                     lifeReference: self.settings.catLifeReference, curation: self.catCandidateCuration
                 )
-                let proposed = try preview.transfer.applying(
+                let profiles = try preview.transfer.applying(
                     to: reconciled, expectedRevision: preview.expectedIdentityRevision,
                     legacyCuration: self.catCandidateCuration,
                     legacyLifeReference: self.settings.catLifeReference
                 )
+                let proposed = try preview.transfer.applyingConfirmedPhotos(to: profiles,
+                    selections: preview.selectedPhotoIdentifiers,
+                    candidates: self.transferPhotoCandidates(preview.transfer))
                 if proposed == reconciled {
                     result = .success(false)
                     return

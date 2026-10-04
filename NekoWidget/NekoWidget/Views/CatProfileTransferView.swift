@@ -28,12 +28,14 @@ struct CatProfileTransferView: View {
     @State private var isImporting = false
     @State private var notice: String?
     @State private var pendingNotice: String?
+    @State private var selectedPhotos: [UUID: String] = [:]
+    @State private var visibleCandidates: Set<String> = []
 
     var body: some View {
         Form {
             Section {
-                Text("猫の名前・誕生日・迎えた日を、ファイルに保存して別のiPhoneへ引き継げます。")
-                Text("写真や猫別の写真設定、お気に入り、共有まどは含まれません。")
+                Text("猫の名前・誕生日・迎えた日と、写真の所属を別のiPhoneへ引き継げます。")
+                Text("この端末で確認でき、撮影日時がある写真の所属が対象です。写真そのものは含みません。原画像は別途写真ライブラリの同期などが必要です。撮影日時とサイズが一致する候補を新しいiPhoneで確かめて選びます。見つからない写真は同期やアクセス範囲を確認し、あとで読み直せます。お気に入り、共有まど、写真アルバムの連携設定は含みません。")
                     .foregroundStyle(.secondary)
             }
             Section("このiPhoneから") {
@@ -55,7 +57,7 @@ struct CatProfileTransferView: View {
                 Text("適用前に内容を確認できます。登録済みのプロフィールや写真設定は上書きしません。")
             }
         }
-        .navigationTitle("名前と日付の引き継ぎ")
+        .navigationTitle("猫と写真の引き継ぎ")
         .fileExporter(isPresented: $showsExporter, document: document,
                       contentType: .json, defaultFilename: "ねこのプロフィール") { result in
             document = nil
@@ -75,6 +77,8 @@ struct CatProfileTransferView: View {
                 let file = try FileHandle(forReadingFrom: url)
                 defer { try? file.close() }
                 let data = try file.read(upToCount: CatProfileTransfer.maximumBytes + 1) ?? Data()
+                selectedPhotos = [:]
+                visibleCandidates = []
                 preview = try actions.previewProfileImport(data)
             } catch { show(error) }
         }
@@ -97,17 +101,29 @@ struct CatProfileTransferView: View {
                             }
                         }
                     }
+                    if !(item.transfer.photos ?? []).isEmpty {
+                        Section("写真の所属を確認") {
+                            Text("撮影日時・サイズが一致する候補です。同じ写真か確かめて選んでください。選ばない写真は取り込みません。")
+                            Text("\(selectedPhotos.count)枚を選択／\((item.transfer.photos ?? []).count)枚")
+                        }
+                        ForEach(item.transfer.photos ?? []) { photo in
+                            transferPhotoSection(photo, candidates: item.photoCandidates[photo.id] ?? [],
+                                                 profiles: item.transfer.profiles)
+                        }
+                    }
                     Section {
-                        Text("写真や猫別の写真設定は引き継がれません。")
+                        Text("選んだ写真の所属だけを引き継ぎます。写真そのものやアルバム連携設定は取り込みません。")
                             .foregroundStyle(.secondary)
-                        if !item.isUnchanged {
+                        if !item.isUnchanged || !selectedPhotos.isEmpty {
                             Button("この内容を引き継ぐ") {
                                 guard !isImporting else { return }
                                 isImporting = true
+                                var confirmed = item
+                                confirmed.selectedPhotoIdentifiers = selectedPhotos
                                 Task { @MainActor in
-                                    switch await actions.importProfileDates(item) {
+                                    switch await actions.importProfileDates(confirmed) {
                                     case let .success(changed):
-                                        pendingNotice = changed ? "名前と日付を引き継ぎました。" : "登録済みの内容と同じでした。変更はありません。"
+                                        pendingNotice = changed ? "猫と選んだ写真の所属を引き継ぎました。" : "登録済みの内容と同じでした。変更はありません。"
                                     case let .failure(error):
                                         pendingNotice = (error as? LocalizedError)?.errorDescription
                                             ?? "引き継ぎを完了できませんでした。ファイルを選び直してください。"
@@ -142,6 +158,58 @@ struct CatProfileTransferView: View {
     private func dateText(_ title: String, _ date: CatLifeDate?, approximate: Bool) -> String {
         guard let date else { return "\(title)：未設定" }
         return "\(title)：\(date.year)年\(date.month)月\(date.day)日\(approximate ? "ごろ" : "")"
+    }
+
+    private func transferPhotoSection(_ photo: CatProfileTransfer.Photo,
+                                      candidates: [CatProfileTransferCandidate],
+                                      profiles: [CatProfileTransfer.Entry]) -> some View {
+        Section {
+            Text(photo.metadata.creationDate.formatted(date: .abbreviated, time: .shortened))
+            if candidates.isEmpty {
+                Text("一致する写真が見つかりません。写真の同期やアクセス範囲を確認し、あとでファイルを読み直せます。")
+                    .foregroundStyle(.secondary)
+            } else {
+                if candidates.count > 1 { Text("候補が複数あります。写真を見比べて選んでください。") }
+                ForEach(Array(candidates.enumerated()), id: \.element.id) { indexed in
+                    let candidate = indexed.element
+                    let number = indexed.offset + 1
+                    NavigationLink("候補\(number)の写真を大きく見る") {
+                        PhotoAssetImageView(localIdentifier: candidate.localIdentifier,
+                            targetPixelSize: CGSize(width: 1600, height: 1600),
+                            showsFullImage: true, allowsZoom: true, networkAccessAllowed: false)
+                            .navigationTitle("候補の写真")
+                    }
+                    Button {
+                        if selectedPhotos[photo.id] == candidate.localIdentifier {
+                            selectedPhotos.removeValue(forKey: photo.id)
+                        } else {
+                            // A duplicate metadata row cannot claim the same local photo twice.
+                            selectedPhotos = selectedPhotos.filter { $0.value != candidate.localIdentifier }
+                            selectedPhotos[photo.id] = candidate.localIdentifier
+                        }
+                    } label: {
+                        HStack {
+                            PhotoAssetImageView(localIdentifier: candidate.localIdentifier,
+                                targetPixelSize: CGSize(width: 360, height: 360), targetAspectRatio: 1,
+                                networkAccessAllowed: false, onLoadResult: { loaded in
+                                    if loaded { visibleCandidates.insert(candidate.localIdentifier) }
+                                    else { visibleCandidates.remove(candidate.localIdentifier) }
+                                })
+                                .frame(width: 80, height: 80)
+                            Label(selectedPhotos[photo.id] == candidate.localIdentifier ? "選択済み" : "この写真を選ぶ",
+                                  systemImage: selectedPhotos[photo.id] == candidate.localIdentifier ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                    .disabled(isImporting || !visibleCandidates.contains(candidate.localIdentifier))
+                    .accessibilityLabel("候補\(number)を選ぶ")
+                    .accessibilityValue(selectedPhotos[photo.id] == candidate.localIdentifier ? "選択済み" : "未選択")
+                    .accessibilityAddTraits(selectedPhotos[photo.id] == candidate.localIdentifier ? .isSelected : [])
+                    .accessibilityIdentifier("cat-profile-transfer-photo-\(photo.id.uuidString)-candidate-\(number)")
+                }
+            }
+        } header: {
+            Text(profiles.filter { photo.profileIDs.contains($0.id) }.map(\.name).joined(separator: "・"))
+        }
     }
 
     private func show(_ error: Error) {
