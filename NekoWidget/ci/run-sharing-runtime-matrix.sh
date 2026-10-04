@@ -113,15 +113,18 @@ case "$RUNTIME_LANE" in
         fi
         ;;
     runtime) ;;
-    app-ui|app-ui-solo|app-ui-other|gallery-normal|gallery-white|gallery-no-caption)
+    app-ui|app-ui-solo|app-ui-other|gallery-normal|gallery-variants|gallery-white)
         # Each visual lane regenerates its own validated production cache.
         # Do not transfer an injected checkout or fixture build between jobs.
         RUNTIME_LABELS=("ios-26-2")
         REQUESTED_RUNTIMES=("com.apple.CoreSimulator.SimRuntime.iOS-26-2")
-        if [[ "$RUNTIME_LANE" == gallery-white ]]; then
+        if [[ "$RUNTIME_LANE" == gallery-variants ]]; then
+            WIDGET_SCENARIOS="long-white-large no-caption"
+        elif [[ "$RUNTIME_LANE" == gallery-white && "$DIAGNOSTIC_REQUESTED" == true ]]; then
             WIDGET_SCENARIOS="long-white-large"
-        elif [[ "$RUNTIME_LANE" == gallery-no-caption ]]; then
-            WIDGET_SCENARIOS="no-caption"
+        elif [[ "$RUNTIME_LANE" == gallery-white ]]; then
+            echo "The standalone white Gallery lane is diagnostic-only." >&2
+            exit 1
         elif [[ "$RUNTIME_LANE" == gallery-normal ]]; then
             WIDGET_SCENARIOS="personal-available personal-used"
         fi
@@ -539,6 +542,7 @@ PY
         local widget_scenario_conditions=""
         local widget_scenario_result=""
         local widget_scenario_status=0
+        local widget_matrix_status=0
         local widget_scenario_test=""
         local -a widget_test_arguments=()
         for widget_scenario in $WIDGET_SCENARIOS; do
@@ -590,24 +594,35 @@ PY
             prepare_simulator_and_build "$simulator_udid" \
                 xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
-                build-for-testing || return $?
-            touch "$runtime_artifacts/Widget-$widget_scenario-test-start"
-            xcodebuild "${widget_test_arguments[@]}" \
-                -resultBundlePath "$widget_scenario_result" \
-                test-without-building || widget_scenario_status=$?
+                build-for-testing || widget_scenario_status=$?
+            if (( widget_scenario_status == 0 )); then
+                touch "$runtime_artifacts/Widget-$widget_scenario-test-start"
+                xcodebuild "${widget_test_arguments[@]}" \
+                    -resultBundlePath "$widget_scenario_result" \
+                    test-without-building || widget_scenario_status=$?
+            fi
             if (( widget_scenario_status != 0 )) || [[ "$DIAGNOSTIC_REQUESTED" == true ]]; then
                 capture_widget_launch_diagnostics "$simulator_udid" "$widget_scenario_result" \
                     "$runtime_artifacts/widget-$widget_scenario-diagnostics" \
                     "$runtime_artifacts/Widget-$widget_scenario-test-start"
             fi
             if [[ -d "$widget_scenario_result" ]]; then
+                local attachment_status=0
                 xcrun xcresulttool export attachments --path "$widget_scenario_result" \
-                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"
+                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots" \
+                    || attachment_status=$?
+                if (( widget_scenario_status == 0 && attachment_status != 0 )); then
+                    widget_scenario_status=$attachment_status
+                fi
             fi
+            printf '%s\n' "$widget_scenario_status" > "$runtime_artifacts/Widget-$widget_scenario-status.txt"
             if (( widget_scenario_status != 0 )); then
-                return "$widget_scenario_status"
+                widget_matrix_status=1
             fi
         done
+        if (( widget_matrix_status != 0 )); then
+            return "$widget_matrix_status"
+        fi
         # App UI and Widget contrast/no-caption captures are independent.
         # Preserve the UI failure, but collect the remaining visual evidence
         # instead of withholding it because a different screen failed.

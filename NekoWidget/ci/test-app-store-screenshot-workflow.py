@@ -218,10 +218,10 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
                          scope.WIDGET_BEHAVIOR_SCOPE, scope.CI_SELECTION_SCOPE):
             with self.assertRaises(ValueError):
-                scope.lane_tests(selected, "gallery-white")
+                scope.lane_tests(selected, "gallery-variants")
         for selected in (scope.WIDGET_LAYOUT_SCOPE, scope.WIDGET_STYLE_SCOPE):
-            self.assertEqual(scope.lane_tests(selected, "gallery-white"),
-                             scope.lane_tests(scope.FULL_SCOPE, "gallery-white"))
+            self.assertEqual(scope.lane_tests(selected, "gallery-variants"),
+                             scope.lane_tests(scope.FULL_SCOPE, "gallery-variants"))
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(
             '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'
@@ -240,7 +240,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             reset_positions.append(preparation.index(reset))
         self.assertEqual(reset_positions, sorted(reset_positions))
         self.assertIn('prepare_simulator_and_build "$simulator_udid"', scenario_body)
-        self.assertIn('build-for-testing || return $?', scenario_body)
+        self.assertIn('build-for-testing || widget_scenario_status=$?', scenario_body)
         self.assertIn('test-without-building || widget_scenario_status=$?', scenario_body)
         self.assertIn('-derivedDataPath "$DERIVED_DATA_DIRECTORY"', scenario_body)
         self.assertIn(
@@ -250,7 +250,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('widget_scenario_conditions="WIDGET_VISUAL_REVIEW_NO_CAPTION"', scenario_body)
         self.assertIn('Widget-$widget_scenario.xcresult', scenario_body)
         self.assertIn('widget-$widget_scenario-screenshots', scenario_body)
-        self.assertIn('return "$widget_scenario_status"', scenario_body)
+        self.assertIn('widget_matrix_status=1', scenario_body)
         workflow = source('.github/workflows/ios-build.yml')
         runtime_job = workflow[workflow.index('\n  sharing-runtime-matrix:'):]
         self.assertIn('timeout-minutes: 60', runtime_job)
