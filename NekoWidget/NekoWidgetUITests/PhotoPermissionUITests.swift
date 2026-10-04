@@ -3024,7 +3024,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(storedCount.value as? String, "0件")
         app.buttons["personal-archive-guide"].tap()
         XCTAssertTrue(app.navigationBars["保管と引き継ぎ"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["保管するもの"].exists)
+        XCTAssertTrue(app.staticTexts["以前の保管"].exists)
         capture("personal-archive-preservation-guide")
         let editingScope = app.staticTexts["編集と削除"]
         for _ in 0..<5 where !editingScope.isHittable { app.swipeUp() }
@@ -3534,6 +3534,31 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["もっと見る"].exists)
         capture("photo-grid-scrolled-to-last-batch")
+        app.terminate()
+    }
+
+    @MainActor
+    func testInitialScanPreviewPreservesUnavailableLabelAndOpensPhoto() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "unavailable"
+        app.launch()
+        let failure = app.descendants(matching: .any)
+            .matching(identifier: "写真を表示できません").firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 15))
+        let preview = app.buttons["initial-scan-photo-mainline-unavailable-photo"]
+        XCTAssertEqual(preview.label, "写真を表示できません")
+        XCTAssertTrue(preview.isHittable)
+        XCTAssertTrue(app.buttons["initial-scan-continue"].isHittable)
+        capture("initial-scan-unavailable-accessible-preview")
+        preview.tap()
+        let close = app.buttons["first-run-photo-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
+        capture("initial-scan-unavailable-opened-photo")
+        close.tap()
+        XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 5))
         app.terminate()
     }
 
