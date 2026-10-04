@@ -3225,6 +3225,20 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
             let photos = app.buttons.matching(identifier: "cat-profile-photo")
             XCTAssertEqual(photos.count, 1, "The shortcut must retain the selected cat")
+            let albumsEntry = app.buttons["cat-profile-open-albums"]
+            XCTAssertTrue(albumsEntry.isHittable)
+            albumsEntry.tap()
+            XCTAssertTrue(app.navigationBars["\(name)のアルバム"].waitForExistence(timeout: 5))
+            app.buttons["albums-cat-more"].tap()
+            app.buttons["albums-cat-photos"].tap()
+            XCTAssertTrue(app.buttons["album-cat-filter"].waitForExistence(timeout: 5))
+            XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, name)
+            XCTAssertEqual(albumPhotos.count, 1)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["\(name)のアルバム"].waitForExistence(timeout: 5))
+            app.buttons["cat-profile-albums-close"].tap()
+            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+            XCTAssertEqual(photos.count, 1)
             let more = app.buttons["cat-profile-more"]
             XCTAssertTrue(more.isHittable)
             more.tap()
@@ -3325,6 +3339,46 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["閉じる"].tap()
         XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 2)
+        app.terminate()
+    }
+
+    @MainActor
+    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        openPhotosTab(in: app)
+        let cat = app.buttons["photo-hub-cat-fixture-cat-0"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 15))
+        reveal(cat, in: app)
+        cat.tap()
+        let entry = app.buttons["cat-profile-open-albums"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertTrue(entry.isHittable, "The album entry must remain reachable at the largest text size.")
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        let closeUp = element("album-card-close_up", in: app)
+        reveal(closeUp, in: app)
+        closeUp.tap()
+        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, "ミケ")
+        selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
+        let photos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
+        XCTAssertEqual(photos.count, 0, "An empty cat scope must not show another cat's photos.")
+        XCTAssertTrue(element("album-scope-empty", in: app).exists)
+        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        app.buttons["cat-profile-albums-close"].tap()
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        app.swipeDown()
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(entry.isHittable)
         app.terminate()
     }
 

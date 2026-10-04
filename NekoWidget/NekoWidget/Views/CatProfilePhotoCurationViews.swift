@@ -3,12 +3,22 @@ import SwiftUI
 /// The photo tab supplies its current, scoped browser. Profile settings can
 /// continue to use the lightweight preview while organizing membership.
 typealias CatProfilePhotoDestination = (String, String) -> AnyView
+typealias CatProfileAlbumsDestination = (String, @escaping () -> Void) -> AnyView
+
+private struct CatProfileAlbumsDestinationKey: EnvironmentKey {
+    static var defaultValue: CatProfileAlbumsDestination? { nil }
+}
 
 private struct CatProfilePhotoDestinationKey: EnvironmentKey {
     static var defaultValue: CatProfilePhotoDestination? { nil }
 }
 
 extension EnvironmentValues {
+    var catProfileAlbumsDestination: CatProfileAlbumsDestination? {
+        get { self[CatProfileAlbumsDestinationKey.self] }
+        set { self[CatProfileAlbumsDestinationKey.self] = newValue }
+    }
+
     var catProfilePhotoDestination: CatProfilePhotoDestination? {
         get { self[CatProfilePhotoDestinationKey.self] }
         set { self[CatProfilePhotoDestinationKey.self] = newValue }
@@ -513,6 +523,7 @@ private struct CatProfileLifeReferenceEditor: View {
 
 struct CatProfileConfirmedPhotosView: View {
     @Environment(\.catProfilePhotoDestination) private var photoDestination
+    @Environment(\.catProfileAlbumsDestination) private var albumsDestination
 
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
@@ -525,6 +536,7 @@ struct CatProfileConfirmedPhotosView: View {
     @State private var previewPhoto: CatProfilePhotoPresentation?
     @State private var openedPhotoIdentifier: String?
     @State private var showsProfileSettings = false
+    @State private var showsAlbums = false
     @State private var showsAddPhotos = false
     @State private var showsAssignmentSheet = false
     @State private var showsRemoveConfirmation = false
@@ -562,6 +574,36 @@ struct CatProfileConfirmedPhotosView: View {
         .disabled(isRemoving)
         .navigationTitle("\(profile.displayName)の写真")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .top) {
+            if albumsDestination != nil && !isSelecting {
+                Button {
+                    showsAlbums = true
+                } label: {
+                    Label("この子のアルバム", systemImage: "rectangle.stack")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                }
+                .accessibilityLabel("\(profile.displayName)のアルバム")
+                .accessibilityIdentifier("cat-profile-open-albums")
+                .background(.background)
+                .disabled(isRemoving)
+            }
+        }
+        .sheet(isPresented: $showsAlbums) {
+            NavigationStack {
+                if let albumsDestination {
+                    albumsDestination(profile.identifier, { showsAlbums = false })
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("閉じる") { showsAlbums = false }
+                                    .accessibilityIdentifier("cat-profile-albums-close")
+                            }
+                        }
+                }
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if isSelecting {
