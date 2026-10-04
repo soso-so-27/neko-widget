@@ -2416,7 +2416,7 @@ struct PhotoBrowserView: View {
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
-                HStack(spacing: 8) {
+                HStack(spacing: dynamicTypeSize.isAccessibilitySize ? 4 : 8) {
                     photoActions(selectedPhoto)
                 }
                 .frame(maxWidth: .infinity)
@@ -2436,7 +2436,7 @@ struct PhotoBrowserView: View {
                 .accessibilityElement(children: .contain)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 16)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
     }
@@ -2488,7 +2488,8 @@ struct PhotoBrowserView: View {
     private func photoDateLabel(_ dateText: String, photo: PhotoPresentation,
                                 showsCollectionIcon: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            if let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) {
+            if !dynamicTypeSize.isAccessibilitySize,
+               let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) {
                 Text(context).font(.caption).foregroundStyle(.secondary)
             }
             if showsCollectionIcon {

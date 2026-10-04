@@ -5188,10 +5188,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 return part.flatMap { Double($0.dropFirst(5)) } ?? 0
             }
             XCTAssertEqual(photoZoom(), 1, accuracy: 0.05)
+            attach(app, name: "photo-browser-compact-actions-\(variant)")
             XCTAssertGreaterThan(visiblePhoto.frame.height, app.frame.height * 0.55)
             XCTAssertGreaterThanOrEqual(deliver.frame.height, 44)
             XCTAssertGreaterThanOrEqual(app.buttons["お気に入りに追加"].frame.height, 44)
-            attach(app, name: "photo-browser-compact-actions-\(variant)")
             visiblePhoto.doubleTap()
             expectation(for: NSPredicate { _, _ in photoZoom() > 1.1 }, evaluatedWith: app)
             waitForExpectations(timeout: 5)
