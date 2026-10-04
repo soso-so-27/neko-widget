@@ -209,9 +209,12 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             if path.endswith("/logs"):
                 return gh.log(source["id"], int(path.split("/")[-2]))
             return gh.get(path[len(prefix):])
-        verified = planner.correction_source(
-            source, sha, current["head_branch"], REPOSITORY, ci_workflow["id"],
-            required, correction_api, now)
+        try:
+            verified = planner.correction_source(
+                source, sha, current["head_branch"], REPOSITORY, ci_workflow["id"],
+                required, correction_api, now)
+        except planner.CorrectionEvidenceUnavailable:
+            raise Blocked("The reviewed source CI evidence is unavailable or invalid.") from None
         require(verified == correction, "Reused native jobs or unchanged-input proof differ from the CI plan.")
         source_jobs = executed_jobs_for(gh, source)
         old_plan_jobs = [job for job in source_jobs if job.get("name") == PLAN_JOB]
