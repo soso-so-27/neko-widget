@@ -2977,6 +2977,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_ALBUM_CATALOG_DEBUG"] = "1"
         app.launchEnvironment["NEKO_ALBUM_CATALOG_DELAY_MS"] = "2500"
+        app.launchEnvironment["NEKO_ARCHIVE_SETTINGS_TRACE"] = "1"
         app.launch()
 
         let catalog = app.staticTexts["album-catalog-debug-state"]
@@ -3017,7 +3018,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
         let archive = app.buttons["settings-personal-archive"]
-        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        let settingsOpened = archive.waitForExistence(timeout: 5)
+        if !settingsOpened {
+            let trace = progress.exists ? progress.label : "fixture-progress-not-visible"
+            print("ARCHIVE_SETTINGS_TRACE: \(trace)")
+            capture("personal-archive-settings-did-not-open")
+        }
+        XCTAssertTrue(settingsOpened)
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
         XCTAssertTrue(archive.isHittable)
         archive.tap()

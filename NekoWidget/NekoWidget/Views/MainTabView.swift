@@ -469,6 +469,16 @@ struct MainTabView: View {
             presentDeferredWidgetGuide()
         }) {
             settingsSheet
+                .onAppear {
+#if DEBUG
+                    PersonalArchiveSettingsTrace.shared.record("sheet-appeared")
+#endif
+                }
+                .onDisappear {
+#if DEBUG
+                    PersonalArchiveSettingsTrace.shared.record("sheet-disappeared")
+#endif
+                }
         }
         .sheet(item: $relatedPhotoRoute) { route in
             relatedAlbumsSheet(for: route)
@@ -1250,7 +1260,15 @@ struct MainTabView: View {
             albumOptions: catProfilesPresentation.photoAlbumOptions,
             albumProfileActions: catProfilesActions,
             albumScope: .constant(scope),
-            showSettings: { showsSettings = true },
+            showSettings: {
+#if DEBUG
+                PersonalArchiveSettingsTrace.shared.record("album-action")
+#endif
+                showsSettings = true
+#if DEBUG
+                PersonalArchiveSettingsTrace.shared.record("binding:\(showsSettings)")
+#endif
+            },
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
             referenceDate: albumHighlightsReferenceDate,
