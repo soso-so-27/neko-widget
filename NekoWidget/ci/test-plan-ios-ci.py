@@ -3084,7 +3084,8 @@ class TestCorrectionReuseTests(unittest.TestCase):
         redirected = handler.redirect_request(request, None, 302, "Found", {}, target)
         self.assertFalse(redirected.has_header("Authorization"))
         self.assertTrue(request.has_header("Authorization"))
-        for url in ("http://productionresultssa13.blob.core.windows.net/log", "https://example.invalid/log",
+        for url in ("http://api.github.com/repos/o/r/actions/jobs/1/logs",
+                    "http://productionresultssa13.blob.core.windows.net/log", "https://example.invalid/log",
                     "https://productionresultssa13.blob.core.windows.net.example.invalid/log",
                     "https://user@productionresultssa13.blob.core.windows.net/log"):
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):
@@ -3125,6 +3126,14 @@ class TestCorrectionReuseTests(unittest.TestCase):
                               planner.ALBUM_CORRECTION_REQUIRED, api, dt.datetime.now(dt.timezone.utc)))
         api.assert_not_called()
 
+    def test_known_full_correction_missing_history_stops_instead_of_restarting_full(self):
+        def api(path):
+            return {"id": 5} if path.endswith("ios-build.yml") else {"workflow_runs": [], "total_count": 0}
+        with patch.object(planner, "album_correction_inputs", return_value=True):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.find_test_correction_evidence("a" * 40, planner.ALBUM_CORRECTION_BRANCH,
+                    "soso-so-27/neko-widget", planner.ALBUM_CORRECTION_REQUIRED, api, dt.datetime.now(dt.timezone.utc))
+
     def test_album_source_requires_exact_graph_plan_identity_and_every_success(self):
         now = dt.datetime.now(dt.timezone.utc)
         repo, branch, source = "soso-so-27/neko-widget", planner.ALBUM_CORRECTION_BRANCH, planner.ALBUM_CORRECTION_SOURCE
@@ -3139,13 +3148,14 @@ class TestCorrectionReuseTests(unittest.TestCase):
                  for index, name in enumerate(required)]
         record = {"schema_version": 1, "repository": repo, "head_sha": source, "scope": scope.FULL_SCOPE,
                   "required_jobs": list(required), "evidence_run_id": None, "evidence_sha": None}
-        def check(*, selected_jobs=jobs, selected_run=run, selected_record=record, double=False, error=None):
+        def check(*, selected_jobs=jobs, selected_run=run, selected_record=record, double=False, error=None, response="auto"):
             fixture = "IOS_CI_PLAN_JSON=" + json.dumps({**record, "repository": "owner/repo", "head_sha": "b" * 40})
             log = "IOS_CI_PLAN_JSON=" + json.dumps(selected_record)
             with patch.object(planner, "test_correction_inputs", return_value=True), \
                     patch.object(planner, "executed_jobs", return_value=selected_jobs):
                 def api(_):
                     if error is not None: raise error
+                    if response != "auto": return response
                     return fixture + "\n" + log + ("\n" + log if double else "")
                 return planner.correction_source(selected_run, "a" * 40, branch, repo, 5, required,
                                                    api, now)
@@ -3162,10 +3172,13 @@ class TestCorrectionReuseTests(unittest.TestCase):
             self.assertIsNone(check(selected_run={**run, key: value}))
         for key, value in (("required_jobs", list(required[:-1])), ("scope", "app-view-ui-v1"),
                            ("head_sha", "b" * 40), ("evidence_run_id", 11), ("test_correction_evidence", {})):
-            self.assertIsNone(check(selected_record={**record, key: value}))
-        self.assertIsNone(check(double=True))
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                check(selected_record={**record, key: value})
+        with self.assertRaises(planner.CorrectionEvidenceUnavailable): check(double=True)
         for error in (OSError("unavailable"), ValueError("unavailable")):
             with self.assertRaises(planner.CorrectionEvidenceUnavailable): check(error=error)
+        for response in (None, b"invalid type", "", "IOS_CI_PLAN_JSON={broken"):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): check(response=response)
 
     def test_full_correction_runs_solo_only_while_retaining_seven_required_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
