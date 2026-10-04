@@ -3051,11 +3051,15 @@ final class SoloMemoriesUITests: XCTestCase {
         let text = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         capture("personal-archive-editor-from-settings-sheet")
-        let editorBar = app.navigationBars["メモ"]
-        app.buttons["photo-memory-note-close"].tap()
+        // The restored detail also has the title "メモ". Observe the editor's
+        // own control so returning to the detail is not mistaken for failure.
+        let editorClose = app.buttons["photo-memory-note-close"]
+        XCTAssertTrue(editorClose.isHittable)
+        editorClose.tap()
         let editorClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+            predicate: NSPredicate(format: "exists == false"), object: editorClose)
         XCTAssertEqual(XCTWaiter.wait(for: [editorClosed], timeout: 5), .completed)
+        XCTAssertFalse(text.exists)
         XCTAssertTrue(edit.isHittable)
         edit.tap()
         XCTAssertTrue(text.waitForExistence(timeout: 5))
@@ -3063,14 +3067,15 @@ final class SoloMemoriesUITests: XCTestCase {
         // settings/editor sheets, with another finite scan-progress burst.
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(editorBar.waitForExistence(timeout: 10))
+        XCTAssertTrue(editorClose.waitForExistence(timeout: 10))
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("A quiet afternoon")
         app.buttons["photo-memory-note-keyboard-done"].tap()
         app.buttons["photo-memory-note-save"].tap()
         let savedEditorClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+            predicate: NSPredicate(format: "exists == false"), object: editorClose)
         XCTAssertEqual(XCTWaiter.wait(for: [savedEditorClosed], timeout: 10), .completed)
+        XCTAssertFalse(text.exists)
         let body = app.staticTexts["memory-note-body"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "A quiet afternoon"), object: body)], timeout: 10), .completed)
