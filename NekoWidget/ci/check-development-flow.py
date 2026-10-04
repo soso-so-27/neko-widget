@@ -14,6 +14,7 @@ CHECKS = (
     "test-plan-ios-ci.py",
     "test-ci-lanes.py",
     "test-widget-ci-scope.py",
+    "test-family-window-widget-boundaries.py",
     "test-ci-smoke-scope.py",
     "test-runtime-preparation.py",
     "test-app-store-screenshot-workflow.py",
