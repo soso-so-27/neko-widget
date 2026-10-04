@@ -1245,6 +1245,9 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == FULL_SCOPE and (
+            branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"):
+        return None
     prefix = f"/repos/{repository}/actions"
     workflow = api(f"{prefix}/workflows/ios-build.yml")
     workflow_id = workflow.get("id")

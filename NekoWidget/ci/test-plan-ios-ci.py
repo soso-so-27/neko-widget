@@ -3100,6 +3100,14 @@ class TestCorrectionReuseTests(unittest.TestCase):
             self.assertFalse(planner.album_correction_inputs(source, head))
         self.assertFalse(planner.album_correction_inputs("b" * 40, head))
 
+    def test_unrelated_full_branches_do_not_query_correction_history(self):
+        api = unittest.mock.Mock(side_effect=AssertionError("unrelated history lookup"))
+        for branch, repository in (("codex/other", "soso-so-27/neko-widget"),
+                                    (planner.ALBUM_CORRECTION_BRANCH, "owner/repo")):
+            self.assertIsNone(planner.find_test_correction_evidence("a" * 40, branch, repository,
+                              planner.ALBUM_CORRECTION_REQUIRED, api, dt.datetime.now(dt.timezone.utc)))
+        api.assert_not_called()
+
     def test_album_source_requires_exact_graph_plan_identity_and_every_success(self):
         now = dt.datetime.now(dt.timezone.utc)
         repo, branch, source = "soso-so-27/neko-widget", planner.ALBUM_CORRECTION_BRANCH, planner.ALBUM_CORRECTION_SOURCE
