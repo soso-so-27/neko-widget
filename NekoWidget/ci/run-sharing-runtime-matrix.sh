@@ -63,8 +63,11 @@ if (re.fullmatch(r"[0-9a-f]{40}", source) is None
 sys.path.insert(0, str(project / "ci"))
 from ios_ci_scope import diagnostic_tests
 try:
+    test_source = ("WidgetPlacementScreenshotUITests.swift"
+                   if test_class == "WidgetPlacementScreenshotUITests"
+                   else "PhotoPermissionUITests.swift")
     tests = diagnostic_tests(test_class, method,
-        (project / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8"))
+        (project / "NekoWidgetUITests" / test_source).read_text(encoding="utf-8"))
 except ValueError as error:
     raise SystemExit(str(error))
 metadata_path.write_text(json.dumps({
@@ -75,6 +78,11 @@ metadata_path.write_text(json.dumps({
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 selection_path.write_text("".join(f"-only-testing:{test}\n" for test in tests), encoding="utf-8")
 PY
+    if [[ "${NEKO_IOS_DIAGNOSTIC_TEST_CLASS:-}" == "WidgetPlacementScreenshotUITests" ]]; then
+        # Keep the same generated-data preparation and fresh Simulator as the
+        # failed owning lane; execute this one Widget test exactly once.
+        RUNTIME_LANE="gallery-white"
+    fi
 else
 # END DIAGNOSTIC-ONLY selection
 python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
@@ -173,6 +181,40 @@ cleanup_runtime() {
     xcrun simctl erase "$simulator_udid" || cleanup_status=$?
     return "$cleanup_status"
 }
+
+capture_widget_launch_diagnostics() (
+    local simulator_udid="$1"
+    local result_bundle="$2"
+    local output="$3"
+    local marker="$4"
+    local status=0
+    local report=""
+    # Capture before shutdown/erase. Diagnostic failure must not replace the
+    # original XCTest result or cause another launch/test attempt.
+    set +e
+    mkdir -p "$output/crash-reports"
+    xcrun simctl spawn "$simulator_udid" log show --style compact --last 10m \
+        --predicate "process == 'NekoWidget' OR process == 'SpringBoard' OR process == 'runningboardd' OR subsystem == '$APP_BUNDLE_ID'" \
+        > "$output/launch-unified.log" 2>&1
+    printf '%s\n' "$?" > "$output/launch-log-exit-code.txt"
+    xcrun simctl spawn "$simulator_udid" launchctl list \
+        > "$output/launch-services.txt" 2>&1
+    printf '%s\n' "$?" > "$output/launch-services-exit-code.txt"
+    if [[ -d "$result_bundle" ]]; then
+        xcrun xcresulttool export diagnostics --path "$result_bundle" \
+            --output-path "$output/xcresult-diagnostics" \
+            > "$output/xcresult-diagnostics-export.log" 2>&1
+        printf '%s\n' "$?" > "$output/xcresult-export-exit-code.txt"
+    fi
+    if [[ -d "$HOME/Library/Logs/DiagnosticReports" ]]; then
+        while IFS= read -r report; do
+            cp "$report" "$output/crash-reports/" || status=$?
+        done < <(find "$HOME/Library/Logs/DiagnosticReports" -type f \
+            -newer "$marker" \( -name 'NekoWidget*.ips' -o -name 'NekoWidget*.crash' \))
+    fi
+    printf '%s\n' "$status" > "$output/crash-copy-exit-code.txt"
+    exit 0
+)
 
 cleanup_all() {
     local original_status=$?
@@ -549,9 +591,15 @@ PY
                 xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
                 build-for-testing || return $?
+            touch "$runtime_artifacts/Widget-$widget_scenario-test-start"
             xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$widget_scenario_result" \
                 test-without-building || widget_scenario_status=$?
+            if (( widget_scenario_status != 0 )) || [[ "$DIAGNOSTIC_REQUESTED" == true ]]; then
+                capture_widget_launch_diagnostics "$simulator_udid" "$widget_scenario_result" \
+                    "$runtime_artifacts/widget-$widget_scenario-diagnostics" \
+                    "$runtime_artifacts/Widget-$widget_scenario-test-start"
+            fi
             if [[ -d "$widget_scenario_result" ]]; then
                 xcrun xcresulttool export attachments --path "$widget_scenario_result" \
                     --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"

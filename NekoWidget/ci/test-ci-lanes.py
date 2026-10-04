@@ -92,7 +92,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.TOOL_CANDIDATE_REFRESH_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         for gallery in scope.LANES[2:]:
             with self.assertRaises(ValueError):
                 scope.lane_tests(selected, gallery)
@@ -169,7 +170,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.MEMBERSHIP_COPY_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         required = planner.required_jobs_from_scope(selected)
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertTrue(scope.accepts_paths(selected, list(changes) + ["handoffs/record.md"]))
@@ -247,7 +249,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.PRESERVATION_USAGE_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         required = planner.required_jobs_from_scope(selected)
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertTrue(scope.accepts_paths(selected, list(changes) + ["handoffs/record.md"]))
@@ -329,7 +332,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.CARE_HANDOFF_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         required = planner.required_jobs_from_scope(selected)
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertTrue(scope.accepts_paths(selected, changes))
@@ -402,7 +406,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.EVACUATION_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         required = planner.required_jobs_from_scope(selected)
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertTrue(scope.accepts_paths(selected, changes))
@@ -441,7 +446,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.LOST_CAT_PHOTO_TESTS)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertEqual(planner.required_jobs_from_scope(selected),
                          (planner.BUILD, planner.BOOTSTRAP_SMOKE,
                           scope.lane_job(selected, "runtime"),
@@ -492,7 +498,8 @@ final class UnrelatedUITests: XCTestCase {
         self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.LOST_CAT_PHOTO_TESTS)
         self.assertEqual(len(set(scope.LOST_CAT_PHOTO_TESTS)), 3)
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertEqual(planner.required_jobs_from_scope(selected),
                          (planner.BUILD, planner.BOOTSTRAP_SMOKE,
                           scope.lane_job(selected, "runtime"),

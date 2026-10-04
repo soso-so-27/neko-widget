@@ -436,7 +436,8 @@ class WidgetScopeTests(unittest.TestCase):
         self.assertNotIn("app-ui", scope.lanes(scope.WIDGET_STYLE_SCOPE))
 
     def test_real_photos_smoke_remains_required_with_separate_execution_evidence(self):
-        bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",)
+        bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                     "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary")
         sha = "a" * 40
         for selected in scope.SCOPES:
             required = planner.required_jobs_from_scope(selected)
@@ -552,7 +553,8 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
         self.assertEqual(len(required), 4)
         self.assertEqual(scope.lanes(scope.VET_SAVED_CAT_SCOPE), ("runtime", "app-ui"))
         self.assertEqual(scope.smoke_tests(scope.VET_SAVED_CAT_SCOPE),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertFalse(any("gallery" in job for job in required))
 
     def test_no_unknown_product_or_control_input_can_borrow_review(self):

@@ -726,6 +726,32 @@ struct PhotoMemoryNoteArchiveView: View {
 }
 
 #if DEBUG
+/// Opt-in observation for a settings action that did not present its sheet.
+/// This only runs in the archive UI fixture and never changes presentation.
+@MainActor
+final class PersonalArchiveSettingsTrace: ObservableObject {
+    static let shared = PersonalArchiveSettingsTrace()
+    @Published private(set) var events: [String] = []
+
+    func record(_ event: String) {
+        guard ProcessInfo.processInfo.arguments.contains("--personal-archive-ui-fixture"),
+              ProcessInfo.processInfo.environment["NEKO_ARCHIVE_SETTINGS_TRACE"] == "1" else { return }
+        events.append(event)
+    }
+}
+
+@MainActor
+private struct PersonalArchiveProgressLabel: View {
+    let updates: Int
+    @ObservedObject private var settingsTrace = PersonalArchiveSettingsTrace.shared
+    var body: some View {
+        Text("進捗")
+            .accessibilityIdentifier("archive-root-fixture-progress")
+            .accessibilityValue(String(updates))
+            .accessibilityLabel("進捗;settings:" + settingsTrace.events.joined(separator: ","))
+    }
+}
+
 /// Runs the shipping AppRoot/MainTab and settings/record lifecycle with a
 /// large, changing library. Only external library input and archive transport
 /// are fixtures; catalog scheduling, view identity and scene handling are real.
@@ -750,9 +776,7 @@ struct PersonalArchiveUIFixture: View {
                             .accessibilityIdentifier("archive-root-fixture-portability")
                             .accessibilityValue(portabilityStatus)
                     }
-                    Text("進捗")
-                        .accessibilityIdentifier("archive-root-fixture-progress")
-                        .accessibilityValue(String(driver.progressUpdates))
+                    PersonalArchiveProgressLabel(updates: driver.progressUpdates)
                     Button("内容更新") { driver.changePhotoContent() }
                         .accessibilityIdentifier("archive-root-fixture-content")
                     Button("写真削除") { driver.removeProbePhoto() }

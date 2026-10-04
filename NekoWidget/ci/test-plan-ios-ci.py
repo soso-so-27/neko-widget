@@ -209,7 +209,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(planner.required_jobs(paths, scope.MEMBERSHIP_TOOLS_SCOPE), expected)
         self.assertEqual(scope.lanes(scope.MEMBERSHIP_TOOLS_SCOPE), ("runtime", "app-ui"))
         self.assertEqual(scope.smoke_tests(scope.MEMBERSHIP_TOOLS_SCOPE),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertEqual(scope.lane_tests(scope.MEMBERSHIP_TOOLS_SCOPE, "app-ui"), scope.MEMBERSHIP_TOOLS_TESTS)
         for gallery in scope.LANES[2:]:
             with self.assertRaises(ValueError): scope.lane_tests(scope.MEMBERSHIP_TOOLS_SCOPE, gallery)
@@ -272,7 +273,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(planner.required_jobs(paths, scope.TOOL_CAT_AUTOFILL_SCOPE), expected)
         self.assertEqual(scope.lanes(scope.TOOL_CAT_AUTOFILL_SCOPE), ("runtime", "app-ui"))
         self.assertEqual(scope.smoke_tests(scope.TOOL_CAT_AUTOFILL_SCOPE),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertEqual(scope.lane_tests(scope.TOOL_CAT_AUTOFILL_SCOPE, "app-ui"), scope.TOOL_CAT_AUTOFILL_TESTS)
         for gallery in scope.LANES[2:]:
             with self.assertRaises(ValueError):
@@ -1745,7 +1747,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"}
                 for name in required]
         self.assertTrue(planner.covers_jobs(jobs, required, self.sha))
@@ -2105,7 +2108,8 @@ class PlanTests(unittest.TestCase):
         required = planner.required_jobs(list(changes), selected)
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
         self.assertEqual(scope.smoke_tests(selected),
-                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+                         ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
         self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
         tests = scope.lane_tests(selected, "app-ui")
@@ -2175,7 +2179,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(scope.lane_tests(selected, "app-ui"), (
             "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",))
         self.assertEqual(scope.smoke_tests(selected),
-            ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",))
+            ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                          "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
         # Existing metadata test iterates every scope and requires both runtime OSes.
         jobs = [dict(name=name, head_sha=self.sha, status="completed", conclusion="success")
                 for name in required]
@@ -2698,7 +2703,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(sum('OfficialWindowUITests/testWidgetURLs' in name for name in tests), 3)
         self.assertNotIn(scope.GALLERY_TEST, tests)
         self.assertEqual(scope.smoke_tests(scope.FAMILY_WINDOW_UI_SCOPE),
-                         ('NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess',))
+                         ('NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess',
+                          'NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary'))
         for path in ('NekoWidget/Shared/Models/WidgetManifest.swift',
                      'NekoWidget/NekoWidgetWidget/NekoWidgetView.swift',
                      'NekoWidget/NekoWidget.xcodeproj/project.pbxproj',

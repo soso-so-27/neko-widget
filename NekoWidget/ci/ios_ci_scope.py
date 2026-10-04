@@ -129,8 +129,10 @@ PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST = "3ed6f6160bedc6297e645e18f46722c1d49cc0bd3
 INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST = "27e3a21f42709a87b6f8d6e99866f138827be6a1052ead5918a72a9124d135fe"
 PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST = "6560b0e7f7d3383ff2c64a4293d93f10229a8c3ad122ae34fc1f7ace4070086e"
 PROFILE_DIAGNOSTIC_WORKFLOW_DIGEST = "922c3e21dfe35347d4d974dfdffa811c4b38317d1503c7cbbfe7c78b27510f70"
-DIAGNOSTIC_WORKFLOW_DIGEST = "ea83e077b3025b357e1cc326baecfb059cbe263262cbf15099d68626c219eeed"
-DIAGNOSTIC_BLOCKS_DIGEST = "f1319d5060a5a0d44efd76c21faf9693b5092b0c5cf4623b26f14747aa3b314c"
+WHITE_DIAGNOSTIC_WORKFLOW_BASE_DIGEST = "ea83e077b3025b357e1cc326baecfb059cbe263262cbf15099d68626c219eeed"
+DIAGNOSTIC_WORKFLOW_DIGEST = "a3e7b0b1ab84d908904f7d1e60d76e80766dae2e9c530997c2ea73f20d74b1df"
+WHITE_DIAGNOSTIC_BLOCKS_BASE_DIGEST = "f1319d5060a5a0d44efd76c21faf9693b5092b0c5cf4623b26f14747aa3b314c"
+DIAGNOSTIC_BLOCKS_DIGEST = "84c45daacf063b3e47508ece6a7f9fffd510a422f84d6411abec74d819fb838a"
 CI_SMOKE_SCRIPT = "NekoWidget/ci/run-simulator-smoke.sh"
 CI_NEW_TEST_PATHS = frozenset({
     CI_DIAGNOSTIC_WORKFLOW,
@@ -1958,7 +1960,7 @@ def swift_declaration_source(source: str) -> str | None:
     return result
 
 
-DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests", "OfficialWindowUITests")
+DIAGNOSTIC_CLASSES = ("MomentDeliveryComposerUITests", "SoloMemoriesUITests", "CatProfilePhotoFlowUITests", "OfficialWindowUITests", "WidgetPlacementScreenshotUITests")
 
 
 def diagnostic_tests(test_class: str, methods: str, source: str | None = None) -> tuple[str, ...]:
@@ -1968,6 +1970,9 @@ def diagnostic_tests(test_class: str, methods: str, source: str | None = None) -
             or len(set(names)) != len(names)
             or any(re.fullmatch(r"test[A-Za-z0-9_]+", name) is None for name in names)):
         raise ValueError("Specify one supported class and one to three distinct comma-separated method names.")
+    if (test_class == "WidgetPlacementScreenshotUITests"
+            and names != ["testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"]):
+        raise ValueError("The Widget diagnostic is restricted to the single white-background test.")
     if source is not None:
         masked = swift_declaration_source(source)
         if masked is None:
@@ -2360,14 +2365,14 @@ def ci_selection_only(changes: dict[str, tuple[str, str]]) -> bool:
         return False
     if CI_DIAGNOSTIC_WORKFLOW in changes:
         before, after = changes[CI_DIAGNOSTIC_WORKFLOW]
-        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST, PROFILE_DIAGNOSTIC_WORKFLOW_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
+        if source_digest(after) != DIAGNOSTIC_WORKFLOW_DIGEST or (before and source_digest(before) not in {PREVIOUS_DIAGNOSTIC_WORKFLOW_DIGEST, INTERMEDIATE_DIAGNOSTIC_WORKFLOW_DIGEST, PROFILE_DIAGNOSTIC_WORKFLOW_DIGEST, WHITE_DIAGNOSTIC_WORKFLOW_BASE_DIGEST, DIAGNOSTIC_WORKFLOW_DIGEST}):
             return False
     if CI_DIAGNOSTIC_MATRIX in changes:
         normalized = []
         for index, source in enumerate(changes[CI_DIAGNOSTIC_MATRIX]):
             pattern = r"(?m)^# BEGIN DIAGNOSTIC-ONLY [^\n]+\n[\s\S]*?^# END DIAGNOSTIC-ONLY [^\n]+\n"
             blocks = re.findall(pattern, source)
-            accepted = {DIAGNOSTIC_BLOCKS_DIGEST, PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST} if index == 0 else {DIAGNOSTIC_BLOCKS_DIGEST}
+            accepted = {DIAGNOSTIC_BLOCKS_DIGEST, WHITE_DIAGNOSTIC_BLOCKS_BASE_DIGEST, PREVIOUS_DIAGNOSTIC_BLOCKS_DIGEST} if index == 0 else {DIAGNOSTIC_BLOCKS_DIGEST}
             if (blocks or index == 1) and (len(blocks) != 3 or source_digest("".join(blocks)) not in accepted):
                 return False
             normalized.append(re.sub(pattern, "", source))
@@ -2575,7 +2580,8 @@ WIDGET_UI_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
 def smoke_tests(scope: str) -> tuple[str, ...]:
     if scope not in SCOPES:
         raise ValueError("Unknown iOS runtime scope")
-    bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",)
+    bootstrap = ("NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+                 "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary")
     return (bootstrap + OFFICIAL_TESTS + ("NekoWidgetUITests/PersonalRediscoveryUITests",)
             if scope in (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE) else bootstrap)
 

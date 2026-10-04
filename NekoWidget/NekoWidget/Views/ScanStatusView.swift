@@ -7,6 +7,8 @@ struct InitialScanView: View {
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
     let continueButtonTitleOverride: String?
+    let openPreviewPhoto: ((PhotoPresentation) -> Void)?
+    let widgetGuideAction: (() -> Void)?
     let continueToApp: () -> Void
 
     init(
@@ -16,6 +18,8 @@ struct InitialScanView: View {
         chooseMorePhotos: @escaping () -> Void,
         rescan: @escaping () -> Void,
         continueButtonTitleOverride: String? = nil,
+        openPreviewPhoto: ((PhotoPresentation) -> Void)? = nil,
+        widgetGuideAction: (() -> Void)? = nil,
         continueToApp: @escaping () -> Void
     ) {
         self.scan = scan
@@ -24,6 +28,8 @@ struct InitialScanView: View {
         self.chooseMorePhotos = chooseMorePhotos
         self.rescan = rescan
         self.continueButtonTitleOverride = continueButtonTitleOverride
+        self.openPreviewPhoto = openPreviewPhoto
+        self.widgetGuideAction = widgetGuideAction
         self.continueToApp = continueToApp
     }
 
@@ -62,18 +68,26 @@ struct InitialScanView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if scan.hasPreliminaryResult {
-                Button(action: continueToApp) {
-                    Text(continueButtonTitle)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
+                VStack(spacing: 8) {
+                    Button(action: continueToApp) {
+                        Text(continueButtonTitle)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("initial-scan-continue")
+                    if let widgetGuideAction, scan.displayedCatCount > 0 {
+                        Button("ウィジェットの置き方", action: widgetGuideAction)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("initial-scan-widget-guide")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 12)
                 .background(.bar)
-                .accessibilityIdentifier("initial-scan-continue")
             }
         }
         .animation(.easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
@@ -113,15 +127,18 @@ struct InitialScanView: View {
             if scan.displayedCatCount > 0, !previewPhotos.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(previewPhotos) { photo in
-                        PhotoAssetImageView(
-                            localIdentifier: photo.localIdentifier,
-                            catBoundingBox: photo.catBoundingBox,
-                            targetPixelSize: CGSize(width: 360, height: 360),
-                            networkAccessAllowed: false
-                        )
-                        .aspectRatio(1, contentMode: .fit)
-                        .frame(maxWidth: 112)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        if let openPreviewPhoto {
+                            Button { openPreviewPhoto(photo) } label: {
+                                previewImage(photo)
+                            }
+                            .buttonStyle(.plain)
+                            // Keep the image's loaded/loading/failed label.
+                            // A fixed button label hides its failure state.
+                            .accessibilityHint("タップして写真を開きます")
+                            .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
+                        } else {
+                            previewImage(photo)
+                        }
                     }
                 }
                 .accessibilityElement(children: .contain)
@@ -174,6 +191,18 @@ struct InitialScanView: View {
                 }
             }
         }
+    }
+
+    private func previewImage(_ photo: PhotoPresentation) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 360, height: 360),
+            networkAccessAllowed: false
+        )
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 112)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
     private var isFinalZero: Bool {

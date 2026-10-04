@@ -1334,10 +1334,14 @@ final class PhotoPermissionUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
-        // Reuse this build and its UI-authorized Simulator library baseline.
-        // These fixtures exercise the actual views without enrolling cats,
-        // sharing, or reading any personal media.
         app.terminate()
+    }
+
+    @MainActor
+    func testMainlineAcceptanceScreensWithAuthorizedLibrary() {
+        // The harness validates and archives the real permission evidence
+        // before this separate session can prune it through fixture launches.
+        // Movie preparation still reuses the UI-authorized library.
         verifyMainlineAcceptanceScreens()
     }
 
@@ -1366,6 +1370,21 @@ final class PhotoPermissionUITests: XCTestCase {
                 }
                 captureMainlineScreen(scenario)
                 next.tap()
+                let closePhoto = app.buttons["first-run-photo-close"]
+                XCTAssertTrue(closePhoto.waitForExistence(timeout: 15))
+                XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
+                XCTAssertFalse(app.buttons["widget-placement-skip"].exists)
+                captureMainlineScreen("\(scenario)-first-photo")
+                closePhoto.tap()
+                XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
+
+                // Widget placement remains an explicit alternative, rather
+                // than interrupting the first photo the person wants to see.
+                app.terminate()
+                app.launch()
+                let widgetGuide = app.buttons["initial-scan-widget-guide"]
+                XCTAssertTrue(widgetGuide.waitForExistence(timeout: 15))
+                widgetGuide.tap()
                 let skipWidget = app.buttons["widget-placement-skip"]
                 XCTAssertTrue(skipWidget.waitForExistence(timeout: 15))
                 if scenario == "one" {
@@ -1375,6 +1394,8 @@ final class PhotoPermissionUITests: XCTestCase {
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "limited-zero":
                 XCTAssertTrue(app.staticTexts["猫の写真は見つかりませんでした"].waitForExistence(timeout: 15))
+                XCTAssertFalse(app.buttons["initial-scan-widget-guide"].exists)
+                XCTAssertFalse(app.buttons["first-run-photo-close"].exists)
                 captureMainlineScreen(scenario)
                 app.buttons["もっと写真を選ぶ"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-action-choose"].waitForExistence(timeout: 5))
@@ -2956,6 +2977,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_ALBUM_CATALOG_DEBUG"] = "1"
         app.launchEnvironment["NEKO_ALBUM_CATALOG_DELAY_MS"] = "2500"
+        app.launchEnvironment["NEKO_ARCHIVE_SETTINGS_TRACE"] = "1"
         app.launch()
 
         let catalog = app.staticTexts["album-catalog-debug-state"]
@@ -2996,7 +3018,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
         let archive = app.buttons["settings-personal-archive"]
-        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        let settingsOpened = archive.waitForExistence(timeout: 5)
+        if !settingsOpened {
+            let trace = progress.exists ? progress.label : "fixture-progress-not-visible"
+            print("ARCHIVE_SETTINGS_TRACE: \(trace)")
+            capture("personal-archive-settings-did-not-open")
+        }
+        XCTAssertTrue(settingsOpened)
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
         XCTAssertTrue(archive.isHittable)
         archive.tap()
@@ -3007,7 +3035,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(storedCount.value as? String, "0件")
         app.buttons["personal-archive-guide"].tap()
         XCTAssertTrue(app.navigationBars["保管と引き継ぎ"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["保管するもの"].exists)
+        XCTAssertTrue(app.staticTexts["以前の保管"].exists)
         capture("personal-archive-preservation-guide")
         let editingScope = app.staticTexts["編集と削除"]
         for _ in 0..<5 where !editingScope.isHittable { app.swipeUp() }
@@ -3034,11 +3062,18 @@ final class SoloMemoriesUITests: XCTestCase {
         let text = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         capture("personal-archive-editor-from-settings-sheet")
-        let editorBar = app.navigationBars["メモ"]
-        app.buttons["photo-memory-note-close"].tap()
+        // A standalone run may still have a real Photos prompt over the editor.
+        // Resolve that known prompt before it consumes the close-control tap.
+        dismissVetPhotosPromptIfPresent()
+        // The restored detail also has the title "メモ". Observe the editor's
+        // own control so returning to the detail is not mistaken for failure.
+        let editorClose = app.buttons["photo-memory-note-close"]
+        XCTAssertTrue(editorClose.isHittable)
+        editorClose.tap()
         let editorClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+            predicate: NSPredicate(format: "exists == false"), object: editorClose)
         XCTAssertEqual(XCTWaiter.wait(for: [editorClosed], timeout: 5), .completed)
+        XCTAssertFalse(text.exists)
         XCTAssertTrue(edit.isHittable)
         edit.tap()
         XCTAssertTrue(text.waitForExistence(timeout: 5))
@@ -3046,14 +3081,15 @@ final class SoloMemoriesUITests: XCTestCase {
         // settings/editor sheets, with another finite scan-progress burst.
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(editorBar.waitForExistence(timeout: 10))
+        XCTAssertTrue(editorClose.waitForExistence(timeout: 10))
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("A quiet afternoon")
         app.buttons["photo-memory-note-keyboard-done"].tap()
         app.buttons["photo-memory-note-save"].tap()
         let savedEditorClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: editorBar)
+            predicate: NSPredicate(format: "exists == false"), object: editorClose)
         XCTAssertEqual(XCTWaiter.wait(for: [savedEditorClosed], timeout: 10), .completed)
+        XCTAssertFalse(text.exists)
         let body = app.staticTexts["memory-note-body"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "A quiet afternoon"), object: body)], timeout: 10), .completed)
@@ -3517,6 +3553,31 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["もっと見る"].exists)
         capture("photo-grid-scrolled-to-last-batch")
+        app.terminate()
+    }
+
+    @MainActor
+    func testInitialScanPreviewPreservesUnavailableLabelAndOpensPhoto() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "unavailable"
+        app.launch()
+        let failure = app.descendants(matching: .any)
+            .matching(identifier: "写真を表示できません").firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 15))
+        let preview = app.buttons["initial-scan-photo-mainline-unavailable-photo"]
+        XCTAssertEqual(preview.label, "写真を表示できません")
+        XCTAssertTrue(preview.isHittable)
+        XCTAssertTrue(app.buttons["initial-scan-continue"].isHittable)
+        capture("initial-scan-unavailable-accessible-preview")
+        preview.tap()
+        let close = app.buttons["first-run-photo-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
+        capture("initial-scan-unavailable-opened-photo")
+        close.tap()
+        XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 5))
         app.terminate()
     }
 
@@ -5146,10 +5207,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 return part.flatMap { Double($0.dropFirst(5)) } ?? 0
             }
             XCTAssertEqual(photoZoom(), 1, accuracy: 0.05)
+            attach(app, name: "photo-browser-compact-actions-\(variant)")
             XCTAssertGreaterThan(visiblePhoto.frame.height, app.frame.height * 0.55)
             XCTAssertGreaterThanOrEqual(deliver.frame.height, 44)
             XCTAssertGreaterThanOrEqual(app.buttons["お気に入りに追加"].frame.height, 44)
-            attach(app, name: "photo-browser-compact-actions-\(variant)")
             visiblePhoto.doubleTap()
             expectation(for: NSPredicate { _, _ in photoZoom() > 1.1 }, evaluatedWith: app)
             waitForExpectations(timeout: 5)

@@ -156,7 +156,7 @@ private struct CareField: View {
             }
             TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
                 .lineLimit(1...8).frame(minHeight: 36)
-                .foregroundStyle(isPrefilled ? Color.secondary : Color.primary)
+                .foregroundStyle(Color.primary)
                 .accessibilityLabel(label).accessibilityIdentifier(identifier)
         }.padding(.vertical, 4)
     }
