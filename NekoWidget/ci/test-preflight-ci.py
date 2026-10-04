@@ -19,6 +19,73 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class FeedbackRoutingTests(unittest.TestCase):
+    method = "testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings"
+
+    def plan(self, *, branch="codex/feedback", dirty="", runs=(), methods=None):
+        with patch.object(planner, "git", side_effect=[dirty, "a" * 40, branch]), \
+                patch.object(preflight, "read_task_runs", return_value=list(runs)), \
+                patch.object(preflight, "read_other_active_ios_runs", return_value=[]):
+            return preflight.feedback_plan("SoloMemoriesUITests", methods or self.method)
+
+    def test_feedback_commands_use_exact_sha_and_diagnostic_branch(self):
+        for branch in ("codex/feedback", "diagnostic/feedback"):
+            result = self.plan(branch=branch)
+            self.assertTrue(result["ready"])
+            self.assertFalse(result["release_evidence"])
+            self.assertTrue(result["diagnostic_only"])
+            self.assertEqual(result["commands"][0],
+                             ["git", "push", "origin", "a" * 40 + ":refs/heads/diagnostic/feedback"])
+            dispatch = result["commands"][1]
+            self.assertIn("diagnostic/feedback", dispatch)
+            self.assertIn("source_ref=" + "a" * 40, dispatch)
+            self.assertEqual(result["native_tests"],
+                             ["NekoWidgetUITests/SoloMemoriesUITests/" + self.method])
+
+    def test_feedback_requires_committed_task_and_existing_distinct_methods(self):
+        for arguments in ({"dirty": " M changed.swift"}, {"branch": "main"}, {"branch": ""},
+                          {"methods": "testNotPresentInThisClass"},
+                          {"methods": self.method + "," + self.method},
+                          {"methods": "testA,testB,testC,testD"}):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                self.plan(**arguments)
+
+    def test_active_task_blocks_commands_but_other_tasks_are_only_advisory(self):
+        result = self.plan(runs=[{"id": 17, "status": "in_progress"}])
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["commands"], [])
+        self.assertEqual(result["active_task_runs"], [17])
+        result = self.plan(runs=[{"id": 18, "status": "completed"}])
+        self.assertTrue(result["ready"])
+
+    def test_contention_deduplicates_and_excludes_both_own_branches(self):
+        def run(identifier, branch, status="queued"):
+            return {"id": identifier, "head_branch": branch, "status": status,
+                    "created_at": "2026-10-04T01:00:00Z"}
+        runs = [run(1, "codex/feedback"), run(2, "diagnostic/feedback"),
+                run(3, "codex/other"), run(4, "codex/finished", "completed")]
+        with patch.object(preflight, "github", return_value={"total_count": 4, "workflow_runs": runs}) as api:
+            result = preflight.read_other_active_ios_runs("codex/feedback")
+        self.assertEqual([run["id"] for run in result], [3])
+        self.assertEqual(api.call_count, 5)
+        self.assertTrue(all("/actions/workflows/ios-build.yml/runs?" in call.args[0]
+                            for call in api.call_args_list))
+
+    def test_incomplete_contention_history_stops_instead_of_assuming_idle(self):
+        for page in ({"total_count": 1, "workflow_runs": []},
+                     {"total_count": 100, "workflow_runs": []}):
+            with patch.object(preflight, "github", return_value=page), self.assertRaises(ValueError):
+                preflight.read_other_active_ios_runs("codex/feedback")
+
+    def test_feedback_cannot_authorize_upload_or_silently_change_candidate_route(self):
+        for arguments in (["--feedback"], ["--test-class", "SoloMemoriesUITests"],
+                          ["--feedback", "--test-class", "SoloMemoriesUITests", "--test-method",
+                           self.method, "--include-upload"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                preflight.main(arguments)
+            self.assertEqual(error.exception.code, 2)
+
+
 class PreflightTests(unittest.TestCase):
     history = {"upload_minutes": 9, "observations": [
         {"scope": "full-v1", "candidate_minutes": 64, "run_id": 1, "outcome": "failure"},

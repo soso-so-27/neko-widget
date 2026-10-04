@@ -4,6 +4,9 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIを起動する前
 
+- 実装途中の画面確認は `preflight-ci.py --feedback --test-class <既存class> --test-method <method1,method2>` で準備する。cleanな確定HEADと同一classの既存1〜3操作を検査し、`diagnostic/<task>` への固定SHA pushと既存診断workflowの起動コマンドをJSON配列で返す。コマンドは自動実行しない。同じ作業のCIが実行中ならコマンドを返さない。診断成功はrelease evidenceではなく、最終候補の必須jobを置き換えない。
+- `codex/<task>` の途中pushは通常CIを起動するため、修正中は上記診断経路と関連ローカル検証を使い、関連修正を一つの統合候補へまとめる。preflightの `other_active_ios_runs` は他作業の通常iOS CIを表示し、runner競合を避ける計画に使う。他作業を自動取消せず、全作業を直列化しない。待ち時間と実行時間を分けて記録する。
+
 - push、main更新、TestFlight配布はユーザーの依頼範囲に含まれる場合だけ行う。
 - 開始時に現在のmain、対象差分、完了条件を一度決め、機能変更とCI試作を別の候補にする。検証待ちの間に同じ候補へ追加変更を積まない。
 - 候補をcommitした後、push前に `python NekoWidget/ci/check-development-flow.py` を実行する。既存の安価な検証に加え、実CIと同じ選択器でbranch全差分・必要job・全件になる理由・過去の所要時間を表示する。配布予定なら `--include-upload`。作業中の単体確認だけなら `--checks-only` とし、push前確認の代用にはしない。

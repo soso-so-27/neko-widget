@@ -99,6 +99,51 @@ def read_task_runs(head=None):
     return list(runs.values())
 
 
+def read_other_active_ios_runs(branch):
+    """Report contention without cancelling jobs or relaxing candidate gates."""
+    task = branch.removeprefix("codex/").removeprefix("diagnostic/")
+    own = {branch, "codex/" + task, "diagnostic/" + task}
+    active = {}
+    for status in ("queued", "in_progress", "waiting", "requested", "pending"):
+        query = urllib.parse.urlencode({"status": status, "per_page": 100})
+        page = github(f"repos/{REPOSITORY}/actions/workflows/ios-build.yml/runs?{query}")
+        if page["total_count"] >= 100 or page["total_count"] != len(page["workflow_runs"]):
+            raise ValueError("Active iOS CI list is incomplete; review contention before starting")
+        for run in page["workflow_runs"]:
+            if run.get("status") != "completed" and run.get("head_branch") not in own:
+                active[run["id"]] = run
+    return [{"id": run["id"], "branch": run["head_branch"], "status": run["status"],
+             "created_at": run["created_at"], "url": run.get("html_url")}
+            for run in sorted(active.values(), key=lambda item: (item["created_at"], item["id"]))]
+
+
+def feedback_plan(test_class, methods):
+    """Exact, read-only diagnostic commands; never candidate or release evidence."""
+    if planner.git("status", "--porcelain"):
+        raise ValueError("Commit the complete feedback candidate before planning")
+    head = planner.git("rev-parse", "HEAD")
+    branch = planner.git("branch", "--show-current")
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or not branch.startswith(("codex/", "diagnostic/")):
+        raise ValueError("Feedback requires an exact commit on a codex/ or diagnostic/ task branch")
+    diagnostic_branch = "diagnostic/" + branch.split("/", 1)[1]
+    source = (CI.parent / "NekoWidgetUITests" / (
+        "WidgetPlacementScreenshotUITests.swift" if test_class == "WidgetPlacementScreenshotUITests"
+        else "PhotoPermissionUITests.swift")).read_text(encoding="utf-8")
+    tests = scope.diagnostic_tests(test_class, methods, source)
+    runs = read_task_runs(head)
+    active = [run["id"] for run in runs if run["status"] != "completed"]
+    commands = [] if active else [
+        ["git", "push", "origin", f"{head}:refs/heads/{diagnostic_branch}"],
+        ["gh", "workflow", "run", "ios-ui-diagnostic.yml", "--ref", diagnostic_branch,
+         "-f", "source_ref=" + head, "-f", "test_class=" + test_class, "-f", "test_method=" + methods],
+    ]
+    return {"head": head, "branch": diagnostic_branch, "diagnostic_only": True,
+            "release_evidence": False, "ready": not active, "active_task_runs": active,
+            "native_tests": list(tests), "commands": commands,
+            "other_active_ios_runs": read_other_active_ios_runs(branch),
+            "note": "No commands executed. Diagnostic success cannot replace the final candidate's required jobs."}
+
+
 def diagnostic_title_tests(title):
     prefix = "UI diagnosis: "
     if not title.startswith(prefix):
@@ -436,6 +481,10 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--feedback", action="store_true",
+                        help="Plan a diagnostic branch and up to three owning UI tests; never release evidence")
+    parser.add_argument("--test-class", choices=scope.DIAGNOSTIC_CLASSES)
+    parser.add_argument("--test-method", help="One to three existing methods in the selected class, comma-separated")
     parser.add_argument("--base", default="origin/main")
     parser.add_argument("--target-minutes", type=float, default=30)
     parser.add_argument("--include-upload", action="store_true")
@@ -447,6 +496,10 @@ def main(argv=None):
                         help="For reviewed app UI profiles only, use the full-route maximum as an unmeasured cost reference; keep all gates")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    if args.feedback and (not args.test_class or not args.test_method or args.include_upload):
+        parser.error("Feedback requires test-class and test-method and cannot authorize upload")
+    if not args.feedback and (args.test_class or args.test_method):
+        parser.error("test-class and test-method require --feedback")
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:
         parser.error("target-minutes must be positive")
     args.history = args.history.resolve()
@@ -457,8 +510,9 @@ def main(argv=None):
     os.chdir(CI.parents[1])
     try:
         history = json.loads(args.history.read_text(encoding="utf-8"))
-        result = candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline)
-        if result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE,
+        result = (feedback_plan(args.test_class, args.test_method) if args.feedback else
+                  candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline))
+        if not args.feedback and result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE,
                                    planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE}:
             runs = read_task_runs(result["head"])
             correction = None
@@ -470,6 +524,7 @@ def main(argv=None):
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs))
+            result["other_active_ios_runs"] = read_other_active_ios_runs(planner.git("branch", "--show-current"))
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
