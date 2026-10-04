@@ -53,6 +53,18 @@ TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
     "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
 ))
+# One reviewed correction of a known full-v1 test gesture. Pin the entire
+# XCTest file: no other case, helper, import or acceptance check may change.
+ALBUM_CORRECTION_SOURCE = "83c67ab482336c8ea8cb360020748f9c7072e265"
+ALBUM_CORRECTION_RUN = 37201863450
+ALBUM_CORRECTION_BRANCH = "codex/cat-albums-gallery-integration-20261004"
+ALBUM_CORRECTION_BLOBS = ("b50afbecb55df840853e6a3a45f45bb14be3b553",
+                          "51dbff99c4f12cab59d836c82dc274ad025486fd")
+ALBUM_CORRECTION_CASE = "SoloMemoriesUITests/testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal"
+ALBUM_CORRECTION_DOC = "handoffs/development-release-workflow.md"
+ALBUM_CORRECTION_REQUIRED = (BUILD, SMOKE) + tuple(
+    f"Sharing checks [{lane}; scope full-v1]" for lane in (
+        "runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-variants"))
 
 # These helpers are not app, build, safety-check or release-evidence inputs.
 # Selection/check-runner/workflow changes are deliberately excluded. Their
@@ -1055,12 +1067,50 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
+    if required == ALBUM_CORRECTION_REQUIRED: return FULL_SCOPE
     return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
 
 
+def correction_ui_job(selected_scope: str) -> str:
+    return lane_job(selected_scope, "app-ui-solo" if selected_scope == FULL_SCOPE else "app-ui")
+
+
+def album_correction_inputs(source: str, head: str) -> bool:
+    """Exact reviewed test blob plus already-merged controls; all else identical."""
+    try:
+        if source != ALBUM_CORRECTION_SOURCE or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
+            return False
+        git("merge-base", "--is-ancestor", source, head)
+        approval = git("merge-base", head, "origin/main")
+        parts = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if parts[-1:] == [""]: parts.pop()
+        if len(parts) % 2: return False
+        allowed = TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH, ALBUM_CORRECTION_DOC}
+        changed = set()
+        for index in range(0, len(parts), 2):
+            fields, path = parts[index].split(), parts[index + 1]
+            if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or path not in allowed or path in changed
+                    or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            changed.add(path)
+            if path == MEMORY_TEST_PATH:
+                if tuple(fields[2:4]) != ALBUM_CORRECTION_BLOBS: return False
+            elif git("show", f"{head}:{path}") != git("show", f"{approval}:{path}"):
+                return False
+        # Require approval of every control, even one unchanged from the source.
+        return MEMORY_TEST_PATH in changed and all(
+            git("show", f"{head}:{path}") == git("show", f"{approval}:{path}")
+            for path in TEST_CORRECTION_CONTROL_PATHS | {ALBUM_CORRECTION_DOC})
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
 def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SCOPE) -> bool:
     """Only owned XCTest bodies and reviewed CI evidence controls may differ."""
+    if selected_scope == FULL_SCOPE:
+        return album_correction_inputs(source, head)
     try:
         if not SHA.fullmatch(source) or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
             return False
@@ -1141,17 +1191,44 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                 or run["head_sha"] == head or not test_correction_inputs(run["head_sha"], head, selected_scope)):
             return None
         jobs = executed_jobs(run, repository, api)
+        if selected_scope == FULL_SCOPE:
+            # Not a generic failed-full escape hatch. The reviewed run must have
+            # executed exactly this graph, with the solo shard as its only failure.
+            if (run["id"] != ALBUM_CORRECTION_RUN or run["head_sha"] != ALBUM_CORRECTION_SOURCE
+                    or run.get("run_attempt", 1) != 1
+                    or branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"
+                    or len(jobs) != len(required) + 1
+                    or {job.get("name") for job in jobs} != set(required) | {PLAN_JOB}
+                    or any(job.get("head_sha") != run["head_sha"] for job in jobs)):
+                return None
         plan = [job for job in jobs if job.get("name") == PLAN_JOB]
         if len(plan) != 1 or (plan[0].get("status"), plan[0].get("conclusion"), plan[0].get("head_sha")) != (
                 "completed", "success", run["head_sha"]):
             return None
-        ui_name = lane_job(selected_scope, "app-ui")
+        if selected_scope == FULL_SCOPE:
+            log = api(f"/repos/{repository}/actions/jobs/{plan[0]['id']}/logs")
+            if not isinstance(log, str): return None
+            records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1])
+                       for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+            # The plan job first runs selector tests, which print other fixture
+            # identities. Only this exact repository/source may certify the run.
+            records = [record for record in records if isinstance(record, dict)
+                       and record.get("repository") == repository and record.get("head_sha") == run["head_sha"]]
+            if (len(records) != 1 or type(records[0].get("schema_version")) is not int or records[0].get("schema_version") != 1
+                    or records[0].get("repository") != repository
+                    or records[0].get("head_sha") != run["head_sha"]
+                    or records[0].get("scope") != FULL_SCOPE
+                    or records[0].get("required_jobs") != list(required)
+                    or any(records[0].get(key) is not None for key in (
+                        "evidence_run_id", "evidence_sha", "test_correction_evidence"))):
+                return None
+        ui_name = correction_ui_job(selected_scope)
         ui = [job for job in jobs if job.get("name") == ui_name]
         if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
                 "completed", "failure", run["head_sha"]):
             return None
         reusable = tuple(name for name in required if name != ui_name)
-        if len(reusable) != 3 or not covers_jobs(jobs, reusable, run["head_sha"], now):
+        if len(reusable) != (len(required) - 1 if selected_scope == FULL_SCOPE else 3) or not covers_jobs(jobs, reusable, run["head_sha"], now):
             return None
         entries = []
         for name in reusable:
@@ -1167,6 +1244,9 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
+        return None
+    if test_correction_scope(required) == FULL_SCOPE and (
+            branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"):
         return None
     prefix = f"/repos/{repository}/actions"
     workflow = api(f"{prefix}/workflows/ios-build.yml")
@@ -1192,7 +1272,7 @@ def evidence_log(stage: str, **fields) -> None:
     print("IOS_CI_EVIDENCE_JSON=" + json.dumps({"stage": stage, **fields}, separators=(",", ":")), flush=True)
 
 
-def github_api(env: dict, path: str) -> dict:
+def github_api(env: dict, path: str) -> dict | str:
     start = time.monotonic()
     evidence_log("api_start", path=path)
     try:
@@ -1203,9 +1283,9 @@ def github_api(env: dict, path: str) -> dict:
                      "X-GitHub-Api-Version": "2022-11-28"},
         )
         with urllib.request.urlopen(request, timeout=15) as response:
-            result = json.load(response)
+            result = response.read().decode("utf-8") if path.endswith("/logs") else json.load(response)
             status = response.status
-        if not isinstance(result, dict):
+        if not isinstance(result, str if path.endswith("/logs") else dict):
             raise ValueError("Expected API object")
     except (OSError, KeyError, TypeError, ValueError) as error:
         evidence_log("api_error", path=path, error=type(error).__name__,
@@ -1475,7 +1555,8 @@ def main() -> None:
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
         "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
-        "app_ui_lanes": json.dumps(app_ui_lanes(selected_scope), separators=(",", ":")),
+        "app_ui_lanes": json.dumps(["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
+                                    else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
         "matrix_lanes": json.dumps(matrix_lanes(selected_scope), separators=(",", ":")),
@@ -1502,7 +1583,7 @@ def main() -> None:
         )
         summary += f"Reusing successful required jobs from {relation}: [run {run_id}]({url}), tested `{tested_sha}`.\n"
     elif correction is not None:
-        summary += (f"Reusing three successful unchanged-input jobs from failed run {correction['run_id']} "
+        summary += (f"Reusing {len(correction['jobs'])} successful unchanged-input jobs from failed run {correction['run_id']} "
                     f"at `{correction['sha']}`; executing all owning app UI tests at this commit.\n")
     else:
         summary += "Executing: " + ", ".join(required) + ".\n"
