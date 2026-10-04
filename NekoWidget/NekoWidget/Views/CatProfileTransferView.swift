@@ -89,7 +89,7 @@ struct CatProfileTransferView: View {
             NavigationStack {
                 List {
                     Section {
-                        Text(item.isUnchanged ? "同じ名前と日付が登録されています。変更はありません。" : "この内容をこのiPhoneに登録します。")
+                        Text(item.isUnchanged ? "名前と日付は登録済みです。選んだ写真の所属を追加できます。" : "この内容をこのiPhoneに登録します。")
                     }
                     ForEach(item.transfer.profiles) { profile in
                         Section(profile.name) {
