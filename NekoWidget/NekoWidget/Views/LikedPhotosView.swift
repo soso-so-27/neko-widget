@@ -2416,6 +2416,19 @@ struct PhotoBrowserView: View {
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
+                if personalNote.state(for: selectedPhoto.localIdentifier) == .failed {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("メモを読み込めませんでした。保存済みの内容は変更していません。")
+                            .font(.subheadline)
+                        Button("メモを再読み込み", systemImage: "arrow.clockwise") {
+                            let identifier = selectedPhoto.localIdentifier
+                            Task { await personalNote.load(for: identifier) }
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("photo-memory-note-read-retry")
+                    }
+                    .accessibilityIdentifier("photo-memory-note-read-error")
+                }
                 HStack(spacing: dynamicTypeSize.isAccessibilitySize ? 4 : 8) {
                     photoActions(selectedPhoto)
                 }
@@ -2529,13 +2542,14 @@ struct PhotoBrowserView: View {
         }
 
         Button { personalNotePhoto = selectedPhoto } label: {
-            photoActionLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil
-                             ? "メモを書く" : "メモを編集", systemImage: "square.and.pencil")
+            photoActionLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
+                hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil), systemImage: "square.and.pencil")
         }
-        .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
+        .accessibilityLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
+            hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil))
         .accessibilityHint("自分だけのメモです。相手には送られません")
         .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto)
+        .disabled(isExportingMemoryPhoto || personalNote.state(for: selectedPhoto.localIdentifier).isLoading)
 
         if canDeliverToWindow {
             Button {

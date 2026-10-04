@@ -14,7 +14,26 @@ enum OnboardingPresentationVerifier {
         try verifiesCompletionVersionOne()
         try verifiesWidgetGuideReplayIsNonDestructive()
         try verifiesWidgetPlacementRecoveryPolicy()
+        try verifiesPartialScanFailureRetainsResultAndStopsProgress()
         print("Onboarding presentation verifier passed")
+    }
+
+    private static func verifiesPartialScanFailureRetainsResultAndStopsProgress() throws {
+        let error = "The photo scan stopped."
+        try require(OnboardingPartialScanRecovery.message(hasPreliminaryResult: true, error: error) == error,
+                    "a partial result hid its scan failure")
+        try require(!OnboardingPartialScanRecovery.showsProgress(hasFinalResult: false,
+            hasPreliminaryResult: true, error: error), "a failed partial scan still looked active")
+        try require(OnboardingPartialScanRecovery.showsProgress(hasFinalResult: false,
+            hasPreliminaryResult: true, error: nil), "a normal partial scan lost its progress")
+        try require(!OnboardingPartialScanRecovery.showsProgress(hasFinalResult: true,
+            hasPreliminaryResult: true, error: nil), "a completed scan showed active progress")
+        for blank in ["", " \n "] {
+            try require(OnboardingPartialScanRecovery.message(hasPreliminaryResult: true, error: blank) == nil,
+                        "blank scan error produced a failure banner")
+        }
+        try require(OnboardingPartialScanRecovery.message(hasPreliminaryResult: false, error: error) == nil,
+                    "the no-result failure became a partial-result screen")
     }
 
     private static func verifiesExactlyFourPagesInTheApprovedOrder() throws {

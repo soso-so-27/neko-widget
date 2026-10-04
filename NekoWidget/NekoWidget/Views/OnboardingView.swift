@@ -111,6 +111,7 @@ struct OnboardingView: View {
                 continueButtonTitleOverride: "写真を見る",
                 openPreviewPhoto: openPhoto,
                 widgetGuideAction: { page = .widgetGuide },
+                scanErrorMessage: scanErrorMessage,
                 continueToApp: {
                     if scan.displayedCatCount > 0, let photo = resultPhotos.first {
                         openPhoto(photo)

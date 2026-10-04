@@ -275,9 +275,11 @@ actor PersonalArchiveStore {
     private static let commitLock = NSLock()
     private let directory: URL?
     private let transport: (any PersonalArchiveTransport)?
+    private let jpegReader: @Sendable (URL) throws -> Data
 
-    init(directory: URL? = nil, transport: (any PersonalArchiveTransport)?) {
-        self.directory = directory; self.transport = transport
+    init(directory: URL? = nil, transport: (any PersonalArchiveTransport)?,
+         jpegReader: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }) {
+        self.directory = directory; self.transport = transport; self.jpegReader = jpegReader
     }
 
     func accountContext() async throws -> String { try await currentAccount().context }
@@ -294,7 +296,7 @@ actor PersonalArchiveStore {
         let account = try await checkedAccount(expectedAccount)
         let state = try readState(account)
         let result = try state.sources?[noteID.uuidString].flatMap { link in
-            try readRecords(account, state: state).first { $0.id == link.recordID }
+            try readRecord(link.recordID, account: account, state: state)
         }
         try await assertCurrent(account)
         return result
@@ -328,7 +330,7 @@ actor PersonalArchiveStore {
             let p = entry.payload
             record = PersonalArchiveRecord(id: id, text: "", createdAt: p.createdAt, capturedAt: nil,
                 jpegData: nil, state: entry.state, issue: entry.issue, revision: p.fingerprint, isDeletionPending: true)
-        } else { record = try readRecords(account, state: state).first { $0.id == id } }
+        } else { record = try readRecord(id, account: account, state: state) }
         try await assertCurrent(account)
         return record
     }
@@ -853,30 +855,39 @@ actor PersonalArchiveStore {
         let url = imageURL(payload, folder)
         guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
               size == payload.jpegByteCount,
-              let data = try? Data(contentsOf: url), payload.accepts(data) else { return nil }
+              let data = try? jpegReader(url), payload.accepts(data) else { return nil }
         return data
     }
     private func readRecords(_ account: PersonalArchiveAccount) throws -> [PersonalArchiveRecord] {
         try readRecords(account, state: readState(account))
     }
+    private func readRecord(_ id: UUID, account: PersonalArchiveAccount, state: State) throws -> PersonalArchiveRecord? {
+        guard let entry = state.entries[id.uuidString] else { return nil }
+        return try materialize(entry, folder: accountFolder(account))
+    }
+
+    // Both list and single-record reads retain identical hash, partial-image and tombstone rules.
+    private func materialize(_ entry: Entry, folder: URL) throws -> PersonalArchiveRecord? {
+        let payload: PersonalArchivePayload
+        if entry.payload.isDeleted {
+            guard entry.state != .stored, let previous = entry.previousPayload else { return nil }
+            payload = previous
+        } else { payload = entry.payload }
+        let bytes = try imageData(payload, folder: folder)
+        let missing = payload.jpegSHA256 != nil && bytes == nil
+        return PersonalArchiveRecord(id: payload.id, text: payload.text,
+            createdAt: payload.createdAt, capturedAt: payload.capturedAt, jpegData: bytes,
+            state: missing && entry.state == .stored ? .partial : entry.state,
+            issue: missing ? .corruptedState : entry.issue, context: payload.context,
+            revision: payload.fingerprint, conflictingText: entry.conflictingPayload?.text,
+            isDeletionPending: entry.payload.isDeleted, conflictingRevision: entry.conflictingPayload?.fingerprint,
+            conflictingContext: entry.conflictingPayload?.context, memoSchema: payload.cloudSchema)
+    }
+
     private func readRecords(_ account: PersonalArchiveAccount, state: State) throws -> [PersonalArchiveRecord] {
         let folder = try accountFolder(account)
-        return try state.entries.values.compactMap { entry -> PersonalArchiveRecord? in
-            let payload: PersonalArchivePayload
-            if entry.payload.isDeleted {
-                guard entry.state != .stored, let previous = entry.previousPayload else { return nil }
-                payload = previous
-            } else { payload = entry.payload }
-            let bytes = try imageData(payload, folder: folder)
-            let missing = payload.jpegSHA256 != nil && bytes == nil
-            return PersonalArchiveRecord(id: payload.id, text: payload.text,
-                createdAt: payload.createdAt, capturedAt: payload.capturedAt, jpegData: bytes,
-                state: missing && entry.state == .stored ? .partial : entry.state,
-                issue: missing ? .corruptedState : entry.issue, context: payload.context,
-                revision: payload.fingerprint, conflictingText: entry.conflictingPayload?.text,
-                isDeletionPending: entry.payload.isDeleted, conflictingRevision: entry.conflictingPayload?.fingerprint,
-                conflictingContext: entry.conflictingPayload?.context, memoSchema: payload.cloudSchema)
-        }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
+        return try state.entries.values.compactMap { try materialize($0, folder: folder) }
+            .sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }
 
     private func removeAcknowledgedImages(_ account: PersonalArchiveAccount) throws {

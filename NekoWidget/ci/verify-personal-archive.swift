@@ -4,6 +4,20 @@ import Foundation
 //   NekoWidget/Services/PersonalArchiveCloudClient.swift ci/verify-personal-archive.swift -o /tmp/verify-personal-archive
 // Also include Services/PhotoMemoryNoteStore.swift and Services/PhotoMemoCoordinator.swift.
 // The injected transport never constructs CKContainer or contacts an Apple account.
+// Synchronous injected JPEG reader measures only fixture I/O, never live Photos or CloudKit.
+private final class ArchiveJPEGReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    private var corrupt = false
+    func reset(corrupt: Bool = false) { lock.lock(); defer { lock.unlock() }; reads = 0; self.corrupt = corrupt }
+    func count() -> Int { lock.lock(); defer { lock.unlock() }; return reads }
+    func read(_ url: URL) throws -> Data {
+        lock.lock(); reads += 1; let damaged = corrupt; lock.unlock()
+        if damaged { return Data([0]) }
+        return try Data(contentsOf: url)
+    }
+}
+
 private actor ArchiveCloudFixture: PersonalArchiveTransport {
     enum Failure: Sendable { case none, beforeCommit, afterCommit, beforePreparation, duringPreparation, afterPreparation }
     private struct Zone {
@@ -153,6 +167,7 @@ enum PersonalArchiveVerifier {
         try await stableRetry(root.appendingPathComponent("retry"))
         try await accountIsolation(root.appendingPathComponent("accounts"))
         try await partialImages(root.appendingPathComponent("partial"))
+        try await singleRecordReads(root.appendingPathComponent("single-record"))
         try await zoneGeneration(root.appendingPathComponent("generation"))
         try await localFailure(root.appendingPathComponent("failure"))
         try await sourcePreservation(root.appendingPathComponent("source"))
@@ -163,7 +178,7 @@ enum PersonalArchiveVerifier {
         try await unifiedMemoBoundaries(root.appendingPathComponent("memo-boundaries"))
         try await unifiedMemoConcurrency(root.appendingPathComponent("memo-concurrency"))
         try await measurementReflection(root.appendingPathComponent("measurement"))
-        print("Personal archive verifier passed: 15 boundary groups; no CloudKit network or account access")
+        print("Personal archive verifier passed: 16 boundary groups; no CloudKit network or account access")
     }
 
     private static func measurementReflection(_ root: URL) async throws {
@@ -581,6 +596,54 @@ enum PersonalArchiveVerifier {
         let restored = try await store.records()
         try require(restored.first(where: { $0.id == pending.id })?.state == .pending, "Account switch discarded the isolated draft")
         try await expect(.accountChanged) { _ = try await store.save(id: UUID(), jpegData: nil, text: "旧世代", capturedAt: nil, expectedAccount: oldContext) }
+    }
+
+    private static func singleRecordReads(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture(), counter = ArchiveJPEGReadCounter()
+        let store = PersonalArchiveStore(directory: root, transport: cloud,
+                                        jpegReader: { try counter.read($0) })
+        for index in 0..<11 { _ = try await save(store, text: "Fixture \(index)") }
+        let account = try await store.accountContext()
+        let source = PersonalArchiveSourceSnapshot(noteID: UUID(), revision: "single-read-fixture",
+                                                  photoIdentifier: "synthetic-photo")
+        let saved = try await store.preserve(source: source, jpegData: jpeg, text: "Retain these words",
+            capturedAt: date, context: PersonalArchiveContext(writtenAt: nil, updatedAt: nil, catNames: []), expectedAccount: account)
+        counter.reset()
+        let all = try await store.records()
+        try require(all.count == 12 && counter.count() == 12, "Fixture list did not exercise every JPEG")
+        // Only generated local fixture images are damaged/removed. No permission changes.
+        let key = await cloud.account().key
+        let otherIDs = all.filter { $0.id != saved.id }.prefix(2).map(\.id)
+        let files = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent(key),
+                                                               includingPropertiesForKeys: nil)
+        guard let corruptURL = files.first(where: { $0.lastPathComponent.hasPrefix(otherIDs[0].uuidString) }),
+              let missingURL = files.first(where: { $0.lastPathComponent.hasPrefix(otherIDs[1].uuidString) }) else {
+            throw Failure(message: "Missing generated JPEG fixtures")
+        }
+        try Data([0]).write(to: corruptURL)
+        try FileManager.default.removeItem(at: missingURL)
+        counter.reset()
+        let linked = try await store.linkedRecord(noteID: source.noteID, expectedAccount: account)
+        try require(linked?.id == saved.id && linked?.jpegData == jpeg && counter.count() == 1,
+                    "Single linked memo read loaded unrelated JPEGs")
+        counter.reset()
+        let memo = try await store.memoRecord(id: saved.id, expectedAccount: account)
+        try require(memo?.revision == linked?.revision && memo?.text == saved.text && counter.count() == 1,
+                    "Single memo read changed payload or loaded unrelated JPEGs")
+        counter.reset()
+        try require(try await store.memoRecord(id: UUID(), expectedAccount: account) == nil && counter.count() == 0,
+                    "Missing single record performed unrelated JPEG reads")
+        counter.reset(corrupt: true)
+        let partial = try await store.memoRecord(id: saved.id, expectedAccount: account)
+        try require(partial?.state == .partial && partial?.jpegData == nil && partial?.text == saved.text
+                    && partial?.revision == saved.revision && counter.count() == 1,
+                    "Single record read accepted corrupt JPEG or discarded its words/revision")
+        counter.reset()
+        let healthy = try await store.memoRecord(id: saved.id, expectedAccount: account)
+        try require(healthy?.state == .stored && healthy?.jpegData == jpeg, "Partial read changed durable healthy bytes")
+        await cloud.switchAccount("fixture-b")
+        try await expect(.accountChanged) { _ = try await store.linkedRecord(noteID: source.noteID, expectedAccount: account) }
+        print("Synthetic archive JPEG reads: list=12; linked=1; memo=1; absent=0 (fixture bytes, not device timings)")
     }
 
     private static func partialImages(_ root: URL) async throws {
