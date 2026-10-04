@@ -1076,6 +1076,26 @@ def correction_ui_job(selected_scope: str) -> str:
     return lane_job(selected_scope, "app-ui-solo" if selected_scope == FULL_SCOPE else "app-ui")
 
 
+class CorrectionEvidenceUnavailable(ValueError):
+    """Known reuse route could not obtain evidence; never launch a full retry."""
+
+
+class EvidenceLogRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        original, target = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        foreign = original.netloc != target.netloc
+        if foreign and not (original.hostname == "api.github.com" and original.path.endswith("/logs")
+                and target.scheme == "https" and target.hostname
+                and target.hostname.startswith("productionresultssa")
+                and target.hostname.endswith(".blob.core.windows.net")
+                and target.username is None and target.password is None):
+            raise CorrectionEvidenceUnavailable("Unrecognized evidence log redirect")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if foreign and redirected is not None:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
 def album_correction_inputs(source: str, head: str) -> bool:
     """Exact reviewed test blob plus already-merged controls; all else identical."""
     try:
@@ -1206,7 +1226,10 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                 "completed", "success", run["head_sha"]):
             return None
         if selected_scope == FULL_SCOPE:
-            log = api(f"/repos/{repository}/actions/jobs/{plan[0]['id']}/logs")
+            try:
+                log = api(f"/repos/{repository}/actions/jobs/{plan[0]['id']}/logs")
+            except (OSError, KeyError, TypeError, ValueError):
+                raise CorrectionEvidenceUnavailable("Could not retrieve the reviewed source plan") from None
             if not isinstance(log, str): return None
             records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1])
                        for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
@@ -1237,6 +1260,8 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                 return None
             entries.append({"name": name, "job_id": matching[0]["id"]})
         return {"run_id": run["id"], "sha": run["head_sha"], "jobs": entries}
+    except CorrectionEvidenceUnavailable:
+        raise
     except (OSError, AttributeError, KeyError, TypeError, ValueError):
         return None
 
@@ -1282,7 +1307,9 @@ def github_api(env: dict, path: str) -> dict | str:
                      "Authorization": f"Bearer {env['GH_TOKEN']}",
                      "X-GitHub-Api-Version": "2022-11-28"},
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        open_request = (urllib.request.build_opener(EvidenceLogRedirect()).open
+                        if path.endswith("/logs") else urllib.request.urlopen)
+        with open_request(request, timeout=15) as response:
             result = response.read().decode("utf-8") if path.endswith("/logs") else json.load(response)
             status = response.status
         if not isinstance(result, str if path.endswith("/logs") else dict):
