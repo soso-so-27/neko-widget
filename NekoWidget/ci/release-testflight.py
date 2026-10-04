@@ -195,7 +195,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
     if correction is not None:
-        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE, planner.VET_SAVED_CAT_SCOPE)
+        require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE, planner.VET_SAVED_CAT_SCOPE, planner.FULL_SCOPE)
                 and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
                 and isinstance(correction, dict)
                 and type(correction.get("run_id")) is int and type(correction.get("sha")) is str,
@@ -206,6 +206,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         def correction_api(path: str) -> dict:
             prefix = f"/repos/{REPOSITORY}/"
             require(path.startswith(prefix + "actions/"), "Unexpected test-correction API path.")
+            if path.endswith("/logs"):
+                return gh.log(source["id"], int(path.split("/")[-2]))
             return gh.get(path[len(prefix):])
         verified = planner.correction_source(
             source, sha, current["head_branch"], REPOSITORY, ci_workflow["id"],
@@ -220,7 +222,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 and old_plan.get("required_jobs") == list(required)
                 and old_plan.get("evidence_run_id") is None,
                 "Test-correction source did not run the same required check graph.")
-        ui_name = planner.lane_job(plan["scope"], "app-ui")
+        ui_name = planner.correction_ui_job(plan["scope"])
         current_jobs = executed_jobs_for(gh, current)
         require(planner.covers_jobs(current_jobs, (ui_name,), sha, now=now),
                 "All required owning app UI cases must pass in the new candidate's normal job.")

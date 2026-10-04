@@ -306,14 +306,15 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     blockers = []
     if active:
         blockers.append("ci_already_running")
-    correction_cases = ({"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+    correction_cases = ({planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
+                        {"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
                          "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"}
                         if result.get("scope") == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
                         {"SoloMemoriesUITests/testVeterinarySelectionIsExplicitAndRemovalKeepsSource"}
                         if result.get("scope") == scope.VET_SAVED_CAT_SCOPE else
                         {"SoloMemoriesUITests/" + name for name in scope.LOST_CAT_PHOTO_TEST_NAMES})
     correction_run = (correction_evidence["run_id"] if correction_evidence is not None
-                      and result.get("scope") in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE)
+                      and result.get("scope") in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE)
                       else None)
     # Only the proven source attempt is awaiting the normal candidate UI retry.
     # A subsequent run or diagnostic failure must remain a blocking failure.
@@ -516,11 +517,11 @@ def main(argv=None):
                                    planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE}:
             runs = read_task_runs(result["head"])
             correction = None
-            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE):
+            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
-                    lambda path: github(path.removeprefix("/")), dt.datetime.now(dt.timezone.utc))
+                    lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs))
