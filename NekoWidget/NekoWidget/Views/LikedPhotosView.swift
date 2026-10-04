@@ -2554,7 +2554,10 @@ struct PhotoBrowserView: View {
     }
 
     private func photoActionLabel(_ title: String, systemImage: String) -> some View {
-        VStack(spacing: 4) {
+        let labelLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(HStackLayout(spacing: 8))
+            : AnyLayout(VStackLayout(spacing: 4))
+        return labelLayout {
             Image(systemName: systemImage).font(.title3)
             Text(title).font(.caption.weight(.medium))
                 .multilineTextAlignment(.center)

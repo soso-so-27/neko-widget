@@ -132,7 +132,9 @@ struct InitialScanView: View {
                                 previewImage(photo)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("見つかった猫写真を開く")
+                            // Keep the image's loaded/loading/failed label.
+                            // A fixed button label hides its failure state.
+                            .accessibilityHint("タップして写真を開きます")
                             .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
                         } else {
                             previewImage(photo)
