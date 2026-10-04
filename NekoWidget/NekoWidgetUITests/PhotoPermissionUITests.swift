@@ -3055,6 +3055,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let text = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         capture("personal-archive-editor-from-settings-sheet")
+        // A standalone run may still have a real Photos prompt over the editor.
+        // Resolve that known prompt before it consumes the close-control tap.
+        dismissVetPhotosPromptIfPresent()
         // The restored detail also has the title "メモ". Observe the editor's
         // own control so returning to the detail is not mistaken for failure.
         let editorClose = app.buttons["photo-memory-note-close"]
