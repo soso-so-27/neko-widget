@@ -87,6 +87,22 @@ if (( ${#SMOKE_TEST_ARGUMENTS[@]} == 0 )); then
 fi
 # END CI_SMOKE_SELECTION
 
+# The permission request is its own session. All selected acceptance cases
+# remain required, but cannot launch until the real request evidence is saved.
+SMOKE_BOOTSTRAP_ARGUMENTS=()
+SMOKE_ACCEPTANCE_ARGUMENTS=()
+for test_argument in "${SMOKE_TEST_ARGUMENTS[@]}"; do
+    if [[ "$test_argument" == "-only-testing:NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess" ]]; then
+        SMOKE_BOOTSTRAP_ARGUMENTS+=("$test_argument")
+    else
+        SMOKE_ACCEPTANCE_ARGUMENTS+=("$test_argument")
+    fi
+done
+if (( ${#SMOKE_BOOTSTRAP_ARGUMENTS[@]} != 1 || ${#SMOKE_ACCEPTANCE_ARGUMENTS[@]} == 0 )); then
+    echo "The smoke selection must keep one real permission test and its acceptance stage." >&2
+    exit 1
+fi
+
 # `simctl addmedia` has occasionally submitted work to Photos and then waited
 # indefinitely for the command response. A timeout therefore has an uncertain
 # outcome: retrying the same files can create duplicate PHAssets. Kill the
@@ -1028,7 +1044,7 @@ TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
     -resultBundlePath "$PERMISSION_RESULT_BUNDLE" \
-    "${SMOKE_TEST_ARGUMENTS[@]}" \
+    "${SMOKE_BOOTSTRAP_ARGUMENTS[@]}" \
     -parallel-testing-enabled NO \
     COMPILER_INDEX_STORE_ENABLE=NO \
     CODE_SIGNING_ALLOWED=YES \
@@ -1039,6 +1055,47 @@ TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
 if [[ -d "$PERMISSION_RESULT_BUNDLE" ]]; then
     xcrun xcresulttool export attachments \
         --path "$PERMISSION_RESULT_BUNDLE" \
+        --output-path "$ARTIFACT_DIRECTORY/permission-screen-attachments"
+fi
+if (( PERMISSION_TEST_STATUS != 0 )); then
+    exit "$PERMISSION_TEST_STATUS"
+fi
+
+# Preserve unmodified files while the permission session is still retained.
+# The validator and application logging policy are deliberately unchanged.
+capture_tcc_state "permission-checkpoint"
+permission_container="$(resolve_group_container || true)"
+if [[ -z "$permission_container" || ! -d "$permission_container/diagnostic-logs" ]]; then
+    echo "The permission checkpoint diagnostic log directory was unavailable." >&2
+    exit 1
+fi
+PERMISSION_EVIDENCE_DIRECTORY="$ARTIFACT_DIRECTORY/permission-evidence"
+mkdir -p "$PERMISSION_EVIDENCE_DIRECTORY"
+cp -R "$permission_container/diagnostic-logs" "$PERMISSION_EVIDENCE_DIRECTORY/"
+python3 "$PHOTO_PERMISSION_VALIDATOR" \
+    --tcc-report "$ARTIFACT_DIRECTORY/tcc-permission-checkpoint.json" \
+    --log-directory "$PERMISSION_EVIDENCE_DIRECTORY/diagnostic-logs" \
+    --bundle-identifier "$APP_BUNDLE_ID"
+
+TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
+    -project NekoWidget.xcodeproj \
+    -scheme NekoWidget \
+    -configuration Debug \
+    -xcconfig "$PROJECT_DIRECTORY/Config.Disabled.xcconfig" \
+    -sdk iphonesimulator \
+    -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+    -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+    -resultBundlePath "$ARTIFACT_DIRECTORY/NekoWidgetMainlineAcceptance.xcresult" \
+    "${SMOKE_ACCEPTANCE_ARGUMENTS[@]}" \
+    -parallel-testing-enabled NO \
+    COMPILER_INDEX_STORE_ENABLE=NO \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGN_IDENTITY=- \
+    AD_HOC_CODE_SIGNING_ALLOWED=YES \
+    test-without-building || PERMISSION_TEST_STATUS=$?
+if [[ -d "$ARTIFACT_DIRECTORY/NekoWidgetMainlineAcceptance.xcresult" ]]; then
+    xcrun xcresulttool export attachments \
+        --path "$ARTIFACT_DIRECTORY/NekoWidgetMainlineAcceptance.xcresult" \
         --output-path "$ARTIFACT_DIRECTORY/mainline-screen-attachments"
 fi
 if (( PERMISSION_TEST_STATUS == 0 )); then
@@ -1067,13 +1124,9 @@ xcrun simctl terminate "$SIMULATOR_UDID" "$WIDGET_BUNDLE_ID" || true
 sleep 1
 capture_tcc_state "after-ui-test"
 if (( PERMISSION_TEST_STATUS == 0 )); then
-    permission_container="$(resolve_group_container || true)"
-    if [[ -z "$permission_container" || ! -d "$permission_container/diagnostic-logs" ]]; then
-        echo "The permission bootstrap diagnostic log directory was unavailable." >&2
-        PERMISSION_TEST_STATUS=1
-    elif ! python3 "$PHOTO_PERMISSION_VALIDATOR" \
+    if ! python3 "$PHOTO_PERMISSION_VALIDATOR" \
         --tcc-report "$ARTIFACT_DIRECTORY/tcc-after-ui-test.json" \
-        --log-directory "$permission_container/diagnostic-logs" \
+        --log-directory "$PERMISSION_EVIDENCE_DIRECTORY/diagnostic-logs" \
         --bundle-identifier "$APP_BUNDLE_ID"; then
         PERMISSION_TEST_STATUS=1
     fi

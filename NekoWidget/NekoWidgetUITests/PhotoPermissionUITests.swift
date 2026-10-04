@@ -1334,10 +1334,14 @@ final class PhotoPermissionUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
-        // Reuse this build and its UI-authorized Simulator library baseline.
-        // These fixtures exercise the actual views without enrolling cats,
-        // sharing, or reading any personal media.
         app.terminate()
+    }
+
+    @MainActor
+    func testMainlineAcceptanceScreensWithAuthorizedLibrary() {
+        // The harness validates and archives the real permission evidence
+        // before this separate session can prune it through fixture launches.
+        // Movie preparation still reuses the UI-authorized library.
         verifyMainlineAcceptanceScreens()
     }
 

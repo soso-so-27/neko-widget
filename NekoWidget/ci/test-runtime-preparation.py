@@ -229,6 +229,27 @@ exit "$status"
         self.assertIn('run_runtime "$label" "$runtime" "$simulator_udid" \\\n        || runtime_status=$?', harness)
         self.assertIn('if (( runtime_status != 0 )); then\n        matrix_status=1', harness)
         self.assertIn('exit "$matrix_status"', harness)
+        self.assertLess(body.index('capture_widget_launch_diagnostics'), body.index('return "$widget_scenario_status"'))
+
+    def test_launch_diagnostic_capture_does_not_mask_original_failure_or_retry(self):
+        harness = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")
+        start = harness.index("capture_widget_launch_diagnostics() (")
+        helper = harness[start:harness.index("\ncleanup_all()", start)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = root / "result.xcresult"; bundle.mkdir()
+            marker = root / "test-start"; marker.touch()
+            output = root / "diagnostics"
+            driver = root / "capture.sh"
+            driver.write_text('APP_BUNDLE_ID=jp.nekowidget.app\n' +
+                              'xcrun() { printf "diagnostic fixture\\n"; return 17; }\n' + helper +
+                              '\ncapture_widget_launch_diagnostics fixture-device "$1" "$2" "$3"\nexit 33\n', encoding="utf-8")
+            result = subprocess.run([BASH, driver.as_posix(), bundle.as_posix(), output.as_posix(), marker.as_posix()],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 33, result.stderr)
+            for name in ("launch-log", "launch-services", "xcresult-export"):
+                self.assertEqual((output / f"{name}-exit-code.txt").read_text().strip(), "17")
+            self.assertIn("diagnostic fixture", (output / "launch-unified.log").read_text())
 
 
 class DiagnosticSelectionTests(unittest.TestCase):
@@ -271,7 +292,7 @@ class DiagnosticSelectionTests(unittest.TestCase):
             result = subprocess.run(
                 [BASH, "-c", r'''
 python3() { "$FIXTURE_PYTHON" "$@"; }
-xcrun() { echo reached-simulator-boundary >&2; return 73; }
+xcrun() { echo reached-simulator-boundary >&2; printf 'lane=%s;scenarios=%s\n' "$RUNTIME_LANE" "$WIDGET_SCENARIOS" >&2; return 73; }
 export -f python3 xcrun
 bash "$1"
 ''', "diagnostic-selection-test", (CI / "run-sharing-runtime-matrix.sh").as_posix()],
@@ -302,6 +323,21 @@ bash "$1"
         self.assertGreater(len(expected), 1)
         self.assertEqual(set(metadata), {"runtime-scope.json"})
         self.assertEqual(metadata["runtime-scope.json"]["nativeTests"], list(expected))
+
+    def test_white_widget_diagnostic_keeps_same_conditions_and_rejects_extra_tests(self):
+        method = "testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
+        overrides = {"NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "WidgetPlacementScreenshotUITests",
+                     "NEKO_IOS_DIAGNOSTIC_TEST_METHOD": method}
+        result, metadata, selected = self.selection(overrides=overrides)
+        self.assertEqual(result.returncode, 73, result.stderr)
+        self.assertIn("lane=gallery-white;scenarios=long-white-large", result.stderr)
+        self.assertEqual(selected, f"-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/{method}\n")
+        self.assertFalse(metadata["diagnostic.json"]["releaseEvidence"])
+        for extra in (method + "," + method, "testCaptureSharedWidgetAllSupportedSizes", method + ",testMissing"):
+            result, metadata, selected = self.selection(overrides=dict(overrides, NEKO_IOS_DIAGNOSTIC_TEST_METHOD=extra))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("reached-simulator-boundary", result.stderr)
+            self.assertFalse(metadata)
 
     def test_override_rejects_regular_ci_release_and_non_dispatch_routes(self):
         cases = [
