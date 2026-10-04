@@ -592,7 +592,7 @@ final class UnrelatedUITests: XCTestCase {
 
     def test_full_partition_preserves_all_app_suites_and_three_gallery_conditions(self):
         self.assertEqual(scope.lanes(scope.FULL_SCOPE),
-                         ("runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-white", "gallery-no-caption"))
+                         ("runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-variants"))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "runtime"), ())
         solo = scope.lane_tests(scope.FULL_SCOPE, "app-ui-solo")
         other = scope.lane_tests(scope.FULL_SCOPE, "app-ui-other")
@@ -602,11 +602,11 @@ final class UnrelatedUITests: XCTestCase {
         self.assertEqual(set(app), set(scope.native_tests(scope.FULL_SCOPE)) - {scope.GALLERY_TEST})
         self.assertEqual(len(app), len(set(app)))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-normal"), (scope.GALLERY_TEST,))
-        self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-no-caption"), (scope.GALLERY_TEST,))
-        self.assertIn("WhiteBackground", scope.lane_tests(scope.FULL_SCOPE, "gallery-white")[0])
-        self.assertIn("NO_CAPTION", scope.GALLERY_CONDITIONS["gallery-no-caption"])
-        self.assertIn("LONG_CAPTION", scope.GALLERY_CONDITIONS["gallery-white"])
-        self.assertIn("LARGE_TEXT", scope.GALLERY_CONDITIONS["gallery-white"])
+        self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-variants")[1:], (scope.GALLERY_TEST,))
+        self.assertIn("WhiteBackground", scope.lane_tests(scope.FULL_SCOPE, "gallery-variants")[0])
+        self.assertIn("NO_CAPTION", scope.GALLERY_CONDITIONS["no-caption"])
+        self.assertIn("LONG_CAPTION", scope.GALLERY_CONDITIONS["long-white-large"])
+        self.assertIn("LARGE_TEXT", scope.GALLERY_CONDITIONS["long-white-large"])
 
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,

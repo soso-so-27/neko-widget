@@ -218,10 +218,10 @@ exit "$status"
         start = harness.index("for widget_scenario in $WIDGET_SCENARIOS; do")
         body = harness[start:harness.index("\n        done", start)]
         self.assertIn('source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"', harness)
-        self.assertIn('build-for-testing || return $?', body)
+        self.assertIn('build-for-testing || widget_scenario_status=$?', body)
         self.assertIn('test-without-building || widget_scenario_status=$?', body)
         self.assertEqual(body.count('"${widget_test_arguments[@]}"'), 2)
-        self.assertIn('return "$widget_scenario_status"', body)
+        self.assertIn('widget_matrix_status=1', body)
         self.assertIn('Widget-$widget_scenario-build.xcresult', body)
         self.assertIn('Widget-$widget_scenario.xcresult', body)
         self.assertIn('widget-$widget_scenario-screenshots', body)
@@ -229,7 +229,56 @@ exit "$status"
         self.assertIn('run_runtime "$label" "$runtime" "$simulator_udid" \\\n        || runtime_status=$?', harness)
         self.assertIn('if (( runtime_status != 0 )); then\n        matrix_status=1', harness)
         self.assertIn('exit "$matrix_status"', harness)
-        self.assertLess(body.index('capture_widget_launch_diagnostics'), body.index('return "$widget_scenario_status"'))
+        self.assertLess(body.index('capture_widget_launch_diagnostics'), body.index('widget_matrix_status=1'))
+
+    def test_gallery_variants_execute_both_conditions_and_preserve_failure_status(self):
+        harness = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")
+        start = harness.index("        for widget_scenario in $WIDGET_SCENARIOS; do")
+        end = harness.index("        # App UI and Widget contrast/no-caption captures", start)
+        loop = harness[start:end]
+        driver = r'''
+set -Eeuo pipefail
+runtime_artifacts=.
+simulator_udid=fixture-device
+DERIVED_DATA_DIRECTORY=./DerivedData
+DIAGNOSTIC_REQUESTED=false
+WIDGET_SCENARIOS="long-white-large no-caption"
+prepare_simulator_and_build() {
+    printf 'prepare:%s\n' "$widget_scenario" >> events
+    [[ "$widget_scenario" != long-white-large ]] || return "$PREPARE_STATUS"
+}
+xcodebuild() {
+    printf 'test:%s\n' "$widget_scenario" >> events
+    [[ "$widget_scenario" != long-white-large ]] || return "$TEST_STATUS"
+}
+capture_widget_launch_diagnostics() {
+    printf 'diagnose:%s\n' "$widget_scenario" >> events
+}
+xcrun() {
+    printf 'attachments:%s\n' "$widget_scenario" >> events
+    [[ "$widget_scenario" != long-white-large ]] || return "$ATTACHMENT_STATUS"
+}
+run_gallery() {
+    local widget_scenario_status=0 widget_matrix_status=0
+''' + loop + "\n}\nrun_gallery\n"
+        for prepare, test, attachment, expected in ((0, 0, 0, 0), (42, 0, 0, 42),
+                                                   (0, 41, 17, 41), (0, 0, 17, 17)):
+            with self.subTest(prepare=prepare, test=test, attachment=attachment), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for scenario in ("long-white-large", "no-caption"):
+                    (root / f"Widget-{scenario}.xcresult").mkdir()
+                result = subprocess.run([BASH, "-c", driver], cwd=directory,
+                    env={**os.environ, "PREPARE_STATUS": str(prepare), "TEST_STATUS": str(test),
+                         "ATTACHMENT_STATUS": str(attachment)},
+                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0 if expected == 0 else 1, result.stderr)
+                events = (root / "events").read_text().splitlines()
+                self.assertEqual(events.count("prepare:long-white-large"), 1)
+                self.assertEqual(events.count("prepare:no-caption"), 1)
+                self.assertEqual(events.count("test:long-white-large"), 0 if prepare else 1)
+                self.assertEqual(events.count("test:no-caption"), 1)
+                self.assertEqual((root / "Widget-long-white-large-status.txt").read_text().strip(), str(expected))
+                self.assertEqual((root / "Widget-no-caption-status.txt").read_text().strip(), "0")
 
     def test_launch_diagnostic_capture_does_not_mask_original_failure_or_retry(self):
         harness = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")

@@ -81,13 +81,13 @@ SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
-LANES = ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption")
+LANES = ("runtime", "app-ui", "gallery-normal", "gallery-variants")
 FULL_APP_UI_LANES = ("app-ui-solo", "app-ui-other")
 LANE_JOB_PREFIX = "Sharing checks"
 GALLERY_CONDITIONS = {
     "gallery-normal": "",
-    "gallery-white": "WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT",
-    "gallery-no-caption": "WIDGET_VISUAL_REVIEW_NO_CAPTION",
+    "long-white-large": "WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT",
+    "no-caption": "WIDGET_VISUAL_REVIEW_NO_CAPTION",
 }
 
 # FamilyWindowView contains shared detail/zoom and settings; PairingView and
@@ -2717,9 +2717,9 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
         if lane == "app-ui-other":
             return tuple(test for test in tests if not test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
         return tests
-    if lane == "gallery-white":
+    if lane == "gallery-variants":
         return (GALLERY_TEST.replace("testCaptureSharedWidgetAllSupportedSizes",
-                                   "testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"),)
+                                    "testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"), GALLERY_TEST)
     return (GALLERY_TEST,)
 
 
@@ -2965,9 +2965,14 @@ def main() -> None:
         "photoBootstrapRuntime": os.environ.get("SMOKE_IOS_RUNTIME") if args.lane == "smoke" else None,
         "nativeTests": tests,
         "widgetGallery": "gallery-normal" in lanes(args.scope) and args.lane not in ("runtime", "app-ui", "smoke"),
-        "fixtureConditions": ("" if args.lane in ("runtime", "smoke") else
+        "fixtureConditions": ("" if args.lane in ("runtime", "smoke", "gallery-variants") else
             "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE "
             + GALLERY_CONDITIONS.get(args.lane, "")).strip(),
+        "scenarioFixtureConditions": ({scenario: (
+            "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE "
+            + GALLERY_CONDITIONS[scenario]).strip()
+            for scenario in ("long-white-large", "no-caption")}
+            if args.lane == "gallery-variants" else {}),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     args.tests.write_text("".join(f"-only-testing:{test}\n" for test in tests), encoding="utf-8")
 

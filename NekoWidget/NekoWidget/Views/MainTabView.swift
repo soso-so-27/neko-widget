@@ -404,6 +404,14 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
+        .environment(\.catProfileAlbumsDestination, { identifier, close in
+            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
+                .navigationDestination(for: AlbumRoute.self) { route in
+                    albumDestination(for: route, defaultScope: .profile(identifier))
+                }
+                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination))
+        })
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -1228,7 +1236,8 @@ struct MainTabView: View {
     private func albumsView(
         scope: CatProfileScopePresentation = .everyone,
         showsReflectionArchive: Bool = false,
-        showsHighlightArchive: Bool = false
+        showsHighlightArchive: Bool = false,
+        openPhotosOverride: (() -> Void)? = nil
     ) -> LikedPhotosView {
         let profile: CatProfilePresentation?
         if case let .profile(identifier) = scope {
@@ -1244,7 +1253,7 @@ struct MainTabView: View {
             latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew,
             seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
-            openPhotos: {
+            openPhotos: openPhotosOverride ?? {
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos

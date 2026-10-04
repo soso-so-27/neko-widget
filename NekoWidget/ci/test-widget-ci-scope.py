@@ -419,8 +419,8 @@ class WidgetScopeTests(unittest.TestCase):
     def test_lane_selection_keeps_runtime_and_required_gallery_conditions(self):
         expected = {
             scope.WIDGET_BEHAVIOR_SCOPE: ("runtime", "app-ui", "gallery-normal"),
-            scope.WIDGET_LAYOUT_SCOPE: ("runtime", "app-ui", "gallery-normal", "gallery-white", "gallery-no-caption"),
-            scope.WIDGET_STYLE_SCOPE: ("runtime", "gallery-normal", "gallery-white", "gallery-no-caption"),
+            scope.WIDGET_LAYOUT_SCOPE: ("runtime", "app-ui", "gallery-normal", "gallery-variants"),
+            scope.WIDGET_STYLE_SCOPE: ("runtime", "gallery-normal", "gallery-variants"),
         }
         for selected, lanes in expected.items():
             with self.subTest(scope=selected):
