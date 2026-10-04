@@ -72,6 +72,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIを改善するとき
 
+- 猫アルバムの既知full-v1 run `37201863450` / `83c67ab` に限り、最大文字サイズのシート閉じ操作1本文の修正を、全UIテストファイルの完全before/after blobで固定する。製品・fixture・workflow・他のテストは不変、制御6本と本手順は独立レビュー・Ubuntu検証・main反映済みの一致が必要。同repo・同branch・24時間以内・同一必須graphの実行済み成功6ジョブを再利用し、新SHAでsoloの全46件を再実行する。原runのsolo失敗を成功へ読み替えず、未知の変更・追加失敗・重複・skip・未反映制御は対象外。配布CLIも原runと新UI結果を再照合する。一般的なfull-v1の失敗回避規則ではない。
+
 - 病院・体重の保存済み猫選択は `reviewed-vet-saved-cat-ui-v1`。アプリ専用2View・既存DEBUG fixture・既存UIテストの完全4ファイルbefore/after一致だけを認める。関連3メソッド（体重編集、明示的な診察追加/除去と共通ID選択、写真なし/日付不明/大文字）とBuild・Photos bootstrap・両OS runtimeを維持し、全UI一式・Widget Galleryは起動しない。未知入力・mode/type変更・共有モデル・project・workflow・CI混在はこの登録を借りない。制御用登録はnative/配布成功ではなく、初回の所要時間は実測する。
 
 - 迷子の保存済み情報入力（`d2f8418`）はstoreの完全before/afterを独立レビューして `lost-cat-photo-ui-v3` へ登録する。既存の迷子3操作へ候補入力・編集・再起動・禁止項目の非転記・同名別猫の場面を追加し、Build・Photos bootstrap・両OS runtimeは維持。全アプリUI・Widget Galleryは起動しない。未知store差分や他の入力はこの登録を借りず、既存selectorで判定する。制御用の登録だけではnative/配布成功と扱わない。

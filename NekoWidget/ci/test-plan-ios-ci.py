@@ -2502,7 +2502,9 @@ class PlanTests(unittest.TestCase):
                     "runtime_scope": scope.FULL_SCOPE,
                     "lanes": json.dumps(scope.lanes(scope.FULL_SCOPE), separators=(",", ":")),
                     "app_ui_lanes": json.dumps(scope.app_ui_lanes(scope.FULL_SCOPE), separators=(",", ":")),
-                    "matrix_lanes": '["runtime","gallery-normal","gallery-variants"]'})
+                    "matrix_lanes": ('["runtime","gallery-normal","gallery-variants"]'
+                                     if "gallery-variants" in scope.lanes(scope.FULL_SCOPE)
+                                     else '["runtime","gallery-normal","gallery-white","gallery-no-caption"]')})
 
     def test_same_sha_lookup_does_not_depend_on_unrelated_old_candidate_api(self):
         calls = []
@@ -3073,6 +3075,98 @@ class PlanTests(unittest.TestCase):
 
 
 class TestCorrectionReuseTests(unittest.TestCase):
+    def test_album_correction_pins_whole_test_file_and_merged_controls(self):
+        head = "a" * 40
+        source = planner.ALBUM_CORRECTION_SOURCE
+        row = ":100644 100644 " + " ".join(planner.ALBUM_CORRECTION_BLOBS) + " M\0" + scope.MEMORY_TEST_PATH + "\0"
+        def check(raw=row, *, approval=True, current=head):
+            def git(*args):
+                if args[0] == "rev-parse": return current
+                if args[0] == "diff": return raw
+                if args[0] == "merge-base": return "c" * 40
+                if args[0] == "show":
+                    return "approved" if approval or not args[1].startswith(head + ":") else "unmerged"
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git):
+                return planner.album_correction_inputs(source, head)
+        self.assertTrue(check())
+        self.assertFalse(check(approval=False))
+        self.assertFalse(check(current="b" * 40))
+        for raw in (row + row, "", row.replace("100644 100644", "100644 100755"),
+                    row.replace(" M\0", " T\0"), row.replace(planner.ALBUM_CORRECTION_BLOBS[1], "d" * 40),
+                    row + row.replace(scope.MEMORY_TEST_PATH, "NekoWidget/Shared/Models/Photo.swift"),
+                    row + row.replace(scope.MEMORY_TEST_PATH, ".github/workflows/ios-build.yml"),
+                    row + row.replace(scope.MEMORY_TEST_PATH, "NekoWidget/NekoWidget/Views/TestFixture.swift")):
+            self.assertFalse(check(raw), raw)
+        with patch.object(planner, "git", side_effect=OSError):
+            self.assertFalse(planner.album_correction_inputs(source, head))
+        self.assertFalse(planner.album_correction_inputs("b" * 40, head))
+
+    def test_unrelated_full_branches_do_not_query_correction_history(self):
+        api = unittest.mock.Mock(side_effect=AssertionError("unrelated history lookup"))
+        for branch, repository in (("codex/other", "soso-so-27/neko-widget"),
+                                    (planner.ALBUM_CORRECTION_BRANCH, "owner/repo")):
+            self.assertIsNone(planner.find_test_correction_evidence("a" * 40, branch, repository,
+                              planner.ALBUM_CORRECTION_REQUIRED, api, dt.datetime.now(dt.timezone.utc)))
+        api.assert_not_called()
+
+    def test_album_source_requires_exact_graph_plan_identity_and_every_success(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        repo, branch, source = "soso-so-27/neko-widget", planner.ALBUM_CORRECTION_BRANCH, planner.ALBUM_CORRECTION_SOURCE
+        required = planner.ALBUM_CORRECTION_REQUIRED
+        run = {"id": planner.ALBUM_CORRECTION_RUN, "workflow_id": 5, "head_sha": source,
+               "head_branch": branch, "event": "push", "status": "completed", "conclusion": "failure",
+               "updated_at": now.isoformat(), "repository": {"full_name": repo}, "head_repository": {"full_name": repo}}
+        ui = planner.correction_ui_job(scope.FULL_SCOPE)
+        jobs = [{"id": 100, "name": planner.PLAN_JOB, "head_sha": source, "status": "completed", "conclusion": "success"}]
+        jobs += [{"id": 101 + index, "name": name, "head_sha": source, "status": "completed",
+                  "conclusion": "failure" if name == ui else "success", "completed_at": now.isoformat()}
+                 for index, name in enumerate(required)]
+        record = {"schema_version": 1, "repository": repo, "head_sha": source, "scope": scope.FULL_SCOPE,
+                  "required_jobs": list(required), "evidence_run_id": None, "evidence_sha": None}
+        def check(*, selected_jobs=jobs, selected_run=run, selected_record=record, double=False):
+            fixture = "IOS_CI_PLAN_JSON=" + json.dumps({**record, "repository": "owner/repo", "head_sha": "b" * 40})
+            log = "IOS_CI_PLAN_JSON=" + json.dumps(selected_record)
+            with patch.object(planner, "test_correction_inputs", return_value=True), \
+                    patch.object(planner, "executed_jobs", return_value=selected_jobs):
+                return planner.correction_source(selected_run, "a" * 40, branch, repo, 5, required,
+                                                   lambda _: fixture + "\n" + log + ("\n" + log if double else ""), now)
+        self.assertEqual([entry["name"] for entry in check()["jobs"]], [name for name in required if name != ui])
+        for index, job in enumerate(jobs):
+            for status in ("skipped", "failure"):
+                if job["name"] == ui and status == "failure": continue
+                broken = copy.deepcopy(jobs); broken[index]["conclusion"] = status
+                self.assertIsNone(check(selected_jobs=broken))
+        self.assertIsNone(check(selected_jobs=jobs + [jobs[-1]]))
+        for key, value in (("id", 1), ("head_sha", "b" * 40), ("event", "workflow_dispatch"),
+                           ("run_attempt", 2),
+                           ("updated_at", (now - dt.timedelta(hours=25)).isoformat()), ("head_branch", "codex/other")):
+            self.assertIsNone(check(selected_run={**run, key: value}))
+        for key, value in (("required_jobs", list(required[:-1])), ("scope", "app-view-ui-v1"),
+                           ("head_sha", "b" * 40), ("evidence_run_id", 11), ("test_correction_evidence", {})):
+            self.assertIsNone(check(selected_record={**record, key: value}))
+        self.assertIsNone(check(double=True))
+
+    def test_full_correction_runs_solo_only_while_retaining_seven_required_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event.json").write_text("{}")
+            env = {"GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "outputs"),
+                   "GITHUB_STEP_SUMMARY": str(root / "summary"), "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF": "refs/heads/" + planner.ALBUM_CORRECTION_BRANCH, "GITHUB_SHA": "a" * 40,
+                   "GITHUB_REPOSITORY": "soso-so-27/neko-widget", "GITHUB_SERVER_URL": "https://github.com"}
+            with patch.dict(os.environ, env), patch.object(planner, "changed_paths", return_value=[]), \
+                    patch.object(planner, "runtime_scope", return_value=scope.FULL_SCOPE), \
+                    patch.object(planner, "required_jobs", return_value=planner.ALBUM_CORRECTION_REQUIRED), \
+                    patch.object(planner, "find_evidence", return_value=None), \
+                    patch.object(planner, "find_test_correction_evidence", return_value={"run_id": 1, "sha": "b" * 40, "jobs": [{}] * 6}), \
+                    contextlib.redirect_stdout(io.StringIO()) as printed:
+                planner.main()
+            values = dict(line.split("=", 1) for line in (root / "outputs").read_text().splitlines())
+            self.assertEqual(values["app_ui_lanes"], '["app-ui-solo"]')
+            self.assertEqual((values["build"], values["smoke"], values["sharing"], values["app_ui"]), ("false", "false", "false", "true"))
+            record = next(json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in printed.getvalue().splitlines() if line.startswith("IOS_CI_PLAN_JSON="))
+            self.assertEqual(record["required_jobs"], list(planner.ALBUM_CORRECTION_REQUIRED))
+
     def test_candidate_plan_runs_only_normal_app_ui_after_verified_correction(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

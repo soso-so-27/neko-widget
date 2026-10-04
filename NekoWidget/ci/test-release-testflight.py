@@ -150,6 +150,44 @@ class ReleaseTests(unittest.TestCase):
     def test_vet_correction_requires_old_native_jobs_and_new_ui(self):
         self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.VET_SAVED_CAT_SCOPE)
 
+    def test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(self):
+        planner = release.planner
+        required = planner.ALBUM_CORRECTION_REQUIRED
+        ui = planner.correction_ui_job(planner.FULL_SCOPE)
+        source_sha, source_id = planner.ALBUM_CORRECTION_SOURCE, planner.ALBUM_CORRECTION_RUN
+        self.run["head_branch"] = planner.ALBUM_CORRECTION_BRANCH
+        old_jobs = [dict(self.plan_job, id=301, head_sha=source_sha)] + [
+            {"id": 302 + index, "name": name, "head_sha": source_sha, "status": "completed",
+             "conclusion": "failure" if name == ui else "success", "completed_at": self.now.isoformat()}
+            for index, name in enumerate(required)]
+        evidence = {"run_id": source_id, "sha": source_sha,
+                    "jobs": [{"name": job["name"], "job_id": job["id"]} for job in old_jobs[1:] if job["name"] != ui]}
+        self.plan.update(required_jobs=list(required), test_correction_evidence=evidence)
+        self.set_plan()
+        current = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]["jobs"]
+        for job in current[1:]:
+            if job["name"] != ui: job["conclusion"] = "skipped"
+        self.gh.values[f"actions/runs/{source_id}"] = dict(self.run, id=source_id, head_sha=source_sha, conclusion="failure")
+        self.gh.values[f"actions/runs/{source_id}/jobs?filter=latest&per_page=100&page=1"] = {"total_count": len(old_jobs), "jobs": old_jobs}
+        old_plan = {"schema_version": 1, "repository": release.REPOSITORY, "head_sha": source_sha,
+                    "scope": planner.FULL_SCOPE, "required_jobs": list(required), "evidence_run_id": None, "evidence_sha": None}
+        self.gh.logs[(source_id, 301)] = release.PLAN_MARKER + json.dumps(old_plan)
+        with patch.object(planner, "test_correction_inputs", return_value=True), \
+                patch.object(planner, "sharing_jobs", side_effect=lambda selected: tuple(required[2:]) if selected == planner.FULL_SCOPE else ()):
+            self.assertEqual(release.check_ci(self.gh, self.sha, 20, self.now)["reused_run"], source_id)
+            for job in old_jobs[1:]:
+                if job["name"] == ui: continue
+                job["conclusion"] = "skipped"
+                with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
+                job["conclusion"] = "success"
+            new_ui = next(job for job in current if job["name"] == ui)
+            for outcome in ("skipped", "failure"):
+                new_ui["conclusion"] = outcome
+                with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
+            new_ui["conclusion"] = "success"
+            self.gh.logs[(source_id, 301)] = release.PLAN_MARKER + json.dumps({**old_plan, "required_jobs": list(required[:-1])})
+            with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
+
     def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self, selected_scope=release.planner.LOST_CAT_UX_SCOPE):
         required = release.planner.required_jobs_from_scope(selected_scope)
         self.run["head_branch"] = "codex/lost-cat"
