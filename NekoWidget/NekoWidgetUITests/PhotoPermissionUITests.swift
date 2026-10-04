@@ -3376,9 +3376,34 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
         entry.tap()
         XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
-        app.swipeDown()
+        let albumNavigationBar = app.navigationBars["ミケのアルバム"]
+        // Drag the sheet's navigation chrome, not the scrollable album content.
+        let dragStart = albumNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        let dragEnd = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragEnd)
+        let close = app.buttons["cat-profile-albums-close"]
+        let returnedToPhotos = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard !albumNavigationBar.exists, !close.exists,
+                  app.navigationBars["ミケの写真"].exists,
+                  entry.exists, entry.isEnabled, entry.isHittable else { return false }
+            let frame = entry.frame
+            return !frame.isEmpty && app.windows.firstMatch.frame.contains(frame)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [returnedToPhotos], timeout: 5) == .completed else {
+            XCTFail("Swiping the album sheet must dismiss it and restore the visible, tappable album entry.")
+            return
+        }
         XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(entry.isHittable)
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        entry.tap()
+        XCTAssertTrue(albumNavigationBar.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !albumNavigationBar.exists && !close.exists
+                && app.navigationBars["ミケの写真"].exists && entry.isHittable
+        }, object: nil)], timeout: 5), .completed,
+                       "The reopened album must also close back to the same cat's photos.")
         app.terminate()
     }
 
