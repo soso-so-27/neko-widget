@@ -3501,6 +3501,9 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             if scenario == "no-cats" {
                 assertAlbumsRoot(in: app)
+                XCTAssertFalse(app.buttons["albums-source-recovery"].exists)
+                XCTAssertFalse(app.buttons.matching(identifier: "albums-source-unavailable")
+                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch.exists)
                 capture("albums-root-standard")
                 openFavorites(in: app)
                 XCTAssertEqual(element("saved-memories-gallery", in: app).value as? String, "お気に入り、9枚",
@@ -3525,7 +3528,13 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             if scenario == "source-unavailable" {
                 assertAlbumsRoot(in: app)
-                let albumRecovery = app.buttons["albums-source-recovery"]
+                // iOS 26 ContentUnavailableView applies its identifier to the
+                // action button too. Keep Button role and exact visible action
+                // when the child's identifier is replaced by the parent.
+                let directRecovery = app.buttons["albums-source-recovery"]
+                let inheritedRecovery = app.buttons.matching(identifier: "albums-source-unavailable")
+                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch
+                let albumRecovery = directRecovery.exists ? directRecovery : inheritedRecovery
                 XCTAssertTrue(albumRecovery.waitForExistence(timeout: 10))
                 XCTAssertTrue(albumRecovery.isHittable)
                 XCTAssertFalse(app.staticTexts["猫のアルバムがまだありません"].exists)
