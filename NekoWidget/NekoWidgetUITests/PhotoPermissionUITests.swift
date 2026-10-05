@@ -3438,7 +3438,17 @@ final class SoloMemoriesUITests: XCTestCase {
                 assertAlbumsRoot(in: app)
                 capture("albums-without-cat-registration")
             }
-            openPhotosTab(in: app)
+            if scenario == "source-unavailable" {
+                assertAlbumsRoot(in: app)
+                let albumRecovery = app.buttons["albums-source-recovery"]
+                XCTAssertTrue(albumRecovery.waitForExistence(timeout: 10))
+                XCTAssertTrue(albumRecovery.isHittable)
+                XCTAssertFalse(app.staticTexts["猫のアルバムがまだありません"].exists)
+                capture("albums-source-unavailable")
+                albumRecovery.tap()
+            } else {
+                openPhotosTab(in: app)
+            }
             XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
             let recovery = app.buttons["photo-hub-source-recovery"]
             if scenario == "source-unavailable" {
@@ -3954,6 +3964,44 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testAlbumMemoReadFailureCanRetryAndKeepRecoveredMemoOnReturn() {
+        let app = launch("memo", arguments: ["--photo-window-ui-fixture", "--album-memos-fail-once"])
+        assertAlbumsRoot(in: app)
+        let retry = app.buttons["albums-memo-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertFalse(app.buttons["albums-memo-featured"].exists)
+        capture("albums-memo-read-failed")
+        retry.tap()
+        let memo = app.buttons["albums-memo-featured"]
+        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertTrue(memo.label.contains("はじめてのおふろ"))
+        XCTAssertFalse(retry.exists)
+        let memoLabel = memo.label
+        memo.tap()
+        XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertEqual(memo.label, memoLabel)
+        capture("albums-memo-read-recovered")
+        app.terminate()
+    }
+
+    @MainActor
+    func testAlbumGroupedScanFailureDoesNotRemainPreparing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "album-scan-failed"
+        app.launch()
+        assertAlbumsRoot(in: app)
+        XCTAssertTrue(element("albums-scan-failed", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["新しいアルバムを準備しています"].exists)
+        XCTAssertFalse(app.staticTexts["アルバムを準備しています"].exists)
+        capture("albums-grouped-scan-failed")
+        app.terminate()
     }
 
     @MainActor

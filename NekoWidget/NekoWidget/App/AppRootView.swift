@@ -456,7 +456,8 @@ struct AppRootView: View {
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
-            isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade
+            isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade,
+            hasFailed: state.phase == .failed
         )
 
         switch state.resultKind {

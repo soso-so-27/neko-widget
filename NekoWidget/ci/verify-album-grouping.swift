@@ -1481,6 +1481,7 @@ private func verifyPhotoPublicationRevisions() throws {
 @MainActor
 private struct AlbumGroupingVerifier {
     static func main() async throws {
+        try verifyGroupedScanFailurePresentation()
         try await verifyAlbumCatalogCoordinator()
         try verifyReadablePhotoProjection()
         try verifyPhotoPublicationRevisions()
@@ -1508,4 +1509,31 @@ private struct AlbumGroupingVerifier {
         try verifyBoundingBoxAspectDistribution()
         print("Curated grouped albums: PASS")
     }
+}
+
+
+private func verifyGroupedScanFailurePresentation() throws {
+    var scan = ScanPresentation()
+    scan.isGroupedAlbumUpgrade = true
+    scan.preliminaryCatAssets = 4
+    scan.isScanning = true
+    try require(scan.isPreparingGroupedAlbums, "Active classification upgrade lost its progress")
+    scan.isScanning = false
+    scan.isPaused = true
+    try require(scan.isPreparingGroupedAlbums, "Paused classification upgrade lost its progress")
+    scan.isPaused = false
+    scan.hasFailed = true
+    try require(!scan.isPreparingGroupedAlbums, "Failed provisional classification still showed preparing")
+    try require(scan.hasPreliminaryResult && !scan.hasFinalResult,
+                "Failure changed preliminary photos into a final count")
+    scan.hasFailed = false
+    scan.isScanning = true
+    try require(scan.isPreparingGroupedAlbums, "Retry did not restore classification progress")
+    scan.isScanning = false
+    scan.finalCatAssets = 4
+    try require(!scan.isPreparingGroupedAlbums, "Completed classification still showed preparing")
+    scan.isGroupedAlbumUpgrade = false
+    scan.finalCatAssets = nil
+    scan.isScanning = true
+    try require(!scan.isPreparingGroupedAlbums, "Ordinary scan gained classification progress")
 }

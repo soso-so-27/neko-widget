@@ -111,7 +111,16 @@ struct AlbumView: View {
             if showsProfilePicker && !profiles.isEmpty {
                 profileScopeSection
             }
-            if scan.isPreparingGroupedAlbums {
+            if scan.hasFailed {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("アルバムの確認を完了できませんでした", systemImage: "exclamationmark.triangle")
+                        .font(.subheadline.weight(.semibold))
+                    Text("表示できるアルバムは残しています。写真へのアクセスや通信を確認し、設定から再スキャンしてください。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("albums-scan-failed")
+            } else if scan.isPreparingGroupedAlbums {
                 groupedAlbumPreparationBanner
             } else if scan.hasFinalResult, scan.hasDeferredAssets {
                 VStack(alignment: .leading, spacing: 5) {
@@ -401,7 +410,14 @@ struct AlbumView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if scan.isPreparingGroupedAlbums || scan.isScanning {
+        if scan.hasFailed {
+            ContentUnavailableView(
+                "アルバムを表示できません",
+                systemImage: "exclamationmark.triangle",
+                description: Text("写真の確認が完了していません。設定から再スキャンしてください。")
+            )
+            .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
+        } else if scan.isPreparingGroupedAlbums || scan.isScanning {
             ContentUnavailableView(
                 "アルバムを準備しています",
                 systemImage: "rectangle.stack.badge.plus",
@@ -890,16 +906,20 @@ struct LikedPhotosView: View {
     @State private var visibleRecommendationID: String?
     @State private var memoRecords: [PhotoMemoryNoteRecord] = []
     @State private var didLoadMemos = false
+    @State private var memoLoadFailed = false
+    @State private var memoRetryRevision = 0
     private let memoryNoteStore: PhotoMemoryNoteStore
 
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
+    let isPhotoSourceUnavailable: Bool
     let monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     let latestMonthlyWindowIsUnread: Bool
     let latestSeasonalMovieIsNew: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
     let openPhotos: () -> Void
+    let recoverPhotoSource: () -> Void
     var albumSections: [CuratedAlbumSectionPresentation]
     let isPreparingAlbums: Bool
     var albumScan: ScanPresentation?
@@ -918,11 +938,13 @@ struct LikedPhotosView: View {
 
     init(
         photos: [PhotoPresentation], hasPhotoAccess: Bool,
+        isPhotoSourceUnavailable: Bool = false,
         monthlyWindowCollection: MonthlyWindowCollectionPresentation?,
         latestMonthlyWindowIsUnread: Bool, latestSeasonalMovieIsNew: Bool,
         seasonalMovies: [SeasonalMovieArchiveRecord],
         exportPhotoBook: @escaping ([String]) async throws -> URL,
         openPhotos: @escaping () -> Void,
+        recoverPhotoSource: (() -> Void)? = nil,
         albumSections: [CuratedAlbumSectionPresentation] = [],
         preparedHighlights: [AlbumHighlightPresentation]? = nil,
         isPreparingAlbums: Bool = false,
@@ -942,12 +964,14 @@ struct LikedPhotosView: View {
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
+        self.isPhotoSourceUnavailable = isPhotoSourceUnavailable
         self.monthlyWindowCollection = monthlyWindowCollection
         self.latestMonthlyWindowIsUnread = latestMonthlyWindowIsUnread
         self.latestSeasonalMovieIsNew = latestSeasonalMovieIsNew
         self.seasonalMovies = seasonalMovies
         self.exportPhotoBook = exportPhotoBook
         self.openPhotos = openPhotos
+        self.recoverPhotoSource = recoverPhotoSource ?? openPhotos
         self.albumSections = albumSections
         self.isPreparingAlbums = isPreparingAlbums
         self.albumScan = albumScan
@@ -1088,7 +1112,20 @@ struct LikedPhotosView: View {
                 reflectionArchive.padding(16)
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    if hasPhotoAccess {
+                    if isPhotoSourceUnavailable {
+                        ContentUnavailableView {
+                            Label("写真の対象を確認してください", systemImage: "photo.on.rectangle")
+                        } description: {
+                            Text("選択した写真アルバムを読み込めません。写真ページから対象を選び直してください。")
+                        } actions: {
+                            Button(action: recoverPhotoSource) {
+                                Label("写真の対象を確認", systemImage: "arrow.right")
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityIdentifier("albums-source-recovery")
+                        }
+                        .accessibilityIdentifier("albums-source-unavailable")
+                    } else if hasPhotoAccess {
                         if let albumScan {
                             AlbumView(
                                 sections: albumSections, scan: albumScan,
@@ -1105,8 +1142,22 @@ struct LikedPhotosView: View {
                             if hasPeriodCollections { reflectionShelf }
                         }
                     }
-                    if !hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
-                        && albumSections.allSatisfy({ $0.id == .all })) {
+                    if memoLoadFailed, !isCatDetail {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("ピックアップのメモを読み込めませんでした")
+                                .font(.subheadline)
+                            Button {
+                                memoLoadFailed = false
+                                memoRetryRevision &+= 1
+                            } label: {
+                                Label("メモを再読み込み", systemImage: "arrow.clockwise")
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityIdentifier("albums-memo-retry")
+                        }
+                    }
+                    if !isPhotoSourceUnavailable && (!hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
+                        && albumSections.allSatisfy({ $0.id == .all }))) {
                         Button(action: openPhotos) {
                             Label("写真を見る", systemImage: "photo.on.rectangle.angled")
                                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -1125,13 +1176,26 @@ struct LikedPhotosView: View {
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
-        .task {
+        .task(id: memoRetryRevision) {
             guard !isCatDetail, !showsReflectionArchive, !showsHighlightArchive else { return }
-            let records = (try? await memoryNoteStore.records()) ?? []
-            guard !Task.isCancelled else { return }
-            memoRecords = records
-            didLoadMemos = true
-            freezeRecommendations(allowAppend: true)
+            didLoadMemos = false
+            do {
+#if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--album-memos-fail-once"),
+                   memoRetryRevision == 0 {
+                    throw PhotoMemoryNoteStoreError.storageUnavailable
+                }
+#endif
+                let records = try await memoryNoteStore.records()
+                guard !Task.isCancelled else { return }
+                memoRecords = records
+                memoLoadFailed = false
+                didLoadMemos = true
+                freezeRecommendations(allowAppend: true)
+            } catch {
+                guard !Task.isCancelled else { return }
+                memoLoadFailed = true
+            }
         }
         .onChange(of: isPreparingAlbums) { _, isPreparing in
             if !isPreparing { freezeRecommendations(allowAppend: true) }

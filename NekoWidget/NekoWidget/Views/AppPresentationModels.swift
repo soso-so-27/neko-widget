@@ -641,6 +641,7 @@ struct ScanPresentation: Equatable {
     var isPaused = false
     var lastScannedAt: Date?
     var isGroupedAlbumUpgrade = false
+    var hasFailed = false
 
     /// A final result also satisfies the first-result gate when the app is relaunched
     /// after the full scan completed.
@@ -664,7 +665,7 @@ struct ScanPresentation: Equatable {
     }
 
     var isPreparingGroupedAlbums: Bool {
-        isGroupedAlbumUpgrade && (isScanning || isPaused || !hasFinalResult)
+        !hasFailed && isGroupedAlbumUpgrade && (isScanning || isPaused || !hasFinalResult)
     }
 }
 

@@ -538,6 +538,13 @@ struct AppStoreScreenshotFixtureRootView: View {
         value.totalAssets = photos.count
         value.finalCatAssets = photos.count
         value.finalOldestDate = photos.compactMap(\.creationDate).min()
+        if widgetRecoveryCase == "album-scan-failed" {
+            value.finalCatAssets = nil
+            value.finalOldestDate = nil
+            value.preliminaryCatAssets = photos.count
+            value.isGroupedAlbumUpgrade = true
+            value.hasFailed = true
+        }
         value.lastScannedAt = AppStoreScreenshotFixture.photos
             .compactMap(\.creationDate)
             .max()

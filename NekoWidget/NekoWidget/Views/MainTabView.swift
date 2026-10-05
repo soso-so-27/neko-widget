@@ -1248,12 +1248,19 @@ struct MainTabView: View {
         return LikedPhotosView(
             photos: likedPhotos,
             hasPhotoAccess: hasPhotoAccess,
+            isPhotoSourceUnavailable: photoSourceStatus == .unavailable,
             monthlyWindowCollection: scope == .everyone ? currentMonthlyWindowCollection : nil,
             latestMonthlyWindowIsUnread: scope == .everyone && latestMonthlyWindowIsUnread,
             latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew,
             seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
             openPhotos: openPhotosOverride ?? {
+                photoLibrarySelection.select(.all)
+                photosPath = NavigationPath()
+                selectedTab = .photos
+            },
+            recoverPhotoSource: {
+                openPhotosOverride?()
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos
