@@ -224,8 +224,12 @@ actor PhotoMemoCoordinator {
     /// Integrates only previously fetched copies and only explicitly enrolled
     /// links without a local outbox. No Photos lookup, fetch or upload occurs.
     func reconcile(expectedAccount: String) async throws {
+        // Freeze the local binding before the archive read can suspend. A local
+        // save/reflection during that read changes the binding, so the note
+        // store's exact-binding check rejects the older archive snapshot.
+        let bindings = try await noteStore.archiveBindings()
         let snapshot = try await archiveStore.readingSnapshot(expectedAccount: expectedAccount)
-        for binding in try await noteStore.archiveBindings() where binding.accountKey == snapshot.account.key {
+        for binding in bindings where binding.accountKey == snapshot.account.key {
             guard binding.pending == nil, binding.inFlight == nil,
                   let record = snapshot.records.first(where: { $0.id == binding.recordID }),
                   record.state == .stored || record.state == .partial, !record.isDeletionPending else { continue }
