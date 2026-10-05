@@ -1086,7 +1086,7 @@ private func verifyHighlightsRequireDatedDistinctScenesInScopedThemes() throws {
     try require(highlights.first?.photos.map(\.id) == ["first", "second", "third"],
                 "a burst, duplicate or non-theme photo entered the scoped collection")
     try require(highlights.first?.sourceAlbumID == .closeUp
-                    && highlights.first?.title == "2025年9月のどアップ"
+                    && highlights.first?.title == "2025年9月の大きく写った猫"
                     && highlights.first?.subtitle == "3枚",
                 "highlight title, photo count or source lost its meaning")
 }
@@ -1477,10 +1477,35 @@ private func verifyPhotoPublicationRevisions() throws {
     print("PASS photo publication revisions: progress, content, replacement, eligibility")
 }
 
+private func verifyAlbumShelfPreservesSparseAndSecondaryCollections() throws {
+    let photos = [photo("shelf-a", date(2026, 2, 22)), photo("shelf-b", date(2026, 3, 1))]
+    let pair = CuratedAlbumPresentation(id: .multipleCats, group: .special, photos: photos)
+    let sparse = CuratedAlbumPresentation(id: .together, group: .special, photos: [photos[0]])
+    let close = CuratedAlbumPresentation(id: .closeUp, group: .cuteness, photos: photos)
+    let outing = CuratedAlbumPresentation(id: .outing, group: .special, photos: photos)
+    let day = CuratedAlbumPresentation(id: .catDay, group: .special, photos: [photos[0]])
+    let input = [CuratedAlbumSectionPresentation(id: .special, albums: [day, outing, sparse, pair]),
+                 CuratedAlbumSectionPresentation(id: .cuteness, albums: [close])]
+    try require(AlbumShelfLayoutPolicy.primaryThemes(in: input) == [pair, close],
+                "main shelf included a sparse or secondary theme, or changed priority")
+    try require(AlbumShelfLayoutPolicy.secondaryThemes(in: input) == [outing, sparse],
+                "single-photo or outing collection became unreachable")
+    try require(AlbumShelfLayoutPolicy.dateAlbums(in: input) == [day],
+                "February 22 collection was lost rather than moved to date exploration")
+    let reached = AlbumShelfLayoutPolicy.primaryThemes(in: input)
+        + AlbumShelfLayoutPolicy.secondaryThemes(in: input) + AlbumShelfLayoutPolicy.dateAlbums(in: input)
+    try require(Set(reached) == Set(input.flatMap(\.albums)), "layout lost or mutated an existing theme")
+    try require(AlbumShelfLayoutPolicy.primaryThemes(in: []).isEmpty
+        && AlbumShelfLayoutPolicy.secondaryThemes(in: []).isEmpty
+        && AlbumShelfLayoutPolicy.dateAlbums(in: []).isEmpty, "empty library produced a shelf")
+    try require(CuratedAlbumID.closeUp.title == "大きく写った猫", "close-up title still claims a face crop")
+}
+
 @main
 @MainActor
 private struct AlbumGroupingVerifier {
     static func main() async throws {
+        try verifyAlbumShelfPreservesSparseAndSecondaryCollections()
         try verifyGroupedScanFailurePresentation()
         try await verifyAlbumCatalogCoordinator()
         try verifyReadablePhotoProjection()

@@ -107,7 +107,7 @@ enum CuratedAlbumID: Hashable, Identifiable, Sendable {
         case .adoptionStart: "お迎えしたころ"
         case let .yearsTogether(years): "いっしょに暮らして\(years)年"
         case let .calendarYear(year): "\(year)年"
-        case .closeUp: "どアップ"
+        case .closeUp: "大きく写った猫"
         case .together: "人といっしょ"
         case .multipleCats: "猫たちがいっしょ"
         case .outing: "おでかけ"
@@ -179,6 +179,31 @@ struct CuratedAlbumSectionPresentation: Identifiable, Hashable, Sendable {
     let albums: [CuratedAlbumPresentation]
 
     var title: String { id.title }
+}
+
+/// Presentation only: every collection and its selected photos stay intact.
+enum AlbumShelfLayoutPolicy {
+    static let primaryThemeIDs: [CuratedAlbumID] = [.multipleCats, .together, .closeUp]
+    static let minimumPrimaryThemePhotoCount = 2
+
+    static func primaryThemes(in sections: [CuratedAlbumSectionPresentation]) -> [CuratedAlbumPresentation] {
+        let albums = sections.flatMap(\.albums)
+        return primaryThemeIDs.compactMap { id in
+            albums.first { $0.id == id && $0.photos.count >= minimumPrimaryThemePhotoCount }
+        }
+    }
+
+    static func secondaryThemes(in sections: [CuratedAlbumSectionPresentation]) -> [CuratedAlbumPresentation] {
+        let primaryIDs = Set(primaryThemes(in: sections).map(\.id))
+        return sections.flatMap(\.albums).filter {
+            (primaryThemeIDs.contains($0.id) || $0.id == .outing)
+                && !primaryIDs.contains($0.id) && !$0.photos.isEmpty
+        }
+    }
+
+    static func dateAlbums(in sections: [CuratedAlbumSectionPresentation]) -> [CuratedAlbumPresentation] {
+        sections.flatMap(\.albums).filter { $0.id == .catDay && !$0.photos.isEmpty }
+    }
 }
 
 /// Chooses a small, stable preview for the Photos root. Relationship albums

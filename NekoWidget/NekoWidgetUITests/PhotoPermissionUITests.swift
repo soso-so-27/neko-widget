@@ -3171,23 +3171,28 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(element("albums-cat-fixture-cat-0", in: app).exists)
 
         // Choose a subject first, then filter inside its shipping destination.
-        let closeUp = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let closeUp = element("album-secondary-close_up", in: app)
         reveal(closeUp, in: app)
         closeUp.tap()
-        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["大きく写った猫"].waitForExistence(timeout: 5))
         let albumPhotos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
         XCTAssertEqual(albumPhotos.count, 1)
         selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
         XCTAssertEqual(albumPhotos.count, 0, "A cat with no matching photos must not fall back to everyone.")
         selectAlbumCatFilter(nil, in: app)
         XCTAssertEqual(albumPhotos.count, 1)
-        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["大きく写った猫"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
 
         let years = element("albums-years-toggle", in: app)
         reveal(years, in: app)
         years.tap()
-        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].waitForExistence(timeout: 5))
         let year = element("album-card-calendar_year_2025", in: app)
         reveal(year, in: app)
         year.tap()
@@ -3210,8 +3215,8 @@ final class SoloMemoriesUITests: XCTestCase {
         selectAlbumCatFilter(nil, in: app)
         XCTAssertEqual(albumPhotos.count, 3)
         app.navigationBars["2025年"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
-        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].waitForExistence(timeout: 5))
+        app.navigationBars["年月・日付から探す"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
         openPhotosTab(in: app)
         XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
@@ -3360,16 +3365,21 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(entry.isHittable, "The album entry must remain reachable at the largest text size.")
         entry.tap()
         XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
-        let closeUp = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let closeUp = element("album-secondary-close_up", in: app)
         reveal(closeUp, in: app)
         closeUp.tap()
-        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["大きく写った猫"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, "ミケ")
         selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
         let photos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
         XCTAssertEqual(photos.count, 0, "An empty cat scope must not show another cat's photos.")
         XCTAssertTrue(element("album-scope-empty", in: app).exists)
-        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["大きく写った猫"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
         app.buttons["cat-profile-albums-close"].tap()
         XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
@@ -3976,16 +3986,20 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["albums-memo-featured"].exists)
         capture("albums-memo-read-failed")
         retry.tap()
-        let memo = app.buttons["albums-memo-featured"]
-        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: retry
+        )], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons["albums-memo-featured"].exists)
+        let memo = openMemoNotes(in: app)
         XCTAssertTrue(memo.label.contains("はじめてのおふろ"))
-        XCTAssertFalse(retry.exists)
         let memoLabel = memo.label
         memo.tap()
         XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 10))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(memo.waitForExistence(timeout: 10))
         XCTAssertEqual(memo.label, memoLabel)
+        returnFromFavorites(in: app)
+        XCTAssertFalse(retry.exists, "Returning must retain the successful album memo reload.")
         capture("albums-memo-read-recovered")
         app.terminate()
     }
@@ -4008,23 +4022,34 @@ final class SoloMemoriesUITests: XCTestCase {
     func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations() {
         let memoApp = launch("memo", arguments: ["--photo-window-ui-fixture"])
         assertAlbumsRoot(in: memoApp)
-        let memoCard = memoApp.buttons["albums-memo-featured"]
-        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
+        XCTAssertFalse(memoApp.buttons["albums-memo-featured"].exists)
+        let memoCard = openMemoNotes(in: memoApp)
         let memoLabel = memoCard.label
         XCTAssertTrue(memoLabel.contains("はじめてのおふろ"))
-        capture("albums-daily-memo-reunion")
+        capture("photos-local-memo")
         memoCard.tap()
         XCTAssertTrue(memoApp.buttons["memory-note-photo"].waitForExistence(timeout: 10))
         XCTAssertTrue(memoApp.staticTexts["はじめてのおふろ"].exists)
         XCTAssertTrue(memoApp.buttons["memory-note-edit"].exists)
         memoApp.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
-        XCTAssertEqual(memoCard.label, memoLabel, "Returning must keep today's same memo.")
+        XCTAssertEqual(memoCard.label, memoLabel, "Returning must retain the local memo.")
+        returnFromFavorites(in: memoApp)
         fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスなし")
-        XCTAssertFalse(memoCard.exists, "A memo must not bypass photo access.")
+        let unavailableMemo = openMemoNotes(in: memoApp)
+        XCTAssertEqual(unavailableMemo.label, memoLabel, "Photo authority changes must preserve local memo text.")
+        unavailableMemo.tap()
+        XCTAssertTrue(element("memory-note-photo-unavailable", in: memoApp).waitForExistence(timeout: 10))
+        XCTAssertFalse(memoApp.buttons["memory-note-photo"].exists, "A local memo must not bypass photo access.")
+        memoApp.navigationBars.buttons.element(boundBy: 0).tap()
+        returnFromFavorites(in: memoApp)
         fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスあり")
-        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
-        XCTAssertEqual(memoCard.label, memoLabel)
+        let restoredMemo = openMemoNotes(in: memoApp)
+        XCTAssertEqual(restoredMemo.label, memoLabel)
+        restoredMemo.tap()
+        XCTAssertTrue(memoApp.buttons["memory-note-photo"].waitForExistence(timeout: 10))
+        memoApp.navigationBars.buttons.element(boundBy: 0).tap()
+        returnFromFavorites(in: memoApp)
         memoApp.terminate()
 
         let app = launch("saved")
@@ -4148,21 +4173,11 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(firstFeatured.waitForExistence(timeout: 10))
             reveal(firstFeatured, in: app)
             XCTAssertFalse(element("albums-highlights-all", in: app).exists)
-            let firstLabel = firstFeatured.label
-            let carousel = element("albums-pickup-carousel", in: app)
-            carousel.swipeLeft()
-            let visible = app.buttons.matching(identifier: "albums-highlight-featured")
-                .allElementsBoundByIndex.filter { $0.isHittable }
-            guard let featured = visible.min(by: {
-                abs($0.frame.midX - carousel.frame.midX) < abs($1.frame.midX - carousel.frame.midX)
-            }) else {
-                XCTFail("The next pickup must be directly reachable by horizontal scrolling.")
-                app.terminate()
-                return
-            }
+            XCTAssertTrue(element("albums-pickup-cover", in: app).exists)
+            XCTAssertEqual(app.buttons.matching(identifier: "albums-highlight-featured").count, 1,
+                           "The root offers one photo collection rather than a carousel.")
+            let featured = firstFeatured
             let featuredLabel = featured.label
-            XCTAssertNotEqual(featuredLabel, firstLabel)
-            let featuredX = featured.frame.minX
             featured.tap()
             let destination = app.staticTexts["solo-memories-highlight-destination"]
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
@@ -4189,27 +4204,23 @@ final class SoloMemoriesUITests: XCTestCase {
                 .matching(NSPredicate(format: "label == %@", featuredLabel)).firstMatch
             XCTAssertTrue(returned.waitForExistence(timeout: 10))
             XCTAssertTrue(returned.isHittable)
-            XCTAssertEqual(returned.frame.minX, featuredX, accuracy: 12,
-                           "Returning from the browser must preserve the horizontal card position.")
             waitForLoadedPhotos([expectedNumbers[0]], in: app)
             capture("albums-\(scenario)-featured")
 
             let closeUp = element("album-card-close_up", in: app)
-            if !scenario.hasSuffix("-large") {
-                XCTAssertTrue(returned.isHittable)
-                XCTAssertTrue(closeUp.isHittable,
-                    "The first fixed themes must be reachable alongside the compact feature.")
-                XCTAssertGreaterThanOrEqual(closeUp.frame.minY, returned.frame.maxY)
-            }
-            reveal(closeUp, in: app)
-            let closeUpFrame = closeUp.frame
             if scenario.hasSuffix("-large") {
-                XCTAssertGreaterThan(closeUpFrame.width, app.frame.width / 2)
+                reveal(closeUp, in: app)
+                XCTAssertGreaterThan(closeUp.frame.width, app.frame.width / 2)
             } else {
+                let pair = element("album-card-multiple_cats", in: app)
+                reveal(pair, in: app)
                 let together = element("album-card-together", in: app)
+                XCTAssertTrue(pair.isHittable)
                 XCTAssertTrue(together.isHittable)
-                XCTAssertEqual(closeUpFrame.minY, together.frame.minY, accuracy: 2)
-                XCTAssertLessThan(closeUpFrame.maxX, together.frame.minX)
+                XCTAssertEqual(pair.frame.minY, together.frame.minY, accuracy: 2)
+                XCTAssertLessThan(pair.frame.maxX, together.frame.minX)
+                reveal(closeUp, in: app)
+                XCTAssertTrue(closeUp.isHittable, "The third theme must remain reachable below the first row.")
             }
             capture("albums-\(scenario)-themes")
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
@@ -4266,12 +4277,20 @@ final class SoloMemoriesUITests: XCTestCase {
     func testAlbumCoversAndFavoritesRemainReachableWithLargestText() {
         let app = launch("seasonal-large")
         assertAlbumsRoot(in: app)
+        XCTAssertFalse(element("albums-seasonal-movie", in: app).exists,
+                       "Movies remain in their fixed lower destination rather than the photo hero.")
+        XCTAssertFalse(monthlyCard(in: app).exists)
+        let movies = element("albums-movies-all", in: app)
+        reveal(movies, in: app)
+        movies.tap()
+        XCTAssertTrue(app.navigationBars["ムービー"].waitForExistence(timeout: 10))
         let seasonalCard = element("albums-seasonal-movie", in: app)
         XCTAssertTrue(seasonalCard.waitForExistence(timeout: 10))
-        XCTAssertFalse(monthlyCard(in: app).exists)
-        waitForLoadedPhotos([1], in: app)
+        reveal(seasonalCard, in: app)
+        // The archive uses date rows; it does not load a photo cover.
         capture("albums-seasonal-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+        app.navigationBars["ムービー"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
 
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
@@ -4285,8 +4304,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-close_up-largest-text")
         openCardAndReturn(theme, expectedRoute: "album:close_up", in: app)
 
-        // Fixed destinations remain available even when today's carousel
-        // keeps its existing movie rather than replacing it with the new month.
+        // Fixed destinations remain available alongside the single photo hero.
         for (identifier, title, route, cardID) in [
             ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
             ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
@@ -4322,7 +4340,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-years-entry-largest-text")
         years.tap()
         XCTAssertTrue(element("albums-years-list", in: app).waitForExistence(timeout: 10))
-        XCTAssertTrue(app.navigationBars["年から探す"].exists)
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].exists)
         reveal(year, in: app)
         XCTAssertGreaterThan(year.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(year.frame.minX, app.frame.minX)
@@ -4331,7 +4349,7 @@ final class SoloMemoriesUITests: XCTestCase {
         openCardAndReturn(year, expectedRoute: "album:calendar_year_2025", in: app)
         XCTAssertTrue(year.waitForExistence(timeout: 5))
         XCTAssertTrue(year.isHittable, "Returning from a year preserves its place in the list.")
-        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["年月・日付から探す"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
         openFavorites(in: app)
         XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].isHittable)
@@ -4473,6 +4491,19 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(all.waitForExistence(timeout: 5))
         all.tap()
         XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)
+    }
+
+    @MainActor
+    private func openMemoNotes(in app: XCUIApplication) -> XCUIElement {
+        openPhotosTab(in: app)
+        let notes = app.buttons["photos-section-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        notes.tap()
+        XCTAssertTrue(element("memory-notes-list", in: app).waitForExistence(timeout: 10))
+        let memo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertTrue(notes.isSelected)
+        return memo
     }
 
     @MainActor

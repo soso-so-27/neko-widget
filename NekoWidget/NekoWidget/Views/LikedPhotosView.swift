@@ -185,28 +185,54 @@ struct AlbumView: View {
     private func timeAlbums(_ albums: [CuratedAlbumPresentation]) -> some View {
         let comparisons = albums.filter { $0.id.isGrowthComparison }
         let periods = albums.filter { !$0.id.isGrowthComparison }
+        let lifePeriods = periods.filter {
+            if case .calendarYear = $0.id { return false }
+            return true
+        }
+        let secondary = AlbumShelfLayoutPolicy.secondaryThemes(in: sections)
+        let dates = AlbumShelfLayoutPolicy.dateAlbums(in: sections)
 
-        return VStack(alignment: .leading, spacing: 24) {
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("時期・ほかの写真から探す")
+                .font(.title3.bold()).accessibilityAddTraits(.isHeader)
             if let periodContent {
                 periodContent
             }
             LazyVGrid(columns: cardColumns, spacing: 12) {
                 ForEach(comparisons) { album in
                     NavigationLink(value: route(for: album.id)) {
-                        AlbumCatalogEntry(title: "昔と最近", symbol: "rectangle.split.2x1")
+                        AlbumCatalogEntry(title: album.title, symbol: "rectangle.split.2x1")
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("album-card-\(album.id.logKey)")
-                    .accessibilityLabel("昔と最近、\(GrowthAlbumOverviewCard.dateRange(for: album))")
+                    .accessibilityLabel("\(album.title)、\(GrowthAlbumOverviewCard.dateRange(for: album))")
                     .accessibilityValue(GrowthAlbumOverviewCard.dateRange(for: album))
                 }
-                if !periods.isEmpty {
+                if !periods.isEmpty || !dates.isEmpty {
                     NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
-                        AlbumCatalogEntry(title: "年から探す", symbol: "calendar")
+                        AlbumCatalogEntry(title: "年月・日付から探す", symbol: "calendar")
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("albums-years-toggle")
                 }
+            }
+            if !lifePeriods.isEmpty {
+                periodShelf(lifePeriods, title: "年齢・暮らした時期", compact: true)
+            }
+            if !secondary.isEmpty {
+                DisclosureGroup("ほかのテーマ") {
+                    VStack(spacing: 8) {
+                        ForEach(secondary) { album in
+                            NavigationLink(value: route(for: album.id)) {
+                                AlbumNavigationRow(title: album.title, subtitle: album.countLabel)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("album-secondary-\(album.id.logKey)")
+                            .accessibilityLabel("\(album.title)、\(album.countLabel)")
+                        }
+                    }.padding(.top, 8)
+                }
+                .accessibilityIdentifier("albums-other-themes")
             }
         }
     }
@@ -222,30 +248,41 @@ struct AlbumView: View {
             if case .calendarYear = $0.id { return false }
             return true
         }
+        let dates = AlbumShelfLayoutPolicy.dateAlbums(in: sections)
         return ScrollView {
             VStack(spacing: 12) {
-                if years.isEmpty && lifePeriods.isEmpty {
+                if years.isEmpty && lifePeriods.isEmpty && dates.isEmpty {
                     ContentUnavailableView("この範囲の写真はありません", systemImage: "calendar")
                         .accessibilityIdentifier("album-scope-empty")
                 }
+                if !dates.isEmpty { periodShelf(dates, title: "日付から探す") }
                 if !lifePeriods.isEmpty { periodShelf(lifePeriods, title: "時期ごと") }
                 ForEach(years) { album in albumLink(album, isPrimary: false) }
             }.padding(16)
         }
-        .navigationTitle("年から探す")
+        .navigationTitle("年月・日付から探す")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("albums-years-list")
     }
 
     private func periodShelf(
-        _ albums: [CuratedAlbumPresentation], title: String
+        _ albums: [CuratedAlbumPresentation], title: String, compact: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.bold())
                 .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
                 ForEach(albums) { album in
-                    albumLink(album, isPrimary: false)
+                    if compact {
+                        NavigationLink(value: route(for: album.id)) {
+                            AlbumNavigationRow(title: album.title, subtitle: album.countLabel)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("album-card-\(album.id.logKey)")
+                        .accessibilityLabel("\(album.title)、\(album.countLabel)")
+                    } else {
+                        albumLink(album, isPrimary: false)
+                    }
                     if album.id != albums.last?.id {
                         Divider().padding(.horizontal, 16)
                     }
@@ -300,11 +337,14 @@ struct AlbumView: View {
     private var orderedSections: [CuratedAlbumSectionPresentation] {
         if !showsAllPhotos {
             let time = sections.filter { $0.id == .time }
-            let themes = sections.filter { $0.id == .cuteness || $0.id == .special }
-                .flatMap(\.albums)
+            let themes = AlbumShelfLayoutPolicy.primaryThemes(in: sections)
+            let needsExploration = !AlbumShelfLayoutPolicy.secondaryThemes(in: sections).isEmpty
+                || !AlbumShelfLayoutPolicy.dateAlbums(in: sections).isEmpty
+            let exploration = time.isEmpty && needsExploration
+                ? [CuratedAlbumSectionPresentation(id: .time, albums: [])] : time
             return (themes.isEmpty ? [] : [
                 CuratedAlbumSectionPresentation(id: .special, albums: themes)
-            ]) + time
+            ]) + exploration
         }
         return sections.filter { isPrimaryAlbumSection($0) }
             + sections.filter { !isPrimaryAlbumSection($0) }
@@ -435,42 +475,38 @@ struct AlbumView: View {
     }
 }
 
-/// Stable category controls stay quieter than the photo recommendations.
-/// Labels carry the meaning; symbols do not have to explain a theme alone.
+/// Theme covers use the same authorized photo pipeline as collection details.
 private struct AlbumThemeEntry: View {
     let album: CuratedAlbumPresentation
-    @ScaledMetric(relativeTo: .title3) private var symbolWidth: CGFloat = 26
-
-    private var symbol: String {
-        switch album.id {
-        case .closeUp: "viewfinder"
-        case .together: "person.fill"
-        case .multipleCats: "pawprint.fill"
-        case .outing: "leaf.fill"
-        case .catDay: "calendar"
-        default: "square.grid.2x2"
-        }
-    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .frame(width: symbolWidth)
+        VStack(alignment: .leading, spacing: 0) {
+            Color(.tertiarySystemFill)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geometry in
+                        PhotoAssetImageView(
+                            localIdentifier: album.coverPhoto.localIdentifier,
+                            catBoundingBox: album.coverPhoto.catBoundingBox,
+                            targetPixelSize: CGSize(width: 640, height: 480),
+                            targetAspectRatio: 4.0 / 3.0
+                        )
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                    }
+                }
                 .accessibilityHidden(true)
-            Text(album.cardTitle)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(album.cardTitle).font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(album.countLabel).font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 14))
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -903,7 +939,6 @@ struct CuratedAlbumDetailView: View {
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("album.featuredSnapshot.v1") private var featuredSnapshotJSON = ""
-    @State private var visibleRecommendationID: String?
     @State private var memoRecords: [PhotoMemoryNoteRecord] = []
     @State private var didLoadMemos = false
     @State private var memoLoadFailed = false
@@ -1133,12 +1168,12 @@ struct LikedPhotosView: View {
                                 profileActions: albumProfileActions,
                                 selectedScope: albumScope, showsAllPhotos: false,
                                 isEmbedded: true,
-                                featuredContent: featuredRecommendations.isEmpty ? nil : AnyView(featuredShelf),
+                                featuredContent: featuredPhotoRecommendation == nil ? nil : AnyView(featuredShelf),
                                 periodContent: hasPeriodCollections ? AnyView(reflectionShelf) : nil,
                                 showsProfilePicker: false
                             )
                         } else {
-                            if !featuredRecommendations.isEmpty { featuredShelf }
+                            if featuredPhotoRecommendation != nil { featuredShelf }
                             if hasPeriodCollections { reflectionShelf }
                         }
                     }
@@ -1300,26 +1335,29 @@ struct LikedPhotosView: View {
         .navigationTitle(showsMovies ? "ムービー" : "月の写真")
         .navigationBarTitleDisplayMode(.inline)
     }
+    private var featuredPhotoRecommendation: AlbumRecommendationItem? {
+        let selected = (featuredRecommendations + proposedRecommendations).first {
+            switch $0 {
+            case .highlight, .month: true
+            case .memo, .movie: false
+            }
+        }
+        // The legacy mixed carousel can suppress a photo collection when a
+        // memo mentions its photo. The single cover still opens an existing
+        // selected collection; it never builds a different set of photos.
+        return selected ?? recommendedHighlights.first.map(AlbumRecommendationItem.highlight)
+        ?? (hasPeriodCollections ? months.first.map(AlbumRecommendationItem.month) : nil)
+    }
     private var featuredShelf: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("今日のピックアップ")
-                .font(.title3.bold()).accessibilityAddTraits(.isHeader)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(featuredRecommendations) { item in
-                        recommendationLink(item)
-                            .containerRelativeFrame(.horizontal) { width, _ in
-                                featuredRecommendations.count == 1 ? width : max(200, width - 44)
-                            }
-                            .id(item.id)
-                    }
-                }.scrollTargetLayout()
+            if let item = featuredPhotoRecommendation {
+                Text("今日のピックアップ")
+                    .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                recommendationLink(item)
             }
-            .scrollIndicators(.hidden)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $visibleRecommendationID)
-            .accessibilityIdentifier("albums-pickup-carousel")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("albums-pickup-cover")
     }
     @ViewBuilder private func recommendationLink(_ item: AlbumRecommendationItem) -> some View {
         switch item {
@@ -1373,7 +1411,7 @@ struct LikedPhotosView: View {
                 AlbumOverviewCard(identifier: highlight.coverPhoto.localIdentifier, catBoundingBox: highlight.coverPhoto.catBoundingBox,
                     title: highlight.sourceAlbumID.title, subtitle: subtitle,
                     isMovie: false, isNew: false, networkAccessAllowed: true,
-                    isCompact: true, preservesScene: false)
+                    isCompact: false, preservesScene: false)
             } else {
                 AlbumNavigationRow(title: highlight.title, subtitle: highlight.subtitle)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -1390,7 +1428,7 @@ struct LikedPhotosView: View {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
                     title: "\(month.monthNumber)月の猫たち", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
                     isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
-                    networkAccessAllowed: true, isCompact: true)
+                    networkAccessAllowed: true, isCompact: false)
             } else {
                 AlbumNavigationRow(title: "\(month.yearNumber)年\(month.monthNumber)月", subtitle: "\(month.photos.count.formatted())枚",
                     newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread ? "monthly-window-new-badge" : nil)
