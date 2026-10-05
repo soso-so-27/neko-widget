@@ -660,6 +660,54 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    func testEmptyPrivateWindowsOfferBothConnectionAndDiscovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-empty-private", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let privateStart = app.buttons["window-list-start-private"]
+        let publicStart = app.buttons["window-list-start"]
+        XCTAssertTrue(privateStart.waitForExistence(timeout: 10))
+        XCTAssertTrue(publicStart.exists)
+        privateStart.tap()
+        XCTAssertTrue(app.navigationBars["相手とつなぐ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
+        app.navigationBars["相手とつなぐ"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(publicStart.waitForExistence(timeout: 5))
+        publicStart.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testPrivateWindowCoverAccessibilityExpiresWhileVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-subscribed",
+                               "--window-list-expiring-cover", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(family.waitForExistence(timeout: 3))
+        XCTAssertTrue((family.value as? String)?.contains("写真あり") == true)
+        let expired = NSPredicate { _, _ in
+            (family.value as? String)?.contains("写真の保存期間が過ぎました") == true
+        }
+        expectation(for: expired, evaluatedWith: family)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse((family.value as? String)?.contains("写真あり") == true)
+        XCTAssertFalse(app.buttons["window-list-start-private"].exists)
+    }
+
+    @MainActor
+    func testLostCatExportLifecycleProtectsAndRemovesOnlyManagedCopies() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture", "--lost-cat-export-lifecycle-check"]
+        app.launch()
+        let result = app.staticTexts["lost-cat-export-lifecycle-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        let passed = NSPredicate(format: "label == %@", "passed")
+        expectation(for: passed, evaluatedWith: result)
+        waitForExpectations(timeout: 10)
+    }
+
+    @MainActor
     func testMixedWindowsKeepAdditionAndScopedRecoveryReachable() {
         continueAfterFailure = false
         for appearance in ["dark", "light", "narrow", "largest"] {
@@ -674,7 +722,7 @@ final class OfficialWindowUITests: XCTestCase {
             app.launch()
             let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
             XCTAssertTrue(family.waitForExistence(timeout: 10))
-            XCTAssertEqual(family.value as? String, "写真あり")
+            XCTAssertEqual(family.value as? String, "写真あり、送った写真")
             XCTAssertFalse(family.label.contains("確認"), "Another window's error must not label this window")
             if !largeText {
                 let official = app.buttons["official-window-entry"]
@@ -2367,6 +2415,10 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("showcase-cat-candidates")
         XCTAssertTrue(hasCandidate)
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
+        let secondCandidate = app.buttons.matching(identifier: "showcase-candidate-photo").element(boundBy: 1)
+        XCTAssertTrue(candidate.label.contains("1枚目"))
+        XCTAssertTrue(secondCandidate.label.contains("2枚目"))
+        XCTAssertNotEqual(candidate.label, secondCandidate.label)
         // Only one is assigned to this cat. Manual selection still offers the
         // unassigned cat photos, but never the fixture's non-cat favorites.
         XCTAssertEqual(candidate.frame.width, candidate.frame.height, accuracy: 1)
