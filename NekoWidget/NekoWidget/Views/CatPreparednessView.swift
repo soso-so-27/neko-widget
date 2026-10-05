@@ -961,7 +961,7 @@ struct LostCatDraftFixtureView: View {
                 .accessibilityIdentifier("lost-cat-export-lifecycle-result")
                 .task {
                     do { try Self.verifyExportLifecycle(image: image); lifecycleResult = "passed" }
-                    catch { lifecycleResult = "failed: \(error)" }
+                    catch { lifecycleResult = "failed" }
                 }
         } else if fixtureError {
             Text("入力候補の保存境界が成立しません").accessibilityIdentifier("lost-cat-fixture-error")
