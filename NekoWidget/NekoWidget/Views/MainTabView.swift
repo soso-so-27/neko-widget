@@ -1123,11 +1123,12 @@ struct MainTabView: View {
         // AppRoot calls this destination directly, outside MainTabView.body.
         // The installed host must own presentation state and supply the same
         // related-photo actions as the in-app browser.
-        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) { openRelatedAlbum in
             if hasPhotoAccess,
                catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
                !excludedCatCandidateIdentifiers.contains(localIdentifier) {
-                photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true)
+                photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true,
+                            openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
                                        description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
@@ -1139,12 +1140,13 @@ struct MainTabView: View {
 
     @ViewBuilder
     func firstRunPhotoDestination(for localIdentifier: String) -> some View {
-        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) { openRelatedAlbum in
             if hasPhotoAccess, photoPresentationVersion.canPresent,
                photoSourceStatus != .unavailable,
                catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
                !excludedCatCandidateIdentifiers.contains(localIdentifier) {
-                photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false)
+                photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false,
+                            openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
                                        description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
@@ -1165,7 +1167,8 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
-                             openedFromWidget: Bool, fromNote: Bool = false, libraryContext: Bool = false) -> some View {
+                             openedFromWidget: Bool, fromNote: Bool = false, libraryContext: Bool = false,
+                             openRelatedAlbumOverride: OpenPhotoRelatedAlbum? = nil) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
            fromNote || photoSourceStatus != .unavailable,
            !libraryContext || photoLibraryIncludes(localIdentifier),
@@ -1196,7 +1199,10 @@ struct MainTabView: View {
             .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
             .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
             .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+            // The nearest environment wins. Direct destinations must use their
+            // installed host's state, not MainTabView.body's unrelated state.
+            .environment(\.openPhotoRelatedAlbum, openRelatedAlbumOverride
+                ?? (libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 }))
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
@@ -2482,18 +2488,20 @@ private struct PhotoRelatedAlbumsHost<Content: View, Sheet: View>: View {
     @State private var route: PhotoRediscoveryRoute?
     let relatedAlbums: PhotoRelatedAlbums
     let sheet: (PhotoRediscoveryRoute) -> Sheet
-    let content: Content
+    let content: (@escaping OpenPhotoRelatedAlbum) -> Content
 
     init(relatedAlbums: @escaping PhotoRelatedAlbums,
          sheet: @escaping (PhotoRediscoveryRoute) -> Sheet,
-         @ViewBuilder content: () -> Content) {
+         @ViewBuilder content: @escaping (@escaping OpenPhotoRelatedAlbum) -> Content) {
         self.relatedAlbums = relatedAlbums
         self.sheet = sheet
-        self.content = content()
+        self.content = content
     }
 
     var body: some View {
-        content
+        // Pass this installed state setter to the browser itself, where an
+        // inner environment would otherwise replace an ancestor's action.
+        content({ route = $0 })
             .environment(\.photoRelatedAlbums, relatedAlbums)
             .environment(\.openPhotoRelatedAlbum, { route = $0 })
             .sheet(item: $route, content: sheet)

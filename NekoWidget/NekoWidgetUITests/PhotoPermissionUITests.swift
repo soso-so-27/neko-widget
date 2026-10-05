@@ -53,6 +53,8 @@ final class OfficialWindowUITests: XCTestCase {
         let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
         try foreground(app.buttons.matching(identifier: "photo-browser-rediscover")).tap()
         try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
+        let closeRelated = app.buttons.matching(identifier: "photo-related-close")
+        _ = try foreground(closeRelated)
         // SwiftUI NavigationLink may expose a Link or another element type,
         // rather than Button. Match the stable tile identity while retaining
         // the exact-one foreground/hittable requirement used for this sheet.
@@ -64,7 +66,6 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertNotEqual(relatedDate, originalDate, "The related album must open the selected different photo")
         capture("widget-url-personal-related-photo", app)
 
-        let closeRelated = app.buttons.matching(identifier: "photo-related-close")
         try foreground(closeRelated).tap()
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             closeRelated.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.isEmpty
