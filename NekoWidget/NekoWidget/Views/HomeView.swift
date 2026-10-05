@@ -304,6 +304,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .accessibilityIdentifier("photo-library-all-scroll")
         .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")

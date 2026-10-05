@@ -3776,9 +3776,13 @@ final class SoloMemoriesUITests: XCTestCase {
         openPhotosTab(in: app)
         let grid = element("photo-hub-detected-grid", in: app)
         XCTAssertTrue(grid.waitForExistence(timeout: 15))
+        // The common cat picker is a separate horizontal ScrollView above
+        // the grid. Scroll the photo collection, never the first scroll view.
+        let photoList = app.scrollViews["photo-library-all-scroll"]
+        XCTAssertTrue(photoList.waitForExistence(timeout: 5))
         for number in [25, 49] {
             let target = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-\(number)"]
-            for _ in 0..<14 where !target.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            for _ in 0..<14 where !target.isHittable { photoList.swipeUp() }
             XCTAssertTrue(target.isHittable, "Scrolling alone reaches photo \(number)")
             XCTAssertEqual(app.buttons.matching(identifier: target.identifier).count, 1)
             target.tap()
