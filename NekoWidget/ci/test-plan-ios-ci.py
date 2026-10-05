@@ -3347,7 +3347,9 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
         self.head = "a" * 40
         self.source = planner.PHOTO_SMOKE_CORRECTION_SOURCE
         self.required = planner.ALBUM_CORRECTION_REQUIRED
-        self.owning = (planner.SMOKE, scope.lane_job(scope.FULL_SCOPE, "app-ui-other"))
+        self.solo_job = planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB
+        self.other_job = scope.lane_job(scope.FULL_SCOPE, "app-ui-other")
+        self.owning = (planner.SMOKE, self.other_job, self.solo_job)
         self.run = {"id": planner.PHOTO_SMOKE_CORRECTION_RUN, "workflow_id": 5,
                     "head_sha": self.source, "head_branch": planner.PHOTO_SMOKE_CORRECTION_BRANCH,
                     "event": "push", "status": "completed", "conclusion": "failure", "run_attempt": 1,
@@ -3355,20 +3357,36 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
                     "repository": {"full_name": "soso-so-27/neko-widget"},
                     "head_repository": {"full_name": "soso-so-27/neko-widget"}}
         self.jobs = [{"id": 100, "name": planner.PLAN_JOB, "head_sha": self.source,
-                      "status": "completed", "conclusion": "success"}] + [
-            {"id": 101 + index, "name": name, "head_sha": self.source, "status": "completed",
-             "conclusion": "failure" if name in self.owning else "success", "completed_at": self.now.isoformat()}
-            for index, name in enumerate(self.required)]
+                      "status": "completed", "conclusion": "success"}]
+        source_outcomes = {planner.SMOKE: "failure", self.other_job: "failure", self.solo_job: "cancelled"}
+        for index, name in enumerate(self.required):
+            job = {"id": 101 + index, "name": name, "head_sha": self.source, "status": "completed",
+                   "conclusion": source_outcomes.get(name, "success"), "completed_at": self.now.isoformat()}
+            if name == self.solo_job:
+                job["id"] = planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID
+                job["steps"] = [
+                    {"name": "Run sharing runtime matrix", "status": "completed", "conclusion": "cancelled"},
+                    {"name": "Upload sharing runtime matrix artifacts", "status": "completed", "conclusion": "failure"},
+                ]
+            self.jobs.append(job)
         self.plan = {"schema_version": 1, "repository": "soso-so-27/neko-widget", "head_sha": self.source,
                      "scope": scope.FULL_SCOPE, "required_jobs": list(self.required),
                      "evidence_run_id": None, "evidence_sha": None}
         self.failures = "\n".join("Test Case '-[NekoWidgetUITests." + case.replace("/", " ") + "]' failed"
                                   for case in sorted(planner.PHOTO_SMOKE_CORRECTION_CASES))
+        self.solo_log = ("Test Suite 'SoloMemoriesUITests' passed at 2026-10-05 01:13:21.029.\n"
+                         + "Executed 46 tests, with 0 failures (0 unexpected) in 3676.850 (3676.913) seconds\n" * 3
+                         + "** TEST SUCCEEDED **\n"
+                         + "Sharing checks [app-ui-solo; scope full-v1]\tUpload sharing runtime matrix artifacts\n"
+                         + "Error: ENOENT: no such file or directory, open '/Users/runner/work/_temp/MomentComposer.xcresult/Staging/1_Test/Diagnostics/session.log'\n"
+                         + "Error: An error has occurred during zip creation for the artifact\n")
 
-    def source_check(self, jobs=None, run=None, failures=None, plan=None):
+    def source_check(self, jobs=None, run=None, failures=None, plan=None, solo_log=None):
         def api(path):
             if path.endswith("/jobs/100/logs"):
                 return "IOS_CI_PLAN_JSON=" + json.dumps(self.plan if plan is None else plan)
+            if path.endswith(f"/jobs/{planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID}/logs"):
+                return self.solo_log if solo_log is None else solo_log
             return self.failures if failures is None else failures
         with patch.object(planner, "test_correction_inputs", return_value=True), \
                 patch.object(planner, "executed_jobs", return_value=self.jobs if jobs is None else jobs):
@@ -3377,30 +3395,45 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
                 self.required, api, self.now)
 
     def test_pin_rejects_other_bodies_product_modes_and_unapproved_controls(self):
-        row = ":100644 100644 " + " ".join(planner.PHOTO_SMOKE_CORRECTION_BLOBS) + " M\0" + scope.MEMORY_TEST_PATH + "\0"
-        def check(raw=row, approval=True):
+        workflow_before = ("  sharing-app-ui:\n" + planner.PHOTO_SMOKE_CORRECTION_OLD_BUDGET)
+        workflow_after = workflow_before.replace(
+            planner.PHOTO_SMOKE_CORRECTION_OLD_BUDGET, planner.PHOTO_SMOKE_CORRECTION_NEW_BUDGET, 1)
+        memory_row = ":100644 100644 " + " ".join(planner.PHOTO_SMOKE_CORRECTION_BLOBS) + " M\0" + scope.MEMORY_TEST_PATH + "\0"
+        workflow_row = ":100644 100644 " + "e" * 40 + " " + "f" * 40 + " M\0" + planner.PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH + "\0"
+        row = memory_row + workflow_row
+        def check(raw=row, approval=True, source_workflow=workflow_before, candidate_workflow=workflow_after):
             def git(*args):
                 if args[0] == "rev-parse": return self.head
                 if args[0] == "diff": return raw
                 if args[0] == "merge-base": return "c" * 40
-                if args[0] == "show": return "approved" if approval or not args[1].startswith(self.head + ":") else "unmerged"
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    if path == planner.PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH:
+                        if revision == self.source: return source_workflow
+                        if revision == self.head: return candidate_workflow
+                        return candidate_workflow if approval else "unmerged"
+                    return "approved" if approval or not revision.startswith(self.head) else "unmerged"
                 raise AssertionError(args)
             with patch.object(planner, "git", side_effect=git):
                 return planner.photo_smoke_correction_inputs(self.source, self.head)
         self.assertTrue(check())
         self.assertFalse(check(approval=False))
+        self.assertFalse(check(raw=memory_row))
+        self.assertFalse(check(source_workflow=workflow_before.replace("timeout-minutes: 75", "timeout-minutes: 60")))
+        self.assertFalse(check(candidate_workflow=workflow_after.replace("timeout-minutes: 90", "timeout-minutes: 95")))
+        self.assertFalse(check(candidate_workflow=workflow_after + "extra\n"))
         for raw in ("", row + row, row.replace("100644 100644", "100644 100755"),
                     row.replace(" M\0", " T\0"), row.replace(planner.PHOTO_SMOKE_CORRECTION_BLOBS[1], "d" * 40),
                     row + row.replace(scope.MEMORY_TEST_PATH, "NekoWidget/NekoWidget/Views/LikedPhotosView.swift"),
                     row + row.replace(scope.MEMORY_TEST_PATH, ".github/workflows/ios-build.yml")):
             self.assertFalse(check(raw), raw)
 
-    def test_source_requires_both_known_failures_and_five_real_successes(self):
+    def test_source_reuses_only_four_successes_and_reruns_every_failed_or_incomplete_lane(self):
         result = self.source_check()
         self.assertEqual({item["name"] for item in result["jobs"]}, set(self.required) - set(self.owning))
-        self.assertEqual(len(result["jobs"]), 5)
+        self.assertEqual(len(result["jobs"]), 4)
         for index, job in enumerate(self.jobs):
-            for conclusion in ("skipped", "failure", "success"):
+            for conclusion in ("skipped", "failure", "success", "cancelled"):
                 if conclusion == job["conclusion"]: continue
                 broken = copy.deepcopy(self.jobs); broken[index]["conclusion"] = conclusion
                 if job["name"] not in self.owning and conclusion == "success": continue
@@ -3409,6 +3442,11 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
         for failures in ("", self.failures.splitlines()[0], self.failures + "\n" + self.failures,
                          self.failures + "\nTest Case '-[NekoWidgetUITests.SoloMemoriesUITests testOther]' failed"):
             self.assertIsNone(self.source_check(failures=failures))
+        for invalid_log in (self.solo_log.replace("Executed 46 tests, with 0 failures", "Executed 46 tests, with 1 failure", 1),
+                            self.solo_log.replace("** TEST SUCCEEDED **", "** TEST FAILED **", 1),
+                            self.solo_log.replace("ENOENT: no such file or directory", "EACCES: permission denied", 1),
+                            self.solo_log.replace("Error: An error has occurred during zip creation for the artifact\n", "")):
+            self.assertIsNone(self.source_check(solo_log=invalid_log))
         for key, value in (("id", 1), ("head_sha", "b" * 40), ("event", "workflow_dispatch"),
                            ("run_attempt", 2), ("head_branch", "codex/other"),
                            ("updated_at", (self.now - dt.timedelta(hours=25)).isoformat())):
@@ -3418,7 +3456,7 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):
                 self.source_check(plan={**self.plan, key: value})
 
-    def test_new_candidate_selects_complete_smoke_and_other_only(self):
+    def test_new_candidate_selects_complete_smoke_and_both_ui_lanes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / "event.json").write_text("{}")
             env = {"GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
@@ -3436,12 +3474,12 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
             values = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
             self.assertEqual((values["build"], values["smoke"], values["sharing"], values["app_ui"]),
                              ("false", "true", "false", "true"))
-            self.assertEqual(values["app_ui_lanes"], '["app-ui-other"]')
+            self.assertEqual(values["app_ui_lanes"], '["app-ui-other","app-ui-solo"]')
             record = next(json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in printed.getvalue().splitlines()
                           if line.startswith("IOS_CI_PLAN_JSON="))
             self.assertEqual(record["required_jobs"], list(self.required))
 
-    def test_main_and_release_qualify_new_two_and_revalidate_original_five(self):
+    def test_main_and_release_qualify_new_three_and_revalidate_original_four(self):
         evidence = self.source_check()
         candidate = {**self.run, "id": 20, "head_sha": self.head, "conclusion": "success"}
         current_jobs = [{**job, "id": job["id"] + 100, "head_sha": self.head,
@@ -3453,6 +3491,7 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
                 if path.endswith("/runs/" + str(self.run["id"])): return self.run
                 if path.endswith("/jobs/200/logs"): return "IOS_CI_PLAN_JSON=" + json.dumps(selected_record)
                 if path.endswith("/jobs/100/logs"): return "IOS_CI_PLAN_JSON=" + json.dumps(self.plan)
+                if path.endswith(f"/jobs/{planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID}/logs"): return self.solo_log
                 return self.failures
             with patch.object(planner, "test_correction_inputs", return_value=True), \
                     patch.object(planner, "executed_jobs", return_value=original):

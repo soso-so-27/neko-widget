@@ -871,13 +871,14 @@ class PhotoCorrectionBudgetTests(unittest.TestCase):
         self.assertFalse(preflight.apply_task_gate(dict(plan), [failed, {**failed, "id": 11, "status": "in_progress"}],
                          now, correction_evidence=evidence)["ready"])
 
-    def test_cost_uses_successful_complete_both_jobs_and_rejects_missing_or_failed_reference(self):
+    def test_cost_reserves_the_retry_timeout_and_keeps_cancelled_run_out_of_success_evidence(self):
         plan = {"ready": True, "scope": scope.FULL_SCOPE, "target_minutes": 210,
                 "cost": {"status": "observed", "with_upload_minutes": [100, 110]}}
         evidence = {"run_id": planner.PHOTO_SMOKE_CORRECTION_RUN, "sha": planner.PHOTO_SMOKE_CORRECTION_SOURCE}
         references = {
             111435105247: (planner.SMOKE, "2026-10-04T12:50:45Z"),
             111435105277: (scope.lane_job(scope.FULL_SCOPE, "app-ui-other"), "2026-10-04T13:26:12Z"),
+            planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID: (planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB, "2026-10-05T01:14:55Z"),
         }
         def github(path):
             job_id = int(path.split("/")[-1]); name, end = references[job_id]
@@ -885,14 +886,24 @@ class PhotoCorrectionBudgetTests(unittest.TestCase):
                     "head_sha": planner.ALBUM_CORRECTION_SOURCE, "name": name,
                     "status": "completed", "conclusion": "success", "started_at": "2026-10-04T12:22:45Z",
                     "completed_at": end}
-        with patch.object(preflight, "github", side_effect=github):
+        def source_aware_github(path):
+            job_id = int(path.split("/")[-1])
+            job = github(path)
+            if job_id == planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID:
+                job.update({"run_id": planner.PHOTO_SMOKE_CORRECTION_RUN,
+                            "head_sha": planner.PHOTO_SMOKE_CORRECTION_SOURCE,
+                            "conclusion": "cancelled", "started_at": "2026-10-04T23:59:03Z"})
+            return job
+        with patch.object(preflight, "github", side_effect=source_aware_github):
             result = preflight.photo_correction_replay_cost(plan, evidence, True, {"upload_minutes": 12})
-        self.assertEqual(result["cost"]["with_upload_minutes"], [75.45, 75.45])
+        self.assertEqual(result["cost"]["with_upload_minutes"], [102.0, 102.0])
+        self.assertEqual(result["cost"]["ci_minutes"], [90.0, 90.0])
+        self.assertEqual(result["cost"]["source_app_ui_solo_incomplete_minutes"], 75.87)
         self.assertEqual(result["full_cost_before_correction"], plan["cost"])
         self.assertIs(preflight.photo_correction_replay_cost(plan, {**evidence, "sha": "b" * 40}, True, {}), plan)
         for changes in ({"conclusion": "failure"}, {"run_id": 1}, {"head_sha": "a" * 40},
                         {"completed_at": "2026-10-04T12:00:00Z"}):
-            with patch.object(preflight, "github", side_effect=lambda path: {**github(path), **changes}), \
+            with patch.object(preflight, "github", side_effect=lambda path: {**source_aware_github(path), **changes}), \
                     self.assertRaises(ValueError):
                 preflight.photo_correction_replay_cost(plan, evidence, True, {"upload_minutes": 12})
 
