@@ -150,43 +150,69 @@ class ReleaseTests(unittest.TestCase):
     def test_vet_correction_requires_old_native_jobs_and_new_ui(self):
         self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.VET_SAVED_CAT_SCOPE)
 
-    def test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(self):
+    def test_photo_correction_release_and_main_require_old_five_and_new_both_jobs(self):
+        self.test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(photo=True)
+
+    def test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(self, photo=False):
         planner = release.planner
         required = planner.ALBUM_CORRECTION_REQUIRED
-        ui = planner.correction_ui_job(planner.FULL_SCOPE)
-        source_sha, source_id = planner.ALBUM_CORRECTION_SOURCE, planner.ALBUM_CORRECTION_RUN
-        self.run["head_branch"] = planner.ALBUM_CORRECTION_BRANCH
+        source_sha = planner.PHOTO_SMOKE_CORRECTION_SOURCE if photo else planner.ALBUM_CORRECTION_SOURCE
+        source_id = planner.PHOTO_SMOKE_CORRECTION_RUN if photo else planner.ALBUM_CORRECTION_RUN
+        owning = planner.correction_owning_jobs(planner.FULL_SCOPE, source_sha)
+        self.run["head_branch"] = planner.PHOTO_SMOKE_CORRECTION_BRANCH if photo else planner.ALBUM_CORRECTION_BRANCH
         old_jobs = [dict(self.plan_job, id=301, head_sha=source_sha)] + [
             {"id": 302 + index, "name": name, "head_sha": source_sha, "status": "completed",
-             "conclusion": "failure" if name == ui else "success", "completed_at": self.now.isoformat()}
+             "conclusion": "failure" if name in owning else "success", "completed_at": self.now.isoformat()}
             for index, name in enumerate(required)]
         evidence = {"run_id": source_id, "sha": source_sha,
-                    "jobs": [{"name": job["name"], "job_id": job["id"]} for job in old_jobs[1:] if job["name"] != ui]}
+                    "jobs": [{"name": job["name"], "job_id": job["id"]} for job in old_jobs[1:] if job["name"] not in owning]}
         self.plan.update(required_jobs=list(required), test_correction_evidence=evidence)
         self.set_plan()
         current = self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"]["jobs"]
         for job in current[1:]:
-            if job["name"] != ui: job["conclusion"] = "skipped"
+            if job["name"] not in owning: job["conclusion"] = "skipped"
         self.gh.values[f"actions/runs/{source_id}"] = dict(self.run, id=source_id, head_sha=source_sha, conclusion="failure")
         self.gh.values[f"actions/runs/{source_id}/jobs?filter=latest&per_page=100&page=1"] = {"total_count": len(old_jobs), "jobs": old_jobs}
         old_plan = {"schema_version": 1, "repository": release.REPOSITORY, "head_sha": source_sha,
                     "scope": planner.FULL_SCOPE, "required_jobs": list(required), "evidence_run_id": None, "evidence_sha": None}
         self.gh.logs[(source_id, 301)] = release.PLAN_MARKER + json.dumps(old_plan)
+        if photo:
+            failure_log = "\n".join("Test Case '-[NekoWidgetUITests." + case.replace("/", " ") + "]' failed"
+                                    for case in sorted(planner.PHOTO_SMOKE_CORRECTION_CASES))
+            for job in old_jobs[1:]:
+                if job["name"] in owning: self.gh.logs[(source_id, job["id"])] = failure_log
         with patch.object(planner, "test_correction_inputs", return_value=True), \
                 patch.object(planner, "sharing_jobs", side_effect=lambda selected: tuple(required[2:]) if selected == planner.FULL_SCOPE else ()):
             self.assertEqual(release.check_ci(self.gh, self.sha, 20, self.now)["reused_run"], source_id)
             for job in old_jobs[1:]:
-                if job["name"] == ui: continue
+                if job["name"] in owning: continue
                 job["conclusion"] = "skipped"
                 with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
                 job["conclusion"] = "success"
-            new_ui = next(job for job in current if job["name"] == ui)
-            for outcome in ("skipped", "failure"):
-                new_ui["conclusion"] = outcome
-                with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
-            new_ui["conclusion"] = "success"
+            for new_ui in (job for job in current if job["name"] in owning):
+                for outcome in ("skipped", "failure"):
+                    new_ui["conclusion"] = outcome
+                    with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
+                new_ui["conclusion"] = "success"
             self.gh.logs[(source_id, 301)] = release.PLAN_MARKER + json.dumps({**old_plan, "required_jobs": list(required[:-1])})
             with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 20, self.now)
+            self.gh.logs[(source_id, 301)] = release.PLAN_MARKER + json.dumps(old_plan)
+            if photo:
+                main = dict(self.run, id=21, head_branch="main")
+                main_plan = {**self.plan, "test_correction_evidence": None,
+                             "evidence_run_id": 20, "evidence_sha": self.sha}
+                main_jobs = [dict(self.plan_job, id=501)]
+                self.gh.values["actions/runs/21"] = main
+                self.gh.values["actions/runs/21/jobs?filter=latest&per_page=100&page=1"] = {"total_count": 1, "jobs": main_jobs}
+                self.gh.logs[(21, 501)] = release.PLAN_MARKER + json.dumps(main_plan)
+                for job in [self.plan_job, *old_jobs]:
+                    self.gh.values[f"actions/jobs/{job['id']}"] = {"run_id": 20 if job["id"] == 201 else source_id}
+                result = release.check_ci(self.gh, self.sha, 21, self.now)
+                self.assertEqual((result["tested_run"], result["tested_sha"]), (20, self.sha))
+                for new_ui in (job for job in current if job["name"] in owning):
+                    new_ui["conclusion"] = "skipped"
+                    with self.assertRaises(release.Blocked): release.check_ci(self.gh, self.sha, 21, self.now)
+                    new_ui["conclusion"] = "success"
 
     def test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(self, selected_scope=release.planner.LOST_CAT_UX_SCOPE):
         required = release.planner.required_jobs_from_scope(selected_scope)

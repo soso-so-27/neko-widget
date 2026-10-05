@@ -65,6 +65,18 @@ ALBUM_CORRECTION_DOC = "handoffs/development-release-workflow.md"
 ALBUM_CORRECTION_REQUIRED = (BUILD, SMOKE) + tuple(
     f"Sharing checks [{lane}; scope full-v1]" for lane in (
         "runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-variants"))
+# This second closed registration corrects one obsolete AX-name lookup used by
+# two smoke cases. The entire XCTest blob is pinned; product, fixture, workflow,
+# imports, other assertions and test bodies remain identical.
+PHOTO_SMOKE_CORRECTION_SOURCE = "1c4c4b541c30939b2320942f944511c2703a4f90"
+PHOTO_SMOKE_CORRECTION_RUN = 37245665341
+PHOTO_SMOKE_CORRECTION_BRANCH = "codex/photo-recovery-continuity-release-20261005"
+PHOTO_SMOKE_CORRECTION_BLOBS = ("4ea794be0dbeb01e35c46a0b6734f5ed43e78e51",
+                                "00c674bfd90c7f235a73fa45757cf810a6e7eee4")
+PHOTO_SMOKE_CORRECTION_CASES = frozenset({
+    "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
+    "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
+})
 
 # These helpers are not app, build, safety-check or release-evidence inputs.
 # Selection/check-runner/workflow changes are deliberately excluded. Their
@@ -1072,8 +1084,18 @@ def test_correction_scope(required: tuple[str, ...]) -> str | None:
                  if required == required_jobs_from_scope(selected)), None)
 
 
-def correction_ui_job(selected_scope: str) -> str:
+def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
+    if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
+        return SMOKE
     return lane_job(selected_scope, "app-ui-solo" if selected_scope == FULL_SCOPE else "app-ui")
+
+
+def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
+        # This shared helper is compiled into both selections. Neither is an
+        # unchanged input: rerun the complete smoke and other UI jobs.
+        return (SMOKE, lane_job(FULL_SCOPE, "app-ui-other"))
+    return (correction_ui_job(selected_scope, source),)
 
 
 class CorrectionEvidenceUnavailable(ValueError):
@@ -1099,9 +1121,17 @@ class EvidenceLogRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def album_correction_inputs(source: str, head: str) -> bool:
+    return reviewed_full_correction_inputs(source, head, ALBUM_CORRECTION_SOURCE, ALBUM_CORRECTION_BLOBS)
+
+
+def photo_smoke_correction_inputs(source: str, head: str) -> bool:
+    return reviewed_full_correction_inputs(source, head, PHOTO_SMOKE_CORRECTION_SOURCE, PHOTO_SMOKE_CORRECTION_BLOBS)
+
+
+def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str, reviewed_blobs: tuple[str, str]) -> bool:
     """Exact reviewed test blob plus already-merged controls; all else identical."""
     try:
-        if source != ALBUM_CORRECTION_SOURCE or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
+        if source != reviewed_source or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
             return False
         git("merge-base", "--is-ancestor", source, head)
         approval = git("merge-base", head, "origin/main")
@@ -1118,7 +1148,7 @@ def album_correction_inputs(source: str, head: str) -> bool:
                 return False
             changed.add(path)
             if path == MEMORY_TEST_PATH:
-                if tuple(fields[2:4]) != ALBUM_CORRECTION_BLOBS: return False
+                if tuple(fields[2:4]) != reviewed_blobs: return False
             elif git("show", f"{head}:{path}") != git("show", f"{approval}:{path}"):
                 return False
         # Require approval of every control, even one unchanged from the source.
@@ -1132,7 +1162,7 @@ def album_correction_inputs(source: str, head: str) -> bool:
 def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SCOPE) -> bool:
     """Only owned XCTest bodies and reviewed CI evidence controls may differ."""
     if selected_scope == FULL_SCOPE:
-        return album_correction_inputs(source, head)
+        return album_correction_inputs(source, head) or photo_smoke_correction_inputs(source, head)
     try:
         if not SHA.fullmatch(source) or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
             return False
@@ -1214,11 +1244,14 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
             return None
         jobs = executed_jobs(run, repository, api)
         if selected_scope == FULL_SCOPE:
-            # Not a generic failed-full escape hatch. The reviewed run must have
-            # executed exactly this graph, with the solo shard as its only failure.
-            if (run["id"] != ALBUM_CORRECTION_RUN or run["head_sha"] != ALBUM_CORRECTION_SOURCE
+            # Only the two separately reviewed, fixed run/branch/source triples.
+            photo_smoke = run["head_sha"] == PHOTO_SMOKE_CORRECTION_SOURCE
+            reviewed_run = PHOTO_SMOKE_CORRECTION_RUN if photo_smoke else ALBUM_CORRECTION_RUN
+            reviewed_source = PHOTO_SMOKE_CORRECTION_SOURCE if photo_smoke else ALBUM_CORRECTION_SOURCE
+            reviewed_branch = PHOTO_SMOKE_CORRECTION_BRANCH if photo_smoke else ALBUM_CORRECTION_BRANCH
+            if (run["id"] != reviewed_run or run["head_sha"] != reviewed_source
                     or run.get("run_attempt", 1) != 1
-                    or branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"
+                    or branch != reviewed_branch or repository != "soso-so-27/neko-widget"
                     or len(jobs) != len(required) + 1
                     or {job.get("name") for job in jobs} != set(required) | {PLAN_JOB}
                     or any(job.get("head_sha") != run["head_sha"] for job in jobs)):
@@ -1251,13 +1284,25 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                     or any(records[0].get(key) is not None for key in (
                         "evidence_run_id", "evidence_sha", "test_correction_evidence"))):
                 raise CorrectionEvidenceUnavailable("Reviewed source plan does not match its required graph")
-        ui_name = correction_ui_job(selected_scope)
-        ui = [job for job in jobs if job.get("name") == ui_name]
-        if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
-                "completed", "failure", run["head_sha"]):
-            return None
-        reusable = tuple(name for name in required if name != ui_name)
-        if len(reusable) != (len(required) - 1 if selected_scope == FULL_SCOPE else 3) or not covers_jobs(jobs, reusable, run["head_sha"], now):
+        owning = correction_owning_jobs(selected_scope, run["head_sha"])
+        for ui_name in owning:
+            ui = [job for job in jobs if job.get("name") == ui_name]
+            if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
+                    "completed", "failure", run["head_sha"]):
+                return None
+            if selected_scope == FULL_SCOPE and run["head_sha"] == PHOTO_SMOKE_CORRECTION_SOURCE:
+                try:
+                    log = api(f"/repos/{repository}/actions/jobs/{ui[0]['id']}/logs")
+                except (OSError, KeyError, TypeError, ValueError):
+                    raise CorrectionEvidenceUnavailable("Could not retrieve the reviewed photo-action failure") from None
+                if not isinstance(log, str):
+                    raise CorrectionEvidenceUnavailable("Invalid reviewed photo-action failure log")
+                cases = [f"{owner.removeprefix('NekoWidgetUITests.')}/{method}" for owner, method in re.findall(
+                    r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)]
+                if len(cases) != 2 or set(cases) != PHOTO_SMOKE_CORRECTION_CASES:
+                    return None
+        reusable = tuple(name for name in required if name not in owning)
+        if len(reusable) != (len(required) - len(owning) if selected_scope == FULL_SCOPE else 3) or not covers_jobs(jobs, reusable, run["head_sha"], now):
             return None
         entries = []
         for name in reusable:
@@ -1277,7 +1322,8 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
     if test_correction_scope(required) == FULL_SCOPE and (
-            branch != ALBUM_CORRECTION_BRANCH or repository != "soso-so-27/neko-widget"):
+            branch not in (ALBUM_CORRECTION_BRANCH, PHOTO_SMOKE_CORRECTION_BRANCH)
+            or repository != "soso-so-27/neko-widget"):
         return None
     prefix = f"/repos/{repository}/actions"
     workflow = api(f"{prefix}/workflows/ios-build.yml")
@@ -1294,9 +1340,66 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
         evidence = correction_source(run, head, branch, repository, workflow_id, required, api, now)
         if evidence is not None:
             return evidence
-    if test_correction_scope(required) == FULL_SCOPE and album_correction_inputs(ALBUM_CORRECTION_SOURCE, head):
-        raise CorrectionEvidenceUnavailable("Known album correction has no complete source evidence")
+    if test_correction_scope(required) == FULL_SCOPE and (
+            album_correction_inputs(ALBUM_CORRECTION_SOURCE, head)
+            or photo_smoke_correction_inputs(PHOTO_SMOKE_CORRECTION_SOURCE, head)):
+        raise CorrectionEvidenceUnavailable("Known full correction has no complete source evidence")
     return None
+
+
+def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple[str, ...], api,
+                               now: dt.datetime, jobs: list[dict]) -> bool:
+    """Qualify the same fixed correction graph for main and release callers.
+
+    This never recurses through arbitrary reuse chains. A candidate's unique
+    plan names one of the two registered original failed runs; that original
+    has physically executed the full graph. Changed owning jobs must execute
+    successfully at the corrected candidate SHA.
+    """
+    if required != ALBUM_CORRECTION_REQUIRED or run.get("head_branch") not in (
+            ALBUM_CORRECTION_BRANCH, PHOTO_SMOKE_CORRECTION_BRANCH):
+        return False
+    repo = "soso-so-27/neko-widget"
+    if (run.get("event") != "push" or run.get("status") != "completed" or run.get("conclusion") != "success"
+            or run.get("run_attempt", 1) != 1
+            or run.get("repository", {}).get("full_name") != repo
+            or run.get("head_repository", {}).get("full_name") != repo):
+        return False
+    plans = [job for job in jobs if job.get("name") == PLAN_JOB]
+    if len(plans) != 1 or (plans[0].get("status"), plans[0].get("conclusion"), plans[0].get("head_sha")) != (
+            "completed", "success", run.get("head_sha")):
+        return False
+    log = api(f"/repos/{repo}/actions/jobs/{plans[0]['id']}/logs")
+    if not isinstance(log, str):
+        raise CorrectionEvidenceUnavailable("Invalid corrected candidate plan log")
+    try:
+        records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines()
+                   if "IOS_CI_PLAN_JSON=" in line]
+    except (TypeError, ValueError):
+        raise CorrectionEvidenceUnavailable("Invalid corrected candidate plan") from None
+    records = [record for record in records if isinstance(record, dict) and record.get("repository") == repo
+               and record.get("head_sha") == run.get("head_sha")]
+    if len(records) != 1:
+        return False
+    record = records[0]
+    correction = record.get("test_correction_evidence")
+    if (type(record.get("schema_version")) is not int or record["schema_version"] != 1
+            or record.get("scope") != FULL_SCOPE or record.get("required_jobs") != list(required)
+            or record.get("evidence_run_id") is not None or record.get("evidence_sha") is not None
+            or not isinstance(correction, dict) or type(correction.get("run_id")) is not int
+            or (correction.get("run_id"), correction.get("sha")) not in (
+                (ALBUM_CORRECTION_RUN, ALBUM_CORRECTION_SOURCE),
+                (PHOTO_SMOKE_CORRECTION_RUN, PHOTO_SMOKE_CORRECTION_SOURCE))):
+        return False
+    source = api(f"/repos/{repo}/actions/runs/{correction['run_id']}")
+    verified = correction_source(source, validation_head, run["head_branch"], repo,
+                                 run["workflow_id"], required, api, now)
+    owning = correction_owning_jobs(FULL_SCOPE, correction["sha"])
+    return (verified == correction and covers_jobs(jobs, owning, run["head_sha"], now)
+            and all(job.get("head_sha") == run["head_sha"]
+                    and (job.get("name") in {PLAN_JOB, *owning}
+                         or (job.get("status"), job.get("conclusion")) == ("completed", "skipped"))
+                    for job in jobs))
 
 
 def evidence_log(stage: str, **fields) -> None:
@@ -1487,6 +1590,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
             try:
                 jobs = executed_jobs(run, repo, api)
                 covered = covers_jobs(jobs, required, run["head_sha"], now, audit=True)
+                if not covered:
+                    covered = covers_corrected_full_graph(run, env["GITHUB_SHA"], required, api, now, jobs)
             except (OSError, AttributeError, KeyError, TypeError, ValueError) as error:
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
@@ -1583,14 +1688,16 @@ def main() -> None:
     if evidence is None and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/main":
         raise SystemExit("No matching candidate evidence for main. No duplicate Mac checks started. "
                          "Use the tested merged candidate for release, or validate a new integration candidate.")
+    correction_jobs = correction_owning_jobs(selected_scope, correction["sha"]) if correction else ()
+    smoke_correction = SMOKE in correction_jobs
     values = {
         "build": str(evidence is None and correction is None).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
-        "smoke": str(evidence is None and correction is None and smoke_job(selected_scope) in required).lower(),
+        "smoke": str(evidence is None and (correction is None or smoke_correction) and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
         "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
-        "app_ui_lanes": json.dumps(["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
+        "app_ui_lanes": json.dumps(["app-ui-other"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
                                     else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
@@ -1619,7 +1726,7 @@ def main() -> None:
         summary += f"Reusing successful required jobs from {relation}: [run {run_id}]({url}), tested `{tested_sha}`.\n"
     elif correction is not None:
         summary += (f"Reusing {len(correction['jobs'])} successful unchanged-input jobs from failed run {correction['run_id']} "
-                    f"at `{correction['sha']}`; executing all owning app UI tests at this commit.\n")
+                    f"at `{correction['sha']}`; executing complete owning jobs {correction_jobs} at this commit.\n")
     else:
         summary += "Executing: " + ", ".join(required) + ".\n"
     with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:

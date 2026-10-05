@@ -225,9 +225,9 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 and old_plan.get("required_jobs") == list(required)
                 and old_plan.get("evidence_run_id") is None,
                 "Test-correction source did not run the same required check graph.")
-        ui_name = planner.correction_ui_job(plan["scope"])
+        owning_jobs = planner.correction_owning_jobs(plan["scope"], correction["sha"])
         current_jobs = executed_jobs_for(gh, current)
-        require(planner.covers_jobs(current_jobs, (ui_name,), sha, now=now),
+        require(planner.covers_jobs(current_jobs, owning_jobs, sha, now=now),
                 "All required owning app UI cases must pass in the new candidate's normal job.")
         # Skipped reused jobs are expected, but a duplicate/misrouted execution is not.
         require(not any(job.get("name") in {entry["name"] for entry in correction["jobs"]}
@@ -249,7 +249,22 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 and planner.reusable_run(source, current, REPOSITORY, now),
                 "Candidate CI evidence is stale or does not match the main commit/workflow.")
         jobs = executed_jobs_for(gh, source)
-    require(planner.covers_jobs(jobs, required, source_sha, now=now),
+    covered = planner.covers_jobs(jobs, required, source_sha, now=now)
+    if not covered and source_id != run_id:
+        def candidate_api(path: str):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected corrected candidate API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Corrected candidate job identity unavailable.")
+                return gh.log(job["run_id"], job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            covered = planner.covers_corrected_full_graph(source, sha, required, candidate_api, now, jobs)
+        except planner.CorrectionEvidenceUnavailable:
+            raise Blocked("Corrected candidate evidence is unavailable or invalid.") from None
+    require(covered,
             "Required CI jobs are missing, skipped, failed, duplicated, or from another commit.")
     return {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
             "scope": plan["scope"], "required_jobs": list(required)}
