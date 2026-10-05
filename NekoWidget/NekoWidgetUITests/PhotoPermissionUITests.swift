@@ -2111,16 +2111,23 @@ final class SoloMemoriesUITests: XCTestCase {
                     lastFieldIndex = index
                     return element
                 }
-                let upper = top + (bottom - top) * 0.25
-                let lower = top + (bottom - top) * 0.70
-                let movesUp = element.exists ? element.frame.midY >= bottom - 8 : index >= lastFieldIndex
+                let bandHeight = bottom - top
+                let centre = top + bandHeight * 0.5
+                let offset = element.exists ? element.frame.midY - centre
+                    : (index >= lastFieldIndex ? bandHeight : -bandHeight)
+                // A fixed fast swipe overshoots this band while the keyboard is
+                // visible, leaving the place field alternately under the title
+                // and the bottom action. Approach its centre without inertia.
+                let distance = min(max(abs(offset), 20), bandHeight * 0.25)
+                let direction: CGFloat = offset >= 0 ? 1 : -1
                 let origin = app.coordinate(withNormalizedOffset: .zero)
                 // Use the form margin, so a multiline editor doesn't consume the drag.
                 let start = origin.withOffset(CGVector(dx: app.frame.width - 10,
-                    dy: movesUp ? lower : upper))
+                    dy: centre + direction * distance * 0.5))
                 let end = origin.withOffset(CGVector(dx: app.frame.width - 10,
-                    dy: movesUp ? upper : lower))
-                start.press(forDuration: 0.05, thenDragTo: end)
+                    dy: centre - direction * distance * 0.5))
+                start.press(forDuration: 0.1, thenDragTo: end,
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
             }
             XCTFail("Input did not reach the visible form band: \(name)")
             return element
