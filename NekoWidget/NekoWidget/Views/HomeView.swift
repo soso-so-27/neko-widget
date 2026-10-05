@@ -45,10 +45,11 @@ enum PhotoLibraryReadingPosition {
         else { defaults.removeObject(forKey: key) }
     }
 
-    static func returnToOpenedPhoto(_ identifier: String) {
+    static func returnToOpenedPhoto(_ identifier: String, section: String = "all") {
         diagnose("return to \(identifier)")
-        save(identifier, section: "all")
-        NotificationCenter.default.post(name: returnToPhotoNotification, object: identifier)
+        save(identifier, section: section)
+        NotificationCenter.default.post(name: returnToPhotoNotification, object: identifier,
+                                        userInfo: ["section": section])
     }
 }
 
@@ -106,6 +107,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     @State private var position: String?
     @State private var userScrolled = false
     @State private var isVisible = false
+    @State private var restorationGeneration = 0
 
     init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
@@ -135,7 +137,12 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     isVisible = true
                     PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
                 }
-                .onDisappear { isVisible = false }
+                .onDisappear { isVisible = false; restorationGeneration += 1 }
+                .onChange(of: self.section) { _, newSection in
+                    restorationGeneration += 1
+                    userScrolled = false
+                    position = newSection.flatMap { PhotoLibraryReadingPosition.identifier(for: $0) }.map(normalize)
+                }
                 .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
                     userScrolled = true
                 })
@@ -148,7 +155,8 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                 }
                 .onReceive(NotificationCenter.default.publisher(
                     for: PhotoLibraryReadingPosition.returnToPhotoNotification)) { notification in
-                    guard section == "all", let identifier = notification.object as? String else { return }
+                    guard isVisible, (notification.userInfo?["section"] as? String ?? "all") == section,
+                          let identifier = notification.object as? String else { return }
                     // Navigation's final layout may update the scroll binding
                     // after the destination disappears. Reissue the exact row
                     // once the root list is laid out, without treating it as a
@@ -156,7 +164,10 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     userScrolled = false
                     position = nil
                     PhotoLibraryReadingPosition.diagnose("restore return \(identifier)")
+                    restorationGeneration += 1
+                    let generation = restorationGeneration
                     DispatchQueue.main.async {
+                        guard isVisible, generation == restorationGeneration else { return }
                         position = normalize(identifier)
                     }
                 }
@@ -188,6 +199,8 @@ struct HomeView: View {
     let catProfilesActions: CatProfilesViewActions
     let isEmbedded: Bool
     let supplementaryPhotos: AnyView?
+    let readingPositionKey: String?
+    let showsCatProfileNavigation: Bool
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -213,7 +226,9 @@ struct HomeView: View {
         catProfilesPresentation: CatProfilesPresentation = .init(),
         catProfilesActions: CatProfilesViewActions = .noOp,
         isEmbedded: Bool = false,
-        supplementaryPhotos: AnyView? = nil
+        supplementaryPhotos: AnyView? = nil,
+        readingPositionKey: String? = nil,
+        showsCatProfileNavigation: Bool = true
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -235,8 +250,10 @@ struct HomeView: View {
         self.catProfilesActions = catProfilesActions
         self.isEmbedded = isEmbedded
         self.supplementaryPhotos = supplementaryPhotos
+        self.readingPositionKey = readingPositionKey
+        self.showsCatProfileNavigation = showsCatProfileNavigation
         _initialReadingIdentifier = State(initialValue: isEmbedded
-            ? PhotoLibraryReadingPosition.identifier(for: "all") : nil)
+            ? PhotoLibraryReadingPosition.identifier(for: readingPositionKey ?? "all") : nil)
     }
 
     var body: some View {
@@ -248,7 +265,7 @@ struct HomeView: View {
                             LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                         }
 
-                        catProfilesSection
+                        if showsCatProfileNavigation { catProfilesSection }
 
                         if case .unavailable = photoSourceStatus {
                             photoSourceRecoveryLink
@@ -262,6 +279,9 @@ struct HomeView: View {
                     .id("photo-library-all-header")
 
                     if !catPhotos.isEmpty {
+                        if scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused {
+                            partialScanStatus
+                        }
                         detectedPhotosSection
                     } else {
                         emptyPhotoState
@@ -276,7 +296,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .restoringPhotoLibraryPosition(section: isEmbedded ? "all" : nil,
+        .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -335,42 +355,74 @@ struct HomeView: View {
 
     private var widgetPlacementCard: some View {
         Button(action: showWidgetPlacementGuide) {
-            HStack(spacing: 14) {
-                Image(systemName: "rectangle.on.rectangle.angled")
-                    .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 14))
-
-                Text("ウィジェットを置く")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color.accentColor.opacity(0.10),
-                in: RoundedRectangle(cornerRadius: 20)
-            )
+            Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("home-widget-placement-guide")
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
+    private var partialScanStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(scan.hasFailed ? "写真の確認を完了できませんでした"
+                  : scan.hasDeferredAssets ? "まだ読み込めない写真があります"
+                  : scan.isPaused ? "写真の確認が一時停止しています" : "写真を確認しています",
+                  systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
+                .font(.subheadline)
+            if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
+                Button("もう一度確認", action: rescan)
+                    .frame(minHeight: 44)
+                    .disabled(scan.isScanning)
+                    .accessibilityIdentifier("photo-library-partial-retry")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("photo-library-partial-status")
+    }
+
+    private var monthDestinations: [(label: String, identifier: String)] {
+        var seen = Set<String>()
+        return catPhotos.compactMap { photo in
+            guard let date = photo.creationDate else { return nil }
+            let components = Calendar.current.dateComponents([.year, .month], from: date)
+            guard let year = components.year, let month = components.month else { return nil }
+            let label = "\(year)年\(month)月"
+            guard seen.insert(label).inserted else { return nil }
+            return (label, photo.localIdentifier)
+        }
+    }
+
+    private func moveToMonth(_ identifier: String) {
+        guard let index = catPhotos.firstIndex(where: { $0.localIdentifier == identifier }) else { return }
+        visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 24)
+        initialReadingIdentifier = identifier
+        PhotoLibraryReadingPosition.returnToOpenedPhoto(
+            PhotoLibraryGridRow.identifier(containing: identifier, in: catPhotos),
+            section: readingPositionKey ?? "all")
+    }
+
     @ViewBuilder private var detectedPhotosSection: some View {
             HStack(alignment: .firstTextBaseline) {
-                Text("すべての猫写真")
+                Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
                     .font(.title3.bold())
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("photo-hub-detected-grid")
                 Spacer()
+                if isEmbedded, !monthDestinations.isEmpty {
+                    Menu {
+                        ForEach(monthDestinations, id: \.identifier) { month in
+                            Button(month.label) { moveToMonth(month.identifier) }
+                        }
+                    } label: {
+                        Image(systemName: "calendar")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("年月へ移動")
+                    .accessibilityIdentifier("photo-library-month-jump")
+                }
                 Text("\(catPhotos.count.formatted())枚")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -449,7 +501,7 @@ struct HomeView: View {
             if catProfilesPresentation.profiles.isEmpty {
                 HStack {
                     Label("猫ごとの写真", systemImage: "cat.fill")
-                        .font(.headline)
+                        .font(.subheadline)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                     Spacer(minLength: 8)
