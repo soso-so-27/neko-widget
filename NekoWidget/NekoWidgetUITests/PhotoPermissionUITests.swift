@@ -53,7 +53,10 @@ final class OfficialWindowUITests: XCTestCase {
         let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
         try foreground(app.buttons.matching(identifier: "photo-browser-rediscover")).tap()
         try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
-        try foreground(app.buttons.matching(
+        // SwiftUI NavigationLink may expose a Link or another element type,
+        // rather than Button. Match the stable tile identity while retaining
+        // the exact-one foreground/hittable requirement used for this sheet.
+        try foreground(app.descendants(matching: .any).matching(
             identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"
         )).tap()
         _ = try foreground(app.images.matching(identifier: "photo-detail-zoom-surface"))
