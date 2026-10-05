@@ -961,7 +961,8 @@ struct LostCatDraftFixtureView: View {
                 .accessibilityIdentifier("lost-cat-export-lifecycle-result")
                 .task {
                     do { try Self.verifyExportLifecycle(image: image); lifecycleResult = "passed" }
-                    catch { lifecycleResult = "failed" }
+                    catch let failure as ExportLifecycleFailure { lifecycleResult = "failed:\(failure.rawValue)" }
+                    catch { lifecycleResult = "failed:operation" }
                 }
         } else if fixtureError {
             Text("入力候補の保存境界が成立しません").accessibilityIdentifier("lost-cat-fixture-error")
@@ -1026,9 +1027,15 @@ struct LostCatDraftFixtureView: View {
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility3 : .large)
     }
 
+    private enum ExportLifecycleFailure: String, Error {
+        case sharedDirectory, missingFile, fileProtection, directoryProtection
+        case foreignCopy, completedExport, activeExport, staleExport, invalidDirectory, symbolicLink
+    }
+
     @MainActor private static func verifyExportLifecycle(image: UIImage) throws {
-        enum Failure: Error { case invariant }
-        func require(_ condition: Bool) throws { if !condition { throw Failure.invariant } }
+        func require(_ condition: Bool, _ failure: ExportLifecycleFailure) throws {
+            if !condition { throw failure }
+        }
         let manager = FileManager.default
         let foreign = manager.temporaryDirectory.appendingPathComponent("lost-cat-fixture-" + UUID().uuidString)
         try manager.createDirectory(at: foreign, withIntermediateDirectories: false)
@@ -1046,24 +1053,27 @@ struct LostCatDraftFixtureView: View {
         let png = try LostCatFlyerRenderer.createImage(draft)
         let pdf = try LostCatFlyerRenderer.createPDF(draft)
         defer { LostCatFlyerRenderer.removeExport(png); LostCatFlyerRenderer.removeExport(pdf) }
-        try require(png.deletingLastPathComponent() != pdf.deletingLastPathComponent())
+        try require(png.deletingLastPathComponent() != pdf.deletingLastPathComponent(), .sharedDirectory)
         for file in [png, pdf] {
-            try require(manager.fileExists(atPath: file.path))
+            try require(manager.fileExists(atPath: file.path), .missingFile)
             for target in [file, file.deletingLastPathComponent()] {
                 let attributes = try manager.attributesOfItem(atPath: target.path)
-                try require(attributes[.protectionKey] as? String == FileProtectionType.complete.rawValue)
+                let protection = (attributes[.protectionKey] as? FileProtectionType)?.rawValue
+                    ?? (attributes[.protectionKey] as? String)
+                try require(protection == FileProtectionType.complete.rawValue,
+                            target == file ? .fileProtection : .directoryProtection)
             }
         }
         LostCatFlyerRenderer.removeExport(saved)
-        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8))
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8), .foreignCopy)
         LostCatFlyerRenderer.removeExport(png)
-        try require(!manager.fileExists(atPath: png.deletingLastPathComponent().path))
-        try require(manager.fileExists(atPath: pdf.path))
+        try require(!manager.fileExists(atPath: png.deletingLastPathComponent().path), .completedExport)
+        try require(manager.fileExists(atPath: pdf.path), .activeExport)
         LostCatFlyerRenderer.cleanupOnLaunch()
-        try require(!manager.fileExists(atPath: pdf.deletingLastPathComponent().path))
-        try require(manager.fileExists(atPath: invalid.path))
-        try require((try link.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink == true)
-        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8))
+        try require(!manager.fileExists(atPath: pdf.deletingLastPathComponent().path), .staleExport)
+        try require(manager.fileExists(atPath: invalid.path), .invalidDirectory)
+        try require((try link.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink == true, .symbolicLink)
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8), .foreignCopy)
     }
 
     @MainActor private static func prepareSavedInformation(key: String, image: UIImage) throws

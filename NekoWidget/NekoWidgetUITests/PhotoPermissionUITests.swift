@@ -702,9 +702,10 @@ final class OfficialWindowUITests: XCTestCase {
         app.launch()
         let result = app.staticTexts["lost-cat-export-lifecycle-result"]
         XCTAssertTrue(result.waitForExistence(timeout: 10))
-        let passed = NSPredicate(format: "label == %@", "passed")
-        expectation(for: passed, evaluatedWith: result)
+        let finished = NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "passed", "failed:")
+        expectation(for: finished, evaluatedWith: result)
         waitForExpectations(timeout: 10)
+        XCTAssertEqual(result.label, "passed", "Export lifecycle fixture reported a bounded failure code")
     }
 
     @MainActor
