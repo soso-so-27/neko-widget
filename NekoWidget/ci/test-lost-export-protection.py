@@ -29,12 +29,13 @@ class LostExportProtectionTests(unittest.TestCase):
     def test_diagnostics_are_closed_and_do_not_expose_underlying_errors(self):
         definition = SOURCE.split("struct ExportProtectionFailure", 1)[1].split("static func removeExport", 1)[0]
         self.assertIn("case directory, file", definition)
-        self.assertIn("case setFailed, readFailed, missing, unknownType, wrongClass", definition)
+        self.assertIn("case createFailed, writeFailed, setFailed, readFailed, missing, unknownType, wrongClass", definition)
         for reason in ("setFailed", "readFailed", "missing", "unknownType", "wrongClass"):
             self.assertIn("reason: ." + reason, definition)
-        for forbidden in ("localizedDescription", "NSError", "url.path)", "error.userInfo"):
-            if forbidden != "url.path)":
-                self.assertNotIn(forbidden, definition)
+        for forbidden in ("localizedDescription", "NSError", "error.userInfo"):
+            self.assertNotIn(forbidden, definition)
+        self.assertIn("target: .directory, reason: .createFailed", SOURCE)
+        self.assertIn("target: .file, reason: .writeFailed", SOURCE)
         fixture = (ROOT / "NekoWidget/NekoWidget/Views/CatPreparednessView.swift").read_text(encoding="utf-8")
         self.assertIn("catch let failure as LostCatFlyerRenderer.ExportProtectionFailure", fixture)
         self.assertIn("failure.diagnosticCode", fixture)

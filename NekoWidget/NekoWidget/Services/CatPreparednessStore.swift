@@ -461,10 +461,13 @@ enum LostCatFlyerRenderer {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(exportPrefix + UUID().uuidString)
         let file = directory.appendingPathComponent(fileName)
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
-                                                   attributes: [.protectionKey: FileProtectionType.complete])
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                       attributes: [.protectionKey: FileProtectionType.complete])
+            } catch { throw ExportProtectionFailure(target: .directory, reason: .createFailed) }
             try enforceExportProtection(directory, target: .directory)
-            try data.write(to: file, options: [.atomic, .completeFileProtection])
+            do { try data.write(to: file, options: [.atomic, .completeFileProtection]) }
+            catch { throw ExportProtectionFailure(target: .file, reason: .writeFailed) }
             // Atomic writing replaces the destination inode. Apply and verify
             // protection on the final file before exposing it to a share sheet.
             try enforceExportProtection(file, target: .file)
@@ -474,7 +477,7 @@ enum LostCatFlyerRenderer {
 
     struct ExportProtectionFailure: Error {
         enum Target: String { case directory, file }
-        enum Reason: String { case setFailed, readFailed, missing, unknownType, wrongClass }
+        enum Reason: String { case createFailed, writeFailed, setFailed, readFailed, missing, unknownType, wrongClass }
         let target: Target
         let reason: Reason
         var diagnosticCode: String { "protection-\(target.rawValue)-\(reason.rawValue)" }
