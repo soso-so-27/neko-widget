@@ -1672,6 +1672,10 @@ struct SavedMemoriesGalleryView: View {
     let photos: [PhotoPresentation]
     let isDedicatedPhotoBookFlow: Bool
     let isEmbedded: Bool
+    let readingPositionKey: String?
+    let unavailableSavedPhotoCount: Int
+    let hasPhotoAccess: Bool
+    let savedStateReadFailed: Bool
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var creationOutput: CreationOutput?
@@ -1688,11 +1692,19 @@ struct SavedMemoriesGalleryView: View {
         photos: [PhotoPresentation],
         startsInExportMode: Bool,
         isEmbedded: Bool = false,
+        readingPositionKey: String? = nil,
+        unavailableSavedPhotoCount: Int = 0,
+        hasPhotoAccess: Bool = true,
+        savedStateReadFailed: Bool = false,
         exportPhotoBook: @escaping ([String]) async throws -> URL
     ) {
         self.photos = photos
         self.isDedicatedPhotoBookFlow = startsInExportMode
         self.isEmbedded = isEmbedded
+        self.readingPositionKey = readingPositionKey
+        self.unavailableSavedPhotoCount = max(0, unavailableSavedPhotoCount)
+        self.hasPhotoAccess = hasPhotoAccess
+        self.savedStateReadFailed = savedStateReadFailed
         self.exportPhotoBook = exportPhotoBook
         _creationOutput = State(initialValue: startsInExportMode ? .pdf : nil)
         _selectedExportIdentifiers = State(initialValue: Set<String>())
@@ -1704,15 +1716,14 @@ struct SavedMemoriesGalleryView: View {
 
     var body: some View {
         ZStack {
-            if photos.isEmpty {
-                ContentUnavailableView(
-                    "まだありません",
-                    systemImage: "bookmark",
-                    description: Text("写真で「お気に入りに追加」を押すと、ここに並びます")
-                )
+            if !hasPhotoAccess || photos.isEmpty {
+                emptyGalleryState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 3) {
+                        if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
+                            unavailableSavedPhotosBanner
+                        }
                         ForEach(PhotoLibraryGridRow.rows(photos)) { row in
                             PhotoLibraryGridRowView(row: row, spacing: 3) { photo in
                                 gridItem(photo)
@@ -1724,7 +1735,7 @@ struct SavedMemoriesGalleryView: View {
                     .scrollTargetLayout(isEnabled: isEmbedded)
                     .padding(3)
                 }
-                .restoringPhotoLibraryPosition(section: isEmbedded ? "favorites" : nil,
+                .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") : nil,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: photos) })
             }
         }
@@ -1733,9 +1744,9 @@ struct SavedMemoriesGalleryView: View {
         .background(Color(.systemGroupedBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("saved-memories-gallery")
-        .accessibilityValue("お気に入り、\(photos.count.formatted())枚")
+        .accessibilityValue(galleryAccessibilityValue)
         .toolbar {
-            if !photos.isEmpty {
+            if hasPhotoAccess && !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(isSelectingForExport ? "キャンセル" : "作成") {
                         toggleExportMode()
@@ -1746,7 +1757,7 @@ struct SavedMemoriesGalleryView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if isSelectingForExport {
+            if hasPhotoAccess && isSelectingForExport {
                 exportActionBar
             }
         }
@@ -1787,6 +1798,52 @@ struct SavedMemoriesGalleryView: View {
             photoBookExportTask?.cancel()
             photoBookExportTask = nil
         }
+    }
+
+    @ViewBuilder
+    private var emptyGalleryState: some View {
+        if !hasPhotoAccess {
+            ContentUnavailableView("写真許可を確認してください", systemImage: "photo",
+                description: Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。設定で写真許可を確認してください。"))
+                .accessibilityIdentifier("saved-memories-photo-access-unavailable")
+        } else if savedStateReadFailed {
+            ContentUnavailableView("お気に入りを確認できませんでした", systemImage: "exclamationmark.triangle",
+                description: Text("保存状態を読み込めませんでした。時間をおいて、もう一度開いてください。"))
+                .accessibilityIdentifier("saved-memories-state-read-failed")
+        } else if unavailableSavedPhotoCount > 0 {
+            ContentUnavailableView("お気に入りの写真を表示できません", systemImage: "photo",
+                description: Text("お気に入りに保存された写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真許可や元の写真を確認してください。"))
+                .accessibilityIdentifier("saved-memories-photos-unavailable")
+        } else {
+            ContentUnavailableView("まだありません", systemImage: "bookmark",
+                description: Text("写真で「お気に入りに追加」を押すと、ここに並びます"))
+                .accessibilityIdentifier("saved-memories-empty")
+        }
+    }
+
+    private var unavailableSavedPhotosBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if savedStateReadFailed {
+                Label("お気に入りの保存状態を確認できませんでした", systemImage: "exclamationmark.triangle")
+                Text("表示できる写真は残しています。時間をおいて、もう一度開いてください。")
+            } else {
+                Label("表示できないお気に入りが\(unavailableSavedPhotoCount.formatted())枚あります", systemImage: "photo")
+                Text("写真許可や元の写真を確認してください。表示できる写真は下に並んでいます。")
+            }
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .accessibilityIdentifier("saved-memories-partially-unavailable")
+    }
+
+    private var galleryAccessibilityValue: String {
+        guard hasPhotoAccess else { return "お気に入り、写真許可を確認してください" }
+        if savedStateReadFailed { return "お気に入り、表示できる写真\(photos.count.formatted())枚、保存状態は確認できません" }
+        if unavailableSavedPhotoCount > 0 {
+            return "お気に入り、表示できる写真\(photos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
+        }
+        return "お気に入り、\(photos.count.formatted())枚"
     }
 
     private var creationOptions: some View {
