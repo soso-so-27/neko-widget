@@ -3323,6 +3323,88 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        openPhotosTab(in: app)
+        app.buttons["window-settings-button"].tap()
+        let profiles = app.buttons["settings-cat-profiles"]
+        XCTAssertTrue(profiles.waitForExistence(timeout: 10))
+        reveal(profiles, in: app)
+        profiles.tap()
+        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 10))
+        let cat = app.buttons.matching(identifier: "cat-profile-open")
+            .matching(NSPredicate(format: "label CONTAINS %@", "ミケ")).firstMatch
+        XCTAssertTrue(cat.waitForExistence(timeout: 10))
+        reveal(cat, in: app)
+        cat.tap()
+        XCTAssertTrue(app.navigationBars["ミケ"].waitForExistence(timeout: 5))
+        let photosEntry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "この子の写真を見る")).firstMatch
+        reveal(photosEntry, in: app)
+        photosEntry.tap()
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+        let entry = app.buttons["cat-profile-open-albums"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertTrue(entry.isHittable, "The album entry must remain reachable at the largest text size.")
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let closeUp = element("album-secondary-close_up", in: app)
+        reveal(closeUp, in: app)
+        closeUp.tap()
+        XCTAssertTrue(app.navigationBars["大きく写った猫"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, "ミケ")
+        selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
+        let photos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
+        XCTAssertEqual(photos.count, 0, "An empty cat scope must not show another cat's photos.")
+        XCTAssertTrue(element("album-scope-empty", in: app).exists)
+        app.navigationBars["大きく写った猫"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        app.buttons["cat-profile-albums-close"].tap()
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
+        let albumNavigationBar = app.navigationBars["ミケのアルバム"]
+        // Drag the sheet's navigation chrome, not the scrollable album content.
+        let dragStart = albumNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        let dragEnd = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragEnd)
+        let close = app.buttons["cat-profile-albums-close"]
+        let returnedToPhotos = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard !albumNavigationBar.exists, !close.exists,
+                  app.navigationBars["ミケの写真"].exists,
+                  entry.exists, entry.isEnabled, entry.isHittable else { return false }
+            let frame = entry.frame
+            return !frame.isEmpty && app.windows.firstMatch.frame.contains(frame)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [returnedToPhotos], timeout: 5) == .completed else {
+            XCTFail("Swiping the album sheet must dismiss it and restore the visible, tappable album entry.")
+            return
+        }
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(entry.isHittable)
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-photo").count, 1)
+        entry.tap()
+        XCTAssertTrue(albumNavigationBar.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !albumNavigationBar.exists && !close.exists
+                && app.navigationBars["ミケの写真"].exists && entry.isHittable
+        }, object: nil)], timeout: 5), .completed,
+                       "The reopened album must also close back to the same cat's photos.")
+        app.terminate()
+    }
+
+    @MainActor
     func testCatPhotoRootFilterLargeTextAndViewerReturn() {
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",
