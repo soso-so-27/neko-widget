@@ -437,6 +437,10 @@ enum LostCatFlyerRenderer {
     private static let exportPrefix = "lost-cat-export-"
 
     static func createImage(_ draft: LostCatPublicDraft) throws -> URL {
+        try writeExport(imageData(draft), fileName: "迷子の猫.png")
+    }
+
+    private static func imageData(_ draft: LostCatPublicDraft) throws -> Data {
         guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
         let rendererFormat = UIGraphicsImageRendererFormat()
         rendererFormat.scale = 1
@@ -444,20 +448,59 @@ enum LostCatFlyerRenderer {
         let image = UIGraphicsImageRenderer(size: layout(draft, format: .social).0.size, format: rendererFormat)
             .image { draw(draft, format: .social, context: $0.cgContext) }
         guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
-        return try writeExport(data, fileName: "迷子の猫.png")
+        return data
     }
 
     static func createPDF(_ draft: LostCatPublicDraft) throws -> URL {
+        try writeExport(pdfData(draft), fileName: "迷子の猫.pdf")
+    }
+
+    private static func pdfData(_ draft: LostCatPublicDraft) throws -> Data {
         guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: paperSize))
         let data = renderer.pdfData { context in
             context.beginPage()
             draw(draft, format: .paper, context: context.cgContext)
         }
-        return try writeExport(data, fileName: "迷子の猫.pdf")
+        return data
     }
 
-    private static func writeExport(_ data: Data, fileName: String) throws -> URL {
+    private enum ProtectionVerification {
+        case native
+        #if DEBUG
+        // Explicit fixture injection is absent from Release builds.
+        case fixture((URL, ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any])
+        #endif
+
+        func verify(_ url: URL, target: ExportProtectionFailure.Target) throws {
+            switch self {
+            case .native: try LostCatFlyerRenderer.enforceExportProtection(url, target: target)
+            #if DEBUG
+            case .fixture(let verify):
+                // Keep actual filesystem setting; only the unavailable readback
+                // is modeled by this explicitly DEBUG-only verifier.
+                do { try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path) }
+                catch { throw ExportProtectionFailure(target: target, reason: .setFailed) }
+                try LostCatFlyerRenderer.validateExportProtection(verify(url, target, .complete), target: target)
+            #endif
+            }
+        }
+    }
+
+    #if DEBUG
+    static func createFixtureImage(_ draft: LostCatPublicDraft,
+        verify: @escaping (URL, ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any]) throws -> URL {
+        try writeExport(imageData(draft), fileName: "迷子の猫.png", verification: .fixture(verify))
+    }
+
+    static func createFixturePDF(_ draft: LostCatPublicDraft,
+        verify: @escaping (URL, ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any]) throws -> URL {
+        try writeExport(pdfData(draft), fileName: "迷子の猫.pdf", verification: .fixture(verify))
+    }
+    #endif
+
+    private static func writeExport(_ data: Data, fileName: String,
+                                    verification: ProtectionVerification = .native) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(exportPrefix + UUID().uuidString)
         let file = directory.appendingPathComponent(fileName)
         do {
@@ -465,12 +508,12 @@ enum LostCatFlyerRenderer {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                        attributes: [.protectionKey: FileProtectionType.complete])
             } catch { throw ExportProtectionFailure(target: .directory, reason: .createFailed) }
-            try enforceExportProtection(directory, target: .directory)
+            try verification.verify(directory, target: .directory)
             do { try data.write(to: file, options: [.atomic, .completeFileProtection]) }
             catch { throw ExportProtectionFailure(target: .file, reason: .writeFailed) }
             // Atomic writing replaces the destination inode. Apply and verify
             // protection on the final file before exposing it to a share sheet.
-            try enforceExportProtection(file, target: .file)
+            try verification.verify(file, target: .file)
             return file
         } catch { removeExport(file); throw error }
     }
@@ -491,6 +534,11 @@ enum LostCatFlyerRenderer {
         let attributes: [FileAttributeKey: Any]
         do { attributes = try manager.attributesOfItem(atPath: url.path) }
         catch { throw ExportProtectionFailure(target: target, reason: .readFailed) }
+        try validateExportProtection(attributes, target: target)
+    }
+
+    private static func validateExportProtection(_ attributes: [FileAttributeKey: Any],
+                                                target: ExportProtectionFailure.Target) throws {
         guard let value = attributes[.protectionKey] else {
             throw ExportProtectionFailure(target: target, reason: .missing)
         }

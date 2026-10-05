@@ -11,9 +11,9 @@ class LostExportProtectionTests(unittest.TestCase):
         baseline = subprocess.check_output(["git", "show", "b2a6d82:" + PATH], cwd=ROOT).decode("utf-8")
         self.assertNotIn("try enforceExportProtection(file)", baseline)
         writer = SOURCE.split("private static func writeExport", 1)[1].split("private static func enforceExportProtection", 1)[0]
-        self.assertLess(writer.index("try enforceExportProtection(directory, target: .directory)"), writer.index("try data.write"))
-        self.assertLess(writer.index("try data.write"), writer.index("try enforceExportProtection(file, target: .file)"))
-        self.assertLess(writer.index("try enforceExportProtection(file, target: .file)"), writer.index("return file"))
+        self.assertLess(writer.index("try verification.verify(directory, target: .directory)"), writer.index("try data.write"))
+        self.assertLess(writer.index("try data.write"), writer.index("try verification.verify(file, target: .file)"))
+        self.assertLess(writer.index("try verification.verify(file, target: .file)"), writer.index("return file"))
         self.assertIn("catch { removeExport(file); throw error }", writer)
 
     def test_protection_is_set_verified_strictly_and_not_skipped_on_simulator(self):
@@ -41,12 +41,13 @@ class LostExportProtectionTests(unittest.TestCase):
         self.assertIn("failure.diagnosticCode", fixture)
 
     def test_image_and_pdf_remain_on_same_owned_lifecycle(self):
-        self.assertEqual(SOURCE.count("return try writeExport(data, fileName:"), 2)
+        self.assertIn('try writeExport(imageData(draft), fileName: "迷子の猫.png")', SOURCE)
+        self.assertIn('try writeExport(pdfData(draft), fileName: "迷子の猫.pdf")', SOURCE)
         self.assertIn("value.deletingLastPathComponent() == root", SOURCE)
         self.assertIn("UUID(uuidString: String(value.lastPathComponent.dropFirst(exportPrefix.count)))", SOURCE)
         self.assertIn(".isSymbolicLinkKey", SOURCE)
         fixture = (ROOT / "NekoWidget/NekoWidget/Views/CatPreparednessView.swift").read_text(encoding="utf-8")
-        self.assertIn("try require(protection == FileProtectionType.complete.rawValue", fixture)
-        self.assertIn(".fileProtection : .directoryProtection", fixture)
+        self.assertIn("verifiedTargets == [.directory, .file, .directory, .file]", fixture)
+        self.assertIn("requested == .complete", fixture)
 
 if __name__ == "__main__": unittest.main()
