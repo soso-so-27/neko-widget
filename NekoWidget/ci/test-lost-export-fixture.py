@@ -12,7 +12,7 @@ class LostExportFixtureTests(unittest.TestCase):
         source = VIEW.read_text(encoding="utf-8")
         case = source.split("static func verifyExportLifecycle", 1)[1].split("static func prepareSavedInformation", 1)[0]
         self.assertIn("[LostCatFlyerRenderer.createImage, LostCatFlyerRenderer.createPDF]", case)
-        self.assertIn("failure.reason == .missing", case)
+        self.assertIn("failure.target == .directory && failure.reason == .missing", case)
         self.assertIn("try require(nativeMissing", case)
         self.assertIn("try ownedDirectories() == before", case)
         self.assertLess(case.index("try require(nativeMissing"), case.index("createFixtureImage"))

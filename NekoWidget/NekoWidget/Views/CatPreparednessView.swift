@@ -1100,7 +1100,7 @@ struct LostCatDraftFixtureView: View {
             do { let file = try create(draft); LostCatFlyerRenderer.removeExport(file) }
             catch let failure as LostCatFlyerRenderer.ExportProtectionFailure {
                 #if targetEnvironment(simulator)
-                try require(failure.reason == .missing, .directoryProtection)
+                try require(failure.target == .directory && failure.reason == .missing, .directoryProtection)
                 nativeMissing = true
                 #else
                 throw failure
