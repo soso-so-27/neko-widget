@@ -2358,6 +2358,10 @@ private struct ClosePhotoRelatedAlbumsKey: EnvironmentKey {
     static var defaultValue: (() -> Void)? { nil }
 }
 
+private struct PhotoRediscoveryEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 private struct PhotoRediscoveryScopeKey: EnvironmentKey {
     static var defaultValue: CatProfileScopePresentation { .everyone }
 }
@@ -2376,6 +2380,11 @@ extension EnvironmentValues {
     var closePhotoRelatedAlbums: (() -> Void)? {
         get { self[ClosePhotoRelatedAlbumsKey.self] }
         set { self[ClosePhotoRelatedAlbumsKey.self] = newValue }
+    }
+
+    var photoRediscoveryEnabled: Bool {
+        get { self[PhotoRediscoveryEnabledKey.self] }
+        set { self[PhotoRediscoveryEnabledKey.self] = newValue }
     }
 
     var photoRediscoveryScope: CatProfileScopePresentation {
@@ -2409,6 +2418,7 @@ struct PhotoBrowserView: View {
     @Environment(\.openPhotoRelatedAlbum) private var openRelatedAlbum
     @Environment(\.closePhotoRelatedAlbums) private var closeRelatedAlbums
     @Environment(\.photoRediscoveryScope) private var rediscoveryScope
+    @Environment(\.photoRediscoveryEnabled) private var rediscoveryEnabled
     @Environment(\.showcaseOpenOne) private var showcaseOpenOne
     @Environment(\.showcaseAddPhoto) private var showcaseAddPhoto
 
@@ -2745,10 +2755,10 @@ struct PhotoBrowserView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if openRelatedAlbum != nil,
+                if rediscoveryEnabled, openRelatedAlbum != nil,
                    !(relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty {
                     Menu {
-                        if let photo = selectedPhoto, let date = photo.creationDate,
+                        if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
                            dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                             sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
                                 .accessibilityIdentifier("photo-browser-same-day")
@@ -2781,7 +2791,7 @@ struct PhotoBrowserView: View {
                         }
                         Divider()
                     }
-                    if let photo = selectedPhoto, let date = photo.creationDate,
+                    if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
                             .accessibilityIdentifier("photo-browser-same-day")

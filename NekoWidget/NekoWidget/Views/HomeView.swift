@@ -135,11 +135,13 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     userScrolled = false
                     position = saved
                     isVisible = true
+                    PhotoLibraryReadingPosition.activeSection = section
                     PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
                 }
                 .onDisappear { isVisible = false; restorationGeneration += 1 }
                 .onChange(of: self.section) { _, newSection in
                     restorationGeneration += 1
+                    if isVisible { PhotoLibraryReadingPosition.activeSection = newSection }
                     userScrolled = false
                     position = newSection.flatMap { PhotoLibraryReadingPosition.identifier(for: $0) }.map(normalize)
                 }
@@ -175,6 +177,12 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
             content
         }
     }
+}
+
+private struct PhotoLibraryMonthDestination: Identifiable {
+    let label: String
+    let identifier: String
+    var id: String { identifier }
 }
 
 struct HomeView: View {
@@ -383,7 +391,7 @@ struct HomeView: View {
         .accessibilityIdentifier("photo-library-partial-status")
     }
 
-    private var monthDestinations: [(label: String, identifier: String)] {
+    private var monthDestinations: [PhotoLibraryMonthDestination] {
         var seen = Set<String>()
         return catPhotos.compactMap { photo in
             guard let date = photo.creationDate else { return nil }
@@ -391,7 +399,7 @@ struct HomeView: View {
             guard let year = components.year, let month = components.month else { return nil }
             let label = "\(year)年\(month)月"
             guard seen.insert(label).inserted else { return nil }
-            return (label, photo.localIdentifier)
+            return PhotoLibraryMonthDestination(label: label, identifier: photo.localIdentifier)
         }
     }
 
@@ -413,7 +421,7 @@ struct HomeView: View {
                 Spacer()
                 if isEmbedded, !monthDestinations.isEmpty {
                     Menu {
-                        ForEach(monthDestinations, id: \.identifier) { month in
+                        ForEach(monthDestinations) { month in
                             Button(month.label) { moveToMonth(month.identifier) }
                         }
                     } label: {
@@ -575,6 +583,11 @@ struct HomeView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 320)
             .accessibilityIdentifier("photo-hub-scan-failed")
+        } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
+            ContentUnavailableView("この表示の写真がありません", systemImage: "photo.on.rectangle",
+                description: Text("猫の選択、写真の所属、写真へのアクセス範囲を確認してください。"))
+                .frame(maxWidth: .infinity, minHeight: 280)
+                .accessibilityIdentifier("photo-library-scoped-empty")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")

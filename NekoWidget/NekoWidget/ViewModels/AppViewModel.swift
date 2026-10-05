@@ -3454,6 +3454,7 @@ final class AppViewModel: ObservableObject {
                     source: "received-memory-deleted"
                 ) {
                     sharedLikeRecords[identifier] = mutation.record
+                    savedPhotoIdentifiers = Set(sharedLikeRecords.compactMap { $0.value.isLiked ? $0.key : nil })
                 }
             }
         }

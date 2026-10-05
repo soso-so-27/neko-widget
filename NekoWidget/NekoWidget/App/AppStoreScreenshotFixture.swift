@@ -834,6 +834,7 @@ private struct SoloMemoriesFixtureView: View {
                 case .favorites:
                     SavedMemoriesGalleryView(
                         photos: savedPhotos, startsInExportMode: false,
+                        hasPhotoAccess: hasPhotoAccess,
                         exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) }
                     )
                 case .reflectionsArchive:
@@ -918,7 +919,8 @@ private struct SoloMemoriesFixtureView: View {
                     catPhotos: fixturePhotos, isEmbedded: true)
             case .favorites:
                 SavedMemoriesGalleryView(photos: savedPhotos, startsInExportMode: false,
-                    isEmbedded: true, exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
+                    isEmbedded: true, hasPhotoAccess: hasPhotoAccess,
+                    exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
             case .notes:
                 PhotoMemoryNotesListView(photos: fixturePhotos, store: persistence.memoryNotes,
                     archiveStore: persistence.archive, isEmbedded: true) { photoSection = .all }
