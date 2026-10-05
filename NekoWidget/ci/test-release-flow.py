@@ -78,8 +78,8 @@ class ReleaseFlowTests(unittest.TestCase):
     def test_only_exact_reviewed_app_ui_result_budget_is_control_plane(self):
         path = ".github/workflows/ios-build.yml"
         before = (CI.parents[1] / path).read_text(encoding="utf-8")
-        old = "    # Full UI execution can consume 60 minutes before result/attachment export.\n    timeout-minutes: 60\n"
-        new = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+        old = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+        new = "    # Reserve 15 minutes after the observed 74-minute UI run for result and artifact export.\n    timeout-minutes: 90\n"
         # This test runs before and after adoption without changing the fixture.
         if new in before:
             before = before.replace(new, old, 1)
@@ -87,9 +87,10 @@ class ReleaseFlowTests(unittest.TestCase):
         after = before.replace(old, new, 1)
         for candidate, expected in (
             (after, True),
-            (after.replace("timeout-minutes: 75", "timeout-minutes: 90"), False),
-            (after.replace("timeout-minutes: 75", "timeout-minutes: 30"), False),
-            (after.replace("timeout-minutes: 40", "timeout-minutes: 75"), False),
+            (after.replace("timeout-minutes: 90", "timeout-minutes: 120"), False),
+            (after.replace("timeout-minutes: 90", "timeout-minutes: 75"), False),
+            (after.replace("timeout-minutes: 90", "timeout-minutes: 30"), False),
+            (after.replace("timeout-minutes: 40", "timeout-minutes: 90"), False),
             (after.replace("run: bash ci/run-sharing-runtime-matrix.sh", "run: true"), False),
             (after.replace("retention-days: 7", "retention-days: 0"), False),
             (after.replace("if: needs.plan.outputs.app_ui == 'true'", "if: false"), False),
@@ -100,7 +101,7 @@ class ReleaseFlowTests(unittest.TestCase):
                 self.assertEqual(planner.orchestration_only([path], "old", "new"), expected)
         # Reject native/build changes when there is no budget correction as well.
         with patch.object(planner, "development_tools_only", return_value=True), \
-                patch.object(planner, "git", side_effect=[before, before.replace("timeout-minutes: 60", "timeout-minutes: 75")]):
+                patch.object(planner, "git", side_effect=[before, before.replace("timeout-minutes: 75", "timeout-minutes: 80", 1)]):
             self.assertFalse(planner.orchestration_only([path], "old", "new"))
 
     def test_same_repo_pr_does_not_duplicate_push_and_main_run_is_not_cancelled(self):

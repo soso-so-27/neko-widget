@@ -375,24 +375,28 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
 
 
 def photo_correction_replay_cost(result, correction, include_upload, history):
-    """Use measured complete owning jobs, not the partial failed duration.
+    """Bound replay cost by the new timeout and retain the incomplete-run evidence.
 
-    This estimate does not authorize reuse. The caller has already qualified
-    the exact source/whole-file correction and all five successful siblings.
+    The cancelled source lane is never success evidence. The caller has already
+    qualified its exact log signature and the four successful unaffected jobs.
     Preserve the original full estimate and elapsed/failure/active gates.
     """
     if (result.get("scope") != scope.FULL_SCOPE or not isinstance(correction, dict)
             or correction.get("run_id") != planner.PHOTO_SMOKE_CORRECTION_RUN
             or correction.get("sha") != planner.PHOTO_SMOKE_CORRECTION_SOURCE):
         return result
-    references = ((111435105247, planner.SMOKE),
-                  (111435105277, scope.lane_job(scope.FULL_SCOPE, "app-ui-other")))
+    references = ((111435105247, planner.SMOKE, planner.ALBUM_CORRECTION_RUN,
+                   planner.ALBUM_CORRECTION_SOURCE, "success"),
+                  (111435105277, scope.lane_job(scope.FULL_SCOPE, "app-ui-other"),
+                   planner.ALBUM_CORRECTION_RUN, planner.ALBUM_CORRECTION_SOURCE, "success"),
+                  (planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID, planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB,
+                   planner.PHOTO_SMOKE_CORRECTION_RUN, planner.PHOTO_SMOKE_CORRECTION_SOURCE, "cancelled"))
     minutes = []
-    for job_id, name in references:
+    for job_id, name, expected_run, expected_sha, expected_conclusion in references:
         job = github(f"repos/{REPOSITORY}/actions/jobs/{job_id}")
-        if (job.get("id") != job_id or job.get("run_id") != planner.ALBUM_CORRECTION_RUN
-                or job.get("head_sha") != planner.ALBUM_CORRECTION_SOURCE or job.get("name") != name
-                or (job.get("status"), job.get("conclusion")) != ("completed", "success")):
+        if (job.get("id") != job_id or job.get("run_id") != expected_run
+                or job.get("head_sha") != expected_sha or job.get("name") != name
+                or (job.get("status"), job.get("conclusion")) != ("completed", expected_conclusion)):
             raise ValueError("Complete owning-job timing reference is unavailable")
         parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
         elapsed = (parse(job["completed_at"]) - parse(job["started_at"])).total_seconds() / 60
@@ -402,15 +406,22 @@ def photo_correction_replay_cost(result, correction, include_upload, history):
     upload = float(history["upload_minutes"]) if include_upload else 0
     if not math.isfinite(upload) or upload < 0:
         raise ValueError("Invalid upload timing reference")
-    upper = round(max(minutes) + upload, 2)
+    # The longest observed source lane reached the old 75-minute job ceiling
+    # after XCTest passed but while its result artifact was being exported.
+    # Reserve the newly configured 90-minute ceiling for the retry instead of
+    # treating that cancelled run as a completed-duration measurement.
+    ci_budget = max(float(planner.PHOTO_SMOKE_CORRECTION_SOLO_TIMEOUT_MINUTES), max(minutes))
+    upper = round(ci_budget + upload, 2)
     result = dict(result)
     result["full_cost_before_correction"] = result["cost"]
-    result["cost"] = {"status": "reference", "ci_minutes": [round(max(minutes), 2)] * 2,
+    result["cost"] = {"status": "reference", "ci_minutes": [round(ci_budget, 2)] * 2,
                       "with_upload_minutes": [upper] * 2,
-                      "reference_run": planner.ALBUM_CORRECTION_RUN,
-                      "owning_job_minutes": dict((name, round(value, 2)) for (_, name), value in zip(references, minutes)),
+                      "reference_runs": [planner.ALBUM_CORRECTION_RUN, planner.PHOTO_SMOKE_CORRECTION_RUN],
+                      "owning_job_minutes": dict((name, round(value, 2)) for (_, name, _, _, _), value in zip(references, minutes)),
+                      "app_ui_solo_timeout_minutes": planner.PHOTO_SMOKE_CORRECTION_SOLO_TIMEOUT_MINUTES,
+                      "source_app_ui_solo_incomplete_minutes": round(minutes[-1], 2),
                       "includes_future_rework": False,
-                      "note": "Complete smoke and app-ui-other measured reference; parallel wall time estimate, not a guarantee or speedup result."}
+                      "note": "The source app-ui-solo job is incomplete, not success evidence: XCTest logged 46/46 passing before artifact export failed under the old 75-minute ceiling. Re-run all three owning lanes with a 90-minute ceiling; reuse only four successful siblings. Estimate is not a guarantee or speedup result."}
     result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
     return result

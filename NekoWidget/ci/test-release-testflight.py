@@ -150,7 +150,7 @@ class ReleaseTests(unittest.TestCase):
     def test_vet_correction_requires_old_native_jobs_and_new_ui(self):
         self.test_lost_cat_test_correction_requires_old_three_jobs_and_new_app_ui(release.planner.VET_SAVED_CAT_SCOPE)
 
-    def test_photo_correction_release_and_main_require_old_five_and_new_both_jobs(self):
+    def test_photo_correction_release_and_main_require_four_reused_and_three_rerun_jobs(self):
         self.test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(photo=True)
 
     def test_album_release_rechecks_old_six_jobs_exact_graph_and_new_solo(self, photo=False):
@@ -164,6 +164,21 @@ class ReleaseTests(unittest.TestCase):
             {"id": 302 + index, "name": name, "head_sha": source_sha, "status": "completed",
              "conclusion": "failure" if name in owning else "success", "completed_at": self.now.isoformat()}
             for index, name in enumerate(required)]
+        solo_log = None
+        if photo:
+            solo = next(job for job in old_jobs[1:] if job["name"] == planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB)
+            solo.update(id=planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID, conclusion="cancelled", steps=[
+                {"name": "Run sharing runtime matrix", "status": "completed", "conclusion": "cancelled"},
+                {"name": "Upload sharing runtime matrix artifacts", "status": "completed", "conclusion": "failure"},
+            ])
+            solo_log = (
+                "Test Suite 'SoloMemoriesUITests' passed at 2026-10-05 01:13:21.029.\n"
+                + "Executed 46 tests, with 0 failures (0 unexpected) in 3676.850 (3676.913) seconds\n" * 3
+                + "** TEST SUCCEEDED **\n"
+                + "Sharing checks [app-ui-solo; scope full-v1]\tUpload sharing runtime matrix artifacts\n"
+                + "Error: ENOENT: no such file or directory, open '/Users/runner/work/_temp/MomentComposer.xcresult/Staging/1_Test/Diagnostics/session.log'\n"
+                + "Error: An error has occurred during zip creation for the artifact\n"
+            )
         evidence = {"run_id": source_id, "sha": source_sha,
                     "jobs": [{"name": job["name"], "job_id": job["id"]} for job in old_jobs[1:] if job["name"] not in owning]}
         self.plan.update(required_jobs=list(required), test_correction_evidence=evidence)
@@ -180,7 +195,10 @@ class ReleaseTests(unittest.TestCase):
             failure_log = "\n".join("Test Case '-[NekoWidgetUITests." + case.replace("/", " ") + "]' failed"
                                     for case in sorted(planner.PHOTO_SMOKE_CORRECTION_CASES))
             for job in old_jobs[1:]:
-                if job["name"] in owning: self.gh.logs[(source_id, job["id"])] = failure_log
+                if job["name"] in (planner.SMOKE, planner.lane_job(planner.FULL_SCOPE, "app-ui-other")):
+                    self.gh.logs[(source_id, job["id"])] = failure_log
+                elif job["name"] == planner.PHOTO_SMOKE_CORRECTION_SOLO_JOB:
+                    self.gh.logs[(source_id, job["id"])] = solo_log
         with patch.object(planner, "test_correction_inputs", return_value=True), \
                 patch.object(planner, "sharing_jobs", side_effect=lambda selected: tuple(required[2:]) if selected == planner.FULL_SCOPE else ()):
             self.assertEqual(release.check_ci(self.gh, self.sha, 20, self.now)["reused_run"], source_id)
