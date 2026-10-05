@@ -77,7 +77,7 @@ def read_task_runs(head=None):
             if jobs["total_count"] >= 100:
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
-                if "[app-ui" in job["name"] and job["conclusion"] in {"failure", "timed_out"}:
+                if ("[app-ui" in job["name"] or job["name"] == planner.SMOKE) and job["conclusion"] in {"failure", "timed_out"}:
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
                     cases = sorted(set(re.findall(
                         r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)))
@@ -306,7 +306,11 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     blockers = []
     if active:
         blockers.append("ci_already_running")
-    correction_cases = ({planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
+    photo_smoke_correction = (result.get("scope") == scope.FULL_SCOPE and correction_evidence is not None
+                             and correction_evidence.get("run_id") == planner.PHOTO_SMOKE_CORRECTION_RUN
+                             and correction_evidence.get("sha") == planner.PHOTO_SMOKE_CORRECTION_SOURCE)
+    correction_cases = (planner.PHOTO_SMOKE_CORRECTION_CASES if photo_smoke_correction else
+                        {planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
                         {"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
                          "SoloMemoriesUITests/testManagedPreservationAccountDeletionRetainsReceiptAndCompletes"}
                         if result.get("scope") == scope.REVIEWED_MANAGED_PRESERVATION_SCOPE else
@@ -335,7 +339,9 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     failed_tests = sorted(set(failed_tests) | {test for test, value in latest.items() if value["outcome"] != "passed"})
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
-    unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])})
+    unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
+                          if not (photo_smoke_correction and run["id"] == planner.PHOTO_SMOKE_CORRECTION_RUN
+                                  and test.removeprefix("NekoWidgetUITests.") in correction_cases)})
     if unsupported:
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
     if missing:
@@ -365,6 +371,48 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     result["next_action"] = ("Diagnose one failing operation; a prose decision cannot authorize another candidate CI"
                              if missing or unsupported else
                              "Reuse active work or revise the measured execution plan" if blockers else "Run required checks")
+    return result
+
+
+def photo_correction_replay_cost(result, correction, include_upload, history):
+    """Use measured complete owning jobs, not the partial failed duration.
+
+    This estimate does not authorize reuse. The caller has already qualified
+    the exact source/whole-file correction and all five successful siblings.
+    Preserve the original full estimate and elapsed/failure/active gates.
+    """
+    if (result.get("scope") != scope.FULL_SCOPE or not isinstance(correction, dict)
+            or correction.get("run_id") != planner.PHOTO_SMOKE_CORRECTION_RUN
+            or correction.get("sha") != planner.PHOTO_SMOKE_CORRECTION_SOURCE):
+        return result
+    references = ((111435105247, planner.SMOKE),
+                  (111435105277, scope.lane_job(scope.FULL_SCOPE, "app-ui-other")))
+    minutes = []
+    for job_id, name in references:
+        job = github(f"repos/{REPOSITORY}/actions/jobs/{job_id}")
+        if (job.get("id") != job_id or job.get("run_id") != planner.ALBUM_CORRECTION_RUN
+                or job.get("head_sha") != planner.ALBUM_CORRECTION_SOURCE or job.get("name") != name
+                or (job.get("status"), job.get("conclusion")) != ("completed", "success")):
+            raise ValueError("Complete owning-job timing reference is unavailable")
+        parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elapsed = (parse(job["completed_at"]) - parse(job["started_at"])).total_seconds() / 60
+        if not math.isfinite(elapsed) or elapsed <= 0:
+            raise ValueError("Invalid complete owning-job duration")
+        minutes.append(elapsed)
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0:
+        raise ValueError("Invalid upload timing reference")
+    upper = round(max(minutes) + upload, 2)
+    result = dict(result)
+    result["full_cost_before_correction"] = result["cost"]
+    result["cost"] = {"status": "reference", "ci_minutes": [round(max(minutes), 2)] * 2,
+                      "with_upload_minutes": [upper] * 2,
+                      "reference_run": planner.ALBUM_CORRECTION_RUN,
+                      "owning_job_minutes": dict((name, round(value, 2)) for (_, name), value in zip(references, minutes)),
+                      "includes_future_rework": False,
+                      "note": "Complete smoke and app-ui-other measured reference; parallel wall time estimate, not a guarantee or speedup result."}
+    result["cost_review_required"] = upper > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
     return result
 
 
@@ -522,6 +570,7 @@ def main(argv=None):
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
+            result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs))
