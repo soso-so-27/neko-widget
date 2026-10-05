@@ -77,6 +77,16 @@ PHOTO_SMOKE_CORRECTION_CASES = frozenset({
     "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
     "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
 })
+PHOTO_SMOKE_CORRECTION_SOLO_JOB = lane_job(FULL_SCOPE, "app-ui-solo")
+PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID = 111563023901
+PHOTO_SMOKE_CORRECTION_SOLO_TIMEOUT_MINUTES = 90
+PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH = ".github/workflows/ios-build.yml"
+PHOTO_SMOKE_CORRECTION_OLD_BUDGET = (
+    "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n"
+    "    timeout-minutes: 75\n")
+PHOTO_SMOKE_CORRECTION_NEW_BUDGET = (
+    "    # Reserve 15 minutes after the observed 74-minute UI run for result and artifact export.\n"
+    "    timeout-minutes: 90\n")
 
 # These helpers are not app, build, safety-check or release-evidence inputs.
 # Selection/check-runner/workflow changes are deliberately excluded. Their
@@ -654,10 +664,10 @@ def orchestration_only(paths, base, head):
         old_native = before.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
         new_native = after.split(boundary, 1)[1].replace('"$GITHUB_SHA"', '"$RELEASE_SOURCE_SHA"')
         if path.endswith("ios-build.yml"):
-            # One bounded scheduling correction, not a native-command exemption.
-            # All build/test/artifact/evidence inputs still compare byte-for-byte.
-            old_budget = "    # Full UI execution can consume 60 minutes before result/attachment export.\n    timeout-minutes: 60\n"
-            new_budget = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+            # One evidence-based result-export allowance, not a native-command
+            # exemption. All build/test/artifact/evidence inputs stay identical.
+            old_budget = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
+            new_budget = "    # Reserve 15 minutes after the observed 74-minute UI run for result and artifact export.\n    timeout-minutes: 90\n"
             if (old_native.count(old_budget) == 1 and new_native.count(new_budget) == 1
                     and new_budget not in old_native and old_budget not in new_native):
                 old_native = old_native.replace(old_budget, new_budget, 1)
@@ -1092,14 +1102,60 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
     if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
-        # This shared helper is compiled into both selections. Neither is an
-        # unchanged input: rerun the complete smoke and other UI jobs.
-        return (SMOKE, lane_job(FULL_SCOPE, "app-ui-other"))
+        # This shared helper is compiled into photo and solo UI tests. Rerun
+        # every lane with a known failure or incomplete result.
+        return (SMOKE, lane_job(FULL_SCOPE, "app-ui-other"), PHOTO_SMOKE_CORRECTION_SOLO_JOB)
     return (correction_ui_job(selected_scope, source),)
 
 
 class CorrectionEvidenceUnavailable(ValueError):
     """Known reuse route could not obtain evidence; never launch a full retry."""
+
+
+def photo_smoke_solo_timeout_completion(job: dict, source: str, api) -> bool:
+    """Recognize only the fixed source run's test-complete/artifact-timeout job.
+
+    The cancelled job is always rerun. Its XCTest result is used only to
+    distinguish this exact export timeout from an unknown test failure.
+    """
+    if (job.get("id") != PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID
+            or job.get("name") != PHOTO_SMOKE_CORRECTION_SOLO_JOB
+            or job.get("head_sha") != source
+            or (job.get("status"), job.get("conclusion")) != ("completed", "cancelled")):
+        return False
+    expected_steps = {
+        "Run sharing runtime matrix": "cancelled",
+        "Upload sharing runtime matrix artifacts": "failure",
+    }
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    step_indexes = {}
+    for name, conclusion in expected_steps.items():
+        matching = [step for step in steps if step.get("name") == name]
+        if len(matching) != 1 or (matching[0].get("status"), matching[0].get("conclusion")) != (
+                "completed", conclusion):
+            return False
+        step_indexes[name] = steps.index(matching[0])
+    if step_indexes["Run sharing runtime matrix"] >= step_indexes["Upload sharing runtime matrix artifacts"]:
+        return False
+    try:
+        log = api(f"/repos/soso-so-27/neko-widget/actions/jobs/{PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID}/logs")
+    except (OSError, KeyError, TypeError, ValueError):
+        raise CorrectionEvidenceUnavailable("Could not retrieve the reviewed app-ui-solo completion log") from None
+    if not isinstance(log, str):
+        raise CorrectionEvidenceUnavailable("Invalid reviewed app-ui-solo completion log")
+    artifact_error = re.search(
+        r"ENOENT: no such file or directory, open '.*/MomentComposer\.xcresult/.+\.log'", log)
+    test_summaries = re.findall(
+        r"Executed 46 tests, with 0 failures \(0 unexpected\) in [0-9.]+ \([0-9.]+\) seconds", log)
+    return (log.count("Test Suite 'SoloMemoriesUITests' passed at ") == 1
+            and len(test_summaries) == 3
+            and log.count("** TEST SUCCEEDED **") == 1
+            and "** TEST FAILED **" not in log
+            and re.search(r"Test Case '-\[.+\]' failed", log) is None
+            and artifact_error is not None
+            and log.count("Error: An error has occurred during zip creation for the artifact") == 1)
 
 
 class EvidenceLogRedirect(urllib.request.HTTPRedirectHandler):
@@ -1125,10 +1181,12 @@ def album_correction_inputs(source: str, head: str) -> bool:
 
 
 def photo_smoke_correction_inputs(source: str, head: str) -> bool:
-    return reviewed_full_correction_inputs(source, head, PHOTO_SMOKE_CORRECTION_SOURCE, PHOTO_SMOKE_CORRECTION_BLOBS)
+    return reviewed_full_correction_inputs(source, head, PHOTO_SMOKE_CORRECTION_SOURCE,
+                                           PHOTO_SMOKE_CORRECTION_BLOBS, photo_timeout_change=True)
 
 
-def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str, reviewed_blobs: tuple[str, str]) -> bool:
+def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str,
+                                    reviewed_blobs: tuple[str, str], *, photo_timeout_change: bool = False) -> bool:
     """Exact reviewed test blob plus already-merged controls; all else identical."""
     try:
         if source != reviewed_source or not SHA.fullmatch(head) or git("rev-parse", "HEAD") != head:
@@ -1139,6 +1197,8 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
         if parts[-1:] == [""]: parts.pop()
         if len(parts) % 2: return False
         allowed = TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH, ALBUM_CORRECTION_DOC}
+        if photo_timeout_change:
+            allowed = allowed | {PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH}
         changed = set()
         for index in range(0, len(parts), 2):
             fields, path = parts[index].split(), parts[index + 1]
@@ -1149,12 +1209,22 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
             changed.add(path)
             if path == MEMORY_TEST_PATH:
                 if tuple(fields[2:4]) != reviewed_blobs: return False
+            elif path == PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH and photo_timeout_change:
+                source_workflow, head_workflow, approved_workflow = (
+                    git("show", f"{revision}:{path}") for revision in (source, head, approval))
+                if (source_workflow.count(PHOTO_SMOKE_CORRECTION_OLD_BUDGET) != 1
+                        or PHOTO_SMOKE_CORRECTION_NEW_BUDGET in source_workflow
+                        or head_workflow != source_workflow.replace(
+                            PHOTO_SMOKE_CORRECTION_OLD_BUDGET, PHOTO_SMOKE_CORRECTION_NEW_BUDGET, 1)
+                        or head_workflow != approved_workflow):
+                    return False
             elif git("show", f"{head}:{path}") != git("show", f"{approval}:{path}"):
                 return False
         # Require approval of every control, even one unchanged from the source.
         return MEMORY_TEST_PATH in changed and all(
             git("show", f"{head}:{path}") == git("show", f"{approval}:{path}")
-            for path in TEST_CORRECTION_CONTROL_PATHS | {ALBUM_CORRECTION_DOC})
+            for path in TEST_CORRECTION_CONTROL_PATHS | {ALBUM_CORRECTION_DOC}) and (
+                not photo_timeout_change or PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH in changed)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return False
 
@@ -1287,8 +1357,14 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
         owning = correction_owning_jobs(selected_scope, run["head_sha"])
         for ui_name in owning:
             ui = [job for job in jobs if job.get("name") == ui_name]
-            if len(ui) != 1 or (ui[0].get("status"), ui[0].get("conclusion"), ui[0].get("head_sha")) != (
-                    "completed", "failure", run["head_sha"]):
+            if len(ui) != 1 or ui[0].get("head_sha") != run["head_sha"]:
+                return None
+            if (selected_scope == FULL_SCOPE and run["head_sha"] == PHOTO_SMOKE_CORRECTION_SOURCE
+                    and ui_name == PHOTO_SMOKE_CORRECTION_SOLO_JOB):
+                if not photo_smoke_solo_timeout_completion(ui[0], run["head_sha"], api):
+                    return None
+                continue
+            if (ui[0].get("status"), ui[0].get("conclusion")) != ("completed", "failure"):
                 return None
             if selected_scope == FULL_SCOPE and run["head_sha"] == PHOTO_SMOKE_CORRECTION_SOURCE:
                 try:
@@ -1697,7 +1773,7 @@ def main() -> None:
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
         "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
-        "app_ui_lanes": json.dumps(["app-ui-other"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
+        "app_ui_lanes": json.dumps(["app-ui-other", "app-ui-solo"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
                                     else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
