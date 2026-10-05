@@ -6,6 +6,8 @@ struct PrivateWindowCoverPhoto: Sendable {
     let jpeg: Data
     let displayUntil: Date
     let origin: Origin
+
+    func isVisible(at now: Date) -> Bool { now < displayUntil }
 }
 
 struct PrivateWindowCoverPresentation: Sendable {

@@ -744,7 +744,7 @@ struct MainTabView: View {
             }
         } label: {
             ToolTile(title: "うちの子を見せる", systemImage: "photo.on.rectangle.angled",
-                     subtitle: "選んだ写真だけ", catPose: "tilt")
+                     subtitle: "初回はおすすめ、あとから選べる", catPose: "tilt")
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -2783,24 +2783,35 @@ private struct WindowListView: View {
     }
 
     private var emptyWindowCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("暮らしの中に、猫の一枚を。", systemImage: "pawprint.fill")
-                .font(.title2)
-
-            Text("公開まどから写真を受け取れます。写真の投稿や、友だちの招待は必要ありません。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            NavigationLink { discovery } label: { Text("まどを探す") }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("window-list-start")
+        VStack(alignment: .leading, spacing: 18) {
+            Text("まどをはじめる").font(.title2)
+                .accessibilityAddTraits(.isHeader)
+            if supportsPrivateWindows {
+                VStack(alignment: .leading, spacing: 8) {
+                    NavigationLink { connectionOptions } label: {
+                        Label("相手とつなぐ", systemImage: "person.badge.plus")
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("window-list-start-private")
+                    Text("身近な相手と写真を送り合います。送る写真と相手を確認してから届けます。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                NavigationLink { discovery } label: {
+                    Label("公式の写真を受け取る", systemImage: "photo")
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("window-list-start")
+                Text("まどを選んで写真を見られます。写真の投稿や、相手の招待は必要ありません。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 20)
-        )
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
     @ViewBuilder
@@ -2885,6 +2896,16 @@ private struct WindowListView: View {
     }
 
     private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
+        // The same deadline redraws the image and its outer VoiceOver value.
+        let now = Date.now
+        let deadline = coverPhotos[window.localWindowID]?.photo?.displayUntil
+        let dates = [now] + (deadline.map { $0 > now ? [$0] : [] } ?? [])
+        return TimelineView(.explicit(dates)) { context in
+            windowCard(window, at: context.date)
+        }
+    }
+
+    private func windowCard(_ window: PrivateWindowCatalogEntry, at now: Date) -> some View {
         let isActive = window.localWindowID == activeWindowID
         let isSwitching = window.localWindowID == switchingWindowID
         let isSetup = groupedWindows.setupWindowIDs.contains(window.localWindowID)
@@ -2917,7 +2938,7 @@ private struct WindowListView: View {
                 }
             } else {
                 WindowPhotoCard(title: window.displayName, kind: .shared) {
-                    windowCover(for: window)
+                    windowCover(for: window, at: now)
                         .overlay(alignment: .topTrailing) {
                             if isSwitching {
                                 ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
@@ -2945,7 +2966,7 @@ private struct WindowListView: View {
         )
         .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
         .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、相手と送り合うまど")
-        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup))
+        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup, at: now))
         .accessibilityHint(
             pausesWindowChanges && !isActive
                 ? "更新が完了すると、このまどを開けます"
@@ -2953,33 +2974,36 @@ private struct WindowListView: View {
         )
     }
 
-    private func windowCover(for window: PrivateWindowCatalogEntry) -> some View {
+    private func windowCover(for window: PrivateWindowCatalogEntry, at now: Date) -> some View {
         GeometryReader { geometry in
-            TimelineView(.explicit([Date.now, coverPhotos[window.localWindowID]?.photo?.displayUntil].compactMap { $0 })) { context in
-                if let cover = coverPhotos[window.localWindowID]?.photo,
-                   context.date < cover.displayUntil,
-                   let image = UIImage(data: cover.jpeg) {
-                    Image(uiImage: image).resizable().scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                } else {
-                    VStack(spacing: 12) {
-                        Image("ToolCat-hide").resizable().scaledToFit()
-                            .frame(width: 58, height: 58)
-                        Text(coverPlaceholder(for: window))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let cover = coverPhotos[window.localWindowID]?.photo,
+               cover.isVisible(at: now), let image = UIImage(data: cover.jpeg) {
+                Image(uiImage: image).resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+            } else {
+                VStack(spacing: 12) {
+                    Image("ToolCat-hide").resizable().scaledToFit()
+                        .frame(width: 58, height: 58)
+                    Text(coverPlaceholder(for: window))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .accessibilityHidden(true)
     }
 
-    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool) -> String {
+    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool, at now: Date) -> String {
+        let visiblePhoto = coverPhotos[window.localWindowID]?.photo.flatMap { cover in
+            cover.isVisible(at: now) && UIImage(data: cover.jpeg) != nil ? cover : nil
+        }
         var parts = [isSetup ? windowPrimaryStatusLabel(for: window)
-                     : coverPhotos[window.localWindowID]?.photo != nil ? "写真あり" : coverPlaceholder(for: window)]
+                     : visiblePhoto != nil ? "写真あり" : coverPlaceholder(for: window)]
+        if !isSetup, let visiblePhoto {
+            parts.append(visiblePhoto.origin == .received ? "相手から届いた写真" : "送った写真")
+        }
         if windowErrors.contains(window.localWindowID) {
             parts.append(isSetup ? "設定を開いて確認" : "開いて共有の状態を確認")
         }
@@ -3098,8 +3122,13 @@ private struct WindowListView: View {
     /// Only the account read is replaced. The shipping list, controls, grouping,
     /// accessibility and layouts are used by the mixed-state UI regression.
     private func loadMixedFixtureIfNeeded() -> Bool {
-        guard CommandLine.arguments.contains("--window-list-ui-fixture"),
-              CommandLine.arguments.contains("--window-list-mixed") else { return false }
+        guard CommandLine.arguments.contains("--window-list-ui-fixture") else { return false }
+        if CommandLine.arguments.contains("--window-list-empty-private") {
+            windows = []; pairingPhases = [:]; coverPhotos = [:]; windowErrors = []
+            activeWindowID = nil; isLoading = false
+            return true
+        }
+        guard CommandLine.arguments.contains("--window-list-mixed") else { return false }
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         let pairedID = "10000000-0000-0000-0000-000000000001"
         let failedID = "10000000-0000-0000-0000-000000000002"
@@ -3113,7 +3142,7 @@ private struct WindowListView: View {
         pairingPhases = [pairedID: .paired, failedID: .failed]
         windowErrors = [failedID]
         if let jpeg = MomentExperiencePhotoFixture.image(index: 1).jpegData(compressionQuality: 0.8) {
-            coverPhotos = [pairedID: .init(photo: .init(jpeg: jpeg, displayUntil: Date().addingTimeInterval(3600), origin: .sent), status: .photo)]
+            coverPhotos = [pairedID: .init(photo: .init(jpeg: jpeg, displayUntil: Date().addingTimeInterval(CommandLine.arguments.contains("--window-list-expiring-cover") ? 5 : 3600), origin: .sent), status: .photo)]
         }
         isLoading = false
         return true
@@ -3323,7 +3352,7 @@ struct WindowListNavigationFixture: View {
                 WindowListView(opensActiveWindow: $opensActiveWindow,
                                pendingFamilyMomentSourceDigest: .constant(nil),
                                pendingFamilyNotificationRoute: .constant(nil),
-                               supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed"),
+                               supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed") || CommandLine.arguments.contains("--window-list-empty-private"),
                                officialStore: model.store,
                                refreshOfficialFeed: { try await model.refresh() },
                                previewOfficialFeed: { try await model.preview() },
