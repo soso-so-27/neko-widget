@@ -1138,6 +1138,27 @@ actor WidgetCacheBuilder {
         }
     }
 
+    /// Revoke derived personal bytes under the publication authority lock.
+    /// Original Photos and the separate family cache are untouched.
+    func prunePersonalCache(expectedRevision: String) throws {
+        guard let cache = SharedContainer.widgetCacheDirectoryURL,
+              let manifestURL = SharedContainer.widgetManifestURL else {
+            throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
+        }
+        try PersonalRediscoveryStore.shared.withProtectedCacheFiles(expectedRevision: expectedRevision) { protected in
+            let manifest = (try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)) ?? .empty
+            let items = manifest.items.filter { Set($0.allCacheFilenames).isSubset(of: protected) }
+            try AtomicJSON.write(WidgetManifest(items: items, generatedAt: .now), to: manifestURL)
+            guard FileManager.default.fileExists(atPath: cache.path) else { return }
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: cache, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            for url in contents where !protected.contains(url.lastPathComponent)
+                && ["jpg", "jpeg"].contains(url.pathExtension.lowercased()) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
     func clearPersonal(expectedRevision: String) throws {
         try PersonalRediscoveryStore.shared.withProtectedCacheFiles(expectedRevision: expectedRevision) { _ in
             try clear()

@@ -506,7 +506,24 @@ struct HomeView: View {
 
     @ViewBuilder
     private var emptyPhotoState: some View {
-        if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
+        if scan.hasFailed {
+            ContentUnavailableView {
+                Label("写真の確認を完了できませんでした", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("写真へのアクセスや通信を確認して、もう一度スキャンしてください。")
+            } actions: {
+                VStack(spacing: 10) {
+                    if isLimitedAccess {
+                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                        .buttonStyle(.bordered)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 320)
+            .accessibilityIdentifier("photo-hub-scan-failed")
+        } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {

@@ -136,6 +136,20 @@ final class AppViewModel: ObservableObject {
         cachedPresentationSnapshot = (version, value)
         return value
     }
+    /// Favorites are global, but every displayed original still needs current
+    /// PhotoKit read authority. This does not mutate saved favorites or memos.
+    var readableSourceSnapshot: LibrarySnapshot {
+        let version = presentationVersion
+        if let cachedReadableSourceSnapshot, cachedReadableSourceSnapshot.version == version {
+            return cachedReadableSourceSnapshot.snapshot
+        }
+        guard canPresentPhotoCandidates else { return .empty }
+        var value = snapshot
+        value.assets.removeAll { !readablePhotoProjection.contains($0.localIdentifier) }
+        cachedReadableSourceSnapshot = (version, value)
+        return value
+    }
+
     var presentationVersion: LibraryPresentationVersion {
         LibraryPresentationVersion(
             photoContentRevision: photoPresentationRevisions.content,
@@ -274,6 +288,7 @@ final class AppViewModel: ObservableObject {
     private var scanProgressFlushTask: Task<Void, Never>?
     private var scanProgressFlushSequence = 0
     private var lastScanProgressPublicationUptime: TimeInterval?
+    private var cachedReadableSourceSnapshot: (version: LibraryPresentationVersion, snapshot: LibrarySnapshot)?
     private var cachedPresentationSnapshot: (
         version: LibraryPresentationVersion,
         snapshot: LibrarySnapshot
@@ -322,6 +337,12 @@ final class AppViewModel: ObservableObject {
         cachedPresentationSnapshot = nil
         currentAsset = nil
         widgetPhotoLibraryLoadSucceeded = canReadPhotos ? nil : false
+#if DEBUG
+        if isUIFixture { return }
+#endif
+        // Revoke shared readers before asynchronous PhotoKit resolution.
+        _ = suspendPersonalWidgetAuthority()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func updatePhotoReadAuthority() {
@@ -416,7 +437,12 @@ final class AppViewModel: ObservableObject {
         self.libraryChangePending = true
         let previousStatus = self.authorizationStatus
         self.authorizationStatus = self.authorizationService.status
-        guard self.authorizationStatus == .limited else { return }
+        guard self.authorizationStatus == .limited else {
+            if !self.canReadPhotos {
+                Task { [weak self] in await self?.clearWidgetOutput(reportErrors: false) }
+            }
+            return
+        }
         // A limited selection can shrink without changing authorizationStatus.
         // Revoke the old projection before scheduling any asynchronous work.
         if previousStatus == .limited { self.invalidateReadablePhotoProjection() }
@@ -963,9 +989,14 @@ final class AppViewModel: ObservableObject {
                 } ?? []
             )
             profilePhotoAlbumAssetDates = [:]
+            await reconcilePersonalWidgetReadAuthority()
             return
         }
-        guard await resolveReadablePhotoProjectionIfNeeded() else { return }
+        guard await resolveReadablePhotoProjectionIfNeeded() else {
+            // Keep the suspension if the read was cancelled or superseded.
+            await reconcilePersonalWidgetReadAuthority()
+            return
+        }
         let albums = PhotoSourceAlbumCatalog.availableAlbums(
             excluding: snapshot.albumLocalIdentifier
         )
@@ -1027,6 +1058,9 @@ final class AppViewModel: ObservableObject {
         await refreshProfilePhotoAlbumLinks(availableAlbums: albums)
         reconcileCandidatePostureState()
         chooseCurrentAssetIfNeeded()
+        // An unavailable source still needs the newly resolved limited authority
+        // before foreground synchronization takes its early return.
+        await reconcilePersonalWidgetReadAuthority()
         if hasFinishedSnapshotLoad { openPendingDeepLinkIfNeeded() }
     }
 
@@ -3860,7 +3894,7 @@ final class AppViewModel: ObservableObject {
         let dates = Dictionary(uniqueKeysWithValues: eligible.compactMap { record in
             record.sourceModificationDate.map { (record.localIdentifier, $0) }
         })
-        let authorized = canReadPhotos && catIdentityLoadState == .ready
+        let authorized = canPresentPhotoCandidates && catIdentityLoadState == .ready
         let eligibleIDs = Set(eligible.map(\.localIdentifier))
         var bootstrap: [PersonalRediscoveryCandidate] = []
         // Adopt usable cached photos atomically with the new authority. An
@@ -3892,6 +3926,26 @@ final class AppViewModel: ObservableObject {
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
         if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
         return revision
+    }
+
+    private func reconcilePersonalWidgetReadAuthority() async {
+#if DEBUG
+        if isUIFixture { return }
+#endif
+        guard catIdentityLoadState == .ready,
+              !canReadPhotos || readablePhotoProjection.isResolved else { return }
+        defer { WidgetCenter.shared.reloadAllTimelines() }
+        do {
+            let revision = try synchronizePersonalWidgetAuthority()
+            // Only derived personal Widget images are removed. A stale cleanup
+            // cannot remove bytes published by a newer permission generation.
+            try await widgetCacheBuilder.prunePersonalCache(expectedRevision: revision)
+        } catch {
+            Self.logError(error, category: "widget-cache", operation: "reconcile_read_authority")
+            // Failed publication keeps the suspension. Failed cleanup leaves
+            // revoked identifiers ineligible in the already committed authority.
+            setError(error)
+        }
     }
 
     private func suspendPersonalWidgetAuthority() -> Bool {

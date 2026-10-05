@@ -312,9 +312,10 @@ struct AppRootView: View {
         let visibleSnapshot = hasPhotoAccess
             ? viewModel.presentationSnapshot
             : .empty
+        let readableSnapshot = hasPhotoAccess ? viewModel.readableSourceSnapshot : .empty
         let photoProjection = photoPresentationCache.projection(
             snapshot: visibleSnapshot,
-            sourceSnapshot: hasPhotoAccess ? viewModel.snapshot : .empty,
+            sourceSnapshot: readableSnapshot,
             version: viewModel.presentationVersion,
             transform: photoPresentation
         )
@@ -345,6 +346,7 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
+            readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)

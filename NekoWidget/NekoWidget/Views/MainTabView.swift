@@ -259,6 +259,7 @@ struct MainTabView: View {
     let likedPhotos: [PhotoPresentation]
     let catPhotos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
+    var readablePhotoIdentifiers: Set<String>? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
@@ -1036,32 +1037,39 @@ struct MainTabView: View {
         )
     }
 
+    @ViewBuilder
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
                              openedFromWidget: Bool) -> some View {
-        let initialPhoto = photo(for: localIdentifier)
-        return PhotoBrowserView(
-            // A proposed photo and a Widget tap are one-photo entry points.
-            // The grid uses a separate route whose browser can page through
-            // the detected cat-photo collection.
-            photos: [initialPhoto],
-            libraryPhotos: libraryPhotos,
-            initialPhoto: initialPhoto,
-            widgetShownAt: shownAt,
-            showsWidgetTiming: openedFromWidget,
-            setMemorySaved: setMemorySaved,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           photoSourceStatus != .unavailable,
+           let initialPhoto = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+            PhotoBrowserView(
+                // A proposed photo and a Widget tap are one-photo entry points.
+                // The grid uses a separate route whose browser can page through
+                // the detected cat-photo collection.
+                photos: [initialPhoto],
+                libraryPhotos: libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: shownAt,
+                showsWidgetTiming: openedFromWidget,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
     }
 
     /// Related albums use today's permission/source/explicit-assignment state,
@@ -1186,51 +1194,74 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func collectionDetailView(for localIdentifier: String) -> some View {
-        PhotoBrowserView(
-            photos: catPhotos,
-            libraryPhotos: libraryPhotos,
-            initialPhoto: photo(for: localIdentifier),
-            widgetShownAt: nil,
-            showsWidgetTiming: false,
-            setMemorySaved: setMemorySaved,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           photoSourceStatus != .unavailable,
+           let initialPhoto = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+            PhotoBrowserView(
+                photos: catPhotos,
+                libraryPhotos: libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
     }
 
     @ViewBuilder
     private func memoryDetailView(for localIdentifier: String) -> some View {
-        PhotoBrowserView(
-            photos: likedPhotos,
-            libraryPhotos: libraryPhotos,
-            initialPhoto: photo(for: localIdentifier),
-            widgetShownAt: nil,
-            showsWidgetTiming: false,
-            setMemorySaved: setMemorySaved,
-            exportMemoryPhoto: exportMemoryPhoto,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           (readablePhotoIdentifiers?.contains(localIdentifier)
+            ?? (likedPhotos + libraryPhotos).contains { $0.localIdentifier == localIdentifier }) {
+            let initialPhoto = photo(for: localIdentifier)
+            PhotoBrowserView(
+                photos: likedPhotos,
+                libraryPhotos: libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
+    }
+
+    private var unavailablePersonalPhotoView: some View {
+        ContentUnavailableView("この写真は開けません", systemImage: "photo",
+            description: Text("写真へのアクセスや表示する写真の範囲が変更されました。戻って選び直してください。"))
+            .navigationTitle("写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("personal-photo-unavailable")
     }
 
     private func albumsView(
