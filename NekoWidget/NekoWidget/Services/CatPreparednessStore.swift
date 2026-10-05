@@ -434,6 +434,8 @@ enum LostCatFlyerRenderer {
         }
     }
 
+    private static let exportPrefix = "lost-cat-export-"
+
     static func createImage(_ draft: LostCatPublicDraft) throws -> URL {
         guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
         let rendererFormat = UIGraphicsImageRendererFormat()
@@ -442,10 +444,7 @@ enum LostCatFlyerRenderer {
         let image = UIGraphicsImageRenderer(size: layout(draft, format: .social).0.size, format: rendererFormat)
             .image { draw(draft, format: .social, context: $0.cgContext) }
         guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("迷子の猫-\(UUID().uuidString).png")
-        try data.write(to: url, options: .atomic)
-        return url
+        return try writeExport(data, fileName: "迷子の猫.png")
     }
 
     static func createPDF(_ draft: LostCatPublicDraft) throws -> URL {
@@ -455,10 +454,39 @@ enum LostCatFlyerRenderer {
             context.beginPage()
             draw(draft, format: .paper, context: context.cgContext)
         }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("迷子の猫-\(UUID().uuidString).pdf")
-        try data.write(to: url, options: .atomic)
-        return url
+        return try writeExport(data, fileName: "迷子の猫.pdf")
+    }
+
+    private static func writeExport(_ data: Data, fileName: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(exportPrefix + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                               attributes: [.protectionKey: FileProtectionType.complete])
+        let file = directory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: file, options: [.atomic, .completeFileProtection])
+            return file
+        } catch { removeExport(file); throw error }
+    }
+
+    static func removeExport(_ file: URL) {
+        guard ["迷子の猫.png", "迷子の猫.pdf"].contains(file.lastPathComponent) else { return }
+        removeExportDirectory(file.standardizedFileURL.deletingLastPathComponent())
+    }
+
+    private static func removeExportDirectory(_ directory: URL) {
+        let root = FileManager.default.temporaryDirectory.standardizedFileURL
+        let value = directory.standardizedFileURL
+        guard value.deletingLastPathComponent() == root,
+              value.lastPathComponent.hasPrefix(exportPrefix),
+              UUID(uuidString: String(value.lastPathComponent.dropFirst(exportPrefix.count))) != nil else { return }
+        // Never follow a managed-looking symlink to files outside our export directory.
+        guard (try? value.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { return }
+        try? FileManager.default.removeItem(at: value)
+    }
+
+    static func cleanupOnLaunch() {
+        for item in (try? FileManager.default.contentsOfDirectory(at: FileManager.default.temporaryDirectory,
+            includingPropertiesForKeys: nil)) ?? [] { removeExportDirectory(item) }
     }
 
     private static func layout(_ draft: LostCatPublicDraft,

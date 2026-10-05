@@ -915,7 +915,7 @@ private struct LostCatPreviewView: View {
         }
         .sheet(item: $payload) { item in
             LostCatActivitySheet(items: [item.url])
-                .onDisappear { try? FileManager.default.removeItem(at: item.url) }
+                .onDisappear { LostCatFlyerRenderer.removeExport(item.url) }
         }
         .sheet(isPresented: $expanded) {
             NavigationStack {
@@ -943,6 +943,7 @@ struct LostCatDraftFixtureView: View {
     @State private var prepared = false
     @State private var savedStores: (EvacuationStore, CareHandoffStore, LostCatDraftStore)?
     @State private var fixtureError = false
+    @State private var lifecycleResult: String?
     private var candidatePhotos: [CatProfilePhotoPresentation] {
         guard ProcessInfo.processInfo.environment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] == "1" else { return [] }
         return Array(AppStoreScreenshotFixture.photos.prefix(3)).map { photo in
@@ -955,7 +956,14 @@ struct LostCatDraftFixtureView: View {
         AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
     }
     var body: some View {
-        if fixtureError {
+        if CommandLine.arguments.contains("--lost-cat-export-lifecycle-check") {
+            Text(lifecycleResult ?? "確認中")
+                .accessibilityIdentifier("lost-cat-export-lifecycle-result")
+                .task {
+                    do { try Self.verifyExportLifecycle(image: image); lifecycleResult = "passed" }
+                    catch { lifecycleResult = "failed: \(error)" }
+                }
+        } else if fixtureError {
             Text("入力候補の保存境界が成立しません").accessibilityIdentifier("lost-cat-fixture-error")
         } else if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] == "1" {
             LostCatPhotoTapFixtureView()
@@ -1016,6 +1024,46 @@ struct LostCatDraftFixtureView: View {
             }
         }
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility3 : .large)
+    }
+
+    @MainActor private static func verifyExportLifecycle(image: UIImage) throws {
+        enum Failure: Error { case invariant }
+        func require(_ condition: Bool) throws { if !condition { throw Failure.invariant } }
+        let manager = FileManager.default
+        let foreign = manager.temporaryDirectory.appendingPathComponent("lost-cat-fixture-" + UUID().uuidString)
+        try manager.createDirectory(at: foreign, withIntermediateDirectories: false)
+        defer { try? manager.removeItem(at: foreign) }
+        let saved = foreign.appendingPathComponent("迷子の猫.png")
+        try Data("user-saved-copy".utf8).write(to: saved)
+        let invalid = manager.temporaryDirectory.appendingPathComponent("lost-cat-export-not-a-uuid-" + UUID().uuidString)
+        try manager.createDirectory(at: invalid, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: invalid) }
+        let link = manager.temporaryDirectory.appendingPathComponent("lost-cat-export-" + UUID().uuidString)
+        try manager.createSymbolicLink(at: link, withDestinationURL: foreign)
+        defer { try? manager.removeItem(at: link) }
+        let draft = LostCatPublicDraft(name: "むぎ", features: "茶白", collar: "不明", approachAdvice: "",
+            lastSeenAt: nil, lastSeenNear: "公園", contact: "public@example.test", faceImage: image, bodyImage: nil)
+        let png = try LostCatFlyerRenderer.createImage(draft)
+        let pdf = try LostCatFlyerRenderer.createPDF(draft)
+        defer { LostCatFlyerRenderer.removeExport(png); LostCatFlyerRenderer.removeExport(pdf) }
+        try require(png.deletingLastPathComponent() != pdf.deletingLastPathComponent())
+        for file in [png, pdf] {
+            try require(manager.fileExists(atPath: file.path))
+            for target in [file, file.deletingLastPathComponent()] {
+                let attributes = try manager.attributesOfItem(atPath: target.path)
+                try require(attributes[.protectionKey] as? String == FileProtectionType.complete.rawValue)
+            }
+        }
+        LostCatFlyerRenderer.removeExport(saved)
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8))
+        LostCatFlyerRenderer.removeExport(png)
+        try require(!manager.fileExists(atPath: png.deletingLastPathComponent().path))
+        try require(manager.fileExists(atPath: pdf.path))
+        LostCatFlyerRenderer.cleanupOnLaunch()
+        try require(!manager.fileExists(atPath: pdf.deletingLastPathComponent().path))
+        try require(manager.fileExists(atPath: invalid.path))
+        try require((try link.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink == true)
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8))
     }
 
     @MainActor private static func prepareSavedInformation(key: String, image: UIImage) throws
