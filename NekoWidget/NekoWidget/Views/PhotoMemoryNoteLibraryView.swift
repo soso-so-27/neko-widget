@@ -309,6 +309,9 @@ struct PhotoMemoryNotesListView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
+        // Scope the list identity to the ScrollView itself. Applying it after
+        // safeAreaInset propagates it to the separate search/sort controls.
+        .accessibilityIdentifier("memory-notes-list")
         .restoringPhotoLibraryPosition(section: positionSection,
                                        isSearching: !search.isEmpty)
     }
@@ -393,7 +396,6 @@ struct PhotoMemoryNotesListView: View {
         )) {
             archiveDestination
         }
-        .accessibilityIdentifier("memory-notes-list")
         .task {
             library.setSceneActive(scenePhase == .active)
             access.start(photos: photos)

@@ -26,6 +26,13 @@ class MemoryLibraryFilterContracts(unittest.TestCase):
         self.assertIn('readingPositionKey ?? selectedProfileIdentifier.map', VIEW)
         self.assertIn('memory-notes-sort', VIEW)
 
+    def test_list_identity_does_not_override_search_and_sort_inset(self):
+        list_code = VIEW.split('@ViewBuilder private var readingList: some View {', 1)[1].split('@ViewBuilder private func yearSections', 1)[0]
+        body = VIEW.split('struct PhotoMemoryNotesListView: View {', 1)[1].split('var body: some View {', 1)[1].split('@ToolbarContentBuilder private var readingToolbar', 1)[0]
+        self.assertIn('.accessibilityIdentifier("memory-notes-list")', list_code)
+        self.assertNotIn('.accessibilityIdentifier("memory-notes-list")', body)
+        self.assertIn('.accessibilityIdentifier("memory-notes-sort")', body)
+
     def test_native_boundaries_are_wired(self):
         self.assertIn('try verifiesLibraryScopeAndOrdering()', VERIFIER)
         for message in ['former cat', 'missing authoritative assignment', 'legacy/cloud-only memo', 'update ordering']:

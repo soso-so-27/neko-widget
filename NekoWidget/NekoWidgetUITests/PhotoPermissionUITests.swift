@@ -3718,6 +3718,8 @@ final class SoloMemoriesUITests: XCTestCase {
             } else if mode == "notes" {
                 let sort = app.buttons["memory-notes-sort"]
                 XCTAssertTrue(sort.waitForExistence(timeout: 10))
+                XCTAssertEqual(app.buttons.matching(identifier: "memory-notes-sort").count, 1)
+                XCTAssertTrue(sort.isHittable, "The sort control retains its own accessible identity")
                 XCTAssertTrue(sort.label.contains("撮影順"))
                 sort.tap()
                 app.buttons["更新順"].tap()
