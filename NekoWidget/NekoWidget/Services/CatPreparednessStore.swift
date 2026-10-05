@@ -459,13 +459,28 @@ enum LostCatFlyerRenderer {
 
     private static func writeExport(_ data: Data, fileName: String) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(exportPrefix + UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
-                                               attributes: [.protectionKey: FileProtectionType.complete])
         let file = directory.appendingPathComponent(fileName)
         do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                   attributes: [.protectionKey: FileProtectionType.complete])
+            try enforceExportProtection(directory)
             try data.write(to: file, options: [.atomic, .completeFileProtection])
+            // Atomic writing replaces the destination inode. Apply and verify
+            // protection on the final file before exposing it to a share sheet.
+            try enforceExportProtection(file)
             return file
         } catch { removeExport(file); throw error }
+    }
+
+    private static func enforceExportProtection(_ url: URL) throws {
+        let manager = FileManager.default
+        try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        let attributes = try manager.attributesOfItem(atPath: url.path)
+        let protection = (attributes[.protectionKey] as? FileProtectionType)?.rawValue
+            ?? (attributes[.protectionKey] as? String)
+        guard protection == FileProtectionType.complete.rawValue else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
     }
 
     static func removeExport(_ file: URL) {
