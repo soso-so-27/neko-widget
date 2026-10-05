@@ -646,7 +646,13 @@ private struct ShowcaseCandidatePicker: View {
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
                            GridItem(.flexible(), spacing: 8)]
 
+    private func candidateLabel(_ photo: PhotoPresentation, index: Int) -> String {
+        let date = photo.creationDate.map { $0.formatted(date: .long, time: .omitted) } ?? "撮影日不明"
+        return "猫の写真、\(index + 1)枚目、\(date)"
+    }
+
     private func toggleSelection(_ identifier: String) {
+        guard !isSaving else { return }
         if selected.contains(identifier) { selected.remove(identifier) }
         else if selected.count < maximumSelection { selected.insert(identifier) }
     }
@@ -658,7 +664,7 @@ private struct ShowcaseCandidatePicker: View {
                     ContentUnavailableView("追加できる猫の写真はありません", systemImage: "photo")
                 } else {
                     LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(candidates) { photo in
+                        ForEach(Array(candidates.enumerated()), id: \.element.localIdentifier) { index, photo in
                             Button { toggleSelection(photo.localIdentifier) } label: {
                                 ShowcaseSquare {
                                     PhotoAssetImageView(localIdentifier: photo.localIdentifier,
@@ -677,7 +683,8 @@ private struct ShowcaseCandidatePicker: View {
                             .accessibilityElement(children: .ignore)
                             .accessibilityAddTraits(.isButton)
                             .accessibilityAction { toggleSelection(photo.localIdentifier) }
-                            .accessibilityLabel("猫の写真")
+                            .accessibilityLabel(candidateLabel(photo, index: index))
+                            .disabled(isSaving)
                             .accessibilityAddTraits(selected.contains(photo.localIdentifier) ? .isSelected : [])
                             .accessibilityIdentifier("showcase-candidate-photo")
                         }
@@ -685,11 +692,12 @@ private struct ShowcaseCandidatePicker: View {
                 }
             }
             .padding(16)
+            .interactiveDismissDisabled(isSaving)
             .navigationTitle(maximumSelection == 1 ? "写真を入れ替える" : "写真を追加")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("キャンセル") { dismiss() }
+                    Button("キャンセル") { dismiss() }.disabled(isSaving)
                 }
             }
             .alert("写真を準備できませんでした", isPresented: $saveFailed) {
