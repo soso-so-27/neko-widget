@@ -41,8 +41,8 @@ class LostExportProtectionTests(unittest.TestCase):
         self.assertIn("failure.diagnosticCode", fixture)
 
     def test_image_and_pdf_remain_on_same_owned_lifecycle(self):
-        self.assertIn('try writeExport(imageData(draft), fileName: "迷子の猫.png")', SOURCE)
-        self.assertIn('try writeExport(pdfData(draft), fileName: "迷子の猫.pdf")', SOURCE)
+        self.assertIn('return try writeExport(data, fileName: "迷子の猫.png")', SOURCE)
+        self.assertIn('return try writeExport(data, fileName: "迷子の猫.pdf")', SOURCE)
         self.assertIn("value.deletingLastPathComponent() == root", SOURCE)
         self.assertIn("UUID(uuidString: String(value.lastPathComponent.dropFirst(exportPrefix.count)))", SOURCE)
         self.assertIn(".isSymbolicLinkKey", SOURCE)

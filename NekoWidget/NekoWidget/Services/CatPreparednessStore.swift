@@ -437,7 +437,8 @@ enum LostCatFlyerRenderer {
     private static let exportPrefix = "lost-cat-export-"
 
     static func createImage(_ draft: LostCatPublicDraft) throws -> URL {
-        try writeExport(imageData(draft), fileName: "迷子の猫.png")
+        let data = try imageData(draft)
+        return try writeExport(data, fileName: "迷子の猫.png")
     }
 
     private static func imageData(_ draft: LostCatPublicDraft) throws -> Data {
@@ -452,7 +453,8 @@ enum LostCatFlyerRenderer {
     }
 
     static func createPDF(_ draft: LostCatPublicDraft) throws -> URL {
-        try writeExport(pdfData(draft), fileName: "迷子の猫.pdf")
+        let data = try pdfData(draft)
+        return try writeExport(data, fileName: "迷子の猫.pdf")
     }
 
     private static func pdfData(_ draft: LostCatPublicDraft) throws -> Data {

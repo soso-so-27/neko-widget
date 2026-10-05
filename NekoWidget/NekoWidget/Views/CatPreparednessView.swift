@@ -1062,7 +1062,7 @@ struct LostCatDraftFixtureView: View {
 
     private static func verifyFixtureExport(_ url: URL, target: LostCatFlyerRenderer.ExportProtectionFailure.Target,
                                             requested: FileProtectionType) throws -> [FileAttributeKey: Any] {
-        guard requested == .complete, FileManager.default.fileExists(atPath: url.path) else {
+        guard requested.rawValue == FileProtectionType.complete.rawValue, FileManager.default.fileExists(atPath: url.path) else {
             throw ExportLifecycleFailure.fileProtection
         }
         return [.protectionKey: FileProtectionType.complete]
