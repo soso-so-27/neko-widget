@@ -2543,6 +2543,7 @@ private struct WindowListView: View {
     @State private var requestedSetupPath: PairingSetupPath?
     @State private var publicStates: [String: OfficialWindowState]
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
+    @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
 
     let supportsPrivateWindows: Bool
@@ -2896,13 +2897,19 @@ private struct WindowListView: View {
     }
 
     private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
-        // The same deadline redraws the image and its outer VoiceOver value.
-        let now = Date.now
+        // A state change refreshes both the image and the outer VoiceOver value.
+        // TimelineView's scheduled redraw alone can leave the Button's AX value stale.
+        let now = max(Date.now, coverClock)
         let deadline = coverPhotos[window.localWindowID]?.photo?.displayUntil
-        let dates = [now] + (deadline.map { $0 > now ? [$0] : [] } ?? [])
-        return TimelineView(.explicit(dates)) { context in
-            windowCard(window, at: context.date)
-        }
+        return windowCard(window, at: now)
+            .task(id: deadline) {
+                guard let deadline, deadline > now else { return }
+                do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+                catch { return }
+                guard !Task.isCancelled,
+                      coverPhotos[window.localWindowID]?.photo?.displayUntil == deadline else { return }
+                coverClock = max(Date.now, deadline)
+            }
     }
 
     private func windowCard(_ window: PrivateWindowCatalogEntry, at now: Date) -> some View {

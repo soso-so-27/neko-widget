@@ -16,11 +16,17 @@ class WindowPresentation(unittest.TestCase):
         self.assertIn('if windows.isEmpty, receivingPublicWindows.isEmpty',body)
     def test_same_clock_drives_image_and_voiceover(self):
         cover=MAIN.split('private func windowCard(',1)[1].split('private func coverPlaceholder(',1)[0]
-        self.assertIn('windowCard(window, at: context.date)',cover)
+        self.assertIn('windowCard(window, at: now)',cover)
+        self.assertIn('let now = max(Date.now, coverClock)',cover)
         self.assertIn('windowCover(for: window, at: now)',cover)
         self.assertIn('windowAccessibilityStatus(for: window, isSetup: isSetup, at: now)',cover)
         self.assertEqual(cover.count('cover.isVisible(at: now)'),2)
-        self.assertIn('$0 > now ? [$0] : []',cover)
+        self.assertIn('.task(id: deadline)',cover)
+        self.assertIn('deadline > now',cover)
+        self.assertIn('catch { return }',cover)
+        self.assertIn('!Task.isCancelled',cover)
+        self.assertIn('photo?.displayUntil == deadline',cover)
+        self.assertIn('coverClock = max(Date.now, deadline)',cover)
     def test_source_does_not_advance_expiry_boundary(self):
         service=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")
         self.assertIn('func isVisible(at now: Date) -> Bool { now < displayUntil }',service)
