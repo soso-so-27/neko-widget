@@ -28,7 +28,7 @@ class PhotoReadAuthorityRecoveryTests(unittest.TestCase):
         detail = block(source, "private func memoryDetailView", "private var unavailablePersonalPhotoView")
         self.assertIn("readablePhotoIdentifiers?.contains(localIdentifier)", detail)
         self.assertIn("let initialPhoto = photo(for: localIdentifier)", detail)
-        self.assertIn("photos: selectedTab == .photos ? photoLibraryLikedPhotos : likedPhotos", detail)
+        self.assertIn("photos: libraryContext ? photoLibraryLikedPhotos : likedPhotos", detail)
         self.assertNotIn("let initialPhoto = likedPhotos.first", detail)
         self.assertIn(".id(photoPresentationVersion.sourceResolutionRevision)", detail)
         root = read("NekoWidget/App/AppRootView.swift")

@@ -21,6 +21,11 @@ class ReadingControls(unittest.TestCase):
         method = VM.split('func rescan() async {', 1)[1].split('func suspendScan()', 1)[0]
         self.assertLess(method.index('isManualRescanRequestPending = true'), method.index('await saveSnapshot'))
         self.assertIn('defer { isManualRescanRequestPending = false }', method)
+    def test_reselecting_current_mode_preserves_scoped_position_owner(self):
+        main=(ROOT / "NekoWidget/Views/MainTabView.swift").read_text(encoding="utf-8")
+        selection=main.split('func select(_ section: PhotoLibrarySection)',1)[1].split('func resolveInitialSelection',1)[0]
+        self.assertIn('if selection != section',selection)
+        self.assertIn('hasResolvedSelection = true',selection)
     def test_saved_metadata_is_published_separately(self):
         self.assertIn('@Published private(set) var savedPhotoIdentifiers', VM)
         self.assertIn('savedPhotoStateReadFailed = true', VM)
