@@ -3422,6 +3422,10 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
         self.assertFalse(check(source_workflow=workflow_before.replace("timeout-minutes: 75", "timeout-minutes: 60")))
         self.assertFalse(check(candidate_workflow=workflow_after.replace("timeout-minutes: 90", "timeout-minutes: 95")))
         self.assertFalse(check(candidate_workflow=workflow_after + "extra\n"))
+        for path in ("NekoWidget/ci/test-ci-lanes.py", "NekoWidget/ci/test-release-flow.py"):
+            control_row = f":100644 100644 {'c' * 40} {'d' * 40} M\0{path}\0"
+            self.assertTrue(check(raw=row + control_row))
+            self.assertFalse(check(raw=row + control_row, approval=False))
         for raw in ("", row + row, row.replace("100644 100644", "100644 100755"),
                     row.replace(" M\0", " T\0"), row.replace(planner.PHOTO_SMOKE_CORRECTION_BLOBS[1], "d" * 40),
                     row + row.replace(scope.MEMORY_TEST_PATH, "NekoWidget/NekoWidget/Views/LikedPhotosView.swift"),
