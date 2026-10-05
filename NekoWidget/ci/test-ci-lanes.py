@@ -683,7 +683,7 @@ final class UnrelatedUITests: XCTestCase {
             body = jobs[identifier]
             self.assertNotIn("download-artifact", body)
             self.assertNotIn("continue-on-error", body)
-            expected_timeout = 75 if identifier == "sharing-app-ui" else 60
+            expected_timeout = 90 if identifier == "sharing-app-ui" else 60
             self.assertIn(f"timeout-minutes: {expected_timeout}", body)
             # Scheduling must not change checkout isolation, commands, flags,
             # artifact provenance or whether a failure is propagated.
