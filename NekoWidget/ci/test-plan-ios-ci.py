@@ -2854,9 +2854,10 @@ class PlanTests(unittest.TestCase):
         for identifier, output in (("build-without-signing", "build"),
                                    ("simulator-smoke-test", "smoke"),
                                    ("sharing-app-ui", "app_ui"),
-                                   ("sharing-runtime-matrix", "sharing")):
+                                   ("sharing-runtime-matrix", "sharing"),
+                                   ("sharing-runtime-deferred", "sharing")):
             body = re.split(r"\n  (?=\S)", workflow.split("\n  " + identifier + ":", 1)[1], maxsplit=1)[0]
-            if identifier == "sharing-runtime-matrix":
+            if identifier == "sharing-runtime-deferred":
                 self.assertIn("    needs: [plan, build-without-signing, simulator-smoke-test]\n", body)
                 self.assertIn("    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
             else:

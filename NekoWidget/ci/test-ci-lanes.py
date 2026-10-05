@@ -706,7 +706,7 @@ final class UnrelatedUITests: XCTestCase {
         self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}", matrix)
         self.assertIn("NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}", matrix)
         self.assertIn("${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", matrix)
-        for identifier in ("sharing-app-ui", "sharing-runtime-matrix"):
+        for identifier in ("sharing-app-ui", "sharing-runtime-matrix", "sharing-runtime-deferred"):
             body = jobs[identifier]
             self.assertNotIn("download-artifact", body)
             self.assertNotIn("continue-on-error", body)
@@ -727,6 +727,7 @@ final class UnrelatedUITests: XCTestCase {
                 remaining = scope.matrix_lanes(selected)
                 ui_lanes = scope.app_ui_lanes(selected)
                 has_app_ui = bool(ui_lanes)
+                deferred = "app-ui-solo-1" in ui_lanes
                 partition = ui_lanes + remaining
                 self.assertCountEqual(partition, scope.lanes(selected))
                 self.assertEqual(len(partition), len(set(partition)))
@@ -739,6 +740,15 @@ final class UnrelatedUITests: XCTestCase {
                 for identifier, body in jobs.items():
                     if "    runs-on: macos-15\n" not in body:
                         continue
+                    if identifier == "sharing-runtime-matrix":
+                        self.assertIn("!contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')", body)
+                        self.assertIn("    needs: plan\n", body)
+                        if deferred:
+                            continue
+                    if identifier == "sharing-runtime-deferred":
+                        self.assertIn("&& contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')", body)
+                        if not deferred:
+                            continue
                     if selected == scope.ICON_SCOPE and identifier != "build-without-signing":
                         continue
                     if identifier == "sharing-app-ui" and not has_app_ui:
@@ -746,11 +756,11 @@ final class UnrelatedUITests: XCTestCase {
                         continue
                     matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
                     expansion = outputs[matrix[1]] if matrix else (None,)
-                    limit = parallelism if identifier == "sharing-runtime-matrix" else 3 if identifier == "sharing-app-ui" else len(expansion)
+                    limit = parallelism if identifier.startswith("sharing-runtime-") else 3 if identifier == "sharing-app-ui" else len(expansion)
                     if matrix:
-                        if identifier == "sharing-runtime-matrix":
+                        if identifier.startswith("sharing-runtime-"):
                             self.assertIn("max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}", body)
-                    if identifier == "sharing-runtime-matrix":
+                    if identifier == "sharing-runtime-deferred":
                         deferred_running += min(len(expansion), limit)
                         self.assertIn("    needs: [plan, build-without-signing, simulator-smoke-test]\n", body)
                         self.assertIn("if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
@@ -784,6 +794,9 @@ final class UnrelatedUITests: XCTestCase {
                     self.assertEqual(ui_running + deferred_running, 5)
                 if selected == scope.ICON_SCOPE:
                     self.assertEqual(maximum_running, 1)
+                if not deferred and selected != scope.ICON_SCOPE:
+                    self.assertEqual(deferred_running, 0,
+                                     "Small scopes must not wait for build/smoke before runtime checks")
                 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.TOOL_CANDIDATE_REFRESH_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE, scope.PRESERVATION_USAGE_SCOPE, scope.MEMBERSHIP_TOOLS_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):

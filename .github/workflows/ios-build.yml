@@ -1133,7 +1133,7 @@ jobs:
       max-parallel: 3
       matrix:
         lane: ${{ fromJSON(needs.plan.outputs.app_ui_lanes) }}
-    # Reserve 15 minutes after the observed 74-minute UI run for result and artifact export.
+    # Bound execution to 80 minutes below, leaving 10 minutes for artifact upload.
     timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -1165,12 +1165,52 @@ jobs:
 
   sharing-runtime-matrix:
     name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]
+    # Small scopes still start all independent checks immediately. Only the
+    # three-UI-shard graph needs to wait for build/smoke to free two slots.
+    needs: plan
+    if: needs.plan.outputs.sharing == 'true' && !contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}
+      matrix:
+        lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Run sharing runtime matrix
+        working-directory: NekoWidget
+        shell: bash
+        env:
+          NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
+          NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}
+        run: python3 ci/run-recorded-command.py --record "$RUNNER_TEMP/neko-sharing-runtime-matrix/matrix-timing.json" -- bash ci/run-sharing-runtime-matrix.sh
+
+      - name: Upload sharing runtime matrix artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios-sharing-${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-sharing-runtime-matrix
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  sharing-runtime-deferred:
+    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]
     # Each lane has its own runner, checkout, Simulator, and derived products.
     # A failed Gallery condition can be rerun without replaying app UI.
     # Release the two initial build/smoke slots before starting runtime/Gallery.
     # Failed siblings still collect their independent evidence.
     needs: [plan, build-without-signing, simulator-smoke-test]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true' && contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')
     runs-on: macos-15
     strategy:
       fail-fast: false

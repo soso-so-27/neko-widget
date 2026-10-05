@@ -49,9 +49,10 @@ class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
         self.assertEqual(self.replay(), scope.APP_DATA_SCOPE)
         self.assertEqual(scope.select_scope(self.changes), scope.APP_DATA_SCOPE)
         required = planner.required_jobs(self.paths, scope.APP_DATA_SCOPE)
-        self.assertEqual(len(required), 5)
+        self.assertEqual(len(required), 6)
         self.assertEqual(required[:2], (planner.BUILD, planner.SMOKE))
-        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE), ("runtime", "app-ui-solo", "app-ui-other"))
+        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE),
+                         ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
         self.assertEqual(scope.native_tests(scope.APP_DATA_SCOPE),
                          tuple(test for test in scope.native_tests(scope.FULL_SCOPE) if test != scope.GALLERY_TEST))
         self.assertEqual(scope.smoke_tests(scope.APP_DATA_SCOPE), scope.smoke_tests(scope.FULL_SCOPE))

@@ -11,33 +11,76 @@ import subprocess
 import time
 
 
-def run(command, record, timeout=None):
-    started = dt.datetime.now(dt.timezone.utc).isoformat()
-    clock = time.monotonic()
-    timed_out = False
-    process = subprocess.Popen(command, start_new_session=os.name == "posix")
+class Interrupted(Exception):
+    def __init__(self, signum):
+        self.signum = signum
+
+
+def interrupt(signum, _frame):
+    raise Interrupted(signum)
+
+
+def stop(process):
+    if process.poll() is not None:
+        return
+    if os.name == "posix":
+        os.killpg(process.pid, signal.SIGTERM)
+    else:
+        process.terminate()
     try:
-        status = process.wait(timeout=timeout)
+        process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        timed_out = True
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGKILL)
         else:
             process.kill()
         process.wait()
+
+
+def run(command, record, timeout=None):
+    started = dt.datetime.now(dt.timezone.utc).isoformat()
+    clock = time.monotonic()
+    timed_out = False
+    status, interrupted, process = None, None, None
+    path = Path(record)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {"schemaVersion": 1, "startedAt": started,
+                "sourceSHA": os.environ.get("GITHUB_SHA"),
+                "runID": os.environ.get("GITHUB_RUN_ID"),
+                "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT")}
+    # A hard runner kill cannot execute finally. Keep an explicitly incomplete
+    # start record in that case, never a fabricated successful completion.
+    path.write_text(json.dumps(dict(metadata, state="running", exitCode=None)) + "\n", encoding="utf-8")
+    handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        process = subprocess.Popen(command, start_new_session=os.name == "posix")
+        status = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
         status = 124
-    status = status if status >= 0 else 128 - status
-    Path(record).write_text(json.dumps({
-        "schemaVersion": 1,
-        "startedAt": started,
-        "completedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "elapsedSeconds": round(time.monotonic() - clock, 3),
-        "exitCode": status,
-        "timedOut": timed_out,
-        "sourceSHA": os.environ.get("GITHUB_SHA"),
-        "runID": os.environ.get("GITHUB_RUN_ID"),
-        "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
-    }, indent=2) + "\n", encoding="utf-8")
+    except Interrupted as error:
+        interrupted = error.signum
+        status = 128 + interrupted
+    except OSError:
+        status = 127
+    finally:
+        # Ignore repeat shutdown signals only during bounded child cleanup.
+        for sig in handlers:
+            signal.signal(sig, signal.SIG_IGN)
+        try:
+            if process is not None and (timed_out or interrupted is not None):
+                stop(process)
+        finally:
+            if status is not None and status < 0:
+                status = 128 - status
+            path.write_text(json.dumps(dict(metadata,
+                state="completed" if status is not None else "incomplete",
+                completedAt=dt.datetime.now(dt.timezone.utc).isoformat(),
+                elapsedSeconds=round(time.monotonic() - clock, 3),
+                exitCode=status, timedOut=timed_out, interruptedSignal=interrupted,
+            ), indent=2) + "\n", encoding="utf-8")
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
     return status
 
 

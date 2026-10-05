@@ -25,3 +25,30 @@ PR #169後に着手し、通常CodexのPR #170/#171を含むmain `e97ebe6d`を�
 標準環境のPython検証と編集は可能。Bash fixtureテストはWindowsホーム親ディレクトリのmkdirでアクセス拒否となり、Xcode/Swiftは利用できない。GitHub shell接続の既知制限も残る。ACL、safe.directory、実行アカウント、ネットワーク設定は変更しない。
 
 ローカル必須チェックを成功扱いにせず、この環境からpush/CI/main統合/TestFlightは実施しない。通常Codexの新規プロジェクトチャットで候補を取り込み、開発・リリース手順の必須チェック→製品候補CI→main統合→本人向けTestFlightを完了する。テスト基準は維持する。
+
+## 通常環境での引継ぎ検証（2026-10-05）
+
+最新main e97ebe6とbundleのbase一致を確認。別worktree
+`C:/dev/neko-ci-runtime-validation-20261005` で検証し、進行中PR168のbranch/runは変更しない。
+製品PRと変更pathの重複はないが、Soloの明示一覧は製品側UI sourceへの依存がある。
+
+必須ローカル検証でapp-onlyの期待値5job/旧Solo名が残っていることを再現し、
+6job/新2shardへ修正した。全scopeへのbuild/smoke待機は狭い検証も遅らせるため、
+3UI shardを使う場合だけに限定。通常scopeは従来どおりplan直後から並行する。
+成果物のversion固定、必須job集合、失敗の扱い、製品・fixture・XCTest本文は維持。
+
+計測wrapperは開始時にincompleteと区別できる記録を作り、SIGINT/SIGTERM後も
+非ゼロ終了と所要時間を残す。起動できないcommandは127、timeoutは124、
+SIGTERMは143。timeout後の子プロセス終了待ちは最大5秒を別途含む。
+OSによる強制kill時は完了と偽らずrunning/exitCode nullが残る。
+Windowsのsignal模擬とPOSIX実signalは区別して確認する。
+
+最初の候補時刻は元4776220の11:22:59 JST、引継ぎ開始は11:39:38 JST。
+CIだけの変更なので測定専用TestFlightは作らない。配布総時間は製品配布で
+確認するまで未測定とする。元資料の成功221件を必須全件成功とは読み替えない。
+事前計画と実測は `C:/dev/neko-evidence/ci-runtime-validation-20261005/` に保存する。
+
+同環境でmandatory development-flowの14suiteが175.2秒で成功。
+Windowsで実行できないPOSIX signalと既存Apple環境チェックのskipは残し、
+native成功として数えない。修正前の期待値失敗と修正中のartifact固定値不一致も
+手戻りに含める。成功したchecksは変更しない限り再実行せず、次はpreflightのみ。
