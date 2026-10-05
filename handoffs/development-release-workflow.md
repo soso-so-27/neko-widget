@@ -72,7 +72,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIを改善するとき
 
-- 写真読み込み・見返しの既知full-v1 run `37245665341` / `1c4c4b5` に限り、PersonalRediscoveryUITestsの共通openHistory helperの旧AX名称検索だけを修正する。XCTestファイル全文の完全before/after blobを固定し、ID検索・現ラベル一致・hittableを確認、元の2テスト本文と合格条件は維持する。このhelperを読むSMOKEとapp-ui-otherの両ジョブを新SHAで全件再実行する。既知2ケースだけが両ジョブで失敗し、Build/runtime/solo/Gallery2系統の旧5件が実行成功してからのみ再利用する。同repo・branch・push・24h・attempt1・原plan full7・raw差分・既にmain承認済みの制御6本との一致を要求する。製品/fixture/workflow/未知の変更・追加失敗・skip・重複・欠落は対象外。未完了・取得不能では全件再起動せず停止。mainと配布でも旧5件＋新2件を再照合する。費用は失敗・診断と初回候補からの経過を残し、旧fullの成功したSMOKE28分とother約63分を次の並列実行の参考にする。未計測の短縮実績や完了保証にはしない。
+- 写真読み込み・見返しの既知full-v1 run `37245665341` / `1c4c4b5` に限り、PersonalRediscoveryUITestsの共通openHistory helperの旧AX名称検索だけを修正する。XCTestファイル全文の完全before/after blobを固定し、ID検索・現ラベル一致・hittableを確認、元の2テスト本文と合格条件は維持する。このhelperを読むSMOKEとapp-ui-otherに加え、テスト成功後に成果物保存だけが失敗したapp-ui-soloを、新SHAで全件再実行する。既知2ケースだけがSMOKEとapp-ui-otherで失敗し、Build/runtime/Gallery2系統の旧4件が成功し、soloが固定ID・step結果・ログの全条件に一致してからのみ再利用する。同repo・branch・push・24h・attempt1・原plan full7・raw差分・既にmain承認済みの制御8本との一致を要求する。制御ファイルのうち`test-ci-lanes.py`と`test-release-flow.py`も、現mainと完全一致する場合だけ許可する。製品/fixture/未知の変更・追加失敗・skip・重複・欠落は対象外。未完了・取得不能では全件再起動せず停止。mainと配布でも旧4件＋新3件を再照合する。費用は失敗・診断と初回候補からの経過を残し、測定済みの実績だけを用いて報告する。未計測の短縮実績や完了保証にはしない。
 
 - 猫アルバムの既知full-v1 run `37201863450` / `83c67ab` に限り、最大文字サイズのシート閉じ操作1本文の修正を、全UIテストファイルの完全before/after blobで固定する。製品・fixture・workflow・他のテストは不変、制御6本と本手順は独立レビュー・Ubuntu検証・main反映済みの一致が必要。同repo・同branch・24時間以内・同一必須graphの実行済み成功6ジョブを再利用し、新SHAでsoloの全46件を再実行する。原runのsolo失敗を成功へ読み替えず、未知の変更・追加失敗・重複・skip・未反映制御は対象外。配布CLIも原runと新UI結果を再照合する。一般的なfull-v1の失敗回避規則ではない。
 

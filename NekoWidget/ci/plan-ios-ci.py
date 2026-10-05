@@ -53,6 +53,9 @@ TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
     "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
 ))
+PHOTO_SMOKE_CORRECTION_CONTROL_PATHS = TEST_CORRECTION_CONTROL_PATHS | frozenset({
+    "NekoWidget/ci/test-ci-lanes.py", "NekoWidget/ci/test-release-flow.py",
+})
 # One reviewed correction of a known full-v1 test gesture. Pin the entire
 # XCTest file: no other case, helper, import or acceptance check may change.
 ALBUM_CORRECTION_SOURCE = "83c67ab482336c8ea8cb360020748f9c7072e265"
@@ -1196,7 +1199,8 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
         parts = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
         if parts[-1:] == [""]: parts.pop()
         if len(parts) % 2: return False
-        allowed = TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH, ALBUM_CORRECTION_DOC}
+        controls = PHOTO_SMOKE_CORRECTION_CONTROL_PATHS if photo_timeout_change else TEST_CORRECTION_CONTROL_PATHS
+        allowed = controls | {MEMORY_TEST_PATH, ALBUM_CORRECTION_DOC}
         if photo_timeout_change:
             allowed = allowed | {PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH}
         changed = set()
@@ -1223,7 +1227,7 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
         # Require approval of every control, even one unchanged from the source.
         return MEMORY_TEST_PATH in changed and all(
             git("show", f"{head}:{path}") == git("show", f"{approval}:{path}")
-            for path in TEST_CORRECTION_CONTROL_PATHS | {ALBUM_CORRECTION_DOC}) and (
+            for path in controls | {ALBUM_CORRECTION_DOC}) and (
                 not photo_timeout_change or PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH in changed)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return False
