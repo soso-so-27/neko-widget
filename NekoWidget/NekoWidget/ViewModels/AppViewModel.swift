@@ -3547,6 +3547,12 @@ final class AppViewModel: ObservableObject {
                 records = try SharedLikeStore.readAll()
             }
 
+            // Compare the canonical cache, not the scan snapshot: scans may
+            // already have applied the value while an open browser still owns
+            // its earlier confirmed override.
+            let confirmedChanges = records.values.filter {
+                sharedLikeRecords[$0.localIdentifier]?.isLiked != $0.isLiked
+            }
             sharedLikeRecords = records
             let wasInteractionReady = isLikeInteractionReady
             refreshLikeInteractionState()
@@ -3582,6 +3588,14 @@ final class AppViewModel: ObservableObject {
             }
             let sharedLikedCount = records.values.lazy.filter(\.isLiked).count
             let visibleLikedCount = updatedSnapshot.assets.lazy.filter(\.liked).count
+            for record in confirmedChanges {
+                NotificationCenter.default.post(
+                    name: .confirmedMemorySavedStateChanged,
+                    object: ConfirmedMemorySavedState(
+                        localIdentifier: record.localIdentifier, isSaved: record.isLiked
+                    )
+                )
+            }
             SharedLog.app.info(
                 "like",
                 "Shared like state synchronized",
