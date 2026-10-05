@@ -4,7 +4,7 @@ import ImageIO
 import Photos
 
 enum PhotoLibrarySection: String, CaseIterable {
-    case notes, favorites, all
+    case all, favorites, notes
 
     var title: String {
         switch self {
@@ -259,6 +259,9 @@ struct MainTabView: View {
     let likedPhotos: [PhotoPresentation]
     let catPhotos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
+    var photoLibraryAssignments: [String: Set<String>]? = nil
+    var savedPhotoIdentifiers: Set<String>? = nil
+    var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
@@ -304,6 +307,7 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .memories
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore()
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
@@ -603,12 +607,22 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
+            photoLibraryCatPicker
             PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding)
-            photoLibraryContent.id(photoLibraryRevision)
+            photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
+            PhotoLibraryReadingPosition.activeSection = key
+        }
+        .onChange(of: catProfilesPresentation.profiles.map(\.identifier)) { _, identifiers in
+            if let selected = photoLibraryProfileIdentifier,
+               selected != "unassigned", !identifiers.contains(selected) {
+                photoLibraryProfileIdentifier = nil
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
@@ -876,17 +890,75 @@ struct MainTabView: View {
         selectedTab == .photos && photosPath.isEmpty && scenePhase == .active
     }
 
+    private var photoLibraryPositionKey: String {
+        let mode = photoLibrarySelection.selection.rawValue
+        return photoLibraryProfileIdentifier.map { "\(mode)-\($0)" } ?? mode
+    }
+
+    private var currentPhotoLibraryAssignments: [String: Set<String>] {
+        photoLibraryAssignments ?? assignmentsByPhotoIdentifier
+    }
+
+    private func photoLibraryIncludes(_ identifier: String) -> Bool {
+        let registered = Set(catProfilesPresentation.profiles.map(\.identifier))
+        let assignments = (currentPhotoLibraryAssignments[identifier] ?? []).intersection(registered)
+        return PhotoMemoryNoteLibraryPolicy.includes(selected: photoLibraryProfileIdentifier, identifiers: assignments)
+    }
+
+    private var photoLibraryCatPhotos: [PhotoPresentation] { catPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    private var photoLibraryLikedPhotos: [PhotoPresentation] { likedPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    private var unavailablePhotoLibrarySavedCount: Int {
+        let saved = savedPhotoIdentifiers ?? Set(likedPhotos.map(\.localIdentifier))
+        let visible = Set((hasPhotoAccess ? photoLibraryLikedPhotos : []).map(\.localIdentifier))
+        return saved.filter { photoLibraryIncludes($0) && !visible.contains($0) }.count
+    }
+
+    private var photoLibraryCatPicker: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                photoLibraryCatButton("全猫", identifier: nil)
+                ForEach(catProfilesPresentation.profiles) { profile in
+                    photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
+                }
+                photoLibraryCatButton("未指定", identifier: "unassigned")
+            }.padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("photos-cat-picker")
+    }
+
+    private func photoLibraryCatButton(_ title: String, identifier: String?) -> some View {
+        Button { photoLibraryProfileIdentifier = identifier } label: {
+            Text(title).font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14).frame(minHeight: 44)
+                .background(photoLibraryProfileIdentifier == identifier ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(photoLibraryProfileIdentifier == identifier ? .isSelected : [])
+        .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
+    }
+
     @ViewBuilder private var photoLibraryContent: some View {
         switch photoLibrarySelection.selection {
         case .all:
             allPhotosView
         case .favorites:
-            SavedMemoriesGalleryView(photos: likedPhotos, startsInExportMode: false,
-                                    isEmbedded: true, exportPhotoBook: exportPhotoBook)
+            SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : [], startsInExportMode: false,
+                                    isEmbedded: true,
+                                    readingPositionKey: photoLibraryPositionKey,
+                                    unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
+                                    hasPhotoAccess: hasPhotoAccess,
+                                    savedStateReadFailed: savedPhotoStateReadFailed,
+                                    exportPhotoBook: exportPhotoBook)
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
                                      isEmbedded: true,
-                                     openCatPreparedness: nil) {
+                                     openCatPreparedness: nil,
+                                     selectedProfileIdentifier: photoLibraryProfileIdentifier,
+                                     currentPhotoAssignments: currentPhotoLibraryAssignments,
+                                     registeredProfileIdentifiers: Set(catProfilesPresentation.profiles.map(\.identifier)),
+                                     currentProfileNames: Dictionary(uniqueKeysWithValues: catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) }),
+                                     readingPositionKey: photoLibraryPositionKey) {
                 photoLibrarySelection.select(.all)
             }
         }
@@ -899,14 +971,16 @@ struct MainTabView: View {
             requestPhotoAccess: requestPhotoAccess, chooseMorePhotos: chooseMorePhotos,
             showWidgetPlacementGuide: showWidgetPlacementGuide,
             showSettings: { showsSettings = true }, rescan: { Task { await rescan() } },
-            catPhotos: catPhotos, excludedCatPhotos: excludedCatPhotos,
+            catPhotos: photoLibraryCatPhotos, excludedCatPhotos: excludedCatPhotos,
             photoSourceAlbums: photoSourceAlbums, photoSourceStatus: photoSourceStatus,
             restoreCatCandidates: restoreCatCandidates, selectPhotoSourceAlbum: selectPhotoSourceAlbum,
             refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
             catProfilesPresentation: catProfilesPresentation, catProfilesActions: catProfilesActions,
             isEmbedded: true,
-            supplementaryPhotos: AnyView(PersonalArchivePhotosSection(
-                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore))
+            supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
+                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
+            readingPositionKey: photoLibraryPositionKey,
+            showsCatProfileNavigation: false
         )
     }
 
@@ -961,7 +1035,8 @@ struct MainTabView: View {
                     // top row can hide the photo that was just viewed. Restore
                     // after the pop rather than before its layout transition.
                     PhotoLibraryReadingPosition.returnToOpenedPhoto(
-                        PhotoLibraryGridRow.identifier(containing: localIdentifier, in: catPhotos)
+                        PhotoLibraryGridRow.identifier(containing: localIdentifier, in: photoLibraryCatPhotos),
+                        section: photoLibraryPositionKey
                     )
                 }
         case .automaticAlbums:
@@ -1196,9 +1271,9 @@ struct MainTabView: View {
     private func collectionDetailView(for localIdentifier: String) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
            photoSourceStatus != .unavailable,
-           let initialPhoto = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+           let initialPhoto = photoLibraryCatPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
             PhotoBrowserView(
-                photos: catPhotos,
+                photos: photoLibraryCatPhotos,
                 libraryPhotos: libraryPhotos,
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil,
@@ -1226,11 +1301,12 @@ struct MainTabView: View {
     @ViewBuilder
     private func memoryDetailView(for localIdentifier: String) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
+           selectedTab != .photos || photoLibraryIncludes(localIdentifier),
            (readablePhotoIdentifiers?.contains(localIdentifier)
             ?? (likedPhotos + libraryPhotos).contains { $0.localIdentifier == localIdentifier }) {
             let initialPhoto = photo(for: localIdentifier)
             PhotoBrowserView(
-                photos: likedPhotos,
+                photos: selectedTab == .photos ? photoLibraryLikedPhotos : likedPhotos,
                 libraryPhotos: libraryPhotos,
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil,

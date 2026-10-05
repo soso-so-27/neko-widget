@@ -346,6 +346,18 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
+            photoLibraryAssignments: identity.map { value in
+                let registered = Set(value.profiles.map(\.id))
+                var assignments: [String: Set<String>] = [:]
+                for membership in value.memberships where membership.decision == .included
+                    && registered.contains(membership.profileID)
+                    && !value.isGloballyExcluded(membership.assetLocalIdentifier) {
+                    assignments[membership.assetLocalIdentifier, default: []].insert(membership.profileID.uuidString)
+                }
+                return assignments
+            } ?? [:],
+            savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
+            savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
