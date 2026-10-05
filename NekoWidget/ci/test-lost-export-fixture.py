@@ -16,6 +16,7 @@ class LostExportFixtureTests(unittest.TestCase):
         self.assertIn("try require(nativeMissing", case)
         self.assertIn("try ownedDirectories() == before", case)
         self.assertLess(case.index("try require(nativeMissing"), case.index("createFixtureImage"))
+        self.assertLess(case.index("defer { LostCatFlyerRenderer.removeExport(png) }"), case.index("let pdf = try LostCatFlyerRenderer.createFixturePDF"))
         self.assertIn("UIImage(data: Data(contentsOf: png))", case)
         self.assertIn('Data("%PDF-".utf8)', case)
         self.assertIn(".unknownType, .wrongClass, .readFailed, .setFailed", case)

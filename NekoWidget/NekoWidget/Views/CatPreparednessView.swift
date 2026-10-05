@@ -1123,8 +1123,9 @@ struct LostCatDraftFixtureView: View {
             return [.protectionKey: FileProtectionType.complete]
         }
         let png = try LostCatFlyerRenderer.createFixtureImage(draft, verify: verify)
+        defer { LostCatFlyerRenderer.removeExport(png) }
         let pdf = try LostCatFlyerRenderer.createFixturePDF(draft, verify: verify)
-        defer { LostCatFlyerRenderer.removeExport(png); LostCatFlyerRenderer.removeExport(pdf) }
+        defer { LostCatFlyerRenderer.removeExport(pdf) }
         try require(verifiedTargets == [.directory, .file, .directory, .file], .directoryProtection)
         try require(png.deletingLastPathComponent() != pdf.deletingLastPathComponent(), .sharedDirectory)
         try require(UIImage(data: Data(contentsOf: png)) != nil, .missingFile)
