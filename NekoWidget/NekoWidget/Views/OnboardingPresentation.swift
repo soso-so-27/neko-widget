@@ -1,5 +1,17 @@
 import Foundation
 
+enum OnboardingPartialScanRecovery {
+    static func message(hasPreliminaryResult: Bool, error: String?) -> String? {
+        guard hasPreliminaryResult, let error,
+              !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return error
+    }
+
+    static func showsProgress(hasFinalResult: Bool, hasPreliminaryResult: Bool, error: String?) -> Bool {
+        !hasFinalResult && message(hasPreliminaryResult: hasPreliminaryResult, error: error) == nil
+    }
+}
+
 /// The onboarding is deliberately limited to these four moments. Adding a
 /// case changes the product flow, so the standalone verifier locks the count
 /// and order.

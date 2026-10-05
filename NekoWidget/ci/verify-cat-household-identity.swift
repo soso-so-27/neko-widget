@@ -27,8 +27,10 @@ enum CatHouseholdIdentityVerifier {
         try verifiesRevisionPolicyRejectsStaleState()
         try verifiesCodableRoundTrip()
         try verifiesProfileTransferBoundaries()
+        try verifiesPortablePhotoTransferNeedsExplicitConfirmation()
         try await verifiesProfileTransferCommitConflict()
         try await verifiesProtectedAtomicStore()
+        try await verifiesFailedIdentityLoadsPreserveBytesAndAllowExplicitReread()
         print("Cat household identity verifier passed")
     }
 
@@ -821,6 +823,61 @@ enum CatHouseholdIdentityVerifier {
         )
     }
 
+    /// Uses only a fresh temporary fixture and the existing stateURL injection.
+    /// This proves store-level rejection/reread, not AppViewModel startup retry.
+    private static func verifiesFailedIdentityLoadsPreserveBytesAndAllowExplicitReread() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "startup-identity-fault-fixture-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("synthetic-identity.json")
+        let store = try CatHouseholdIdentityStore(stateURL: url)
+        var curation = CatCandidateCurationState.empty
+        curation.exclude(localIdentifiers: ["synthetic-excluded-photo"], at: Date(timeIntervalSince1970: 1))
+        let original = try await store.loadOrMigrate(
+            legacyLifeReference: lifeReference(year: 2020, month: 4, day: 5),
+            legacyCuration: curation, at: Date(timeIntervalSince1970: 2))
+        let validBytes = try Data(contentsOf: url)
+
+        // A truncated read payload must not be treated as a missing/empty ledger.
+        let partialBytes = Data(validBytes.prefix(max(1, validBytes.count / 2)))
+        try partialBytes.write(to: url)
+        var rejected = false
+        do { _ = try await store.load() } catch is DecodingError { rejected = true }
+        try require(rejected, "a truncated identity was accepted as a successful load")
+        let bytesAfterFailure = try Data(contentsOf: url)
+        try require(bytesAfterFailure == partialBytes, "a failed load rewrote the truncated identity")
+
+        // Even the migration entry point must not replace malformed data with defaults.
+        for _ in 0..<2 {
+            rejected = false
+            do {
+                _ = try await store.loadOrMigrate(legacyLifeReference: nil, legacyCuration: .empty)
+            } catch is DecodingError { rejected = true }
+            try require(rejected, "persistent identity corruption became an empty migration")
+            let bytesAfterMigrationFailure = try Data(contentsOf: url)
+            try require(bytesAfterMigrationFailure == partialBytes, "migration overwrote a corrupt identity")
+        }
+
+        // Restore only the generated fixture; no automatic recovery/reset is performed.
+        try validBytes.write(to: url)
+        let recovered = try await store.load()
+        try require(recovered == original, "the same store could not explicitly reread a repaired fixture")
+        let bytesAfterRecovery = try Data(contentsOf: url)
+        try require(bytesAfterRecovery == validBytes, "rereading advanced or rewrote healthy identity data")
+
+        var future = try JSONSerialization.jsonObject(with: validBytes) as! [String: Any]
+        future["schemaVersion"] = CatHouseholdIdentityState.currentSchemaVersion + 1
+        let futureBytes = try JSONSerialization.data(withJSONObject: future, options: [.sortedKeys])
+        try futureBytes.write(to: url)
+        do {
+            _ = try await store.loadOrMigrate(legacyLifeReference: nil, legacyCuration: .empty)
+            throw VerificationError.failed("a future identity schema was silently replaced")
+        } catch CatHouseholdIdentityStoreError.unsupportedSchema(_) { }
+        let bytesAfterFutureSchemaFailure = try Data(contentsOf: url)
+        try require(bytesAfterFutureSchemaFailure == futureBytes, "future-schema failure changed stored bytes")
+    }
+
     private static func verifiesProtectedAtomicStore() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "cat-identity-verifier-\(UUID().uuidString)",
@@ -980,6 +1037,61 @@ enum CatHouseholdIdentityVerifier {
             _ = try CatProfileTransfer.decode(Data(repeating: 32, count: CatProfileTransfer.maximumBytes + 1))
             throw VerificationError.failed("oversized transfer was accepted")
         } catch CatProfileTransferError.invalidFile { }
+    }
+
+    private static func verifiesPortablePhotoTransferNeedsExplicitConfirmation() throws {
+        let cat = CatProfile(displayName: "Portable cat")
+        let metadata = CatProfileTransfer.PhotoMetadata(creationDate: Date(timeIntervalSince1970: 1234.987),
+            width: 2048, height: 1536, mediaType: 1, duration: 0)
+        let portableID = UUID()
+        let transfer = try CatProfileTransfer(profiles: [cat], photos: [
+            .init(id: portableID, metadata: metadata, profileIDs: [cat.id])
+        ])
+        let encoded = try transfer.encoded()
+        let decoded = try CatProfileTransfer.decode(encoded)
+        try require(decoded == transfer, "portable metadata did not round trip")
+        try require(decoded.photos?.first?.metadata.creationDate == Date(timeIntervalSince1970: 1234),
+                    "fractional PhotoKit dates did not normalize to portable seconds")
+        let text = String(decoding: encoded, as: UTF8.self)
+        try require(!text.contains("localIdentifier") && !text.contains("assetLocalIdentifier"),
+                    "portable file contains device-specific photo identifiers")
+        let empty = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
+        let profiles = try transfer.applying(to: empty, expectedRevision: empty.mutationRevision)
+        let candidates = [CatProfileTransferCandidate(localIdentifier: "new-device-photo", metadata: metadata),
+                          CatProfileTransferCandidate(localIdentifier: "ambiguous-other-photo", metadata: metadata)]
+        let notConfirmed = try transfer.applyingConfirmedPhotos(to: profiles, selections: [:], candidates: candidates)
+        try require(notConfirmed.memberships.isEmpty, "metadata or ambiguous matches assigned automatically")
+        let confirmed = try transfer.applyingConfirmedPhotos(to: profiles,
+            selections: [portableID: "new-device-photo"], candidates: candidates)
+        try require(confirmed.confirmedAssetIdentifiers(for: cat.id) == ["new-device-photo"],
+                    "explicit selection did not use the new device identifier")
+        let repeated = try transfer.applyingConfirmedPhotos(to: confirmed,
+            selections: [portableID: "new-device-photo"], candidates: candidates)
+        try require(repeated == confirmed, "repeated confirmation changed existing memberships")
+        do {
+            _ = try transfer.applyingConfirmedPhotos(to: profiles,
+                selections: [portableID: "new-device-photo"], candidates: [])
+            throw VerificationError.failed("missing or revoked photo was assigned")
+        } catch CatProfileTransferError.changedState { }
+        let secondID = UUID()
+        let duplicates = try CatProfileTransfer(profiles: [cat], photos: [
+            .init(id: portableID, metadata: metadata, profileIDs: [cat.id]),
+            .init(id: secondID, metadata: metadata, profileIDs: [cat.id])
+        ])
+        do {
+            _ = try duplicates.applyingConfirmedPhotos(to: profiles,
+                selections: [portableID: "new-device-photo", secondID: "new-device-photo"], candidates: candidates)
+            throw VerificationError.failed("two portable rows claimed the same local asset")
+        } catch CatProfileTransferError.invalidFile { }
+        var excluded = profiles
+        excluded.setManualMembership(assetLocalIdentifier: "new-device-photo", profileID: cat.id, decision: .excluded)
+        do {
+            _ = try transfer.applyingConfirmedPhotos(to: excluded,
+                selections: [portableID: "new-device-photo"], candidates: candidates)
+            throw VerificationError.failed("import overwrote an existing exclusion")
+        } catch CatProfileTransferError.existingSettings { }
+        try require(excluded.membershipDecision(for: "new-device-photo", profileID: cat.id) == .excluded,
+                    "failed import changed its input")
     }
 
     private static func verifiesProfileTransferCommitConflict() async throws {

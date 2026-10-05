@@ -18,10 +18,42 @@ enum CatProfileTransferError: LocalizedError {
 /// A separate, explicit whitelist. Never encode CatProfile or its PhotoKit IDs
 /// directly into a portable document.
 struct CatProfileTransfer: Codable, Equatable, Sendable {
-    static let maximumBytes = 65_536
+    static let maximumBytes = 4_194_304
     let format: String
     let version: Int
     let profiles: [Entry]
+    /// Portable random keys and metadata only; never PhotoKit identifiers or pixels.
+    var photos: [Photo]? = nil
+
+    struct Photo: Codable, Equatable, Identifiable, Sendable {
+        let id: UUID
+        let metadata: PhotoMetadata
+        let profileIDs: [UUID]
+    }
+
+    struct PhotoMetadata: Codable, Equatable, Hashable, Sendable {
+        let creationDate: Date
+        let width: Int
+        let height: Int
+        let mediaType: Int
+        let duration: Double
+
+        init(creationDate: Date, width: Int, height: Int, mediaType: Int, duration: Double) {
+            self.creationDate = Date(timeIntervalSince1970: floor(creationDate.timeIntervalSince1970))
+            self.width = width
+            self.height = height
+            self.mediaType = mediaType
+            self.duration = duration
+        }
+
+        var isValid: Bool {
+            creationDate.timeIntervalSince1970.isFinite
+                && creationDate.timeIntervalSince1970 == floor(creationDate.timeIntervalSince1970)
+                && width > 0 && height > 0
+                && width <= 100_000 && height <= 100_000
+                && (mediaType == 1 || mediaType == 2) && duration.isFinite && duration >= 0
+        }
+    }
 
     struct Entry: Codable, Equatable, Identifiable, Sendable {
         let id: UUID
@@ -50,6 +82,14 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         try validate()
     }
 
+    init(profiles: [CatProfile], photos: [Photo]) throws {
+        format = "neko-profile-dates"
+        version = 2
+        self.profiles = profiles.map(Entry.init)
+        self.photos = photos
+        try validate()
+    }
+
     static func decode(_ data: Data) throws -> Self {
         guard data.count <= maximumBytes else { throw CatProfileTransferError.invalidFile }
         let value: Self
@@ -70,7 +110,16 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
 
     func validate() throws {
         guard format == "neko-profile-dates" else { throw CatProfileTransferError.invalidFile }
-        guard version == 1 else { throw CatProfileTransferError.unsupportedVersion }
+        guard version == 1 || version == 2 else { throw CatProfileTransferError.unsupportedVersion }
+        let photos = photos ?? []
+        let profileIDs = Set(profiles.map(\.id))
+        guard (version == 2 || photos.isEmpty), photos.count <= 10_000,
+              Set(photos.map(\.id)).count == photos.count,
+              photos.allSatisfy({ $0.metadata.isValid && !$0.profileIDs.isEmpty
+                  && Set($0.profileIDs).count == $0.profileIDs.count
+                  && Set($0.profileIDs).isSubset(of: profileIDs) }) else {
+            throw CatProfileTransferError.invalidFile
+        }
         guard !profiles.isEmpty else { throw CatProfileTransferError.emptyProfiles }
         guard profiles.count <= 100, Set(profiles.map(\.id)).count == profiles.count else {
             throw CatProfileTransferError.invalidFile
@@ -134,4 +183,49 @@ struct CatProfileImportPreview: Identifiable {
     let expectedCurationRevision: Int
     let expectedLegacyReference: CatLifeReference?
     let isUnchanged: Bool
+    var photoCandidates: [UUID: [CatProfileTransferCandidate]] = [:]
+    /// Empty by default, even when exactly one metadata candidate exists.
+    var selectedPhotoIdentifiers: [UUID: String] = [:]
+}
+
+struct CatProfileTransferCandidate: Identifiable, Equatable {
+    let localIdentifier: String
+    let metadata: CatProfileTransfer.PhotoMetadata
+    var id: String { localIdentifier }
+}
+
+extension CatProfileTransfer {
+    /// Selection is explicit. Revalidate against the current permitted library;
+    /// metadata matches are candidates, never proof of identity.
+    func applyingConfirmedPhotos(to proposed: CatHouseholdIdentityState,
+                                 selections: [UUID: String],
+                                 candidates: [CatProfileTransferCandidate],
+                                 at date: Date = .now) throws -> CatHouseholdIdentityState {
+        try validate()
+        let entries = photos ?? []
+        guard Set(selections.keys).isSubset(of: Set(entries.map(\.id))),
+              Set(selections.values).count == selections.count else {
+            throw CatProfileTransferError.invalidFile
+        }
+        var result = proposed
+        for photo in entries {
+            guard let identifier = selections[photo.id] else { continue }
+            let matching = candidates.filter { $0.localIdentifier == identifier && $0.metadata == photo.metadata }
+            guard matching.count == 1 else { throw CatProfileTransferError.changedState }
+            guard !result.globalExcludedAssets.contains(where: { $0.localIdentifier == identifier }) else {
+                throw CatProfileTransferError.existingSettings
+            }
+            for profileID in photo.profileIDs {
+                guard result.profiles.contains(where: { $0.id == profileID }) else {
+                    throw CatProfileTransferError.changedState
+                }
+                let decision = result.membershipDecision(for: identifier, profileID: profileID)
+                guard decision != .excluded else { throw CatProfileTransferError.existingSettings }
+                if decision == .included { continue }
+                result.setManualMembership(assetLocalIdentifier: identifier, profileID: profileID,
+                                           decision: .included, at: date)
+            }
+        }
+        return result
+    }
 }

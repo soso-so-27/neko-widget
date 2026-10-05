@@ -2416,6 +2416,19 @@ struct PhotoBrowserView: View {
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
+                if personalNote.state(for: selectedPhoto.localIdentifier) == .failed {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("メモを読み込めませんでした。保存済みの内容は変更していません。")
+                            .font(.subheadline)
+                        Button("メモを再読み込み", systemImage: "arrow.clockwise") {
+                            let identifier = selectedPhoto.localIdentifier
+                            Task { await personalNote.load(for: identifier) }
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("photo-memory-note-read-retry")
+                    }
+                    .accessibilityIdentifier("photo-memory-note-read-error")
+                }
                 HStack(spacing: dynamicTypeSize.isAccessibilitySize ? 4 : 8) {
                     photoActions(selectedPhoto)
                 }
@@ -2529,13 +2542,14 @@ struct PhotoBrowserView: View {
         }
 
         Button { personalNotePhoto = selectedPhoto } label: {
-            photoActionLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil
-                             ? "メモを書く" : "メモを編集", systemImage: "square.and.pencil")
+            photoActionLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
+                hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil), systemImage: "square.and.pencil")
         }
-        .accessibilityLabel(personalNote.note(for: selectedPhoto.localIdentifier) == nil ? "メモを書く" : "メモを編集")
+        .accessibilityLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
+            hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil))
         .accessibilityHint("自分だけのメモです。相手には送られません")
         .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto)
+        .disabled(isExportingMemoryPhoto || personalNote.state(for: selectedPhoto.localIdentifier).isLoading)
 
         if canDeliverToWindow {
             Button {
@@ -2572,6 +2586,24 @@ struct PhotoBrowserView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                if openRelatedAlbum != nil,
+                   !(relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty {
+                    Menu {
+                        if let photo = selectedPhoto, let date = photo.creationDate,
+                           dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
+                            sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
+                                .accessibilityIdentifier("photo-browser-same-day")
+                        }
+                        relatedAlbumsMenu
+                    } label: {
+                        Label("見返す", systemImage: "photo.on.rectangle")
+                    }
+                    .accessibilityLabel("関連する写真")
+                    .accessibilityHint("同じ猫やテーマ、撮影した年の写真を探します")
+                    .accessibilityIdentifier("photo-browser-rediscover")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let showcaseOpenOne, let selectedPhoto {
                         Button {
@@ -2595,7 +2627,6 @@ struct PhotoBrowserView: View {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
                             .accessibilityIdentifier("photo-browser-same-day")
                     }
-                    relatedAlbumsMenu
                     if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
                         Button { managedPreservationPhoto = photo } label: {
                             Label("サービスに保管", systemImage: "externaldrive.badge.plus")
@@ -2660,6 +2691,7 @@ struct PhotoBrowserView: View {
                     Label("写真メニュー", systemImage: "ellipsis")
                 }
                 .accessibilityIdentifier("photo-browser-related")
+                .accessibilityLabel("写真のその他の操作")
             }
         }
     }
@@ -2683,6 +2715,8 @@ struct PhotoBrowserView: View {
                                     Text(link.title)
                                 }
                                 .accessibilityIdentifier(link.accessibilityIdentifier)
+                                .accessibilityLabel("\(group.rawValue)、\(link.title)")
+                                .accessibilityHint("関連する写真の一覧を開きます。閉じると元の写真に戻ります")
                             }
                         }
                     }

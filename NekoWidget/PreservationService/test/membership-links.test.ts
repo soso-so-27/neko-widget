@@ -36,6 +36,38 @@ async function fixture() {
     advance: (ms: number) => { now += ms; }, status: (value: MembershipStatus) => { membership = value; } };
 }
 describe('two-proof preservation membership link', () => {
+  it('retains the same archive through purchase, cancellation, expiry, outage and restored membership', async () => {
+    const f = await fixture(); await f.link();
+    const id = crypto.randomUUID();
+    const document = { formatVersion: 1, text: 'synthetic continuity record', capturedAt: null,
+      writtenAt: null, updatedAt: null, catNames: [], photoFile: 'photo.jpg' };
+    const upload = { expectedRevision: null, consentVersion: 'managed-preservation-v1', document,
+      photoBase64: btoa('synthetic-photo') };
+    await f.services.archive.put(f.user.token, id, upload);
+    // Turning off renewal is still active until verified expiry; no client flag grants access.
+    f.advance(1000); f.status('active');
+    expect(await f.links.forSession(f.user.token)).toMatchObject({ status: 'active' });
+    expect(await (await f.request('/v1/retention', 'GET')).json()).toMatchObject({ dueAt: null });
+    f.advance(1000); f.status('expired');
+    const expired = await (await f.request('/v1/retention', 'GET')).json() as { dueAt: number };
+    expect(expired.dueAt).toBe(Date.UTC(2027, 8, 22) + 2000);
+    await expect(f.services.archive.put(f.user.token, crypto.randomUUID(), upload))
+      .rejects.toMatchObject({ status: 403 });
+    expect((await f.services.archive.read(f.user.token, id)).document.text).toBe(document.text);
+    f.advance(1000); f.status('unknown');
+    expect(await (await f.request('/v1/retention', 'GET')).json()).toMatchObject({ status: 'unknown', paused: true });
+    await expect(f.services.archive.put(f.user.token, crypto.randomUUID(), upload))
+      .rejects.toMatchObject({ code: 'ACCESS_UNCONFIRMED' });
+    expect((await f.services.archive.read(f.user.token, id)).document.text).toBe(document.text);
+    await f.auth.revokeSession(f.user.token);
+    const restored = await f.auth.establish(f.identity);
+    f.advance(1000); f.status('active'); await f.link(restored.token);
+    expect(restored.ownerId).toBe(f.user.ownerId);
+    expect(await (await f.request('/v1/retention', 'GET', undefined, restored.token)).json())
+      .toMatchObject({ status: 'active', dueAt: null, paused: false });
+    expect((await f.services.archive.read(restored.token, id)).document.text).toBe(document.text);
+    await f.services.archive.put(restored.token, crypto.randomUUID(), upload);
+  });
   it('uses the pilot for unlinked owners and preserves an existing real billing link', async () => {
     const f = await fixture();
     const links = new MembershipLinks({ db, auth: f.auth, authority: f.authority,

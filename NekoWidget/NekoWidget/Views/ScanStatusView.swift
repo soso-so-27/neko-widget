@@ -10,6 +10,7 @@ struct InitialScanView: View {
     let openPreviewPhoto: ((PhotoPresentation) -> Void)?
     let widgetGuideAction: (() -> Void)?
     let continueToApp: () -> Void
+    let scanErrorMessage: String?
 
     init(
         scan: ScanPresentation,
@@ -20,6 +21,7 @@ struct InitialScanView: View {
         continueButtonTitleOverride: String? = nil,
         openPreviewPhoto: ((PhotoPresentation) -> Void)? = nil,
         widgetGuideAction: (() -> Void)? = nil,
+        scanErrorMessage: String? = nil,
         continueToApp: @escaping () -> Void
     ) {
         self.scan = scan
@@ -31,6 +33,7 @@ struct InitialScanView: View {
         self.openPreviewPhoto = openPreviewPhoto
         self.widgetGuideAction = widgetGuideAction
         self.continueToApp = continueToApp
+        self.scanErrorMessage = scanErrorMessage
     }
 
     var body: some View {
@@ -42,6 +45,21 @@ struct InitialScanView: View {
                     if scan.hasPreliminaryResult {
                         result
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        if let scanErrorMessage = OnboardingPartialScanRecovery.message(
+                            hasPreliminaryResult: scan.hasPreliminaryResult, error: scanErrorMessage) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Label("途中までの写真を表示しています", systemImage: "exclamationmark.triangle")
+                                    .font(.headline)
+                                Text(scanErrorMessage).font(.subheadline)
+                                Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                                    .frame(minHeight: 44)
+                                    .accessibilityIdentifier("onboarding-partial-scan-retry")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+                            .accessibilityIdentifier("onboarding-partial-scan-error")
+                        }
                     } else {
                         VStack(spacing: 18) {
                             ProgressView()
@@ -155,7 +173,8 @@ struct InitialScanView: View {
                 }
             }
 
-            if !scan.hasFinalResult {
+            if OnboardingPartialScanRecovery.showsProgress(hasFinalResult: scan.hasFinalResult,
+                hasPreliminaryResult: scan.hasPreliminaryResult, error: scanErrorMessage) {
                 VStack(spacing: 7) {
                     let quickTotal = min(scan.totalAssets, 500)
                     let quickScanned = min(scan.scannedAssets, quickTotal)

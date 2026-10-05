@@ -8,6 +8,7 @@ import Foundation
 enum PhotoMemoryNoteVerifier {
     static func main() async throws {
         try verifiesWeightValues()
+        try verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated()
         if CommandLine.arguments.contains("--portable-only") { print("Weight value boundaries passed (no Apple persistence claims)"); return }
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("photo-memory-notes-\(UUID().uuidString)", isDirectory: true)
@@ -24,6 +25,34 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated() throws {
+        let saved = PhotoMemoryNote(id: UUID(), text: "saved private memo", updatedAt: Date(),
+            revision: "revision", writtenAt: nil, context: nil)
+        var state = PhotoMemoryNoteReadingState()
+        let first = state.begin(for: "first-photo")
+        try require(state.phase == .loading && state.note == nil, "a pending memo looked like an empty successful read")
+        state.fail(token: first)
+        try require(state.phase == .failed && state.phase.actionTitle(hasNote: false) != "メモを書く",
+                    "a failed memo read offered new-memo creation")
+        let retry = state.begin(for: "first-photo")
+        state.complete(saved, token: retry)
+        try require(state.phase == .loaded && state.note == saved, "read retry did not restore the saved memo")
+        let late = state.begin(for: "old-photo")
+        let current = state.begin(for: "current-photo")
+        state.complete(saved, token: late)
+        state.fail(token: late)
+        state.cancel(token: late)
+        try require(state.identifier == "current-photo" && state.phase == .loading && state.note == nil,
+                    "an older request changed the selected photo's reading state")
+        state.complete(nil, token: current)
+        try require(state.phase == .loaded && state.note == nil && state.phase.actionTitle(hasNote: false) == "メモを書く",
+                    "a successful absent memo was not distinguished from failure")
+        let cancelled = state.begin(for: "cancelled-photo")
+        state.cancel(token: cancelled)
+        state.complete(saved, token: cancelled)
+        try require(state.phase == .idle && state.note == nil, "a cancelled read later published a memo")
     }
 
     private static func verifiesWeightValues() throws {

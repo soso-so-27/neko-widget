@@ -165,30 +165,34 @@ extension EnvironmentValues {
 @MainActor
 final class PhotoMemoryNotePresentation: ObservableObject {
     let store: PhotoMemoryNoteStore
-    @Published private(set) var identifier: String?
-    @Published private(set) var note: PhotoMemoryNote?
-    private var request = UUID()
+    @Published private(set) var reading = PhotoMemoryNoteReadingState()
+    var identifier: String? { reading.identifier }
+    var note: PhotoMemoryNote? { reading.note }
+    var readState: PhotoMemoryNoteReadState { reading.phase }
 
     init(store: PhotoMemoryNoteStore) { self.store = store }
 
     func load(for identifier: String) async {
-        let token = UUID()
-        request = token
-        self.identifier = nil
-        note = nil
+        let token = reading.begin(for: identifier)
         do {
             let loaded = try await store.note(for: identifier)
-            guard request == token, !Task.isCancelled else { return }
-            self.identifier = identifier
-            note = loaded
+            guard !Task.isCancelled else { reading.cancel(token: token); return }
+            reading.complete(loaded, token: token)
+        } catch is CancellationError {
+            reading.cancel(token: token)
         } catch {
-            // The editor provides a retry. Do not report a corrupt store as an
-            // empty successful load, log the private content, or overwrite it.
+            guard !Task.isCancelled else { reading.cancel(token: token); return }
+            reading.fail(token: token)
+            // Never log private content or turn a read failure into an empty memo.
         }
     }
 
     func note(for identifier: String) -> PhotoMemoryNote? {
-        self.identifier == identifier ? note : nil
+        self.identifier == identifier && readState == .loaded ? note : nil
+    }
+
+    func state(for identifier: String) -> PhotoMemoryNoteReadState {
+        self.identifier == identifier ? readState : .loading
     }
 }
 

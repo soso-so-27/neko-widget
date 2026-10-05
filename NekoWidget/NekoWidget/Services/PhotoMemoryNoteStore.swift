@@ -1,5 +1,55 @@
 import Foundation
 
+/// Reading failure is never evidence that the photo has no saved memo.
+enum PhotoMemoryNoteReadState: Equatable, Sendable {
+    case idle, loading, loaded, failed
+
+    func actionTitle(hasNote: Bool) -> String {
+        switch self {
+        case .idle, .loading: "メモを読み込み中"
+        case .loaded: hasNote ? "メモを編集" : "メモを書く"
+        case .failed: "メモを開く"
+        }
+    }
+
+    var isLoading: Bool { self == .idle || self == .loading }
+}
+
+/// A read-only request reducer. Older completions cannot publish another
+/// photo's memo, and cancellation is distinct from an empty successful read.
+struct PhotoMemoryNoteReadingState: Equatable, Sendable {
+    private(set) var identifier: String?
+    private(set) var note: PhotoMemoryNote?
+    private(set) var phase: PhotoMemoryNoteReadState = .idle
+    private var request = UUID()
+
+    mutating func begin(for identifier: String) -> UUID {
+        request = UUID()
+        self.identifier = identifier
+        note = nil
+        phase = .loading
+        return request
+    }
+
+    mutating func complete(_ note: PhotoMemoryNote?, token: UUID) {
+        guard request == token, phase == .loading else { return }
+        self.note = note
+        phase = .loaded
+    }
+
+    mutating func fail(token: UUID) {
+        guard request == token, phase == .loading else { return }
+        note = nil
+        phase = .failed
+    }
+
+    mutating func cancel(token: UUID) {
+        guard request == token, phase == .loading else { return }
+        note = nil
+        phase = .idle
+    }
+}
+
 /// A measured value, not a diagnosis. A civil day is never inferred from a photo
 /// or the memo's writing date. Device identity is kept out of portable data.
 struct PhotoMemoWeightValue: Codable, Equatable, Sendable {
