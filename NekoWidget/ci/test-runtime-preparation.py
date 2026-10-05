@@ -243,6 +243,14 @@ simulator_udid=fixture-device
 DERIVED_DATA_DIRECTORY=./DerivedData
 DIAGNOSTIC_REQUESTED=false
 WIDGET_SCENARIOS="long-white-large no-caption"
+RECORDED_COMMAND=fixture-recorded-command
+python3() {
+    [[ "$1" == "$RECORDED_COMMAND" ]] || return 99
+    shift
+    while [[ "$1" != -- ]]; do shift; done
+    shift
+    "$@"
+}
 prepare_simulator_and_build() {
     printf 'prepare:%s\n' "$widget_scenario" >> events
     [[ "$widget_scenario" != long-white-large ]] || return "$PREPARE_STATUS"

@@ -17,6 +17,7 @@ CHECKS = (
     "test-family-window-widget-boundaries.py",
     "test-ci-smoke-scope.py",
     "test-runtime-preparation.py",
+    "test-recorded-command.py",
     "test-app-store-screenshot-workflow.py",
     "test-release-testflight.py",
     "test-testflight-release-evidence-workflow.py",

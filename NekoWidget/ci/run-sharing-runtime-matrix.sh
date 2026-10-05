@@ -5,6 +5,7 @@ set -Eeuo pipefail
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
+RECORDED_COMMAND="$PROJECT_DIRECTORY/ci/run-recorded-command.py"
 REPORT_FILENAME="sharing-runtime-self-test.json"
 RENDERER_VERSION="cat-aware-full-bleed-v6"
 ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-sharing-runtime-matrix"
@@ -113,7 +114,7 @@ case "$RUNTIME_LANE" in
         fi
         ;;
     runtime) ;;
-    app-ui|app-ui-solo|app-ui-other|gallery-normal|gallery-variants|gallery-white)
+    app-ui|app-ui-solo|app-ui-solo-1|app-ui-solo-2|app-ui-other|gallery-normal|gallery-variants|gallery-white)
         # Each visual lane regenerates its own validated production cache.
         # Do not transfer an injected checkout or fixture build between jobs.
         RUNTIME_LABELS=("ios-26-2")
@@ -510,7 +511,7 @@ PY
         # Keep the same fixture preparation/build for full and mapped UI.
         # Only test selection and the extra Gallery builds vary by scope.
         if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui* || "$RUNTIME_LANE" == gallery-normal ]]; then
-        xcodebuild \
+        python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-test-timing.json" -- xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Debug \
@@ -529,8 +530,13 @@ PY
             'WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE' \
             test || composer_status=$?
         if [[ -d "$composer_result" ]]; then
-            xcrun xcresulttool export attachments --path "$composer_result" \
-                --output-path "$runtime_artifacts/composer-screenshots"
+            local composer_export_status=0
+            python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-export-timing.json" \
+                --timeout 180 -- xcrun xcresulttool export attachments --path "$composer_result" \
+                --output-path "$runtime_artifacts/composer-screenshots" || composer_export_status=$?
+            if (( composer_status == 0 && composer_export_status != 0 )); then
+                composer_status=$composer_export_status
+            fi
         fi
         fi
         # Reuse DerivedData, but reset the disposable Simulator between
@@ -608,7 +614,8 @@ PY
             fi
             if [[ -d "$widget_scenario_result" ]]; then
                 local attachment_status=0
-                xcrun xcresulttool export attachments --path "$widget_scenario_result" \
+                python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/widget-$widget_scenario-export-timing.json" \
+                    --timeout 180 -- xcrun xcresulttool export attachments --path "$widget_scenario_result" \
                     --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots" \
                     || attachment_status=$?
                 if (( widget_scenario_status == 0 && attachment_status != 0 )); then

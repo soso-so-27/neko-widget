@@ -77,7 +77,21 @@ class ReleaseFlowTests(unittest.TestCase):
 
     def test_only_exact_reviewed_app_ui_result_budget_is_control_plane(self):
         path = ".github/workflows/ios-build.yml"
-        before = (CI.parents[1] / path).read_text(encoding="utf-8")
+        # Freeze the registered historical budget correction; later harness
+        # changes still require native validation rather than this exception.
+        before = """name: iOS build check
+jobs:
+  build-without-signing:
+    run: xcodebuild
+  simulator-smoke-test:
+    timeout-minutes: 40
+  sharing-app-ui:
+    if: needs.plan.outputs.app_ui == 'true'
+    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.
+    timeout-minutes: 75
+    run: bash ci/run-sharing-runtime-matrix.sh
+    retention-days: 7
+"""
         old = "    # Keep 15 minutes for result/attachment export after the observed 60-minute UI route.\n    timeout-minutes: 75\n"
         new = "    # Reserve 15 minutes after the observed 74-minute UI run for result and artifact export.\n    timeout-minutes: 90\n"
         # This test runs before and after adoption without changing the fixture.

@@ -82,7 +82,56 @@ SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-variants")
-FULL_APP_UI_LANES = ("app-ui-solo", "app-ui-other")
+FULL_APP_UI_LANES = ("app-ui-solo-1", "app-ui-solo-2", "app-ui-other")
+SOLO_TEST_METHODS = (
+    'testAlbumCoversAndFavoritesRemainReachableWithLargestText',
+    'testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin',
+    'testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations',
+    'testCareHandoffAutofillIsRealOutputAndEditedValueSurvivesRestart',
+    'testCareHandoffSelectionPrivacyAndPDF',
+    'testCareHandoffUnregisteredCatSavesAtLargeText',
+    'testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal',
+    'testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess',
+    'testEvacuationAutofillKeepsMealDetailsAndIndependentPhotoAtLargeText',
+    'testEvacuationPackingPersistsAndPrivateFieldsStayOutOfPreview',
+    'testEvacuationUnregisteredCatCanCreateAndRestoreRecord',
+    'testHighlightsPageThroughTheirPhotosAndReopenFromTheCard',
+    'testInitialScanPreviewPreservesUnavailableLabelAndOpensPhoto',
+    'testLocalPhotoFailureCanReloadTheSamePhoto',
+    'testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary',
+    'testLostCatPhotoTapSelectsOnlyTheTappedCandidate',
+    'testManagedPreservationAccountDeletionRetainsReceiptAndCompletes',
+    'testManagedPreservationDisabledHidesEntries',
+    'testManagedPreservationLostCopyResultShowsConfirmationAndStoredState',
+    'testManagedPreservationMembershipLinkConsentAndRetry',
+    'testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown',
+    'testMembershipDailyToolsKeepExistingRecordsAccessible',
+    'testMembershipOfferExplainsExpiryWithoutChangingThePlan',
+    'testMembershipOfferPreviewReturnsToPurpose',
+    'testMembershipOfferPreviewWaitingAndRestore',
+    'testMembershipShowcaseBoundaryKeepsEmergencyToolsFree',
+    'testMemoryNoteExportCancellationKeepsText',
+    'testMonthlySaveUsesConfirmedStateAndCanBeRemoved',
+    'testPartialPhotoRetryPreservesZoomAndVisibleRegion',
+    'testPersonalArchiveExportCancellationKeepsPhotoAndText',
+    'testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText',
+    'testPhotoGridRevealsFollowingBatchesAndKeepsReturnPosition',
+    'testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings',
+    'testPhotosStayUsableWithoutCatRegistrationAndOfferSourceRecoveryOnlyWhenNeeded',
+    'testSameDayRediscoveryOpensAndSavesTheTappedPhoto',
+    'testShowcaseGalleryKeepsSelectedCatThroughDetailAndEditing',
+    'testShowcaseOpensSquareGalleryAndReturnsWithoutAuthentication',
+    'testShowcasePickerOffersOnlyCatPhotoCandidates',
+    'testSparsePhotosAndDeniedAccessDoNotOfferEmptyHighlights',
+    'testToolsReplaceAlbumShowcaseEntryAtStandardAndLargeText',
+    'testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF',
+    'testVeterinarySelectionIsExplicitAndRemovalKeepsSource',
+    'testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText',
+    'testWeightOnlyMemoRemainsReadableAndEditable',
+    'testWidgetPhotoOutsideCurrentScopeOffersAPathBack',
+    'testWindowSettingsPrioritizeDisplayAndKeepSafetyReachable',
+)
+
 LANE_JOB_PREFIX = "Sharing checks"
 GALLERY_CONDITIONS = {
     "gallery-normal": "",
@@ -2702,6 +2751,28 @@ def sharing_jobs(scope: str) -> tuple[str, ...]:
     return tuple(lane_job(scope, lane) for lane in lanes(scope))
 
 
+def solo_test_methods(source: str) -> tuple[str, ...]:
+    """Fail closed unless the explicit shards cover every direct Solo test."""
+    methods = family_window_test_methods(source, owner_class="SoloMemoriesUITests",
+                                         required_names=frozenset())
+    if methods is None:
+        raise ValueError("Could not enumerate SoloMemoriesUITests")
+    masked = swift_declaration_source(source)
+    owner = re.search(r"(?ms)^final class SoloMemoriesUITests: XCTestCase \{\n.*?^\}", masked)
+    # Also count direct test declarations the existing method parser could not
+    # understand (for example a new modifier or multiline signature).
+    if re.search(r"\bextension\s+SoloMemoriesUITests\b", masked):
+        raise ValueError("Solo test extensions require an explicit coverage review")
+    declarations = re.findall(r"\bfunc\s+(test\w+)\b", owner.group())
+    actual = tuple(sorted(name for name, body in methods.items()
+                          if name.startswith("test") and not body[5]))
+    if sorted(declarations) != list(actual):
+        raise ValueError("Unsupported direct Solo test declaration")
+    if actual != SOLO_TEST_METHODS or len(actual) != len(set(actual)):
+        raise ValueError("SoloMemoriesUITests changed: update both explicit shards")
+    return actual
+
+
 def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
     if lane == "smoke":
         return smoke_tests(scope)
@@ -2712,8 +2783,13 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
         return ()
     if lane.startswith("app-ui"):
         tests = tuple(test for test in native_tests(scope) if test != GALLERY_TEST)
-        if lane == "app-ui-solo":
-            return tuple(test for test in tests if test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
+        if lane in ("app-ui-solo-1", "app-ui-solo-2"):
+            source = (Path(__file__).resolve().parents[1] / "NekoWidgetUITests" /
+                      "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+            methods = solo_test_methods(source)
+            offset = 0 if lane == "app-ui-solo-1" else 1
+            return tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method
+                         for method in methods[offset::2])
         if lane == "app-ui-other":
             return tuple(test for test in tests if not test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
         return tests
