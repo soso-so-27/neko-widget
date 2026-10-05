@@ -215,7 +215,7 @@ final class MomentSharingViewModel: ObservableObject {
                         "更新できませんでした。時間をおいて、もう一度確認してください。"
                 } else {
                     manualRefreshMessage = errorMessage == nil
-                        ? "更新しました。新しい写真はありません。"
+                        ? "まどの写真を確認しました。"
                         : "更新しました。画面の案内を確認してください。"
                 }
             }

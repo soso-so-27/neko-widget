@@ -3043,7 +3043,14 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("family-window-manual-refresh-result", family_view)
         self.assertIn("manualRefreshSucceeded", family_model)
         self.assertIn("exclamationmark.triangle", family_view)
-        self.assertIn("更新しました。新しい写真はありません", family_model)
+        self.assertIn("まどの写真を確認しました。", family_model)
+        # A successful synchronization is not evidence that the photo set
+        # stayed unchanged, or that every pending transfer has arrived.
+        synchronize = section(family_model, "func synchronize(isManual: Bool = true) async", "func report(")
+        self.assertNotIn("新しい写真はありません", synchronize)
+        self.assertNotIn("新しい写真が届きました", synchronize)
+        self.assertIn("manualRefreshSucceeded = synchronizationSucceeded", synchronize)
+        self.assertIn("&& errorMessage == nil", synchronize)
         self.assertNotIn("相手が見ました", family_model)
         self.assertNotIn("相手が受け取りました", family_model)
 
