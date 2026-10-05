@@ -6131,8 +6131,11 @@ final class PersonalRediscoveryUITests: XCTestCase {
 
     @MainActor
     private func openHistory(in app: XCUIApplication) {
-        XCTAssertTrue(app.buttons["写真メニュー"].waitForExistence(timeout: 10))
-        app.buttons["写真メニュー"].tap()
+        let menu = app.buttons["photo-browser-related"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        XCTAssertEqual(menu.label, "写真のその他の操作")
+        XCTAssertTrue(menu.isHittable)
+        menu.tap()
         let history = app.buttons["photo-browser-rediscovery-history"]
         XCTAssertTrue(history.waitForExistence(timeout: 5))
         history.tap()
