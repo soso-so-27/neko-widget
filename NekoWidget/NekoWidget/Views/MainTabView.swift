@@ -408,14 +408,7 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
-        .environment(\.catProfileAlbumsDestination, { identifier, close in
-            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
-                .navigationDestination(for: AlbumRoute.self) { route in
-                    albumDestination(for: route, defaultScope: .profile(identifier))
-                }
-                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) })
-        })
+        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -1027,6 +1020,17 @@ struct MainTabView: View {
         )
     }
 
+    private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
+        { identifier, close in
+            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
+                .navigationDestination(for: AlbumRoute.self) { route in
+                    albumDestination(for: route, defaultScope: .profile(identifier))
+                }
+                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) })
+        }
+    }
+
     private var settingsSheet: some View {
         SettingsSheetHost(onClose: { showsSettings = false }) {
             SettingsView(
@@ -1063,6 +1067,9 @@ struct MainTabView: View {
                 personalArchiveStore: personalArchiveStore
             )
         }
+        // The settings sheet is presented outside the TabView's environment.
+        // Its profile-photo destination needs the same explicit album routes.
+        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
     }
 
     @ViewBuilder

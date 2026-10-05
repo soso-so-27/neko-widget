@@ -4442,7 +4442,12 @@ final class SoloMemoriesUITests: XCTestCase {
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
         assertAlbumsRoot(in: app)
         XCTAssertFalse(element("albums-favorites", in: app).exists)
-        let theme = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let theme = element("album-secondary-close_up", in: app)
         reveal(theme, in: app)
         XCTAssertGreaterThan(theme.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(theme.frame.minX, app.frame.minX)
@@ -4456,7 +4461,8 @@ final class SoloMemoriesUITests: XCTestCase {
             ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
         ] {
             let entry = element(identifier, in: app)
-            reveal(entry, in: app)
+            // The secondary theme returns near the shelf's bottom; months are above it.
+            reveal(entry, in: app, scrollsDown: identifier == "albums-months-all")
             XCTAssertGreaterThan(entry.frame.width, app.frame.width / 2)
             XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
             entry.tap()
@@ -4674,8 +4680,11 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ card: XCUIElement, in app: XCUIApplication) {
-        for _ in 0..<8 where !(card.exists && card.isHittable) { app.scrollViews.firstMatch.swipeUp() }
+    private func reveal(_ card: XCUIElement, in app: XCUIApplication, scrollsDown: Bool = false) {
+        for _ in 0..<8 where !(card.exists && card.isHittable) {
+            if scrollsDown { app.scrollViews.firstMatch.swipeDown() }
+            else { app.scrollViews.firstMatch.swipeUp() }
+        }
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         XCTAssertTrue(card.isHittable, "The actual card must remain reachable at this text size.")
     }

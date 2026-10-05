@@ -39,6 +39,30 @@ class AlbumShelfLayoutTests(unittest.TestCase):
         self.assertIn("PhotoMemoryNotesListView(photos: memoryNotePhotos", routes)
         self.assertIn("PhotoMemoryNoteDetailView(recordID: identifier", routes)
 
+    def test_settings_sheet_supplies_cat_album_routes_explicitly(self):
+        source = read("NekoWidget/Views/MainTabView.swift")
+        settings = block(source, "private var settingsSheet:", "private func photosDestination")
+        self.assertIn(".environment(\\.catProfileAlbumsDestination, catProfileAlbumsDestination)", settings)
+        self.assertEqual(source.count(".environment(\\.catProfileAlbumsDestination, catProfileAlbumsDestination)"), 2)
+        destination = block(source, "private var catProfileAlbumsDestination:", "private var settingsSheet:")
+        self.assertIn("albumsView(scope: .profile(identifier)", destination)
+        self.assertIn("defaultScope: .profile(identifier)", destination)
+        self.assertNotIn("photoLibrarySelectedScope", destination)
+
+    def test_secondary_disclosure_identifier_belongs_only_to_label(self):
+        source = read("NekoWidget/Views/LikedPhotosView.swift")
+        disclosure = block(source, "DisclosureGroup {", "var yearArchive:")
+        content, label = disclosure.split("} label: {", 1)
+        self.assertIn('accessibilityIdentifier("album-secondary-\\(album.id.logKey)")', content)
+        self.assertNotIn('accessibilityIdentifier("albums-other-themes")', content)
+        self.assertIn('accessibilityIdentifier("albums-other-themes")', label)
+        tests = read("NekoWidgetUITests/PhotoPermissionUITests.swift")
+        largest = block(tests, "func testAlbumCoversAndFavoritesRemainReachableWithLargestText()", "private func assertHighlightPhotos")
+        self.assertIn('otherThemes.tap()', largest)
+        self.assertIn('scrollsDown: identifier == "albums-months-all"', largest)
+        self.assertIn('element("album-secondary-close_up", in: app)', largest)
+        self.assertIn('expectedRoute: "album:close_up"', largest)
+
     def test_theme_photos_use_existing_pipeline_and_accessibility_layout(self):
         source = read("NekoWidget/Views/LikedPhotosView.swift")
         card = block(source, "private struct AlbumThemeEntry:", "private struct AlbumCatalogEntry:")

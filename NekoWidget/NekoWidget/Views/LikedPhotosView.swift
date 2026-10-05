@@ -220,7 +220,7 @@ struct AlbumView: View {
                 periodShelf(lifePeriods, title: "年齢・暮らした時期", compact: true)
             }
             if !secondary.isEmpty {
-                DisclosureGroup("ほかのテーマ") {
+                DisclosureGroup {
                     VStack(spacing: 8) {
                         ForEach(secondary) { album in
                             NavigationLink(value: route(for: album.id)) {
@@ -231,8 +231,11 @@ struct AlbumView: View {
                             .accessibilityLabel("\(album.title)、\(album.countLabel)")
                         }
                     }.padding(.top, 8)
+                } label: {
+                    // Identifying the entire group overrides its child links' IDs.
+                    Text("ほかのテーマ")
+                        .accessibilityIdentifier("albums-other-themes")
                 }
-                .accessibilityIdentifier("albums-other-themes")
             }
         }
     }
