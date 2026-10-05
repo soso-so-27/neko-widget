@@ -40,7 +40,7 @@ final class PhotoLibrarySelectionState: ObservableObject {
 
     func select(_ section: PhotoLibrarySection) {
         // Freeze the outgoing list before its disappearance/layout callbacks.
-        PhotoLibraryReadingPosition.activeSection = section.rawValue
+        if selection != section { PhotoLibraryReadingPosition.activeSection = section.rawValue }
         PhotoLibraryReadingPosition.diagnose("section \(selection.rawValue) -> \(section.rawValue)")
         resolutionID = nil
         hasResolvedSelection = true
@@ -260,6 +260,7 @@ struct MainTabView: View {
     let catPhotos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
     var photoLibraryAssignments: [String: Set<String>]? = nil
+    var photoLibraryProfileNames: [String: String]? = nil
     var savedPhotoIdentifiers: Set<String>? = nil
     var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
@@ -323,6 +324,7 @@ struct MainTabView: View {
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
+    @State private var relatedPhotoUsesLibraryScope = false
     @State private var showsSettings = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
@@ -349,13 +351,10 @@ struct MainTabView: View {
                         albumDestination(for: route, defaultScope: .everyone)
                     }
                     .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                    .navigationDestination(
-                        for: MemoriesRoute.self,
-                        destination: memoriesDestination
-                    )
+                    .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .tabItem {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
@@ -366,14 +365,14 @@ struct MainTabView: View {
             NavigationStack(path: $photosPath) {
                 photoLibrary
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
-                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .environment(\.catProfilePhotoDestination, { profileID, photoID in
                 AnyView(albumPhotoDetail(for: .allCatPhotos,
                     localIdentifier: photoID, scope: .profile(profileID)))
@@ -415,7 +414,7 @@ struct MainTabView: View {
                     albumDestination(for: route, defaultScope: .profile(identifier))
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination))
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) })
         })
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }
@@ -493,11 +492,12 @@ struct MainTabView: View {
 #endif
                 }
         }
-        .sheet(item: $relatedPhotoRoute) { route in
+        .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             let isOutsideScopedSource = photoSourceStatus != .allLibrary
                 && !catPhotos.contains(where: {
@@ -526,12 +526,14 @@ struct MainTabView: View {
         }
         .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
             guard isPresented else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
         }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
@@ -617,7 +619,7 @@ struct MainTabView: View {
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
         }
-        .onChange(of: catProfilesPresentation.profiles.map(\.identifier)) { _, identifiers in
+        .onChange(of: photoLibraryRegisteredIdentifiers) { _, identifiers in
             if let selected = photoLibraryProfileIdentifier,
                selected != "unassigned", !identifiers.contains(selected) {
                 photoLibraryProfileIdentifier = nil
@@ -899,14 +901,55 @@ struct MainTabView: View {
         photoLibraryAssignments ?? assignmentsByPhotoIdentifier
     }
 
+    private var currentPhotoLibraryProfileNames: [String: String] {
+        photoLibraryProfileNames ?? Dictionary(uniqueKeysWithValues: catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) })
+    }
+
+    private var photoLibraryRegisteredIdentifiers: Set<String> { Set(currentPhotoLibraryProfileNames.keys) }
+
+    private var photoLibraryRediscoveryScope: CatProfileScopePresentation {
+        photoLibraryProfileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone
+    }
+
+    private var permitsPhotoLibraryRediscovery: Bool {
+        photoLibraryProfileIdentifier != "unassigned"
+    }
+
+    private func photoLibraryRelatedAlbums(for identifier: String, scope: CatProfileScopePresentation) -> [PhotoRelatedAlbumLink] {
+        guard permitsPhotoLibraryRediscovery, scope == photoLibraryRediscoveryScope else { return [] }
+        guard case let .profile(profileIdentifier) = scope else { return relatedAlbums(for: identifier, scope: scope) }
+        let photos = photoLibraryCatPhotos
+        guard photos.contains(where: { $0.localIdentifier == identifier }) else { return [] }
+        let albums = CuratedAlbumBuilder().sections(from: photos, lifeReference: nil, includesGrowth: false)
+            .flatMap(\.albums).filter { album in
+                album.photos.contains { $0.localIdentifier == identifier }
+                    && album.photos.contains { $0.localIdentifier != identifier }
+            }
+        var allowed = Set(albums.map { AlbumRoute.catAlbum(profileIdentifier: profileIdentifier, album: $0.id) })
+        if photos.count > 1 { allowed.insert(.catAlbum(profileIdentifier: profileIdentifier, album: .allCatPhotos)) }
+        return relatedAlbums(for: identifier, scope: scope).filter { allowed.contains($0.route) }
+    }
+
+    private func openPhotoLibraryRelatedAlbum(_ route: PhotoRediscoveryRoute) {
+        relatedPhotoUsesLibraryScope = true
+        relatedPhotoRoute = route
+    }
+
     private func photoLibraryIncludes(_ identifier: String) -> Bool {
-        let registered = Set(catProfilesPresentation.profiles.map(\.identifier))
+        let registered = photoLibraryRegisteredIdentifiers
         let assignments = (currentPhotoLibraryAssignments[identifier] ?? []).intersection(registered)
         return PhotoMemoryNoteLibraryPolicy.includes(selected: photoLibraryProfileIdentifier, identifiers: assignments)
     }
 
     private var photoLibraryCatPhotos: [PhotoPresentation] { catPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
     private var photoLibraryLikedPhotos: [PhotoPresentation] { likedPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    private var photoLibraryBrowserPhotos: [PhotoPresentation] {
+        guard photoLibraryProfileIdentifier != nil else { return libraryPhotos }
+        var seen = Set<String>()
+        return (libraryPhotos + likedPhotos).filter {
+            photoLibraryIncludes($0.localIdentifier) && seen.insert($0.localIdentifier).inserted
+        }
+    }
     private var unavailablePhotoLibrarySavedCount: Int {
         let saved = savedPhotoIdentifiers ?? Set(likedPhotos.map(\.localIdentifier))
         let visible = Set((hasPhotoAccess ? photoLibraryLikedPhotos : []).map(\.localIdentifier))
@@ -917,8 +960,8 @@ struct MainTabView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 photoLibraryCatButton("全猫", identifier: nil)
-                ForEach(catProfilesPresentation.profiles) { profile in
-                    photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
+                ForEach(photoLibraryRegisteredIdentifiers.sorted(), id: \.self) { identifier in
+                    photoLibraryCatButton(currentPhotoLibraryProfileNames[identifier] ?? "猫", identifier: identifier)
                 }
                 photoLibraryCatButton("未指定", identifier: "unassigned")
             }.padding(.horizontal, 16).padding(.vertical, 8)
@@ -956,8 +999,8 @@ struct MainTabView: View {
                                      openCatPreparedness: nil,
                                      selectedProfileIdentifier: photoLibraryProfileIdentifier,
                                      currentPhotoAssignments: currentPhotoLibraryAssignments,
-                                     registeredProfileIdentifiers: Set(catProfilesPresentation.profiles.map(\.identifier)),
-                                     currentProfileNames: Dictionary(uniqueKeysWithValues: catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) }),
+                                     registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
+                                     currentProfileNames: currentPhotoLibraryProfileNames,
                                      readingPositionKey: photoLibraryPositionKey) {
                 photoLibrarySelection.select(.all)
             }
@@ -1064,7 +1107,8 @@ struct MainTabView: View {
     private func detailView(for localIdentifier: String) -> some View {
         photoDetail(for: localIdentifier,
                     shownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
-                    openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier)
+                    openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier,
+                    libraryContext: widgetOpenedPhotoIdentifier != localIdentifier)
     }
 
     @ViewBuilder
@@ -1114,16 +1158,17 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
-                             openedFromWidget: Bool) -> some View {
+                             openedFromWidget: Bool, fromNote: Bool = false, libraryContext: Bool = false) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
-           photoSourceStatus != .unavailable,
-           let initialPhoto = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+           fromNote || photoSourceStatus != .unavailable,
+           !libraryContext || photoLibraryIncludes(localIdentifier),
+           let initialPhoto = (fromNote ? memoryNotePhotos : catPhotos).first(where: { $0.localIdentifier == localIdentifier }) {
             PhotoBrowserView(
                 // A proposed photo and a Widget tap are one-photo entry points.
                 // The grid uses a separate route whose browser can page through
                 // the detected cat-photo collection.
                 photos: [initialPhoto],
-                libraryPhotos: libraryPhotos,
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
                 initialPhoto: initialPhoto,
                 widgetShownAt: shownAt,
                 showsWidgetTiming: openedFromWidget,
@@ -1141,6 +1186,10 @@ struct MainTabView: View {
                     await catProfilesActions.replacePhotoAssignments(values)
                 }
             )
+            .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
+            .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
@@ -1155,6 +1204,10 @@ struct MainTabView: View {
     ) -> [PhotoRelatedAlbumLink] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent,
               photoSourceStatus != .unavailable else { return [] }
+        if relatedPhotoUsesLibraryScope {
+            guard permitsPhotoLibraryRediscovery,
+                  scope == photoLibraryRediscoveryScope else { return [] }
+        }
         let photos = scopedCatPhotos(for: scope)
         guard photos.contains(where: { $0.localIdentifier == localIdentifier }) else { return [] }
         let albums = CuratedAlbumBuilder().sections(
@@ -1247,6 +1300,10 @@ struct MainTabView: View {
     private func currentDayPhotos(_ context: PhotoRediscoveryDay) -> [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent,
               photoSourceStatus != .unavailable else { return [] }
+        if relatedPhotoUsesLibraryScope {
+            guard permitsPhotoLibraryRediscovery,
+                  context.scope == photoLibraryRediscoveryScope else { return [] }
+        }
         var seen = Set<String>()
         return browserLibraryPhotos(for: context.scope).filter { photo in
             guard let date = photo.creationDate,
@@ -1274,7 +1331,7 @@ struct MainTabView: View {
            let initialPhoto = photoLibraryCatPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
             PhotoBrowserView(
                 photos: photoLibraryCatPhotos,
-                libraryPhotos: libraryPhotos,
+                libraryPhotos: photoLibraryBrowserPhotos,
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil,
                 showsWidgetTiming: false,
@@ -1292,6 +1349,10 @@ struct MainTabView: View {
                     await catProfilesActions.replacePhotoAssignments(values)
                 }
             )
+            .environment(\.photoRediscoveryScope, photoLibraryRediscoveryScope)
+            .environment(\.photoRediscoveryEnabled, permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, photoLibraryRelatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, openPhotoLibraryRelatedAlbum)
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
@@ -1299,15 +1360,15 @@ struct MainTabView: View {
     }
 
     @ViewBuilder
-    private func memoryDetailView(for localIdentifier: String) -> some View {
+    private func memoryDetailView(for localIdentifier: String, libraryContext: Bool = false) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
-           selectedTab != .photos || photoLibraryIncludes(localIdentifier),
+           !libraryContext || photoLibraryIncludes(localIdentifier),
            (readablePhotoIdentifiers?.contains(localIdentifier)
             ?? (likedPhotos + libraryPhotos).contains { $0.localIdentifier == localIdentifier }) {
             let initialPhoto = photo(for: localIdentifier)
             PhotoBrowserView(
-                photos: selectedTab == .photos ? photoLibraryLikedPhotos : likedPhotos,
-                libraryPhotos: libraryPhotos,
+                photos: libraryContext ? photoLibraryLikedPhotos : likedPhotos,
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil,
                 showsWidgetTiming: false,
@@ -1326,6 +1387,10 @@ struct MainTabView: View {
                     await catProfilesActions.replacePhotoAssignments(values)
                 }
             )
+            .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
+            .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
@@ -1433,7 +1498,7 @@ struct MainTabView: View {
     }
 
     @ViewBuilder
-    private func memoriesDestination(for route: MemoriesRoute) -> some View {
+    private func memoriesDestination(for route: MemoriesRoute, libraryContext: Bool = false) -> some View {
         switch route {
         case .memoryNotes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore) {
@@ -1446,7 +1511,7 @@ struct MainTabView: View {
                                       archiveStore: personalArchiveStore)
         case let .memoryNotePhoto(identifier):
             PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos, store: memoStore) { photo in
-                photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false)
+                photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false, fromNote: true, libraryContext: libraryContext)
             }
         case .favorites:
             SavedMemoriesGalleryView(
@@ -1466,7 +1531,7 @@ struct MainTabView: View {
         case let .highlight(snapshot):
             highlightDestination(snapshot)
         case let .photo(localIdentifier):
-            memoryDetailView(for: localIdentifier)
+            memoryDetailView(for: localIdentifier, libraryContext: libraryContext)
         case let .seasonalMovie(periodID):
             seasonalMovieDestination(periodID)
         case let .monthlyWindow(snapshot):
@@ -2168,6 +2233,13 @@ struct MainTabView: View {
     private func scopedCatPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
         let excludedIdentifiers = excludedCatCandidateIdentifiers
+        if relatedPhotoUsesLibraryScope, photoLibraryProfileIdentifier != nil {
+            guard permitsPhotoLibraryRediscovery,
+                  scope == photoLibraryRediscoveryScope else { return [] }
+            return catPhotos.filter {
+                photoLibraryIncludes($0.localIdentifier) && !excludedIdentifiers.contains($0.localIdentifier)
+            }
+        }
         guard case let .profile(identifier) = scope else {
             return catPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
         }

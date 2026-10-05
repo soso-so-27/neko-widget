@@ -346,7 +346,7 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
-            photoLibraryAssignments: identity.map { value in
+            photoLibraryAssignments: viewModel.catHouseholdIdentity.map { value in
                 let registered = Set(value.profiles.map(\.id))
                 var assignments: [String: Set<String>] = [:]
                 for membership in value.memberships where membership.decision == .included
@@ -356,6 +356,11 @@ struct AppRootView: View {
                 }
                 return assignments
             } ?? [:],
+            photoLibraryProfileNames: viewModel.catHouseholdIdentity.map { value in
+                Dictionary(uniqueKeysWithValues: value.profiles.map { profile in
+                    (profile.id.uuidString, profile.displayName)
+                })
+            },
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
