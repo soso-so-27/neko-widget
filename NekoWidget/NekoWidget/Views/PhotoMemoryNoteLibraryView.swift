@@ -149,6 +149,8 @@ private struct MemoryReadingItem: Identifiable {
             ?? local?.note.writtenAt ?? preserved?.context?.writtenAt
             ?? local?.note.updatedAt ?? preserved!.createdAt
     }
+    var updatedAt: Date { local?.note.updatedAt ?? preserved?.context?.updatedAt ?? preserved!.createdAt }
+    var savedIdentifiers: Set<String> { Set(local?.note.context?.cats.map { $0.id.uuidString } ?? []) }
     var dateLabel: String {
         if local?.note.context?.capturedAt != nil || preserved?.capturedAt != nil { return "撮影" }
         if local?.note.writtenAt != nil || preserved?.context?.writtenAt != nil { return "メモ" }
@@ -173,10 +175,16 @@ struct PhotoMemoryNotesListView: View {
     let isEmbedded: Bool
     let openCatPreparedness: (() -> Void)?
     let openPhotos: () -> Void
+    let selectedProfileIdentifier: String?
+    let currentPhotoAssignments: [String: Set<String>]?
+    let registeredProfileIdentifiers: Set<String>
+    let currentProfileNames: [String: String]
+    let readingPositionKey: String?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
+    @State private var sort: PhotoMemoryNoteLibraryPolicy.Sort = .captured
     @State private var search = ""
     @State private var isSearchFocused = false
     @State private var selectedArchive: PersonalArchiveRecord?
@@ -187,8 +195,18 @@ struct PhotoMemoryNotesListView: View {
          archiveStore: PersonalArchiveStore? = nil,
          isEmbedded: Bool = false,
          openCatPreparedness: (() -> Void)? = nil,
+         selectedProfileIdentifier: String? = nil,
+         currentPhotoAssignments: [String: Set<String>]? = nil,
+         registeredProfileIdentifiers: Set<String> = [],
+         currentProfileNames: [String: String] = [:],
+         readingPositionKey: String? = nil,
          openPhotos: @escaping () -> Void) {
         self.photos = photos
+        self.selectedProfileIdentifier = selectedProfileIdentifier
+        self.currentPhotoAssignments = currentPhotoAssignments
+        self.registeredProfileIdentifiers = registeredProfileIdentifiers
+        self.currentProfileNames = currentProfileNames
+        self.readingPositionKey = readingPositionKey
         let enabled = archiveStore != nil || PersonalArchiveStore.isConfigured
         self.archiveEnabled = enabled
         self.archiveStore = archiveStore ?? .shared
@@ -218,10 +236,33 @@ struct PhotoMemoryNotesListView: View {
         return (local + other).filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.weight != nil
         }.filter {
-            search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || ([$0.text] + $0.cats + [$0.weight?.kilogramsText ?? "", $0.weight?.measuredOn ?? "", $0.date.formatted(.dateTime.year().month().day())])
-                    .joined(separator: " ").localizedStandardContains(search)
-        }.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
+            PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: $0))
+        }.filter { item in
+            let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+            let names = identifiers(for: item).compactMap { currentProfileNames[$0] }
+            let values = [item.text] + item.cats + names + [item.weight?.kilogramsText ?? "",
+                item.weight?.measuredOn ?? "", item.date.formatted(.dateTime.year().month().day()),
+                item.updatedAt.formatted(.dateTime.year().month().day())]
+            return query.isEmpty || values.joined(separator: " ").localizedStandardContains(query)
+        }.sorted {
+            let first = sortingDate($0), second = sortingDate($1)
+            return first == second ? $0.id < $1.id : first > second
+        }
+    }
+
+    private func identifiers(for item: MemoryReadingItem) -> Set<String> {
+        PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: item.local?.photoIdentifier,
+            saved: item.savedIdentifiers, current: currentPhotoAssignments, registered: registeredProfileIdentifiers)
+    }
+
+    private func sortingDate(_ item: MemoryReadingItem) -> Date {
+        sort.date(captured: item.date, updated: item.updatedAt)
+    }
+
+    private var positionSection: String? {
+        guard isEmbedded else { return nil }
+        let prefix = readingPositionKey ?? selectedProfileIdentifier.map { "notes-\($0)" } ?? "notes"
+        return sort == .captured ? prefix : "\(prefix)-\(sort.rawValue)"
     }
 
     @ViewBuilder private var readingList: some View {
@@ -249,7 +290,7 @@ struct PhotoMemoryNotesListView: View {
                     ContentUnavailableView.search(text: search)
                 } else if visible.isEmpty && !library.failed {
                     ContentUnavailableView {
-                        Label("メモを付けた写真が並びます", systemImage: "note.text")
+                        Label(selectedProfileIdentifier == nil ? "メモを付けた写真が並びます" : "この条件のメモはありません", systemImage: "note.text")
                     } description: {
                         Text("写真を開き、鉛筆から書けます。")
                     } actions: {
@@ -268,15 +309,15 @@ struct PhotoMemoryNotesListView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
-        .restoringPhotoLibraryPosition(section: isEmbedded ? "notes" : nil,
+        .restoringPhotoLibraryPosition(section: positionSection,
                                        isSearching: !search.isEmpty)
     }
 
     @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem], account: String?) -> some View {
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-            let year = Calendar.current.component(.year, from: item.date)
-            let startsYear = index == 0 || Calendar.current.component(.year, from: visible[index - 1].date) != year
-            let endsYear = index == visible.count - 1 || Calendar.current.component(.year, from: visible[index + 1].date) != year
+            let year = Calendar.current.component(.year, from: sortingDate(item))
+            let startsYear = index == 0 || Calendar.current.component(.year, from: sortingDate(visible[index - 1])) != year
+            let endsYear = index == visible.count - 1 || Calendar.current.component(.year, from: sortingDate(visible[index + 1])) != year
             VStack(alignment: .leading, spacing: 0) {
                 if startsYear {
                     Text(String(year) + "年")
@@ -326,10 +367,22 @@ struct PhotoMemoryNotesListView: View {
         readingList
         .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
-            MemoryNotesSearchBar(text: $search, isFocused: $isSearchFocused)
-                .frame(height: 56)
-                .padding(.horizontal, 8)
-                .background(Color(.systemGroupedBackground))
+            VStack(alignment: .leading, spacing: 0) {
+                MemoryNotesSearchBar(text: $search, isFocused: $isSearchFocused)
+                    .frame(height: 56)
+                Menu {
+                    Picker("メモの並び", selection: $sort) {
+                        ForEach(PhotoMemoryNoteLibraryPolicy.Sort.allCases, id: \.self) { value in
+                            Text(value.title).tag(value)
+                        }
+                    }
+                } label: { Label(sort.title, systemImage: "arrow.up.arrow.down") }
+                .accessibilityLabel("メモの並び、\(sort.title)")
+                .accessibilityIdentifier("memory-notes-sort")
+                .padding(.horizontal, 16).padding(.bottom, 8)
+            }
+            .padding(.horizontal, 8)
+            .background(Color(.systemGroupedBackground))
         }
         .refreshable { await library.reload() }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
@@ -419,10 +472,16 @@ struct PhotoMemoryNotesListView: View {
                 Text(item.text.isEmpty ? "写真の記録" : item.text)
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 4).foregroundStyle(.primary)
                 if let weight = item.weight { Label("\(weight.kilogramsText) kg", systemImage: "scalemass").font(.subheadline).foregroundStyle(.secondary) }
-                if !item.cats.isEmpty {
-                    Text(item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
+                let currentNames = identifiers(for: item).sorted().compactMap { currentProfileNames[$0] }
+                if !currentNames.isEmpty {
+                    Text(currentNames.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
+                } else if !item.cats.isEmpty {
+                    Text("記録時：" + item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 }
-                Text("\(item.dateLabel) \(item.date.formatted(.dateTime.month().day()))")
+                if identifiers(for: item).isEmpty {
+                    Text("猫の所属未指定").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("\(sort == .updated ? "更新" : item.dateLabel) \(sortingDate(item).formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
                 if !item.archiveLabel.isEmpty {
                     Label(item.archiveLabel, systemImage: "icloud")

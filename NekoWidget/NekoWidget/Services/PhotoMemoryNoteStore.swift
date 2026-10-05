@@ -689,3 +689,26 @@ actor PhotoMemoryNoteStore {
         }
     }
 }
+
+/// Read-only library presentation. Current explicit membership overrides saved
+/// history; absent authoritative membership means unassigned, never name matching.
+enum PhotoMemoryNoteLibraryPolicy {
+    static func identifiers(photoIdentifier: String?, saved: Set<String>,
+                            current: [String: Set<String>]?, registered: Set<String>) -> Set<String> {
+        let identifiers: Set<String>
+        if let photoIdentifier, let current { identifiers = current[photoIdentifier] ?? [] }
+        else { identifiers = saved }
+        return identifiers.intersection(registered)
+    }
+
+    static func includes(selected: String?, identifiers: Set<String>) -> Bool {
+        guard let selected else { return true }
+        return selected == "unassigned" ? identifiers.isEmpty : identifiers.contains(selected)
+    }
+
+    enum Sort: String, CaseIterable {
+        case captured, updated
+        var title: String { self == .captured ? "撮影順" : "更新順" }
+        func date(captured: Date, updated: Date) -> Date { self == .captured ? captured : updated }
+    }
+}
