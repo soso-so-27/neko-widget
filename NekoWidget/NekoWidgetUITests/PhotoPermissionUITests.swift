@@ -1555,7 +1555,19 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(section.waitForExistence(timeout: 15)); section.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "memory-note-row-", "食べる量が少なかった")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        // Search can focus automatically at the largest text size. Close its
+        // keyboard before scrolling the actual memo list, whose older target
+        // row is lazily created below the newer, unselected cat's record.
+        if app.keyboards.firstMatch.exists {
+            let closeSearch = app.buttons["閉じる"]
+            XCTAssertTrue(closeSearch.waitForExistence(timeout: 5)); closeSearch.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        }
+        let notesList = app.scrollViews["memory-notes-list"]
+        XCTAssertTrue(notesList.waitForExistence(timeout: 5))
+        for _ in 0..<10 where !(row.exists && row.isHittable) { notesList.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.isHittable); row.tap()
         XCTAssertTrue(app.staticTexts["memory-note-weight"].waitForExistence(timeout: 5))
         return app
     }
@@ -4199,7 +4211,11 @@ final class SoloMemoriesUITests: XCTestCase {
         fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスなし")
         let unavailableMemo = openMemoNotes(in: memoApp)
         XCTAssertEqual(unavailableMemo.label, memoLabel, "Photo authority changes must preserve local memo text.")
-        unavailableMemo.tap()
+        XCTAssertTrue(unavailableMemo.isHittable)
+        // The center remains tappable when removing the thumbnail leaves a
+        // transparent gap between the memo text and the disclosure chevron.
+        unavailableMemo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(memoApp.navigationBars["メモ"].waitForExistence(timeout: 10))
         XCTAssertTrue(element("memory-note-photo-unavailable", in: memoApp).waitForExistence(timeout: 10))
         XCTAssertFalse(memoApp.buttons["memory-note-photo"].exists, "A local memo must not bypass photo access.")
         memoApp.navigationBars.buttons.element(boundBy: 0).tap()

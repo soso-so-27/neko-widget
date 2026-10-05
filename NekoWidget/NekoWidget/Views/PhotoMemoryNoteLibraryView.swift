@@ -494,6 +494,7 @@ struct PhotoMemoryNotesListView: View {
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
         }.padding(.vertical, 6)
+            .contentShape(Rectangle())
             .accessibilityElement(children: .combine)
     }
 }
