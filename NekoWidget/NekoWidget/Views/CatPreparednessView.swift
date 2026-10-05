@@ -962,6 +962,7 @@ struct LostCatDraftFixtureView: View {
                 .task {
                     do { try Self.verifyExportLifecycle(image: image); lifecycleResult = "passed" }
                     catch let failure as ExportLifecycleFailure { lifecycleResult = "failed:\(failure.rawValue)" }
+                    catch let failure as LostCatFlyerRenderer.ExportProtectionFailure { lifecycleResult = "failed:\(failure.diagnosticCode)" }
                     catch { lifecycleResult = "failed:operation" }
                 }
         } else if fixtureError {

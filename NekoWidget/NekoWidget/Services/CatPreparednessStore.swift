@@ -463,23 +463,39 @@ enum LostCatFlyerRenderer {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                    attributes: [.protectionKey: FileProtectionType.complete])
-            try enforceExportProtection(directory)
+            try enforceExportProtection(directory, target: .directory)
             try data.write(to: file, options: [.atomic, .completeFileProtection])
             // Atomic writing replaces the destination inode. Apply and verify
             // protection on the final file before exposing it to a share sheet.
-            try enforceExportProtection(file)
+            try enforceExportProtection(file, target: .file)
             return file
         } catch { removeExport(file); throw error }
     }
 
-    private static func enforceExportProtection(_ url: URL) throws {
+    struct ExportProtectionFailure: Error {
+        enum Target: String { case directory, file }
+        enum Reason: String { case setFailed, readFailed, missing, unknownType, wrongClass }
+        let target: Target
+        let reason: Reason
+        var diagnosticCode: String { "protection-\(target.rawValue)-\(reason.rawValue)" }
+    }
+
+    private static func enforceExportProtection(_ url: URL, target: ExportProtectionFailure.Target) throws {
         let manager = FileManager.default
-        try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
-        let attributes = try manager.attributesOfItem(atPath: url.path)
-        let protection = (attributes[.protectionKey] as? FileProtectionType)?.rawValue
-            ?? (attributes[.protectionKey] as? String)
+        do {
+            try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        } catch { throw ExportProtectionFailure(target: target, reason: .setFailed) }
+        let attributes: [FileAttributeKey: Any]
+        do { attributes = try manager.attributesOfItem(atPath: url.path) }
+        catch { throw ExportProtectionFailure(target: target, reason: .readFailed) }
+        guard let value = attributes[.protectionKey] else {
+            throw ExportProtectionFailure(target: target, reason: .missing)
+        }
+        guard let protection = (value as? FileProtectionType)?.rawValue ?? (value as? String) else {
+            throw ExportProtectionFailure(target: target, reason: .unknownType)
+        }
         guard protection == FileProtectionType.complete.rawValue else {
-            throw CocoaError(.fileWriteNoPermission)
+            throw ExportProtectionFailure(target: target, reason: .wrongClass)
         }
     }
 

@@ -11,9 +11,9 @@ class LostExportProtectionTests(unittest.TestCase):
         baseline = subprocess.check_output(["git", "show", "b2a6d82:" + PATH], cwd=ROOT).decode("utf-8")
         self.assertNotIn("try enforceExportProtection(file)", baseline)
         writer = SOURCE.split("private static func writeExport", 1)[1].split("private static func enforceExportProtection", 1)[0]
-        self.assertLess(writer.index("try enforceExportProtection(directory)"), writer.index("try data.write"))
-        self.assertLess(writer.index("try data.write"), writer.index("try enforceExportProtection(file)"))
-        self.assertLess(writer.index("try enforceExportProtection(file)"), writer.index("return file"))
+        self.assertLess(writer.index("try enforceExportProtection(directory, target: .directory)"), writer.index("try data.write"))
+        self.assertLess(writer.index("try data.write"), writer.index("try enforceExportProtection(file, target: .file)"))
+        self.assertLess(writer.index("try enforceExportProtection(file, target: .file)"), writer.index("return file"))
         self.assertIn("catch { removeExport(file); throw error }", writer)
 
     def test_protection_is_set_verified_strictly_and_not_skipped_on_simulator(self):
@@ -21,10 +21,23 @@ class LostExportProtectionTests(unittest.TestCase):
         self.assertIn("try manager.setAttributes([.protectionKey: FileProtectionType.complete]", guard)
         self.assertIn("try manager.attributesOfItem", guard)
         self.assertIn("guard protection == FileProtectionType.complete.rawValue else", guard)
-        self.assertIn("throw CocoaError(.fileWriteNoPermission)", guard)
+        self.assertIn("throw ExportProtectionFailure(target: target, reason: .wrongClass)", guard)
         self.assertNotIn("targetEnvironment(simulator)", guard)
         self.assertNotIn("try?", guard)
         self.assertNotIn("completeUntilFirstUserAuthentication", guard)
+
+    def test_diagnostics_are_closed_and_do_not_expose_underlying_errors(self):
+        definition = SOURCE.split("struct ExportProtectionFailure", 1)[1].split("static func removeExport", 1)[0]
+        self.assertIn("case directory, file", definition)
+        self.assertIn("case setFailed, readFailed, missing, unknownType, wrongClass", definition)
+        for reason in ("setFailed", "readFailed", "missing", "unknownType", "wrongClass"):
+            self.assertIn("reason: ." + reason, definition)
+        for forbidden in ("localizedDescription", "NSError", "url.path)", "error.userInfo"):
+            if forbidden != "url.path)":
+                self.assertNotIn(forbidden, definition)
+        fixture = (ROOT / "NekoWidget/NekoWidget/Views/CatPreparednessView.swift").read_text(encoding="utf-8")
+        self.assertIn("catch let failure as LostCatFlyerRenderer.ExportProtectionFailure", fixture)
+        self.assertIn("failure.diagnosticCode", fixture)
 
     def test_image_and_pdf_remain_on_same_owned_lifecycle(self):
         self.assertEqual(SOURCE.count("return try writeExport(data, fileName:"), 2)
