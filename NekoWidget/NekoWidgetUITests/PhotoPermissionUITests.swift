@@ -2101,9 +2101,18 @@ final class SoloMemoriesUITests: XCTestCase {
         func field(_ name: String) -> XCUIElement {
             let element = app.descendants(matching: .any).matching(identifier: name).firstMatch
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
+            let guidance = app.staticTexts.matching(NSPredicate(
+                format: "label ENDSWITH %@ OR label == %@",
+                "を入れると作成できます", "仕上がりで調整する項目があります"
+            )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
-                let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                let buttonTop = app.buttons["仕上がりを確認"].frame.minY
+                // The floating action also includes guidance above its button.
+                // At largest text it wraps; starting a drag there never scrolls
+                // the form. Bound both tapping and dragging above the full inset.
+                let bottom = guidance.exists
+                    ? min(buttonTop - 28, guidance.frame.minY - 8) : buttonTop - 28
                 // isHittable can be true even when the floating bottom action
                 // covers the field's centre. Tap only in the visible form band.
                 if element.exists, element.isHittable,
