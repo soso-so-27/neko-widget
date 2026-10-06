@@ -423,7 +423,10 @@ class LaneTests(unittest.TestCase):
     def test_lost_cat_ux_scope_keeps_store_boundaries_and_three_ui_checks(self):
         store_path = scope.LOST_CAT_STORE_PATH
         view_path = scope.LOST_CAT_PHOTO_PATH
-        before = (CI.parents[0] / "NekoWidget/Services/CatPreparednessStore.swift").read_text(
+        # Fixed legacy input: newer production conditional declarations must
+        # remain outside this narrow scope, rather than breaking its fixture.
+        # Source: e2fe4cd432a9027a9955229044b634c29ff96ce5, unchanged store blob.
+        before = (CI / "fixtures/lost-cat-ux-legacy-store.swift").read_text(
             encoding="utf-8")
         method = ("    func removePhoto(_ role: CatPreparednessStore.PhotoRole,\n"
                   "                     draft: LostCatDraft, for key: String) throws -> LostCatDraft {\n"
