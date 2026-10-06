@@ -221,12 +221,26 @@ class WidgetScopeTests(unittest.TestCase):
                  "\n          grep -Fq \\\n" + f"            -e '{old}' \\\n"
                  + f"            -e '{new}' \\\n" + target) for old, new in pairs]
 
+    @classmethod
+    def photo_source_check_workflow_fixture(cls):
+        # Freeze the historical grep contract independently of the live workflow.
+        # The new helper checker is a different execution change, tested below.
+        return ("name: Historical photo source checks\n"
+                "permissions:\n  contents: read\n"
+                "jobs:\n  build:\n    steps:\n"
+                "      - name: Check photo source\n        run: |\n"
+                "          set -euo pipefail\n"
+                + "".join(compatible for _, _, _, compatible in cls.photo_source_check_blocks())
+                + "\n          grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \\\n"
+                  "            NekoWidget/App/AppRootView.swift\n")
+
     def test_exact_photo_source_check_upgrade_keeps_ci_selection_and_required_jobs(self):
-        workflow = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        workflow = self.photo_source_check_workflow_fixture()
         legacy = workflow
         for _, _, old, compatible in self.photo_source_check_blocks():
             self.assertEqual(workflow.count(compatible), 1)
             legacy = legacy.replace(compatible, old)
+        self.assertNotEqual(legacy, workflow)
         changes = {scope.CI_WORKFLOW: (legacy, workflow)}
         selected = scope.select_scope(changes)
         self.assertEqual(selected, scope.CI_SELECTION_SCOPE)
@@ -241,8 +255,9 @@ class WidgetScopeTests(unittest.TestCase):
             "NekoWidget/NekoWidget/Views/LikedPhotosView.swift": CHANGE})), scope.FULL_SCOPE)
 
     def test_photo_source_check_exception_rejects_removed_alternatives_and_unrelated_commands(self):
-        workflow = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        workflow = self.photo_source_check_workflow_fixture()
         for old, new, legacy, compatible in self.photo_source_check_blocks():
+            self.assertEqual(workflow.count(compatible), 1)
             variants = (
                 legacy, legacy.replace(old, new),  # Neither one-sided rollback is equivalent.
                 compatible.replace("Views/LikedPhotosView.swift", "Views/HomeView.swift"),
@@ -255,16 +270,35 @@ class WidgetScopeTests(unittest.TestCase):
             for replacement in variants:
                 with self.subTest(replacement=replacement):
                     changed = workflow.replace(compatible, replacement)
+                    self.assertNotEqual(changed, workflow)
                     self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (workflow, changed)}),
                                      scope.FULL_SCOPE)
                     before = workflow.replace(compatible, legacy)
+                    self.assertNotEqual(before, workflow)
                     # A different command/path may not hitchhike on an upgrade.
                     if replacement != legacy:
+                        self.assertNotEqual(before, changed)
                         self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (before, changed)}),
                                          scope.FULL_SCOPE)
         changed = workflow.replace('grep -Fq', 'grep -Fqv', 1)
         self.assertNotEqual(changed, workflow)
         self.assertEqual(scope.select_scope({scope.CI_WORKFLOW: (workflow, changed)}), scope.FULL_SCOPE)
+
+    def test_new_photo_source_helper_checker_requires_full_scope(self):
+        workflow = (ROOT / scope.CI_WORKFLOW).read_text(encoding="utf-8")
+        pattern = (r"(?m)\n          # Favorites accessibility normal/recovery contract\n"
+                   r"          python3 - <<'PY'\n[\s\S]*?^          PY\n")
+        checkers = re.findall(pattern, workflow)
+        self.assertEqual(len(checkers), 1)
+        compatible = self.photo_source_check_blocks()[1][3]
+        self.assertNotIn(compatible, workflow)
+        previous = workflow.replace(checkers[0], compatible, 1)
+        self.assertNotEqual(previous, workflow)
+        self.assertEqual(previous.count(compatible), 1)
+        changes = {scope.CI_WORKFLOW: (previous, workflow)}
+        self.assertFalse(scope.ci_selection_only(changes))
+        self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+        self.assertEqual(planner.required_jobs(list(changes), scope.FULL_SCOPE), planner.FULL)
 
     def test_compatible_source_checks_accept_old_or_new_but_not_missing_values(self):
         git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"

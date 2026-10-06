@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Ensure split jobs conserve checks and cannot reuse partial/legacy evidence."""
 
+import contextlib
 import copy
+import io
 import datetime as dt
 import importlib.util
 import json
@@ -11,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -29,6 +32,124 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_month_jump_return_keeps_exact_photo_and_bounded_wait(self):
+        source = (CI.parent / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+        expected = '    @MainActor\n    func testMonthJumpReachesPhotoBeyondInitialGridBatch() {\n        let app = XCUIApplication()\n        app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]\n        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"\n        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "PhotoMonthJumpUITest.\\(UUID().uuidString)"\n        app.launch()\n        openPhotosTab(in: app)\n        let jump = app.buttons["photo-library-month-jump"]\n        XCTAssertTrue(jump.waitForExistence(timeout: 10))\n        reveal(jump, in: app)\n        jump.tap()\n        let september = app.buttons["2025年9月"]\n        XCTAssertTrue(september.waitForExistence(timeout: 5))\n        september.tap()\n        let firstSeptemberPhotoIdentifier = "photo-hub-photo-app-store-screenshot-fixture-page-31"\n        let firstSeptemberPhoto = app.buttons[firstSeptemberPhotoIdentifier].firstMatch\n        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(\n            predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto\n        )], timeout: 10), .completed)\n        XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)\n        firstSeptemberPhoto.tap()\n        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))\n        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()\n        // Returning restores the exact row asynchronously.\n        // Wait on that same photo, without scrolling or choosing a substitute.\n        print("[PhotoMonthJumpReturn] Back completed; waiting for original page-31 without scrolling")\n        let returnedToMonthRow = XCTNSPredicateExpectation(\n            predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto)\n        let returned = XCTWaiter.wait(for: [returnedToMonthRow], timeout: 5)\n        let returnedMatches = app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count\n        if returned != .completed || returnedMatches != 1 {\n            capture("photo-grid-month-jump-return-failed")\n            let diagnostic = XCTAttachment(string: app.debugDescription)\n            diagnostic.name = "photo-grid-month-jump-return-hierarchy"\n            diagnostic.lifetime = .keepAlways\n            add(diagnostic)\n        }\n        print("[PhotoMonthJumpReturn] waiter=\\(returned) matches=\\(returnedMatches)")\n        XCTAssertEqual(returned, .completed, "Returning restores the same September row")\n        XCTAssertEqual(returnedMatches, 1)\n        XCTAssertTrue(firstSeptemberPhoto.isHittable)\n        capture("photo-grid-month-jump-beyond-first-batch")\n        firstSeptemberPhoto.tap()\n        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))\n        app.terminate()\n    }'
+
+        def verifies(value):
+            active = scope.swift_declaration_source(value)
+            if active is None:
+                return False
+            owners = list(re.finditer(r"(?ms)^final class SoloMemoriesUITests: XCTestCase \{\n.*?^\}", active))
+            if len(owners) != 1:
+                return False
+            start, end = owners[0].span()
+            owner, masked = value[start:end], active[start:end]
+            methods = list(re.finditer(
+                r"(?ms)^    @MainActor\n    func testMonthJumpReachesPhotoBeyondInitialGridBatch\(\) \{\n.*?^    \}", masked))
+            if len(methods) != 1:
+                return False
+            first, last = methods[0].span()
+            return owner[first:last] == expected and masked[first:last] == scope.swift_declaration_source(expected)
+
+        self.assertTrue(verifies(source))
+        replacements = (
+            ("photo-hub-photo-app-store-screenshot-fixture-page-31", "photo-hub-photo-app-store-screenshot-fixture-page-1"),
+            ('predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto)',
+             'predicate: NSPredicate(format: "exists == true"), object: firstSeptemberPhoto)'),
+            ('object: firstSeptemberPhoto)', 'object: jump)'),
+            ('XCTWaiter.wait(for: [returnedToMonthRow], timeout: 5)', 'XCTWaiter.wait(for: [returnedToMonthRow], timeout: 60)'),
+            ('XCTWaiter.wait(for: [returnedToMonthRow], timeout: 5)', 'XCTWaiter.Result.completed'),
+            ('XCTAssertEqual(returned, .completed, "Returning restores the same September row")', 'XCTAssertTrue(true)'),
+            ('XCTAssertEqual(returnedMatches, 1)', 'XCTAssertTrue(true)'),
+            ('XCTAssertTrue(firstSeptemberPhoto.isHittable)', 'XCTAssertTrue(firstSeptemberPhoto.exists)'),
+            ('capture("photo-grid-month-jump-return-failed")', 'print("failure")'),
+            ('XCTAttachment(string: app.debugDescription)', 'XCTAttachment(string: "unavailable")'),
+        )
+        for old, new in replacements:
+            with self.subTest(old=old):
+                self.assertIn(old, expected)
+                self.assertFalse(verifies(source.replace(expected, expected.replace(old, new), 1)))
+        reopen = '        firstSeptemberPhoto.tap()\n        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))\n        app.terminate()'
+        self.assertEqual(expected.count(reopen), 1)
+        for index, changed in enumerate((
+            expected.replace(reopen, '        app.terminate()', 1),
+            expected.replace(reopen, reopen.replace('"31 / 50"', '"1 / 50"'), 1),
+            expected.replace('        let returnedToMonthRow', '        app.swipeUp()\n        let returnedToMonthRow', 1),
+            "/*\n" + expected + "\n*/",
+            "#if false\n" + expected + "\n#endif",
+            expected + "\n" + expected,
+        )):
+            with self.subTest(case=index):
+                self.assertFalse(verifies(source.replace(expected, changed, 1)))
+
+    def test_favorites_accessibility_contract_keeps_normal_and_recovery_values(self):
+        job = workflow_jobs()["build-without-signing"]
+        programs = re.findall(
+            r"(?ms)^          # Favorites accessibility normal/recovery contract\n"
+            r"          python3 - <<'PY'\n(.*?)^          PY$", job)
+        self.assertEqual(len(programs), 1)
+        program = compile(textwrap.dedent(programs[0]), "<favorites-accessibility-contract>", "exec")
+        source = (CI.parent / "NekoWidget/Views/LikedPhotosView.swift").read_text(encoding="utf-8")
+        galleries = re.findall(r"(?ms)^struct SavedMemoriesGalleryView: View \{\n.*?^\}", source)
+        self.assertEqual(len(galleries), 1)
+        gallery = galleries[0]
+
+        def accepts(value):
+            with patch.object(Path, "read_text", return_value=value), \
+                    patch.object(sys, "path", list(sys.path)), contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    exec(program, {})
+                except SystemExit:
+                    return False
+            return True
+
+        self.assertTrue(accepts(source))
+        helper = re.search(r"(?ms)^    private var galleryAccessibilityValue: String \{\n.*?^    \}", gallery).group(0)
+        replacements = (
+            ('.accessibilityValue(galleryAccessibilityValue)', '.accessibilityValue("wrong")'),
+            ('.accessibilityIdentifier("saved-memories-gallery")', '.accessibilityIdentifier("wrong-gallery")'),
+            ('guard hasPhotoAccess else', 'guard true else'),
+            ('if savedStateReadFailed', 'if false'),
+            ('if unavailableSavedPhotoCount > 0', 'if unavailableSavedPhotoCount > 999'),
+            ('写真許可を確認してください', '写真はありません'),
+            ('保存状態は確認できません', '保存済みです'),
+            (r'表示できない写真\(unavailableSavedPhotoCount.formatted())枚', 'すべて表示できます'),
+            (r'return "お気に入り、\(photos.count.formatted())枚"', 'return "お気に入り"'),
+        )
+        for old, new in replacements:
+            with self.subTest(old=old):
+                owner = gallery if old.startswith(".accessibility") else helper
+                self.assertEqual(owner.count(old), 1)
+                replacement = owner.replace(old, new, 1)
+                changed = replacement if owner == gallery else gallery.replace(helper, replacement, 1)
+                self.assertFalse(accepts(source.replace(gallery, changed, 1)))
+
+        binding = '.accessibilityIdentifier("saved-memories-gallery")\n        .accessibilityValue(galleryAccessibilityValue)'
+        for index, changed in enumerate((
+            gallery.replace(helper, "/*\n" + helper + "\n*/", 1),
+            gallery.replace(binding, "/*\n" + binding + "\n*/", 1),
+            gallery.replace(helper, helper + "\n" + helper, 1),
+            gallery.replace(helper, "#if DEBUG\n" + helper + "\n#endif", 1),
+            gallery.replace(".accessibilityValue(galleryAccessibilityValue)",
+                            r'.accessibilityValue("お気に入り、\(photos.count.formatted())枚")', 1),
+        )):
+            with self.subTest(case=index):
+                self.assertFalse(accepts(source.replace(gallery, changed, 1)))
+
+        unused = '\n    private var unusedAccessibilityProbe: some View {\n        EmptyView()\n        ' + binding + '\n    }\n'
+        moved = gallery.replace(binding, '.accessibilityIdentifier("saved-memories-gallery")\n        .accessibilityValue("wrong")', 1)
+        moved = moved.replace(helper, helper + unused, 1)
+        for index, value in enumerate((
+            source.replace(gallery, "/*\n" + gallery + "\n*/", 1),
+            source.replace(gallery, "#if false\n" + gallery + "\n#endif", 1),
+            source.replace(gallery, "#if DEBUG\n" + gallery + "\n#endif", 1),
+            source.replace(gallery, moved, 1),
+            source + "\n" + gallery,
+        )):
+            with self.subTest(context=index):
+                self.assertFalse(accepts(value))
+
     def test_tool_candidate_refresh_is_frozen_to_ten_sources_and_three_owning_cases(self):
         selected = scope.TOOL_CANDIDATE_REFRESH_SCOPE
         self.assertEqual(len(scope.TOOL_CANDIDATE_REFRESH_PATHS), 10)

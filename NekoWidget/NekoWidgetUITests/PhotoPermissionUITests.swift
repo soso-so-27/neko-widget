@@ -3795,15 +3795,36 @@ final class SoloMemoriesUITests: XCTestCase {
         let september = app.buttons["2025年9月"]
         XCTAssertTrue(september.waitForExistence(timeout: 5))
         september.tap()
-        let firstSeptemberPhoto = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-31"]
+        let firstSeptemberPhotoIdentifier = "photo-hub-photo-app-store-screenshot-fixture-page-31"
+        let firstSeptemberPhoto = app.buttons[firstSeptemberPhotoIdentifier].firstMatch
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto
         )], timeout: 10), .completed)
+        XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)
         firstSeptemberPhoto.tap()
         XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
         app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        // Returning restores the exact row asynchronously.
+        // Wait on that same photo, without scrolling or choosing a substitute.
+        print("[PhotoMonthJumpReturn] Back completed; waiting for original page-31 without scrolling")
+        let returnedToMonthRow = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto)
+        let returned = XCTWaiter.wait(for: [returnedToMonthRow], timeout: 5)
+        let returnedMatches = app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count
+        if returned != .completed || returnedMatches != 1 {
+            capture("photo-grid-month-jump-return-failed")
+            let diagnostic = XCTAttachment(string: app.debugDescription)
+            diagnostic.name = "photo-grid-month-jump-return-hierarchy"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+        }
+        print("[PhotoMonthJumpReturn] waiter=\(returned) matches=\(returnedMatches)")
+        XCTAssertEqual(returned, .completed, "Returning restores the same September row")
+        XCTAssertEqual(returnedMatches, 1)
         XCTAssertTrue(firstSeptemberPhoto.isHittable)
         capture("photo-grid-month-jump-beyond-first-batch")
+        firstSeptemberPhoto.tap()
+        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
         app.terminate()
     }
 
