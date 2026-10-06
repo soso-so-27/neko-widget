@@ -110,6 +110,7 @@ private enum PersonalRediscoveryVerifier {
         try dailyPhotoAndCadenceMigration()
         try invalidCandidateDoesNotConsume()
         try authorityAndPublication()
+        try limitedReadAuthorityRecovery()
         try upgradeBootstrap()
         try bootstrapRejections()
         try membershipSelectionBoundary()
@@ -446,6 +447,39 @@ private enum PersonalRediscoveryVerifier {
         let dstToken = try dst.token(at: dstTime, timeZone: pacific)
         _ = try dst.store.perform(token: dstToken, operationID: UUID().uuidString, operationCreatedAt: dstTime, now: dstTime, timeZone: pacific)
         try require(try dst.store.snapshot(now: dstTime)?.nextAvailableAt == ISO8601DateFormatter().date(from: "2026-03-09T07:00:00Z"), "DST used fixed 86400 seconds")
+    }
+
+    private static func limitedReadAuthorityRecovery() throws {
+        let fixture = try Fixture(3)
+        defer { fixture.cleanup() }
+        let originalToken = try fixture.token()
+        try fixture.store.suspend(now: baseline)
+        try require(try fixture.store.currentEntry(now: baseline) == nil,
+                    "permission resolution exposed the previous photo")
+        let emptyRevision = try fixture.store.updateEligibility(photoIDs: [],
+            scopeIdentifier: "limited-empty", isAuthorized: true, now: baseline, timeZone: utc)
+        try require(try fixture.store.currentEntry(now: baseline) == nil,
+                    "zero readable photos retained a Widget entry")
+        try fixture.store.withProtectedCacheFiles(expectedRevision: emptyRevision, now: baseline) { protected in
+            try require(protected.isEmpty, "revoked photos remained protected after resolution")
+        }
+        let restored = fixture.candidates[0]
+        let restoredRevision = try fixture.store.updateEligibility(photoIDs: [restored.item.localIdentifier],
+            scopeIdentifier: "limited-restored", isAuthorized: true, now: baseline, timeZone: utc)
+        try fixture.store.publish(candidates: [restored], expectedRevision: restoredRevision, now: baseline, timeZone: utc)
+        try require(try fixture.store.currentEntry(now: baseline, timeZone: utc)?.item?.localIdentifier == restored.item.localIdentifier,
+                    "restored permission did not recover its allowed photo")
+        try require(try fixture.store.perform(token: originalToken, operationID: UUID().uuidString,
+            operationCreatedAt: baseline, now: baseline, timeZone: utc) == .unavailable,
+                    "restored access reactivated the old Widget control")
+        var staleCleanupRan = false
+        do {
+            try fixture.store.withProtectedCacheFiles(expectedRevision: emptyRevision, now: baseline) { _ in
+                staleCleanupRan = true
+            }
+            throw CheckFailure.failed("stale cleanup accepted after permission recovery")
+        } catch PersonalRediscoveryStore.Error.staleRevision {}
+        try require(!staleCleanupRan, "stale cleanup touched restored dependencies")
     }
 
     private static func authorityAndPublication() throws {

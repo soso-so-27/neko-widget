@@ -4,7 +4,7 @@ import ImageIO
 import Photos
 
 enum PhotoLibrarySection: String, CaseIterable {
-    case notes, favorites, all
+    case all, favorites, notes
 
     var title: String {
         switch self {
@@ -40,7 +40,7 @@ final class PhotoLibrarySelectionState: ObservableObject {
 
     func select(_ section: PhotoLibrarySection) {
         // Freeze the outgoing list before its disappearance/layout callbacks.
-        PhotoLibraryReadingPosition.activeSection = section.rawValue
+        if selection != section { PhotoLibraryReadingPosition.activeSection = section.rawValue }
         PhotoLibraryReadingPosition.diagnose("section \(selection.rawValue) -> \(section.rawValue)")
         resolutionID = nil
         hasResolvedSelection = true
@@ -259,6 +259,11 @@ struct MainTabView: View {
     let likedPhotos: [PhotoPresentation]
     let catPhotos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
+    var photoLibraryAssignments: [String: Set<String>]? = nil
+    var photoLibraryProfileNames: [String: String]? = nil
+    var savedPhotoIdentifiers: Set<String>? = nil
+    var savedPhotoStateReadFailed: Bool = false
+    var readablePhotoIdentifiers: Set<String>? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
@@ -303,6 +308,7 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .memories
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore()
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
@@ -318,6 +324,7 @@ struct MainTabView: View {
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
+    @State private var relatedPhotoUsesLibraryScope = false
     @State private var showsSettings = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
@@ -344,13 +351,10 @@ struct MainTabView: View {
                         albumDestination(for: route, defaultScope: .everyone)
                     }
                     .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                    .navigationDestination(
-                        for: MemoriesRoute.self,
-                        destination: memoriesDestination
-                    )
+                    .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .tabItem {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
@@ -361,14 +365,14 @@ struct MainTabView: View {
             NavigationStack(path: $photosPath) {
                 photoLibrary
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
-                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
             }
             .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoRoute = $0 })
+            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
             .environment(\.catProfilePhotoDestination, { profileID, photoID in
                 AnyView(albumPhotoDetail(for: .allCatPhotos,
                     localIdentifier: photoID, scope: .profile(profileID)))
@@ -404,14 +408,7 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
-        .environment(\.catProfileAlbumsDestination, { identifier, close in
-            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
-                .navigationDestination(for: AlbumRoute.self) { route in
-                    albumDestination(for: route, defaultScope: .profile(identifier))
-                }
-                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                .navigationDestination(for: MemoriesRoute.self, destination: memoriesDestination))
-        })
+        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -488,11 +485,12 @@ struct MainTabView: View {
 #endif
                 }
         }
-        .sheet(item: $relatedPhotoRoute) { route in
+        .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             let isOutsideScopedSource = photoSourceStatus != .allLibrary
                 && !catPhotos.contains(where: {
@@ -521,12 +519,14 @@ struct MainTabView: View {
         }
         .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
             guard isPresented else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
         }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
+            relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
@@ -602,12 +602,22 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
+            photoLibraryCatPicker
             PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding)
-            photoLibraryContent.id(photoLibraryRevision)
+            photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
+            PhotoLibraryReadingPosition.activeSection = key
+        }
+        .onChange(of: photoLibraryRegisteredIdentifiers) { _, identifiers in
+            if let selected = photoLibraryProfileIdentifier,
+               selected != "unassigned", !identifiers.contains(selected) {
+                photoLibraryProfileIdentifier = nil
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
@@ -727,7 +737,7 @@ struct MainTabView: View {
             }
         } label: {
             ToolTile(title: "うちの子を見せる", systemImage: "photo.on.rectangle.angled",
-                     subtitle: "選んだ写真だけ", catPose: "tilt")
+                     subtitle: "初回はおすすめ、あとから選べる", catPose: "tilt")
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -875,17 +885,116 @@ struct MainTabView: View {
         selectedTab == .photos && photosPath.isEmpty && scenePhase == .active
     }
 
+    private var photoLibraryPositionKey: String {
+        let mode = photoLibrarySelection.selection.rawValue
+        return photoLibraryProfileIdentifier.map { "\(mode)-\($0)" } ?? mode
+    }
+
+    private var currentPhotoLibraryAssignments: [String: Set<String>] {
+        photoLibraryAssignments ?? assignmentsByPhotoIdentifier
+    }
+
+    private var currentPhotoLibraryProfileNames: [String: String] {
+        photoLibraryProfileNames ?? Dictionary(uniqueKeysWithValues: catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) })
+    }
+
+    private var photoLibraryRegisteredIdentifiers: Set<String> { Set(currentPhotoLibraryProfileNames.keys) }
+
+    private var photoLibraryRediscoveryScope: CatProfileScopePresentation {
+        photoLibraryProfileIdentifier.map(CatProfileScopePresentation.profile) ?? .everyone
+    }
+
+    private var permitsPhotoLibraryRediscovery: Bool {
+        photoLibraryProfileIdentifier != "unassigned"
+    }
+
+    private func photoLibraryRelatedAlbums(for identifier: String, scope: CatProfileScopePresentation) -> [PhotoRelatedAlbumLink] {
+        guard permitsPhotoLibraryRediscovery, scope == photoLibraryRediscoveryScope else { return [] }
+        guard case let .profile(profileIdentifier) = scope else { return relatedAlbums(for: identifier, scope: scope) }
+        let photos = photoLibraryCatPhotos
+        guard photos.contains(where: { $0.localIdentifier == identifier }) else { return [] }
+        let albums = CuratedAlbumBuilder().sections(from: photos, lifeReference: nil, includesGrowth: false)
+            .flatMap(\.albums).filter { album in
+                album.photos.contains { $0.localIdentifier == identifier }
+                    && album.photos.contains { $0.localIdentifier != identifier }
+            }
+        var allowed = Set(albums.map { AlbumRoute.catAlbum(profileIdentifier: profileIdentifier, album: $0.id) })
+        if photos.count > 1 { allowed.insert(.catAlbum(profileIdentifier: profileIdentifier, album: .allCatPhotos)) }
+        return relatedAlbums(for: identifier, scope: scope).filter { allowed.contains($0.route) }
+    }
+
+    private func openPhotoLibraryRelatedAlbum(_ route: PhotoRediscoveryRoute) {
+        relatedPhotoUsesLibraryScope = true
+        relatedPhotoRoute = route
+    }
+
+    private func photoLibraryIncludes(_ identifier: String) -> Bool {
+        let registered = photoLibraryRegisteredIdentifiers
+        let assignments = (currentPhotoLibraryAssignments[identifier] ?? []).intersection(registered)
+        return PhotoMemoryNoteLibraryPolicy.includes(selected: photoLibraryProfileIdentifier, identifiers: assignments)
+    }
+
+    private var photoLibraryCatPhotos: [PhotoPresentation] { catPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    private var photoLibraryLikedPhotos: [PhotoPresentation] { likedPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    private var photoLibraryBrowserPhotos: [PhotoPresentation] {
+        guard photoLibraryProfileIdentifier != nil else { return libraryPhotos }
+        var seen = Set<String>()
+        return (libraryPhotos + likedPhotos).filter {
+            photoLibraryIncludes($0.localIdentifier) && seen.insert($0.localIdentifier).inserted
+        }
+    }
+    private var unavailablePhotoLibrarySavedCount: Int {
+        let saved = savedPhotoIdentifiers ?? Set(likedPhotos.map(\.localIdentifier))
+        let visible = Set((hasPhotoAccess ? photoLibraryLikedPhotos : []).map(\.localIdentifier))
+        return saved.filter { photoLibraryIncludes($0) && !visible.contains($0) }.count
+    }
+
+    private var photoLibraryCatPicker: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                photoLibraryCatButton("全猫", identifier: nil)
+                ForEach(photoLibraryRegisteredIdentifiers.sorted(), id: \.self) { identifier in
+                    photoLibraryCatButton(currentPhotoLibraryProfileNames[identifier] ?? "猫", identifier: identifier)
+                }
+                photoLibraryCatButton("未指定", identifier: "unassigned")
+            }.padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("photos-cat-picker")
+    }
+
+    private func photoLibraryCatButton(_ title: String, identifier: String?) -> some View {
+        Button { photoLibraryProfileIdentifier = identifier } label: {
+            Text(title).font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14).frame(minHeight: 44)
+                .background(photoLibraryProfileIdentifier == identifier ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(photoLibraryProfileIdentifier == identifier ? .isSelected : [])
+        .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
+    }
+
     @ViewBuilder private var photoLibraryContent: some View {
         switch photoLibrarySelection.selection {
         case .all:
             allPhotosView
         case .favorites:
-            SavedMemoriesGalleryView(photos: likedPhotos, startsInExportMode: false,
-                                    isEmbedded: true, exportPhotoBook: exportPhotoBook)
+            SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : [], startsInExportMode: false,
+                                    isEmbedded: true,
+                                    readingPositionKey: photoLibraryPositionKey,
+                                    unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
+                                    hasPhotoAccess: hasPhotoAccess,
+                                    savedStateReadFailed: savedPhotoStateReadFailed,
+                                    exportPhotoBook: exportPhotoBook)
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
                                      isEmbedded: true,
-                                     openCatPreparedness: nil) {
+                                     openCatPreparedness: nil,
+                                     selectedProfileIdentifier: photoLibraryProfileIdentifier,
+                                     currentPhotoAssignments: currentPhotoLibraryAssignments,
+                                     registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
+                                     currentProfileNames: currentPhotoLibraryProfileNames,
+                                     readingPositionKey: photoLibraryPositionKey) {
                 photoLibrarySelection.select(.all)
             }
         }
@@ -898,15 +1007,28 @@ struct MainTabView: View {
             requestPhotoAccess: requestPhotoAccess, chooseMorePhotos: chooseMorePhotos,
             showWidgetPlacementGuide: showWidgetPlacementGuide,
             showSettings: { showsSettings = true }, rescan: { Task { await rescan() } },
-            catPhotos: catPhotos, excludedCatPhotos: excludedCatPhotos,
+            catPhotos: photoLibraryCatPhotos, excludedCatPhotos: excludedCatPhotos,
             photoSourceAlbums: photoSourceAlbums, photoSourceStatus: photoSourceStatus,
             restoreCatCandidates: restoreCatCandidates, selectPhotoSourceAlbum: selectPhotoSourceAlbum,
             refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
             catProfilesPresentation: catProfilesPresentation, catProfilesActions: catProfilesActions,
             isEmbedded: true,
-            supplementaryPhotos: AnyView(PersonalArchivePhotosSection(
-                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore))
+            supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
+                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
+            readingPositionKey: photoLibraryPositionKey,
+            showsCatProfileNavigation: false
         )
+    }
+
+    private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
+        { identifier, close in
+            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
+                .navigationDestination(for: AlbumRoute.self) { route in
+                    albumDestination(for: route, defaultScope: .profile(identifier))
+                }
+                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) })
+        }
     }
 
     private var settingsSheet: some View {
@@ -945,6 +1067,9 @@ struct MainTabView: View {
                 personalArchiveStore: personalArchiveStore
             )
         }
+        // The settings sheet is presented outside the TabView's environment.
+        // Its profile-photo destination needs the same explicit album routes.
+        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
     }
 
     @ViewBuilder
@@ -960,8 +1085,16 @@ struct MainTabView: View {
                     // top row can hide the photo that was just viewed. Restore
                     // after the pop rather than before its layout transition.
                     PhotoLibraryReadingPosition.returnToOpenedPhoto(
-                        PhotoLibraryGridRow.identifier(containing: localIdentifier, in: catPhotos)
+                        PhotoLibraryGridRow.identifier(containing: localIdentifier, in: photoLibraryCatPhotos),
+                        section: photoLibraryPositionKey
                     )
+                    if photosPath.isEmpty {
+                        // A retained native scroll view can keep its final offset even
+                        // when the saved/bound row ID is unchanged. Recreate only the
+                        // root collection, after saving the exact return row.
+                        photoLibraryRevision &+= 1
+                        PhotoLibraryReadingPosition.diagnose("rebuild returned collection \(photoLibraryPositionKey) revision=\(photoLibraryRevision)")
+                    }
                 }
         case .automaticAlbums:
             automaticAlbumsView
@@ -988,7 +1121,8 @@ struct MainTabView: View {
     private func detailView(for localIdentifier: String) -> some View {
         photoDetail(for: localIdentifier,
                     shownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
-                    openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier)
+                    openedFromWidget: widgetOpenedPhotoIdentifier == localIdentifier,
+                    libraryContext: widgetOpenedPhotoIdentifier != localIdentifier)
     }
 
     @ViewBuilder
@@ -996,11 +1130,12 @@ struct MainTabView: View {
         // AppRoot calls this destination directly, outside MainTabView.body.
         // The installed host must own presentation state and supply the same
         // related-photo actions as the in-app browser.
-        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) { openRelatedAlbum in
             if hasPhotoAccess,
                catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
                !excludedCatCandidateIdentifiers.contains(localIdentifier) {
-                photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true)
+                photoDetail(for: localIdentifier, shownAt: shownAt, openedFromWidget: true,
+                            openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
                                        description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
@@ -1012,12 +1147,13 @@ struct MainTabView: View {
 
     @ViewBuilder
     func firstRunPhotoDestination(for localIdentifier: String) -> some View {
-        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) {
+        PhotoRelatedAlbumsHost(relatedAlbums: relatedAlbums, sheet: relatedAlbumsSheet) { openRelatedAlbum in
             if hasPhotoAccess, photoPresentationVersion.canPresent,
                photoSourceStatus != .unavailable,
                catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
                !excludedCatCandidateIdentifiers.contains(localIdentifier) {
-                photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false)
+                photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false,
+                            openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
                                        description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
@@ -1036,32 +1172,48 @@ struct MainTabView: View {
         )
     }
 
+    @ViewBuilder
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
-                             openedFromWidget: Bool) -> some View {
-        let initialPhoto = photo(for: localIdentifier)
-        return PhotoBrowserView(
-            // A proposed photo and a Widget tap are one-photo entry points.
-            // The grid uses a separate route whose browser can page through
-            // the detected cat-photo collection.
-            photos: [initialPhoto],
-            libraryPhotos: libraryPhotos,
-            initialPhoto: initialPhoto,
-            widgetShownAt: shownAt,
-            showsWidgetTiming: openedFromWidget,
-            setMemorySaved: setMemorySaved,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+                             openedFromWidget: Bool, fromNote: Bool = false, libraryContext: Bool = false,
+                             openRelatedAlbumOverride: OpenPhotoRelatedAlbum? = nil) -> some View {
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           fromNote || photoSourceStatus != .unavailable,
+           !libraryContext || photoLibraryIncludes(localIdentifier),
+           let initialPhoto = (fromNote ? memoryNotePhotos : catPhotos).first(where: { $0.localIdentifier == localIdentifier }) {
+            PhotoBrowserView(
+                // A proposed photo and a Widget tap are one-photo entry points.
+                // The grid uses a separate route whose browser can page through
+                // the detected cat-photo collection.
+                photos: [initialPhoto],
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: shownAt,
+                showsWidgetTiming: openedFromWidget,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
+            .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
+            // The nearest environment wins. Direct destinations must use their
+            // installed host's state, not MainTabView.body's unrelated state.
+            .environment(\.openPhotoRelatedAlbum, openRelatedAlbumOverride
+                ?? (libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 }))
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
     }
 
     /// Related albums use today's permission/source/explicit-assignment state,
@@ -1072,6 +1224,10 @@ struct MainTabView: View {
     ) -> [PhotoRelatedAlbumLink] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent,
               photoSourceStatus != .unavailable else { return [] }
+        if relatedPhotoUsesLibraryScope {
+            guard permitsPhotoLibraryRediscovery,
+                  scope == photoLibraryRediscoveryScope else { return [] }
+        }
         let photos = scopedCatPhotos(for: scope)
         guard photos.contains(where: { $0.localIdentifier == localIdentifier }) else { return [] }
         let albums = CuratedAlbumBuilder().sections(
@@ -1164,6 +1320,10 @@ struct MainTabView: View {
     private func currentDayPhotos(_ context: PhotoRediscoveryDay) -> [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent,
               photoSourceStatus != .unavailable else { return [] }
+        if relatedPhotoUsesLibraryScope {
+            guard permitsPhotoLibraryRediscovery,
+                  context.scope == photoLibraryRediscoveryScope else { return [] }
+        }
         var seen = Set<String>()
         return browserLibraryPhotos(for: context.scope).filter { photo in
             guard let date = photo.creationDate,
@@ -1186,51 +1346,83 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func collectionDetailView(for localIdentifier: String) -> some View {
-        PhotoBrowserView(
-            photos: catPhotos,
-            libraryPhotos: libraryPhotos,
-            initialPhoto: photo(for: localIdentifier),
-            widgetShownAt: nil,
-            showsWidgetTiming: false,
-            setMemorySaved: setMemorySaved,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           photoSourceStatus != .unavailable,
+           let initialPhoto = photoLibraryCatPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+            PhotoBrowserView(
+                photos: photoLibraryCatPhotos,
+                libraryPhotos: photoLibraryBrowserPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .environment(\.photoRediscoveryScope, photoLibraryRediscoveryScope)
+            .environment(\.photoRediscoveryEnabled, permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, photoLibraryRelatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, openPhotoLibraryRelatedAlbum)
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
     }
 
     @ViewBuilder
-    private func memoryDetailView(for localIdentifier: String) -> some View {
-        PhotoBrowserView(
-            photos: likedPhotos,
-            libraryPhotos: libraryPhotos,
-            initialPhoto: photo(for: localIdentifier),
-            widgetShownAt: nil,
-            showsWidgetTiming: false,
-            setMemorySaved: setMemorySaved,
-            exportMemoryPhoto: exportMemoryPhoto,
-            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-            excludeFromCatCandidates: { identifiers in
-                Task { await excludeFromCatCandidates(identifiers) }
-            },
-            restoreCatCandidates: { identifiers in
-                Task { await restoreCatCandidates(identifiers) }
-            },
-            profiles: catProfilesPresentation.profiles,
-            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-            replaceProfileAssignments: { values in
-                await catProfilesActions.replacePhotoAssignments(values)
-            }
-        )
+    private func memoryDetailView(for localIdentifier: String, libraryContext: Bool = false) -> some View {
+        if hasPhotoAccess, photoPresentationVersion.canPresent,
+           !libraryContext || photoLibraryIncludes(localIdentifier),
+           (readablePhotoIdentifiers?.contains(localIdentifier)
+            ?? (likedPhotos + libraryPhotos).contains { $0.localIdentifier == localIdentifier }) {
+            let initialPhoto = photo(for: localIdentifier)
+            PhotoBrowserView(
+                photos: libraryContext ? photoLibraryLikedPhotos : likedPhotos,
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    await catProfilesActions.replacePhotoAssignments(values)
+                }
+            )
+            .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
+            .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
+            .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
+            .environment(\.openPhotoRelatedAlbum, libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+            .id(photoPresentationVersion.sourceResolutionRevision)
+        } else {
+            unavailablePersonalPhotoView
+        }
+    }
+
+    private var unavailablePersonalPhotoView: some View {
+        ContentUnavailableView("この写真は開けません", systemImage: "photo",
+            description: Text("写真へのアクセスや表示する写真の範囲が変更されました。戻って選び直してください。"))
+            .navigationTitle("写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("personal-photo-unavailable")
     }
 
     private func albumsView(
@@ -1248,12 +1440,19 @@ struct MainTabView: View {
         return LikedPhotosView(
             photos: likedPhotos,
             hasPhotoAccess: hasPhotoAccess,
+            isPhotoSourceUnavailable: photoSourceStatus == .unavailable,
             monthlyWindowCollection: scope == .everyone ? currentMonthlyWindowCollection : nil,
             latestMonthlyWindowIsUnread: scope == .everyone && latestMonthlyWindowIsUnread,
             latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew,
             seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : [],
             exportPhotoBook: exportPhotoBook,
             openPhotos: openPhotosOverride ?? {
+                photoLibrarySelection.select(.all)
+                photosPath = NavigationPath()
+                selectedTab = .photos
+            },
+            recoverPhotoSource: {
+                openPhotosOverride?()
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos
@@ -1319,7 +1518,7 @@ struct MainTabView: View {
     }
 
     @ViewBuilder
-    private func memoriesDestination(for route: MemoriesRoute) -> some View {
+    private func memoriesDestination(for route: MemoriesRoute, libraryContext: Bool = false) -> some View {
         switch route {
         case .memoryNotes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore) {
@@ -1332,7 +1531,7 @@ struct MainTabView: View {
                                       archiveStore: personalArchiveStore)
         case let .memoryNotePhoto(identifier):
             PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos, store: memoStore) { photo in
-                photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false)
+                photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false, fromNote: true, libraryContext: libraryContext)
             }
         case .favorites:
             SavedMemoriesGalleryView(
@@ -1352,7 +1551,7 @@ struct MainTabView: View {
         case let .highlight(snapshot):
             highlightDestination(snapshot)
         case let .photo(localIdentifier):
-            memoryDetailView(for: localIdentifier)
+            memoryDetailView(for: localIdentifier, libraryContext: libraryContext)
         case let .seasonalMovie(periodID):
             seasonalMovieDestination(periodID)
         case let .monthlyWindow(snapshot):
@@ -2054,6 +2253,13 @@ struct MainTabView: View {
     private func scopedCatPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
         guard hasPhotoAccess, photoPresentationVersion.canPresent else { return [] }
         let excludedIdentifiers = excludedCatCandidateIdentifiers
+        if relatedPhotoUsesLibraryScope, photoLibraryProfileIdentifier != nil {
+            guard permitsPhotoLibraryRediscovery,
+                  scope == photoLibraryRediscoveryScope else { return [] }
+            return catPhotos.filter {
+                photoLibraryIncludes($0.localIdentifier) && !excludedIdentifiers.contains($0.localIdentifier)
+            }
+        }
         guard case let .profile(identifier) = scope else {
             return catPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
         }
@@ -2289,18 +2495,20 @@ private struct PhotoRelatedAlbumsHost<Content: View, Sheet: View>: View {
     @State private var route: PhotoRediscoveryRoute?
     let relatedAlbums: PhotoRelatedAlbums
     let sheet: (PhotoRediscoveryRoute) -> Sheet
-    let content: Content
+    let content: (@escaping OpenPhotoRelatedAlbum) -> Content
 
     init(relatedAlbums: @escaping PhotoRelatedAlbums,
          sheet: @escaping (PhotoRediscoveryRoute) -> Sheet,
-         @ViewBuilder content: () -> Content) {
+         @ViewBuilder content: @escaping (@escaping OpenPhotoRelatedAlbum) -> Content) {
         self.relatedAlbums = relatedAlbums
         self.sheet = sheet
-        self.content = content()
+        self.content = content
     }
 
     var body: some View {
-        content
+        // Pass this installed state setter to the browser itself, where an
+        // inner environment would otherwise replace an ancestor's action.
+        content({ route = $0 })
             .environment(\.photoRelatedAlbums, relatedAlbums)
             .environment(\.openPhotoRelatedAlbum, { route = $0 })
             .sheet(item: $route, content: sheet)
@@ -2357,6 +2565,7 @@ private struct WindowListView: View {
     @State private var requestedSetupPath: PairingSetupPath?
     @State private var publicStates: [String: OfficialWindowState]
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
+    @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
 
     let supportsPrivateWindows: Bool
@@ -2597,24 +2806,35 @@ private struct WindowListView: View {
     }
 
     private var emptyWindowCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("暮らしの中に、猫の一枚を。", systemImage: "pawprint.fill")
-                .font(.title2)
-
-            Text("公開まどから写真を受け取れます。写真の投稿や、友だちの招待は必要ありません。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            NavigationLink { discovery } label: { Text("まどを探す") }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("window-list-start")
+        VStack(alignment: .leading, spacing: 18) {
+            Text("まどをはじめる").font(.title2)
+                .accessibilityAddTraits(.isHeader)
+            if supportsPrivateWindows {
+                VStack(alignment: .leading, spacing: 8) {
+                    NavigationLink { connectionOptions } label: {
+                        Label("相手とつなぐ", systemImage: "person.badge.plus")
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("window-list-start-private")
+                    Text("身近な相手と写真を送り合います。送る写真と相手を確認してから届けます。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                NavigationLink { discovery } label: {
+                    Label("公式の写真を受け取る", systemImage: "photo")
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("window-list-start")
+                Text("まどを選んで写真を見られます。写真の投稿や、相手の招待は必要ありません。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 20)
-        )
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
     @ViewBuilder
@@ -2699,6 +2919,22 @@ private struct WindowListView: View {
     }
 
     private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
+        // A state change refreshes both the image and the outer VoiceOver value.
+        // TimelineView's scheduled redraw alone can leave the Button's AX value stale.
+        let now = max(Date.now, coverClock)
+        let deadline = coverPhotos[window.localWindowID]?.photo?.displayUntil
+        return windowCard(window, at: now)
+            .task(id: deadline) {
+                guard let deadline, deadline > now else { return }
+                do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+                catch { return }
+                guard !Task.isCancelled,
+                      coverPhotos[window.localWindowID]?.photo?.displayUntil == deadline else { return }
+                coverClock = max(Date.now, deadline)
+            }
+    }
+
+    private func windowCard(_ window: PrivateWindowCatalogEntry, at now: Date) -> some View {
         let isActive = window.localWindowID == activeWindowID
         let isSwitching = window.localWindowID == switchingWindowID
         let isSetup = groupedWindows.setupWindowIDs.contains(window.localWindowID)
@@ -2731,7 +2967,7 @@ private struct WindowListView: View {
                 }
             } else {
                 WindowPhotoCard(title: window.displayName, kind: .shared) {
-                    windowCover(for: window)
+                    windowCover(for: window, at: now)
                         .overlay(alignment: .topTrailing) {
                             if isSwitching {
                                 ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
@@ -2759,7 +2995,7 @@ private struct WindowListView: View {
         )
         .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
         .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、相手と送り合うまど")
-        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup))
+        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup, at: now))
         .accessibilityHint(
             pausesWindowChanges && !isActive
                 ? "更新が完了すると、このまどを開けます"
@@ -2767,33 +3003,36 @@ private struct WindowListView: View {
         )
     }
 
-    private func windowCover(for window: PrivateWindowCatalogEntry) -> some View {
+    private func windowCover(for window: PrivateWindowCatalogEntry, at now: Date) -> some View {
         GeometryReader { geometry in
-            TimelineView(.explicit([Date.now, coverPhotos[window.localWindowID]?.photo?.displayUntil].compactMap { $0 })) { context in
-                if let cover = coverPhotos[window.localWindowID]?.photo,
-                   context.date < cover.displayUntil,
-                   let image = UIImage(data: cover.jpeg) {
-                    Image(uiImage: image).resizable().scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                } else {
-                    VStack(spacing: 12) {
-                        Image("ToolCat-hide").resizable().scaledToFit()
-                            .frame(width: 58, height: 58)
-                        Text(coverPlaceholder(for: window))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let cover = coverPhotos[window.localWindowID]?.photo,
+               cover.isVisible(at: now), let image = UIImage(data: cover.jpeg) {
+                Image(uiImage: image).resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+            } else {
+                VStack(spacing: 12) {
+                    Image("ToolCat-hide").resizable().scaledToFit()
+                        .frame(width: 58, height: 58)
+                    Text(coverPlaceholder(for: window))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .accessibilityHidden(true)
     }
 
-    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool) -> String {
+    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool, at now: Date) -> String {
+        let visiblePhoto = coverPhotos[window.localWindowID]?.photo.flatMap { cover in
+            cover.isVisible(at: now) && UIImage(data: cover.jpeg) != nil ? cover : nil
+        }
         var parts = [isSetup ? windowPrimaryStatusLabel(for: window)
-                     : coverPhotos[window.localWindowID]?.photo != nil ? "写真あり" : coverPlaceholder(for: window)]
+                     : visiblePhoto != nil ? "写真あり" : coverPlaceholder(for: window)]
+        if !isSetup, let visiblePhoto {
+            parts.append(visiblePhoto.origin == .received ? "相手から届いた写真" : "送った写真")
+        }
         if windowErrors.contains(window.localWindowID) {
             parts.append(isSetup ? "設定を開いて確認" : "開いて共有の状態を確認")
         }
@@ -2912,8 +3151,13 @@ private struct WindowListView: View {
     /// Only the account read is replaced. The shipping list, controls, grouping,
     /// accessibility and layouts are used by the mixed-state UI regression.
     private func loadMixedFixtureIfNeeded() -> Bool {
-        guard CommandLine.arguments.contains("--window-list-ui-fixture"),
-              CommandLine.arguments.contains("--window-list-mixed") else { return false }
+        guard CommandLine.arguments.contains("--window-list-ui-fixture") else { return false }
+        if CommandLine.arguments.contains("--window-list-empty-private") {
+            windows = []; pairingPhases = [:]; coverPhotos = [:]; windowErrors = []
+            activeWindowID = nil; isLoading = false
+            return true
+        }
+        guard CommandLine.arguments.contains("--window-list-mixed") else { return false }
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         let pairedID = "10000000-0000-0000-0000-000000000001"
         let failedID = "10000000-0000-0000-0000-000000000002"
@@ -2927,7 +3171,7 @@ private struct WindowListView: View {
         pairingPhases = [pairedID: .paired, failedID: .failed]
         windowErrors = [failedID]
         if let jpeg = MomentExperiencePhotoFixture.image(index: 1).jpegData(compressionQuality: 0.8) {
-            coverPhotos = [pairedID: .init(photo: .init(jpeg: jpeg, displayUntil: Date().addingTimeInterval(3600), origin: .sent), status: .photo)]
+            coverPhotos = [pairedID: .init(photo: .init(jpeg: jpeg, displayUntil: Date().addingTimeInterval(CommandLine.arguments.contains("--window-list-expiring-cover") ? 5 : 3600), origin: .sent), status: .photo)]
         }
         isLoading = false
         return true
@@ -3137,7 +3381,7 @@ struct WindowListNavigationFixture: View {
                 WindowListView(opensActiveWindow: $opensActiveWindow,
                                pendingFamilyMomentSourceDigest: .constant(nil),
                                pendingFamilyNotificationRoute: .constant(nil),
-                               supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed"),
+                               supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed") || CommandLine.arguments.contains("--window-list-empty-private"),
                                officialStore: model.store,
                                refreshOfficialFeed: { try await model.refresh() },
                                previewOfficialFeed: { try await model.preview() },

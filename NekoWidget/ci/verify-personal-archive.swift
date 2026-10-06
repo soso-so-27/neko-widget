@@ -39,7 +39,29 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
     private var accountSwitchCountdown: Int?
 
     func account() -> PersonalArchiveAccount { current }
-    func isCurrent(_ account: PersonalArchiveAccount) -> Bool {
+    private var pauseCurrentCheckCountdown: Int?
+    private var pausedCurrentCheck: CheckedContinuation<Void, Never>?
+    private var currentCheckStarted: CheckedContinuation<Void, Never>?
+
+    func isCurrent(_ account: PersonalArchiveAccount) async -> Bool {
+        if let remaining = pauseCurrentCheckCountdown {
+            if remaining == 0 {
+                pauseCurrentCheckCountdown = nil
+                await withCheckedContinuation { continuation in
+                    pausedCurrentCheck = continuation
+                    currentCheckStarted?.resume(); currentCheckStarted = nil
+                }
+            } else { pauseCurrentCheckCountdown = remaining - 1 }
+        }
+        return currentCheck(account)
+    }
+    func suspendCurrentCheck(after count: Int) { pauseCurrentCheckCountdown = count }
+    func waitForPausedCurrentCheck() async {
+        if pausedCurrentCheck != nil { return }
+        await withCheckedContinuation { currentCheckStarted = $0 }
+    }
+    func resumeCurrentCheck() { pausedCurrentCheck?.resume(); pausedCurrentCheck = nil }
+    private func currentCheck(_ account: PersonalArchiveAccount) -> Bool {
         if let remaining = accountSwitchCountdown {
             if remaining == 0 { accountSwitchCountdown = nil; switchAccount("fixture-b") }
             else { accountSwitchCountdown = remaining - 1 }
@@ -53,7 +75,7 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
     func failNext(_ value: Failure) { failure = value }
     func afterCommit(_ hook: @escaping @Sendable () throws -> Void) { commitHook = hook }
     func prepareZone(for account: PersonalArchiveAccount, allowCreation: Bool, expectedGeneration: UUID?) throws -> UUID {
-        guard isCurrent(account) else { throw PersonalArchiveError.accountChanged }
+        guard currentCheck(account) else { throw PersonalArchiveError.accountChanged }
         if case .beforePreparation = failure { failure = .none; throw PersonalArchiveError.networkUnavailable }
         if zones[account.key] == nil {
             guard allowCreation, expectedGeneration == nil else { throw PersonalArchiveError.zoneMissing }
@@ -132,7 +154,7 @@ private actor ArchiveCloudFixture: PersonalArchiveTransport {
     func payload(_ id: UUID) -> PersonalArchivePayload? { zones[current.key]?.entries[id]?.payload }
     func counts() -> (uploads: Int, creations: Int) { (uploadCount, creations) }
     private func checkedGeneration(_ account: PersonalArchiveAccount, expected: UUID?) throws -> UUID {
-        guard isCurrent(account) else { throw PersonalArchiveError.accountChanged }
+        guard currentCheck(account) else { throw PersonalArchiveError.accountChanged }
         guard let zone = zones[account.key] else { throw PersonalArchiveError.zoneMissing }
         guard let value = zone.generation else { throw PersonalArchiveError.archiveChanged }
         guard expected == nil || value == expected else { throw PersonalArchiveError.archiveChanged }
@@ -177,6 +199,7 @@ enum PersonalArchiveVerifier {
         try await unifiedMemoOutbox(root.appendingPathComponent("memo-outbox"))
         try await unifiedMemoBoundaries(root.appendingPathComponent("memo-boundaries"))
         try await unifiedMemoConcurrency(root.appendingPathComponent("memo-concurrency"))
+        try await reconcileDuringLocalSave(root.appendingPathComponent("reconcile-save"))
         try await measurementReflection(root.appendingPathComponent("measurement"))
         print("Personal archive verifier passed: 16 boundary groups; no CloudKit network or account access")
     }
@@ -343,6 +366,36 @@ enum PersonalArchiveVerifier {
         let withdrawn = await cloud.payload(bound.id)
         try require(afterDelete.reflection == .conflict && withdrawn?.isDeleted == true,
                     "A later local edit revived the withdrawn cloud record")
+    }
+
+    private static func reconcileDuringLocalSave(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture()
+        let archive = PersonalArchiveStore(directory: root.appendingPathComponent("archive"), transport: cloud)
+        let notes = PhotoMemoryNoteStore(fileURL: root.appendingPathComponent("notes.json"))
+        let coordinator = PhotoMemoCoordinator(noteStore: notes, archiveStore: archive)
+        let account = try await archive.accountContext()
+        guard let note = try await notes.save(text: "元のメモ", for: "photo", expectedRevision: nil) else {
+            throw Failure(message: "Missing reconcile fixture note")
+        }
+        _ = try await coordinator.enableUpdates(for: .init(photoIdentifier: "photo", note: note),
+            jpegData: jpeg, expectedAccount: account)
+        // readingSnapshot's third identity check follows materializing the old
+        // records. Pause there while a reentrant editor commits a newer version.
+        await cloud.suspendCurrentCheck(after: 2)
+        let reconcile = Task { try await coordinator.reconcile(expectedAccount: account) }
+        await cloud.waitForPausedCurrentCheck()
+        let saved = try await coordinator.saveLocal(text: "保存が完了した新しいメモ", recordID: note.id,
+            expectedRevision: note.revision, expectedAccount: account)
+        let binding = try await notes.archiveBinding(for: "photo")
+        await cloud.resumeCurrentCheck()
+        do { try await reconcile.value }
+        catch PhotoMemoryNoteStoreError.conflict { } // Stale reconciliation is rejected.
+        try require(try await notes.record(id: note.id) == saved.localRecord,
+            "Stale reconciliation replaced a newer completed local save")
+        try require(try await notes.archiveBinding(for: "photo") == binding,
+            "Stale reconciliation rolled back the acknowledged archive revision")
+        try require(try await archive.records().first?.text == saved.localRecord?.note.text,
+            "Stale reconciliation diverged from the committed archive")
     }
 
     private static func unifiedMemoConcurrency(_ root: URL) async throws {

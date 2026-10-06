@@ -707,10 +707,71 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("saved-memories-selection-toggle")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq \
-            -e 'accessibilityLabel("お気に入り、\(photos.count.formatted())枚")' \
-            -e 'accessibilityValue("お気に入り、\(photos.count.formatted())枚")' \
-            NekoWidget/Views/LikedPhotosView.swift
+          # Favorites accessibility normal/recovery contract
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          sys.path.insert(0, "ci")
+          from ios_ci_scope import swift_declaration_source
+
+          source = Path("NekoWidget/Views/LikedPhotosView.swift").read_text(encoding="utf-8")
+          directives = list(re.finditer(r"(?m)^[ \t]*#(if|elseif|else|endif)\b", source))
+          probe = list(source)
+          positions = []
+          for directive in directives:
+              position = directive.start() + directive[0].index("#")
+              probe[position] = "_"
+              positions.append((position, directive[1]))
+          # Preserve comment/string offsets and separately reject conditional gallery code.
+          whole = swift_declaration_source("".join(probe))
+          if whole is None:
+              raise SystemExit("Cannot verify favorites accessibility source context.")
+          galleries = list(re.finditer(r"(?ms)^struct SavedMemoriesGalleryView: View \{\n.*?^\}", whole))
+          if len(galleries) != 1:
+              raise SystemExit("Favorites accessibility must belong to one saved-memories gallery.")
+          span = galleries[0].span()
+          depth = gallery_depth = 0
+          for position, directive in positions:
+              if whole[position] != "_":
+                  continue  # A directive-shaped line inside a comment or string is not code.
+              if span[0] <= position < span[1]:
+                  raise SystemExit("Favorites accessibility must not be conditionally declared.")
+              if directive == "if":
+                  depth += 1
+              else:
+                  if depth == 0:
+                      raise SystemExit("Unbalanced conditional source context.")
+                  if directive == "endif":
+                      depth -= 1
+              if position < span[0]:
+                  gallery_depth = depth
+          if depth or gallery_depth:
+              raise SystemExit("Favorites accessibility must have unconditional source context.")
+          gallery, masked = source[span[0]:span[1]], whole[span[0]:span[1]]
+          bodies = list(re.finditer(r"(?ms)^    var body: some View \{\n.*?^    \}", masked))
+          if len(bodies) != 1:
+              raise SystemExit("Favorites accessibility must bind to one view body.")
+          body_span = bodies[0].span()
+          body, body_mask = gallery[body_span[0]:body_span[1]], masked[body_span[0]:body_span[1]]
+          binding = '''.accessibilityIdentifier("saved-memories-gallery")
+                  .accessibilityValue(galleryAccessibilityValue)'''
+          helper = r'''    private var galleryAccessibilityValue: String {
+                  guard hasPhotoAccess else { return "お気に入り、写真許可を確認してください" }
+                  if savedStateReadFailed { return "お気に入り、表示できる写真\(photos.count.formatted())枚、保存状態は確認できません" }
+                  if unavailableSavedPhotoCount > 0 {
+                      return "お気に入り、表示できる写真\(photos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
+                  }
+                  return "お気に入り、\(photos.count.formatted())枚"
+              }'''
+          for owner, active, expected in ((body, body_mask, binding), (gallery, masked, helper)):
+              if owner.count(expected) != 1:
+                  raise SystemExit("Favorites accessibility binding, normal value, or recovery value changed.")
+              start = owner.index(expected)
+              if active[start:start + len(expected)] != swift_declaration_source(expected):
+                  raise SystemExit("Favorites accessibility contract must be active code, not a comment or string.")
+          print("Favorites accessibility normal/recovery contract: PASS")
+          PY
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
           grep -Fq 'にお気に入りへ追加した猫の写真' \

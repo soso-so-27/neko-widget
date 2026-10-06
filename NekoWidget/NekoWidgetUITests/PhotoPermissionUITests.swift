@@ -53,7 +53,12 @@ final class OfficialWindowUITests: XCTestCase {
         let originalDate = try XCTUnwrap(try foreground(sameDay).value as? String)
         try foreground(app.buttons.matching(identifier: "photo-browser-rediscover")).tap()
         try foreground(app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")).tap()
-        try foreground(app.buttons.matching(
+        let closeRelated = app.buttons.matching(identifier: "photo-related-close")
+        _ = try foreground(closeRelated)
+        // SwiftUI NavigationLink may expose a Link or another element type,
+        // rather than Button. Match the stable tile identity while retaining
+        // the exact-one foreground/hittable requirement used for this sheet.
+        try foreground(app.descendants(matching: .any).matching(
             identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-3"
         )).tap()
         _ = try foreground(app.images.matching(identifier: "photo-detail-zoom-surface"))
@@ -61,7 +66,6 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertNotEqual(relatedDate, originalDate, "The related album must open the selected different photo")
         capture("widget-url-personal-related-photo", app)
 
-        let closeRelated = app.buttons.matching(identifier: "photo-related-close")
         try foreground(closeRelated).tap()
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             closeRelated.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.isEmpty
@@ -660,6 +664,55 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    func testEmptyPrivateWindowsOfferBothConnectionAndDiscovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-empty-private", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let privateStart = app.buttons["window-list-start-private"]
+        let publicStart = app.buttons["window-list-start"]
+        XCTAssertTrue(privateStart.waitForExistence(timeout: 10))
+        XCTAssertTrue(publicStart.exists)
+        privateStart.tap()
+        XCTAssertTrue(app.navigationBars["相手とつなぐ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["window-connection-options"].firstMatch.exists)
+        app.navigationBars["相手とつなぐ"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(publicStart.waitForExistence(timeout: 5))
+        publicStart.tap()
+        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testPrivateWindowCoverAccessibilityExpiresWhileVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-subscribed",
+                               "--window-list-expiring-cover", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(family.waitForExistence(timeout: 3))
+        XCTAssertTrue((family.value as? String)?.contains("写真あり") == true)
+        let expired = NSPredicate { _, _ in
+            (family.value as? String)?.contains("写真の保存期間が過ぎました") == true
+        }
+        expectation(for: expired, evaluatedWith: family)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse((family.value as? String)?.contains("写真あり") == true)
+        XCTAssertFalse(app.buttons["window-list-start-private"].exists)
+    }
+
+    @MainActor
+    func testLostCatExportLifecycleProtectsAndRemovesOnlyManagedCopies() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture", "--lost-cat-export-lifecycle-check"]
+        app.launch()
+        let result = app.staticTexts["lost-cat-export-lifecycle-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        let finished = NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "passed", "failed:")
+        expectation(for: finished, evaluatedWith: result)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(result.label, "passed", "Export lifecycle fixture reported a bounded failure code")
+    }
+
+    @MainActor
     func testMixedWindowsKeepAdditionAndScopedRecoveryReachable() {
         continueAfterFailure = false
         for appearance in ["dark", "light", "narrow", "largest"] {
@@ -674,7 +727,7 @@ final class OfficialWindowUITests: XCTestCase {
             app.launch()
             let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
             XCTAssertTrue(family.waitForExistence(timeout: 10))
-            XCTAssertEqual(family.value as? String, "写真あり")
+            XCTAssertEqual(family.value as? String, "写真あり、送った写真")
             XCTAssertFalse(family.label.contains("確認"), "Another window's error must not label this window")
             if !largeText {
                 let official = app.buttons["official-window-entry"]
@@ -1503,7 +1556,19 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(section.waitForExistence(timeout: 15)); section.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "memory-note-row-", "食べる量が少なかった")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        // Search can focus automatically at the largest text size. Close its
+        // keyboard before scrolling the actual memo list, whose older target
+        // row is lazily created below the newer, unselected cat's record.
+        if app.keyboards.firstMatch.exists {
+            let closeSearch = app.buttons["閉じる"]
+            XCTAssertTrue(closeSearch.waitForExistence(timeout: 5)); closeSearch.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        }
+        let notesList = app.scrollViews["memory-notes-list"]
+        XCTAssertTrue(notesList.waitForExistence(timeout: 5))
+        for _ in 0..<10 where !(row.exists && row.isHittable) { notesList.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.isHittable); row.tap()
         XCTAssertTrue(app.staticTexts["memory-note-weight"].waitForExistence(timeout: 5))
         return app
     }
@@ -2036,9 +2101,18 @@ final class SoloMemoriesUITests: XCTestCase {
         func field(_ name: String) -> XCUIElement {
             let element = app.descendants(matching: .any).matching(identifier: name).firstMatch
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
+            let guidance = app.staticTexts.matching(NSPredicate(
+                format: "label ENDSWITH %@ OR label == %@",
+                "を入れると作成できます", "仕上がりで調整する項目があります"
+            )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
-                let bottom = app.buttons["仕上がりを確認"].frame.minY - 28
+                let buttonTop = app.buttons["仕上がりを確認"].frame.minY
+                // The floating action also includes guidance above its button.
+                // At largest text it wraps; starting a drag there never scrolls
+                // the form. Bound both tapping and dragging above the full inset.
+                let bottom = guidance.exists
+                    ? min(buttonTop - 28, guidance.frame.minY - 8) : buttonTop - 28
                 // isHittable can be true even when the floating bottom action
                 // covers the field's centre. Tap only in the visible form band.
                 if element.exists, element.isHittable,
@@ -2046,16 +2120,27 @@ final class SoloMemoriesUITests: XCTestCase {
                     lastFieldIndex = index
                     return element
                 }
-                let upper = top + (bottom - top) * 0.25
-                let lower = top + (bottom - top) * 0.70
-                let movesUp = element.exists ? element.frame.midY >= bottom - 8 : index >= lastFieldIndex
+                let bandHeight = bottom - top
+                let centre = top + bandHeight * 0.5
+                let offset = element.exists ? element.frame.midY - centre
+                    : (index >= lastFieldIndex ? bandHeight : -bandHeight)
+                // A fixed fast swipe overshoots this band while the keyboard is
+                // visible, leaving the place field alternately under the title
+                // and the bottom action. Approach its centre without inertia.
+                // Large text can put the next section several screens away.
+                // Travel farther until it is near, then keep the fine approach.
+                let nearTarget = element.exists && abs(offset) <= bandHeight * 0.5
+                let maxDistance = bandHeight * (nearTarget ? 0.25 : 0.75)
+                let distance = min(max(abs(offset), 20), maxDistance)
+                let direction: CGFloat = offset >= 0 ? 1 : -1
                 let origin = app.coordinate(withNormalizedOffset: .zero)
                 // Use the form margin, so a multiline editor doesn't consume the drag.
                 let start = origin.withOffset(CGVector(dx: app.frame.width - 10,
-                    dy: movesUp ? lower : upper))
+                    dy: centre + direction * distance * 0.5))
                 let end = origin.withOffset(CGVector(dx: app.frame.width - 10,
-                    dy: movesUp ? upper : lower))
-                start.press(forDuration: 0.05, thenDragTo: end)
+                    dy: centre - direction * distance * 0.5))
+                start.press(forDuration: 0.1, thenDragTo: end,
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
             }
             XCTFail("Input did not reach the visible form band: \(name)")
             return element
@@ -2367,6 +2452,10 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("showcase-cat-candidates")
         XCTAssertTrue(hasCandidate)
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
+        let secondCandidate = app.buttons.matching(identifier: "showcase-candidate-photo").element(boundBy: 1)
+        XCTAssertTrue(candidate.label.contains("1枚目"))
+        XCTAssertTrue(secondCandidate.label.contains("2枚目"))
+        XCTAssertNotEqual(candidate.label, secondCandidate.label)
         // Only one is assigned to this cat. Manual selection still offers the
         // unassigned cat photos, but never the fixture's non-cat favorites.
         XCTAssertEqual(candidate.frame.width, candidate.frame.height, accuracy: 1)
@@ -3171,23 +3260,28 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(element("albums-cat-fixture-cat-0", in: app).exists)
 
         // Choose a subject first, then filter inside its shipping destination.
-        let closeUp = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let closeUp = element("album-secondary-close_up", in: app)
         reveal(closeUp, in: app)
         closeUp.tap()
-        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["大きく写った猫"].waitForExistence(timeout: 5))
         let albumPhotos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
         XCTAssertEqual(albumPhotos.count, 1)
         selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
         XCTAssertEqual(albumPhotos.count, 0, "A cat with no matching photos must not fall back to everyone.")
         selectAlbumCatFilter(nil, in: app)
         XCTAssertEqual(albumPhotos.count, 1)
-        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["大きく写った猫"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
 
         let years = element("albums-years-toggle", in: app)
         reveal(years, in: app)
         years.tap()
-        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].waitForExistence(timeout: 5))
         let year = element("album-card-calendar_year_2025", in: app)
         reveal(year, in: app)
         year.tap()
@@ -3210,45 +3304,24 @@ final class SoloMemoriesUITests: XCTestCase {
         selectAlbumCatFilter(nil, in: app)
         XCTAssertEqual(albumPhotos.count, 3)
         app.navigationBars["2025年"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["年から探す"].waitForExistence(timeout: 5))
-        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].waitForExistence(timeout: 5))
+        app.navigationBars["年月・日付から探す"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
         openPhotosTab(in: app)
-        XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
+        XCTAssertTrue(element("photos-cat-picker", in: app).waitForExistence(timeout: 15))
         XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
         XCTAssertFalse(app.staticTexts["写真の対象と整理"].exists)
         capture("photo-hub-cats")
         for (index, name) in ["ミケ", "ソラ"].enumerated() {
-            let shortcut = app.buttons["photo-hub-cat-fixture-cat-\(index)"]
-            XCTAssertTrue(shortcut.isHittable)
-            shortcut.tap()
-            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
-            let photos = app.buttons.matching(identifier: "cat-profile-photo")
-            XCTAssertEqual(photos.count, 1, "The shortcut must retain the selected cat")
-            let albumsEntry = app.buttons["cat-profile-open-albums"]
-            XCTAssertTrue(albumsEntry.isHittable)
-            albumsEntry.tap()
-            XCTAssertTrue(app.navigationBars["\(name)のアルバム"].waitForExistence(timeout: 5))
-            app.buttons["albums-cat-more"].tap()
-            app.buttons["albums-cat-photos"].tap()
-            XCTAssertTrue(app.buttons["album-cat-filter"].waitForExistence(timeout: 5))
-            XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, name)
-            XCTAssertEqual(albumPhotos.count, 1)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(app.navigationBars["\(name)のアルバム"].waitForExistence(timeout: 5))
-            app.buttons["cat-profile-albums-close"].tap()
-            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
-            XCTAssertEqual(photos.count, 1)
-            let more = app.buttons["cat-profile-more"]
-            XCTAssertTrue(more.isHittable)
-            more.tap()
-            XCTAssertTrue(app.buttons["cat-profile-add-photos"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["cat-profile-settings"].exists)
-            app.buttons["cat-profile-select"].tap()
-            XCTAssertEqual(app.buttons["cat-profile-select"].label, "完了")
-            app.buttons["cat-profile-select"].tap()
-            if index == 0 { capture("cat-photo-page") }
-
+            let filter = app.buttons["photos-cat-fixture-cat-\(index)"]
+            XCTAssertTrue(filter.isHittable)
+            filter.tap()
+            XCTAssertTrue(filter.isSelected)
+            XCTAssertTrue(app.navigationBars["写真"].exists)
+            let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-hub-photo-"))
+            XCTAssertEqual(photos.count, 1, "The root filter must retain the selected cat")
+            XCTAssertFalse(app.buttons["cat-profile-open-albums"].exists)
+            if index == 0 { capture("cat-filtered-photo-root") }
             photos.firstMatch.tap()
             let zoom = app.images["photo-detail-zoom-surface"]
             XCTAssertTrue(zoom.waitForExistence(timeout: 10))
@@ -3256,17 +3329,13 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(date.waitForExistence(timeout: 5))
             let expectedDate = index == 0 ? "2025年12月18日" : "2025年8月4日"
             XCTAssertEqual(date.value as? String, expectedDate, "The browser opened another cat's photo")
-            XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].isHittable,
-                          "The cat photo must retain the normal favorite action")
-            // Each existing fixture cat has one photo. Paging cannot expose
-            // the other cat or the unassigned photos in the main library.
+            XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].isHittable)
             zoom.swipeLeft()
             XCTAssertEqual(date.value as? String, expectedDate)
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+            XCTAssertTrue(filter.waitForExistence(timeout: 5))
+            XCTAssertTrue(filter.isSelected)
             XCTAssertEqual(photos.count, 1)
-            app.navigationBars["\(name)の写真"].buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
         }
         app.buttons["window-settings-button"].tap()
         let profiles = app.buttons["settings-cat-profiles"]
@@ -3351,25 +3420,42 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
         openPhotosTab(in: app)
-        let cat = app.buttons["photo-hub-cat-fixture-cat-0"]
-        XCTAssertTrue(cat.waitForExistence(timeout: 15))
+        app.buttons["window-settings-button"].tap()
+        let profiles = app.buttons["settings-cat-profiles"]
+        XCTAssertTrue(profiles.waitForExistence(timeout: 10))
+        reveal(profiles, in: app)
+        profiles.tap()
+        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 10))
+        let cat = app.buttons.matching(identifier: "cat-profile-open")
+            .matching(NSPredicate(format: "label CONTAINS %@", "ミケ")).firstMatch
+        XCTAssertTrue(cat.waitForExistence(timeout: 10))
         reveal(cat, in: app)
         cat.tap()
+        XCTAssertTrue(app.navigationBars["ミケ"].waitForExistence(timeout: 5))
+        let photosEntry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "この子の写真を見る")).firstMatch
+        reveal(photosEntry, in: app)
+        photosEntry.tap()
+        XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
         let entry = app.buttons["cat-profile-open-albums"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         XCTAssertTrue(entry.isHittable, "The album entry must remain reachable at the largest text size.")
         entry.tap()
         XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
-        let closeUp = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let closeUp = element("album-secondary-close_up", in: app)
         reveal(closeUp, in: app)
         closeUp.tap()
-        XCTAssertTrue(app.navigationBars["どアップ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["大きく写った猫"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["album-cat-filter"].value as? String, "ミケ")
         selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
         let photos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
         XCTAssertEqual(photos.count, 0, "An empty cat scope must not show another cat's photos.")
         XCTAssertTrue(element("album-scope-empty", in: app).exists)
-        app.navigationBars["どアップ"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["大きく写った猫"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["ミケのアルバム"].waitForExistence(timeout: 5))
         app.buttons["cat-profile-albums-close"].tap()
         XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
@@ -3408,6 +3494,38 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testCatPhotoRootFilterLargeTextAndViewerReturn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        openPhotosTab(in: app)
+        let cat = app.buttons["photos-cat-fixture-cat-0"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 15))
+        cat.tap()
+        XCTAssertTrue(cat.isSelected)
+        let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-hub-photo-"))
+        XCTAssertEqual(photos.count, 1)
+        photos.firstMatch.tap()
+        XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(cat.isSelected)
+        XCTAssertEqual(photos.count, 1)
+        let unassigned = app.buttons["photos-cat-unassigned"]
+        let picker = element("photos-cat-picker", in: app)
+        for _ in 0..<4 where !unassigned.isHittable { picker.swipeLeft() }
+        XCTAssertTrue(unassigned.isHittable)
+        unassigned.tap()
+        XCTAssertTrue(unassigned.isSelected)
+        XCTAssertFalse(app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"].exists)
+        XCTAssertFalse(app.buttons["photo-hub-photo-app-store-screenshot-fixture-2"].exists)
+        capture("photo-filter-largest-text")
+        app.terminate()
+    }
+
+    @MainActor
     func testPhotosStayUsableWithoutCatRegistrationAndOfferSourceRecoveryOnlyWhenNeeded() {
         for scenario in ["no-cats", "source-unavailable"] {
             let app = XCUIApplication()
@@ -3416,6 +3534,9 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             if scenario == "no-cats" {
                 assertAlbumsRoot(in: app)
+                XCTAssertFalse(app.buttons["albums-source-recovery"].exists)
+                XCTAssertFalse(app.buttons.matching(identifier: "albums-source-unavailable")
+                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch.exists)
                 capture("albums-root-standard")
                 openFavorites(in: app)
                 XCTAssertEqual(element("saved-memories-gallery", in: app).value as? String, "お気に入り、9枚",
@@ -3438,8 +3559,24 @@ final class SoloMemoriesUITests: XCTestCase {
                 assertAlbumsRoot(in: app)
                 capture("albums-without-cat-registration")
             }
-            openPhotosTab(in: app)
-            XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
+            if scenario == "source-unavailable" {
+                assertAlbumsRoot(in: app)
+                // iOS 26 ContentUnavailableView applies its identifier to the
+                // action button too. Keep Button role and exact visible action
+                // when the child's identifier is replaced by the parent.
+                let directRecovery = app.buttons["albums-source-recovery"]
+                let inheritedRecovery = app.buttons.matching(identifier: "albums-source-unavailable")
+                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch
+                let albumRecovery = directRecovery.exists ? directRecovery : inheritedRecovery
+                XCTAssertTrue(albumRecovery.waitForExistence(timeout: 10))
+                XCTAssertTrue(albumRecovery.isHittable)
+                XCTAssertFalse(app.staticTexts["猫のアルバムがまだありません"].exists)
+                capture("albums-source-unavailable")
+                albumRecovery.tap()
+            } else {
+                openPhotosTab(in: app)
+            }
+            XCTAssertTrue(element("photos-cat-picker", in: app).waitForExistence(timeout: 15))
             let recovery = app.buttons["photo-hub-source-recovery"]
             if scenario == "source-unavailable" {
                 XCTAssertTrue(recovery.isHittable)
@@ -3604,6 +3741,94 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testCommonCatFilterPersistsAcrossPhotoModesAndViewer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+        app.launch()
+        openPhotosTab(in: app)
+        let cat = app.buttons["photos-cat-fixture-cat-0"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 10))
+        cat.tap()
+        for mode in ["favorites", "notes", "all"] {
+            let section = app.buttons["photos-section-\(mode)"]
+            section.tap()
+            XCTAssertTrue(section.isSelected)
+            XCTAssertTrue(cat.isSelected, "Changing mode must preserve the common cat filter")
+            if mode == "favorites" {
+                XCTAssertFalse(app.buttons["saved-memory-photo-app-store-screenshot-fixture-2"].exists)
+            } else if mode == "notes" {
+                let sort = app.buttons["memory-notes-sort"]
+                XCTAssertTrue(sort.waitForExistence(timeout: 10))
+                XCTAssertEqual(app.buttons.matching(identifier: "memory-notes-sort").count, 1)
+                XCTAssertTrue(sort.isHittable, "The sort control retains its own accessible identity")
+                XCTAssertTrue(sort.label.contains("撮影順"))
+                sort.tap()
+                app.buttons["更新順"].tap()
+                XCTAssertTrue(sort.label.contains("更新順"))
+                XCTAssertTrue(cat.isSelected)
+            }
+        }
+        let photo = app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 10))
+        photo.tap()
+        XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(cat.isSelected)
+        XCTAssertTrue(photo.isHittable)
+        XCTAssertFalse(app.buttons["photo-hub-photo-app-store-screenshot-fixture-2"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testMonthJumpReachesPhotoBeyondInitialGridBatch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "PhotoMonthJumpUITest.\(UUID().uuidString)"
+        app.launch()
+        openPhotosTab(in: app)
+        let jump = app.buttons["photo-library-month-jump"]
+        XCTAssertTrue(jump.waitForExistence(timeout: 10))
+        reveal(jump, in: app)
+        jump.tap()
+        let september = app.buttons["2025年9月"]
+        XCTAssertTrue(september.waitForExistence(timeout: 5))
+        september.tap()
+        let firstSeptemberPhotoIdentifier = "photo-hub-photo-app-store-screenshot-fixture-page-31"
+        let firstSeptemberPhoto = app.buttons[firstSeptemberPhotoIdentifier].firstMatch
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto
+        )], timeout: 10), .completed)
+        XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)
+        firstSeptemberPhoto.tap()
+        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
+        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        // Returning restores the exact row asynchronously.
+        // Wait on that same photo, without scrolling or choosing a substitute.
+        print("[PhotoMonthJumpReturn] Back completed; waiting for original page-31 without scrolling")
+        let returnedToMonthRow = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: firstSeptemberPhoto)
+        let returned = XCTWaiter.wait(for: [returnedToMonthRow], timeout: 5)
+        let returnedMatches = app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count
+        if returned != .completed || returnedMatches != 1 {
+            capture("photo-grid-month-jump-return-failed")
+            let diagnostic = XCTAttachment(string: app.debugDescription)
+            diagnostic.name = "photo-grid-month-jump-return-hierarchy"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+        }
+        print("[PhotoMonthJumpReturn] waiter=\(returned) matches=\(returnedMatches)")
+        XCTAssertEqual(returned, .completed, "Returning restores the same September row")
+        XCTAssertEqual(returnedMatches, 1)
+        XCTAssertTrue(firstSeptemberPhoto.isHittable)
+        capture("photo-grid-month-jump-beyond-first-batch")
+        firstSeptemberPhoto.tap()
+        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
     func testPhotoGridRevealsFollowingBatchesAndKeepsReturnPosition() {
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",
@@ -3616,9 +3841,13 @@ final class SoloMemoriesUITests: XCTestCase {
         openPhotosTab(in: app)
         let grid = element("photo-hub-detected-grid", in: app)
         XCTAssertTrue(grid.waitForExistence(timeout: 15))
+        // The common cat picker is a separate horizontal ScrollView above
+        // the grid. Scroll the photo collection, never the first scroll view.
+        let photoList = app.scrollViews["photo-library-all-scroll"]
+        XCTAssertTrue(photoList.waitForExistence(timeout: 5))
         for number in [25, 49] {
             let target = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-\(number)"]
-            for _ in 0..<14 where !target.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            for _ in 0..<14 where !target.isHittable { photoList.swipeUp() }
             XCTAssertTrue(target.isHittable, "Scrolling alone reaches photo \(number)")
             XCTAssertEqual(app.buttons.matching(identifier: target.identifier).count, 1)
             target.tap()
@@ -3807,9 +4036,9 @@ final class SoloMemoriesUITests: XCTestCase {
             // Photos restores its last section. Select the scope that owns
             // the cat shortcuts instead of assuming a fresh "all" section.
             try foreground(app.buttons.matching(identifier: "photos-section-all")).tap()
-            let catShortcut = app.buttons.matching(identifier: "photo-hub-cat-fixture-cat-0")
+            let catShortcut = app.buttons.matching(identifier: "photos-cat-fixture-cat-0")
             try foreground(catShortcut).tap()
-            let catPhotos = app.buttons.matching(identifier: "cat-profile-photo")
+            let catPhotos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-hub-photo-"))
             // This grid deliberately contains two choices; open its first visible card.
             try hittableElements(catPhotos, count: 2)[0].tap()
             try foreground(related).tap()
@@ -3817,9 +4046,9 @@ final class SoloMemoriesUITests: XCTestCase {
             try closeSheet(in: app)
             _ = try foreground(app.buttons.matching(identifier: "photo-memory-note-open"))
             try foreground(back).tap()
-            XCTAssertTrue(app.navigationBars["ミケの写真"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
             _ = try hittableElements(catPhotos, count: 2)
-            try foreground(back).tap()
+            XCTAssertTrue(catShortcut.element(boundBy: 0).isSelected)
             _ = try foreground(catShortcut)
             app.terminate()
         }
@@ -3897,7 +4126,8 @@ final class SoloMemoriesUITests: XCTestCase {
             assertAlbumsRoot(in: app)
             openFavorites(in: app)
             let favorites = element("saved-memories-gallery", in: app)
-            XCTAssertEqual(favorites.value as? String, "お気に入り、\(scenario == "saved" ? 1 : 0)枚")
+            XCTAssertEqual(favorites.value as? String, scenario == "denied"
+                ? "お気に入り、写真許可を確認してください" : "お気に入り、\(scenario == "saved" ? 1 : 0)枚")
             if scenario == "saved" {
                 waitForLoadedPhotos([9], in: app)
                 let selection = app.buttons["saved-memories-selection-toggle"]
@@ -3927,7 +4157,12 @@ final class SoloMemoriesUITests: XCTestCase {
                 selection.tap()
                 XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
             } else {
-                XCTAssertTrue(app.staticTexts["まだありません"].waitForExistence(timeout: 5))
+                if scenario == "denied" {
+                    XCTAssertTrue(element("saved-memories-photo-access-unavailable", in: app).waitForExistence(timeout: 5))
+                    XCTAssertFalse(app.staticTexts["まだありません"].exists)
+                } else {
+                    XCTAssertTrue(app.staticTexts["まだありません"].waitForExistence(timeout: 5))
+                }
                 XCTAssertFalse(app.buttons["saved-memories-selection-toggle"].exists)
                 if scenario == "empty" { capture("albums-empty-favorites") }
             }
@@ -3957,26 +4192,83 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testAlbumMemoReadFailureCanRetryAndKeepRecoveredMemoOnReturn() {
+        let app = launch("memo", arguments: ["--photo-window-ui-fixture", "--album-memos-fail-once"])
+        assertAlbumsRoot(in: app)
+        let retry = app.buttons["albums-memo-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertFalse(app.buttons["albums-memo-featured"].exists)
+        capture("albums-memo-read-failed")
+        retry.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: retry
+        )], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons["albums-memo-featured"].exists)
+        let memo = openMemoNotes(in: app)
+        XCTAssertTrue(memo.label.contains("はじめてのおふろ"))
+        let memoLabel = memo.label
+        memo.tap()
+        XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertEqual(memo.label, memoLabel)
+        returnFromFavorites(in: app)
+        XCTAssertFalse(retry.exists, "Returning must retain the successful album memo reload.")
+        capture("albums-memo-read-recovered")
+        app.terminate()
+    }
+
+    @MainActor
+    func testAlbumGroupedScanFailureDoesNotRemainPreparing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "album-scan-failed"
+        app.launch()
+        assertAlbumsRoot(in: app)
+        XCTAssertTrue(element("albums-scan-failed", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["新しいアルバムを準備しています"].exists)
+        XCTAssertFalse(app.staticTexts["アルバムを準備しています"].exists)
+        capture("albums-grouped-scan-failed")
+        app.terminate()
+    }
+
+    @MainActor
     func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations() {
         let memoApp = launch("memo", arguments: ["--photo-window-ui-fixture"])
         assertAlbumsRoot(in: memoApp)
-        let memoCard = memoApp.buttons["albums-memo-featured"]
-        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
+        XCTAssertFalse(memoApp.buttons["albums-memo-featured"].exists)
+        let memoCard = openMemoNotes(in: memoApp)
         let memoLabel = memoCard.label
         XCTAssertTrue(memoLabel.contains("はじめてのおふろ"))
-        capture("albums-daily-memo-reunion")
+        capture("photos-local-memo")
         memoCard.tap()
         XCTAssertTrue(memoApp.buttons["memory-note-photo"].waitForExistence(timeout: 10))
         XCTAssertTrue(memoApp.staticTexts["はじめてのおふろ"].exists)
         XCTAssertTrue(memoApp.buttons["memory-note-edit"].exists)
         memoApp.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
-        XCTAssertEqual(memoCard.label, memoLabel, "Returning must keep today's same memo.")
+        XCTAssertEqual(memoCard.label, memoLabel, "Returning must retain the local memo.")
+        returnFromFavorites(in: memoApp)
         fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスなし")
-        XCTAssertFalse(memoCard.exists, "A memo must not bypass photo access.")
+        let unavailableMemo = openMemoNotes(in: memoApp)
+        XCTAssertEqual(unavailableMemo.label, memoLabel, "Photo authority changes must preserve local memo text.")
+        XCTAssertTrue(unavailableMemo.isHittable)
+        // The center remains tappable when removing the thumbnail leaves a
+        // transparent gap between the memo text and the disclosure chevron.
+        unavailableMemo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(memoApp.navigationBars["メモ"].waitForExistence(timeout: 10))
+        XCTAssertTrue(element("memory-note-photo-unavailable", in: memoApp).waitForExistence(timeout: 10))
+        XCTAssertFalse(memoApp.buttons["memory-note-photo"].exists, "A local memo must not bypass photo access.")
+        memoApp.navigationBars.buttons.element(boundBy: 0).tap()
+        returnFromFavorites(in: memoApp)
         fixtureAction("solo-memories-toggle-access", in: memoApp, expectedValue: "写真アクセスあり")
-        XCTAssertTrue(memoCard.waitForExistence(timeout: 10))
-        XCTAssertEqual(memoCard.label, memoLabel)
+        let restoredMemo = openMemoNotes(in: memoApp)
+        XCTAssertEqual(restoredMemo.label, memoLabel)
+        restoredMemo.tap()
+        XCTAssertTrue(memoApp.buttons["memory-note-photo"].waitForExistence(timeout: 10))
+        memoApp.navigationBars.buttons.element(boundBy: 0).tap()
+        returnFromFavorites(in: memoApp)
         memoApp.terminate()
 
         let app = launch("saved")
@@ -4100,21 +4392,11 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(firstFeatured.waitForExistence(timeout: 10))
             reveal(firstFeatured, in: app)
             XCTAssertFalse(element("albums-highlights-all", in: app).exists)
-            let firstLabel = firstFeatured.label
-            let carousel = element("albums-pickup-carousel", in: app)
-            carousel.swipeLeft()
-            let visible = app.buttons.matching(identifier: "albums-highlight-featured")
-                .allElementsBoundByIndex.filter { $0.isHittable }
-            guard let featured = visible.min(by: {
-                abs($0.frame.midX - carousel.frame.midX) < abs($1.frame.midX - carousel.frame.midX)
-            }) else {
-                XCTFail("The next pickup must be directly reachable by horizontal scrolling.")
-                app.terminate()
-                return
-            }
+            XCTAssertTrue(element("albums-pickup-cover", in: app).exists)
+            XCTAssertEqual(app.buttons.matching(identifier: "albums-highlight-featured").count, 1,
+                           "The root offers one photo collection rather than a carousel.")
+            let featured = firstFeatured
             let featuredLabel = featured.label
-            XCTAssertNotEqual(featuredLabel, firstLabel)
-            let featuredX = featured.frame.minX
             featured.tap()
             let destination = app.staticTexts["solo-memories-highlight-destination"]
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
@@ -4141,27 +4423,23 @@ final class SoloMemoriesUITests: XCTestCase {
                 .matching(NSPredicate(format: "label == %@", featuredLabel)).firstMatch
             XCTAssertTrue(returned.waitForExistence(timeout: 10))
             XCTAssertTrue(returned.isHittable)
-            XCTAssertEqual(returned.frame.minX, featuredX, accuracy: 12,
-                           "Returning from the browser must preserve the horizontal card position.")
             waitForLoadedPhotos([expectedNumbers[0]], in: app)
             capture("albums-\(scenario)-featured")
 
             let closeUp = element("album-card-close_up", in: app)
-            if !scenario.hasSuffix("-large") {
-                XCTAssertTrue(returned.isHittable)
-                XCTAssertTrue(closeUp.isHittable,
-                    "The first fixed themes must be reachable alongside the compact feature.")
-                XCTAssertGreaterThanOrEqual(closeUp.frame.minY, returned.frame.maxY)
-            }
-            reveal(closeUp, in: app)
-            let closeUpFrame = closeUp.frame
             if scenario.hasSuffix("-large") {
-                XCTAssertGreaterThan(closeUpFrame.width, app.frame.width / 2)
+                reveal(closeUp, in: app)
+                XCTAssertGreaterThan(closeUp.frame.width, app.frame.width / 2)
             } else {
+                let pair = element("album-card-multiple_cats", in: app)
+                reveal(pair, in: app)
                 let together = element("album-card-together", in: app)
+                XCTAssertTrue(pair.isHittable)
                 XCTAssertTrue(together.isHittable)
-                XCTAssertEqual(closeUpFrame.minY, together.frame.minY, accuracy: 2)
-                XCTAssertLessThan(closeUpFrame.maxX, together.frame.minX)
+                XCTAssertEqual(pair.frame.minY, together.frame.minY, accuracy: 2)
+                XCTAssertLessThan(pair.frame.maxX, together.frame.minX)
+                reveal(closeUp, in: app)
+                XCTAssertTrue(closeUp.isHittable, "The third theme must remain reachable below the first row.")
             }
             capture("albums-\(scenario)-themes")
             openCardAndReturn(closeUp, expectedRoute: "album:close_up", in: app)
@@ -4218,18 +4496,31 @@ final class SoloMemoriesUITests: XCTestCase {
     func testAlbumCoversAndFavoritesRemainReachableWithLargestText() {
         let app = launch("seasonal-large")
         assertAlbumsRoot(in: app)
+        XCTAssertFalse(element("albums-seasonal-movie", in: app).exists,
+                       "Movies remain in their fixed lower destination rather than the photo hero.")
+        XCTAssertFalse(monthlyCard(in: app).exists)
+        let movies = element("albums-movies-all", in: app)
+        reveal(movies, in: app)
+        movies.tap()
+        XCTAssertTrue(app.navigationBars["ムービー"].waitForExistence(timeout: 10))
         let seasonalCard = element("albums-seasonal-movie", in: app)
         XCTAssertTrue(seasonalCard.waitForExistence(timeout: 10))
-        XCTAssertFalse(monthlyCard(in: app).exists)
-        waitForLoadedPhotos([1], in: app)
+        reveal(seasonalCard, in: app)
+        // The archive uses date rows; it does not load a photo cover.
         capture("albums-seasonal-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+        app.navigationBars["ムービー"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
 
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
         assertAlbumsRoot(in: app)
         XCTAssertFalse(element("albums-favorites", in: app).exists)
-        let theme = element("album-card-close_up", in: app)
+        XCTAssertFalse(element("album-card-close_up", in: app).exists,
+                       "A single-photo theme belongs in the secondary disclosure.")
+        let otherThemes = element("albums-other-themes", in: app)
+        reveal(otherThemes, in: app)
+        otherThemes.tap()
+        let theme = element("album-secondary-close_up", in: app)
         reveal(theme, in: app)
         XCTAssertGreaterThan(theme.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(theme.frame.minX, app.frame.minX)
@@ -4237,14 +4528,14 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-close_up-largest-text")
         openCardAndReturn(theme, expectedRoute: "album:close_up", in: app)
 
-        // Fixed destinations remain available even when today's carousel
-        // keeps its existing movie rather than replacing it with the new month.
+        // Fixed destinations remain available alongside the single photo hero.
         for (identifier, title, route, cardID) in [
             ("albums-months-all", "月の写真", "monthly:2025-08", "memories-monthly-window"),
             ("albums-movies-all", "ムービー", "seasonal:2025-Q3", "albums-seasonal-movie")
         ] {
             let entry = element(identifier, in: app)
-            reveal(entry, in: app)
+            // The secondary theme returns near the shelf's bottom; months are above it.
+            reveal(entry, in: app, scrollsDown: identifier == "albums-months-all")
             XCTAssertGreaterThan(entry.frame.width, app.frame.width / 2)
             XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
             entry.tap()
@@ -4274,7 +4565,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("albums-years-entry-largest-text")
         years.tap()
         XCTAssertTrue(element("albums-years-list", in: app).waitForExistence(timeout: 10))
-        XCTAssertTrue(app.navigationBars["年から探す"].exists)
+        XCTAssertTrue(app.navigationBars["年月・日付から探す"].exists)
         reveal(year, in: app)
         XCTAssertGreaterThan(year.frame.width, app.frame.width / 2)
         XCTAssertGreaterThanOrEqual(year.frame.minX, app.frame.minX)
@@ -4283,7 +4574,7 @@ final class SoloMemoriesUITests: XCTestCase {
         openCardAndReturn(year, expectedRoute: "album:calendar_year_2025", in: app)
         XCTAssertTrue(year.waitForExistence(timeout: 5))
         XCTAssertTrue(year.isHittable, "Returning from a year preserves its place in the list.")
-        app.navigationBars["年から探す"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["年月・日付から探す"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: app)
         openFavorites(in: app)
         XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].isHittable)
@@ -4428,6 +4719,19 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    private func openMemoNotes(in app: XCUIApplication) -> XCUIElement {
+        openPhotosTab(in: app)
+        let notes = app.buttons["photos-section-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        notes.tap()
+        XCTAssertTrue(element("memory-notes-list", in: app).waitForExistence(timeout: 10))
+        let memo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(memo.waitForExistence(timeout: 10))
+        XCTAssertTrue(notes.isSelected)
+        return memo
+    }
+
+    @MainActor
     private func openFavorites(in app: XCUIApplication) {
         openPhotosTab(in: app)
         let favorites = app.buttons["photos-section-favorites"]
@@ -4449,8 +4753,11 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ card: XCUIElement, in app: XCUIApplication) {
-        for _ in 0..<8 where !(card.exists && card.isHittable) { app.scrollViews.firstMatch.swipeUp() }
+    private func reveal(_ card: XCUIElement, in app: XCUIApplication, scrollsDown: Bool = false) {
+        for _ in 0..<8 where !(card.exists && card.isHittable) {
+            if scrollsDown { app.scrollViews.firstMatch.swipeDown() }
+            else { app.scrollViews.firstMatch.swipeUp() }
+        }
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         XCTAssertTrue(card.isHittable, "The actual card must remain reachable at this text size.")
     }
@@ -4511,8 +4818,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(entry.label, "メモ")
         let favorites = app.buttons["photos-section-favorites"]
         let all = app.buttons["photos-section-all"]
-        XCTAssertLessThan(entry.frame.minX, favorites.frame.minX)
-        XCTAssertLessThan(favorites.frame.minX, all.frame.minX)
+        XCTAssertLessThan(all.frame.minX, favorites.frame.minX)
+        XCTAssertLessThan(favorites.frame.minX, entry.frame.minX)
         all.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "preserved-photo-")).firstMatch
             .waitForExistence(timeout: 10), "Preserved photos remain reachable in All.")

@@ -7,6 +7,7 @@ import Foundation
 @main
 enum PhotoMemoryNoteVerifier {
     static func main() async throws {
+        try verifiesLibraryScopeAndOrdering()
         try verifiesWeightValues()
         try verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated()
         if CommandLine.arguments.contains("--portable-only") { print("Weight value boundaries passed (no Apple persistence claims)"); return }
@@ -25,6 +26,36 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesLibraryScopeAndOrdering() throws {
+        let first = UUID().uuidString, second = UUID().uuidString, removed = UUID().uuidString
+        let registered: Set<String> = [first, second]
+        let reassigned = PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: "photo", saved: [first],
+            current: ["photo": [second]], registered: registered)
+        try require(reassigned == [second], "current explicit reassignment did not override historical identity")
+        try require(!PhotoMemoryNoteLibraryPolicy.includes(selected: first, identifiers: reassigned)
+            && PhotoMemoryNoteLibraryPolicy.includes(selected: second, identifiers: reassigned), "memo appeared under its former cat")
+        let unknown = PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: "photo", saved: [first],
+            current: [:], registered: registered)
+        try require(unknown.isEmpty && PhotoMemoryNoteLibraryPolicy.includes(selected: "unassigned", identifiers: unknown),
+                    "missing authoritative assignment fell back to an old saved cat")
+        let history = PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: "photo", saved: [first, removed],
+            current: nil, registered: registered)
+        try require(history == [first], "unknown assignment authority lost an explicit registered ID or retained a deleted profile")
+        let cloud = PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: nil, saved: [],
+            current: ["photo": [first]], registered: registered)
+        try require(cloud.isEmpty && PhotoMemoryNoteLibraryPolicy.includes(selected: nil, identifiers: cloud)
+            && PhotoMemoryNoteLibraryPolicy.includes(selected: "unassigned", identifiers: cloud)
+            && !PhotoMemoryNoteLibraryPolicy.includes(selected: first, identifiers: cloud),
+                    "legacy/cloud-only memo disappeared from all or acquired identity without an explicit ID")
+        // Rename changes display lookup only: immutable saved IDs and historical names remain intact.
+        let renamed = [first: "new name"]
+        try require(history.compactMap { renamed[$0] } == ["new name"], "explicit ID failed a current-name lookup")
+        let captured = Date(timeIntervalSince1970: 100), updated = Date(timeIntervalSince1970: 200)
+        try require(PhotoMemoryNoteLibraryPolicy.Sort.captured.date(captured: captured, updated: updated) == captured
+            && PhotoMemoryNoteLibraryPolicy.Sort.updated.date(captured: captured, updated: updated) == updated,
+                    "memo update ordering still used its capture date")
     }
 
     private static func verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated() throws {

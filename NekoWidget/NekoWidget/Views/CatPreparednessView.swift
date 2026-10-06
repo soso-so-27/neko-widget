@@ -847,8 +847,23 @@ private struct LostCatGuideView: View {
     }
 }
 
+#if DEBUG
+private struct LostCatFixtureVerificationKey: EnvironmentKey {
+    static let defaultValue: ((URL, LostCatFlyerRenderer.ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any])? = nil
+}
+private extension EnvironmentValues {
+    var lostCatFixtureVerification: ((URL, LostCatFlyerRenderer.ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any])? {
+        get { self[LostCatFixtureVerificationKey.self] }
+        set { self[LostCatFixtureVerificationKey.self] = newValue }
+    }
+}
+#endif
+
 private struct LostCatPreviewView: View {
     let draft: LostCatPublicDraft
+    #if DEBUG
+    @Environment(\.lostCatFixtureVerification) private var fixtureVerification
+    #endif
     @Environment(\.dismiss) private var dismiss
     @State private var format = 0
     @State private var payload: LostCatSharePayload?
@@ -899,7 +914,17 @@ private struct LostCatPreviewView: View {
         .safeAreaInset(edge: .bottom) {
             Button(format == 0 ? "送る・保存する" : "保存・印刷する", systemImage: "square.and.arrow.up") {
                 do {
-                    let url = try format == 0 ? LostCatFlyerRenderer.createImage(draft) : LostCatFlyerRenderer.createPDF(draft)
+                    let url: URL
+                    #if DEBUG
+                    if let verify = fixtureVerification {
+                        url = try format == 0 ? LostCatFlyerRenderer.createFixtureImage(draft, verify: verify)
+                            : LostCatFlyerRenderer.createFixturePDF(draft, verify: verify)
+                    } else {
+                        url = try format == 0 ? LostCatFlyerRenderer.createImage(draft) : LostCatFlyerRenderer.createPDF(draft)
+                    }
+                    #else
+                    url = try format == 0 ? LostCatFlyerRenderer.createImage(draft) : LostCatFlyerRenderer.createPDF(draft)
+                    #endif
                     payload = LostCatSharePayload(url: url); exportError = false
                 } catch { exportError = true }
             }
@@ -915,7 +940,7 @@ private struct LostCatPreviewView: View {
         }
         .sheet(item: $payload) { item in
             LostCatActivitySheet(items: [item.url])
-                .onDisappear { try? FileManager.default.removeItem(at: item.url) }
+                .onDisappear { LostCatFlyerRenderer.removeExport(item.url) }
         }
         .sheet(isPresented: $expanded) {
             NavigationStack {
@@ -943,6 +968,7 @@ struct LostCatDraftFixtureView: View {
     @State private var prepared = false
     @State private var savedStores: (EvacuationStore, CareHandoffStore, LostCatDraftStore)?
     @State private var fixtureError = false
+    @State private var lifecycleResult: String?
     private var candidatePhotos: [CatProfilePhotoPresentation] {
         guard ProcessInfo.processInfo.environment["NEKO_LOST_CAT_HAS_CONFIRMED_PHOTO"] == "1" else { return [] }
         return Array(AppStoreScreenshotFixture.photos.prefix(3)).map { photo in
@@ -955,12 +981,23 @@ struct LostCatDraftFixtureView: View {
         AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
     }
     var body: some View {
-        if fixtureError {
+        if CommandLine.arguments.contains("--lost-cat-export-lifecycle-check") {
+            Text(lifecycleResult ?? "確認中")
+                .accessibilityIdentifier("lost-cat-export-lifecycle-result")
+                .accessibilityHint("ファイル生成と安全停止の検証。実機の暗号化確認ではありません")
+                .task {
+                    do { try Self.verifyExportLifecycle(image: image); lifecycleResult = "passed" }
+                    catch let failure as ExportLifecycleFailure { lifecycleResult = "failed:\(failure.rawValue)" }
+                    catch let failure as LostCatFlyerRenderer.ExportProtectionFailure { lifecycleResult = "failed:\(failure.diagnosticCode)" }
+                    catch { lifecycleResult = "failed:operation" }
+                }
+        } else if fixtureError {
             Text("入力候補の保存境界が成立しません").accessibilityIdentifier("lost-cat-fixture-error")
         } else if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PICKER_TAP_FIXTURE"] == "1" {
             LostCatPhotoTapFixtureView()
         } else if prepared {
             draftFixture
+                .environment(\.lostCatFixtureVerification, Self.verifyFixtureExport)
         } else {
             ProgressView().task {
                 if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_SAVED_INFO"] == "1" {
@@ -1016,6 +1053,118 @@ struct LostCatDraftFixtureView: View {
             }
         }
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility3 : .large)
+    }
+
+    private enum ExportLifecycleFailure: String, Error {
+        case verification, sharedDirectory, missingFile, fileProtection, directoryProtection
+        case foreignCopy, completedExport, activeExport, staleExport, invalidDirectory, symbolicLink
+    }
+
+    private static func verifyFixtureExport(_ url: URL, target: LostCatFlyerRenderer.ExportProtectionFailure.Target,
+                                            requested: FileProtectionType) throws -> [FileAttributeKey: Any] {
+        guard requested.rawValue == FileProtectionType.complete.rawValue, FileManager.default.fileExists(atPath: url.path) else {
+            throw ExportLifecycleFailure.fileProtection
+        }
+        return [.protectionKey: FileProtectionType.complete]
+    }
+
+    @MainActor private static func verifyExportLifecycle(image: UIImage) throws {
+        func require(_ condition: Bool, _ failure: ExportLifecycleFailure) throws {
+            if !condition { throw failure }
+        }
+        let manager = FileManager.default
+        let foreign = manager.temporaryDirectory.appendingPathComponent("lost-cat-fixture-" + UUID().uuidString)
+        try manager.createDirectory(at: foreign, withIntermediateDirectories: false)
+        defer { try? manager.removeItem(at: foreign) }
+        let saved = foreign.appendingPathComponent("迷子の猫.png")
+        try Data("user-saved-copy".utf8).write(to: saved)
+        let invalid = manager.temporaryDirectory.appendingPathComponent("lost-cat-export-not-a-uuid-" + UUID().uuidString)
+        try manager.createDirectory(at: invalid, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: invalid) }
+        let link = manager.temporaryDirectory.appendingPathComponent("lost-cat-export-" + UUID().uuidString)
+        try manager.createSymbolicLink(at: link, withDestinationURL: foreign)
+        defer { try? manager.removeItem(at: link) }
+        let draft = LostCatPublicDraft(name: "むぎ", features: "茶白", collar: "不明", approachAdvice: "",
+            lastSeenAt: nil, lastSeenNear: "公園", contact: "public@example.test", faceImage: image, bodyImage: nil)
+        func ownedDirectories() throws -> Set<String> {
+            Set(try manager.contentsOfDirectory(at: manager.temporaryDirectory,
+                includingPropertiesForKeys: nil).map(\.lastPathComponent).filter {
+                    $0.hasPrefix("lost-cat-export-") && UUID(uuidString: String($0.dropFirst("lost-cat-export-".count))) != nil
+                })
+        }
+        // Real Foundation calls must fail closed when Simulator omits protection.
+        // This does not claim to verify hardware encryption on Simulator.
+        for create in [LostCatFlyerRenderer.createImage, LostCatFlyerRenderer.createPDF] {
+            let before = try ownedDirectories()
+            var nativeMissing = false
+            do { let file = try create(draft); LostCatFlyerRenderer.removeExport(file) }
+            catch let failure as LostCatFlyerRenderer.ExportProtectionFailure {
+                #if targetEnvironment(simulator)
+                try require(failure.target == .directory && failure.reason == .missing, .directoryProtection)
+                nativeMissing = true
+                #else
+                throw failure
+                #endif
+            }
+            #if targetEnvironment(simulator)
+            try require(nativeMissing, .directoryProtection)
+            #endif
+            try require(try ownedDirectories() == before, .staleExport)
+            try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8), .foreignCopy)
+        }
+        // Explicit injected verifier exercises real rendered bytes and cleanup,
+        // without treating unavailable hardware protection as successfully read.
+        var verifiedTargets: [LostCatFlyerRenderer.ExportProtectionFailure.Target] = []
+        let verify: (URL, LostCatFlyerRenderer.ExportProtectionFailure.Target, FileProtectionType) throws -> [FileAttributeKey: Any] = { url, target, requested in
+            try require(requested == .complete, .fileProtection)
+            try require(manager.fileExists(atPath: url.path), .missingFile)
+            if target == .file { try require(verifiedTargets.last == .directory, .directoryProtection) }
+            verifiedTargets.append(target)
+            return [.protectionKey: FileProtectionType.complete]
+        }
+        let png = try LostCatFlyerRenderer.createFixtureImage(draft, verify: verify)
+        defer { LostCatFlyerRenderer.removeExport(png) }
+        let pdf = try LostCatFlyerRenderer.createFixturePDF(draft, verify: verify)
+        defer { LostCatFlyerRenderer.removeExport(pdf) }
+        try require(verifiedTargets == [.directory, .file, .directory, .file], .directoryProtection)
+        try require(png.deletingLastPathComponent() != pdf.deletingLastPathComponent(), .sharedDirectory)
+        try require(UIImage(data: Data(contentsOf: png)) != nil, .missingFile)
+        try require(Data(contentsOf: pdf).starts(with: Data("%PDF-".utf8)), .missingFile)
+        for reason in [LostCatFlyerRenderer.ExportProtectionFailure.Reason.missing, .unknownType, .wrongClass, .readFailed, .setFailed] {
+            for failingTarget in [LostCatFlyerRenderer.ExportProtectionFailure.Target.directory, .file] {
+                let before = try ownedDirectories()
+                var failedClosed = false
+                do {
+                    let unexpected = try LostCatFlyerRenderer.createFixtureImage(draft) { _, target, requested in
+                        try require(requested == .complete, .fileProtection)
+                        if target == failingTarget {
+                            switch reason {
+                            case .missing: return [:]
+                            case .unknownType: return [.protectionKey: 42]
+                            case .wrongClass: return [.protectionKey: FileProtectionType.none]
+                            default: throw LostCatFlyerRenderer.ExportProtectionFailure(target: target, reason: reason)
+                            }
+                        }
+                        return [.protectionKey: FileProtectionType.complete]
+                    }
+                    LostCatFlyerRenderer.removeExport(unexpected)
+                } catch let failure as LostCatFlyerRenderer.ExportProtectionFailure {
+                    failedClosed = failure.target == failingTarget && failure.reason == reason
+                }
+                try require(failedClosed, .fileProtection)
+                try require(try ownedDirectories() == before, .staleExport)
+            }
+        }
+        LostCatFlyerRenderer.removeExport(saved)
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8), .foreignCopy)
+        LostCatFlyerRenderer.removeExport(png)
+        try require(!manager.fileExists(atPath: png.deletingLastPathComponent().path), .completedExport)
+        try require(manager.fileExists(atPath: pdf.path), .activeExport)
+        LostCatFlyerRenderer.cleanupOnLaunch()
+        try require(!manager.fileExists(atPath: pdf.deletingLastPathComponent().path), .staleExport)
+        try require(manager.fileExists(atPath: invalid.path), .invalidDirectory)
+        try require((try link.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink == true, .symbolicLink)
+        try require(try Data(contentsOf: saved) == Data("user-saved-copy".utf8), .foreignCopy)
     }
 
     @MainActor private static func prepareSavedInformation(key: String, image: UIImage) throws

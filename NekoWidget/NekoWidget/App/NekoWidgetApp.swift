@@ -31,6 +31,7 @@ struct NekoWidgetApp: App {
         if shouldRunLaunchCleanup {
             EvacuationExporter.cleanupOnLaunch()
             CareHandoffExporter.cleanupOnLaunch()
+            LostCatFlyerRenderer.cleanupOnLaunch()
             TemporaryExportFileLifecycle.removeManagedFiles()
             Task {
                 // A seasonal movie share sheet also cannot survive relaunch.

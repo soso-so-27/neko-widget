@@ -44,7 +44,7 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
 }
 
 enum VeterinaryVisitError: Error, LocalizedError {
-    case storage, corrupted, changed, wrongCat, confirmationRequired, tooLarge
+    case storage, corrupted, changed, wrongCat, confirmationRequired, invalidName, visitLimit, tooLarge
     var errorDescription: String? {
         switch self {
         case .storage: "診察メモを保存できません。保存済みの内容は変更していません。"
@@ -52,6 +52,8 @@ enum VeterinaryVisitError: Error, LocalizedError {
         case .changed: "診察メモが変更されました。開き直して確認してください。"
         case .wrongCat: "この体重は別の猫の記録です。測定した猫を確認してください。"
         case .confirmationRequired: "この記録を見せる猫を確認してください。"
+        case .invalidName: "猫の名前を1〜200文字で入力してください。"
+        case .visitLimit: "保存できる診察メモは100件までです。不要な診察メモを削除してから作ってください。"
         case .tooLarge: "一度の診察メモには20件まで追加できます。写真は6MB以下で用意してください。"
         }
     }
@@ -85,7 +87,8 @@ actor VeterinaryVisitStore {
         Self.lock.lock(); defer { Self.lock.unlock() }
         var state = try load()
         if let existing = state.visits.first(where: { $0.catID == catID && $0.completedAt == nil }) { return existing }
-        guard Self.validName(catName), state.visits.count < 100 else { throw VeterinaryVisitError.tooLarge }
+        guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }
+        guard state.visits.count < 100 else { throw VeterinaryVisitError.visitLimit }
         let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
         try create {
@@ -241,6 +244,10 @@ actor VeterinaryVisitStore {
     }
 
     private static func validName(_ name: String) -> Bool { !name.isEmpty && name.count <= 200 && !name.contains("\0") }
+
+    nonisolated static func isValidCatName(_ name: String) -> Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && name.count <= 200 && !name.contains("\0")
+    }
     private static func validPhotoFile(_ file: String) -> Bool { file.hasSuffix(".jpg") && UUID(uuidString: String(file.dropLast(4))) != nil }
     private func validate(_ visit: VeterinaryVisit) throws {
         guard Self.validName(visit.catName), visit.observations.count <= 500, visit.questions.count <= 500,

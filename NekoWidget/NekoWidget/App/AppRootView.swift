@@ -312,9 +312,10 @@ struct AppRootView: View {
         let visibleSnapshot = hasPhotoAccess
             ? viewModel.presentationSnapshot
             : .empty
+        let readableSnapshot = hasPhotoAccess ? viewModel.readableSourceSnapshot : .empty
         let photoProjection = photoPresentationCache.projection(
             snapshot: visibleSnapshot,
-            sourceSnapshot: hasPhotoAccess ? viewModel.snapshot : .empty,
+            sourceSnapshot: readableSnapshot,
             version: viewModel.presentationVersion,
             transform: photoPresentation
         )
@@ -345,6 +346,24 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
+            photoLibraryAssignments: viewModel.catHouseholdIdentity.map { value in
+                let registered = Set(value.profiles.map(\.id))
+                var assignments: [String: Set<String>] = [:]
+                for membership in value.memberships where membership.decision == .included
+                    && registered.contains(membership.profileID)
+                    && !value.isGloballyExcluded(membership.assetLocalIdentifier) {
+                    assignments[membership.assetLocalIdentifier, default: []].insert(membership.profileID.uuidString)
+                }
+                return assignments
+            } ?? [:],
+            photoLibraryProfileNames: viewModel.catHouseholdIdentity.map { value in
+                Dictionary(uniqueKeysWithValues: value.profiles.map { profile in
+                    (profile.id.uuidString, profile.displayName)
+                })
+            },
+            savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
+            savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
+            readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)
@@ -456,7 +475,8 @@ struct AppRootView: View {
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
-            isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade
+            isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade,
+            hasFailed: state.phase == .failed
         )
 
         switch state.resultKind {

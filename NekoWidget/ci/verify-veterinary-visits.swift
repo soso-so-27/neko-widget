@@ -11,6 +11,42 @@ import CoreGraphics
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = VeterinaryVisitStore(directory: root), owner = UUID(), otherOwner = UUID()
+        let initial = try await store.visits()
+        for invalid in ["", "   ", String(repeating: "猫", count: 201), "猫\0"] {
+            do {
+                _ = try await store.current(catID: UUID(), catName: invalid) { _ in
+                    throw Failure(message: "Invalid name reached the creation boundary")
+                }
+                throw Failure(message: "Invalid name accepted")
+            } catch VeterinaryVisitError.invalidName {}
+            try require(try await store.visits() == initial, "Invalid name changed records")
+        }
+        // Previously valid whitespace names must remain readable, without a schema migration.
+        struct LegacyState: Encodable { let schema = 1; let visits: [VeterinaryVisit] }
+        let legacyRoot = root.appendingPathComponent("legacy")
+        try FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        let legacy = VeterinaryVisit(id: UUID(), catID: UUID(), catName: "   ", revision: UUID(),
+            startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
+        try JSONEncoder().encode(LegacyState(visits: [legacy])).write(to: legacyRoot.appendingPathComponent("state.json"))
+        let legacyStore = VeterinaryVisitStore(directory: legacyRoot)
+        try require(try await legacyStore.visits() == [legacy], "Legacy whitespace name became unreadable")
+        let reused = try await legacyStore.current(catID: legacy.catID, catName: "   ") { _ in
+            throw Failure(message: "Existing legacy record invoked creation")
+        }
+        try require(reused == legacy, "Legacy draft was not reused")
+        let capacityRoot = root.appendingPathComponent("capacity")
+        try FileManager.default.createDirectory(at: capacityRoot, withIntermediateDirectories: true)
+        let full = (0..<100).map { _ in VeterinaryVisit(id: UUID(), catID: UUID(), catName: "猫", revision: UUID(),
+            startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil) }
+        try JSONEncoder().encode(LegacyState(visits: full)).write(to: capacityRoot.appendingPathComponent("state.json"))
+        let capacityStore = VeterinaryVisitStore(directory: capacityRoot)
+        do {
+            _ = try await capacityStore.current(catID: UUID(), catName: "新しい猫") { _ in
+                throw Failure(message: "Full store reached creation")
+            }
+            throw Failure(message: "Visit cap accepted another visit")
+        } catch VeterinaryVisitError.visitLimit {}
+        try require(try await capacityStore.visits() == full, "Visit limit changed records")
         let first = try await store.current(catID: owner, catName: "同じ名前") { try $0() }
         let other = try await store.current(catID: otherOwner, catName: "同じ名前") { try $0() }
         try require(first.id != other.id, "same names merged cats")

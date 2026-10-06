@@ -115,7 +115,10 @@ struct VeterinaryVisitsView: View {
         .alert("猫の名前", isPresented: $addsCat) {
             TextField("名前", text: $newName)
             Button("作る") { Task { await open(PhotoMemoryNoteCat(id: UUID(), name: newName.trimmingCharacters(in: .whitespacesAndNewlines))) } }
+                .disabled(!VeterinaryVisitStore.isValidCatName(newName.trimmingCharacters(in: .whitespacesAndNewlines)))
             Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("猫の名前を1〜200文字で入力してください。")
         }
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {

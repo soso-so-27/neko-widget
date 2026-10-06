@@ -1193,7 +1193,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         today_detail = section(
             main,
             "private func detailView(for localIdentifier: String) -> some View",
-            "private func memoryDetailView(for localIdentifier: String) -> some View",
+            "private func memoryDetailView(for localIdentifier: String,",
         )
         self.assertIn("photos: [initialPhoto]", today_detail)
         self.assertIn(
@@ -1206,18 +1206,20 @@ try MomentSharingStateStore.verifyPrivateAlias()
         collection_detail = section(
             main,
             "private func collectionDetailView(for localIdentifier: String) -> some View",
-            "private func memoryDetailView(for localIdentifier: String) -> some View",
+            "private func memoryDetailView(for localIdentifier: String,",
         )
-        self.assertIn("photos: catPhotos", collection_detail)
+        self.assertIn("photos: photoLibraryCatPhotos", collection_detail)
+        self.assertIn("libraryPhotos: photoLibraryBrowserPhotos", collection_detail)
         self.assertIn("showsWidgetTiming: false", collection_detail)
         self.assertIn("PhotosRoute.collectionPhoto", home)
 
         memory_detail = section(
             main,
-            "private func memoryDetailView(for localIdentifier: String) -> some View",
-            "private func memoriesDestination(for route: MemoriesRoute) -> some View",
+            "private func memoryDetailView(for localIdentifier: String,",
+            "private func memoriesDestination(for route: MemoriesRoute,",
         )
-        self.assertIn("photos: likedPhotos", memory_detail)
+        self.assertIn("photos: libraryContext ? photoLibraryLikedPhotos : likedPhotos", memory_detail)
+        self.assertIn("!libraryContext || photoLibraryIncludes(localIdentifier)", memory_detail)
         self.assertIn("showsWidgetTiming: false", memory_detail)
         self.assertIn("if showsWidgetTiming", browser)
         self.assertIn("更新時刻は目安で、iOSにより前後します", browser)
@@ -1230,7 +1232,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("return ordered", ordering)
         self.assertNotIn(".sorted", ordering)
 
-        self.assertIn('Text("ウィジェットを置く")', home)
+        self.assertIn('Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")', home)
         self.assertIn("showWidgetPlacementGuide", home)
         self.assertIn("撮りためた猫写真が、", onboarding)
         self.assertIn("自動アルバムとホーム画面へ。", onboarding)
@@ -1259,7 +1261,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn('accessibilityIdentifier("albums-favorites")', album_root)
         photo_library = section(main_tab, "private var photoLibraryContent:", "private var allPhotosView:")
         self.assertIn("case .favorites:", photo_library)
-        self.assertIn("SavedMemoriesGalleryView(photos: likedPhotos", photo_library)
+        self.assertIn("SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : []", photo_library)
+        self.assertIn("unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount", photo_library)
+        self.assertIn("savedStateReadFailed: savedPhotoStateReadFailed", photo_library)
         self.assertIn("case .notes:", photo_library)
         self.assertIn("PhotoMemoryNotesListView(photos: memoryNotePhotos", photo_library)
         self.assertIn('navigationTitleOverride ?? "アルバム"', album_root)
@@ -1313,7 +1317,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
             main_tab,
-            "private func memoriesDestination(for route: MemoriesRoute) -> some View",
+            "private func memoriesDestination(for route: MemoriesRoute,",
             "private func seasonalMovieDestination(",
         )
         self.assertIn("case .favorites:", destinations)
@@ -1727,7 +1731,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         reload_catalog = section(
             window_list,
             "private func reloadCatalogPresentation()",
-            "private func reloadPreparationCounts()",
+            "private func loadMixedFixtureIfNeeded()",
         )
         catalog_failure = reload_catalog.split("} catch {", 1)[1]
         self.assertIn("catalogLoadMessage = windows.isEmpty", catalog_failure)
@@ -1753,7 +1757,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("NavigationLink { discovery }", empty_window)
         self.assertNotIn("opensActiveWindow = true", empty_window)
-        self.assertIn('Text("まどを探す")', empty_window)
+        self.assertIn('Label("公式の写真を受け取る"', empty_window)
+        self.assertIn("NavigationLink { connectionOptions }", empty_window)
+        self.assertIn("if supportsPrivateWindows", empty_window)
         pairing_view = source("NekoWidget/Views/PairingView.swift")
         self.assertIn("init(initialSetupPath: PairingSetupPath? = nil)", pairing_view)
         self.assertIn("if setupPath == .create", pairing_view)
@@ -1777,12 +1783,24 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("WindowPhotoCard(title: window.displayName, kind: .setup)", setup_card)
         self.assertIn('Image("ToolCat-tilt")', setup_card)
         cover = section(window_list, "private func windowCover(", "private func windowAccessibilityStatus(")
-        self.assertIn("context.date < cover.displayUntil", cover)
+        self.assertIn(".task(id: deadline)", setup_card)
+        self.assertIn("coverClock = max(Date.now, deadline)", setup_card)
+        self.assertIn("!Task.isCancelled", setup_card)
+        self.assertIn("photo?.displayUntil == deadline", setup_card)
+        self.assertIn("windowCard(window, at: now)", setup_card)
+        self.assertIn("cover.isVisible(at: now)", cover)
+        self.assertIn("windowCover(for: window, at: now)", setup_card)
+        self.assertIn(".accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup, at: now))", setup_card)
+        accessibility = section(window_list, "private func windowAccessibilityStatus(", "private func coverPlaceholder(")
+        self.assertIn("cover.isVisible(at: now)", accessibility)
         self.assertIn('Image("ToolCat-hide")', cover)
         self.assertIn("Text(coverPlaceholder(for: window))", cover)
         self.assertNotIn("windowThumbnail(for:", window_list)
         self.assertNotIn("Color.accentColor.opacity(0.18)", window_list)
-        self.assertIn("PairingStateStore.load(", reload_catalog)
+        self.assertIn("try Self.loadCatalogPresentationSnapshot()", reload_catalog)
+        catalog_snapshot = section(window_list, "private nonisolated static func loadCatalogPresentationSnapshot()",
+                                   "private func reloadPreparationCounts()")
+        self.assertIn("PairingStateStore.load(", catalog_snapshot)
         self.assertIn("case .awaitingInvitee:", window_list)
         self.assertIn('return "相手の参加待ち"', window_list)
         self.assertNotIn('Text("現在のまど")', window_list)
@@ -1903,7 +1921,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn('Text("自動アルバム")', home)
         self.assertNotIn("HomeAlbumHighlightCard(", home)
         self.assertNotIn("AlbumRoute.album(album.id)", home)
-        self.assertIn('Text("すべての猫写真")', home)
+        self.assertIn('Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")', home)
         self.assertNotIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
 
     def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
@@ -2812,7 +2830,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             main_tab,
         )
         self.assertIn(
-            'Image(systemName: "rectangle.on.rectangle.angled")',
+            'Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")',
             home,
         )
         self.assertIn('Label("アルバム", systemImage: "photo.stack.fill")', main_tab)
@@ -3043,7 +3061,14 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("family-window-manual-refresh-result", family_view)
         self.assertIn("manualRefreshSucceeded", family_model)
         self.assertIn("exclamationmark.triangle", family_view)
-        self.assertIn("更新しました。新しい写真はありません", family_model)
+        self.assertIn("まどの写真を確認しました。", family_model)
+        # A successful synchronization is not evidence that the photo set
+        # stayed unchanged, or that every pending transfer has arrived.
+        synchronize = section(family_model, "func synchronize(isManual: Bool = true) async", "func report(")
+        self.assertNotIn("新しい写真はありません", synchronize)
+        self.assertNotIn("新しい写真が届きました", synchronize)
+        self.assertIn("manualRefreshSucceeded = synchronizationSucceeded", synchronize)
+        self.assertIn("&& errorMessage == nil", synchronize)
         self.assertNotIn("相手が見ました", family_model)
         self.assertNotIn("相手が受け取りました", family_model)
 
