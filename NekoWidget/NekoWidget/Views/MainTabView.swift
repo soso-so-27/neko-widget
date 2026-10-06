@@ -1088,6 +1088,13 @@ struct MainTabView: View {
                         PhotoLibraryGridRow.identifier(containing: localIdentifier, in: photoLibraryCatPhotos),
                         section: photoLibraryPositionKey
                     )
+                    if photosPath.isEmpty {
+                        // A retained native scroll view can keep its final offset even
+                        // when the saved/bound row ID is unchanged. Recreate only the
+                        // root collection, after saving the exact return row.
+                        photoLibraryRevision &+= 1
+                        PhotoLibraryReadingPosition.diagnose("rebuild returned collection \(photoLibraryPositionKey) revision=\(photoLibraryRevision)")
+                    }
                 }
         case .automaticAlbums:
             automaticAlbumsView

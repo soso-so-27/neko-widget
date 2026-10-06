@@ -326,6 +326,7 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var selectedPhotoIdentifier: String?
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
+    @State private var photoPositionDiagnostics = ""
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     private var photos: [PhotoPresentation] {
@@ -489,6 +490,11 @@ struct AppStoreScreenshotFixtureRootView: View {
         .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark
                               : CommandLine.arguments.contains("--tools-hub-light") ? .light : nil)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
+        .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
+            guard widgetRecoveryCase == "paging",
+                  ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
+            photoPositionDiagnostics = PhotoLibraryReadingPosition.diagnosticEvents.joined(separator: "\n")
+        }
         .task {
             if ["excluded", "scoped", "available", "rediscovery"].contains(widgetRecoveryCase ?? "") {
                 selectedPhotoIdentifier = photos[0].localIdentifier
@@ -505,6 +511,16 @@ struct AppStoreScreenshotFixtureRootView: View {
 
     private var loadedAccessibilityMarkers: some View {
         ZStack {
+            if widgetRecoveryCase == "paging",
+               ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil {
+                Text("photo reading position diagnostics")
+                    .foregroundStyle(Color.clear)
+                    .frame(width: 1, height: 1)
+                    .clipped()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("photo-reading-position-diagnostics")
+                    .accessibilityValue(photoPositionDiagnostics)
+            }
             ForEach(sortedLoadedImages, id: \.self) { loaded in
                 Text("fixture image loaded")
                     .foregroundStyle(Color.clear)
