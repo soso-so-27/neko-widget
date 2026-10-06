@@ -2118,7 +2118,11 @@ final class SoloMemoriesUITests: XCTestCase {
                 // A fixed fast swipe overshoots this band while the keyboard is
                 // visible, leaving the place field alternately under the title
                 // and the bottom action. Approach its centre without inertia.
-                let distance = min(max(abs(offset), 20), bandHeight * 0.25)
+                // Large text can put the next section several screens away.
+                // Travel farther until it is near, then keep the fine approach.
+                let nearTarget = element.exists && abs(offset) <= bandHeight * 0.5
+                let maxDistance = bandHeight * (nearTarget ? 0.25 : 0.75)
+                let distance = min(max(abs(offset), 20), maxDistance)
                 let direction: CGFloat = offset >= 0 ? 1 : -1
                 let origin = app.coordinate(withNormalizedOffset: .zero)
                 // Use the form margin, so a multiline editor doesn't consume the drag.
