@@ -181,7 +181,7 @@ class StalledRunRecoveryTests(unittest.TestCase):
             for succeeds in (True, False):
                 result = {"ready": True, "head": self.head, "task": {"recovery": proof}}
                 response = create if succeeds else subprocess.TimeoutExpired(["gh"], 45)
-                with patch.object(planner, "git", side_effect=[self.head, ""]), \
+                with patch.object(planner, "git", side_effect=[self.head, "", "https://github.com/" + preflight.REPOSITORY + ".git"]), \
                         patch.object(preflight, "recovery_source", return_value=proof), \
                         patch.object(preflight, "github", return_value={"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}), \
                         patch.object(subprocess, "run", side_effect=response) as mutation:
@@ -192,10 +192,21 @@ class StalledRunRecoveryTests(unittest.TestCase):
                         with self.assertRaises(subprocess.TimeoutExpired): preflight.dispatch_recovery(result, proof, output)
                         self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["dispatch"]["state"], "creation_requested")
                     self.assertEqual(mutation.call_count, 1)
-            with patch.object(planner, "git", side_effect=[self.head, ""]), \
+            with patch.object(planner, "git", side_effect=[self.head, "", "https://github.com/" + preflight.REPOSITORY + ".git"]), \
                     patch.object(preflight, "recovery_source", side_effect=ValueError("replacement appeared")), \
                     patch.object(subprocess, "run") as mutation, self.assertRaises(ValueError):
                 preflight.dispatch_recovery(result, proof, output)
+            mutation.assert_not_called()
+
+    def test_alternate_or_multiple_push_destinations_are_rejected_before_mutation(self):
+        proof = self.admission()
+        result = {"ready": True, "head": self.head, "task": {"recovery": proof}}
+        allowed = "https://github.com/" + preflight.REPOSITORY + ".git"
+        for destination in ("https://github.com/other/repo.git", allowed + "\n" + allowed, ""):
+            with self.subTest(destination=destination), \
+                    patch.object(planner, "git", side_effect=[self.head, "", destination]), \
+                    patch.object(subprocess, "run") as mutation, self.assertRaises(ValueError):
+                preflight.dispatch_recovery(result, proof, Path("unused.json"))
             mutation.assert_not_called()
 
     def test_git_recovery_push_creates_once_and_cannot_update_an_existing_ref(self):

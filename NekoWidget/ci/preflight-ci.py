@@ -39,6 +39,8 @@ DIAGNOSTIC_JOB_NAMES = frozenset({
 RECOVERY_PREFIX = "codex/recovery-"
 IOS_WORKFLOW = ".github/workflows/ios-build.yml"
 RECOVERY_MINIMUM_MINUTES = 60
+RECOVERY_REMOTES = frozenset({f"https://github.com/{REPOSITORY}.git", f"https://github.com/{REPOSITORY}",
+                              f"git@github.com:{REPOSITORY}.git"})
 
 
 def task_refs(branch):
@@ -118,10 +120,10 @@ def approved_recovery_checkout(checkout):
     if at(control, "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Recovery tooling must be committed and clean")
     at(control, "merge-base", "--is-ancestor", control_sha, "origin/main")
-    allowed_remotes = {f"https://github.com/{REPOSITORY}.git", f"https://github.com/{REPOSITORY}",
-                       f"git@github.com:{REPOSITORY}.git"}
-    if any(at(path, "remote", "get-url", "origin") not in allowed_remotes for path in (control, checkout)):
+    if any(at(path, "remote", "get-url", "origin") not in RECOVERY_REMOTES for path in (control, checkout)):
         raise ValueError("Recovery tooling and candidate must use the same expected repository")
+    if at(checkout, "remote", "get-url", "--push", "--all", "origin") not in RECOVERY_REMOTES:
+        raise ValueError("Recovery requires exactly one push destination in the expected repository")
     # The approved preflight is the only newer input. Scope selection, workflow,
     # and its imported code/data must be identical to the candidate's own inputs.
     for path in (IOS_WORKFLOW, "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/ios_ci_scope.py",
@@ -150,6 +152,8 @@ def dispatch_recovery(result, recovery, output):
         raise ValueError("Recovery dispatch requires a successful bound preflight")
     if planner.git("rev-parse", "HEAD") != result["head"] or planner.git("status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Candidate changed before recovery dispatch")
+    if planner.git("remote", "get-url", "--push", "--all", "origin") not in RECOVERY_REMOTES:
+        raise ValueError("Recovery push destination changed; alternate or multiple recipients are forbidden")
     # Close the discovery/creation race. An explicit empty expected
     # ref in force-with-lease permits creation only, never an update.
     # Unlike Git Data create-ref, git push starts the owning workflow.
