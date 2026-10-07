@@ -1,1 +1,5 @@
 NekoWidget/SharingService/migrations/*.sql text eol=lf
+acceptance/movie/fixed-inputs/* -text
+
+# The pinned manifest includes CRLF bytes; preserve it as an opaque fixture.
+acceptance/movie/fixed-inputs/fixture.json binary

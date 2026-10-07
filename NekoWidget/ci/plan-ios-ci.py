@@ -80,7 +80,7 @@ PHOTO_SMOKE_CORRECTION_CASES = frozenset({
     "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
     "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
 })
-PHOTO_SMOKE_CORRECTION_SOLO_JOB = lane_job(FULL_SCOPE, "app-ui-solo")
+PHOTO_SMOKE_CORRECTION_SOLO_JOB = "Sharing checks [app-ui-solo; scope full-v1]"
 PHOTO_SMOKE_CORRECTION_SOLO_JOB_ID = 111563023901
 PHOTO_SMOKE_CORRECTION_SOLO_TIMEOUT_MINUTES = 90
 PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH = ".github/workflows/ios-build.yml"
@@ -1092,6 +1092,10 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
+    # The registered failed sources executed the historical monolithic Solo
+    # graph. Never reinterpret that evidence as either of the new shards.
+    if required == required_jobs_from_scope(FULL_SCOPE) and required != ALBUM_CORRECTION_REQUIRED:
+        return None
     if required == ALBUM_CORRECTION_REQUIRED: return FULL_SCOPE
     return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
@@ -1100,7 +1104,9 @@ def test_correction_scope(required: tuple[str, ...]) -> str | None:
 def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
     if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
         return SMOKE
-    return lane_job(selected_scope, "app-ui-solo" if selected_scope == FULL_SCOPE else "app-ui")
+    # Historical evidence names remain pinned even though that lane is no
+    # longer runnable in the current graph.
+    return "Sharing checks [app-ui-solo; scope full-v1]" if selected_scope == FULL_SCOPE else lane_job(selected_scope, "app-ui")
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
@@ -1782,7 +1788,7 @@ def main() -> None:
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),
         "matrix_lanes": json.dumps(matrix_lanes(selected_scope), separators=(",", ":")),
-        "matrix_parallelism": "3" if selected_scope == WIDGET_STYLE_SCOPE else "1" if selected_scope == FULL_SCOPE else "2",
+        "matrix_parallelism": "3" if selected_scope == WIDGET_STYLE_SCOPE else "2",
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():

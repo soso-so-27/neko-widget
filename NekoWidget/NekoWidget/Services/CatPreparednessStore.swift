@@ -153,7 +153,8 @@ final class LostCatDraftStore: ObservableObject {
     private let directory: URL
     private let manifest: URL
     private let legacy: CatPreparednessStore
-    private let manifestUnreadable: Bool
+    private var manifestUnreadable: Bool
+    private var hasCommittedManifest = false
 
     init(directory: URL? = nil, legacy: CatPreparednessStore = .shared) {
         let base = directory ?? FileManager.default.urls(
@@ -163,22 +164,57 @@ final class LostCatDraftStore: ObservableObject {
         self.directory = base
         self.manifest = file
         self.legacy = legacy
-        if let data = try? Data(contentsOf: file),
-           let saved = try? JSONDecoder().decode([String: LostCatDraft].self, from: data) {
-            drafts = saved
+        do {
+            let data = try Data(contentsOf: file)
+            drafts = try JSONDecoder().decode([String: LostCatDraft].self, from: data)
             manifestUnreadable = false
-        } else {
-            manifestUnreadable = FileManager.default.fileExists(atPath: file.path)
+            hasCommittedManifest = true
+        } catch {
+            let ns = error as NSError
+            let missing = ns.domain == NSCocoaErrorDomain
+                && [CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue].contains(ns.code)
+            manifestUnreadable = !missing || !Self.canInitializeMissingManifest(in: base)
         }
     }
 
-    func hasPreparedRecord(for key: String) -> Bool {
-        drafts[key] != nil || legacy.records[key == "guest-legacy" ? "unregistered" : key] != nil
+    private static func canInitializeMissingManifest(in directory: URL) -> Bool {
+        do { return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty }
+        catch {
+            let ns = error as NSError
+            return ns.domain == NSCocoaErrorDomain
+                && [CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue].contains(ns.code)
+        }
+    }
+
+    private func requireReadableManifest(allowingNewFiles: Set<String> = []) throws {
+        // Recheck a ledger that existed before this operation. A deleted or
+        // corrupted manifest must not be replaced from a stale in-memory snapshot.
+        if manifestUnreadable || hasCommittedManifest || FileManager.default.fileExists(atPath: manifest.path) {
+            let data = try Data(contentsOf: manifest)
+            let restored = try JSONDecoder().decode([String: LostCatDraft].self, from: data)
+            drafts = restored
+            manifestUnreadable = false
+            hasCommittedManifest = true
+        } else if !Self.canInitializeMissingManifest(in: directory) {
+            // Initial photo copying may precede the first manifest commit. Only
+            // the exact copies created by this operation are allowed here.
+            let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            guard !allowingNewFiles.isEmpty,
+                  files.allSatisfy({ allowingNewFiles.contains($0.lastPathComponent) })
+            else { throw CocoaError(.fileReadCorruptFile) }
+        }
+    }
+
+    func hasPreparedRecord(for key: String) throws -> Bool {
+        // Preparation decides whether source photos must be copied. Refresh a
+        // restored ledger before that decision; unreadable storage must stop it.
+        try requireReadableManifest()
+        return drafts[key] != nil || legacy.records[key == "guest-legacy" ? "unregistered" : key] != nil
     }
 
     func draft(for key: String, profileName: String = "",
                savedInformation: LostCatSavedInformation? = nil) throws -> LostCatDraft {
-        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        try requireReadableManifest()
         if let saved = drafts[key] { return saved }
         let legacyKey = key == "guest-legacy" ? "unregistered" : key
         let hasLegacyRecord = legacy.records[legacyKey] != nil
@@ -230,7 +266,7 @@ final class LostCatDraftStore: ObservableObject {
                 else { migrated.bodyFileName = name }
                 migrated.prefilledFields?.insert(role)
             }
-            try save(migrated, for: key)
+            try persistDraft(migrated, for: key, allowingNewFiles: Set(copied.map(\.lastPathComponent)))
             return migrated
         } catch {
             copied.forEach { try? FileManager.default.removeItem(at: $0) }
@@ -239,7 +275,11 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     func save(_ draft: LostCatDraft, for key: String) throws {
-        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        try persistDraft(draft, for: key)
+    }
+
+    private func persistDraft(_ draft: LostCatDraft, for key: String, allowingNewFiles: Set<String> = []) throws {
+        try requireReadableManifest(allowingNewFiles: allowingNewFiles)
         var next = drafts
         var value = draft
         value.updatedAt = Date()
@@ -247,12 +287,14 @@ final class LostCatDraftStore: ObservableObject {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
         drafts = next
+        hasCommittedManifest = true
     }
 
     /// Text-only refresh is separate from initial photo copying. Existing local
     /// drafts remain readable even when a source photo was removed or corrupted.
     func refreshCandidateText(for key: String, information: LostCatSavedInformation) throws -> LostCatDraft {
-        guard !manifestUnreadable, let before = drafts[key] else { throw CocoaError(.fileReadCorruptFile) }
+        try requireReadableManifest()
+        guard let before = drafts[key] else { throw CocoaError(.fileReadCorruptFile) }
         guard information.identityKey == key else { return before }
         var next = before
         if next.prefilledFields?.contains("name") == true, information.refreshableFields.contains("name") {
@@ -268,6 +310,7 @@ final class LostCatDraftStore: ObservableObject {
 
     func replacePhoto(_ data: Data, role: CatPreparednessStore.PhotoRole,
                       draft: LostCatDraft, for key: String) throws -> LostCatDraft {
+        try requireReadableManifest()
         guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.86)
         else { throw CocoaError(.fileReadCorruptFile) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -278,7 +321,7 @@ final class LostCatDraftStore: ObservableObject {
         let old = role == .face ? draft.faceFileName : draft.bodyFileName
         if role == .face { updated.faceFileName = name } else { updated.bodyFileName = name }
         updated.prefilledFields?.remove(role == .face ? "face" : "body")
-        do { try save(updated, for: key) }
+        do { try persistDraft(updated, for: key, allowingNewFiles: [name]) }
         catch { try? FileManager.default.removeItem(at: url); throw error }
         if let old, old == URL(fileURLWithPath: old).lastPathComponent,
            old.hasSuffix(".jpg"),
@@ -314,13 +357,14 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     func delete(for key: String) throws {
-        guard !manifestUnreadable else { throw CocoaError(.fileReadCorruptFile) }
+        try requireReadableManifest()
         guard let old = drafts[key] else { return }
         var next = drafts
         next.removeValue(forKey: key)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
         drafts = next
+        hasCommittedManifest = true
         for name in [old.faceFileName, old.bodyFileName].compactMap({ $0 })
         where name == URL(fileURLWithPath: name).lastPathComponent
             && name.hasSuffix(".jpg")

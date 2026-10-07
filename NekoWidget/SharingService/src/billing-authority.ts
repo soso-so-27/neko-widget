@@ -26,6 +26,7 @@ import {
   readBody,
 } from "./http";
 import { exactKeys, stringField } from "./validation";
+import { ownerOnlyBillingRequired, ownerSandboxBillingAccount, requireOwnerSandboxAccount, recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
 
 const maximumSignedNotificationBytes = 60 * 1024;
 const reconciliationLimit = 8;
@@ -173,6 +174,12 @@ export async function ingestVerifiedAppleBillingNotification(
   value: VerifiedAppleNotification,
   payloadHash: string,
 ): Promise<void> {
+  if (ownerOnlyBillingRequired(env)) {
+    // Authentic TEST/irrelevant notifications have no owner. Acknowledge without
+    // storing them; a different purchaser must never enter this pilot ledger.
+    if (!value.relevant || value.transaction === null) return;
+    await requireOwnerSandboxAccount(env, value.transaction.billingAccountId);
+  }
   const existing = await notificationReplay(env, value.notificationUUID);
   if (existing !== null) {
     await resumeNotificationReplay(env, existing, payloadHash, value);
@@ -466,6 +473,7 @@ async function recordAuthorityObservations(
     leaseToken,
     completedAt,
   ));
+  recheckOwnerSandboxAdmission(env);
   await env.DB.batch(statements);
   return selectedItem.status === 1 || selectedItem.status === 3 || selectedItem.status === 4;
 }
@@ -568,6 +576,8 @@ export async function runBillingSubscriptionReconciliation(
   now = Math.floor(Date.now() / 1_000),
   completedAtOverride?: number,
 ): Promise<void> {
+  const ownerAccount = ownerOnlyBillingRequired(env) ? await ownerSandboxBillingAccount(env) : null;
+  if (ownerOnlyBillingRequired(env) && ownerAccount === null) return;
   const gate = await loadGate(env);
   if (gate?.subscription_reconciliation_enabled !== 1) return;
   const jobs = await env.DB.prepare(
@@ -575,11 +585,14 @@ export async function runBillingSubscriptionReconciliation(
        FROM billing_reconciliation_jobs
       WHERE not_before <= ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+        ${ownerAccount === null ? '' : `AND original_transaction_id IN
+          (SELECT original_transaction_id FROM billing_transaction_lineages WHERE billing_account_id=?)`}
       ORDER BY not_before ASC, requested_at ASC, original_transaction_id ASC
       LIMIT ?`,
-  ).bind(now, now, reconciliationLimit).all<ReconciliationJobRow>();
+  ).bind(now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
 
   for (const job of jobs.results) {
+    if (ownerAccount !== null) await requireOwnerSandboxAccount(env, ownerAccount);
     const leaseToken = randomBase64url(16);
     const claimed = await env.DB.prepare(
       `UPDATE billing_reconciliation_jobs
@@ -605,7 +618,9 @@ export async function runBillingSubscriptionReconciliation(
       if (lineage === null) {
         throw new ApiError(409, "billing_lineage_missing", "Billing is temporarily unavailable.");
       }
+      await requireOwnerSandboxAccount(env, lineage.billing_account_id);
       const status = await fetchStatus(job.original_transaction_id, env);
+      await requireOwnerSandboxAccount(env, lineage.billing_account_id);
       const completedAt = completedAtOverride
         ?? Math.max(now, Math.floor(Date.now() / 1_000));
       const keepPeriodic = await recordAuthorityObservations(

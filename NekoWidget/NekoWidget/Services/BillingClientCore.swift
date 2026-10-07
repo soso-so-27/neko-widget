@@ -1438,3 +1438,27 @@ enum BillingValidation {
         }
     }
 }
+
+/// Public-only enrollment summary. Never Codable, persisted, or sent by this UI.
+struct BillingSandboxOwnerEnrollment: Equatable, Sendable {
+    let bootstrapClientRequestID: String
+    let initialPublicKeySHA256: String
+
+    static func readExistingPending(
+        credential: BillingCredential,
+        installationMarker: UUID
+    ) throws -> Self {
+        let credential = try credential.validated()
+        guard credential.phase == .pendingBootstrap,
+              credential.installationMarker == installationMarker.uuidString.lowercased()
+        else { throw BillingClientError.credentialChanged }
+        let publicKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: credential.signingPrivateKey
+        ).publicKey.rawRepresentation
+        return Self(
+            bootstrapClientRequestID: credential.clientRequestID,
+            initialPublicKeySHA256: SHA256.hash(data: publicKey)
+                .map { String(format: "%02x", $0) }.joined()
+        )
+    }
+}

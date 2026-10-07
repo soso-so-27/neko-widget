@@ -592,7 +592,7 @@ struct LostCatDraftView: View {
             let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
                 .filter { $0.id == identity }
             // Existing drafts need no source access, even if its copy is now unavailable.
-            let alreadyPrepared = store.hasPreparedRecord(for: identity)
+            let alreadyPrepared = try store.hasPreparedRecord(for: identity)
             let information = !alreadyPrepared && candidates.count == 1
                 ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
             var saved = try store.draft(for: identity, profileName: name, savedInformation: information)
@@ -981,7 +981,14 @@ struct LostCatDraftFixtureView: View {
         AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
     }
     var body: some View {
-        if CommandLine.arguments.contains("--lost-cat-export-lifecycle-check") {
+        if CommandLine.arguments.contains("--lost-cat-ledger-recovery-check") {
+            Text(lifecycleResult ?? "確認中")
+                .accessibilityIdentifier("lost-cat-ledger-recovery-result")
+                .task {
+                    do { try Self.verifyLedgerRecovery(image: image); lifecycleResult = "passed" }
+                    catch { lifecycleResult = "failed: \(error)" }
+                }
+        } else if CommandLine.arguments.contains("--lost-cat-export-lifecycle-check") {
             Text(lifecycleResult ?? "確認中")
                 .accessibilityIdentifier("lost-cat-export-lifecycle-result")
                 .accessibilityHint("ファイル生成と安全停止の検証。実機の暗号化確認ではありません")
@@ -1066,6 +1073,116 @@ struct LostCatDraftFixtureView: View {
             throw ExportLifecycleFailure.fileProtection
         }
         return [.protectionKey: FileProtectionType.complete]
+    }
+
+    @MainActor private static func verifyLedgerRecovery(image: UIImage) throws {
+        enum Failure: Error { case invariant, acceptedUnreadableLedger }
+        func require(_ condition: Bool) throws { if !condition { throw Failure.invariant } }
+        func blocked(_ action: () throws -> Void) throws {
+            do { try action() } catch { return }
+            throw Failure.acceptedUnreadableLedger
+        }
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("lost-ledger-verify-" + UUID().uuidString)
+        defer { try? manager.removeItem(at: root) }
+        let legacy = CatPreparednessStore(directory: root.appendingPathComponent("legacy"))
+        let firstPhotoStore = LostCatDraftStore(directory: root.appendingPathComponent("first-photo"), legacy: legacy)
+        let firstPhoto = try firstPhotoStore.replacePhoto(image.jpegData(compressionQuality: 0.9)!,
+            role: .face, draft: LostCatDraft(), for: "first-cat")
+        try require(firstPhotoStore.image(firstPhoto.faceFileName) != nil)
+        let lateDirectory = root.appendingPathComponent("late-orphan")
+        let lateOrphan = LostCatDraftStore(directory: lateDirectory, legacy: legacy)
+        try manager.createDirectory(at: lateDirectory, withIntermediateDirectories: true)
+        let orphan = lateDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        let orphanBytes = image.jpegData(compressionQuality: 0.9)!
+        try orphanBytes.write(to: orphan)
+        try blocked { try lateOrphan.save(LostCatDraft(), for: "new-cat") }
+        try require(try Data(contentsOf: orphan) == orphanBytes)
+        try require(!manager.fileExists(atPath: lateDirectory.appendingPathComponent("drafts.json").path))
+        var lateRestored = LostCatDraft(); lateRestored.name = "復旧した猫"
+        try JSONEncoder().encode(["restored": lateRestored]).write(to: lateDirectory.appendingPathComponent("drafts.json"))
+        try require(try lateOrphan.draft(for: "restored") == lateRestored)
+        try require(try Data(contentsOf: orphan) == orphanBytes)
+        let directory = root.appendingPathComponent("drafts")
+        let empty = LostCatDraftStore(directory: directory, legacy: legacy)
+        try require(empty.drafts.isEmpty)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = LostCatDraftStore(directory: directory, legacy: legacy)
+        var draft = try store.draft(for: "cat", profileName: "むぎ")
+        draft = try store.replacePhoto(image.jpegData(compressionQuality: 0.9)!, role: .face, draft: draft, for: "cat")
+        let ledger = directory.appendingPathComponent("drafts.json")
+        let original = try Data(contentsOf: ledger)
+        let photo = directory.appendingPathComponent(draft.faceFileName!)
+        let photoBytes = try Data(contentsOf: photo)
+        try require(try LostCatDraftStore(directory: directory, legacy: legacy).draft(for: "cat") == draft)
+        let sourceDirectory = root.appendingPathComponent("unavailable-source")
+        let source = EvacuationStore(directory: sourceDirectory)
+        let care = CareHandoffStore(directory: root.appendingPathComponent("unavailable-source-care"))
+        var sourceCat = EvacuationCat(); sourceCat.profileID = "cat"; sourceCat.name = "Source candidate"
+        try require(source.update { $0.cats = [sourceCat] })
+        try source.replacePhoto(image.jpegData(compressionQuality: 0.9)!, catID: sourceCat.id, role: .face)
+        guard let sourcePhoto = source.plan.cats[0].photos["face"],
+              let sourceCandidate = LostCatSavedCat.candidates(evacuation: source, care: care).first(where: { $0.id == "cat" })
+        else { throw Failure.invariant }
+        // Only this fixture's own source copy is removed. The prepared local
+        // photo must remain usable after restoring a ledger in the same store.
+        try manager.removeItem(at: sourceDirectory.appendingPathComponent(sourcePhoto))
+        try blocked { _ = try sourceCandidate.information(evacuation: source, care: care) }
+        for corrupt in [false, true] {
+            if corrupt { try Data("broken-ledger".utf8).write(to: ledger) }
+            else { try manager.removeItem(at: ledger) }
+            let unreadable = LostCatDraftStore(directory: directory, legacy: legacy)
+            try blocked { _ = try unreadable.hasPreparedRecord(for: "cat") }
+            try blocked { _ = try store.hasPreparedRecord(for: "cat") }
+            try blocked { _ = try unreadable.draft(for: "new-cat") }
+            try blocked { try unreadable.save(draft, for: "cat") }
+            try blocked { _ = try unreadable.replacePhoto(image.jpegData(compressionQuality: 0.9)!, role: .face, draft: draft, for: "cat") }
+            try blocked { try unreadable.delete(for: "cat") }
+            try blocked { _ = try unreadable.removePhoto(role: .body, draft: draft, for: "cat") }
+            try blocked { _ = try unreadable.refreshCandidateText(for: "cat", information: .init()) }
+            // A store opened before loss must not overwrite the missing ledger either.
+            try blocked { try store.save(draft, for: "cat") }
+            try require(try Data(contentsOf: photo) == photoBytes)
+            try require(try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).count == (corrupt ? 2 : 1))
+            if corrupt { try require(try Data(contentsOf: ledger) == Data("broken-ledger".utf8)) }
+            else { try require(!manager.fileExists(atPath: ledger.path)) }
+            try original.write(to: ledger)
+            // Mirror the view's preparation decision before any draft read.
+            let alreadyPrepared = try unreadable.hasPreparedRecord(for: "cat")
+            try require(alreadyPrepared)
+            let information = !alreadyPrepared
+                ? try sourceCandidate.information(evacuation: source, care: care) : nil
+            let opened = try unreadable.draft(for: "cat", savedInformation: information)
+            try require(opened == draft && unreadable.image(opened.faceFileName) != nil)
+            try require(try store.hasPreparedRecord(for: "cat"))
+            try require(try Data(contentsOf: ledger) == original)
+            try require(try Data(contentsOf: photo) == photoBytes)
+            let recovered = LostCatDraftStore(directory: directory, legacy: legacy)
+            try require(try recovered.draft(for: "cat") == draft)
+            try require(recovered.image(draft.faceFileName) != nil)
+            try require(try store.draft(for: "cat") == draft)
+            try require(try unreadable.draft(for: "cat") == draft)
+            // Restoring a different valid ledger must preserve entries absent
+            // from the old instance's memory when that instance saves again.
+            var restored = try JSONDecoder().decode([String: LostCatDraft].self, from: original)
+            var additional = LostCatDraft(); additional.name = "復旧した別の猫"
+            restored["restored-other"] = additional
+            try JSONEncoder().encode(restored).write(to: ledger)
+            try store.save(draft, for: "cat")
+            let preserved = try JSONDecoder().decode([String: LostCatDraft].self, from: Data(contentsOf: ledger))
+            try require(preserved["restored-other"] == additional)
+            var newer = draft; newer.name = "復元後の新しい名前"
+            var later = preserved; later["cat"] = newer
+            try JSONEncoder().encode(later).write(to: ledger)
+            var newDraft = LostCatDraft(); newDraft.name = "復元後に追加した猫"
+            try unreadable.save(newDraft, for: "post-recovery")
+            let reopened = LostCatDraftStore(directory: directory, legacy: legacy)
+            try require(try reopened.draft(for: "cat") == newer)
+            try require(try reopened.draft(for: "restored-other") == additional)
+            try require(try reopened.draft(for: "post-recovery").name == newDraft.name)
+            try require(try Data(contentsOf: photo) == photoBytes)
+            try original.write(to: ledger)
+        }
     }
 
     @MainActor private static func verifyExportLifecycle(image: UIImage) throws {

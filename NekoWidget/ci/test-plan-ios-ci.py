@@ -2499,7 +2499,7 @@ class PlanTests(unittest.TestCase):
                 planner.main()
                 outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                 self.assertEqual(outputs, {"build": "true", "build_name": planner.BUILD, "smoke": "true", "sharing": "true",
-                    "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "1",
+                    "smoke_name": planner.SMOKE, "app_ui": "true", "matrix_parallelism": "2",
                     "runtime_scope": scope.FULL_SCOPE,
                     "lanes": json.dumps(scope.lanes(scope.FULL_SCOPE), separators=(",", ":")),
                     "app_ui_lanes": json.dumps(scope.app_ui_lanes(scope.FULL_SCOPE), separators=(",", ":")),
@@ -2633,7 +2633,7 @@ class PlanTests(unittest.TestCase):
                 self.assertEqual(scope.select_scope({store: pair}), scope.APP_VIEW_SCOPE)
                 self.assertEqual(scope.select_scope(changes), scope.APP_VIEW_SCOPE)
                 self.assertEqual(scope.lanes(scope.APP_VIEW_SCOPE),
-                                 ("runtime", "app-ui-solo", "app-ui-other"))
+                                 ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
                 self.assertTrue(any("Build disabled app" in job for job in
                                     planner.required_jobs(list(changes), scope.APP_VIEW_SCOPE)))
                 self.assertFalse(any("gallery" in job.lower() for job in
@@ -2854,10 +2854,21 @@ class PlanTests(unittest.TestCase):
         for identifier, output in (("build-without-signing", "build"),
                                    ("simulator-smoke-test", "smoke"),
                                    ("sharing-app-ui", "app_ui"),
-                                   ("sharing-runtime-matrix", "sharing")):
+                                   ("sharing-runtime-matrix", "sharing"),
+                                   ("sharing-runtime-deferred", "sharing"),
+                                   ("sharing-gallery-early", "sharing")):
             body = re.split(r"\n  (?=\S)", workflow.split("\n  " + identifier + ":", 1)[1], maxsplit=1)[0]
-            self.assertIn("    needs: plan\n", body)
-            self.assertIn("    if: needs.plan.outputs." + output + " == 'true'", body)
+            if identifier == "sharing-gallery-early":
+                self.assertIn("    needs: [plan, simulator-smoke-test]\n", body)
+                self.assertIn("    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
+                self.assertIn("needs.plan.outputs.runtime_scope == 'full-v1'", body)
+                self.assertNotIn("needs.build-without-signing", body)
+            elif identifier == "sharing-runtime-deferred":
+                self.assertIn("    needs: [plan, build-without-signing, simulator-smoke-test]\n", body)
+                self.assertIn("    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
+            else:
+                self.assertIn("    needs: plan\n", body)
+                self.assertIn("    if: needs.plan.outputs." + output + " == 'true'", body)
             self.assertNotIn("continue-on-error:", body)
         # Parallel runtime success cannot stand in for a failed/skipped Release.
         for result in ("failure", "skipped", "cancelled"):
@@ -3076,6 +3087,20 @@ class PlanTests(unittest.TestCase):
 
 
 class TestCorrectionReuseTests(unittest.TestCase):
+    def test_split_full_graph_cannot_reuse_historical_pinned_correction(self):
+        required = planner.required_jobs_from_scope(scope.FULL_SCOPE)
+        self.assertNotEqual(required, planner.ALBUM_CORRECTION_REQUIRED)
+        self.assertIsNone(planner.test_correction_scope(required))
+        def forbidden_api(path):
+            self.fail("Graph mismatch must be rejected before fetching evidence")
+        self.assertIsNone(planner.correction_source({}, "a" * 40, planner.ALBUM_CORRECTION_BRANCH,
+                          "soso-so-27/neko-widget", 1, required, forbidden_api,
+                          dt.datetime.now(dt.timezone.utc)))
+        self.assertFalse(planner.covers_corrected_full_graph({}, "a" * 40, required,
+                         forbidden_api, dt.datetime.now(dt.timezone.utc), []))
+        self.assertIn("Sharing checks [app-ui-solo; scope full-v1]", planner.ALBUM_CORRECTION_REQUIRED)
+        self.assertNotIn("Sharing checks [app-ui-solo; scope full-v1]", required)
+
     def test_signed_log_redirect_strips_token_and_rejects_other_origins(self):
         request = urllib.request.Request("https://api.github.com/repos/o/r/actions/jobs/1/logs",
                                          headers={"Authorization": "Bearer private-test-token"})

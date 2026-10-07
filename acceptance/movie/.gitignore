@@ -1,0 +1,6 @@
+generated/
+reused-inputs/
+inspection-*/
+__pycache__/
+*.probe.json
+exported-*.mp4

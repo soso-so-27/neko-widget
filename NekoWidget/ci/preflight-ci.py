@@ -515,8 +515,21 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                 "note": "The plan job has a 5 minute execution limit; queue time is separate. Not a measured release duration."}
     if required == (planner.BUILD,) and selected != "app-icon-v1":
         selected = "movie-screen-only"
+    # Explanation only: this does not add paths to any evidence allowlist,
+    # change the selected scope, or waive a required job. Runtime wrappers
+    # execute native UI/runtime/Gallery commands and are not plan-only tools.
+    runtime_graph_paths = scope.CI_SELECTION_PATHS | {
+        "NekoWidget/ci/run-recorded-command.py", "NekoWidget/ci/test-recorded-command.py",
+        "NekoWidget/ci/test-release-flow.py",
+    }
+    runtime_graph_change = (selected == scope.FULL_SCOPE
+        and scope.source_paths(paths) <= runtime_graph_paths
+        and "NekoWidget/ci/run-recorded-command.py" in paths
+        and scope.CI_DIAGNOSTIC_MATRIX in paths)
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Private app data only; Widget source membership/render inputs unchanged. Keep build, storage/privacy/migration, Photos, runtime and both app UI shards; omit Widget gallery only"
+    reason = ("Native CI execution graph and command/attachment wrapper changed. Verify both Solo shards, other UI and runtime/Gallery execution plus the existing build/privacy/Photos contract; do not reuse the historical seven-job graph as eight-job evidence"
+              if runtime_graph_change else
+              "Private app data only; Widget source membership/render inputs unchanged. Keep build, storage/privacy/migration, Photos, runtime and both app UI shards; omit Widget gallery only"
               if selected == scope.APP_DATA_SCOPE else
               "Private JPEG Container gateway with persistent runtime admission budget and frozen Node/Docker workflow; no deployment or release evidence"
               if selected == planner.JPEG_SCOPE else

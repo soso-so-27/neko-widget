@@ -59,6 +59,9 @@ export interface Env {
   BILLING_VERIFIER_SHARED_SECRET?: string;
   BILLING_BUNDLE_ID?: string;
   BILLING_STORE_ENVIRONMENT?: string;
+  BILLING_SANDBOX_OWNER_ADMISSION?: string;
+  // Forced by the named private Sandbox gateway; ordinary routes do not infer it.
+  BILLING_SANDBOX_OWNER_ONLY_REQUIRED?: string;
   BILLING_SUBSCRIPTION_GROUP_ID?: string;
   BILLING_MONTHLY_PRODUCT_ID?: string;
   BILLING_ANNUAL_PRODUCT_ID?: string;

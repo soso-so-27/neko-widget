@@ -223,7 +223,12 @@ actor VeterinaryVisitStore {
         }
         catch {
             let ns = error as NSError
-            if ns.domain == NSCocoaErrorDomain && [CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue].contains(ns.code) { return State() }
+            if ns.domain == NSCocoaErrorDomain && [CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue].contains(ns.code) {
+                // A missing ledger is a new store only when no saved files remain.
+                // Never overwrite an orphaned photo directory with an empty ledger.
+                guard Self.canInitializeMissingManifest(in: directory) else { throw VeterinaryVisitError.storage }
+                return State()
+            }
             throw VeterinaryVisitError.storage
         }
         do {
@@ -241,6 +246,15 @@ actor VeterinaryVisitStore {
                   retired.allSatisfy({ Self.validPhotoFile($0) && !photoFiles.contains($0) }) else { throw VeterinaryVisitError.corrupted }
             return state
         } catch { throw VeterinaryVisitError.corrupted }
+    }
+
+    private static func canInitializeMissingManifest(in directory: URL) -> Bool {
+        do { return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty }
+        catch {
+            let ns = error as NSError
+            return ns.domain == NSCocoaErrorDomain
+                && [CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue].contains(ns.code)
+        }
     }
 
     private static func validName(_ name: String) -> Bool { !name.isEmpty && name.count <= 200 && !name.contains("\0") }

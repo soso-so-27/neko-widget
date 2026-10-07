@@ -121,7 +121,7 @@ function authenticatedFetch(
   return async (input, init) => {
     expect(String(input)).toBe(`http://127.0.0.1:8080${BILLING_NOTIFICATION_HISTORY_PATH}`);
     expect(init?.method).toBe("POST");
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     const headers = new Headers(init?.headers);
     expect(headers.get("cf-access-client-id")).toBe("staging-verifier.access");
     expect(headers.get("cf-access-client-secret")).toBe("staging-access-secret");

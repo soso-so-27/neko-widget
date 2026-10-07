@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "syntheticOnly": true,
+  "productionExportExecuted": false,
+  "scenes": [
+    {
+      "file": "still-1.png",
+      "date": "2025-01-02T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 1.8
+    },
+    {
+      "file": "still-2.png",
+      "date": "2025-01-07T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 1.45
+    },
+    {
+      "file": "source-video.mp4",
+      "date": "2025-01-19T12:00:00Z",
+      "kind": "video",
+      "duration": 2.0
+    },
+    {
+      "file": "still-3.png",
+      "date": "2025-02-03T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 1.45
+    },
+    {
+      "file": "still-4.png",
+      "date": "2025-02-12T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 1.45
+    },
+    {
+      "file": "source-video.mp4",
+      "date": "2025-02-22T12:00:00Z",
+      "kind": "video",
+      "duration": 2.0
+    },
+    {
+      "file": "still-5.png",
+      "date": "2025-03-04T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 1.45
+    },
+    {
+      "file": "still-6.png",
+      "date": "2025-03-19T12:00:00Z",
+      "kind": "stillPhoto",
+      "duration": 2.0
+    }
+  ],
+  "expectedFrameCount": 370,
+  "expectedDuration": 15.416666666666666,
+  "sourceMetadataSentinel": "SYNTHETIC_SOURCE_DO_NOT_EXPORT",
+  "sha256": {
+    "still-1.png": "3760f761018765f1810fe9eb1752d63d70bd07ad63d83d22c691aec3ab639e9e",
+    "still-2.png": "fa224e2132d32a21212aa5c3e46ddd0eb011903b9d9c5af9774710be755b13f3",
+    "still-3.png": "38fd92aa7193e7c6a94d8744184afef0690b3025cd1db376346b929f23b6cf28",
+    "still-4.png": "6fada486b18ee2f6bbcfcc8e8e4b38a836479a053a9192f6cbadb8a7d205c9f4",
+    "still-5.png": "2fd65087bbdf2ad6d0e4aabd58503a5bd2b987063bbcc3f672619c9514371efd",
+    "still-6.png": "bfd6bd93bfdb8160e8ffa82bda1e20b16c513eb7d85fd2b84f78a331de5926f7",
+    "source-audio-997hz.wav": "26b0e6295e733e86082bb6b36f97005bc8dce8f07d1c96533d93ff29a9046fa2",
+    "source-video.mp4": "38369ef656938409998ccab69e08f66fbbe9b765fff39a7b5f9df216ffac59db"
+  },
+  "sourceVideoVerification": {
+    "schemaVersion": 1,
+    "syntheticInputOnly": true,
+    "productionExportExecuted": false,
+    "sourceFile": "source-video.mp4",
+    "sha256": "38369ef656938409998ccab69e08f66fbbe9b765fff39a7b5f9df216ffac59db",
+    "bytes": 42585,
+    "videoCodec": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "duration": 3,
+    "decodedVideoFrames": 72,
+    "audioCodec": "aac",
+    "audioSampleRate": 48000,
+    "audioChannels": 1,
+    "decodedAudioSamples": 144384,
+    "source997HzEnergyFraction": 0.9996154731200305,
+    "sourceMetadataSentinelVerified": true,
+    "ffmpegSHA256": "2ce797a0f88d7f067180338fb227f7b1928ea727bd9a4d7a1d022f7c52af71a3",
+    "overwriteProtection": {
+      "option": "-n",
+      "refusalMessageVerified": true,
+      "hashUnchanged": true,
+      "processExitCode": 0
+    }
+  }
+}

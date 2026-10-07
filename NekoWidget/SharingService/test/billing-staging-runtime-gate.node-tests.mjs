@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +24,8 @@ import { renderStagingConfig } from "../scripts/staging-config-lib.mjs";
 import { renderLiveConfigs } from "../gateway/render-live-config.mjs";
 import { billingControlEnabledFlags } from "../scripts/billing-control-staging-config-lib.mjs";
 
+const ownerAdmission = JSON.stringify({ version: 1, bootstrapClientRequestId: '5f30c0de-0000-4000-8000-000000000001', initialPublicKeySHA256: 'a'.repeat(64), startsAtMs: Date.now() - 1000, expiresAtMs: Date.now() + 3600000 });
+const ownerPolicyHash = createHash('sha256').update(ownerAdmission).digest('hex');
 const projectDirectory = join(import.meta.dirname, "..");
 const template = await readFile(
   join(projectDirectory, "wrangler.staging.template.jsonc"),
@@ -105,6 +108,8 @@ const healthHeader = Object.freeze({
 
 function healthResponse(state, generation) {
   const headers = new Headers({
+    "neko-runtime-billing-owner-admission": "READY",
+    "neko-runtime-billing-owner-policy-sha256": ownerPolicyHash,
     "Content-Type": "application/json",
     "Neko-Runtime-Billing-Gate-Generation": String(generation),
   });
@@ -142,6 +147,7 @@ function privateFixture() {
       { type: "plain_text", name: "APNS_RUNTIME_ENABLED", text: "YES" },
     ] },
   }, "/safe/project");
+  gateway.vars.BILLING_SANDBOX_OWNER_ADMISSION = ownerAdmission;
   for (const flag of billingControlEnabledFlags) gateway.vars[flag] = "YES";
   const input = { ...manifest, accountId: gateway.account_id, databaseId: gateway.d1_databases[0].database_id };
   return { gateway, input, reader: async path => {
@@ -165,7 +171,7 @@ test("private plan accepts only the closed Sandbox gateway and never runs comman
     c => { c.vars.BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED = "YES"; },
     c => { c.vars.ENVIRONMENT = "production"; }, c => { c.name = "neko-window-sharing-staging"; },
     c => { c.services[0].service = "other-verifier"; }, c => { c.d1_databases[0].database_id = manifest.databaseId; },
-    c => { c.ratelimits[0].simple.limit = 1000; }, c => { c.vars.SECRET = "do-not-accept"; }]) {
+    c => { c.ratelimits[0].simple.limit = 1000; }, c => { c.vars.SECRET = "do-not-accept"; }, c => { delete c.vars.BILLING_SANDBOX_OWNER_ADMISSION; }, c => { c.vars.BILLING_SANDBOX_OWNER_ADMISSION = "{}"; }]) {
     const bad = structuredClone(gateway); mutate(bad);
     await assert.rejects(runPlan(bad), /reviewed Sandbox target/u);
   }
@@ -458,4 +464,49 @@ test("non-adjacent emergency stop requires billing-all-off confirmation", async 
     },
   ), /emergency billing-all-off generation 10 verified/u);
   assert.equal(commands.length, 2);
+});
+
+test('private owner admission mismatch refuses before CAS; rollback does not require active admission', async () => {
+  const { input, reader, gateway } = privateFixture();
+  for (const mismatch of ['CLOSED', 'different-hash', 'missing-hash']) {
+    let writes = 0;
+    await assert.rejects(runBillingRuntimeGateControl(['--confirm-bootstrap-only'], {
+      projectDirectory: '/safe/project', profile: 'private-gateway', readFileImpl: reader,
+      runCommand: async command => {
+        if (command.args.at(-1) === '--version') return 'wrangler 4.125.0';
+        if (command.args.at(-1).startsWith('UPDATE')) writes += 1;
+        return statusOutput('all-off', 0);
+      },
+      fetchImpl: async () => {
+        const response = healthResponse('all-off', 0);
+        if (mismatch === 'CLOSED') response.headers.set('neko-runtime-billing-owner-admission', 'CLOSED');
+        if (mismatch === 'different-hash') response.headers.set('neko-runtime-billing-owner-policy-sha256', 'b'.repeat(64));
+        if (mismatch === 'missing-hash') response.headers.delete('neko-runtime-billing-owner-policy-sha256');
+        return response;
+      },
+    }), /owner admission verification failed/u);
+    assert.equal(writes, 0);
+  }
+  const rollback = { ...input, expectedState: 'recovery-on', desiredState: 'all-off', expectedGeneration: 7 };
+  gateway.vars.BILLING_SANDBOX_OWNER_ADMISSION = JSON.stringify({ ...JSON.parse(ownerAdmission), startsAtMs: 0, expiresAtMs: 1000 });
+  let fetches = 0, writes = 0;
+  await runBillingRuntimeGateControl(['--confirm-billing-all-off'], {
+    projectDirectory: '/safe/project', profile: 'private-gateway',
+    readFileImpl: async path => JSON.stringify(path.endsWith(billingRuntimeGateManifestName) ? rollback : gateway),
+    runCommand: async command => {
+      if (command.args.at(-1) === '--version') return 'wrangler 4.125.0';
+      if (command.args.at(-1).startsWith('SELECT')) return statusOutput('recovery-on', 7);
+      writes += 1; return updateOutput(rollback);
+    },
+    fetchImpl: async () => {
+      fetches += 1;
+      // An expired policy masks the live lower gates OFF; emergency rollback must
+      // still reconcile exact D1 state without demanding intake READY.
+      const response = healthResponse('all-off', fetches === 1 ? 7 : 8);
+      response.headers.set('neko-runtime-billing-owner-admission', 'CLOSED');
+      response.headers.delete('neko-runtime-billing-owner-policy-sha256');
+      return response;
+    },
+  });
+  assert.equal(writes, 1);
 });

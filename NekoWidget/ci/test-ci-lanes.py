@@ -693,7 +693,7 @@ final class UnrelatedUITests: XCTestCase {
         changed = {path: ("old", "new") for path in (main, notes, ui_test)}
         selected = scope.APP_VIEW_SCOPE
         self.assertEqual(scope.select_scope(changed), selected)
-        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui-solo", "app-ui-other"))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
         self.assertEqual(scope.native_tests(selected),
                          tuple(test for test in scope.native_tests(scope.FULL_SCOPE)
                                if test != scope.GALLERY_TEST))
@@ -702,7 +702,8 @@ final class UnrelatedUITests: XCTestCase {
         self.assertEqual(planner.required_jobs_from_scope(selected), (
             planner.BUILD, planner.SMOKE,
             scope.lane_job(selected, "runtime"),
-            scope.lane_job(selected, "app-ui-solo"),
+            scope.lane_job(selected, "app-ui-solo-1"),
+            scope.lane_job(selected, "app-ui-solo-2"),
             scope.lane_job(selected, "app-ui-other"),
         ))
         release_note = "NekoWidget/ci/release-candidates/2026-09-25-showcase-ia.md"
@@ -722,14 +723,20 @@ final class UnrelatedUITests: XCTestCase {
 
     def test_full_partition_preserves_all_app_suites_and_three_gallery_conditions(self):
         self.assertEqual(scope.lanes(scope.FULL_SCOPE),
-                         ("runtime", "app-ui-solo", "app-ui-other", "gallery-normal", "gallery-variants"))
+                         ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other", "gallery-normal", "gallery-variants"))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "runtime"), ())
-        solo = scope.lane_tests(scope.FULL_SCOPE, "app-ui-solo")
+        solo1 = scope.lane_tests(scope.FULL_SCOPE, "app-ui-solo-1")
+        solo2 = scope.lane_tests(scope.FULL_SCOPE, "app-ui-solo-2")
+        self.assertEqual((len(solo1), len(solo2)), (26, 25))
+        self.assertFalse(set(solo1) & set(solo2))
+        solo = solo1 + solo2
         other = scope.lane_tests(scope.FULL_SCOPE, "app-ui-other")
         self.assertTrue(solo and other)
         self.assertFalse(set(solo) & set(other))
         app = solo + other
-        self.assertEqual(set(app), set(scope.native_tests(scope.FULL_SCOPE)) - {scope.GALLERY_TEST})
+        self.assertEqual(set(other), set(scope.native_tests(scope.FULL_SCOPE)) -
+                         {scope.GALLERY_TEST, "NekoWidgetUITests/SoloMemoriesUITests"})
+        self.assertEqual({test.rsplit("/", 1)[1] for test in solo}, set(scope.SOLO_TEST_METHODS))
         self.assertEqual(len(app), len(set(app)))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-normal"), (scope.GALLERY_TEST,))
         self.assertEqual(scope.lane_tests(scope.FULL_SCOPE, "gallery-variants")[1:], (scope.GALLERY_TEST,))
@@ -737,6 +744,25 @@ final class UnrelatedUITests: XCTestCase {
         self.assertIn("NO_CAPTION", scope.GALLERY_CONDITIONS["no-caption"])
         self.assertIn("LONG_CAPTION", scope.GALLERY_CONDITIONS["long-white-large"])
         self.assertIn("LARGE_TEXT", scope.GALLERY_CONDITIONS["long-white-large"])
+
+    def test_solo_explicit_inventory_rejects_added_removed_or_duplicate_methods(self):
+        source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+        self.assertEqual(scope.solo_test_methods(source), scope.SOLO_TEST_METHODS)
+        name = scope.SOLO_TEST_METHODS[0]
+        for changed in (source + "\nextension SoloMemoriesUITests { func testExtensionAdded() {} }\n",
+                        source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                       "final class SoloMemoriesUITests: XCTestCase {\n        func testIndentedNewMethod() {}"),
+                        source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                       "final class SoloMemoriesUITests: XCTestCase {\n\tfunc testTabbedNewMethod() {}"),
+                        source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                       "final class SoloMemoriesUITests: XCTestCase {\n    func testUnexpectedNewMethod() {}"),
+                        source.replace("func " + name + "(", "public func " + name + "("),
+                        source.replace("func " + name + "(", "func testUnexpectedNewMethod("),
+                        source.replace("func " + name + "(", "func helperRemovedTest("),
+                        source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                       "final class SoloMemoriesUITests: XCTestCase {\n    func " + name + "() {}")):
+            with self.assertRaises(ValueError):
+                scope.solo_test_methods(changed)
 
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
@@ -805,11 +831,12 @@ final class UnrelatedUITests: XCTestCase {
         app_ui = jobs["sharing-app-ui"]
         self.assertIn("fail-fast: false", matrix)
         self.assertIn("fail-fast: false", app_ui)
+        self.assertIn("max-parallel: 3", app_ui)
         self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.app_ui_lanes) }}", app_ui)
         self.assertIn("lane: ${{ fromJSON(needs.plan.outputs.matrix_lanes) }}", matrix)
         self.assertIn("NEKO_IOS_RUNTIME_LANE: ${{ matrix.lane }}", matrix)
         self.assertIn("${{ matrix.lane }}-${{ needs.plan.outputs.runtime_scope }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", matrix)
-        for identifier in ("sharing-app-ui", "sharing-runtime-matrix"):
+        for identifier in ("sharing-app-ui", "sharing-runtime-matrix", "sharing-runtime-deferred", "sharing-gallery-early"):
             body = jobs[identifier]
             self.assertNotIn("download-artifact", body)
             self.assertNotIn("continue-on-error", body)
@@ -818,6 +845,9 @@ final class UnrelatedUITests: XCTestCase {
             # Scheduling must not change checkout isolation, commands, flags,
             # artifact provenance or whether a failure is propagated.
             steps = body.split("    steps:\n", 1)[1]
+            if identifier == "sharing-app-ui":
+                self.assertEqual(steps.count("        timeout-minutes: 80\n"), 1)
+                steps = steps.replace("        timeout-minutes: 80\n", "")
             self.assertEqual(steps.strip(), matrix.split("    steps:\n", 1)[1].strip())
 
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
@@ -827,17 +857,33 @@ final class UnrelatedUITests: XCTestCase {
                 remaining = scope.matrix_lanes(selected)
                 ui_lanes = scope.app_ui_lanes(selected)
                 has_app_ui = bool(ui_lanes)
+                deferred = "app-ui-solo-1" in ui_lanes
                 partition = ui_lanes + remaining
                 self.assertCountEqual(partition, scope.lanes(selected))
                 self.assertEqual(len(partition), len(set(partition)))
                 outputs = {"lanes": scope.lanes(selected), "matrix_lanes": remaining,
                            "app_ui_lanes": ui_lanes}
-                parallelism = 3 if selected == scope.WIDGET_STYLE_SCOPE else 1 if selected == scope.FULL_SCOPE else 2
-                maximum_running = 0
+                parallelism = 3 if selected == scope.WIDGET_STYLE_SCOPE else 2
+                initial_running = 0
+                deferred_running = 0
+                early_running = 0
                 names = []
                 for identifier, body in jobs.items():
                     if "    runs-on: macos-15\n" not in body:
                         continue
+                    if identifier == "sharing-runtime-matrix":
+                        self.assertIn("!contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')", body)
+                        self.assertIn("    needs: plan\n", body)
+                        if deferred:
+                            continue
+                    if identifier == "sharing-runtime-deferred":
+                        self.assertIn("&& contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')", body)
+                        if not deferred:
+                            continue
+                    if identifier == "sharing-gallery-early":
+                        self.assertIn("needs.plan.outputs.runtime_scope == 'full-v1'", body)
+                        if selected != scope.FULL_SCOPE:
+                            continue
                     if selected == scope.ICON_SCOPE and identifier != "build-without-signing":
                         continue
                     if identifier == "sharing-app-ui" and not has_app_ui:
@@ -845,14 +891,35 @@ final class UnrelatedUITests: XCTestCase {
                         continue
                     matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
                     expansion = outputs[matrix[1]] if matrix else (None,)
-                    limit = parallelism if identifier == "sharing-runtime-matrix" else len(expansion)
+                    if identifier == "sharing-gallery-early":
+                        self.assertIn("lane: [gallery-variants, gallery-normal]", body)
+                        self.assertIn("max-parallel: 1", body)
+                        expansion = ("gallery-variants", "gallery-normal")
+                    if identifier == "sharing-runtime-deferred":
+                        self.assertIn("fromJSON(needs.plan.outputs.runtime_scope == 'full-v1' && '[\"runtime\"]' || needs.plan.outputs.matrix_lanes)", body)
+                        expansion = ("runtime",) if selected == scope.FULL_SCOPE else remaining
+                    limit = 1 if identifier == "sharing-gallery-early" else parallelism if identifier.startswith("sharing-runtime-") else 3 if identifier == "sharing-app-ui" else len(expansion)
                     if matrix:
-                        if identifier == "sharing-runtime-matrix":
+                        if identifier.startswith("sharing-runtime-"):
                             self.assertIn("max-parallel: ${{ fromJSON(needs.plan.outputs.matrix_parallelism) }}", body)
-                    maximum_running += min(len(expansion), limit)
-                    # Every Mac check depends only on the planner. A failed
-                    # sibling neither blocks another check nor forces its rerun.
-                    self.assertIn("    needs: plan\n", body)
+                    if identifier == "sharing-gallery-early":
+                        early_running += min(len(expansion), limit)
+                        self.assertIn("    needs: [plan, simulator-smoke-test]\n", body)
+                        self.assertNotIn("needs.build-without-signing", body)
+                        condition = re.search(r"^    if: (.+)$", body, re.M)[1]
+                        self.assertEqual(condition, "always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true' && needs.plan.outputs.runtime_scope == 'full-v1'")
+                        self.assertNotIn("needs.simulator-smoke-test.result", body)
+                    elif identifier == "sharing-runtime-deferred":
+                        deferred_running += min(len(expansion), limit)
+                        self.assertIn("    needs: [plan, build-without-signing, simulator-smoke-test]\n", body)
+                        self.assertIn("if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
+                        # No success predicate on either sibling: all terminal
+                        # outcomes release the slots and still collect evidence.
+                        self.assertNotIn("needs.build-without-signing.result", body)
+                        self.assertNotIn("needs.simulator-smoke-test.result", body)
+                    else:
+                        initial_running += min(len(expansion), limit)
+                        self.assertIn("    needs: plan\n", body)
                     self.assertNotIn("continue-on-error", body)
                     name = re.search(r"^    name: (.+)$", body, re.M)[1]
                     for lane in expansion:
@@ -867,14 +934,47 @@ final class UnrelatedUITests: XCTestCase {
                 self.assertEqual(len(names), len(set(names)))
                 if has_app_ui:
                     self.assertIn("    name: Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]", jobs["sharing-app-ui"])
+                ui_running = min(3, len(ui_lanes))
+                maximum_running = max(initial_running, ui_running + (1 if early_running else 0) + early_running, ui_running + deferred_running + early_running)
                 self.assertLessEqual(maximum_running, 5)
-                self.assertEqual(maximum_running, 1 if selected == scope.ICON_SCOPE else
-                    4 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.TOOL_CANDIDATE_REFRESH_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE, scope.PRESERVATION_USAGE_SCOPE, scope.MEMBERSHIP_TOOLS_SCOPE) else
-                    4 if selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE) else 5)
+                if selected in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE, scope.APP_DATA_SCOPE):
+                    self.assertEqual(initial_running, 5)
+                if selected == scope.FULL_SCOPE:
+                    self.assertEqual(ui_running + deferred_running + early_running, 5)
+                    self.assertEqual(deferred_running, 1)
+                    self.assertEqual(early_running, 1)
+                if selected == scope.ICON_SCOPE:
+                    self.assertEqual(maximum_running, 1)
+                if not deferred and selected != scope.ICON_SCOPE:
+                    self.assertEqual(deferred_running, 0,
+                                     "Small scopes must not wait for build/smoke before runtime checks")
                 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.TOOL_CANDIDATE_REFRESH_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE, scope.PRESERVATION_USAGE_SCOPE, scope.MEMBERSHIP_TOOLS_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")
+
+    def test_full_gallery_released_smoke_slot_never_overbooks(self):
+        # Exhaust all reachable completion subsets; duration, queue ordering,
+        # and success/failure of a completed sibling must not affect the cap.
+        initial = {"build", "smoke", "solo1", "solo2", "other"}
+        dependencies = {name: set() for name in initial}
+        dependencies.update(runtime={"build", "smoke"},
+                            gallery1={"smoke"}, gallery2={"smoke"})
+        jobs = tuple(dependencies)
+        observed = set()
+        for bits in range(1 << len(jobs)):
+            completed = {name for index, name in enumerate(jobs) if bits & (1 << index)}
+            if any(not dependencies[name] <= completed for name in completed):
+                continue
+            ready = {name for name in jobs if name not in completed
+                     and dependencies[name] <= completed}
+            galleries = ready & {"gallery1", "gallery2"}
+            running = len(ready - galleries) + min(1, len(galleries))
+            self.assertLessEqual(running, 5, completed)
+            observed.add(running)
+        self.assertIn(5, observed)
+        self.assertNotIn("build", dependencies["gallery1"])
+        self.assertEqual(dependencies["runtime"], {"build", "smoke"})
 
     def test_partial_rerun_keeps_passed_siblings_and_uses_only_latest_result(self):
         run = dict(id=42, head_sha="a" * 40, run_attempt=2)

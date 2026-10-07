@@ -1,6 +1,38 @@
 import XCTest
 
 final class OfficialWindowUITests: XCTestCase {
+    @MainActor
+    func testSyntheticMovieShippingExportsSoundOnAndOff() throws {
+        guard ProcessInfo.processInfo.environment["NEKO_MOVIE_SYNTHETIC_DIAGNOSTIC"] == "true" else {
+            throw XCTSkip("Run only through the pinned synthetic movie diagnostic preparation.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "movie"
+        app.launchEnvironment["NEKO_MOVIE_SYNTHETIC_FIXTURE_DIR"] = "@app-tmp/movie-synthetic-inputs"
+        app.launchEnvironment["NEKO_MOVIE_BUILD_SHA"] = ProcessInfo.processInfo.environment["NEKO_MOVIE_BUILD_SHA"] ?? "not supplied"
+        defer { app.terminate() }
+        app.launch()
+        let ready = app.staticTexts["mainline-movie-ready"]
+        let deadline = Date().addingTimeInterval(180)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        while !ready.exists && Date() < deadline {
+            if app.staticTexts["mainline-movie-failed"].exists { break }
+            // Only this explicit synthetic fixture creates and deletes Photos.
+            let alert = springboard.alerts.firstMatch
+            for label in ["削除", "Delete"] where alert.exists && alert.buttons[label].exists {
+                alert.buttons[label].tap()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        let evidence = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        evidence.name = "movie-synthetic-on-off"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        XCTAssertTrue(ready.exists, "Shipping ON/OFF export, input validation or synthetic cleanup failed.")
+    }
+
     /// These tests send an actual URL event into the production presentation
     /// host. Source resolution and pixels stay offline; they do not establish
     /// live PhotoKit authorization, private binding validity, or WidgetKit tap
@@ -510,6 +542,25 @@ final class OfficialWindowUITests: XCTestCase {
         app.buttons["閉じる"].tap()
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+        let discoveryEntry = app.buttons["official-window-entry"]
+        XCTAssertTrue((discoveryEntry.value as? String ?? "").contains("受け取り中"))
+        discoveryEntry.tap()
+        stopReceiving(app)
+        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        expectation(for: NSPredicate { _, _ in
+            (discoveryEntry.value as? String ?? "").contains("まだ受け取っていません")
+        }, evaluatedWith: discoveryEntry)
+        waitForExpectations(timeout: 5)
+        capture("window-discovery-after-stop", app)
+        discoveryEntry.tap()
+        let receiveAgain = app.buttons["official-window-subscribe"]
+        for _ in 0..<5 where !receiveAgain.isHittable { app.swipeUp(velocity: .slow) }
+        receiveAgain.tap()
+        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        expectation(for: NSPredicate { _, _ in
+            (discoveryEntry.value as? String ?? "").contains("受け取り中")
+        }, evaluatedWith: discoveryEntry)
+        waitForExpectations(timeout: 5)
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
@@ -697,6 +748,17 @@ final class OfficialWindowUITests: XCTestCase {
         waitForExpectations(timeout: 10)
         XCTAssertFalse((family.value as? String)?.contains("写真あり") == true)
         XCTAssertFalse(app.buttons["window-list-start-private"].exists)
+    }
+
+    @MainActor
+    func testLostCatMissingLedgerStopsWithoutChangingPhotosAndRecoversAfterRestore() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--lost-cat-draft-ui-fixture", "--lost-cat-ledger-recovery-check"]
+        app.launch()
+        let result = app.staticTexts["lost-cat-ledger-recovery-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "label == %@", "passed"), evaluatedWith: result)
+        waitForExpectations(timeout: 10)
     }
 
     @MainActor
@@ -961,6 +1023,69 @@ final class OfficialWindowUITests: XCTestCase {
         // before selecting that action; the post-tap subscription checks stay.
         app.alerts["「\(windowName)」の受け取りをやめますか？"]
             .buttons.matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    func testOfficialEmptyStatesMatchCoverAndOfferNearbyActions() {
+        continueAfterFailure = false
+        let scenarios: [(String, String, Bool)] = [
+            ("empty", "いまは掲載されている写真がありません", false),
+            ("paused", "いまは配信をお休みしています", true),
+            ("failure", "写真を確認できませんでした", false),
+            ("catalog-expiry", "新しい配信の確認が必要です", true)
+        ]
+        for largest in [false, true] {
+            for (scenario, title, offersDiscovery) in scenarios {
+                let app = XCUIApplication()
+                app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed", "--window-list-two-public",
+                                       "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                    + (largest ? ["--window-list-largest-text"] : [])
+                app.launchEnvironment["NEKO_OFFICIAL_WINDOW_STATUS_FIXTURE"] = scenario
+                app.launch()
+                let entry = app.buttons["official-window-entry"]
+                XCTAssertTrue(entry.waitForExistence(timeout: 10))
+                if scenario == "catalog-expiry" {
+                    XCTAssertFalse((entry.value as? String ?? "").contains(title))
+                    capture("official-state-catalog-before-deadline-\(largest)", app)
+                }
+                expectation(for: NSPredicate { _, _ in
+                    (entry.value as? String ?? "").contains(title)
+                }, evaluatedWith: entry)
+                waitForExpectations(timeout: 20)
+                XCTAssertFalse((entry.value as? String ?? "").contains("配信は終了"))
+                capture("official-state-\(scenario)-cover-\(largest)", app)
+                entry.tap()
+                let state = app.descendants(matching: .any)["official-window-state-title"].firstMatch
+                XCTAssertTrue(state.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in state.label.contains(title) }, evaluatedWith: state)
+                waitForExpectations(timeout: 5)
+                let retry = app.buttons["official-window-refresh-retry"]
+                for _ in 0..<3 where !retry.isHittable { app.swipeUp(velocity: .slow) }
+                XCTAssertTrue(retry.isHittable)
+                XCTAssertTrue(retry.isEnabled)
+                capture("official-state-\(scenario)-detail-\(largest)", app)
+                retry.tap()
+                expectation(for: NSPredicate { _, _ in retry.isEnabled }, evaluatedWith: retry)
+                waitForExpectations(timeout: 5)
+                XCTAssertTrue(state.label.contains(title))
+                let discovery = app.buttons["official-window-state-discovery"]
+                XCTAssertEqual(discovery.exists, offersDiscovery)
+                if offersDiscovery {
+                    for _ in 0..<3 where !discovery.isHittable { app.swipeUp(velocity: .slow) }
+                    XCTAssertTrue(discovery.isHittable)
+                    discovery.tap()
+                    XCTAssertTrue(app.descendants(matching: .any)["window-discovery"].firstMatch
+                        .waitForExistence(timeout: 5))
+                    let other = app.buttons["public-window-entry-nap-cats"]
+                    for _ in 0..<3 where !other.isHittable { app.swipeUp(velocity: .slow) }
+                    XCTAssertTrue(other.isHittable)
+                    app.navigationBars.buttons.element(boundBy: 0).tap()
+                    XCTAssertTrue(state.waitForExistence(timeout: 5))
+                    XCTAssertTrue(state.label.contains(title))
+                }
+                app.terminate()
+            }
+        }
     }
 
     @MainActor
@@ -2381,6 +2506,18 @@ final class SoloMemoriesUITests: XCTestCase {
             } else {
                 XCTAssertEqual(showcase.frame.minY, care.frame.minY, accuracy: 1)
                 XCTAssertGreaterThan(care.frame.minX, showcase.frame.minX)
+            }
+            if !largeText {
+                let visibleTop = app.navigationBars["ツール"].frame.maxY
+                let visibleBottom = app.tabBars.firstMatch.frame.minY
+                for id in ["tools-showcase-open", "tools-care-open", "tools-vet-open",
+                           "tools-lost-cat-open", "tools-evacuation-open"] {
+                    let entrance = app.buttons[id]
+                    XCTAssertTrue(entrance.isHittable, "Every standard-size entrance starts visible")
+                    XCTAssertGreaterThanOrEqual(entrance.frame.minY, visibleTop - 1)
+                    XCTAssertLessThanOrEqual(entrance.frame.maxY, visibleBottom + 1,
+                        "Partial visibility is insufficient for an entrance")
+                }
             }
             capture("tools-hub-\(appearance)")
             for _ in 0..<5 where !care.isHittable { app.swipeUp() }
@@ -5234,6 +5371,50 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(retained.count, 0)
         XCTAssertEqual(withdrawn.count, 0, "A catalog from another window cannot populate this collection.")
         app.terminate()
+    }
+
+    @MainActor
+    func testFamilyCollectionEmptyAndFailureGuidancePreservesAvailablePhotos() {
+        continueAfterFailure = false
+        for largest in [false, true] {
+            for scenario in ["empty", "image-less", "retry"] {
+                let app = XCUIApplication()
+                app.launchArguments = ["--photo-window-ui-fixture", "--family-record-ui-fixture",
+                    "--family-collection-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+                    + (largest ? ["--ux-large-text"] : [])
+                    + [scenario == "retry" ? "--family-collection-retry-fixture" : "--family-collection-\(scenario)"]
+                app.launch()
+                if scenario == "retry" {
+                    let delivery = app.descendants(matching: .any)["family-collection-delivery"].firstMatch
+                    XCTAssertTrue(delivery.waitForExistence(timeout: 10))
+                    app.buttons["family-collection-fixture-failure"].tap()
+                    let failure = app.descendants(matching: .any)["family-collection-load-failed"].firstMatch
+                    XCTAssertTrue(failure.waitForExistence(timeout: 5))
+                    XCTAssertTrue(delivery.exists, "Failed record refresh keeps independently available photos")
+                    let retry = app.buttons["family-collection-retry"]
+                    for _ in 0..<3 where !retry.isHittable { app.swipeUp(velocity: .slow) }
+                    XCTAssertTrue(retry.isHittable)
+                    attach(app, name: "family-collection-failure-\(largest)")
+                    let recover = app.buttons["family-collection-fixture-recover"]
+                    recover.tap()
+                    expectation(for: NSPredicate { _, _ in recover.label == "通信回復済み" }, evaluatedWith: recover)
+                    waitForExpectations(timeout: 5)
+                    retry.tap()
+                    expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: failure)
+                    waitForExpectations(timeout: 5)
+                    XCTAssertTrue(delivery.exists)
+                } else {
+                    let title = scenario == "empty" ? "いまは写真がありません" : "写真の控えがありません"
+                    XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 10))
+                    XCTAssertFalse(app.buttons["family-collection-retry"].exists)
+                    let picker = app.buttons["family-window-photo-picker"]
+                    for _ in 0..<3 where !picker.isHittable { app.swipeUp(velocity: .slow) }
+                    XCTAssertTrue(picker.isHittable)
+                    attach(app, name: "family-collection-\(scenario)-\(largest)")
+                }
+                app.terminate()
+            }
+        }
     }
 
     @MainActor

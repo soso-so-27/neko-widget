@@ -12,6 +12,7 @@ import {
 } from "./billing-verifier-client";
 import { requestBillingReconciliation } from "./billing-reconciliation-queue";
 import { effectiveBillingEntitlement } from "./billing-entitlement";
+import { requireOwnerSandboxBootstrap, requireOwnerSandboxAccount, recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
 import {
   randomBase64url,
   sha256Base64url,
@@ -158,6 +159,7 @@ export async function createBillingAccount(request: Request, env: Env): Promise<
     throw new ApiError(401, "invalid_billing_creation_signature", "Billing authentication failed.");
   }
   const requestHash = await sha256Base64url(creationTranscript);
+  await requireOwnerSandboxBootstrap(env, clientRequestId, signingPublicKey);
   const existing = await loadBootstrap(env, clientRequestId);
   if (existing !== null) {
     if (existing.request_hash !== requestHash) {
@@ -169,6 +171,7 @@ export async function createBillingAccount(request: Request, env: Env): Promise<
   const createdAt = nowSeconds();
   const billingAccountId = crypto.randomUUID().toLowerCase();
   const billingKeyId = randomBase64url(16);
+  recheckOwnerSandboxAdmission(env);
   try {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO billing_accounts(id, created_at) VALUES (?, ?)")
@@ -311,6 +314,7 @@ export async function storeVerifiedTransaction(
   source: { kind: "app"; submitter: AuthenticatedBillingAccount }
     | { kind: "apple_notification" },
 ): Promise<TransactionEventRow> {
+  await requireOwnerSandboxAccount(env, value.billingAccountId);
   if (source.kind === "app" && value.billingAccountId !== source.submitter.billingAccountId) {
     throw new ApiError(409, "billing_account_mismatch", "The App Store transaction is invalid.");
   }
@@ -333,6 +337,7 @@ export async function storeVerifiedTransaction(
   )) {
     throw new ApiError(409, "billing_lineage_conflict", "The App Store transaction is invalid.");
   }
+  recheckOwnerSandboxAdmission(env);
   try {
     await env.DB.batch([
       env.DB.prepare(

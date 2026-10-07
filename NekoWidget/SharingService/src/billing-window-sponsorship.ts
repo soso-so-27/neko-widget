@@ -1,3 +1,4 @@
+import { recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
 import {
   authenticateSignedRequest,
   consumeNonce,
@@ -306,7 +307,11 @@ export async function changeWindowSponsorship(
         "The current window owner must approve sponsorship.",
       );
   }
+  const ownerConsentNonceHash = ownerConsentNonce === undefined ? null
+    : await sha256Base64url(new TextEncoder().encode(ownerConsentNonce));
+  const ownerConsentHash = operation === "sponsor" ? await sha256Base64url(transcript) : null;
   const resultingGeneration = expectedGeneration + 1;
+  recheckOwnerSandboxAdmission(env);
   try {
     await env.DB.prepare(
       `INSERT INTO billing_window_sponsorship_requests(client_request_id,request_hash,operation,billing_account_id,submitted_by_billing_key_id,window_lineage_id,expected_generation,expected_current_billing_account_id,consent_space_id,owner_participant_id,owner_device_id,consent_membership_revision,consent_issued_at,owner_consent_nonce_hash,owner_consent_hash,entitlement_decision_id,entitlement_request_generation,entitlement_evaluated_at_ms,resulting_generation) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -325,10 +330,8 @@ export async function changeWindowSponsorship(
         ownerDeviceId ?? null,
         consentMembershipRevision ?? null,
         consentIssuedAt ?? null,
-        ownerConsentNonce === undefined
-          ? null
-          : await sha256Base64url(new TextEncoder().encode(ownerConsentNonce)),
-        operation === "sponsor" ? await sha256Base64url(transcript) : null,
+        ownerConsentNonceHash,
+        ownerConsentHash,
         entitlement?.decision_id ?? null,
         entitlement?.request_generation ?? null,
         entitlement?.evaluated_at_ms ?? null,

@@ -7,9 +7,69 @@ import CoreGraphics
 @main enum VeterinaryVisitVerifier {
     struct Failure: Error { let message: String }
     static func require(_ result: Bool, _ message: String) throws { if !result { throw Failure(message: message) } }
+    static func verifyLedgerRecovery(root: URL) async throws {
+        let manager = FileManager.default
+        let store = VeterinaryVisitStore(directory: root)
+        try require(try await store.visits().isEmpty, "New absent directory was not empty")
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        try require(try await store.visits().isEmpty, "New empty directory was not empty")
+        let visit = try await store.current(catID: UUID(), catName: "むぎ") { try $0() }
+        let ledger = root.appendingPathComponent("state.json")
+        let original = try Data(contentsOf: ledger)
+        let photo = root.appendingPathComponent(UUID().uuidString + ".jpg")
+        let photoBytes = Data([0xff, 0xd8, 0xff, 0xd9])
+        try photoBytes.write(to: photo)
+        try require(try await store.visits() == [visit], "Normal ledger failed")
+        for corrupt in [false, true] {
+            if corrupt { try Data("broken-ledger".utf8).write(to: ledger) }
+            else { try manager.removeItem(at: ledger) }
+            do { _ = try await store.visits(); throw Failure(message: "Missing/corrupt ledger became empty") }
+            catch VeterinaryVisitError.storage {} catch VeterinaryVisitError.corrupted {}
+            do {
+                _ = try await store.current(catID: UUID(), catName: "別の猫") { _ in
+                    throw Failure(message: "Unreadable ledger reached creation")
+                }
+                throw Failure(message: "Unreadable ledger accepted creation")
+            } catch VeterinaryVisitError.storage {} catch VeterinaryVisitError.corrupted {}
+            do { _ = try await store.save(visit, expectedRevision: visit.revision); throw Failure(message: "Unreadable ledger accepted edit") }
+            catch VeterinaryVisitError.storage {} catch VeterinaryVisitError.corrupted {}
+            do { try await store.delete(visitID: visit.id, expectedRevision: visit.revision); throw Failure(message: "Unreadable ledger accepted delete") }
+            catch VeterinaryVisitError.storage {} catch VeterinaryVisitError.corrupted {}
+            do { _ = try await store.cleanupPending(); throw Failure(message: "Unreadable ledger accepted cleanup") }
+            catch VeterinaryVisitError.storage {} catch VeterinaryVisitError.corrupted {}
+            try require(try Data(contentsOf: photo) == photoBytes, "Recovery path changed photo bytes")
+            if corrupt { try require(try Data(contentsOf: ledger) == Data("broken-ledger".utf8), "Corrupt ledger overwritten") }
+            else { try require(!manager.fileExists(atPath: ledger.path), "Missing ledger recreated") }
+            try original.write(to: ledger)
+            try require(try await store.visits() == [visit], "Restored ledger did not recover")
+            // Restore a newer revision and another cat's record, then reuse the
+            // old instance. Its stale edit/delete must preserve both records.
+            struct RestoredState: Encodable { let schema = 1; let visits: [VeterinaryVisit] }
+            var newer = visit; newer.revision = UUID(); newer.observations = "復元後の新しい記録"
+            let additional = VeterinaryVisit(id: UUID(), catID: UUID(), catName: "別の猫", revision: UUID(),
+                startedOn: nil, observations: "復元した別の記録", questions: "", entries: [], completedAt: nil)
+            let restoredBytes = try JSONEncoder().encode(RestoredState(visits: [newer, additional]))
+            try restoredBytes.write(to: ledger)
+            do { _ = try await store.save(visit, expectedRevision: visit.revision); throw Failure(message: "Stale edit overwrote restored revision") }
+            catch VeterinaryVisitError.changed {}
+            do { try await store.delete(visitID: visit.id, expectedRevision: visit.revision); throw Failure(message: "Stale delete removed restored revision") }
+            catch VeterinaryVisitError.changed {}
+            try require(try Data(contentsOf: ledger) == restoredBytes, "Stale operation changed restored bytes")
+            var edited = newer; edited.questions = "復元後の追記"
+            let saved = try await store.save(edited, expectedRevision: newer.revision)
+            let reopened = VeterinaryVisitStore(directory: root)
+            let after = try await reopened.visits()
+            try require(after.contains(saved) && after.contains(additional) && after.count == 2, "Post-recovery edit lost records")
+            try require(try Data(contentsOf: photo) == photoBytes, "Post-recovery edit changed photo bytes")
+            try original.write(to: ledger)
+        }
+    }
+
     static func main() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let suiteRoot = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: suiteRoot) }
+        try await verifyLedgerRecovery(root: suiteRoot.appendingPathComponent("ledger-recovery"))
+        let root = suiteRoot.appendingPathComponent("primary-store")
         let store = VeterinaryVisitStore(directory: root), owner = UUID(), otherOwner = UUID()
         let initial = try await store.visits()
         for invalid in ["", "   ", String(repeating: "猫", count: 201), "猫\0"] {
@@ -23,7 +83,7 @@ import CoreGraphics
         }
         // Previously valid whitespace names must remain readable, without a schema migration.
         struct LegacyState: Encodable { let schema = 1; let visits: [VeterinaryVisit] }
-        let legacyRoot = root.appendingPathComponent("legacy")
+        let legacyRoot = suiteRoot.appendingPathComponent("legacy")
         try FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
         let legacy = VeterinaryVisit(id: UUID(), catID: UUID(), catName: "   ", revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
@@ -34,7 +94,7 @@ import CoreGraphics
             throw Failure(message: "Existing legacy record invoked creation")
         }
         try require(reused == legacy, "Legacy draft was not reused")
-        let capacityRoot = root.appendingPathComponent("capacity")
+        let capacityRoot = suiteRoot.appendingPathComponent("capacity")
         try FileManager.default.createDirectory(at: capacityRoot, withIntermediateDirectories: true)
         let full = (0..<100).map { _ in VeterinaryVisit(id: UUID(), catID: UUID(), catName: "猫", revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil) }

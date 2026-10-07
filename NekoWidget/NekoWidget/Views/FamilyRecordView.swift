@@ -134,6 +134,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     let windowName: String
     let photos: [MomentSharedPhoto]
     let canShowRecords: Bool
+    let hasImageLessHistory: Bool
     let addPhotoAction: AnyView?
     let showInformation: () -> Void
     let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
@@ -168,11 +169,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
-         addPhotoAction: AnyView? = nil,
+         addPhotoAction: AnyView? = nil, hasImageLessHistory: Bool = false,
          showInformation: @escaping () -> Void,
          deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.addPhotoAction = addPhotoAction
+        self.hasImageLessHistory = hasImageLessHistory
         self.showInformation = showInformation
         self.deliveryCard = deliveryCard
         self.fixturePhoto = fixturePhoto
@@ -271,14 +273,34 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 Label("接続を確認できません", systemImage: "wifi.exclamationmark")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .accessibilityIdentifier("family-collection-unavailable")
-            } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
-                if addPhotoAction != nil {
-                    ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle",
-                        description: Text("＋から写真を1枚選び、相手と共有できます。"))
-                } else {
-                    ContentUnavailableView("まだ写真がありません", systemImage: "photo.on.rectangle")
+            } else if model.error != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("写真を読み込めませんでした", systemImage: "wifi.exclamationmark")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
+                        .font(.subheadline).frame(minHeight: 44)
+                        .disabled(model.loading)
+                        .accessibilityIdentifier("family-collection-retry")
                 }
-            } else {
+                .accessibilityIdentifier("family-collection-load-failed")
+            } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(hasImageLessHistory ? "写真の控えがありません" : "いまは写真がありません",
+                          systemImage: "photo.on.rectangle")
+                        .font(.headline)
+                    Text(hasImageLessHistory
+                        ? "写真のない送信履歴で、以前の送信状況を確認できます。"
+                        : addPhotoAction != nil
+                            ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
+                            : "相手からの写真はここに届きます。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("family-collection-empty")
+            }
+            // A refresh failure does not hide independently available photos.
+            // Projection still applies the existing authority and scene gates.
+            if !value.items.isEmpty || !value.withdrawn.isEmpty {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
                     count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), alignment: .leading, spacing: 16) {
                     ForEach(value.items) { item in
@@ -295,10 +317,6 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 }
             }
             if model.loading { ProgressView("写真を確認中").font(.footnote) }
-            if model.error != nil, canShowRecords {
-                Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
-                    .font(.subheadline).frame(minHeight: 44)
-            }
             if exporter.preparing {
                 HStack {
                     ProgressView("写真とメモを準備中")
@@ -1282,9 +1300,11 @@ private struct FamilyRecordEditor: View {
 struct FamilyRecordUIFixture: View {
     private let client: FamilyRecordFixtureClient
     private let photo: MomentShareIngressPhoto
-    @State private var showDelivery = true
+    @State private var showDelivery = !CommandLine.arguments.contains("--family-collection-empty")
+        && !CommandLine.arguments.contains("--family-collection-image-less")
     @State private var canReadCollection = true
     @State private var otherSpace = false
+    @State private var loadRecoveryReady = false
     @State private var fixtureSelection: PhotosPickerItem?
     init() {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 180)).image { context in
@@ -1312,6 +1332,7 @@ struct FamilyRecordUIFixture: View {
                             }
                             .accessibilityLabel("写真を追加")
                             .accessibilityIdentifier("family-window-photo-picker")),
+                            hasImageLessHistory: CommandLine.arguments.contains("--family-collection-image-less"),
                             showInformation: {}) { item, captionSource in
                                 if case let .sent(record) = item {
                                     let caption: String? = switch captionSource {
@@ -1334,39 +1355,50 @@ struct FamilyRecordUIFixture: View {
                 FamilyRecordView(fixtureClient: client, fixturePhoto: photo)
             }
         }
+            .environment(\.dynamicTypeSize,
+                CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
             .safeAreaInset(edge: .bottom) {
                 HStack {
-                    if CommandLine.arguments.contains("--family-collection-ui-fixture") {
-                        Button("追加") { Task {
-                            if let operation = try? await client.preparePhoto(photo, sourceMomentID: "fixture-moment") {
-                                _ = try? await client.save(operation); await client.addPeerWords(); refresh()
-                            }
-                        } }.accessibilityIdentifier("family-collection-fixture-retain")
-                        Button("期限") { showDelivery.toggle() }
-                            .accessibilityIdentifier("family-collection-fixture-expire")
-                        Menu("メモ") {
-                            Button("初回メモ") { Task {
-                                try? await client.addInitialDeliveryWords(); refresh()
-                            } }.accessibilityIdentifier("family-collection-fixture-initial-words")
-                            Button("初回メモを取り下げ") { Task {
-                                try? await client.withdrawInitialDeliveryWords(); refresh()
-                            } }.accessibilityIdentifier("family-collection-fixture-withdraw-initial-words")
-                        }
-                        Button("撤回") { Task {
-                            if let row = try? await client.load().catalog.records.first(where: { $0.kind == .photo }),
-                               let operation = try? await client.prepareWithdrawal(row) {
-                                _ = try? await client.save(operation); refresh()
-                            }
-                        } }.accessibilityIdentifier("family-collection-fixture-withdraw")
-                        Button("制限") { canReadCollection.toggle() }
-                            .accessibilityIdentifier("family-collection-fixture-restrict")
-                        Button("別まど") { otherSpace = true; showDelivery = false }
-                            .accessibilityIdentifier("family-collection-fixture-switch")
+                    if CommandLine.arguments.contains("--family-collection-retry-fixture") {
+                        Button("通信失敗") { Task { await client.setLoadFailure(true); refresh() } }
+                            .accessibilityIdentifier("family-collection-fixture-failure")
+                        Button(loadRecoveryReady ? "通信回復済み" : "通信回復") { Task {
+                            await client.setLoadFailure(false); loadRecoveryReady = true
+                        } }
+                            .accessibilityIdentifier("family-collection-fixture-recover")
                     } else {
-                    Button("相手の追記") { Task { await client.addPeerWords(); refresh() } }
-                        .accessibilityIdentifier("family-record-fixture-peer")
-                    Button("退出") { Task { await client.leave(); refresh() } }
-                        .accessibilityIdentifier("family-record-fixture-leave")
+                        if CommandLine.arguments.contains("--family-collection-ui-fixture") {
+                            Button("追加") { Task {
+                                if let operation = try? await client.preparePhoto(photo, sourceMomentID: "fixture-moment") {
+                                    _ = try? await client.save(operation); await client.addPeerWords(); refresh()
+                                }
+                            } }.accessibilityIdentifier("family-collection-fixture-retain")
+                            Button("期限") { showDelivery.toggle() }
+                                .accessibilityIdentifier("family-collection-fixture-expire")
+                            Menu("メモ") {
+                                Button("初回メモ") { Task {
+                                    try? await client.addInitialDeliveryWords(); refresh()
+                                } }.accessibilityIdentifier("family-collection-fixture-initial-words")
+                                Button("初回メモを取り下げ") { Task {
+                                    try? await client.withdrawInitialDeliveryWords(); refresh()
+                                } }.accessibilityIdentifier("family-collection-fixture-withdraw-initial-words")
+                            }
+                            Button("撤回") { Task {
+                                if let row = try? await client.load().catalog.records.first(where: { $0.kind == .photo }),
+                                   let operation = try? await client.prepareWithdrawal(row) {
+                                    _ = try? await client.save(operation); refresh()
+                                }
+                            } }.accessibilityIdentifier("family-collection-fixture-withdraw")
+                            Button("制限") { canReadCollection.toggle() }
+                                .accessibilityIdentifier("family-collection-fixture-restrict")
+                            Button("別まど") { otherSpace = true; showDelivery = false }
+                                .accessibilityIdentifier("family-collection-fixture-switch")
+                        } else {
+                        Button("相手の追記") { Task { await client.addPeerWords(); refresh() } }
+                            .accessibilityIdentifier("family-record-fixture-peer")
+                        Button("退出") { Task { await client.leave(); refresh() } }
+                            .accessibilityIdentifier("family-record-fixture-leave")
+                        }
                     }
                 }.buttonStyle(.bordered).padding(6)
             }
@@ -1388,6 +1420,8 @@ actor FamilyRecordFixtureClient: FamilyRecordServing {
     private let peer = "fixture_family_peer"
     private let jpeg: Data
     private var active = true
+    private var failsLoad = false
+    func setLoadFailure(_ value: Bool) { failsLoad = value }
     private var rows: [FamilyRecordRow] = []
     private var words: [String: String] = [:]
     private var receipts: [String: FamilyRecordRow] = [:]
@@ -1395,6 +1429,7 @@ actor FamilyRecordFixtureClient: FamilyRecordServing {
     private func requireActive() throws { guard active else { throw FamilyRecordError.unavailable } }
     func load() throws -> FamilyRecordSnapshot {
         try requireActive()
+        if failsLoad { throw URLError(.notConnectedToInternet) }
         return FamilyRecordSnapshot(catalog: .init(schemaVersion: 1, spaceID: space,
             participantID: author, maximumPhotos: 100, records: rows), words: words)
     }

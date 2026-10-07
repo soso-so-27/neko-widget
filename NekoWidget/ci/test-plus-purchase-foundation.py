@@ -133,6 +133,29 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             updates.index("await transaction.finish()"),
         )
 
+    def test_empty_or_unrelated_reconciliation_cannot_release_pending_purchase(self) -> None:
+        reconcile = section(
+            self.store,
+            "private func reconcileCurrentEntitlements() async",
+            "private func refreshServerAuthority() async",
+        )
+        guard = "if pendingProductID == transaction.productID {"
+        self.assertEqual(reconcile.count("pendingProductID = nil"), 1)
+        self.assertIn(guard, reconcile)
+        acknowledged = reconcile.index("try await recordVerifiedTransactionEvent(")
+        finished = reconcile.index("await transaction.finish()")
+        matching = reconcile.index(guard)
+        cleared = reconcile.index("pendingProductID = nil")
+        loop_end = reconcile.index("_ = await refreshServerAuthority()")
+        self.assertLess(acknowledged, finished)
+        self.assertLess(finished, matching)
+        self.assertLess(matching, cleared)
+        # Both the matching guard and event loop must end before the authority
+        # fetch. A reset at loop scope would admit a second pending purchase.
+        self.assertRegex(reconcile[cleared:loop_end], r"pendingProductID = nil\s*}\s*}\s*$")
+        failure = reconcile[reconcile.index("} catch {"):]
+        self.assertNotIn("pendingProductID = nil", failure)
+
     def test_entitlement_is_server_confirmed_and_family_sharing_is_not_granted(self) -> None:
         self.assertIn("case serverConfirmed(PlusVerifiedEntitlement)", self.store)
         self.assertIn("case indeterminate(lastServerConfirmed:", self.store)
