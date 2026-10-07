@@ -1333,10 +1333,17 @@ WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for n
 # migration, privacy, Photos, runtime and BOTH app UI shards remain required;
 # only the three unrelated Widget gallery lanes are omitted. Do not generalize
 # this to Services/**, Shared/**, app startup, fixtures or arbitrary new files.
+# Owner-only local preparation reviewed as exact source pairs. The files also
+# own broader billing behavior, so future edits cannot borrow this exclusion.
+BILLING_LOCAL_PREPARATION_DIGESTS = {'NekoWidget/NekoWidget/Services/BillingFreshAccountAuthorization.swift': ('6e25a3540d6a23eb1f184894ece48a0c48817e94965e2ca21f58ef0eb9be2f9a', '97c75752707bbe0ccf1e8ea1e469656df1f68146a9fcda99ecf1550e3ed274ab'), 'NekoWidget/NekoWidget/Services/BillingKeychainStore.swift': ('bb514a42fc8add6a14af020c25d891f69c25c8d76237ac94a7c9cc46159144af', '73c70dcf4bceaa7398f89a66b20fd676915a569cd5fd95b9dcf49b1d1bd997b6'), 'NekoWidget/NekoWidget/Services/MembershipOfferModel.swift': ('b2f114f7fbf79f628bda3ce180c5f27a83def525dc68e9bfbf47ebf6b64f8676', '75049a999363eb2fbc1353ef5b93a09ad64d7886f06717eed0fbfe8419508dbf'), 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('def69cd0b95170cbcf31ee0edd9db28b50df4a73b978bc39beedc0044e8b72ff', '46627cb8555afd3e14056b4540fae8790589fe5431e56e4487f68301eaf8f6e4'), 'NekoWidget/ci/test-billing-client-foundation.py': ('d60954a73abc683d4d28c124f2afb473b43aada429b32cc6b4b36e4cbb526ce2', 'be0f7ac455c7a8a3f5dfb6b388201fb935d2983b7350e99aa069f845217addff')}
+BILLING_LOCAL_PREPARATION_PRODUCTS = frozenset(path for path in BILLING_LOCAL_PREPARATION_DIGESTS
+    if path.startswith("NekoWidget/NekoWidget/Services/"))
+
 APP_DATA_PRODUCT_PATHS = frozenset("NekoWidget/NekoWidget/Services/" + name for name in (
     "PhotoMemoCoordinator.swift", "PhotoMemoryNoteStore.swift", "PhotoMemoryNoteExporter.swift",
     "PersonalArchiveStore.swift", "PersonalArchiveCloudClient.swift", "VeterinaryVisitStore.swift",
     "ManagedPreservationClient.swift", "ManagedPreservationCoordinator.swift",
+    "BillingFreshAccountAuthorization.swift", "BillingKeychainStore.swift", "MembershipOfferModel.swift",
 )) | frozenset("NekoWidget/NekoWidget/Views/" + name for name in (
     "PhotoMemoryNoteView.swift", "PhotoMemoryNoteLibraryView.swift", "PersonalArchiveView.swift",
     "ManagedPreservationView.swift", "VeterinaryVisitView.swift", "MainTabView.swift",
@@ -1350,6 +1357,7 @@ APP_DATA_REGISTRATIONS = {
 }
 APP_DATA_PATHS = APP_DATA_PRODUCT_PATHS | {
     APP_DATA_PROJECT, APP_DATA_DIAGNOSTIC, CI_WORKFLOW, MEMORY_TEST_PATH,
+    "NekoWidget/ci/test-billing-client-foundation.py",
     "NekoWidget/PreservationService/src/contracts.ts",
     "NekoWidget/PreservationService/src/documents.ts",
     "NekoWidget/PreservationService/test/weight-document.test.ts",
@@ -1406,6 +1414,12 @@ def app_data_changes(changes, *, project_source=None) -> bool:
         return False
     if any(not after.strip() for before, after in changes.values()):
         return False
+    if set(changes) & BILLING_LOCAL_PREPARATION_PRODUCTS:
+        if set(changes) != set(BILLING_LOCAL_PREPARATION_DIGESTS):
+            return False
+        if any(tuple(map(source_digest, changes[path])) != pair
+               for path, pair in BILLING_LOCAL_PREPARATION_DIGESTS.items()):
+            return False
     project_pair = changes.get(APP_DATA_PROJECT)
     if project_pair is not None:
         if not app_data_project_unchanged(*project_pair):

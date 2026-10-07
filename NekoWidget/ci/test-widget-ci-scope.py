@@ -60,6 +60,40 @@ class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 scope.lane_tests(scope.APP_DATA_SCOPE, lane)
 
+    def test_billing_local_preparation_requires_exact_review_and_project_proof(self):
+        expected_products = {
+            "NekoWidget/NekoWidget/Services/BillingFreshAccountAuthorization.swift",
+            "NekoWidget/NekoWidget/Services/BillingKeychainStore.swift",
+            "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift",
+        }
+        self.assertEqual(scope.BILLING_LOCAL_PREPARATION_PRODUCTS, expected_products)
+        self.assertEqual(set(scope.BILLING_LOCAL_PREPARATION_DIGESTS), expected_products | {
+            scope.MEMORY_TEST_PATH, "NekoWidget/ci/test-billing-client-foundation.py"})
+        changes = {path: ("old " + path, "new " + path)
+                   for path in scope.BILLING_LOCAL_PREPARATION_DIGESTS}
+        self.assertFalse(scope.app_data_changes(changes, project_source=self.project))
+        digests = {path: tuple(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        with patch.object(scope, "BILLING_LOCAL_PREPARATION_DIGESTS", digests):
+            self.assertFalse(scope.app_data_changes(changes))
+            self.assertTrue(scope.app_data_changes(changes, project_source=self.project))
+            for path in changes:
+                modified = dict(changes)
+                modified[path] = (modified[path][0], modified[path][1] + " unreviewed")
+                self.assertFalse(scope.app_data_changes(modified, project_source=self.project))
+                missing = {key: value for key, value in changes.items() if key != path}
+                self.assertFalse(scope.app_data_changes(missing, project_source=self.project))
+            for path in ("NekoWidget/Shared/MembershipAccessPolicy.swift",
+                         "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                         "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift"):
+                self.assertFalse(scope.app_data_changes(changes | {path: ("old", "new")}, project_source=self.project))
+        # Existing app-data jobs still retain all product boundary checks;
+        # this change does not alter tests, execution commands or release gates.
+        required = planner.required_jobs_from_scope(scope.APP_DATA_SCOPE)
+        self.assertIn(planner.BUILD, required)
+        self.assertIn(planner.SMOKE, required)
+        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE),
+                         ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
+
     def test_later_private_store_edit_needs_project_proof_not_frozen_product_hashes(self):
         path = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
         changes = {path: (self.changes[path][1], self.changes[path][1] + "\n// private storage change\n")}
