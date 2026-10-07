@@ -4,9 +4,10 @@ import json
 import math
 from fractions import Fraction
 from pathlib import Path
+from export_timestamps import SOURCE_DATES, SOURCE_SECONDS
 
 
-def validate(probe, expected_duration, sound_enabled):
+def validate(probe, expected_duration, sound_enabled, *, export_timestamps_verified=False):
     errors = []
     def check(condition, message):
         if not condition:
@@ -54,7 +55,8 @@ def validate(probe, expected_duration, sound_enabled):
         check(math.isfinite(duration) and abs(duration-expected_duration) <= .1, "unexpected total duration")
     except (KeyError, TypeError, ValueError):
         errors.append("missing or invalid duration")
-    # Muxer technical tags are allowed. Source names/location/timestamps are not.
+    # Source timestamps remain forbidden. Muxer creation_time requires a measured
+    # hash-bound receipt AND independently checked container/track/media headers.
     allowed = {"major_brand", "minor_version", "compatible_brands", "encoder", "language", "handler_name", "vendor_id"}
     for item in [container]+streams:
         tags = item.get("tags", {})
@@ -62,7 +64,14 @@ def validate(probe, expected_duration, sound_enabled):
             errors.append("invalid metadata tags")
             continue
         for tag in tags:
-            check(tag.lower() in allowed, "unexpected metadata tag: "+tag)
+            check(tag.lower() in allowed or (tag == "creation_time" and export_timestamps_verified is True),
+                  "unexpected metadata tag")
+        values = json.dumps(tags)
+        check(not any(name in values for name in ["source-video.mp4", "source-audio-997hz.wav"]
+                      + [f"still-{i}.png" for i in range(1, 7)]), "source filename leaked in metadata")
+        check("12.345" not in values and "67.89" not in values, "source location sentinel leaked in metadata")
+        check(not any(date[:10] in values for date in SOURCE_DATES)
+              and not any(str(second) in values for second in SOURCE_SECONDS), "source capture date leaked in metadata")
         sides = item.get("side_data_list", [])
         if not isinstance(sides, list) or any(not isinstance(side, dict) for side in sides):
             errors.append("invalid side data")

@@ -4,6 +4,7 @@
 import UIKit
 import Foundation
 import CryptoKit
+import CoreLocation
 /// Explicit acceptance capture for a disposable CI Simulator only.
 /// The PNG is decoded from the shipping exporter's MP4, not a parallel renderer.
 @MainActor
@@ -310,6 +311,11 @@ enum MainlineMovieAcceptance {
                     let request = name.hasSuffix(".mp4")
                         ? PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
                         : PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+                    // Fixed source capture-date sentinel, never a personal asset.
+                    if let index = fixture.scenes.firstIndex(where: { $0.file == name }) {
+                        request?.creationDate = dates[index]
+                    }
+                    request?.location = CLLocation(latitude: 12.345, longitude: 67.89)
                     if let identifier = request?.placeholderForCreatedAsset?.localIdentifier {
                         created[name] = identifier
                     }
@@ -317,6 +323,17 @@ enum MainlineMovieAcceptance {
             }
             guard created.count == 7, Set(created.values).count == 7,
                   Set(created.values).isDisjoint(with: baseline) else { throw SeasonalMovieExportError.assetMissing }
+            // Read back only our new assets; missing sentinels invalidate the privacy fixture.
+            for (name, identifier) in created {
+                guard let index = fixture.scenes.firstIndex(where: { $0.file == name }),
+                      let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject,
+                      let date = asset.creationDate, let location = asset.location,
+                      abs(date.timeIntervalSince(dates[index])) < 0.001,
+                      abs(location.coordinate.latitude - 12.345) < 0.000001,
+                      abs(location.coordinate.longitude - 67.89) < 0.000001 else {
+                    throw SeasonalMovieExportError.assetMissing
+                }
+            }
             let scenes = try fixture.scenes.enumerated().map { index, scene -> SeasonalMovieCandidate in
                 guard let identifier = created[scene.file],
                       PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).count == 1 else {
@@ -333,7 +350,13 @@ enum MainlineMovieAcceptance {
                 endYearNumber: 2025, endMonthNumber: 3, scenes: scenes)
             for enabled in [true, false] {
                 exportAttempts += 1
+                // Measure before calling the shipping exporter, not from MP4 metadata.
+                let exportStartedUnixMilliseconds = Int64(Date().timeIntervalSince1970 * 1_000)
+                let exportStartedUptime = ProcessInfo.processInfo.systemUptime
                 let managed = try await SeasonalMovieExportService.shared.export(presentation, soundEnabled: enabled)
+                let exportCompletedUptime = ProcessInfo.processInfo.systemUptime
+                let exportCompletedUnixMilliseconds = Int64(Date().timeIntervalSince1970 * 1_000)
+                let exportElapsedMilliseconds = Int64((exportCompletedUptime - exportStartedUptime) * 1_000)
                 exports.append(managed)
                 let file = output.appendingPathComponent(enabled ? "exported-on.mp4" : "exported-off.mp4")
                 try manager.copyItem(at: managed, to: file)
@@ -347,6 +370,9 @@ enum MainlineMovieAcceptance {
                     throw SeasonalMovieExportError.encodingFailed
                 }
                 results.append(["file": file.lastPathComponent, "soundEnabled": enabled, "duration": duration,
+                    "exportStartedUnixMilliseconds": exportStartedUnixMilliseconds,
+                    "exportCompletedUnixMilliseconds": exportCompletedUnixMilliseconds,
+                    "exportElapsedMilliseconds": exportElapsedMilliseconds,
                     "sha256": SHA256.hash(data: try Data(contentsOf: file)).map { String(format: "%02x", $0) }.joined()])
                 if !enabled {
                     let generator = AVAssetImageGenerator(asset: asset)
@@ -375,7 +401,7 @@ enum MainlineMovieAcceptance {
         let remainingDirectoryEvidence: Any
         if let remainingNewManagedDirectories { remainingDirectoryEvidence = Array(remainingNewManagedDirectories).sorted() }
         else { remainingDirectoryEvidence = NSNull() }
-        let receipt: [String: Any] = ["syntheticOnly": true, "shippingExporterInvoked": exportAttempts > 0,
+        let receipt: [String: Any] = ["schemaVersion": 2, "syntheticOnly": true, "shippingExporterInvoked": exportAttempts > 0,
             "exportAttempts": exportAttempts,
             "fixtureManifestSHA256": manifestHash,
             "buildSourceSHA": ProcessInfo.processInfo.environment["NEKO_MOVIE_BUILD_SHA"] ?? "not supplied",

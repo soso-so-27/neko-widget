@@ -22,6 +22,7 @@ UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 FAILURE_KEYS = {"schemaVersion", "syntheticOnly", "result", "stage", "photosAuthorization", "buildSourceSHA"}
 FAILURE_STAGES = {"photos-authorization", "cleanup-lifecycle", "synthetic-fixture"}
 PHOTOS_STATES = {"notDetermined", "restricted", "denied", "authorized", "limited", "unknown"}
+EXPORT_TIMING_KEYS = {"exportStartedUnixMilliseconds", "exportCompletedUnixMilliseconds", "exportElapsedMilliseconds"}
 
 
 def digest(data):
@@ -70,7 +71,9 @@ def seed(app_tmp, directory=FIXED_INPUTS):
 
 def validated_receipt(data):
     receipt = json.loads(data, object_pairs_hook=unique_json_fields)
-    if not isinstance(receipt, dict) or set(receipt) != RECEIPT_KEYS:
+    version = receipt.get("schemaVersion", 1) if isinstance(receipt, dict) else None
+    if (type(version) is not int or version not in {1, 2} or not isinstance(receipt, dict)
+            or set(receipt) != (RECEIPT_KEYS | {"schemaVersion"} if version == 2 else RECEIPT_KEYS)):
         raise ValueError("Unexpected native receipt fields")
     if (receipt["syntheticOnly"] is not True
             or receipt["fixtureManifestSHA256"] != MANIFEST_SHA256
@@ -96,7 +99,8 @@ def validated_receipt(data):
         raise ValueError("Unexpected export evidence")
     names = set()
     for entry in exports:
-        if (not isinstance(entry, dict) or set(entry) != {"file", "soundEnabled", "duration", "sha256"}
+        keys = {"file", "soundEnabled", "duration", "sha256"} | (EXPORT_TIMING_KEYS if version == 2 else set())
+        if (not isinstance(entry, dict) or set(entry) != keys
                 or entry["file"] not in {"exported-on.mp4", "exported-off.mp4"}
                 or entry["file"] in names
                 or type(entry["soundEnabled"]) is not bool
@@ -106,8 +110,21 @@ def validated_receipt(data):
                 or not isinstance(entry["sha256"], str)
                 or re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is None):
             raise ValueError("Unexpected exported file evidence")
+        if version == 2:
+            validate_export_timing(entry)
         names.add(entry["file"])
     return receipt
+
+
+def validate_export_timing(entry):
+    if any(type(entry.get(key)) is not int for key in EXPORT_TIMING_KEYS):
+        raise ValueError("Export timing requires integer measurements")
+    start, end, elapsed = (entry[key] for key in ["exportStartedUnixMilliseconds",
+        "exportCompletedUnixMilliseconds", "exportElapsedMilliseconds"])
+    if (not 946684800000 <= start < end <= 4102444800000
+            or not 0 < elapsed <= 180000 or end-start > 180000 or abs(end-start-elapsed) > 50):
+        raise ValueError("Export timing is invalid or wall clock changed")
+    return start, end
 
 
 def unique_json_fields(pairs):

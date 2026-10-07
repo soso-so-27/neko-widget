@@ -15,6 +15,8 @@ import wave
 
 from validate_probe import validate
 from verify_source_video import tone_fraction
+from diagnostic_fixture import regular_bytes, unique_json_fields
+from export_timestamps import export_interval, validate_timestamps
 
 RATE = 48000
 BUNDLED_BGM_SHA256 = "f9acf7a8dd0ed3ba2f45a110bc6702c39e70233d19edaeb8323659057fa8f134"
@@ -91,7 +93,8 @@ def audio_metrics(actual, reference, duration):
             "clippedSamples": clipped, "sourceToneWindows": tones, "errors": errors}
 
 
-def inspect(source, destination, ffmpeg, ffprobe, duration, sound, reference=None):
+def inspect(source, destination, ffmpeg, ffprobe, duration, sound, reference=None,
+            receipt=None, source_sha=None, receipt_sha=None):
     source = Path(source).resolve(strict=True)
     if not source.is_file():
         raise ValueError("MP4 input must be a regular file")
@@ -113,8 +116,28 @@ def inspect(source, destination, ffmpeg, ffprobe, duration, sound, reference=Non
                                   "ffprobe": run(ffprobe, ["-version"]).decode("utf-8", errors="replace").splitlines()[0]}
         raw = run(ffprobe, ["-v", "error", "-show_format", "-show_streams", "-of", "json", str(source)])
         (destination / "probe.json").write_bytes(raw)
-        probe = json.loads(raw)
-        report["errors"].extend(validate(probe, duration, sound))
+        probe = json.loads(raw, object_pairs_hook=unique_json_fields)
+        timestamp_verified = False
+        # All technical acceptance requires provenance, even when ffprobe omits
+        # a creation_time tag. Hidden nonzero modification dates cannot bypass it.
+        if receipt is None or source_sha is None or receipt_sha is None:
+            report["errors"].append("Measured export receipt unavailable or invalid")
+        else:
+            try:
+                if receipt is None or source_sha is None or receipt_sha is None:
+                    raise ValueError("Receipt and independently pinned source/receipt hashes are required")
+                receipt_bytes = regular_bytes(Path(receipt), 64 * 1024)
+                interval = export_interval(Path(receipt), receipt_sha, source_sha, source.name, before, sound, duration)
+                timestamp_errors = validate_timestamps(regular_bytes(source, 100 * 1024 * 1024), probe, interval)
+                if regular_bytes(Path(receipt), 64 * 1024) != receipt_bytes:
+                    raise ValueError("Export receipt changed during inspection")
+                report["errors"].extend(timestamp_errors)
+                timestamp_verified = not timestamp_errors
+                report["timestampEvidence"] = {"receiptSHA256": hashlib.sha256(receipt_bytes).hexdigest(),
+                    "buildSourceSHA": source_sha, "headerAndProbeCheck": "passed" if timestamp_verified else "failed"}
+            except (OSError, ValueError, TypeError, KeyError):
+                report["errors"].append("Measured export receipt unavailable or invalid")
+        report["errors"].extend(validate(probe, duration, sound, export_timestamps_verified=timestamp_verified))
         # Decode ALL video frames. Hash evidence is from pixels, not nb_frames.
         frames = run(ffmpeg, ["-v", "error", "-nostdin", "-xerror", "-i", str(source),
                              "-map", "0:v:0", "-an", "-fps_mode", "passthrough", "-f", "framemd5", "-"])
@@ -168,8 +191,12 @@ if __name__ == "__main__":
     parser.add_argument("--expected-duration", type=float, required=True)
     parser.add_argument("--sound", choices=["on", "off"], required=True)
     parser.add_argument("--reference", type=Path)
+    parser.add_argument("--receipt", type=Path, help="Unmodified native schema-2 synthetic export receipt")
+    parser.add_argument("--source-sha", help="Expected immutable build SHA, supplied independently of the receipt")
+    parser.add_argument("--receipt-sha256", help="Expected receipt hash from the independently verified artifact")
     args = parser.parse_args()
     result = inspect(args.source, args.destination, args.ffmpeg, args.ffprobe,
-                     args.expected_duration, args.sound == "on", args.reference)
+                     args.expected_duration, args.sound == "on", args.reference, args.receipt, args.source_sha,
+                     args.receipt_sha256)
     print(json.dumps(result, indent=2))
     raise SystemExit(bool(result["errors"]))
