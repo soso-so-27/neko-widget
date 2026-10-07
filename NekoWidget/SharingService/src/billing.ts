@@ -10,6 +10,7 @@ import {
   type VerifiedBillingTransaction,
   verifyAppleTransactionViaService,
 } from "./billing-verifier-client";
+import { reconcileBillingTransactionNow, type AppleSubscriptionStatusFetcher } from "./billing-authority";
 import { requestBillingReconciliation } from "./billing-reconciliation-queue";
 import { effectiveBillingEntitlement } from "./billing-entitlement";
 import { requireOwnerSandboxBootstrap, requireOwnerSandboxAccount, recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
@@ -407,6 +408,7 @@ export async function recordBillingTransaction(
   request: Request,
   env: Env,
   verify: BillingTransactionVerifier = verifyAppleTransactionViaService,
+  fetchStatus?: AppleSubscriptionStatusFetcher,
 ): Promise<Response> {
   if ((await loadBillingGate(env)).transaction_ingestion_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
@@ -435,5 +437,10 @@ export async function recordBillingTransaction(
     { kind: "app", submitter: account },
   );
   await requestBillingReconciliation(env, verified.originalTransactionId);
+  // Keep the acknowledgement provisional. Only the authoritative status GET
+  // may grant access, but it must not normally have to wait for the next Cron.
+  await reconcileBillingTransactionNow(
+    env, account.billingAccountId, verified.originalTransactionId, fetchStatus,
+  );
   return jsonResponse(await transactionResponse(env, verified, event));
 }

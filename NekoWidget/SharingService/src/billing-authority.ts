@@ -19,7 +19,7 @@ import {
 } from "./billing-notification-reconciliation-cause";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
-import type { Env } from "./env";
+import { billingSubscriptionReconciliationRuntimeEnabled, type Env } from "./env";
 import {
   enforceRateLimit,
   parseJsonBody,
@@ -367,6 +367,9 @@ async function recordAuthorityObservations(
     SELECT 1 FROM billing_reconciliation_jobs
      WHERE original_transaction_id = ? AND request_generation = ? AND lease_token = ?
        AND lease_expires_at > ?
+  ) AND EXISTS (
+    SELECT 1 FROM billing_runtime_gate
+     WHERE singleton = 1 AND subscription_reconciliation_enabled = 1
   )`;
   statements.push(env.DB.prepare(
     `INSERT INTO billing_effective_entitlement_decisions(
@@ -474,7 +477,12 @@ async function recordAuthorityObservations(
     completedAt,
   ));
   recheckOwnerSandboxAdmission(env);
-  await env.DB.batch(statements);
+  const written = await env.DB.batch(statements);
+  // A lost fence is not a completed reconciliation. Keep its retry instead of
+  // deleting the job or postponing it for a full periodic interval.
+  if (written.at(-2)?.meta.changes !== 1 || written.at(-1)?.meta.changes !== 1) {
+    throw new ApiError(409, "billing_reconciliation_superseded", "Billing is temporarily unavailable.");
+  }
   return selectedItem.status === 1 || selectedItem.status === 3 || selectedItem.status === 4;
 }
 
@@ -592,55 +600,99 @@ export async function runBillingSubscriptionReconciliation(
   ).bind(now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
 
   for (const job of jobs.results) {
-    if (ownerAccount !== null) await requireOwnerSandboxAccount(env, ownerAccount);
-    const leaseToken = randomBase64url(16);
-    const claimed = await env.DB.prepare(
-      `UPDATE billing_reconciliation_jobs
-          SET lease_token = ?, lease_expires_at = ?, updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND request_generation = ?
-          AND not_before <= ?
-          AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
-    ).bind(
-      leaseToken,
-      now + leaseSeconds,
-      job.original_transaction_id,
-      job.request_generation,
-      now,
-      now,
-    ).run();
-    if (claimed.meta.changes !== 1) continue;
+    await reconcileClaimedJob(env, job, ownerAccount, fetchStatus, now, completedAtOverride);
+  }
+}
 
-    try {
-      const lineage = await env.DB.prepare(
-        `SELECT billing_account_id, environment, subscription_group_id
-           FROM billing_transaction_lineages WHERE original_transaction_id = ?`,
-      ).bind(job.original_transaction_id).first<LineageRow>();
-      if (lineage === null) {
-        throw new ApiError(409, "billing_lineage_missing", "Billing is temporarily unavailable.");
-      }
-      await requireOwnerSandboxAccount(env, lineage.billing_account_id);
-      const status = await fetchStatus(job.original_transaction_id, env);
-      await requireOwnerSandboxAccount(env, lineage.billing_account_id);
-      const completedAt = completedAtOverride
-        ?? Math.max(now, Math.floor(Date.now() / 1_000));
-      const keepPeriodic = await recordAuthorityObservations(
-        env,
-        status,
-        lineage,
-        job.original_transaction_id,
-        job,
-        leaseToken,
-        completedAt * 1_000,
-        completedAt,
-      );
-      await releaseSuccessfulLease(env, job, leaseToken, completedAt, keepPeriodic);
-    } catch (error) {
-      const code = error instanceof ApiError
-        ? error.code.replace(/[^a-z0-9_]/gu, "_").slice(0, 64)
-        : "billing_reconciliation_unavailable";
-      const failedAt = completedAtOverride
-        ?? Math.max(now, Math.floor(Date.now() / 1_000));
-      await releaseFailedLease(env, job, leaseToken, failedAt, code);
+/** One authenticated lineage only. The durable queue remains the retry path. */
+export async function reconcileBillingTransactionNow(
+  env: Env,
+  billingAccountId: string,
+  originalTransactionId: string,
+  fetchStatus: AppleSubscriptionStatusFetcher = fetchAppleSubscriptionStatusViaService,
+  now = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  if (!billingSubscriptionReconciliationRuntimeEnabled(env)) return;
+  if ((await loadGate(env))?.subscription_reconciliation_enabled !== 1) return;
+  await requireOwnerSandboxAccount(env, billingAccountId);
+  const job = await env.DB.prepare(
+    `SELECT j.original_transaction_id, j.request_generation, j.attempts
+       FROM billing_reconciliation_jobs j
+       JOIN billing_transaction_lineages l
+         ON l.original_transaction_id = j.original_transaction_id
+      WHERE j.original_transaction_id = ? AND l.billing_account_id = ?
+        AND j.not_before <= ?
+        AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= ?)`,
+  ).bind(originalTransactionId, billingAccountId, now, now).first<ReconciliationJobRow>();
+  if (job === null) return;
+  await reconcileClaimedJob(env, job, billingAccountId, fetchStatus, now, undefined, true);
+}
+
+async function reconcileClaimedJob(
+  env: Env,
+  job: ReconciliationJobRow,
+  ownerAccount: string | null,
+  fetchStatus: AppleSubscriptionStatusFetcher,
+  now: number,
+  completedAtOverride?: number,
+  requireStaticGate = false,
+): Promise<void> {
+  if (ownerAccount !== null) await requireOwnerSandboxAccount(env, ownerAccount);
+  const leaseToken = randomBase64url(16);
+  const claimed = await env.DB.prepare(
+    `UPDATE billing_reconciliation_jobs
+        SET lease_token = ?, lease_expires_at = ?, updated_at = unixepoch()
+      WHERE original_transaction_id = ? AND request_generation = ?
+        AND not_before <= ?
+        AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
+  ).bind(
+    leaseToken,
+    now + leaseSeconds,
+    job.original_transaction_id,
+    job.request_generation,
+    now,
+    now,
+  ).run();
+  if (claimed.meta.changes !== 1) return;
+
+  try {
+    const lineage = await env.DB.prepare(
+      `SELECT billing_account_id, environment, subscription_group_id
+         FROM billing_transaction_lineages WHERE original_transaction_id = ?`,
+    ).bind(job.original_transaction_id).first<LineageRow>();
+    if (lineage === null) {
+      throw new ApiError(409, "billing_lineage_missing", "Billing is temporarily unavailable.");
     }
+    await requireOwnerSandboxAccount(env, lineage.billing_account_id);
+    if ((requireStaticGate && !billingSubscriptionReconciliationRuntimeEnabled(env))
+      || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {
+      throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+    }
+    const status = await fetchStatus(job.original_transaction_id, env);
+    await requireOwnerSandboxAccount(env, lineage.billing_account_id);
+    if ((requireStaticGate && !billingSubscriptionReconciliationRuntimeEnabled(env))
+      || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {
+      throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+    }
+    const completedAt = completedAtOverride
+      ?? Math.max(now, Math.floor(Date.now() / 1_000));
+    const keepPeriodic = await recordAuthorityObservations(
+      env,
+      status,
+      lineage,
+      job.original_transaction_id,
+      job,
+      leaseToken,
+      completedAt * 1_000,
+      completedAt,
+    );
+    await releaseSuccessfulLease(env, job, leaseToken, completedAt, keepPeriodic);
+  } catch (error) {
+    const code = error instanceof ApiError
+      ? error.code.replace(/[^a-z0-9_]/gu, "_").slice(0, 64)
+      : "billing_reconciliation_unavailable";
+    const failedAt = completedAtOverride
+      ?? Math.max(now, Math.floor(Date.now() / 1_000));
+    await releaseFailedLease(env, job, leaseToken, failedAt, code);
   }
 }
