@@ -25,6 +25,7 @@ WIDGET_STYLE_SCOPE = "widget-style-v1"
 CI_SELECTION_SCOPE = "ci-selection-v1"
 APP_VIEW_SCOPE = "app-view-ui-v1"
 APP_DATA_SCOPE = "app-private-data-ui-v1"
+BILLING_LOCAL_PREPARATION_SCOPE = "billing-local-preparation-v1"
 LOST_CAT_PHOTO_SCOPE = "lost-cat-photo-ui-v2"
 LOST_CAT_UX_SCOPE = "lost-cat-photo-ui-v3"
 EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
@@ -77,7 +78,7 @@ REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
 SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -1338,6 +1339,11 @@ WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for n
 BILLING_LOCAL_PREPARATION_DIGESTS = {'NekoWidget/NekoWidget/Services/BillingFreshAccountAuthorization.swift': ('6e25a3540d6a23eb1f184894ece48a0c48817e94965e2ca21f58ef0eb9be2f9a', '97c75752707bbe0ccf1e8ea1e469656df1f68146a9fcda99ecf1550e3ed274ab'), 'NekoWidget/NekoWidget/Services/BillingKeychainStore.swift': ('bb514a42fc8add6a14af020c25d891f69c25c8d76237ac94a7c9cc46159144af', '73c70dcf4bceaa7398f89a66b20fd676915a569cd5fd95b9dcf49b1d1bd997b6'), 'NekoWidget/NekoWidget/Services/MembershipOfferModel.swift': ('b2f114f7fbf79f628bda3ce180c5f27a83def525dc68e9bfbf47ebf6b64f8676', '75049a999363eb2fbc1353ef5b93a09ad64d7886f06717eed0fbfe8419508dbf'), 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('def69cd0b95170cbcf31ee0edd9db28b50df4a73b978bc39beedc0044e8b72ff', '46627cb8555afd3e14056b4540fae8790589fe5431e56e4487f68301eaf8f6e4'), 'NekoWidget/ci/test-billing-client-foundation.py': ('d60954a73abc683d4d28c124f2afb473b43aada429b32cc6b4b36e4cbb526ce2', 'be0f7ac455c7a8a3f5dfb6b388201fb935d2983b7350e99aa069f845217addff')}
 BILLING_LOCAL_PREPARATION_PRODUCTS = frozenset(path for path in BILLING_LOCAL_PREPARATION_DIGESTS
     if path.startswith("NekoWidget/NekoWidget/Services/"))
+BILLING_LOCAL_PREPARATION_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testMembershipOfferPreviewReturnsToPurpose",
+    "testMembershipOfferPreviewWaitingAndRestore",
+    "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
+))
 
 APP_DATA_PRODUCT_PATHS = frozenset("NekoWidget/NekoWidget/Services/" + name for name in (
     "PhotoMemoCoordinator.swift", "PhotoMemoryNoteStore.swift", "PhotoMemoryNoteExporter.swift",
@@ -2486,6 +2492,8 @@ def accepts_paths(scope: str, paths) -> bool:
         return sources == TOOL_CANDIDATE_REFRESH_PATHS
     if scope == MEMBERSHIP_COPY_SCOPE:
         return sources == MEMBERSHIP_COPY_PATHS
+    if scope == BILLING_LOCAL_PREPARATION_SCOPE:
+        return sources == set(BILLING_LOCAL_PREPARATION_DIGESTS)
     if scope == APP_DATA_SCOPE:
         return bool(sources & APP_DATA_PRODUCT_PATHS and sources <= APP_DATA_PATHS)
     if scope == TOOL_CAT_AUTOFILL_SCOPE:
@@ -2661,6 +2669,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == BILLING_LOCAL_PREPARATION_SCOPE:
+        return BILLING_LOCAL_PREPARATION_TESTS
     if scope == PRESERVATION_USAGE_SCOPE:
         return PRESERVATION_USAGE_TESTS
     if scope == MEMBERSHIP_TOOLS_SCOPE:
@@ -3009,6 +3019,10 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     if reviewed_app_changes(changes):
         return REVIEWED_APP_SCOPE
     if app_data_changes(changes, project_source=project_source):
+        if set(changes) & BILLING_LOCAL_PREPARATION_PRODUCTS:
+            return (BILLING_LOCAL_PREPARATION_SCOPE
+                    if memory_tests_available(changes[MEMORY_TEST_PATH][1], BILLING_LOCAL_PREPARATION_TESTS)
+                    else FULL_SCOPE)
         return APP_DATA_SCOPE
     if any(path in changes and source_digest(changes[path][0]) == pair[0]
            for path, pair in CI_EVIDENCE_DIGESTS.items()):
