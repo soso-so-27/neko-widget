@@ -301,11 +301,18 @@ enum BillingSandboxOwnerEnrollmentAvailability {
     }
 }
 
-/// A separate read-only settings route; never creates billing identity or starts purchase.
+/// Internal setup stays local until the owner policy is admitted separately.
 @MainActor
 struct BillingSandboxOwnerEnrollmentView: View {
     @State private var ownerEnrollment: BillingSandboxOwnerEnrollment?
     @State private var enrollmentMessage: String?
+    @State private var canPrepare = false
+    @State private var isPreparing = false
+    init() { }
+#if DEBUG
+    private var fixture: BillingOwnerEnrollmentFixtureState?
+    init(fixture: BillingOwnerEnrollmentFixtureState) { self.fixture = fixture }
+#endif
 
     var body: some View {
         List {
@@ -313,15 +320,34 @@ struct BillingSandboxOwnerEnrollmentView: View {
                 Section {
                     Button("端末確認情報を表示") { readOwnerEnrollment() }
                         .accessibilityIdentifier("billing-owner-enrollment-read")
-                    if let ownerEnrollment {
-                        LabeledContent("申込ID", value: ownerEnrollment.bootstrapClientRequestID)
-                            .textSelection(.enabled)
-                        LabeledContent("公開鍵の指紋", value: ownerEnrollment.initialPublicKeySHA256)
-                            .textSelection(.enabled)
+                        .disabled(isPreparing)
+                    if canPrepare {
+                        Button(isPreparing ? "準備しています…" : "テストの準備をする") {
+                            Task { await prepareOwnerEnrollment() }
+                        }
+                        .accessibilityIdentifier("billing-owner-enrollment-prepare")
+                        .disabled(isPreparing)
                     }
-                    if let enrollmentMessage { Text(enrollmentMessage).font(.footnote) }
+                    if let ownerEnrollment {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("申込ID").font(.caption).foregroundStyle(.secondary)
+                            Text(ownerEnrollment.bootstrapClientRequestID)
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("billing-owner-enrollment-request")
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("公開鍵の指紋").font(.caption).foregroundStyle(.secondary)
+                            Text(ownerEnrollment.initialPublicKeySHA256)
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("billing-owner-enrollment-fingerprint")
+                        }
+                    }
+                    if let enrollmentMessage {
+                        Text(enrollmentMessage).font(.footnote)
+                            .accessibilityIdentifier("billing-owner-enrollment-status")
+                    }
                 } footer: {
-                    Text("既存の申込準備を確認します。鍵・アカウントの作成、申し込み、購入、送信は行いません。")
+                    Text("準備では、この端末だけに確認用の鍵と申込IDを保存します。購入・サーバーへの登録は始まりません。秘密鍵は端末の外へ送りません。")
                 }
             } else {
                 Text("このビルドでは端末確認を利用できません。")
@@ -329,17 +355,36 @@ struct BillingSandboxOwnerEnrollmentView: View {
         }.navigationTitle("本人限定テストの端末確認")
     }
 
-    private var ownerEnrollmentAvailable: Bool { BillingSandboxOwnerEnrollmentAvailability.isAvailable }
+    private var ownerEnrollmentAvailable: Bool {
+#if DEBUG
+        if fixture != nil { return true }
+#endif
+        return BillingSandboxOwnerEnrollmentAvailability.isAvailable
+    }
 
     private func readOwnerEnrollment() {
         ownerEnrollment = nil
+        canPrepare = false
         guard ownerEnrollmentAvailable else { return }
+#if DEBUG
+        if let fixture {
+            ownerEnrollment = fixture.enrollment
+            canPrepare = fixture.enrollment == nil
+            enrollmentMessage = canPrepare ? "この端末の準備はまだです。" : "購入はまだ開始していません。"
+            return
+        }
+#endif
         do {
-            guard let marker = try BillingInstallationMarkerStore.loadExisting(),
-                  let credential = try BillingKeychainStore.load()
-            else {
-                enrollmentMessage = "既存の申込準備がありません。新しい鍵やアカウントは作成していません。"
+            // Read credentials first. A retained key with a missing marker
+            // must never be mistaken for a clean installation.
+            guard let credential = try BillingKeychainStore.load() else {
+                _ = try BillingInstallationMarkerStore.loadExisting()
+                canPrepare = true
+                enrollmentMessage = "この端末の準備はまだです。「テストの準備をする」から進めてください。"
                 return
+            }
+            guard let marker = try BillingInstallationMarkerStore.loadExisting() else {
+                throw BillingClientError.installationChanged
             }
             ownerEnrollment = try BillingSandboxOwnerEnrollment.readExistingPending(
                 credential: credential, installationMarker: marker
@@ -349,11 +394,54 @@ struct BillingSandboxOwnerEnrollmentView: View {
             enrollmentMessage = "この端末の申込準備を確認できません。状態は変更していません。"
         }
     }
+
+    private func prepareOwnerEnrollment() async {
+        guard ownerEnrollmentAvailable, canPrepare, !isPreparing else { return }
+        isPreparing = true
+        defer { isPreparing = false }
+        do {
+#if DEBUG
+            if let fixture {
+                guard BillingKeychainStore.verifySandboxOwnerPreparation() else {
+                    throw BillingClientError.credentialChanged
+                }
+                let marker = UUID()
+                let credential = BillingCredential.pending(installationMarker: marker)
+                fixture.enrollment = try BillingSandboxOwnerEnrollment.readExistingPending(
+                    credential: credential, installationMarker: marker
+                )
+                ownerEnrollment = fixture.enrollment
+                canPrepare = false
+                enrollmentMessage = "準備できました。購入はまだ始まっていません。境界確認OK"
+                return
+            }
+#endif
+            let authorization = try await BillingFreshAccountAuthorizer()
+                .authorizeForSandboxOwnerPreparation()
+            ownerEnrollment = try BillingKeychainStore.prepareSandboxOwnerPending(
+                authorizedBy: authorization
+            )
+            canPrepare = false
+            enrollmentMessage = "準備できました。申込IDと公開鍵の指紋を運用者へ伝えてください。購入はまだ始まっていません。"
+        } catch BillingClientError.billingAccountRecoveryRequired {
+            canPrepare = false
+            enrollmentMessage = "既存の購入が見つかりました。新しい申込情報は作らず、購入の復元が必要です。"
+        } catch {
+            enrollmentMessage = "準備を完了できませんでした。「端末確認情報を表示」で現在の状態を確認してください。"
+            canPrepare = false
+        }
+    }
 }
 
 #if DEBUG
 @MainActor
+final class BillingOwnerEnrollmentFixtureState {
+    var enrollment: BillingSandboxOwnerEnrollment?
+}
+
+@MainActor
 struct MembershipOfferFixture: View {
+    @State private var enrollmentFixture = BillingOwnerEnrollmentFixtureState()
     private var configurationPasses: Bool {
         func config(_ enabled: Bool, _ monthly: String?, _ annual: String?) -> PlusPurchaseConfiguration {
             PlusPurchaseConfiguration(isEnabled: enabled, monthlyProductID: monthly, annualProductID: annual)
@@ -370,12 +458,16 @@ struct MembershipOfferFixture: View {
 
     var body: some View {
         NavigationStack {
-            MembershipOfferPreviewView(purchaseResult: result)
+            if CommandLine.arguments.contains("--billing-owner-enrollment-fixture") {
+                BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
+            } else {
+                MembershipOfferPreviewView(purchaseResult: result)
                 .safeAreaInset(edge: .bottom) {
                     Text(configurationPasses ? "構成確認OK" : "構成確認失敗")
                         .font(.caption)
                         .accessibilityIdentifier("membership-fixture-configuration")
                 }
+            }
         }
     }
 
