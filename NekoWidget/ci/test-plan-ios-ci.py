@@ -24,6 +24,93 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class ImmediateBillingAuthorityScopeTests(unittest.TestCase):
+    def candidate(self):
+        return {path: ("reviewed before " + path, "reviewed after " + path)
+                for path in planner.BILLING_AUTHORITY_PATHS}
+
+    def select(self, changes, *, mutation=None, ancestor=True, workflow="owning workflow", companions=None):
+        base, head = "b" * 40, "a" * 40
+        pairs = {path: list(map(scope.source_digest, values)) for path, values in self.candidate().items()}
+        def git(*args):
+            if args[0] == "merge-base":
+                if not ancestor: raise subprocess.CalledProcessError(1, args)
+                return ""
+            if args[0] == "diff":
+                rows = []
+                for path in changes:
+                    modes, status = ":100644 100644", "M"
+                    if mutation and path == mutation[0]: modes, status = mutation[1:]
+                    rows.append(f"{modes} {'c'*40} {'d'*40} {status}\0{path}\0")
+                return "".join(rows)
+            if args[0] == "show":
+                revision, path = args[1].split(":", 1)
+                if path == planner.BILLING_WORKFLOW: return workflow
+                return changes[path][revision == head]
+            raise AssertionError(args)
+        with patch.object(planner, "comparison_base", return_value=base), \
+             patch.object(planner, "git", side_effect=git), \
+             patch.object(planner, "BILLING_AUTHORITY_PRODUCTS", pairs), \
+             patch.object(planner, "BILLING_AUTHORITY_WORKFLOW_DIGEST", scope.source_digest("owning workflow")), \
+             patch.object(planner, "BILLING_AUTHORITY_COMPANION_DIGESTS", companions or {}):
+            return planner.runtime_scope(list(changes), {}, {"GITHUB_SHA": head})
+
+    def test_exact_batch_requires_existing_owning_backend_job(self):
+        self.assertFalse(planner.billing_authority_paths_only(None))
+        self.assertFalse(planner.billing_authority_paths_only([]))
+        changes = self.candidate()
+        self.assertFalse(planner.billing_authority_paths_only(list(changes) + [next(iter(changes))]))
+        self.assertEqual(self.select(changes), planner.BILLING_AUTHORITY_SCOPE)
+        self.assertEqual(planner.required_jobs(list(changes), planner.BILLING_AUTHORITY_SCOPE),
+                         (planner.BILLING_AUTHORITY_JOB,))
+        with self.assertRaises(ValueError):
+            planner.required_jobs_from_scope(planner.BILLING_AUTHORITY_SCOPE)
+        self.assertNotIn(planner.BILLING_AUTHORITY_SCOPE, scope.SCOPES)
+        workflow = (Path(__file__).resolve().parents[2] / planner.BILLING_WORKFLOW).read_text(encoding="utf-8")
+        check = workflow[workflow.index("  check:"):]
+        self.assertIn("name: " + planner.BILLING_AUTHORITY_JOB, check)
+        self.assertIn("run: npm run check", check)
+        self.assertIn("--dry-run", check)
+        self.assertNotIn(planner.BILLING_AUTHORITY_SCOPE, check)
+
+    def test_unknown_partial_changed_or_unsafe_batch_is_full(self):
+        original = self.candidate()
+        for path in original:
+            modified = dict(original); modified[path] = (modified[path][0], modified[path][1] + " unknown")
+            self.assertEqual(self.select(modified), scope.FULL_SCOPE)
+            removed = dict(original); del removed[path]
+            self.assertEqual(self.select(removed), scope.FULL_SCOPE)
+            for mode, status in ((":100644 100755", "M"), (":100644 120000", "T"),
+                                 (":100644 000000", "D"), (":000000 100644", "A")):
+                self.assertEqual(self.select(original, mutation=(path, mode, status)), scope.FULL_SCOPE)
+        for path in ("NekoWidget/SharingService/src/env.ts", "NekoWidget/Shared/MembershipAccessPolicy.swift",
+                     "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift", planner.BILLING_WORKFLOW):
+            changed = original | {path: ("before", "after")}
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE)
+            self.assertEqual(planner.required_jobs(list(changed), planner.BILLING_AUTHORITY_SCOPE), planner.FULL)
+        self.assertEqual(self.select(original, ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(self.select(original, workflow="changed workflow"), scope.FULL_SCOPE)
+
+    def test_control_companions_require_full_exact_self_bound_batch(self):
+        changes = self.candidate()
+        companions = {path: ("control before " + path, "control after " + path)
+                      for path in planner.BILLING_AUTHORITY_COMPANION_PATHS}
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in companions.items()}
+        planner_path = "NekoWidget/ci/plan-ios-ci.py"
+        companions[planner_path] = (companions[planner_path][0],
+            companions[planner_path][1] + "\nBILLING_AUTHORITY_COMPANION_DIGESTS = {}\n")
+        bindings[planner_path] = list(map(scope.source_digest, companions[planner_path]))
+        assignment = "BILLING_AUTHORITY_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        companions[planner_path] = (companions[planner_path][0], companions[planner_path][1].replace(
+            "BILLING_AUTHORITY_COMPANION_DIGESTS = {}\n", assignment))
+        self.assertEqual(self.select(changes | companions, companions=bindings), planner.BILLING_AUTHORITY_SCOPE)
+        for path in companions:
+            changed = dict(companions); del changed[path]
+            self.assertEqual(self.select(changes | changed, companions=bindings), scope.FULL_SCOPE)
+            changed = dict(companions); changed[path] = (changed[path][0], changed[path][1] + " drift")
+            self.assertEqual(self.select(changes | changed, companions=bindings), scope.FULL_SCOPE)
+
+
 class PlanTests(unittest.TestCase):
     def test_billing_operator_scope_is_closed_and_requires_owning_tests(self):
         paths = sorted(planner.BILLING_OPERATOR_PATHS) + ["handoffs/operator.md"]
