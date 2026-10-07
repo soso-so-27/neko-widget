@@ -18,6 +18,130 @@ enum BillingKeychainStore {
         try withLock { try loadUnlocked() }
     }
 
+    /// Explicit internal preparation only. Never registers an account, replaces
+    /// retained credentials, or sends a key. SecItemAdd elects a single winner.
+    @MainActor
+    static func prepareSandboxOwnerPending(
+        authorizedBy authorization: BillingFreshAccountAuthorization
+    ) throws -> BillingSandboxOwnerEnrollment {
+        guard BillingSandboxOwnerEnrollmentAvailability.isAvailable else {
+            throw BillingClientError.configurationUnavailable
+        }
+        return try prepareOwnerPending(
+            validateAuthorization: { try authorization.validatedForBootstrap() },
+            loadCredential: { try load() },
+            loadMarker: { try BillingInstallationMarkerStore.loadExisting() },
+            createMarker: { try BillingInstallationMarkerStore.loadOrCreate() },
+            insertPending: { try insertPendingIfAbsent($0) }
+        )
+    }
+
+    private static func prepareOwnerPending(
+        validateAuthorization: () throws -> Void,
+        loadCredential: () throws -> BillingCredential?,
+        loadMarker: () throws -> UUID?,
+        createMarker: () throws -> UUID,
+        insertPending: (BillingCredential) throws -> BillingCredential
+    ) throws -> BillingSandboxOwnerEnrollment {
+        try Task.checkCancellation()
+        if let existing = try loadCredential() {
+            guard let marker = try loadMarker() else {
+                throw BillingClientError.installationChanged
+            }
+            return try BillingSandboxOwnerEnrollment.readExistingPending(
+                credential: existing, installationMarker: marker
+            )
+        }
+        try validateAuthorization()
+        let marker = try createMarker()
+        try Task.checkCancellation()
+        let winner = try insertPending(.pending(installationMarker: marker))
+        guard try loadCredential() == winner,
+              try loadMarker() == marker else {
+            throw BillingClientError.credentialChanged
+        }
+        return try BillingSandboxOwnerEnrollment.readExistingPending(
+            credential: winner, installationMarker: marker
+        )
+    }
+
+#if DEBUG
+    /// In-memory boundary exercise for the native UI fixture. No Keychain or
+    /// disk calls, StoreKit mocks, network clients, or production gate bypass.
+    static func verifySandboxOwnerPreparation() -> Bool {
+        let marker = UUID()
+        let pending = BillingCredential.pending(installationMarker: marker)
+        let registered = BillingCredential(
+            phase: .registered, installationMarker: marker.uuidString.lowercased(),
+            clientRequestID: pending.clientRequestID, signingPrivateKey: pending.signingPrivateKey,
+            billingAccountID: UUID().uuidString.lowercased(),
+            billingKeyID: BillingProtocolCodec.base64URLEncode(Data(repeating: 1, count: 16))
+        )
+        var stored: BillingCredential?
+        var storedMarker: UUID?
+        var writes = 0
+        func prepare() throws -> BillingSandboxOwnerEnrollment {
+            try prepareOwnerPending(
+                validateAuthorization: {}, loadCredential: { stored }, loadMarker: { storedMarker },
+                createMarker: { writes += 1; storedMarker = marker; return marker },
+                insertPending: { writes += 1; stored = $0; return $0 }
+            )
+        }
+        do {
+            let first = try prepare()
+            guard writes == 2, try prepare() == first, writes == 2 else { return false }
+            for invalid in [pending, registered] {
+                for invalidMarker in [nil, UUID(), marker] as [UUID?] {
+                    if invalid == pending && invalidMarker == marker { continue }
+                    stored = invalid; storedMarker = invalidMarker; writes = 0
+                    do { _ = try prepare(); return false } catch { }
+                    guard writes == 0 else { return false }
+                }
+            }
+            // Authorization/read failures precede any local mutation.
+            for failsOnRead in [true, false] {
+                writes = 0
+                do {
+                    _ = try prepareOwnerPending(
+                        validateAuthorization: { throw BillingClientError.freshAccountAuthorizationExpired },
+                        loadCredential: {
+                            if failsOnRead { throw BillingClientError.protectedDataUnavailable }
+                            return nil
+                        }, loadMarker: { nil },
+                        createMarker: { writes += 1; return marker },
+                        insertPending: { writes += 1; return $0 }
+                    )
+                    return false
+                } catch { }
+                guard writes == 0 else { return false }
+            }
+            // A concurrent insert can win, but cannot substitute a different
+            // installation, registered credential, or changed readback.
+            for winner in [pending, registered, BillingCredential.pending(installationMarker: UUID())] {
+                var readCount = 0
+                do {
+                    let result = try prepareOwnerPending(
+                        validateAuthorization: {}, loadCredential: { readCount += 1; return readCount == 1 ? nil : winner },
+                        loadMarker: { marker }, createMarker: { marker }, insertPending: { _ in winner }
+                    )
+                    guard winner == pending, result == (try BillingSandboxOwnerEnrollment.readExistingPending(
+                        credential: pending, installationMarker: marker)) else { return false }
+                } catch { if winner == pending { return false } }
+            }
+            var reads = 0
+            do {
+                _ = try prepareOwnerPending(
+                    validateAuthorization: {}, loadCredential: { reads += 1; return reads == 1 ? nil : registered },
+                    loadMarker: { marker }, createMarker: { marker }, insertPending: { _ in pending }
+                )
+                return false
+            } catch BillingClientError.credentialChanged { }
+            catch { return false }
+            return true
+        } catch { return false }
+    }
+#endif
+
     private static func loadUnlocked() throws -> BillingCredential? {
         var query = itemQuery()
         query[kSecReturnData] = kCFBooleanTrue

@@ -3096,6 +3096,38 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    private func checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-offer-ui-fixture", "--billing-owner-enrollment-fixture"]
+        app.launch()
+        let read = app.buttons["billing-owner-enrollment-read"]
+        XCTAssertTrue(read.waitForExistence(timeout: 10))
+        read.tap()
+        let prepare = app.buttons["billing-owner-enrollment-prepare"]
+        XCTAssertTrue(prepare.waitForExistence(timeout: 5))
+        XCTAssertTrue(prepare.isHittable)
+        prepare.tap()
+        let status = app.staticTexts["billing-owner-enrollment-status"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "境界確認OK"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        XCTAssertFalse(prepare.exists)
+        let requestID = app.staticTexts["billing-owner-enrollment-request"].label
+        let fingerprint = app.staticTexts["billing-owner-enrollment-fingerprint"].label
+        XCTAssertEqual(requestID.count, 36)
+        XCTAssertEqual(fingerprint.count, 64)
+        read.tap()
+        XCTAssertEqual(app.staticTexts["billing-owner-enrollment-request"].label, requestID)
+        XCTAssertEqual(app.staticTexts["billing-owner-enrollment-fingerprint"].label, fingerprint)
+        XCTAssertTrue(status.label.contains("購入はまだ開始していません"))
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "billing-owner-enrollment-local-preparation"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
+    }
+
+    @MainActor
     func testMembershipOfferExplainsExpiryWithoutChangingThePlan() {
         for largeText in [false, true] {
             let app = XCUIApplication()
@@ -3180,6 +3212,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["membership-preview-open"].isHittable)
             app.terminate()
         }
+        checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase()
     }
 
     @MainActor

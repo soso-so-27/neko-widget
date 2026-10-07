@@ -39,6 +39,29 @@ actor BillingFreshAccountAuthorizer {
             throw BillingClientError.configurationUnavailable
         }
 
+        return try await scan(configuredProductIDs: configuredProductIDs)
+    }
+
+    /// The internal owner-only setup precedes enabling the storefront. Scan
+    /// the fixed Sandbox product even when the ordinary purchase IDs are empty.
+    func authorizeForSandboxOwnerPreparation()
+        async throws -> BillingFreshAccountAuthorization {
+        guard BillingSandboxOwnerEnrollmentAvailability.isAvailable else {
+            throw BillingClientError.configurationUnavailable
+        }
+        let info = Bundle.main.infoDictionary ?? [:]
+        let monthly = info["PlusMonthlyProductID"] as? String ?? ""
+        let annual = info["PlusAnnualProductID"] as? String ?? ""
+        let expected = "jp.nekowidget.plus.monthly"
+        guard (monthly.isEmpty || monthly == expected), annual.isEmpty else {
+            throw BillingClientError.configurationUnavailable
+        }
+        return try await scan(configuredProductIDs: [expected])
+    }
+
+    private func scan(configuredProductIDs: Set<String>)
+        async throws -> BillingFreshAccountAuthorization {
+
         try Task.checkCancellation()
         for await result in Transaction.currentEntitlements {
             try Task.checkCancellation()

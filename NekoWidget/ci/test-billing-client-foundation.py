@@ -729,7 +729,7 @@ class BillingClientFoundationTests(unittest.TestCase):
         for forbidden in ("roomKey", "agreementPrivateKey", "Photo"):
             self.assertNotIn(forbidden, coordinator)
 
-    def test_owner_enrollment_inspection_is_public_only_read_only_and_pending(self):
+    def test_owner_enrollment_inspection_remains_read_only_and_pending(self):
         core = source("NekoWidget/Services/BillingClientCore.swift")
         summary = core[core.index("struct BillingSandboxOwnerEnrollment:"):]
         self.assertIn("credential.phase == .pendingBootstrap", summary)
@@ -739,7 +739,7 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertNotIn("Codable", summary)
         self.assertNotIn("signingPrivateKey:", summary)
         ui = source("NekoWidget/Services/MembershipOfferModel.swift")
-        inspection = ui[ui.index("enum BillingSandboxOwnerEnrollmentAvailability"):ui.index("#if DEBUG", ui.index("enum BillingSandboxOwnerEnrollmentAvailability"))]
+        inspection = ui[ui.index("enum BillingSandboxOwnerEnrollmentAvailability"):ui.index("final class BillingOwnerEnrollmentFixtureState")]
         for boundary in ("sandboxReceipt", "SharingReleaseMode", "media-staging", "preservation.isEnabled", "preservation.membershipAudience", "neko-preservation-staging-disabled.nakanishisoya.workers.dev", "neko-preservation-staging"):
             self.assertIn(boundary, inspection)
         availability = inspection[:inspection.index("struct BillingSandboxOwnerEnrollmentView")]
@@ -752,13 +752,51 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("BillingSandboxOwnerEnrollmentView()", settings)
         self.assertIn('"settings-billing-owner-enrollment"', settings)
 
-        for forbidden in ("loadOrCreate", "insertPending", "createFreshCredential", "URLSession", "AppStore.sync", "ShareLink", "UIPasteboard", "print(", "Logger", "signingPrivateKey"):
+        read_ui = inspection[inspection.index("private func readOwnerEnrollment()"):inspection.index("private func prepareOwnerEnrollment()")]
+        for forbidden in ("loadOrCreate", "insertPending", "prepareSandboxOwnerPending", "createFreshCredential", "URLSession", "AppStore.sync", "ShareLink", "UIPasteboard", "print(", "Logger", "signingPrivateKey"):
+            self.assertNotIn(forbidden, read_ui)
+        for forbidden in ("URLSession", "AppStore.sync", "createFreshCredential", "ShareLink", "UIPasteboard", "print(", "Logger", "signingPrivateKey"):
             self.assertNotIn(forbidden, inspection)
         keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
         read = keychain[keychain.index("static func loadExisting()"):keychain.index("static func loadOrCreate()")]
         self.assertIn("loadIfPresent(at: markerURL())", read)
         self.assertNotIn("write", read)
 
+
+    def test_owner_preparation_is_explicit_local_guarded_and_reuses_identity(self):
+        ui = source("NekoWidget/Services/MembershipOfferModel.swift")
+        preparation = ui[ui.index("private func prepareOwnerEnrollment()"):ui.index("final class BillingOwnerEnrollmentFixtureState")]
+        self.assertIn("ownerEnrollmentAvailable, canPrepare, !isPreparing", preparation)
+        self.assertIn("authorizeForSandboxOwnerPreparation()", preparation)
+        self.assertIn("prepareSandboxOwnerPending(", preparation)
+        keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
+        local = keychain[keychain.index("static func prepareSandboxOwnerPending("):keychain.index("#if DEBUG")]
+        self.assertIn("BillingSandboxOwnerEnrollmentAvailability.isAvailable", local)
+        self.assertIn("authorization.validatedForBootstrap()", local)
+        self.assertLess(local.index("if let existing = try loadCredential()"), local.index("let marker = try createMarker()"))
+        self.assertIn("guard let marker = try loadMarker()", local)
+        self.assertIn("guard try loadCredential() == winner", local)
+        self.assertIn("try loadMarker() == marker", local)
+        self.assertIn("credential: winner, installationMarker: marker", local)
+        for forbidden in ("SecItemUpdate", "SecItemDelete", "createAccount", "URLSession", "UserDefaults", "synchronize"):
+            self.assertNotIn(forbidden, local)
+        authorizer = source("NekoWidget/Services/BillingFreshAccountAuthorization.swift")
+        sandbox = authorizer[authorizer.index("func authorizeForSandboxOwnerPreparation()"):authorizer.index("private func scan(")]
+        self.assertIn("BillingSandboxOwnerEnrollmentAvailability.isAvailable", sandbox)
+        self.assertIn('let expected = "jp.nekowidget.plus.monthly"', sandbox)
+        self.assertIn("(monthly.isEmpty || monthly == expected), annual.isEmpty", sandbox)
+        self.assertIn("scan(configuredProductIDs: [expected])", sandbox)
+        normal = authorizer[authorizer.index("func authorizeAfterCurrentEntitlementScan()"):authorizer.index("func authorizeForSandboxOwnerPreparation()")]
+        self.assertIn("configuration.isConfigured", normal)
+        self.assertIn("scan(configuredProductIDs: configuredProductIDs)", normal)
+        scan = authorizer[authorizer.index("private func scan("):authorizer.index("actor BillingStoreKitRecoveryEvidenceCollector")]
+        for required in ("Transaction.currentEntitlements", "case let .verified(value)", "case let .unverified(value, _)", "billingAccountRecoveryRequired", "Task.checkCancellation()"):
+            self.assertIn(required, scan)
+        self.assertIn("verifySandboxOwnerPreparation()", preparation)
+        native = source("NekoWidgetUITests/PhotoPermissionUITests.swift")
+        self.assertIn("private func checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase()", native)
+        self.assertIn("        checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase()", native)
+        self.assertIn('NSPredicate(format: "label CONTAINS %@", "境界確認OK")', native)
 
 if __name__ == "__main__":
     unittest.main()
