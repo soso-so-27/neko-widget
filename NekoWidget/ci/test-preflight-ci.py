@@ -20,6 +20,22 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class ImmediateBillingAuthorityBudgetTests(unittest.TestCase):
+    def test_backend_profile_is_unmeasured_and_cannot_authorize_upload(self):
+        selected = planner.BILLING_AUTHORITY_SCOPE
+        history = {"upload_minutes": 9, "observations": []}
+        cost = preflight.observe_cost(selected, history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 20)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False,
+                  "target_minutes": 30, "cost": cost}
+        gated = preflight.apply_task_gate(result, [], measure_baseline=True)
+        self.assertTrue(gated["ready"])
+        self.assertTrue(gated["task"]["first_baseline_measurement"])
+
+
 class StalledRunRecoveryTests(unittest.TestCase):
     now = dt.datetime.fromisoformat("2026-10-08T00:00:00+00:00")
     head = "a" * 40

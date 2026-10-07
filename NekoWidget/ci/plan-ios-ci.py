@@ -420,6 +420,77 @@ BILLING_COMPANION_DIGESTS = {
     ]
 }
 
+# Exact independently reviewed immediate-authority batch. No native evidence.
+BILLING_AUTHORITY_SCOPE = "billing-immediate-authority-v1"
+BILLING_AUTHORITY_JOB = "Typecheck, test, and bundle Worker"
+BILLING_AUTHORITY_JOB_TIMEOUT_MINUTES = 20
+BILLING_AUTHORITY_PRODUCTS = {
+    "NekoWidget/SharingService/src/billing-authority.ts": [
+        "7fe6a487a60fa4967f1fd76ef706fad305ddae0da215fc3f3bcd4362fa4fc67f",
+        "295504f2b723a4068252aaf56f552e12c756bf292808680ad41e24cc0e75897f"
+    ],
+    "NekoWidget/SharingService/src/billing.ts": [
+        "6a439460d53009d2df63d09a957376cf542b7fe2e13549d4338336445b820b0b",
+        "9f51fe2d93b19c334c06ce1a379922504f79b02c5dd17d5e1ec66904082b8df4"
+    ],
+    "NekoWidget/SharingService/test/billing-authority.integration.test.ts": [
+        "001ba79252040c9474197f4b72205678398425d4625968eab09d8535a5b827af",
+        "8c356ff3777a1512e92850db4a827ea652f337795ca920925224d75fb988a978"
+    ],
+    "NekoWidget/SharingService/test/billing.integration.test.ts": [
+        "3cc9752a443013b9546dba22f287b51d58af6ff5117284c16403a47b3a1e03d5",
+        "3738220f7bbaef183452e5c3ca93205fc684e944f2a274ab10f52c328ec80c8b"
+    ]
+}
+BILLING_AUTHORITY_PATHS = frozenset(BILLING_AUTHORITY_PRODUCTS)
+BILLING_AUTHORITY_WORKFLOW_DIGEST = "7b6593c9e8a7e2a9fd4b1ab4fba730aa06a48407a369f370a5afc35307cd0355"
+BILLING_AUTHORITY_COMPANION_PATHS = JPEG_COMPANION_PATHS
+BILLING_AUTHORITY_COMPANION_DIGESTS = {
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "e55b6e782d94e67c779e6625ecbd1725fbc909dd6b85db5e561e9b71fd547aad",
+        "383de7663884298de448447aa7c2d5656e9586f8594da255f0de267d5bc8c1aa"
+    ],
+    "NekoWidget/ci/preflight-ci.py": [
+        "f039384ab3e9e6a743b86ef25e542f638999d8b1c7aab779fd2dbf74dc202c6e",
+        "40aaf4599fca6072e8fe712bae5aba5c7b2961b11567a17cb629da4317c99479"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "33a1dacf38206752094a390d386bb7e23d638d5f0373d638a719717cdeb3bdd3",
+        "c5f4db7bd03942fa15471867a0a46ce2cf4d3f6c745cbf3ce7e1c555b9ca5a81"
+    ],
+    "NekoWidget/ci/test-preflight-ci.py": [
+        "76b1aeee0886e3ea78c7babb160711a46e3945ba62625c99386e34d7620ef7dc",
+        "968fa74f328b595184d105dc0bb6798116e52ad03142868c4536f9de1d5a49c0"
+    ]
+}
+
+
+def billing_authority_paths_only(paths):
+    if not paths:
+        return False
+    sources = source_paths(paths)
+    companions = sources & BILLING_AUTHORITY_COMPANION_PATHS
+    return (len(paths) == len(set(paths)) and BILLING_AUTHORITY_PATHS <= sources
+            and sources <= BILLING_AUTHORITY_PATHS | BILLING_AUTHORITY_COMPANION_PATHS
+            and (not companions or companions == BILLING_AUTHORITY_COMPANION_PATHS))
+
+
+def billing_authority_backend_only(paths, base, head):
+    if not billing_authority_paths_only(paths):
+        return False
+    if not backend_only(paths, base, head, product_paths=BILLING_AUTHORITY_PATHS,
+                        workflow=BILLING_WORKFLOW, workflow_digest=BILLING_AUTHORITY_WORKFLOW_DIGEST,
+                        companion_paths=BILLING_AUTHORITY_COMPANION_PATHS,
+                        bindings=BILLING_AUTHORITY_COMPANION_DIGESTS,
+                        binding_name="BILLING_AUTHORITY_COMPANION_DIGESTS", allow_product_additions=False):
+        return False
+    # Existing files only: exact nonempty before/after pairs reject additions,
+    # deletions and every later authority or test change.
+    return all(tuple(source_digest(git("show", f"{revision}:{path}"))
+                     for revision in (base, head)) == tuple(pair)
+               for path, pair in BILLING_AUTHORITY_PRODUCTS.items())
+
+
 def backend_paths_only(paths, product_paths, workflow, companion_paths):
     sources = source_paths(paths)
     companions = sources & companion_paths
@@ -436,7 +507,7 @@ def preservation_paths_only(paths):
     return backend_paths_only(paths, PRESERVATION_PATHS, PRESERVATION_WORKFLOW, PRESERVATION_COMPANION_PATHS)
 
 
-def backend_only(paths, base, head, *, product_paths, workflow, workflow_digest, companion_paths, bindings, binding_name):
+def backend_only(paths, base, head, *, product_paths, workflow, workflow_digest, companion_paths, bindings, binding_name, allow_product_additions=True):
     # Shared mechanical checks, called only with the two explicit closed profiles.
     if not backend_paths_only(paths, product_paths, workflow, companion_paths) or len(paths) != len(set(paths)):
         return False
@@ -456,7 +527,7 @@ def backend_only(paths, base, head, *, product_paths, workflow, workflow_digest,
             return False
         seen.add(path)
         valid = (fields[0:2], fields[4]) == ([":100644", "100644"], "M")
-        if path not in companion_paths:
+        if path not in companion_paths and (allow_product_additions or path not in product_paths):
             valid = valid or (fields[0:2], fields[4]) == ([":000000", "100644"], "A")
         if not valid:
             return False
@@ -712,6 +783,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
         return (JPEG_JOB,)
+    if runtime_scope == BILLING_AUTHORITY_SCOPE and billing_authority_paths_only(paths):
+        return (BILLING_AUTHORITY_JOB,)
     if runtime_scope == BILLING_SCOPE and billing_paths_only(paths):
         return (BILLING_CALLER_JOB, PRESERVATION_JOB)
     if runtime_scope == PRESERVATION_SCOPE and preservation_paths_only(paths):
@@ -935,7 +1008,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
+    for selected, matches, verify in ((BILLING_AUTHORITY_SCOPE, billing_authority_paths_only, billing_authority_backend_only),
+                                       (JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
                                        (PRESERVATION_SCOPE, preservation_paths_only, preservation_backend_only),
                                        (BILLING_SCOPE, billing_paths_only, billing_backend_only),
                                        (RELEASE_PREP_SCOPE, release_prep_paths_only, release_prep_only)):
@@ -1724,7 +1798,7 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -1740,7 +1814,8 @@ def main() -> None:
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
-                       BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW)}.get(selected_scope)
+                       BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
+                       BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             if selected_scope == BILLING_OPERATOR_SCOPE:
                 summary = ("## Billing operator tools only\n\nThe mocked Node boundary checks run in this plan job. "
                            "No live cloud operations or Mac jobs are requested. Not iOS release evidence.\n")

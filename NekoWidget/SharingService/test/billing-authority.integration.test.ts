@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ingestAppleBillingNotification,
   runBillingSubscriptionReconciliation,
+  reconcileBillingTransactionNow,
 } from "../src/billing-authority";
 import type {
   VerifiedAppleNotification,
@@ -136,6 +137,19 @@ function status(value: VerifiedBillingTransaction, appleStatus = 1): VerifiedSub
     }],
   };
 }
+
+let immediateTransactionSequence = 210000000099000;
+async function queuedTransaction(): Promise<VerifiedBillingTransaction> {
+  const accountId = crypto.randomUUID().toLowerCase();
+  await registerAccount(accountId);
+  const transactionId = String(++immediateTransactionSequence);
+  const value = transaction(accountId, { transactionId, originalTransactionId: transactionId });
+  await ingestAppleBillingNotification(notificationRequest(`header.immediate${transactionId}.signature`),
+    testEnv, async () => notification(crypto.randomUUID().toLowerCase(), value));
+  return value;
+}
+
+const immediateEnv = { ...testEnv, BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES" } as Env;
 
 describe.sequential("App Store billing authority", () => {
   it("keeps upper and lower notification gates closed before parsing or verification", async () => {
@@ -600,4 +614,96 @@ describe.sequential("App Store billing authority", () => {
       last_error_code: "ordinary_status_outage",
     });
   });
+
+  it("immediately reconciles only the requested authenticated lineage", async () => {
+    await setAuthorityGates(true, true);
+    const first = await queuedTransaction();
+    const other = await queuedTransaction();
+    const fetched: string[] = [];
+    await reconcileBillingTransactionNow(immediateEnv, first.billingAccountId,
+      first.originalTransactionId, async (id) => { fetched.push(id); return status(first); });
+    expect(fetched).toEqual([first.originalTransactionId]);
+    expect(await effectiveBillingEntitlement(testEnv, first.billingAccountId)).toMatchObject({status: "active", grantsPlus: true});
+    expect(await effectiveBillingEntitlement(testEnv, other.billingAccountId)).toMatchObject({status: "unconfirmed", grantsPlus: false});
+    await reconcileBillingTransactionNow(immediateEnv, first.billingAccountId,
+      other.originalTransactionId, async () => { throw new Error("must not fetch another account"); });
+    expect(await effectiveBillingEntitlement(testEnv, other.billingAccountId)).toMatchObject({grantsPlus: false});
+  });
+
+  it("does not start immediate work through a closed upper or lower gate", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    let calls = 0;
+    const fetcher = async () => { calls += 1; return status(value); };
+    await reconcileBillingTransactionNow({...immediateEnv, BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "NO"}, value.billingAccountId, value.originalTransactionId, fetcher);
+    await setAuthorityGates(true, false);
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, fetcher);
+    expect(calls).toBe(0);
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({grantsPlus: false});
+  });
+
+  it("does not grant when the lower gate closes during the immediate Apple fetch", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, async () => {
+      await setAuthorityGates(true, false);
+      return status(value);
+    });
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({grantsPlus: false});
+    expect(await testEnv.DB.prepare("SELECT lease_token, last_error_code FROM billing_reconciliation_jobs WHERE original_transaction_id=?").bind(value.originalTransactionId).first()).toEqual({lease_token: null, last_error_code: "billing_runtime_disabled"});
+  });
+
+  it("keeps a failed immediate fetch queued and never grants from the transaction", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, async () => { throw new Error("synthetic outage"); });
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({status: "unconfirmed", grantsPlus: false});
+    expect(await testEnv.DB.prepare("SELECT attempts, lease_token, last_error_code FROM billing_reconciliation_jobs WHERE original_transaction_id=?").bind(value.originalTransactionId).first()).toEqual({attempts: 1, lease_token: null, last_error_code: "billing_reconciliation_unavailable"});
+  });
+
+  it("shares the Cron lease and rejects a superseded immediate result", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    let calls = 0;
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, async () => {
+      calls += 1;
+      await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, async () => { calls += 1; return status(value); });
+      await requestBillingReconciliation(testEnv, value.originalTransactionId);
+      return status(value);
+    });
+    expect(calls).toBe(1);
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({grantsPlus: false});
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId, value.originalTransactionId, async () => status({...value, revocationDateMs: nowMs}, 5));
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({status: "revoked", grantsPlus: false});
+  });
+
+
+  it("preserves a retry when the gate closes after the last JS check but before the authority batch", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    let intercepted = false;
+    const racingDB = new Proxy(testEnv.DB, {
+      get(target, property) {
+        if (property === "batch") return async (statements: D1PreparedStatement[]) => {
+          intercepted = true;
+          await setAuthorityGates(true, false);
+          return target.batch(statements);
+        };
+        const member = Reflect.get(target, property);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+    await reconcileBillingTransactionNow({...immediateEnv, DB: racingDB}, value.billingAccountId,
+      value.originalTransactionId, async () => status(value));
+    expect(intercepted).toBe(true);
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({grantsPlus: false});
+    const job = await testEnv.DB.prepare("SELECT attempts,not_before,lease_token,last_error_code FROM billing_reconciliation_jobs WHERE original_transaction_id=?").bind(value.originalTransactionId).first<{attempts:number;not_before:number;lease_token:string|null;last_error_code:string}>();
+    expect(job).toMatchObject({attempts: 1, lease_token: null,last_error_code: "billing_reconciliation_superseded"});
+    expect(job!.not_before).toBeLessThanOrEqual(Math.floor(Date.now()/1000)+30);
+    await setAuthorityGates(true, true);
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId,
+      value.originalTransactionId, async () => status(value), job!.not_before);
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({status: "active", grantsPlus: true});
+  });
+
 });

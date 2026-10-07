@@ -88,3 +88,5 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - CI高速化の試作は専用候補で検証する。製品側は検証済み構成を使うが、既知の時間超過を繰り返すことをこの分離規則で正当化しない。選択理由と所要時間を実行前に確認し、必要なら基盤側を先に改善する。
 - CI改善は変更に対応する必須チェック成功と実測時間を確認して採用する。`ci-orchestration-v1` の必須はPythonを実行するplan jobのみであり、CI修正のために製品の全画面テストを追加しない。未計測の配布所要時間を短縮実績として扱わない。
+
+- `billing-immediate-authority-v1` は明示取引の即時Apple authority再照会に関するSharingServiceの製品4ファイルの完全before/after一致だけ。制御4ファイルとの混在は既存の自己参照companion方式で全文一致を要求する。通常mode・削除/追加なし・main祖先・既存Sharing workflow全文不変を検証し、未知差分はfull。既存Ubuntu `Typecheck, test, and bundle Worker` の型検査・D1 integrationを含むnpm run check・bundle成功が必須。既存Sharingの他jobもworkflowどおり実行し、iOS native・再配布は不要。初回は未計測として記録し、20分job timeoutを所要時間と呼ばない。backend成功はiOS release証拠ではない。元taskのSharing runも費用/失敗/active履歴へ含める。

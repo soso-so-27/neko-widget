@@ -19,6 +19,7 @@ import {
   signBillingVerifierTranscript,
   verifyBillingVerifierTranscript,
 } from "../src/billing-verifier-protocol";
+import type { VerifiedSubscriptionStatus } from "../src/billing-apple-client";
 import type { VerifiedBillingTransaction } from "../src/billing-verifier-client";
 import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
@@ -244,6 +245,21 @@ function verifiedTransaction(
 
 function verifier(value: VerifiedBillingTransaction): BillingTransactionVerifier {
   return async () => value;
+}
+
+function subscriptionStatus(value: VerifiedBillingTransaction): VerifiedSubscriptionStatus {
+  return {
+    requestedTransactionId: value.originalTransactionId, environment: value.environment,
+    bundleId: value.bundleId, fetchedAtMs: Date.now(), items: [{status: 1,
+      originalTransactionId: value.originalTransactionId, transaction: value,
+      renewal: {originalTransactionId: value.originalTransactionId,
+        billingAccountId: value.billingAccountId, productId: value.productId,
+        autoRenewProductId: value.productId, autoRenewStatus: 1,
+        isInBillingRetryPeriod: false, gracePeriodExpiresDateMs: null,
+        renewalDateMs: value.expiresDateMs, signedDateMs: value.signedDateMs,
+        environment: value.environment},
+    }],
+  };
 }
 
 describe.sequential("disabled Plus billing foundation", () => {
@@ -624,4 +640,60 @@ describe.sequential("disabled Plus billing foundation", () => {
     expect(await signBillingVerifierTranscript(fixture.secret, responseTranscript))
       .toBe(fixture.responseSignature);
   });
+
+  it("keeps the purchase acknowledgement provisional but makes the next signed read authoritative", async () => {
+    await setLowerGate(true);
+    await testEnv.DB.prepare(`UPDATE billing_runtime_gate SET generation=generation+1,
+      subscription_reconciliation_enabled=1, updated_at=unixepoch() WHERE singleton=1`).run();
+    const account = await createAccount();
+    const value = verifiedTransaction(account.billingAccountId, {
+      transactionId: "200000000098701", originalTransactionId: "200000000098701",
+    });
+    const enabledEnv = {...testEnv, BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES"} as Env;
+    let statusCalls = 0;
+    const response = await recordBillingTransaction(
+      await transactionRequest(account, "header.immediate.signature"), enabledEnv, verifier(value), async (id) => {
+        statusCalls += 1;
+        expect(id).toBe(value.originalTransactionId);
+        return subscriptionStatus(value);
+      },
+    );
+    expect(statusCalls).toBe(1);
+    expect(await response.json()).toMatchObject({recorded: true, entitlement: {provisional: true, grantsPlus: false}});
+    const entitlement = await getBillingEntitlement(await entitlementRequest(account), enabledEnv);
+    expect(await entitlement.json()).toMatchObject({billingAccountId: account.billingAccountId,
+      entitlement: {status: "active", provisional: false, grantsPlus: true, productId: value.productId}});
+  });
+
+
+  it("does not publish authority when owner admission expires during immediate verification", async () => {
+    await setLowerGate(true);
+    const bootstrapClientRequestId = crypto.randomUUID().toLowerCase();
+    const account = await createAccount(undefined, bootstrapClientRequestId);
+    const publicKey = await crypto.subtle.exportKey("raw", account.keys.publicKey);
+    const fingerprint = [...new Uint8Array(await crypto.subtle.digest("SHA-256", publicKey))]
+      .map(value => value.toString(16).padStart(2, "0")).join("");
+    const policy = {version: 1, bootstrapClientRequestId, initialPublicKeySHA256: fingerprint,
+      startsAtMs: Date.now() - 1000, expiresAtMs: Date.now() + 60000};
+    const ownerEnv = {...testEnv, ENVIRONMENT: "local", BILLING_STORE_ENVIRONMENT: "Sandbox",
+      BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES",
+      BILLING_SANDBOX_OWNER_ONLY_REQUIRED: "YES",
+      BILLING_SANDBOX_OWNER_ADMISSION: JSON.stringify(policy)} as Env;
+    const value = verifiedTransaction(account.billingAccountId, {
+      transactionId: "200000000098702", originalTransactionId: "200000000098702",
+    });
+    let calls = 0;
+    const response = await recordBillingTransaction(
+      await transactionRequest(account, "header.expiring.signature"), ownerEnv, verifier(value), async () => {
+        calls += 1;
+        ownerEnv.BILLING_SANDBOX_OWNER_ADMISSION = JSON.stringify({...policy, expiresAtMs: Date.now() - 1});
+        return subscriptionStatus(value);
+      });
+    expect(calls).toBe(1);
+    expect(await response.json()).toMatchObject({recorded: true, entitlement: {provisional: true, grantsPlus: false}});
+    const entitlement = await getBillingEntitlement(await entitlementRequest(account), testEnv);
+    expect(await entitlement.json()).toMatchObject({entitlement: {status: "unconfirmed", grantsPlus: false}});
+    expect(await testEnv.DB.prepare("SELECT lease_token,last_error_code FROM billing_reconciliation_jobs WHERE original_transaction_id=?").bind(value.originalTransactionId).first()).toEqual({lease_token: null,last_error_code: "billing_owner_admission_unavailable"});
+  });
+
 });
