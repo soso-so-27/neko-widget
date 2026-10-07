@@ -9,6 +9,88 @@ import CryptoKit
 @MainActor
 enum MainlineMovieAcceptance {
     static func run() async throws -> URL {
+        // Only the pinned synthetic Simulator diagnostic requests permission
+        // after Xcode's final installation. All other acceptance routes retain
+        // their existing authorization behavior.
+        let environment = ProcessInfo.processInfo.environment
+        guard CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument),
+              environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] == "movie",
+              environment["NEKO_MOVIE_SYNTHETIC_FIXTURE_DIR"] == "@app-tmp/movie-synthetic-inputs" else {
+            return try await runAuthorizedCapture()
+        }
+        let diagnosticDirectory = try createSyntheticDiagnosticDirectory()
+        var stage = SyntheticFailureStage.photosAuthorization
+        do {
+            try writeSyntheticFailureReceipt(at: diagnosticDirectory, stage: stage, result: .pending)
+            if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+                _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            }
+            guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized else {
+                throw SeasonalMovieExportError.assetMissing
+            }
+            stage = .cleanupLifecycle
+            try writeSyntheticFailureReceipt(at: diagnosticDirectory, stage: stage, result: .pending)
+            try await verifyExportCleanupLifecycle()
+            stage = .syntheticFixture
+            try writeSyntheticFailureReceipt(at: diagnosticDirectory, stage: stage, result: .pending)
+            let output = try await runSyntheticFixture(at: FileManager.default.temporaryDirectory
+                .appendingPathComponent("movie-synthetic-inputs", isDirectory: true))
+            try writeSyntheticFailureReceipt(at: diagnosticDirectory, stage: stage, result: .completed)
+            return output
+        } catch {
+            // Never serialize error descriptions, Photos identifiers or paths.
+            try? writeSyntheticFailureReceipt(at: diagnosticDirectory, stage: stage, result: .failed)
+            throw error
+        }
+    }
+
+    private enum SyntheticDiagnosticResult: String {
+        case pending, failed, completed
+    }
+
+    private enum SyntheticFailureStage: String {
+        case photosAuthorization = "photos-authorization"
+        case cleanupLifecycle = "cleanup-lifecycle"
+        case syntheticFixture = "synthetic-fixture"
+    }
+
+    private static func createSyntheticDiagnosticDirectory() throws -> URL {
+        let manager = FileManager.default
+        let documents = try manager.url(for: .documentDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false)
+        let values = try documents.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink == false else {
+            throw SeasonalMovieExportError.cannotCreateOutput
+        }
+        // A new owned directory preserves previous evidence and foreign files.
+        let output = documents.appendingPathComponent("MovieSyntheticDiagnostic-" + UUID().uuidString,
+            isDirectory: true)
+        try manager.createDirectory(at: output, withIntermediateDirectories: false)
+        return output
+    }
+
+    private static func writeSyntheticFailureReceipt(at output: URL, stage: SyntheticFailureStage,
+                                                     result: SyntheticDiagnosticResult) throws {
+        let authorization: String
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .notDetermined: authorization = "notDetermined"
+        case .restricted: authorization = "restricted"
+        case .denied: authorization = "denied"
+        case .authorized: authorization = "authorized"
+        case .limited: authorization = "limited"
+        @unknown default: authorization = "unknown"
+        }
+        let suppliedSHA = ProcessInfo.processInfo.environment["NEKO_MOVIE_BUILD_SHA"] ?? ""
+        let sourceSHA = suppliedSHA.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil
+            ? suppliedSHA : "not supplied"
+        let receipt: [String: Any] = ["schemaVersion": 1, "syntheticOnly": true,
+            "result": result.rawValue, "stage": stage.rawValue, "photosAuthorization": authorization,
+            "buildSourceSHA": sourceSHA]
+        try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("receipt.json"), options: [.atomic, .completeFileProtection])
+    }
+
+    private static func runAuthorizedCapture() async throws -> URL {
         let options = PHFetchOptions()
         options.includeHiddenAssets = true
         options.includeAllBurstAssets = true

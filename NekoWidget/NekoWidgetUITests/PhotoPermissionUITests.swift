@@ -12,7 +12,20 @@ final class OfficialWindowUITests: XCTestCase {
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "movie"
         app.launchEnvironment["NEKO_MOVIE_SYNTHETIC_FIXTURE_DIR"] = "@app-tmp/movie-synthetic-inputs"
         app.launchEnvironment["NEKO_MOVIE_BUILD_SHA"] = ProcessInfo.processInfo.environment["NEKO_MOVIE_BUILD_SHA"] ?? "not supplied"
-        defer { app.terminate() }
+        let fullAccessLabels = ["Allow Full Access", "Allow Access to All Photos",
+                                "フルアクセスを許可", "すべての写真へのアクセスを許可"]
+        let acceptFullPhotosAccess: (XCUIElement) -> Bool = { alert in
+            guard alert.staticTexts.allElementsBoundByIndex.contains(where: {
+                $0.label.localizedCaseInsensitiveContains("photos") || $0.label.contains("写真")
+            }), let button = fullAccessLabels.map({ alert.buttons[$0] }).first(where: { $0.exists }) else {
+                return false
+            }
+            button.tap()
+            return true
+        }
+        let photosMonitor = addUIInterruptionMonitor(withDescription: "Synthetic movie Photos authorization",
+            handler: acceptFullPhotosAccess)
+        defer { removeUIInterruptionMonitor(photosMonitor); app.terminate() }
         app.launch()
         let ready = app.staticTexts["mainline-movie-ready"]
         let deadline = Date().addingTimeInterval(180)
@@ -21,6 +34,9 @@ final class OfficialWindowUITests: XCTestCase {
             if app.staticTexts["mainline-movie-failed"].exists { break }
             // Only this explicit synthetic fixture creates and deletes Photos.
             let alert = springboard.alerts.firstMatch
+            // Polling alone need not trigger an interruption monitor. Handle
+            // only the same positively identified full Photos-access buttons.
+            if alert.exists { _ = acceptFullPhotosAccess(alert) }
             for label in ["削除", "Delete"] where alert.exists && alert.buttons[label].exists {
                 alert.buttons[label].tap()
             }

@@ -27,7 +27,12 @@ class PreparationTests(unittest.TestCase):
                          'Set(created.values).subtracting(baseline)', 'identifiers() == baseline',
                          'exports.allSatisfy', 'exportAttempts > 0']:
             self.assertIn(boundary, source)
-        self.assertNotIn('requestAuthorization', source)
+        # Permission requests are confined to the fixed synthetic entry wrapper.
+        wrapper, existing_routes = source.split('private static func runAuthorizedCapture()', 1)
+        self.assertEqual(wrapper.count('await PHPhotoLibrary.requestAuthorization(for: .readWrite)'), 1)
+        self.assertIn('if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined', wrapper)
+        self.assertIn('environment["NEKO_MOVIE_SYNTHETIC_FIXTURE_DIR"] == "@app-tmp/movie-synthetic-inputs"', wrapper)
+        self.assertNotIn('requestAuthorization', existing_routes)
         cleanup = (root/"NekoWidget/NekoWidget/Services/SeasonalMovieExportService.swift").read_text(encoding="utf-8")
         self.assertIn('isOwnedExportDirectory(directory, root: root)', cleanup)
         self.assertIn('isOwnedExportDirectory(candidate, root: root)', cleanup)

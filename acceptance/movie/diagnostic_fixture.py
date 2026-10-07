@@ -19,6 +19,9 @@ RECEIPT_KEYS = {"syntheticOnly", "shippingExporterInvoked", "exportAttempts",
     "managedCleanupSucceeded", "returnedManagedExportsCleaned",
     "remainingNewManagedDirectories", "result", "visualInspection", "listening"}
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+FAILURE_KEYS = {"schemaVersion", "syntheticOnly", "result", "stage", "photosAuthorization", "buildSourceSHA"}
+FAILURE_STAGES = {"photos-authorization", "cleanup-lifecycle", "synthetic-fixture"}
+PHOTOS_STATES = {"notDetermined", "restricted", "denied", "authorized", "limited", "unknown"}
 
 
 def digest(data):
@@ -66,7 +69,7 @@ def seed(app_tmp, directory=FIXED_INPUTS):
 
 
 def validated_receipt(data):
-    receipt = json.loads(data)
+    receipt = json.loads(data, object_pairs_hook=unique_json_fields)
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_KEYS:
         raise ValueError("Unexpected native receipt fields")
     if (receipt["syntheticOnly"] is not True
@@ -107,6 +110,59 @@ def validated_receipt(data):
     return receipt
 
 
+def unique_json_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate receipt field")
+        result[key] = value
+    return result
+
+
+def validated_failure_receipt(data):
+    receipt = json.loads(data, object_pairs_hook=unique_json_fields)
+    if (not isinstance(receipt, dict) or set(receipt) != FAILURE_KEYS
+            or type(receipt["schemaVersion"]) is not int or receipt["schemaVersion"] != 1
+            or receipt["syntheticOnly"] is not True or not isinstance(receipt["result"], str)
+            or receipt["result"] not in {"pending", "failed", "completed"}
+            or not isinstance(receipt["stage"], str) or receipt["stage"] not in FAILURE_STAGES
+            or not isinstance(receipt["photosAuthorization"], str) or receipt["photosAuthorization"] not in PHOTOS_STATES):
+        raise ValueError("Unexpected synthetic failure receipt fields")
+    source = receipt["buildSourceSHA"]
+    if not isinstance(source, str) or (source != "not supplied" and re.fullmatch(r"[0-9a-f]{40}", source) is None):
+        raise ValueError("Unexpected advisory build source")
+    return receipt
+
+
+def collect_failure(documents, destination, source_sha, report):
+    try:
+        candidates = [path for path in documents.iterdir() if
+            re.fullmatch("MovieSyntheticDiagnostic-" + UUID, path.name)]
+        if not candidates:
+            return
+        if len(candidates) != 1:
+            raise ValueError("Expected at most one synthetic failure directory")
+        output = candidates[0]
+        if output.is_symlink() or not output.is_dir() or {p.name for p in output.iterdir()} != {"receipt.json"}:
+            raise ValueError("Unexpected synthetic failure directory")
+        data = regular_bytes(output / "receipt.json", 4096)
+        receipt = validated_failure_receipt(data)
+        if receipt["result"] == "completed":
+            if receipt["stage"] != "synthetic-fixture" or receipt["photosAuthorization"] != "authorized" or receipt["buildSourceSHA"] != source_sha:
+                raise ValueError("Completed diagnostic evidence is inconsistent")
+            return  # Does not substitute for the existing native export receipt.
+        with (destination / "failure-receipt.json").open("xb") as stream:
+            stream.write(data)
+        report["copied"].append({"file": "failure-receipt.json", "bytes": len(data),
+            "sha256": digest(data), "nativeHashVerified": False})
+        report["errors"].append("Synthetic diagnostic " + receipt["result"] + " at " + receipt["stage"]
+            + " (Photos " + receipt["photosAuthorization"] + ")")
+        if receipt["buildSourceSHA"] != source_sha:
+            report["errors"].append("Failure receipt source SHA differs from fixed diagnostic SHA")
+    except (OSError, ValueError, TypeError, KeyError):
+        report["errors"].append("Synthetic failure receipt unavailable or invalid")
+
+
 def collect(documents, destination, source_sha):
     if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
         raise ValueError("Fixed source SHA is required")
@@ -119,6 +175,9 @@ def collect(documents, destination, source_sha):
         documents = Path(documents)
         if documents.is_symlink() or not documents.is_dir():
             raise ValueError("Expected disposable app Documents directory")
+        # Early authorization/cleanup failures occur before an export directory
+        # exists. Copy only this closed, bounded, non-personal failure schema.
+        collect_failure(documents, destination, source_sha, report)
         candidates = [path for path in documents.iterdir() if
             re.fullmatch("MovieSyntheticAcceptance-" + UUID, path.name)]
         if len(candidates) != 1:
