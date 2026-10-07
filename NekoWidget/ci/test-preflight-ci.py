@@ -32,14 +32,76 @@ class StalledRunRecoveryTests(unittest.TestCase):
                 "status": "queued", "conclusion": None, "run_attempt": 1,
                 "created_at": "2026-10-07T18:00:00Z", "updated_at": "2026-10-07T18:00:00Z", **changes}
 
-    def admission(self, *, source=None, jobs=None, refs=None, replacements=None, head=None, branch=None, existing=False):
+    def admission(self, *, source=None, jobs=None, refs=None, replacements=None, head=None, branch=None, existing=False, refresh=False):
         replies = [self.source() if source is None else source,
                    {"id": 5, "path": preflight.IOS_WORKFLOW},
                    {"total_count": 0, "jobs": []} if jobs is None else jobs,
                    [] if refs is None else refs,
                    {"total_count": 0, "workflow_runs": []} if replacements is None else replacements]
         with patch.object(preflight, "github", side_effect=replies):
-            return preflight.recovery_source(71, head or self.head, branch or "codex/owner-prep", self.now, existing=existing)
+            return preflight.recovery_source(71, head or self.head, branch or "codex/owner-prep", self.now, existing=existing, refresh=refresh)
+
+    def test_refresh_requires_exact_unstarted_ref_and_preserves_source_and_clock(self):
+        arguments = {"refresh": True, "head": "b" * 40,
+                     "refs": [{"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}]}
+        with patch.object(preflight, "verify_recovery_merge", return_value="c" * 40):
+            proof = self.admission(**arguments)
+            self.assertEqual(proof["source_sha"], self.head)
+            self.assertEqual(proof["candidate_sha"], "b" * 40)
+            plan = {"ready": True, "head": "b" * 40, "target_minutes": 500,
+                    "cost": {"status": "reference", "with_upload_minutes": [100, 100]}}
+            result = preflight.apply_task_gate(plan, [self.source()], self.now, recovery=proof)
+            self.assertTrue(result["ready"])
+            self.assertEqual(result["task"]["minutes_since_first_ci"], 360)
+            for changes in ({"refs": []}, {"refs": [{"ref": "refs/heads/codex/recovery-71", "object": {"sha": "c" * 40}}]},
+                            {"replacements": {"total_count": 1, "workflow_runs": [self.source()]}},
+                            {"replacements": {}}, {"jobs": {"total_count": 1, "jobs": [{"id": 1}]}}):
+                with self.subTest(changes=changes), self.assertRaises(ValueError):
+                    self.admission(**{**arguments, **changes})
+
+    def test_refresh_rejects_empty_native_mode_or_non_main_changes(self):
+        path = "NekoWidget/ci/preflight-ci.py"
+        row = f":100644 100644 {'d'*40} {'e'*40} M\t{path}"
+        def git(*args):
+            if args[0] == "show": return self.head + " " + "c" * 40
+            if args[0] == "diff": return row
+            if args[0] == "ls-tree": return "100644 blob " + "e" * 40 + "\t" + path
+            return ""
+        with patch.object(planner, "git", side_effect=git):
+            self.assertEqual(preflight.verify_recovery_merge(self.head, "b" * 40), "c" * 40)
+        for bad in ("", row.replace(path, "NekoWidget/NekoWidgetApp/Views/MembershipOfferView.swift"),
+                    row.replace(":100644", ":100755"), row.replace("100644 100644", "100644 120000"),
+                    row.replace("100644 100644", "000000 100644").replace(" M\t", " A\t")):
+            with self.subTest(bad=bad), patch.object(planner, "git", side_effect=lambda *a: bad if a[0] == "diff" else git(*a)), self.assertRaises(ValueError):
+                preflight.verify_recovery_merge(self.head, "b" * 40)
+        for failure in ("parents", "main", "blob"):
+            def broken(*a):
+                if failure == "parents" and a[0] == "show": return "c" * 40 + " " + self.head
+                if failure == "main" and a[0] == "merge-base": raise subprocess.CalledProcessError(1, a)
+                if failure == "blob" and a[0] == "ls-tree" and a[1] == "b" * 40: return "different"
+                return git(*a)
+            with self.subTest(failure=failure), patch.object(planner, "git", side_effect=broken), self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                preflight.verify_recovery_merge(self.head, "b" * 40)
+
+    def test_refresh_records_request_and_updates_only_the_expected_original_ref(self):
+        proof = {**self.admission(), "refresh": True, "candidate_sha": "b" * 40, "approved_main": "c" * 40}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "receipt.json"
+            def git(*args):
+                if args[0] == "rev-parse": return "b" * 40
+                if args[0] == "remote": return "https://github.com/" + preflight.REPOSITORY + ".git"
+                return ""
+            def push(command, **kwargs):
+                self.assertEqual(json.loads(output.read_text())["dispatch"]["state"], "update_requested")
+                self.assertIn("--force-with-lease=refs/heads/codex/recovery-71:" + self.head, command)
+                self.assertEqual(command[-1], "b" * 40 + ":refs/heads/codex/recovery-71")
+                return subprocess.CompletedProcess(command, 0, "updated")
+            result = {"ready": True, "head": "b" * 40, "task": {"recovery": proof}}
+            with patch.object(planner, "git", side_effect=git), patch.object(preflight, "recovery_source", return_value=proof), \
+                    patch.object(preflight.subprocess, "run", side_effect=push), \
+                    patch.object(preflight, "github", return_value={"ref": "refs/heads/codex/recovery-71", "object": {"sha": "b" * 40}}):
+                preflight.dispatch_recovery(result, proof, output)
+            self.assertEqual(result["dispatch"]["state"], "updated")
 
     def test_only_exact_aged_unstarted_source_has_one_deterministic_replacement(self):
         proof = self.admission()
@@ -142,7 +204,7 @@ class StalledRunRecoveryTests(unittest.TestCase):
                          (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.BILLING_LOCAL_PREPARATION_SCOPE))
 
     def test_recovery_flags_do_not_enable_diagnostic_or_measurement_bypass(self):
-        for args in (["--dispatch-recovery"], ["--recover-run", "0"],
+        for args in (["--dispatch-recovery"], ["--refresh-recovery"], ["--recover-run", "0"],
                      ["--recover-run", "71", "--measure-baseline"],
                      ["--feedback", "--checkout", "."]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): preflight.main(args)

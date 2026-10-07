@@ -1,5 +1,13 @@
 # Started-before-jobs GitHub outage recovery
 
+## Observed correction: unchanged ref creation did not start CI
+
+Control push `37683188045` at `39ab3a9` succeeded in 42 seconds and PR #177 merged as `3004c2a`. The exact product ref `codex/recovery-37642405526` was then created at `c247` using Git push. No owning workflow was created. This disproves ref creation as a sufficient start condition; the internal GitHub cause is not established. Keep both observations and the ref, do not repeat creation or claim native validation started.
+
+The approved correction is `--recover-run <ID> --refresh-recovery`: a real merge whose first parent is the original candidate and whose second parent is main-approved tooling. The complete raw diff must contain only the two preflight sources and these two handoff documents, with normal file modes and exact second-parent blobs. Empty changes, other native/selector/workflow/release inputs and unapproved main content are rejected. The existing recovery ref must still equal the original source, with zero replacement runs in complete history. Dispatch records the request and uses an explicit original-SHA lease to fast-forward that same ref once; unknown responses are inspected, never blindly repeated. Subsequent inspection validates the new exact SHA and its unique push run while retaining the original task history and clock.
+
+The correction preserves all 63 existing preflight tests and adds three boundary tests (66 total). The other 13 local suites have unchanged inputs and retain their earlier success (full suite run 219.4 seconds). Native product code/tests remain unchanged but will be validated at the resulting merge SHA through the four mandatory jobs before release. Control CI is Ubuntu-only, product validation is not its substitute. Recovery branch replaces PR #176 through a linked PR if needed, with merge-commit integration and unchanged release CLI acceptance. The original 120-minute target has been missed; record the full wait and this correction, without counting it as a measured speedup.
+
 ## Candidate and goal
 
 - Product remains `c247cd0a92015660e7a660eaea4e32cb70f9f32e`, PR #176. No product, native test, workflow, signature, or release acceptance changes.

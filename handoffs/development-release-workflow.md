@@ -17,6 +17,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- 同一SHAのrecovery refを作成できてもpush CIが起動しなかった場合、そのref・未起動記録を残す。`--recover-run <ID> --refresh-recovery` は、第一親が元候補、第二親がmain承認済みの実mergeだけを許可する。全raw差分はpreflight・対応テスト・本手順・固定recovery handoffの4パスに限定し、正常modeと第二親の完全一致を確認する。既存refが元SHAのまま・replacement履歴0件・元run全attempt job0を再確認し、元SHAをexpected値とするleaseで同じrefを一度だけFF更新する。空commit、別branch、未知結果の再送は行わない。元の履歴・累計を保持し、新SHAのowning pushと必須job成功を確認してから通常配布へ進む。制御変更以外の製品/選択器/workflow/署名・配布入力の差分は拒否する。
+
 - GitHub内部障害で候補pushが60分以上queuedのまま、全attemptのjobが0、attempt 1、作成後の更新もない場合は、main承認済みのcleanなpreflightから `--checkout <候補checkout> --recover-run <元run ID>` で再開を計画できる。候補・元run・repo・workflow・branchの同一性と、候補が使用する選択器/manifest/workflowとツール側の完全一致を確認する。元runの成功は再利用しない。元のcandidate/diagnostic履歴・失敗・累積時間を保持し、そのrunのactive判定だけを除外する。他の稼働中/未解決失敗は止める。
 - 再開は固定 `codex/recovery-<元run ID>` へ同一SHAを一度だけ登録する。`--dispatch-recovery --output <両checkout外の記録>` を明示した場合だけ、直前再確認→要求記録保存→空のexpected refを指定したGit push (`--force-with-lease=refs/heads/codex/recovery-<ID>:`) を行う。この指定はref不存在だけを許し、既存refを更新しない。既存ref/runがあれば停止する。応答不明時は同じrefとrunを調べ、別branchや再送で重複起動しない。ref作成とpush CI開始は別々に確認し、正しいSHA/branch/workflow/eventの実runを確認するまでCI開始済みと報告しない。
 - 再開branchを後で調べる場合もmain承認済みpreflightの `--checkout` を使う。元run・exact-SHA ref・唯一のreplacement pushを再照合し、元履歴を必ず取り込む。元runが実行を始めた/情報が欠けた場合は再調査する。通常のworkflow・必須job・main統合・TestFlightの成功条件は変更しない。新scopeの実測と混同せず、必要なら既存のfull実測を計画上限の参照にする。元の時間目標を超えた事実を消さない。
