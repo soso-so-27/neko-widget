@@ -4,6 +4,7 @@
 import importlib.util
 import contextlib
 import io
+import json
 import datetime as dt
 import os
 from pathlib import Path
@@ -17,6 +18,185 @@ preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 planner = preflight.planner
 scope = preflight.scope
+
+
+class StalledRunRecoveryTests(unittest.TestCase):
+    now = dt.datetime.fromisoformat("2026-10-08T00:00:00+00:00")
+    head = "a" * 40
+
+    def source(self, **changes):
+        return {"id": 71, "head_sha": self.head, "head_branch": "codex/owner-prep",
+                "workflow_id": 5, "path": preflight.IOS_WORKFLOW, "event": "push",
+                "repository": {"full_name": preflight.REPOSITORY},
+                "head_repository": {"full_name": preflight.REPOSITORY},
+                "status": "queued", "conclusion": None, "run_attempt": 1,
+                "created_at": "2026-10-07T18:00:00Z", "updated_at": "2026-10-07T18:00:00Z", **changes}
+
+    def admission(self, *, source=None, jobs=None, refs=None, replacements=None, head=None, branch=None, existing=False):
+        replies = [self.source() if source is None else source,
+                   {"id": 5, "path": preflight.IOS_WORKFLOW},
+                   {"total_count": 0, "jobs": []} if jobs is None else jobs,
+                   [] if refs is None else refs,
+                   {"total_count": 0, "workflow_runs": []} if replacements is None else replacements]
+        with patch.object(preflight, "github", side_effect=replies):
+            return preflight.recovery_source(71, head or self.head, branch or "codex/owner-prep", self.now, existing=existing)
+
+    def test_only_exact_aged_unstarted_source_has_one_deterministic_replacement(self):
+        proof = self.admission()
+        self.assertEqual(proof["recovery_branch"], "codex/recovery-71")
+        self.assertEqual(proof["source_sha"], self.head)
+        self.assertTrue(proof["original_run_retained"])
+        self.assertFalse(proof["release_evidence"])
+        self.assertEqual(proof["verified_jobs"], 0)
+
+    def test_identity_progress_and_attempts_cannot_be_waived(self):
+        for mutation in ({"id": 72}, {"head_sha": "b" * 40}, {"head_branch": "codex/other"},
+                         {"workflow_id": 6}, {"path": preflight.DIAGNOSTIC_WORKFLOW},
+                         {"event": "workflow_dispatch"}, {"repository": {"full_name": "other/repo"}},
+                         {"head_repository": {"full_name": "other/repo"}}, {"status": "in_progress"},
+                         {"status": "waiting"}, {"conclusion": "failure"}, {"run_attempt": 2},
+                         {"run_attempt": True}, {"updated_at": "2026-10-07T19:00:00Z"},
+                         {"created_at": "2026-10-07T23:59:00Z", "updated_at": "2026-10-07T23:59:00Z"}):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.admission(source=self.source(**mutation))
+        with self.assertRaises(ValueError):
+            self.admission(source=self.source(head_branch="codex/recovery-70"), branch="codex/recovery-70")
+
+    def test_incomplete_jobs_existing_ref_or_any_replacement_history_blocks(self):
+        for jobs in ({}, {"total_count": 0}, {"total_count": 1, "jobs": []},
+                     {"total_count": 0, "jobs": [{"conclusion": "skipped"}]},
+                     {"total_count": False, "jobs": []}):
+            with self.subTest(jobs=jobs), self.assertRaises(ValueError): self.admission(jobs=jobs)
+        for arguments in ({"refs": [{"ref": "refs/heads/codex/recovery-71"}]},
+                          {"replacements": {"total_count": 1, "workflow_runs": []}},
+                          {"replacements": {"total_count": 0, "workflow_runs": [{"id": 72}]}},
+                          {"replacements": {}}):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError): self.admission(**arguments)
+        with patch.object(preflight, "github", side_effect=ValueError("unavailable")), self.assertRaises(ValueError):
+            preflight.recovery_source(71, self.head, "codex/owner-prep", self.now)
+
+    def test_recovery_branch_imports_original_candidate_and_diagnostic_history(self):
+        original = self.source()
+        replacement = {**original, "id": 72, "head_branch": "codex/recovery-71"}
+        diagnostic = {"id": 70, "path": preflight.DIAGNOSTIC_WORKFLOW, "conclusion": None, "status": "queued"}
+        queried = []
+        def api(path):
+            queried.append(path)
+            if path.endswith("/actions/runs/71"): return original
+            runs = [replacement] if "branch=codex%2Frecovery-71" in path else (
+                [diagnostic] if "branch=diagnostic%2Fowner-prep" in path else [original])
+            return {"total_count": len(runs), "workflow_runs": runs}
+        with patch.object(planner, "git", return_value="codex/recovery-71"), patch.object(preflight, "github", side_effect=api):
+            runs = preflight.read_task_runs(self.head)
+        self.assertEqual({run["id"] for run in runs}, {70, 71, 72})
+        self.assertTrue(any("branch=diagnostic%2Fowner-prep" in path for path in queried))
+
+    def test_subsequent_inspection_exempts_only_original_and_retains_replacement(self):
+        replacement = self.source(id=72, head_branch="codex/recovery-71")
+        arguments = {"existing": True, "refs": [{"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}],
+                     "replacements": {"total_count": 1, "workflow_runs": [replacement]}}
+        proof = self.admission(**arguments)
+        plan = {"ready": True, "head": self.head, "target_minutes": 500,
+                "cost": {"status": "observed", "with_upload_minutes": [30, 30]}}
+        result = preflight.apply_task_gate(dict(plan), [self.source(), replacement], self.now, recovery=proof)
+        self.assertEqual(result["task"]["active_runs"], [72])
+        self.assertFalse(result["ready"])
+        completed = {**replacement, "status": "completed", "conclusion": "success"}
+        result = preflight.apply_task_gate(dict(plan), [self.source(), completed], self.now, recovery=proof)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["runs"], 2)
+        for changes in ({"refs": []}, {"refs": [{"ref": "refs/heads/codex/recovery-71", "object": {"sha": "b" * 40}}]},
+                        {"replacements": {"total_count": 2, "workflow_runs": [replacement, replacement]}},
+                        {"replacements": {"total_count": 1, "workflow_runs": [{**replacement, "head_sha": "b" * 40}]}}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError): self.admission(**{**arguments, **changes})
+
+    def test_only_original_active_block_is_exempt_and_clock_is_not_reset(self):
+        proof = self.admission()
+        plan = {"ready": True, "head": self.head, "target_minutes": 500,
+                "cost": {"status": "reference", "with_upload_minutes": [100, 100]}}
+        run = self.source()
+        result = preflight.apply_task_gate(dict(plan), [run], self.now, recovery=proof)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["minutes_since_first_ci"], 360)
+        self.assertEqual(result["task"]["projected_total_minutes"], 460)
+        self.assertEqual(result["task"]["runs"], 1)
+        self.assertFalse(result["task"]["first_baseline_measurement"])
+        for extra in ({**run, "id": 73},
+                      {**run, "id": 74, "status": "completed", "conclusion": "failure",
+                       "failed_tests": ["SoloMemoriesUITests/testOther"]}):
+            result = preflight.apply_task_gate(dict(plan), [run, extra], self.now, recovery=proof)
+            self.assertFalse(result["ready"])
+        result = preflight.apply_task_gate({**plan, "target_minutes": 120}, [run], self.now, recovery=proof)
+        self.assertFalse(result["ready"])
+        with self.assertRaises(ValueError):
+            preflight.apply_task_gate(dict(plan), [], self.now, recovery=proof)
+
+    def test_billing_recovery_uses_observed_full_reference_without_claiming_speedup(self):
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": "full-v1", "candidate_minutes": 98, "run_id": 1, "outcome": "success"}]}
+        cost = preflight.observe_cost(scope.BILLING_LOCAL_PREPARATION_SCOPE, history, True, True)
+        self.assertEqual(cost["status"], "reference")
+        self.assertTrue(cost["scope_unmeasured"])
+        self.assertEqual(cost["with_upload_minutes"], [107, 107])
+        self.assertEqual(planner.required_jobs_from_scope(scope.BILLING_LOCAL_PREPARATION_SCOPE),
+                         (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(scope.BILLING_LOCAL_PREPARATION_SCOPE))
+
+    def test_recovery_flags_do_not_enable_diagnostic_or_measurement_bypass(self):
+        for args in (["--dispatch-recovery"], ["--recover-run", "0"],
+                     ["--recover-run", "71", "--measure-baseline"],
+                     ["--feedback", "--checkout", "."]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): preflight.main(args)
+
+    def test_external_candidate_requires_clean_merged_tooling_and_identical_selector(self):
+        def git(*args):
+            command = args[2:]
+            if command[0] == "status": return ""
+            if command[0] == "merge-base": return ""
+            if command[0] == "remote": return "https://github.com/" + preflight.REPOSITORY + ".git"
+            return self.head
+        with patch.object(planner, "git", side_effect=git):
+            self.assertEqual(preflight.approved_recovery_checkout(Path("candidate")), self.head)
+        for failure in ("dirty", "unmerged", "remote", "selector"):
+            def broken(*args):
+                command = args[2:]
+                if failure == "dirty" and command[0] == "status": return " M preflight-ci.py"
+                if failure == "unmerged" and command[0] == "merge-base": raise subprocess.CalledProcessError(1, ["git"])
+                if failure == "remote" and command[0] == "remote": return "https://github.com/other/repo.git"
+                if failure == "selector" and args[1] == "candidate" and command[-1].endswith("plan-ios-ci.py"): return "b" * 40
+                return git(*args)
+            with self.subTest(failure=failure), patch.object(planner, "git", side_effect=broken), \
+                    self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                preflight.approved_recovery_checkout(Path("candidate"))
+
+    def test_dispatch_records_request_before_atomic_create_and_does_not_retry_unknown_outcome(self):
+        proof = self.admission()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "receipt.json"
+            def create(command, **options):
+                receipt = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(receipt["dispatch"]["state"], "creation_requested")
+                self.assertEqual(command[2], "repos/" + preflight.REPOSITORY + "/git/refs")
+                self.assertEqual(command[3:5], ["--method", "POST"])
+                self.assertEqual(json.loads(options["input"]), {"ref": "refs/heads/codex/recovery-71", "sha": self.head})
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}))
+            for succeeds in (True, False):
+                result = {"ready": True, "head": self.head, "task": {"recovery": proof}}
+                response = create if succeeds else subprocess.TimeoutExpired(["gh"], 45)
+                with patch.object(planner, "git", side_effect=[self.head, ""]), \
+                        patch.object(preflight, "recovery_source", return_value=proof), \
+                        patch.object(subprocess, "run", side_effect=response) as mutation:
+                    if succeeds:
+                        preflight.dispatch_recovery(result, proof, output)
+                        self.assertEqual(result["dispatch"]["state"], "created")
+                    else:
+                        with self.assertRaises(subprocess.TimeoutExpired): preflight.dispatch_recovery(result, proof, output)
+                        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["dispatch"]["state"], "creation_requested")
+                    self.assertEqual(mutation.call_count, 1)
+            with patch.object(planner, "git", side_effect=[self.head, ""]), \
+                    patch.object(preflight, "recovery_source", side_effect=ValueError("replacement appeared")), \
+                    patch.object(subprocess, "run") as mutation, self.assertRaises(ValueError):
+                preflight.dispatch_recovery(result, proof, output)
+            mutation.assert_not_called()
 
 
 class FeedbackRoutingTests(unittest.TestCase):
