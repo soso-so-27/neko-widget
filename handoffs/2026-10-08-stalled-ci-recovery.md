@@ -9,15 +9,17 @@
 
 ## Change and direct evidence
 
-The main-approved preflight can inspect an unchanged candidate checkout, verify an aged queued zero-job original, and create one deterministic `codex/recovery-<run ID>` ref at the exact original SHA. Atomic create-ref never modifies an existing ref. The request receipt is written outside both checkouts before the API call. Unknown outcomes require inspecting that same ref, not another dispatch.
+The main-approved preflight can inspect an unchanged candidate checkout, verify an aged queued zero-job original, and create one deterministic `codex/recovery-<run ID>` ref at the exact original SHA. Git push uses an explicit empty expected-ref lease: creation is allowed only while the remote ref is absent; an existing ref cannot be modified. The request receipt is written outside both checkouts before git push. Unknown outcomes require inspecting that same ref, not another dispatch.
 
 Original candidate and diagnostic histories remain in failure, active-work, and cost accounting. Only the positively verified original active blocker is superseded. Subsequent recovery-branch inspection verifies the original, unchanged ref, and unique owning push run before applying that exemption. No completed, failed, waiting, newer-attempt, changed-SHA, progressed, or nonempty-job run can use this admission. Existing replacements and unknown/incomplete responses stop it.
 
-Preflight regression coverage directly exercises identity, job enumeration, other active/failing work, retained cumulative cost, deterministic single replacement, subsequent history, approved clean tooling, selector equality, and the request-before-atomic-create/unknown-response boundary. Existing assertions remain. The product's earlier native diagnostic remains unchanged and is not substituted for required candidate CI.
+Preflight regression coverage directly exercises identity, job enumeration, other active/failing work, retained cumulative cost, deterministic single replacement, subsequent history, approved clean tooling, selector equality, and the request-before-create-only-push/unknown-response boundary. Existing assertions remain. The product's earlier native diagnostic remains unchanged and is not substituted for required candidate CI.
 
 ## Remaining assumption and validation plan
 
-Ref creation must actually trigger the owning push workflow. Confirm this with the required cheap control candidate itself: publish its objects under its diagnostic ref, then use Git Data create-ref for the control branch and observe `event=push`, matching SHA/workflow, and a completed plan job. Do not launch an extra native probe or equate ref creation with CI start.
+Direct control observation disproved the proposed Git Data create-ref trigger: `91b00e2` was present under the diagnostic ref, and its codex ref was created successfully, but no push CI was created. PR #177 produced only the expected skipped same-repository PR run `37682673819`. Preserve those records; they are not validation success.
+
+Use ordinary git push instead, with an explicit empty expected-ref lease to prevent updating an existing recovery ref. Check that the owning workflow starts at the exact source SHA and branch. The control correction uses its existing PR and a real code-change push; no extra native probe or fake commit. A local bare repository test verifies creation-only semantics before product dispatch. A ref alone still is not CI-start evidence.
 
 Run the existing 14 local development-flow suites and control preflight, independently review the release boundary, then pass the Ubuntu-only control CI and merge it. Previous local suites took about 230 seconds and control CI about 50 seconds. The new helper changes no native inputs. After successful control adoption, use it to plan and dispatch exact `c247`; use the observed full-route maximum only as a conservative planning reference, not a measured duration for `billing-local-preparation-v1`.
 

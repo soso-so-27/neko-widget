@@ -150,8 +150,10 @@ def dispatch_recovery(result, recovery, output):
         raise ValueError("Recovery dispatch requires a successful bound preflight")
     if planner.git("rev-parse", "HEAD") != result["head"] or planner.git("status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Candidate changed before recovery dispatch")
-    # Close the discovery/creation race. Git Data create-ref is
-    # atomic and cannot update an existing ref. Never retry an
+    # Close the discovery/creation race. An explicit empty expected
+    # ref in force-with-lease permits creation only, never an update.
+    # Unlike Git Data create-ref, git push starts the owning workflow.
+    # Never retry an
     # unknown response; inspect this exact ref/run instead.
     fresh = recovery_source(recovery["original_run_id"], result["head"], recovery["original_branch"])
     if any(fresh[key] != recovery[key] for key in fresh):
@@ -164,11 +166,12 @@ def dispatch_recovery(result, recovery, output):
         raise ValueError("Recovery evidence must be outside both checkouts")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    response = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/git/refs", "--method", "POST", "--input", "-"],
-                              input=json.dumps(payload), text=True, capture_output=True, encoding="utf-8", timeout=45)
+    response = subprocess.run(["git", "push", "--porcelain", "--force-with-lease=" + payload["ref"] + ":",
+                               "origin", result["head"] + ":" + payload["ref"]],
+                              text=True, capture_output=True, encoding="utf-8", timeout=45)
     if response.returncode:
         raise ValueError("Recovery ref creation failed or outcome is unknown; inspect the recorded ref, never repeat blindly")
-    created = json.loads(response.stdout)
+    created = github(f"repos/{REPOSITORY}/git/ref/heads/{recovery['recovery_branch']}")
     if created.get("ref") != payload["ref"] or created.get("object", {}).get("sha") != result["head"]:
         raise ValueError("Unexpected recovery ref response; inspect the recorded ref")
     result["dispatch"] = {"state": "created", **payload}

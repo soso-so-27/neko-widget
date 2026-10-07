@@ -175,15 +175,15 @@ class StalledRunRecoveryTests(unittest.TestCase):
             def create(command, **options):
                 receipt = json.loads(output.read_text(encoding="utf-8"))
                 self.assertEqual(receipt["dispatch"]["state"], "creation_requested")
-                self.assertEqual(command[2], "repos/" + preflight.REPOSITORY + "/git/refs")
-                self.assertEqual(command[3:5], ["--method", "POST"])
-                self.assertEqual(json.loads(options["input"]), {"ref": "refs/heads/codex/recovery-71", "sha": self.head})
-                return subprocess.CompletedProcess(command, 0, json.dumps({"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}))
+                self.assertEqual(command, ["git", "push", "--porcelain", "--force-with-lease=refs/heads/codex/recovery-71:",
+                                           "origin", self.head + ":refs/heads/codex/recovery-71"])
+                return subprocess.CompletedProcess(command, 0, "created")
             for succeeds in (True, False):
                 result = {"ready": True, "head": self.head, "task": {"recovery": proof}}
                 response = create if succeeds else subprocess.TimeoutExpired(["gh"], 45)
                 with patch.object(planner, "git", side_effect=[self.head, ""]), \
                         patch.object(preflight, "recovery_source", return_value=proof), \
+                        patch.object(preflight, "github", return_value={"ref": "refs/heads/codex/recovery-71", "object": {"sha": self.head}}), \
                         patch.object(subprocess, "run", side_effect=response) as mutation:
                     if succeeds:
                         preflight.dispatch_recovery(result, proof, output)
@@ -197,6 +197,28 @@ class StalledRunRecoveryTests(unittest.TestCase):
                     patch.object(subprocess, "run") as mutation, self.assertRaises(ValueError):
                 preflight.dispatch_recovery(result, proof, output)
             mutation.assert_not_called()
+
+    def test_git_recovery_push_creates_once_and_cannot_update_an_existing_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote, local = root / "remote.git", root / "local"
+            def git(*args):
+                return subprocess.check_output(["git", *args], text=True, encoding="utf-8", stderr=subprocess.DEVNULL).strip()
+            git("init", "--bare", str(remote))
+            git("init", str(local))
+            git("-C", str(local), "remote", "add", "origin", str(remote))
+            (local / "file.txt").write_text("first", encoding="utf-8")
+            git("-C", str(local), "add", "file.txt")
+            git("-C", str(local), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "first")
+            first = git("-C", str(local), "rev-parse", "HEAD")
+            ref = "refs/heads/codex/recovery-71"
+            git("-C", str(local), "push", "--porcelain", "--force-with-lease=" + ref + ":", "origin", first + ":" + ref)
+            (local / "file.txt").write_text("second", encoding="utf-8")
+            git("-C", str(local), "add", "file.txt")
+            git("-C", str(local), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "second")
+            with self.assertRaises(subprocess.CalledProcessError):
+                git("-C", str(local), "push", "--porcelain", "--force-with-lease=" + ref + ":", "origin", "HEAD:" + ref)
+            self.assertEqual(git("--git-dir=" + str(remote), "rev-parse", ref), first)
 
 
 class FeedbackRoutingTests(unittest.TestCase):
