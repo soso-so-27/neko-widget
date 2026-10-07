@@ -277,12 +277,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("写真を読み込めませんでした", systemImage: "wifi.exclamationmark")
                         .font(.subheadline).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("family-collection-load-failed")
                     Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
                         .font(.subheadline).frame(minHeight: 44)
                         .disabled(model.loading)
                         .accessibilityIdentifier("family-collection-retry")
                 }
-                .accessibilityIdentifier("family-collection-load-failed")
             } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(hasImageLessHistory ? "写真の控えがありません" : "いまは写真がありません",

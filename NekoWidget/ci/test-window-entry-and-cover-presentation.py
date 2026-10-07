@@ -7,6 +7,70 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 MAIN=(ROOT/"NekoWidget/Views/MainTabView.swift").read_text(encoding="utf-8")
 class WindowPresentation(unittest.TestCase):
+    def assert_family_retry_accessibility(self, source):
+        collection=source.split('private func collectionContent(_ value: Projection) -> some View {',1)[1]
+        failed=collection.split('} else if model.error != nil {',1)[1].split('} else if value.items.isEmpty',1)[0]
+        self.assertEqual(failed.count('.accessibilityIdentifier("family-collection-load-failed")'),1)
+        self.assertEqual(failed.count('.accessibilityIdentifier("family-collection-retry")'),1)
+        label,button=failed.split('Button(',1)
+        self.assertIn('Label(',label)
+        self.assertIn('                        .accessibilityIdentifier("family-collection-load-failed")',label)
+        self.assertNotIn('family-collection-load-failed',button)
+        self.assertIn('await reload()',button)
+        self.assertIn('.disabled(model.loading)',button)
+        self.assertIn('.frame(minHeight: 44)',button)
+        self.assertIn('.accessibilityIdentifier("family-collection-retry")',button)
+        self.assertIn('if !value.items.isEmpty || !value.withdrawn.isEmpty {',collection)
+        self.assertIn('ForEach(value.items)',collection)
+        self.assertIn('ForEach(value.withdrawn)',collection)
+
+    def test_family_failure_label_and_retry_keep_distinct_identifiers_and_photos(self):
+        family=(ROOT/"NekoWidget/Views/FamilyRecordView.swift").read_text(encoding="utf-8")
+        self.assert_family_retry_accessibility(family)
+
+    def test_family_retry_identifier_regressions_are_rejected(self):
+        family=(ROOT/"NekoWidget/Views/FamilyRecordView.swift").read_text(encoding="utf-8")
+        state='                        .accessibilityIdentifier("family-collection-load-failed")\n'
+        retry='                        .accessibilityIdentifier("family-collection-retry")\n'
+        self.assertEqual(family.count(state),1)
+        self.assertEqual(family.count(retry),1)
+        # Restore the original parent modifier at the exact VStack closing line.
+        anchor=retry+'                }\n'
+        self.assertEqual(family.count(anchor),1)
+        parent=family.replace(state,'').replace(anchor,anchor+'                .accessibilityIdentifier("family-collection-load-failed")\n')
+        duplicate_parent=family.replace(anchor,anchor+'                .accessibilityIdentifier("family-collection-load-failed")\n')
+        for name,broken in [('original parent ID',parent),('duplicate parent ID',duplicate_parent),('missing state ID',family.replace(state,'')),('missing retry ID',family.replace(retry,''))]:
+            with self.subTest(regression=name), self.assertRaises(AssertionError):
+                self.assert_family_retry_accessibility(broken)
+
+    def assert_official_introduction_accessibility(self, source):
+        introduction=source.split('private var introduction: some View {',1)[1].split('private func photoButton(',1)[0]
+        self.assertNotIn('.accessibilityIdentifier("official-window-introduction")',introduction)
+        for identifier in ('official-window-state-title', 'official-window-refresh-retry', 'official-window-state-discovery'):
+            self.assertEqual(introduction.count('.accessibilityIdentifier("'+identifier+'")'),1)
+        self.assertIn('Label(status.title, systemImage: "photo.on.rectangle")',introduction)
+        retry=introduction.split('if store.endpoint != nil, !stoppedHere {',1)[1].split('if status.showsDiscovery {',1)[0]
+        self.assertIn('await refresh(interactive: true)',retry)
+        self.assertIn('.disabled(isChecking)',retry)
+        self.assertIn('official-window-refresh-retry',retry)
+        discovery=introduction.split('if status.showsDiscovery {',1)[1]
+        self.assertIn('PublicWindowDiscoveryView(sources: discoverySources)',discovery)
+        self.assertIn('official-window-state-discovery',discovery)
+
+    def test_official_empty_state_child_identifiers_and_actions_remain_distinct(self):
+        official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
+        self.assert_official_introduction_accessibility(official)
+
+    def test_official_parent_identifier_regression_is_rejected(self):
+        official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
+        anchor='        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))'
+        introduction=official.split('private var introduction: some View {',1)[1].split('private func photoButton(',1)[0]
+        self.assertEqual(introduction.count(anchor),1)
+        broken=introduction.replace(anchor,anchor+'\n        .accessibilityIdentifier("official-window-introduction")')
+        broken=official.replace(introduction,broken)
+        with self.assertRaises(AssertionError):
+            self.assert_official_introduction_accessibility(broken)
+
     def test_empty_entry_keeps_two_separate_readable_routes(self):
         empty=MAIN.split('private var emptyWindowCard:',1)[1].split('private var windowAdditionControl:',1)[0]
         self.assertIn('if supportsPrivateWindows',empty)

@@ -750,7 +750,7 @@ struct MainTabView: View {
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
                         ? [GridItem(.flexible())]
-                        : [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                        : [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],
                       spacing: 10, content: content)
         }
     }

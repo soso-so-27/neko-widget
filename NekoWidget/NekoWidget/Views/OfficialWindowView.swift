@@ -713,7 +713,6 @@ struct OfficialWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-        .accessibilityIdentifier("official-window-introduction")
     }
 
     private func photoButton(_ photo: OfficialCatPhoto, latest: Bool) -> some View {

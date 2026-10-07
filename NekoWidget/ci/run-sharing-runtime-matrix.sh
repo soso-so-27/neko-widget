@@ -99,7 +99,7 @@ while IFS= read -r test_argument; do
     COMPOSER_TEST_ARGUMENTS+=("$test_argument")
 done < "$UI_SELECTION_FILE"
 MOVIE_SYNTHETIC_REQUESTED=false
-for test_argument in "${COMPOSER_TEST_ARGUMENTS[@]}"; do
+for test_argument in ${COMPOSER_TEST_ARGUMENTS[@]+"${COMPOSER_TEST_ARGUMENTS[@]}"}; do
     if [[ "$test_argument" == "-only-testing:NekoWidgetUITests/OfficialWindowUITests/testSyntheticMovieShippingExportsSoundOnAndOff" ]]; then
         if [[ "$DIAGNOSTIC_REQUESTED" != true ]]; then
             echo "The synthetic movie export is restricted to the dedicated diagnostic workflow." >&2
@@ -539,7 +539,7 @@ PY
             -destination "platform=iOS Simulator,id=$simulator_udid" \
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
-            "${COMPOSER_TEST_ARGUMENTS[@]}" \
+            ${COMPOSER_TEST_ARGUMENTS[@]+"${COMPOSER_TEST_ARGUMENTS[@]}"} \
             -parallel-testing-enabled NO \
             -testLanguage ja \
             -testRegion JP \

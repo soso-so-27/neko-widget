@@ -125,6 +125,34 @@ class PreservationReleaseTests(unittest.TestCase):
                 with self.subTest(source=bad), self.assertRaises(ValueError):
                     pilot.prepare_membership_info(bad, values)
 
+    def test_window_sponsorship_is_explicitly_off_in_every_release_mode(self):
+        project = Path(__file__).resolve().parents[1]
+        config = (project / "Config.xcconfig").read_text(encoding="utf-8")
+        self.assertRegex(config, r"(?m)^PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED = NO$")
+        source_info = plistlib.loads((project / "NekoWidget/Info.plist").read_bytes())
+        self.assertEqual(source_info["PlusWindowSponsorshipClientEnabled"],
+                         "$(PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED)")
+        for requested, billing_requested in ((False, False), (True, False), (True, True)):
+            with self.subTest(preservation=requested, billing=billing_requested):
+                values = pilot.settings(requested, "media-staging", "YES", "internal",
+                                        billing_requested=billing_requested,
+                                        billing_approval="YES", billing_scope="internal")
+                self.assertEqual(values["PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED"], "NO")
+                info = {pilot.INFO_KEYS[key]: value for key, value in values.items()}
+                info.update(SharingReleaseMode="media-staging",
+                            MembershipAccessEnforced=billing_requested)
+                privacy = pilot.add_privacy(self.privacy()) if requested else self.privacy()
+                widget = {"MembershipAccessEnforced": billing_requested}
+                pilot.verify(plistlib.loads(plistlib.dumps(info)), values, privacy, widget)
+                missing = info.copy()
+                del missing["PlusWindowSponsorshipClientEnabled"]
+                with self.assertRaises(ValueError):
+                    pilot.verify(missing, values, privacy, widget)
+                for invalid in ("YES", "", "NO ", "false", False, True, 0, None):
+                    with self.subTest(value=invalid), self.assertRaises(ValueError):
+                        pilot.verify({**info, "PlusWindowSponsorshipClientEnabled": invalid},
+                                     values, privacy, widget)
+
     def test_workflow_passes_same_approval_to_prepare_archive_and_export(self):
         source = Path(__file__).resolve().parents[2].joinpath(".github/workflows/testflight.yml").read_text(encoding="utf-8")
         self.assertIn("      billing_sandbox:", source)

@@ -986,7 +986,7 @@ struct LostCatDraftFixtureView: View {
                 .accessibilityIdentifier("lost-cat-ledger-recovery-result")
                 .task {
                     do { try Self.verifyLedgerRecovery(image: image); lifecycleResult = "passed" }
-                    catch { lifecycleResult = "failed: \(error)" }
+                    catch { lifecycleResult = "failed:operation" }
                 }
         } else if CommandLine.arguments.contains("--lost-cat-export-lifecycle-check") {
             Text(lifecycleResult ?? "確認中")

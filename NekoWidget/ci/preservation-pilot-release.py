@@ -26,6 +26,7 @@ INFO_KEYS = {
     "PLUS_BILLING_CLIENT_ENABLED": "PlusBillingClientEnabled",
     "PLUS_BILLING_API_BASE_URL": "PlusBillingAPIBaseURL",
     "PLUS_BILLING_RECOVERY_ENABLED": "PlusBillingRecoveryEnabled",
+    "PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED": "PlusWindowSponsorshipClientEnabled",
 }
 FLAGS = {key for key in INFO_KEYS if key.endswith("_ENABLED")}
 
