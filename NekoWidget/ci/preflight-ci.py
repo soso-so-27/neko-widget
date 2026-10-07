@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only candidate plan and observed cost, using the release CI selector."""
+"""Candidate plan and observed cost; only explicit recovery dispatch mutates refs."""
 
 import argparse
 import datetime as dt
@@ -36,6 +36,136 @@ DIAGNOSTIC_JOB_NAMES = frozenset({
     "Diagnostic only - one native UI test (not release evidence)",
     "Diagnostic only - up to three native UI tests (not release evidence)",
 })
+RECOVERY_PREFIX = "codex/recovery-"
+IOS_WORKFLOW = ".github/workflows/ios-build.yml"
+RECOVERY_MINIMUM_MINUTES = 60
+RECOVERY_REMOTES = frozenset({f"https://github.com/{REPOSITORY}.git", f"https://github.com/{REPOSITORY}",
+                              f"git@github.com:{REPOSITORY}.git"})
+RECOVERY_MAIN_PATHS = frozenset({"NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
+    "handoffs/development-release-workflow.md", "handoffs/2026-10-08-stalled-ci-recovery.md"})
+
+
+def verify_recovery_merge(source, head):
+    """A real approved tooling merge, never an empty commit or native change."""
+    parents = planner.git("show", "-s", "--format=%P", head).split()
+    if len(parents) != 2 or parents[0] != source:
+        raise ValueError("Recovery refresh requires the original candidate as first merge parent")
+    planner.git("merge-base", "--is-ancestor", parents[1], "origin/main")
+    raw = planner.git("diff", "--raw", "--no-abbrev", "--no-renames", source, head)
+    changes = raw.splitlines()
+    if not changes:
+        raise ValueError("Recovery refresh requires actual approved tooling changes")
+    for line in changes:
+        metadata, path = line.split("\t")
+        before_mode, after_mode, before_blob, after_blob, status = metadata.removeprefix(":").split()
+        if (path not in RECOVERY_MAIN_PATHS or after_mode != "100644"
+                or (status, before_mode) not in {("M", "100644"), ("A", "000000")}
+                or status == "A" and not path.startswith("handoffs/")
+                or planner.git("ls-tree", head, "--", path) != planner.git("ls-tree", parents[1], "--", path)):
+            raise ValueError("Recovery refresh contains unapproved or non-main input changes")
+    return parents[1]
+
+
+def task_refs(branch):
+    """A recovery ref carries its original task identity, never a fresh clock."""
+    if branch.startswith(RECOVERY_PREFIX):
+        identifier = branch.removeprefix(RECOVERY_PREFIX)
+        if not re.fullmatch(r"[1-9][0-9]*", identifier):
+            raise ValueError("Malformed recovery branch")
+        source = github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
+        original = source.get("head_branch", "")
+        if (source.get("id") != int(identifier) or source.get("event") != "push"
+                or source.get("path") != IOS_WORKFLOW
+                or source.get("repository", {}).get("full_name") != REPOSITORY
+                or source.get("head_repository", {}).get("full_name") != REPOSITORY
+                or not original.startswith("codex/") or original.startswith(RECOVERY_PREFIX)):
+            raise ValueError("Recovery task identity is unavailable")
+        return task_refs(original) | {branch}
+    name = branch.removeprefix("codex/").removeprefix("diagnostic/")
+    return {branch, "codex/" + name, "diagnostic/" + name}
+
+
+def recovery_source(run_id, head, branch, now=None, existing=False, refresh=False):
+    """Explicitly replace only an aged, unstarted push; never reuse its success."""
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError("Recovery requires a positive original run ID")
+    run = github(f"repos/{REPOSITORY}/actions/runs/{run_id}")
+    workflow = github(f"repos/{REPOSITORY}/actions/workflows/ios-build.yml")
+    jobs = github(f"repos/{REPOSITORY}/actions/runs/{run_id}/jobs?filter=all&per_page=100")
+    source = run.get("head_sha") if refresh else head
+    if (run.get("id") != run_id or run.get("head_sha") != source
+            or run.get("head_branch") != branch or not branch.startswith("codex/")
+            or branch.startswith(RECOVERY_PREFIX) or not re.fullmatch(r"[0-9a-f]{40}", head)
+            or type(workflow.get("id")) is not int or run.get("workflow_id") != workflow["id"]
+            or workflow.get("path") != IOS_WORKFLOW or run.get("path") != IOS_WORKFLOW
+            or run.get("repository", {}).get("full_name") != REPOSITORY
+            or run.get("head_repository", {}).get("full_name") != REPOSITORY
+            or run.get("event") != "push" or type(run.get("run_attempt")) is not int
+            or run["run_attempt"] != 1 or run.get("status") != "queued"
+            or run.get("conclusion") is not None
+            or type(jobs.get("total_count")) is not int or jobs["total_count"] != 0 or jobs.get("jobs") != []):
+        raise ValueError("Recovery requires the exact original queued push with no jobs in any attempt")
+    created = dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if run.get("updated_at") != run["created_at"] or (now - created).total_seconds() < RECOVERY_MINIMUM_MINUTES * 60:
+        raise ValueError("The original run is recent or has made progress; do not replace it")
+    approved_main = verify_recovery_merge(source, head) if refresh else None
+    recovery_branch = RECOVERY_PREFIX + str(run_id)
+    refs = github(f"repos/{REPOSITORY}/git/matching-refs/heads/{recovery_branch}")
+    query = urllib.parse.urlencode({"branch": recovery_branch, "per_page": 100})
+    replacements = github(f"repos/{REPOSITORY}/actions/runs?{query}")
+    if existing:
+        replacement_runs = replacements.get("workflow_runs")
+        if (not isinstance(refs, list) or len(refs) != 1
+                or refs[0].get("ref") != "refs/heads/" + recovery_branch
+                or refs[0].get("object", {}).get("sha") != head
+                or not isinstance(replacement_runs, list) or not replacement_runs
+                or replacements.get("total_count") != len(replacement_runs) or len(replacement_runs) >= 100
+                or any(item.get("head_sha") != head or item.get("head_branch") != recovery_branch
+                       for item in replacement_runs)
+                or len([item for item in replacement_runs if item.get("event") == "push"
+                        and item.get("path") == IOS_WORKFLOW and item.get("workflow_id") == workflow["id"]
+                        and item.get("repository", {}).get("full_name") == REPOSITORY
+                        and item.get("head_repository", {}).get("full_name") == REPOSITORY]) != 1):
+            raise ValueError("The retained recovery ref/run identity is incomplete or changed")
+    elif refresh:
+        if (not isinstance(refs, list) or len(refs) != 1
+                or refs[0].get("ref") != "refs/heads/" + recovery_branch
+                or refs[0].get("object", {}).get("sha") != source
+                or replacements.get("total_count") != 0 or replacements.get("workflow_runs") != []):
+            raise ValueError("Refresh requires the original recovery ref and no replacement runs")
+    elif refs != [] or replacements.get("total_count") != 0 or replacements.get("workflow_runs") != []:
+        raise ValueError("A recovery ref/run already exists; inspect it instead of creating another")
+    proof = {"original_run_id": run_id, "source_sha": source, "original_branch": branch,
+            "recovery_branch": recovery_branch, "workflow_id": workflow["id"],
+            "original_created_at": run["created_at"], "verified_jobs": 0,
+            "original_run_retained": True, "release_evidence": False}
+    if refresh:
+        proof.update(candidate_sha=head, approved_main=approved_main, refresh=True)
+    return proof
+
+
+def approved_recovery_checkout(checkout):
+    """Use already merged tooling while leaving the complete candidate unchanged."""
+    control = CI.parents[1]
+    def at(path, *args):
+        return planner.git("-C", str(path), *args)
+    control_sha = at(control, "rev-parse", "HEAD")
+    if at(control, "status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("Recovery tooling must be committed and clean")
+    at(control, "merge-base", "--is-ancestor", control_sha, "origin/main")
+    if any(at(path, "remote", "get-url", "origin") not in RECOVERY_REMOTES for path in (control, checkout)):
+        raise ValueError("Recovery tooling and candidate must use the same expected repository")
+    if at(checkout, "remote", "get-url", "--push", "--all", "origin") not in RECOVERY_REMOTES:
+        raise ValueError("Recovery requires exactly one push destination in the expected repository")
+    # The approved preflight is the only newer input. Scope selection, workflow,
+    # and its imported code/data must be identical to the candidate's own inputs.
+    for path in (IOS_WORKFLOW, "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/ios_ci_scope.py",
+                 "NekoWidget/ci/app_icon_ci.py", "NekoWidget/ci/reviewed-app-ui.json",
+                 "NekoWidget/ci/ci-timing-baseline.json"):
+        if at(control, "rev-parse", f"HEAD:{path}") != at(checkout, "rev-parse", f"HEAD:{path}"):
+            raise ValueError("Recovery cannot substitute different selection/workflow inputs")
+    return control_sha
 
 
 def github(path, raw=False):
@@ -51,19 +181,57 @@ def github(path, raw=False):
     return result.stdout if raw else json.loads(result.stdout)
 
 
-def read_task_runs(head=None):
+def dispatch_recovery(result, recovery, output):
+    if not result.get("ready") or result.get("task", {}).get("recovery") != recovery:
+        raise ValueError("Recovery dispatch requires a successful bound preflight")
+    if planner.git("rev-parse", "HEAD") != result["head"] or planner.git("status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("Candidate changed before recovery dispatch")
+    if planner.git("remote", "get-url", "--push", "--all", "origin") not in RECOVERY_REMOTES:
+        raise ValueError("Recovery push destination changed; alternate or multiple recipients are forbidden")
+    # Close the discovery/creation race. An explicit empty expected
+    # ref in force-with-lease permits creation only, never an update.
+    # Ref creation alone did not start CI in direct observation. A reviewed
+    # tooling merge may advance that same ref once. Never retry an
+    # unknown response; inspect this exact ref/run instead.
+    fresh = recovery_source(recovery["original_run_id"], result["head"], recovery["original_branch"],
+                            refresh=recovery.get("refresh", False))
+    if any(fresh[key] != recovery[key] for key in fresh):
+        raise ValueError("Recovery source changed before dispatch")
+    payload = {"ref": "refs/heads/" + recovery["recovery_branch"], "sha": result["head"]}
+    record = {**result, "dispatch": {"state": "update_requested" if recovery.get("refresh") else "creation_requested", **payload}}
+    if not output:
+        raise ValueError("Recovery dispatch requires --output outside the checkout")
+    if output.is_relative_to(Path.cwd()) or output.is_relative_to(CI.parents[1]):
+        raise ValueError("Recovery evidence must be outside both checkouts")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    expected = recovery["source_sha"] if recovery.get("refresh") else ""
+    response = subprocess.run(["git", "push", "--porcelain", "--force-with-lease=" + payload["ref"] + ":" + expected,
+                               "origin", result["head"] + ":" + payload["ref"]],
+                              text=True, capture_output=True, encoding="utf-8", timeout=45)
+    if response.returncode:
+        raise ValueError("Recovery ref creation failed or outcome is unknown; inspect the recorded ref, never repeat blindly")
+    created = github(f"repos/{REPOSITORY}/git/ref/heads/{recovery['recovery_branch']}")
+    if created.get("ref") != payload["ref"] or created.get("object", {}).get("sha") != result["head"]:
+        raise ValueError("Unexpected recovery ref response; inspect the recorded ref")
+    result["dispatch"] = {"state": "updated" if recovery.get("refresh") else "created", **payload}
+
+
+def read_task_runs(head=None, recovery=None):
     # A task uses matching codex/<task> and diagnostic/<task> branches. Look at
     # both, so a diagnostic push cannot reset the time/failure accounting.
     branch = planner.git("branch", "--show-current")
     if not branch or branch == "main":
         raise ValueError("Preflight requires a dedicated task branch")
-    name = branch.removeprefix("codex/").removeprefix("diagnostic/")
     runs = {}
-    for ref in {branch, "codex/" + name, "diagnostic/" + name}:
+    refs = task_refs(branch)
+    if recovery:
+        refs.add(recovery["recovery_branch"])
+    for ref in refs:
         query = urllib.parse.urlencode({"branch": ref, "per_page": 100})
         page = github(f"repos/{REPOSITORY}/actions/runs?{query}")
-        if page["total_count"] >= 100:
-            raise ValueError("Task history exceeds 100 runs; review it before continuing")
+        if page["total_count"] >= 100 or page["total_count"] != len(page["workflow_runs"]):
+            raise ValueError("Task history is incomplete; review it before continuing")
         for run in page["workflow_runs"]:
             if run.get("path") in {".github/workflows/ios-build.yml", DIAGNOSTIC_WORKFLOW,
                                    planner.JPEG_WORKFLOW, planner.PRESERVATION_WORKFLOW}:
@@ -101,8 +269,7 @@ def read_task_runs(head=None):
 
 def read_other_active_ios_runs(branch):
     """Report contention without cancelling jobs or relaxing candidate gates."""
-    task = branch.removeprefix("codex/").removeprefix("diagnostic/")
-    own = {branch, "codex/" + task, "diagnostic/" + task}
+    own = task_refs(branch)
     active = {}
     for status in ("queued", "in_progress", "waiting", "requested", "pending"):
         query = urllib.parse.urlencode({"status": status, "per_page": 100})
@@ -286,7 +453,7 @@ def known_deletion_test_diagnosis(result, runs):
             "reviewed_test_fix": corrected, "reuses_successful_jobs": False}
 
 
-def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None):
+def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -294,6 +461,16 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     failed = [run for run in runs if run["status"] == "completed" and
               run["conclusion"] in {"failure", "timed_out", "cancelled", "startup_failure"}]
     active = [run["id"] for run in runs if run["status"] != "completed"]
+    if recovery:
+        # Keep the source in runs/cost/failure accounting. Exempt only this
+        # positively verified zero-job attempt, not any other active work.
+        sources = [run for run in runs if run["id"] == recovery["original_run_id"]]
+        if (len(sources) != 1 or sources[0].get("head_sha") != recovery["source_sha"]
+                or result["head"] != recovery.get("candidate_sha", recovery["source_sha"])
+                or sources[0].get("status") != "queued" or sources[0].get("run_attempt") != 1
+                or sources[0].get("updated_at") != recovery["original_created_at"]):
+            raise ValueError("Original run changed or is missing from the retained task history")
+        active = [run_id for run_id in active if run_id != recovery["original_run_id"]]
     diagnostics = [run for run in runs if run["path"] == DIAGNOSTIC_WORKFLOW and
                    run.get("event") == "workflow_dispatch" and
                    run.get("head_branch", "").startswith("diagnostic/") and run["status"] == "completed" and
@@ -363,6 +540,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       "missing_diagnostic_tests": missing,
                       "test_correction_evidence": correction_evidence,
                       "known_test_failure_diagnosis": diagnosed_failure,
+                      "recovery": recovery,
                       "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
                       "projected_total_minutes": projected, "blockers": blockers}
@@ -433,7 +611,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
     if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.BILLING_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
-                                             scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
+                                             scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.BILLING_LOCAL_PREPARATION_SCOPE):
         raise ValueError("Full baseline reference is limited to the reviewed app UI profiles")
     samples = [row for row in history["observations"] if row["scope"] == selected]
     # A new backend allowlist (including preservation v23) is unmeasured even when its unchanged
@@ -568,26 +746,55 @@ def main(argv=None):
     parser.add_argument("--use-full-baseline", action="store_true",
                         help="For reviewed app UI profiles only, use the full-route maximum as an unmeasured cost reference; keep all gates")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--checkout", type=Path, help="Candidate inspected by clean, main-approved recovery tooling")
+    parser.add_argument("--recover-run", type=int, help="Plan one exact-SHA replacement for an aged queued zero-job push")
+    parser.add_argument("--refresh-recovery", action="store_true", help="Advance the unstarted recovery ref only by an approved tooling merge")
+    parser.add_argument("--dispatch-recovery", action="store_true", help="Explicitly create the single recovery ref after all preflight gates pass")
     args = parser.parse_args(argv)
     if args.feedback and (not args.test_class or not args.test_method or args.include_upload):
         parser.error("Feedback requires test-class and test-method and cannot authorize upload")
     if not args.feedback and (args.test_class or args.test_method):
         parser.error("test-class and test-method require --feedback")
+    if (args.recover_run is not None and (args.recover_run <= 0 or args.feedback or args.measure_baseline)
+            or (args.dispatch_recovery or args.refresh_recovery) and args.recover_run is None
+            or args.checkout and args.feedback):
+        parser.error("Recovery requires a positive source run, a measured/reference time plan, and no diagnostic mode")
     if not math.isfinite(args.target_minutes) or args.target_minutes <= 0:
         parser.error("target-minutes must be positive")
     args.history = args.history.resolve()
     if args.output:
         args.output = args.output.resolve()
+    if args.checkout:
+        args.checkout = args.checkout.resolve()
     # Absolute invocation from another project must still inspect this tool's
     # checkout; resolve caller-provided result/history paths before changing cwd.
     os.chdir(CI.parents[1])
     try:
+        control_sha = None
+        if args.checkout or args.recover_run is not None:
+            control_sha = approved_recovery_checkout(args.checkout or CI.parents[1])
+            os.chdir(args.checkout or CI.parents[1])
         history = json.loads(args.history.read_text(encoding="utf-8"))
         result = (feedback_plan(args.test_class, args.test_method) if args.feedback else
                   candidate_plan(args.base, args.target_minutes, args.include_upload, history, args.decision, args.use_full_baseline))
         if not args.feedback and result["scope"] not in {"no-change", "handoff-only", planner.DEVELOPMENT_SCOPE, planner.ORCHESTRATION_SCOPE,
                                    planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE}:
-            runs = read_task_runs(result["head"])
+            branch = planner.git("branch", "--show-current")
+            if args.refresh_recovery:
+                if branch != RECOVERY_PREFIX + str(args.recover_run):
+                    raise ValueError("Refresh requires the existing deterministic recovery branch")
+                branch = github(f"repos/{REPOSITORY}/actions/runs/{args.recover_run}")["head_branch"]
+            recovery = (recovery_source(args.recover_run, result["head"], branch, refresh=args.refresh_recovery)
+                        if args.recover_run is not None else None)
+            if recovery:
+                recovery["control_sha"] = control_sha
+            elif control_sha and planner.git("branch", "--show-current").startswith(RECOVERY_PREFIX):
+                identifier = int(planner.git("branch", "--show-current").removeprefix(RECOVERY_PREFIX))
+                original = github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
+                recovery = recovery_source(identifier, result["head"], original["head_branch"], existing=True,
+                                           refresh=result["head"] != original["head_sha"])
+                recovery["control_sha"] = control_sha
+            runs = read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"])
             correction = None
             if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE):
                 branch = planner.git("branch", "--show-current")
@@ -597,8 +804,14 @@ def main(argv=None):
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
-                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs))
+                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery)
             result["other_active_ios_runs"] = read_other_active_ios_runs(planner.git("branch", "--show-current"))
+            if recovery and result["ready"] and args.recover_run is not None:
+                result["next_action"] = "Dispatch the verified recovery ref with --dispatch-recovery; confirm the actual owning push run separately"
+                if args.dispatch_recovery:
+                    dispatch_recovery(result, recovery, args.output)
+        if args.recover_run is not None and "recovery" not in result.get("task", {}):
+            raise ValueError("Recovery requires a native candidate with all mandatory jobs")
         encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
