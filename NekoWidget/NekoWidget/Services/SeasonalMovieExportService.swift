@@ -774,6 +774,12 @@ actor SeasonalMovieExportService {
 
     private func makeOutputURL() throws -> URL {
         let root = Self.exportRoot(fileManager: fileManager)
+        if fileManager.fileExists(atPath: root.path) {
+            guard let values = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true, values.isSymbolicLink == false else {
+                throw SeasonalMovieExportError.cannotCreateOutput
+            }
+        }
         let directory = root.appendingPathComponent(
             UUID().uuidString,
             isDirectory: true
@@ -848,10 +854,21 @@ actor SeasonalMovieExportService {
         let directory = candidate.deletingLastPathComponent()
         guard candidate.lastPathComponent == outputFileName,
               directory.deletingLastPathComponent() == root,
-              UUID(uuidString: directory.lastPathComponent) != nil else {
+              UUID(uuidString: directory.lastPathComponent) != nil,
+              isOwnedExportDirectory(directory, root: root) else {
             return
         }
         try? fileManager.removeItem(at: directory)
+    }
+
+    private static func isOwnedExportDirectory(_ directory: URL, root: URL) -> Bool {
+        // A symlink at either level could make lexical containment point at a
+        // saved copy outside the exporter. Unknown resource values fail closed.
+        for item in [root, directory] {
+            guard let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true, values.isSymbolicLink == false else { return false }
+        }
+        return true
     }
 
     /// App launch may call this static form before any export UI is opened.
@@ -861,6 +878,8 @@ actor SeasonalMovieExportService {
     ) throws {
         let root = exportRoot(fileManager: fileManager)
         guard fileManager.fileExists(atPath: root.path) else { return }
+        guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              rootValues.isDirectory == true, rootValues.isSymbolicLink == false else { return }
         let expiration = Date().addingTimeInterval(-max(0, age))
         let children = try fileManager.contentsOfDirectory(
             at: root,
@@ -874,7 +893,8 @@ actor SeasonalMovieExportService {
         for child in children {
             let candidate = child.standardizedFileURL
             guard candidate.deletingLastPathComponent() == root,
-                  UUID(uuidString: candidate.lastPathComponent) != nil else {
+                  UUID(uuidString: candidate.lastPathComponent) != nil,
+                  isOwnedExportDirectory(candidate, root: root) else {
                 continue
             }
             let values = try candidate.resourceValues(forKeys: [

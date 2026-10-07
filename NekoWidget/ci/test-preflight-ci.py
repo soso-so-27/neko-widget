@@ -177,7 +177,7 @@ class PreflightTests(unittest.TestCase):
                 patch.object(planner, "changed_paths", return_value=paths), \
                 patch.object(planner, "runtime_scope", return_value=scope.APP_DATA_SCOPE):
             result = preflight.candidate_plan("origin/main", 30, True, self.history)
-        self.assertEqual(len(result["required_jobs"]), 5)
+        self.assertEqual(len(result["required_jobs"]), 6)
         self.assertFalse(any("gallery" in name for name in result["required_jobs"]))
         self.assertIn("storage/privacy/migration", result["reason"])
         self.assertIn("Widget source membership/render inputs unchanged", result["reason"])
@@ -195,7 +195,7 @@ class PreflightTests(unittest.TestCase):
             result = preflight.candidate_plan("origin/main", 90, True, history)
         self.assertEqual(result["scope"], scope.APP_VIEW_SCOPE)
         self.assertEqual(result["required_jobs"], list(planner.required_jobs_from_scope(scope.APP_VIEW_SCOPE)))
-        self.assertEqual(len(result["required_jobs"]), 5)
+        self.assertEqual(len(result["required_jobs"]), 6)
         self.assertFalse(any("gallery" in name for name in result["required_jobs"]))
         self.assertEqual(result["unmapped_files"], [])
         self.assertTrue(result["ready"])

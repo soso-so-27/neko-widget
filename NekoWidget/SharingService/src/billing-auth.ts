@@ -2,6 +2,7 @@ import { base64urlDecode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
 import type { Env } from "./env";
 import { billingSignedRequestTranscript } from "./billing-protocol";
+import { requireOwnerSandboxAccount } from "./billing-sandbox-owner";
 
 export interface AuthenticatedBillingAccount {
   billingAccountId: string;
@@ -78,6 +79,7 @@ export async function authenticateBillingSignedRequest(
   if (!valid) {
     throw new ApiError(401, "invalid_billing_authentication", "Billing authentication failed.");
   }
+  await requireOwnerSandboxAccount(env, billingAccountId);
   return { billingAccountId, billingKeyId, nonce, now };
 }
 

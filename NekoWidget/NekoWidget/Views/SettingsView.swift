@@ -300,6 +300,14 @@ struct SettingsView: View {
                 }
             }
 
+            if BillingSandboxOwnerEnrollmentAvailability.isAvailable {
+                Section {
+                    NavigationLink("本人限定テストの端末確認") {
+                        BillingSandboxOwnerEnrollmentView()
+                    }.accessibilityIdentifier("settings-billing-owner-enrollment")
+                }
+            }
+
             if MembershipOfferPreviewAvailability.isAvailable {
                 Section {
                     if !canOpenMembershipOffer {

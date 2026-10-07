@@ -5,6 +5,7 @@ set -Eeuo pipefail
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
+RECORDED_COMMAND="$PROJECT_DIRECTORY/ci/run-recorded-command.py"
 REPORT_FILENAME="sharing-runtime-self-test.json"
 RENDERER_VERSION="cat-aware-full-bleed-v6"
 ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-sharing-runtime-matrix"
@@ -97,6 +98,18 @@ COMPOSER_TEST_ARGUMENTS=()
 while IFS= read -r test_argument; do
     COMPOSER_TEST_ARGUMENTS+=("$test_argument")
 done < "$UI_SELECTION_FILE"
+MOVIE_SYNTHETIC_REQUESTED=false
+for test_argument in ${COMPOSER_TEST_ARGUMENTS[@]+"${COMPOSER_TEST_ARGUMENTS[@]}"}; do
+    if [[ "$test_argument" == "-only-testing:NekoWidgetUITests/OfficialWindowUITests/testSyntheticMovieShippingExportsSoundOnAndOff" ]]; then
+        if [[ "$DIAGNOSTIC_REQUESTED" != true ]]; then
+            echo "The synthetic movie export is restricted to the dedicated diagnostic workflow." >&2
+            exit 1
+        fi
+        MOVIE_SYNTHETIC_REQUESTED=true
+        python3 "$PROJECT_DIRECTORY/../acceptance/movie/diagnostic_fixture.py" verify \
+            > "$ARTIFACT_DIRECTORY/movie-fixed-inputs.json"
+    fi
+done
 if [[ "$RUNTIME_LANE" != runtime ]] && (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
     echo "The requested scope did not select any native UI tests." >&2
     exit 1
@@ -113,7 +126,7 @@ case "$RUNTIME_LANE" in
         fi
         ;;
     runtime) ;;
-    app-ui|app-ui-solo|app-ui-other|gallery-normal|gallery-variants|gallery-white)
+    app-ui|app-ui-solo|app-ui-solo-1|app-ui-solo-2|app-ui-other|gallery-normal|gallery-variants|gallery-white)
         # Each visual lane regenerates its own validated production cache.
         # Do not transfer an injected checkout or fixture build between jobs.
         RUNTIME_LABELS=("ios-26-2")
@@ -510,7 +523,15 @@ PY
         # Keep the same fixture preparation/build for full and mapped UI.
         # Only test selection and the extra Gallery builds vary by scope.
         if [[ "$RUNTIME_LANE" == all || "$RUNTIME_LANE" == app-ui* || "$RUNTIME_LANE" == gallery-normal ]]; then
-        xcodebuild \
+        if [[ "$MOVIE_SYNTHETIC_REQUESTED" == true ]]; then
+            app_data_container="$(xcrun simctl get_app_container "$simulator_udid" "$APP_BUNDLE_ID" data)"
+            python3 "$PROJECT_DIRECTORY/../acceptance/movie/diagnostic_fixture.py" seed \
+                "$app_data_container/tmp" > "$runtime_artifacts/movie-seeded-inputs.json" || return $?
+            xcrun simctl privacy "$simulator_udid" grant photos "$APP_BUNDLE_ID" || return $?
+        fi
+        TEST_RUNNER_NEKO_MOVIE_SYNTHETIC_DIAGNOSTIC="$MOVIE_SYNTHETIC_REQUESTED" \
+        TEST_RUNNER_NEKO_MOVIE_BUILD_SHA="${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-not supplied}" \
+        python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-test-timing.json" -- xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Debug \
@@ -518,7 +539,7 @@ PY
             -destination "platform=iOS Simulator,id=$simulator_udid" \
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
-            "${COMPOSER_TEST_ARGUMENTS[@]}" \
+            ${COMPOSER_TEST_ARGUMENTS[@]+"${COMPOSER_TEST_ARGUMENTS[@]}"} \
             -parallel-testing-enabled NO \
             -testLanguage ja \
             -testRegion JP \
@@ -528,9 +549,28 @@ PY
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             'WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE' \
             test || composer_status=$?
+        # Capture success and failure before cleanup_runtime erases the Simulator.
+        # A collection failure never replaces an already failed XCTest result.
+        if [[ "$MOVIE_SYNTHETIC_REQUESTED" == true ]]; then
+            local movie_collection_status=0
+            app_data_container="$(xcrun simctl get_app_container "$simulator_udid" "$APP_BUNDLE_ID" data)" \
+                || movie_collection_status=$?
+            python3 "$PROJECT_DIRECTORY/../acceptance/movie/diagnostic_fixture.py" collect \
+                "$app_data_container/Documents" "$runtime_artifacts/movie-synthetic" \
+                --source-sha "$NEKO_IOS_DIAGNOSTIC_SOURCE_SHA" \
+                || movie_collection_status=$?
+            if (( composer_status == 0 && movie_collection_status != 0 )); then
+                composer_status=$movie_collection_status
+            fi
+        fi
         if [[ -d "$composer_result" ]]; then
-            xcrun xcresulttool export attachments --path "$composer_result" \
-                --output-path "$runtime_artifacts/composer-screenshots"
+            local composer_export_status=0
+            python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-export-timing.json" \
+                --timeout 180 -- xcrun xcresulttool export attachments --path "$composer_result" \
+                --output-path "$runtime_artifacts/composer-screenshots" || composer_export_status=$?
+            if (( composer_status == 0 && composer_export_status != 0 )); then
+                composer_status=$composer_export_status
+            fi
         fi
         fi
         # Reuse DerivedData, but reset the disposable Simulator between
@@ -608,7 +648,8 @@ PY
             fi
             if [[ -d "$widget_scenario_result" ]]; then
                 local attachment_status=0
-                xcrun xcresulttool export attachments --path "$widget_scenario_result" \
+                python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/widget-$widget_scenario-export-timing.json" \
+                    --timeout 180 -- xcrun xcresulttool export attachments --path "$widget_scenario_result" \
                     --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots" \
                     || attachment_status=$?
                 if (( widget_scenario_status == 0 && attachment_status != 0 )); then

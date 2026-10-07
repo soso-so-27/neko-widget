@@ -7,6 +7,29 @@ def source(name):
     return next((ROOT / "NekoWidget").rglob(name)).read_text(encoding="utf-8")
 
 class ToolsReviewContracts(unittest.TestCase):
+    def assert_tools_grid_columns(self, text):
+        grid=text.split('LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize',1)[1].split('spacing: 10, content: content)',1)[0]
+        self.assertIn('? [GridItem(.flexible())]',grid)
+        two_columns=': [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],'
+        self.assertIn(two_columns,grid)
+        self.assertEqual(grid.count('GridItem('),3)
+        self.assertEqual(grid.count('alignment: .top'),2)
+        self.assertIn('spacing: 10, content: content)',text)
+
+    def test_tools_grid_keeps_two_top_columns_and_accessibility_single_column(self):
+        self.assert_tools_grid_columns(source('MainTabView.swift'))
+
+    def test_default_center_alignment_regression_is_rejected_for_either_column(self):
+        text=source('MainTabView.swift')
+        column='GridItem(.flexible(), spacing: 10, alignment: .top)'
+        self.assertEqual(text.count(column),2)
+        for occurrence in (0,1):
+            with self.subTest(column=occurrence):
+                parts=text.split(column)
+                broken=parts[0]+(column if occurrence!=0 else 'GridItem(.flexible(), spacing: 10)')+parts[1]+(column if occurrence!=1 else 'GridItem(.flexible(), spacing: 10)')+parts[2]
+                with self.assertRaises(AssertionError):
+                    self.assert_tools_grid_columns(broken)
+
     def test_picker_keeps_saving_sheet_and_selection_stable(self):
         picker = source("ShowcasePhotoView.swift").split("private struct ShowcaseCandidatePicker", 1)[1]
         self.assertIn('Button("キャンセル") { dismiss() }.disabled(isSaving)', picker)

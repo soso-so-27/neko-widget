@@ -15,17 +15,23 @@ test('private billing gateway: real named binding, bounded routes and authoritat
     entryPoints: [fileURLToPath(new URL('../src/billing-protocol.ts', import.meta.url))],
     bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022',
   });
-  const { billingSignedRequestTranscript } = await import('data:text/javascript;base64,'
+  const { billingSignedRequestTranscript, billingAccountCreationTranscript } = await import('data:text/javascript;base64,'
     + Buffer.from(protocolBundle.outputFiles[0].text).toString('base64'));
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const rawPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+  const enrollmentId = randomUUID();
+  const ownerPolicy = JSON.stringify({ version: 1, bootstrapClientRequestId: enrollmentId, initialPublicKeySHA256: createHash('sha256').update(rawPublicKey).digest('hex'), startsAtMs: Date.now() - 1000, expiresAtMs: Date.now() + 3600000 });
   const mf = new Miniflare(convertV4MiniflareOptions({
     cf: false,
     workers: [{
       name: 'front', modules: true, compatibilityDate: '2026-08-17',
       script: `export default { fetch(request, env) {
         const path = new URL(request.url).pathname;
-        return (path === '/default' ? env.PUBLIC : path === '/production' ? env.PRODUCTION
+        return (path.startsWith('/expired/') ? env.EXPIRED : path.startsWith('/malformed/') ? env.MALFORMED : path === '/default' ? env.PUBLIC : path === '/production' ? env.PRODUCTION
           : path.startsWith('/enabled/') ? env.ENABLED : env.GATEWAY).fetch(
-            path === '/production'
+            path.startsWith('/expired/') || path.startsWith('/malformed/')
+              ? new Request('https://private.invalid/v1/billing/' + path.split('/').slice(2).join('/'), request)
+              : path === '/production'
               ? new Request('https://private.invalid/v1/billing/transactions', request)
               : path.startsWith('/enabled/')
                 ? new Request('https://private.invalid/v1/billing/' + path.slice('/enabled/'.length), request)
@@ -36,15 +42,18 @@ test('private billing gateway: real named binding, bounded routes and authoritat
         PUBLIC: 'gateway',
         PRODUCTION: { name: 'production', entrypoint: 'BillingGateway' },
         ENABLED: { name: 'enabled', entrypoint: 'BillingGateway' },
+        EXPIRED: { name: 'expired', entrypoint: 'BillingGateway' },
+        MALFORMED: { name: 'malformed', entrypoint: 'BillingGateway' },
       },
-    }, ...['gateway', 'production', 'enabled'].map(name => ({
+    }, ...['gateway', 'production', 'enabled', 'expired', 'malformed'].map(name => ({
       name, modules: true, script: outputFiles[0].text,
       compatibilityDate: '2026-08-17', compatibilityFlags: ['nodejs_compat'],
       d1Databases: { DB: 'billing-gateway-fixture' },
       bindings: {
         ENVIRONMENT: 'local',
         BILLING_STORE_ENVIRONMENT: name === 'production' ? 'Production' : 'Sandbox',
-        ...(name === 'enabled' ? {
+        ...(['enabled', 'expired', 'malformed'].includes(name) ? {
+          BILLING_SANDBOX_OWNER_ADMISSION: name === 'expired' ? JSON.stringify({ ...JSON.parse(ownerPolicy), startsAtMs: Date.now() - 2000, expiresAtMs: Date.now() - 1000 }) : name === 'malformed' ? JSON.stringify({ ...JSON.parse(ownerPolicy), bootstrapClientRequestId: [enrollmentId] }) : ownerPolicy,
           BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: 'YES',
           BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: 'YES',
         } : {}),
@@ -74,6 +83,15 @@ test('private billing gateway: real named binding, bounded routes and authoritat
     assert.equal(health.headers.get('neko-runtime-billing-apple-notification-rate-limiter'), 'MISSING');
     assert.equal(health.headers.get('neko-runtime-media'), null, 'do not invent family/media state');
     assert.equal(health.headers.get('neko-runtime-apns'), null);
+    for (const variant of ['expired', 'malformed']) {
+      const closedHealth = await fetch('/' + variant + '/health');
+      assert.equal(closedHealth.status, 200);
+      assert.equal(closedHealth.headers.get('neko-runtime-billing-owner-admission'), 'CLOSED');
+      assert.equal(closedHealth.headers.get('neko-runtime-billing-transaction-ingestion'), 'OFF');
+      const refused = await fetch('/' + variant + '/accounts', { method: 'POST', body: 'x'.repeat(2049) });
+      assert.equal(refused.status, 503, 'closed policy precedes reads even with upper and lower gates ON');
+      assert.equal((await refused.json()).error.code, 'billing_owner_admission_unavailable');
+    }
     assert.match(health.headers.get('cache-control'), /no-store/);
     for (const path of ['/health', '/v2/family-records', '/v1/spaces', '/v1/sharing/sources',
       '/v1/window-sponsorship', '/v1/billing/unknown', '/v1/billing/accounts/extra',
@@ -89,7 +107,7 @@ test('private billing gateway: real named binding, bounded routes and authoritat
       '/v1/billing/transactions', '/v1/billing/apple-notifications']) {
       const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       assert.equal(response.status, 503, path);
-      assert.equal((await response.json()).error.code, 'billing_runtime_disabled');
+      assert.equal((await response.json()).error.code, 'billing_owner_admission_unavailable');
     }
     const disabledOversized = await fetch('/v1/billing/accounts', { method: 'POST', body: 'x'.repeat(2049) });
     assert.equal(disabledOversized.status, 503, 'runtime refusal must precede body reads');
@@ -112,16 +130,23 @@ test('private billing gateway: real named binding, bounded routes and authoritat
     assert.equal(unauthenticated.status, 401, 'enabled route must still run main authentication');
     assert.equal((await unauthenticated.json()).error.code, 'invalid_billing_authentication');
     await db.prepare(`CREATE TABLE billing_account_keys (
-      id TEXT PRIMARY KEY, billing_account_id TEXT, signing_public_key TEXT, state TEXT)`).run();
+      id TEXT PRIMARY KEY, billing_account_id TEXT, signing_public_key TEXT, state TEXT, created_at INTEGER)`).run();
     await db.prepare(`CREATE TABLE billing_request_nonces (
       billing_key_id TEXT, nonce TEXT, created_at INTEGER, expires_at INTEGER,
       PRIMARY KEY (billing_key_id, nonce))`).run();
-    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-    const accountId = randomUUID();
-    const keyId = randomBytes(16).toString('base64url');
-    await db.prepare('INSERT INTO billing_account_keys VALUES(?,?,?,?)').bind(
-      keyId, accountId, publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64url'), 'active',
-    ).run();
+    await db.prepare('CREATE TABLE billing_accounts (id TEXT PRIMARY KEY, created_at INTEGER)').run();
+    await db.prepare('CREATE TABLE billing_account_bootstrap_requests (client_request_id TEXT PRIMARY KEY, request_hash TEXT, billing_account_id TEXT, billing_key_id TEXT, created_at INTEGER)').run();
+    const enrollmentRequest = clientRequestId => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ protocolVersion: 1, clientRequestId, signingPublicKey: rawPublicKey.toString('base64url'), creationSignature: sign(null, billingAccountCreationTranscript({ clientRequestId, signingPublicKey: rawPublicKey.toString('base64url') }), privateKey).toString('base64url') }) });
+    const wrongEnrollment = await fetch('/enabled/accounts', enrollmentRequest(randomUUID()));
+    assert.equal(wrongEnrollment.status, 403, 'valid bootstrap proof with another request ID must fail');
+    assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM billing_accounts').first()).count, 0);
+    const created = await fetch('/enabled/accounts', enrollmentRequest(enrollmentId));
+    assert.equal(created.status, 201);
+    const { billingAccountId: accountId, billingKeyId: keyId } = await created.json();
+    const repeated = await fetch('/enabled/accounts', enrollmentRequest(enrollmentId));
+    assert.equal(repeated.status, 201);
+    assert.equal((await repeated.json()).billingAccountId, accountId);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM billing_accounts').first()).count, 1, 'only one enrolled account');
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = randomBytes(16).toString('base64url');
     const body = '{ "protocolVersion": 1, "signedTransactionInfo":"\\u0068eader.payload.signature" }\n';
@@ -139,6 +164,15 @@ test('private billing gateway: real named binding, bounded routes and authoritat
     assert.equal(authenticated.status, 503);
     assert.equal((await authenticated.json()).error.code, 'billing_configuration_unavailable',
       'signed original bytes must authenticate before reaching missing verifier configuration');
+    const otherAccount = randomUUID();
+    const otherKey = randomBytes(16).toString('base64url');
+    await db.prepare('INSERT INTO billing_account_keys VALUES(?,?,?,?,?)').bind(otherKey, otherAccount, rawPublicKey.toString('base64url'), 'active', timestamp).run();
+    const otherNonce = randomBytes(16).toString('base64url');
+    const otherTranscript = billingSignedRequestTranscript({ billingAccountId: otherAccount, billingKeyId: otherKey, timestamp, nonce: otherNonce, method: 'POST', pathname: '/v1/billing/transactions', bodySHA256: createHash('sha256').update(body).digest('base64url') });
+    const other = await fetch('/enabled/transactions', { ...signedRequest, headers: { ...signedRequest.headers, 'neko-billing-account-id': otherAccount, 'neko-billing-key-id': otherKey, 'neko-billing-nonce': otherNonce, 'neko-billing-signature': sign(null, otherTranscript, privateKey).toString('base64url') } });
+    assert.equal(other.status, 403, 'valid signature on another account must not reach verification');
+    assert.equal((await other.json()).error.code, 'billing_owner_admission_required');
+    assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM billing_request_nonces WHERE billing_key_id=?').bind(otherKey).first()).count, 0, 'denied account does not consume nonce or write state');
     const replay = await fetch('/enabled/transactions', signedRequest);
     assert.equal(replay.status, 409);
     assert.equal((await replay.json()).error.code, 'replayed_billing_request');

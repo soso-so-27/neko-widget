@@ -169,6 +169,7 @@ const EXPECTATIONS = Object.freeze({
     BASE_EXPECTATIONS.on[0],
     Object.freeze({ name: "billing-health", path: "/v1/billing/health", status: 200,
       body: Object.freeze({ status: "ok", protocolVersion: 1 }), billing: Object.freeze({
+      "neko-runtime-billing-owner-admission": "READY",
       "neko-runtime-billing-account-bootstrap": "ON",
       "neko-runtime-billing-transaction-ingestion": "ON",
       "neko-runtime-billing-apple-notification-ingestion": "ON",

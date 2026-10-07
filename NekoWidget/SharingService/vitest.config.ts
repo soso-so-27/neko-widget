@@ -15,6 +15,8 @@ export default defineConfig(async () => {
       }),
     ],
     test: {
+      include: ["test/**/*.test.ts"],
+      fileParallelism: false,
       setupFiles: ["./test/setup.ts"],
     },
   };

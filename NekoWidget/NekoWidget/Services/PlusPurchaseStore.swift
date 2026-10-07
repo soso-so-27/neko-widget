@@ -517,8 +517,13 @@ final class PlusPurchaseStore: ObservableObject {
                     BillingAccountID(rawValue: billingToken)
                 )
                 await transaction.finish()
+                // An empty foreground/restore scan cannot resolve an Apple
+                // pending purchase. Only an acknowledged matching event may
+                // release the duplicate-purchase guard.
+                if pendingProductID == transaction.productID {
+                    pendingProductID = nil
+                }
             }
-            pendingProductID = nil
             _ = await refreshServerAuthority()
         } catch {
             // Do not fetch after a newer StoreKit event failed to reach the

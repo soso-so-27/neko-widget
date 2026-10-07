@@ -275,6 +275,7 @@ struct MembershipOfferPreviewView: View {
             if let resultText {
                 Text(resultText).accessibilityIdentifier("membership-preview-result")
             }
+
         }
         .navigationTitle("会員案内の確認")
         .sheet(isPresented: $showsOffer) {
@@ -284,6 +285,68 @@ struct MembershipOfferPreviewView: View {
                     ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
                     : "取り消して、元の画面に戻りました。"
             }
+        }
+    }
+}
+
+enum BillingSandboxOwnerEnrollmentAvailability {
+    static var isAvailable: Bool {
+        let preservation = ManagedPreservationConfiguration.current
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+            && (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
+            && preservation.isEnabled
+            && preservation.origin?.absoluteString
+                == "https://neko-preservation-staging-disabled.nakanishisoya.workers.dev"
+            && preservation.membershipAudience == "neko-preservation-staging"
+    }
+}
+
+/// A separate read-only settings route; never creates billing identity or starts purchase.
+@MainActor
+struct BillingSandboxOwnerEnrollmentView: View {
+    @State private var ownerEnrollment: BillingSandboxOwnerEnrollment?
+    @State private var enrollmentMessage: String?
+
+    var body: some View {
+        List {
+            if ownerEnrollmentAvailable {
+                Section {
+                    Button("端末確認情報を表示") { readOwnerEnrollment() }
+                        .accessibilityIdentifier("billing-owner-enrollment-read")
+                    if let ownerEnrollment {
+                        LabeledContent("申込ID", value: ownerEnrollment.bootstrapClientRequestID)
+                            .textSelection(.enabled)
+                        LabeledContent("公開鍵の指紋", value: ownerEnrollment.initialPublicKeySHA256)
+                            .textSelection(.enabled)
+                    }
+                    if let enrollmentMessage { Text(enrollmentMessage).font(.footnote) }
+                } footer: {
+                    Text("既存の申込準備を確認します。鍵・アカウントの作成、申し込み、購入、送信は行いません。")
+                }
+            } else {
+                Text("このビルドでは端末確認を利用できません。")
+            }
+        }.navigationTitle("本人限定テストの端末確認")
+    }
+
+    private var ownerEnrollmentAvailable: Bool { BillingSandboxOwnerEnrollmentAvailability.isAvailable }
+
+    private func readOwnerEnrollment() {
+        ownerEnrollment = nil
+        guard ownerEnrollmentAvailable else { return }
+        do {
+            guard let marker = try BillingInstallationMarkerStore.loadExisting(),
+                  let credential = try BillingKeychainStore.load()
+            else {
+                enrollmentMessage = "既存の申込準備がありません。新しい鍵やアカウントは作成していません。"
+                return
+            }
+            ownerEnrollment = try BillingSandboxOwnerEnrollment.readExistingPending(
+                credential: credential, installationMarker: marker
+            )
+            enrollmentMessage = "購入はまだ開始していません。本人確認のため、この2項目を運用者と照合してください。"
+        } catch {
+            enrollmentMessage = "この端末の申込準備を確認できません。状態は変更していません。"
         }
     }
 }

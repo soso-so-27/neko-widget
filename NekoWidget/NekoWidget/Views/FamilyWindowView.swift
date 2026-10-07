@@ -976,11 +976,15 @@ struct FamilyWindowView: View {
             received: model.receivedMoments,
             sent: model.outgoingPresentation.sentRecords
         )
+        let unavailable = model.outgoingPresentation.sentRecords.filter {
+            $0.localThumbnailJPEG.flatMap { UIImage(data: $0) } == nil
+        }
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
                 addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState
                     && pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
+                hasImageLessHistory: !unavailable.isEmpty,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
                 case .legacy:
@@ -1014,9 +1018,6 @@ struct FamilyWindowView: View {
 
         // An image-less delivery record is useful for support, but it must not
         // become a blank tile among the photos or imply a recoverable archive.
-        let unavailable = model.outgoingPresentation.sentRecords.filter {
-            $0.localThumbnailJPEG.flatMap { UIImage(data: $0) } == nil
-        }
         if !unavailable.isEmpty {
             DisclosureGroup("写真のない送信履歴", isExpanded: $showsUnavailablePhotoHistory) {
                 VStack(spacing: 10) {

@@ -576,6 +576,11 @@ enum BillingInstallationMarkerStore {
     private static let fileName = "billing-installation-marker.v1"
     private static let maximumBytes = 64
 
+    /// Read-only enrollment inspection never creates an installation marker.
+    static func loadExisting() throws -> UUID? {
+        try loadIfPresent(at: markerURL())
+    }
+
     static func loadOrCreate() throws -> UUID {
         let url = try markerURL()
         if let existing = try loadIfPresent(at: url) { return existing }

@@ -21,6 +21,65 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 
 class PreparationTests(unittest.TestCase):
+
+    def composer_selection(self, lane, arguments, diagnostic=False):
+        self.assertIsNotNone(BASH, "Bash is required for selection regression checks")
+        source = (CI / "run-sharing-runtime-matrix.sh").read_text(encoding="utf-8")
+        block = source.split("COMPOSER_TEST_ARGUMENTS=()", 1)[1].split("RUN_WIDGET_GALLERY=false", 1)[0]
+        expansion = re.search(r'^\s+(\$\{COMPOSER_TEST_ARGUMENTS\[@\].*) \\\s*$', source, re.MULTILINE).group(1)
+        driver = r'''
+set -Eeuo pipefail
+RUNTIME_LANE="$1"
+DIAGNOSTIC_REQUESTED="$2"
+UI_SELECTION_FILE="$3"
+PROJECT_DIRECTORY=unused
+ARTIFACT_DIRECTORY="$(dirname "$UI_SELECTION_FILE")"
+python3() { printf 'VERIFY:%s\n' "$*"; }
+COMPOSER_TEST_ARGUMENTS=()
+''' + block + '\nif [[ "$MOVIE_SYNTHETIC_REQUESTED" == true ]]; then cat "$ARTIFACT_DIRECTORY/movie-fixed-inputs.json"; fi\nrecord_arguments() { printf "COUNT:%s\\n" "$#"; for arg in "$@"; do printf "ARG:%s\\n" "$arg"; done; }\nrecord_arguments ' + expansion + '\nprintf "MOVIE:%s\\n" "$MOVIE_SYNTHETIC_REQUESTED"\n'
+        with tempfile.TemporaryDirectory() as directory:
+            selection = Path(directory) / "selection.txt"
+            selection.write_text("".join(arg + "\n" for arg in arguments), encoding="utf-8", newline="\n")
+            return subprocess.run([BASH, "-c", driver, "selection-fixture", lane,
+                "true" if diagnostic else "false", selection.as_posix()],
+                capture_output=True, text=True)
+
+    def test_composer_empty_selection_is_runtime_only(self):
+        for lane in ("runtime", "all", "app-ui", "app-ui-solo-1", "gallery-normal", "gallery-variants"):
+            with self.subTest(lane=lane):
+                result = self.composer_selection(lane, [])
+                self.assertEqual(result.returncode, 0 if lane == "runtime" else 1, result.stderr)
+                if lane == "runtime":
+                    self.assertEqual(result.stdout, "COUNT:0\nMOVIE:false\n")
+                else:
+                    self.assertIn("did not select any native UI tests", result.stderr)
+                    self.assertNotIn("COUNT:", result.stdout)
+
+    def test_composer_arguments_preserve_count_order_and_literal_spaces(self):
+        for args in (["-only-testing:Fixture/One"],
+                     ["-only-testing:Fixture/One", "-only-testing:Fixture/Two"],
+                     ["-only-testing:Fixture/with spaces", "literal * $HOME ' quote", ""]):
+            with self.subTest(arguments=args):
+                result = self.composer_selection("app-ui", args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f"COUNT:{len(args)}\n" +
+                    "".join(f"ARG:{arg}\n" for arg in args) + "MOVIE:false\n")
+
+    def test_composer_movie_selection_still_requires_diagnostic_workflow(self):
+        movie = "-only-testing:NekoWidgetUITests/OfficialWindowUITests/testSyntheticMovieShippingExportsSoundOnAndOff"
+        for diagnostic in (False, True):
+            with self.subTest(diagnostic=diagnostic):
+                result = self.composer_selection("app-ui", ["-only-testing:Fixture/One", movie], diagnostic)
+                self.assertEqual(result.returncode, 0 if diagnostic else 1, result.stderr)
+                if diagnostic:
+                    self.assertEqual(result.stdout.count("VERIFY:"), 1)
+                    self.assertIn("diagnostic_fixture.py verify\n", result.stdout)
+                    self.assertIn("COUNT:2\n", result.stdout)
+                    self.assertIn("MOVIE:true\n", result.stdout)
+                else:
+                    self.assertIn("restricted to the dedicated diagnostic workflow", result.stderr)
+                    self.assertNotIn("COUNT:", result.stdout)
+
     def test_icon_readiness_precedes_single_install_and_failures_stop_the_app_check(self):
         spec = importlib.util.spec_from_file_location("icon_preparation", CI / "verify-app-icon.py")
         verifier = importlib.util.module_from_spec(spec)
@@ -243,6 +302,14 @@ simulator_udid=fixture-device
 DERIVED_DATA_DIRECTORY=./DerivedData
 DIAGNOSTIC_REQUESTED=false
 WIDGET_SCENARIOS="long-white-large no-caption"
+RECORDED_COMMAND=fixture-recorded-command
+python3() {
+    [[ "$1" == "$RECORDED_COMMAND" ]] || return 99
+    shift
+    while [[ "$1" != -- ]]; do shift; done
+    shift
+    "$@"
+}
 prepare_simulator_and_build() {
     printf 'prepare:%s\n' "$widget_scenario" >> events
     [[ "$widget_scenario" != long-white-large ]] || return "$PREPARE_STATUS"

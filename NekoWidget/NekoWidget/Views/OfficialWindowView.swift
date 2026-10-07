@@ -80,6 +80,109 @@ struct PublicWindowPresentationSource: Identifiable {
     }
 }
 
+/// Presentation only: delivery validation and photo retention stay in the store.
+struct OfficialWindowStatusPresentation {
+    enum Kind: Equatable {
+        case preparing, stopped, checking, paused, verificationExpired, photosExpired
+        case failed, noPublication, imageUnavailable, notChecked
+    }
+    let kind: Kind
+
+    init(isConfigured: Bool, stopped: Bool = false, checking: Bool = false,
+         failed: Bool = false, requiresVerification: Bool = false,
+         catalog: OfficialWindowCatalog?, at now: Date) {
+        if !isConfigured { kind = .preparing }
+        else if stopped { kind = .stopped }
+        else if checking && catalog == nil { kind = .checking }
+        // snapshot() removes a catalog that fails today's validation, but
+        // preserves checkedAt. Keep that need to recheck distinct from a first
+        // failed fetch without making the rejected catalog displayable again.
+        else if catalog == nil && requiresVerification { kind = .verificationExpired }
+        else if catalog?.enabled == false { kind = .paused }
+        else if let catalog, catalog.validUntil <= now { kind = .verificationExpired }
+        else if let catalog, !catalog.photos.isEmpty,
+                catalog.photos.allSatisfy({ $0.expiresAt <= now }) { kind = .photosExpired }
+        else if failed { kind = .failed }
+        else if let catalog {
+            kind = catalog.availablePhotos(at: now).isEmpty ? .noPublication : .imageUnavailable
+        } else { kind = .notChecked }
+    }
+
+    var title: String {
+        switch kind {
+        case .preparing: "公式まどを準備しています"
+        case .stopped: "受け取りをやめました"
+        case .checking: "写真を確認しています…"
+        case .paused: "いまは配信をお休みしています"
+        case .verificationExpired: "新しい配信の確認が必要です"
+        case .photosExpired: "写真の掲載期間が終わりました"
+        case .failed: "写真を確認できませんでした"
+        case .noPublication: "いまは掲載されている写真がありません"
+        case .imageUnavailable: "写真を表示できません"
+        case .notChecked: "公開中の写真を確認できます"
+        }
+    }
+
+    var detail: String {
+        switch kind {
+        case .preparing: "公開する写真の準備ができたら、このまどからお届けします。"
+        case .stopped: "また楽しみたくなったら、このまどの受け取りを再開できます。"
+        case .checking: "公開中の写真を確認しています。"
+        case .paused: "配信が再開されると、このまどで写真を楽しめます。ほかのまども探せます。"
+        case .verificationExpired: "もう一度確認すると、現在の配信を確認できます。ほかのまども探せます。"
+        case .photosExpired: "この写真の掲載期間は終了しました。新しい写真を確認するか、ほかのまどを探せます。"
+        case .failed, .imageUnavailable: "少し時間をおいて、もう一度確認できます。"
+        case .noPublication: "新しい写真が掲載されると、このまどで受け取れます。"
+        case .notChecked: "受け取りを始める前に、公開中の写真を確認できます。写真の投稿は必要ありません。"
+        }
+    }
+
+    var showsDiscovery: Bool {
+        [.paused, .verificationExpired, .photosExpired].contains(kind)
+    }
+}
+
+@MainActor
+struct PublicWindowDiscoveryView: View {
+    let sources: [PublicWindowPresentationSource]
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var states: [String: OfficialWindowState]
+
+    init(sources: [PublicWindowPresentationSource]) {
+        self.sources = sources
+        _states = State(initialValue: Dictionary(uniqueKeysWithValues:
+            sources.map { ($0.id, $0.store.snapshot()) }))
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(sources) { source in
+                    OfficialWindowEntryCard(state: states[source.id], store: source.store, refreshFeed: source.refresh,
+                        presentation: .discovery, previewFeed: source.preview, relatedWindows: sources)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle("まどを探す")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier("window-discovery")
+        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
+            reloadStates()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { reloadStates() }
+        }
+    }
+
+    private func reloadStates() {
+        states = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.store.snapshot()) })
+    }
+}
+
 @MainActor
 struct OfficialWindowEntryCard: View {
     enum Presentation: Equatable { case list, discovery }
@@ -89,17 +192,19 @@ struct OfficialWindowEntryCard: View {
     let presentation: Presentation
     let previewFeed: () async throws -> OfficialWindowPreview
     let relatedWindows: [PublicWindowPresentationSource]
+    let refreshFailed: Bool
     @StateObject private var preview: OfficialWindowPreviewModel
 
     init(state: OfficialWindowState? = nil,
          store: OfficialWindowStore = .shared,
          refreshFeed: (() async throws -> Void)? = nil, presentation: Presentation = .list,
          previewFeed: (() async throws -> OfficialWindowPreview)? = nil,
-         relatedWindows: [PublicWindowPresentationSource] = []) {
+         relatedWindows: [PublicWindowPresentationSource] = [], refreshFailed: Bool = false) {
         let source = PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
         self.state = state ?? store.snapshot()
         self.store = store
         self.refreshFeed = source.refresh
+        self.refreshFailed = refreshFailed
         self.presentation = presentation
         self.previewFeed = source.preview
         self.relatedWindows = relatedWindows
@@ -113,17 +218,30 @@ struct OfficialWindowEntryCard: View {
     }
 
     var body: some View {
-        NavigationLink {
+        TimelineView(.explicit(photoDeadlines)) { context in
+            entry(at: max(context.date, Date.now))
+        }
+    }
+
+    private func entry(at now: Date) -> some View {
+        // The cover and its VoiceOver value use the same photo at this boundary.
+        let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto(at: now)
+        let status = OfficialWindowStatusPresentation(isConfigured: store.endpoint != nil,
+            checking: preview.isLoading, failed: refreshFailed || preview.failed,
+            requiresVerification: state.isSubscribed && state.checkedAt != nil,
+            catalog: state.isSubscribed ? state.catalog : preview.content?.catalog, at: now)
+        return NavigationLink {
             OfficialWindowView(store: store, refreshFeed: refreshFeed,
                                previewFeed: previewFeed, preview: preview, relatedWindows: relatedWindows)
         } label: {
             if presentation == .list {
-                WindowPhotoCard(title: store.displayName, kind: .official) { cover }
+                WindowPhotoCard(title: store.displayName, kind: .official) { cover(photo: photo, status: status) }
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Color(.tertiarySystemFill).aspectRatio(16.0 / 9.0, contentMode: .fit)
                         .overlay { GeometryReader { geometry in
-                            cover.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                            cover(photo: photo, status: status)
+                                .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                         } }
                     HStack {
                         Text(store.displayName).font(.headline)
@@ -145,7 +263,7 @@ struct OfficialWindowEntryCard: View {
         .accessibilityIdentifier(store.windowID == OfficialWindowCatalog.sourceID ? "official-window-entry" : "public-window-entry-\(store.windowID)")
         .accessibilityLabel("\(store.displayName)、写真を受け取るまど、公式")
         .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
-                             (state.isSubscribed ? state.photos.first : preview.content?.availablePhoto())?.credit]
+                             photo?.credit ?? status.title]
             .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
         .task {
@@ -154,32 +272,31 @@ struct OfficialWindowEntryCard: View {
         }
     }
 
-    private var cover: some View {
-        TimelineView(.explicit(photoDeadlines)) { _ in
-            if let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto() {
-                OfficialPhotoImage(photo: photo, maximumPixelSize: 650, store: store,
-                                   previewImageData: state.isSubscribed ? nil : preview.content?.imageData,
-                                   fillsFrame: true)
-                    .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
-                    .accessibilityHidden(true)
-            } else if preview.isLoading {
-                ProgressView().accessibilityLabel("写真を確認しています")
-            } else {
-                VStack(spacing: 12) {
-                    if preview.failed {
-                        Image(systemName: "photo.badge.exclamationmark")
-                            .font(.largeTitle).foregroundStyle(.secondary)
-                    } else {
-                        Image("ToolCat-hide").resizable().scaledToFit()
-                            .frame(width: 58, height: 58).accessibilityHidden(true)
-                    }
-                    Text(preview.failed ? "写真を読み込めませんでした" : "表示できる写真がありません")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+    @ViewBuilder
+    private func cover(photo: OfficialCatPhoto?, status: OfficialWindowStatusPresentation) -> some View {
+        if let photo {
+            OfficialPhotoImage(photo: photo, maximumPixelSize: 650, store: store,
+                               previewImageData: state.isSubscribed ? nil : preview.content?.imageData,
+                               fillsFrame: true)
+                .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
+                .accessibilityHidden(true)
+        } else if preview.isLoading {
+            ProgressView().accessibilityLabel("写真を確認しています")
+        } else {
+            VStack(spacing: 12) {
+                if refreshFailed || preview.failed {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .font(.largeTitle).foregroundStyle(.secondary)
+                } else {
+                    Image("ToolCat-hide").resizable().scaledToFit()
+                        .frame(width: 58, height: 58).accessibilityHidden(true)
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(status.title)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -361,7 +478,7 @@ struct OfficialWindowView: View {
                     introduction
                 }
 
-                if let message = feedbackText {
+                if !photos.isEmpty, let message = feedbackText {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(message)
                             .font(.footnote).foregroundStyle(.secondary)
@@ -549,45 +666,53 @@ struct OfficialWindowView: View {
         }
     }
 
+    private var discoverySources: [PublicWindowPresentationSource] {
+        if !relatedWindows.isEmpty { return relatedWindows }
+        // Widget/deep-link entry has no list presenter. Use the same build-owned
+        // registry as the main list while preserving this window's source.
+        return OfficialWindowConfiguration.definitions.map { definition in
+            definition.id == store.windowID
+                ? PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
+                : PublicWindowPresentationSource(store: .forWindow(definition))
+        }
+    }
+
     private var introduction: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "pawprint.fill").font(.system(size: 42)).foregroundStyle(.orange)
-            Text(emptyTitle).font(.title2.weight(.semibold))
-            Text(emptyDescription).foregroundStyle(.secondary)
-            if isChecking { ProgressView() }
-        }
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .leading)
-        .padding(24)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
-        .accessibilityIdentifier("official-window-introduction")
-    }
-
-    private var emptyTitle: String {
-        if store.endpoint == nil { return "公式まどを準備しています" }
-        if stoppedHere { return "受け取りをやめました" }
-        if isChecking, currentCatalog == nil { return "写真を確認しています…" }
-        if currentCatalog?.enabled == false { return "いまは配信をお休みしています" }
-        if let catalog = currentCatalog {
-            if catalog.validUntil <= displayDate { return "新しい配信の確認が必要です" }
-            if !catalog.photos.isEmpty, catalog.photos.allSatisfy({ $0.expiresAt <= displayDate }) {
-                return "写真の掲載期間が終わりました"
+        let status = OfficialWindowStatusPresentation(isConfigured: store.endpoint != nil,
+            stopped: stoppedHere, checking: isChecking, failed: hasRefreshFailure,
+            requiresVerification: state.isSubscribed && state.checkedAt != nil,
+            catalog: currentCatalog, at: displayDate)
+        return VStack(alignment: .leading, spacing: 12) {
+            Label(status.title, systemImage: "photo.on.rectangle")
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("official-window-state-title")
+            Text(status.detail).font(.subheadline).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let message = feedbackText {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("official-window-feedback")
             }
-            if hasRefreshFailure { return "写真を読み込めませんでした" }
-            return "まだ掲載されている写真はありません"
+            if isChecking { ProgressView() }
+            if store.endpoint != nil, !stoppedHere {
+                Button("もう一度確認") { Task { await refresh(interactive: true) } }
+                    .frame(minHeight: 44)
+                    .disabled(isChecking)
+                    .accessibilityIdentifier("official-window-refresh-retry")
+            }
+            if status.showsDiscovery {
+                NavigationLink {
+                    PublicWindowDiscoveryView(sources: discoverySources)
+                } label: {
+                    Label("まどを探す", systemImage: "chevron.right")
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("official-window-state-discovery")
+            }
         }
-        if hasRefreshFailure { return "写真を確認できませんでした" }
-        return "どんな写真が届くか、見てみましょう"
-    }
-
-    private var emptyDescription: String {
-        if store.endpoint == nil { return "公開する写真の準備ができたら、このまどからお届けします。" }
-        if stoppedHere { return "また楽しみたくなったら、このまどの受け取りを再開できます。" }
-        if let catalog = currentCatalog, catalog.enabled, catalog.validUntil <= displayDate {
-            return "写真を表示するには、新しい配信の確認が必要です。画面右上から、もう一度確認できます。"
-        }
-        if currentCatalog?.enabled == false { return "配信が再開されると、このまどで写真を楽しめます。" }
-        if !state.isSubscribed { return "受け取りを始める前に、公開中の写真を確認できます。写真の投稿は必要ありません。" }
-        return "新しい写真が掲載されると、このまどで受け取れます。"
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
     private func photoButton(_ photo: OfficialCatPhoto, latest: Bool) -> some View {
@@ -971,6 +1096,8 @@ private struct OfficialPhotoImage: View {
 final class OfficialWindowFixtureModel: ObservableObject {
     let store: OfficialWindowStore
     private var attempts = 0
+    // Offline state inputs for the shipping list/detail UI regression.
+    private let statusFixture = ProcessInfo.processInfo.environment["NEKO_OFFICIAL_WINDOW_STATUS_FIXTURE"]
     private let fixtureDate = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 2)
     let linkedPhotoID: String?
     @Published var linkedRefreshStarted = false
@@ -999,7 +1126,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
             if initiallySubscribed ?? CommandLine.arguments.contains("--window-list-subscribed") {
                 do {
                     try store.setSubscribed(true)
-                    try seedPhoto(failImage: false)
+                    if statusFixture != "failure" { try seedPhoto(failImage: false) }
                 } catch {
                     assertionFailure("Could not seed the window list fixture")
                 }
@@ -1008,6 +1135,9 @@ final class OfficialWindowFixtureModel: ObservableObject {
     }
 
     func refresh() async throws {
+        if statusFixture == "failure" || statusFixture == "catalog-expiry" {
+            throw URLError(.notConnectedToInternet)
+        }
         if linkedPhotoID != nil {
             linkedRefreshStarted = true
             // Hold only the network boundary; the test releases it after
@@ -1025,12 +1155,19 @@ final class OfficialWindowFixtureModel: ObservableObject {
     private func seedPhoto(failImage: Bool) throws {
         let request = store.snapshot()
         guard request.isSubscribed else { return }
+        if statusFixture == "paused" || statusFixture == "empty" {
+            let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: store.windowID,
+                enabled: statusFixture != "paused", generatedAt: fixtureDate,
+                validUntil: fixtureDate.addingTimeInterval(86400), photos: [])
+            try store.accept(catalog, for: request)
+            return
+        }
         let count = CommandLine.arguments.contains("--official-window-recent-photos") ? 3 : 1
         let items = try (0..<count).map { try fixturePhoto(index: $0) }
         let editionOffset = CommandLine.arguments.contains("--official-window-renew-expiry") ? Double(attempts) : 0
         let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: store.windowID, enabled: true,
                                            generatedAt: fixtureDate.addingTimeInterval(editionOffset),
-                                           validUntil: fixtureDate.addingTimeInterval(86400 + editionOffset * 60),
+                                           validUntil: fixtureDate.addingTimeInterval(statusFixture == "catalog-expiry" ? 14 : 86400 + editionOffset * 60),
                                            photos: items.map(\.photo))
         try store.accept(catalog, for: request)
         if failImage { throw URLError(.networkConnectionLost) }
@@ -1095,7 +1232,9 @@ struct OfficialWindowUIFixture: View {
                     NavigationStack {
                         OfficialWindowView(initialPhotoID: photoID, store: model.store,
                                            refreshFeed: { try await model.refresh() },
-                                           previewFeed: { try await model.preview() })
+                                           previewFeed: { try await model.preview() },
+                                   relatedWindows: [PublicWindowPresentationSource(store: model.store,
+                                       refresh: { try await model.refresh() }, preview: { try await model.preview() })])
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
                                     Button("閉じる") { presentsLinkedPhoto = false }
@@ -1113,7 +1252,9 @@ struct OfficialWindowUIFixture: View {
         } else {
             NavigationStack {
                 OfficialWindowView(store: model.store, refreshFeed: { try await model.refresh() },
-                                   previewFeed: { try await model.preview() })
+                                   previewFeed: { try await model.preview() },
+                                   relatedWindows: [PublicWindowPresentationSource(store: model.store,
+                                       refresh: { try await model.refresh() }, preview: { try await model.preview() })])
             }
         }
     }

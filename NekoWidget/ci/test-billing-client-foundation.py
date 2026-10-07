@@ -729,6 +729,36 @@ class BillingClientFoundationTests(unittest.TestCase):
         for forbidden in ("roomKey", "agreementPrivateKey", "Photo"):
             self.assertNotIn(forbidden, coordinator)
 
+    def test_owner_enrollment_inspection_is_public_only_read_only_and_pending(self):
+        core = source("NekoWidget/Services/BillingClientCore.swift")
+        summary = core[core.index("struct BillingSandboxOwnerEnrollment:"):]
+        self.assertIn("credential.phase == .pendingBootstrap", summary)
+        self.assertIn("credential.installationMarker == installationMarker.uuidString.lowercased()", summary)
+        self.assertIn("SHA256.hash(data: publicKey)", summary)
+        self.assertIn("clientRequestID", summary)
+        self.assertNotIn("Codable", summary)
+        self.assertNotIn("signingPrivateKey:", summary)
+        ui = source("NekoWidget/Services/MembershipOfferModel.swift")
+        inspection = ui[ui.index("enum BillingSandboxOwnerEnrollmentAvailability"):ui.index("#if DEBUG", ui.index("enum BillingSandboxOwnerEnrollmentAvailability"))]
+        for boundary in ("sandboxReceipt", "SharingReleaseMode", "media-staging", "preservation.isEnabled", "preservation.membershipAudience", "neko-preservation-staging-disabled.nakanishisoya.workers.dev", "neko-preservation-staging"):
+            self.assertIn(boundary, inspection)
+        availability = inspection[:inspection.index("struct BillingSandboxOwnerEnrollmentView")]
+        self.assertNotIn("BillingClientConfiguration", availability)
+        self.assertNotIn("PlusPurchaseConfiguration", availability)
+        self.assertIn("BillingInstallationMarkerStore.loadExisting()", inspection)
+        self.assertIn("BillingKeychainStore.load()", inspection)
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        self.assertIn("if BillingSandboxOwnerEnrollmentAvailability.isAvailable", settings)
+        self.assertIn("BillingSandboxOwnerEnrollmentView()", settings)
+        self.assertIn('"settings-billing-owner-enrollment"', settings)
+
+        for forbidden in ("loadOrCreate", "insertPending", "createFreshCredential", "URLSession", "AppStore.sync", "ShareLink", "UIPasteboard", "print(", "Logger", "signingPrivateKey"):
+            self.assertNotIn(forbidden, inspection)
+        keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
+        read = keychain[keychain.index("static func loadExisting()"):keychain.index("static func loadOrCreate()")]
+        self.assertIn("loadIfPresent(at: markerURL())", read)
+        self.assertNotIn("write", read)
+
 
 if __name__ == "__main__":
     unittest.main()

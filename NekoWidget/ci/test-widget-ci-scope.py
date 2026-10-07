@@ -49,9 +49,10 @@ class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
         self.assertEqual(self.replay(), scope.APP_DATA_SCOPE)
         self.assertEqual(scope.select_scope(self.changes), scope.APP_DATA_SCOPE)
         required = planner.required_jobs(self.paths, scope.APP_DATA_SCOPE)
-        self.assertEqual(len(required), 5)
+        self.assertEqual(len(required), 6)
         self.assertEqual(required[:2], (planner.BUILD, planner.SMOKE))
-        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE), ("runtime", "app-ui-solo", "app-ui-other"))
+        self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE),
+                         ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
         self.assertEqual(scope.native_tests(scope.APP_DATA_SCOPE),
                          tuple(test for test in scope.native_tests(scope.FULL_SCOPE) if test != scope.GALLERY_TEST))
         self.assertEqual(scope.smoke_tests(scope.APP_DATA_SCOPE), scope.smoke_tests(scope.FULL_SCOPE))
@@ -535,12 +536,56 @@ class WidgetScopeTests(unittest.TestCase):
 class LostCatSavedInfoBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.base = "212233c5793bf7962baf1a4305ae3fe36bf0d749"
-        cls.head = "d2f84181229bd8e751e027f2d9784866b662cf27"
-        paths = planner.git("diff", "--name-only", "--no-renames", "-z", cls.base, cls.head).split("\0")
-        cls.changes = {path: (planner.git("show", f"{cls.base}:{path}"),
-                              planner.git("show", f"{cls.head}:{path}"))
-                       for path in paths if path and not scope.is_handoff(path)}
+        # Exercise the structural fallback without importing historical commits.
+        # Exact snapshot digest-gate logic is covered separately below; this
+        # fixture does not claim to verify the original snapshot bytes.
+        before = Path(__file__).with_name("fixtures").joinpath(
+            "lost-cat-ux-legacy-store.swift").read_text(encoding="utf-8")
+        method = ("    func removePhoto(_ role: CatPreparednessStore.PhotoRole,\n"
+                  "                     draft: LostCatDraft, for key: String) throws -> LostCatDraft {\n"
+                  "        var updated = draft\n"
+                  "        if role == .face { updated.faceFileName = nil }\n"
+                  "        else { updated.bodyFileName = nil }\n"
+                  "        try save(updated, for: key)\n"
+                  "        return updated\n"
+                  "    }\n\n")
+        after = before.replace("    func image(_ name:", method + "    func image(_ name:", 1)
+        before_tests = """import XCTest
+final class SoloMemoriesUITests: XCTestCase {
+    @MainActor
+    func testUnpreparedLostCatDraftPreviewsAndCreatesImageAndPDF() {
+        XCTAssertTrue(true)
+    }
+    @MainActor
+    func testLostCatDraftOffersThisCatsPhotosBeforeEntireLibrary() {
+        XCTAssertTrue(true)
+    }
+}
+"""
+        after_tests = before_tests.replace(
+            "\n}\n", "\n    @MainActor\n"
+            "    func testLostCatPhotoTapSelectsOnlyTheTappedCandidate() {\n"
+            "        XCTAssertTrue(true)\n    }\n}\n", 1)
+        cls.changes = {
+            scope.LOST_CAT_STORE_PATH: (before, after),
+            scope.LOST_CAT_PHOTO_PATH: ("struct Before {}", "struct After {}"),
+            scope.MEMORY_TEST_PATH: (before_tests, after_tests),
+        }
+
+    def test_exact_snapshot_digest_gate_requires_ordered_unchanged_pair(self):
+        # Dedicated sentinel strings cannot pass structural validation. Map
+        # their digests only within this test to cover the fixed-pair gate.
+        before, after = "snapshot-before-sentinel", "snapshot-after-sentinel"
+        self.assertFalse(scope.lost_cat_store_changes(before, after))
+        digest = scope.source_digest
+        digests = dict(zip((before, after), scope.LOST_CAT_SAVED_INFO_STORE_DIGESTS))
+        with patch.object(scope, "source_digest", side_effect=lambda source:
+                          digests.get(source, digest(source))):
+            self.assertTrue(scope.lost_cat_store_changes(before, after))
+            for pair in ((after, before), (before + " changed", after),
+                         (before, after + " changed"), ("unknown-before", "unknown-after")):
+                with self.subTest(pair=pair):
+                    self.assertFalse(scope.lost_cat_store_changes(*pair))
 
     def test_reviewed_store_keeps_existing_lost_cat_checks_without_gallery(self):
         self.assertEqual(scope.select_scope(self.changes), scope.LOST_CAT_UX_SCOPE)
@@ -555,7 +600,7 @@ class LostCatSavedInfoBoundaryTests(unittest.TestCase):
     def test_unknown_store_input_or_mixed_companion_cannot_borrow_review(self):
         modified = dict(self.changes)
         before, after = modified[scope.LOST_CAT_STORE_PATH]
-        modified[scope.LOST_CAT_STORE_PATH] = (before, after + "\n// unreviewed\n")
+        modified[scope.LOST_CAT_STORE_PATH] = (before, after + "\nstruct ExtraStore {}\n")
         self.assertNotEqual(scope.select_scope(modified), scope.LOST_CAT_UX_SCOPE)
         for path in ("NekoWidget/NekoWidget/Services/EvacuationStore.swift",
                      "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
@@ -563,7 +608,9 @@ class LostCatSavedInfoBoundaryTests(unittest.TestCase):
             with self.subTest(path=path):
                 mixed = dict(self.changes); mixed[path] = ("before", "after")
                 self.assertNotEqual(scope.select_scope(mixed), scope.LOST_CAT_UX_SCOPE)
-        self.assertFalse(scope.lost_cat_store_changes(before + "\n// unknown input\n", after))
+        self.assertIn("static let schemaVersion = 1", before)
+        self.assertFalse(scope.lost_cat_store_changes(
+            before.replace("static let schemaVersion = 1", "static let schemaVersion = 2"), after))
 
 
 class VetSavedCatBoundaryTests(unittest.TestCase):

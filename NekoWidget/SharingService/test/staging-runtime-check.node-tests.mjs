@@ -155,6 +155,7 @@ test("internal purchase build requires exact billing readiness without altering 
     ...Object.fromEntries(["account-bootstrap", "transaction-ingestion", "apple-notification-ingestion",
       "subscription-reconciliation", "effective-entitlement", "window-sponsorship", "account-recovery"]
       .map(name => [`neko-runtime-billing-${name}`, "ON"])),
+    "neko-runtime-billing-owner-admission": "READY",
     "neko-runtime-billing-apple-notification-history-recovery": "OFF",
   };
   const run = (headers, expected = "internal-purchase-sandbox") => checkStagingRuntime({ origin, expected,

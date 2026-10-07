@@ -153,10 +153,10 @@ private struct ToolTile: View {
                 Spacer(minLength: 0)
                 ToolCatArtwork(pose: catPose, systemImage: systemImage)
             }
-            .padding(.top, 4)
+            .padding(.top, 2)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 16))
         .contentShape(RoundedRectangle(cornerRadius: 16))
@@ -176,15 +176,14 @@ private struct ToolCatArtwork: View {
             Image("ToolCat-\(pose)")
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 100, height: 100)
-                .frame(width: 78, height: 78)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .padding(.leading, 18)
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.leading, 14)
             Image(systemName: systemImage)
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 36, height: 36)
+                .frame(width: 28, height: 28)
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
                 .overlay(Circle().strokeBorder(Color(.separator).opacity(0.3), lineWidth: 1))
                 .offset(y: 3)
@@ -665,7 +664,7 @@ struct MainTabView: View {
 
     private var toolsView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 18) {
                 toolSection("暮らしのツール") {
                         showcaseToolCard
                         NavigationLink {
@@ -713,7 +712,7 @@ struct MainTabView: View {
                 }
 
             }
-            .padding(16)
+            .padding(12)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
@@ -745,14 +744,14 @@ struct MainTabView: View {
 
     private func toolSection<Content: View>(_ title: String,
                                              @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
                         ? [GridItem(.flexible())]
-                        : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
-                      spacing: 12, content: content)
+                        : [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],
+                      spacing: 10, content: content)
         }
     }
 
@@ -2564,6 +2563,7 @@ private struct WindowListView: View {
     @State private var catalogReloadRevision = 0
     @State private var requestedSetupPath: PairingSetupPath?
     @State private var publicStates: [String: OfficialWindowState]
+    @State private var publicRefreshFailures: [String: UUID] = [:]
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
     @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
@@ -2608,7 +2608,9 @@ private struct WindowListView: View {
                             presentation: OfficialWindowEntryCard.Presentation = .list) -> some View {
         OfficialWindowEntryCard(state: publicStates[source.id], store: source.store,
                                 refreshFeed: source.refresh, presentation: presentation,
-                                previewFeed: source.preview, relatedWindows: publicWindows)
+                                previewFeed: source.preview, relatedWindows: publicWindows,
+                                refreshFailed: publicRefreshFailures[source.id] != nil
+                                    && publicRefreshFailures[source.id] == publicStates[source.id]?.subscriptionID)
     }
 
     private func reloadPublicStates() {
@@ -2616,20 +2618,7 @@ private struct WindowListView: View {
     }
 
     private var discovery: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                ForEach(publicWindows) { source in
-                    publicCard(source, presentation: .discovery)
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
-        }
-        .navigationTitle("まどを探す")
-        .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
-        .accessibilityIdentifier("window-discovery")
+        PublicWindowDiscoveryView(sources: publicWindows)
     }
 
     private var connectionOptions: some View {
@@ -3047,7 +3036,7 @@ private struct WindowListView: View {
             return availabilityMessage == nil ? "写真を確認中" : "写真を確認できません"
         }
         switch status {
-        case .noPhotos: return "まだ写真がありません"
+        case .noPhotos: return "いまは写真がありません"
         case .noRetainedImage: return "写真の控えがありません"
         case .unavailable: return "写真を確認できません"
         case .notConnected: return "接続を確認してください"
@@ -3079,7 +3068,19 @@ private struct WindowListView: View {
         reloadPublicStates()
         for source in receivingPublicWindows {
             Task {
-                try? await source.refresh()
+                guard let subscriptionID = source.store.snapshot().subscriptionID else { return }
+                do {
+                    try await source.refresh()
+                    if source.store.snapshot().subscriptionID == subscriptionID {
+                        publicRefreshFailures.removeValue(forKey: source.id)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    if source.store.snapshot().subscriptionID == subscriptionID {
+                        publicRefreshFailures[source.id] = subscriptionID
+                    }
+                }
                 publicStates[source.id] = source.store.snapshot()
             }
         }

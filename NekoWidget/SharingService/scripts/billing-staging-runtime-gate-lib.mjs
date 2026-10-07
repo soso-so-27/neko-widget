@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { parseOwnerAdmission } from "../src/billing-sandbox-owner-policy.mjs";
 import process from "node:process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -169,6 +171,11 @@ function validateFixedConfig(config, manifest, profile) {
   if (profile === "private-gateway") {
     // This command only controls D1; it never deploys/rebuilds family source.
     // Preserve the closed, non-public Sandbox gateway and all existing limits.
+    const ownerText = config.vars?.BILLING_SANDBOX_OWNER_ADMISSION;
+    if (manifest.desiredState !== 'all-off' || ownerText !== undefined) {
+      try { parseOwnerAdmission(ownerText, Date.now(), manifest.desiredState === 'all-off'); }
+      catch { throw new Error('Private billing gateway owner admission does not match the reviewed Sandbox target'); }
+    }
     const flags = ["ACCOUNT_BOOTSTRAP", "TRANSACTION_INGESTION", "APPLE_NOTIFICATION",
       "SUBSCRIPTION_RECONCILIATION", "EFFECTIVE_ENTITLEMENT", "ACCOUNT_RECOVERY", "WINDOW_SPONSORSHIP"];
     const expected = {
@@ -177,6 +184,7 @@ function validateFixedConfig(config, manifest, profile) {
       workers_dev: false, preview_urls: false, observability: { enabled: false },
       limits: { cpu_ms: 30000, subrequests: 100 },
       vars: {
+        ...(ownerText === undefined ? {} : { BILLING_SANDBOX_OWNER_ADMISSION: ownerText }),
         ENVIRONMENT: "staging", BILLING_STORE_ENVIRONMENT: "Sandbox", BILLING_BUNDLE_ID: "jp.nekowidget.app",
         BILLING_MONTHLY_PRODUCT_ID: "jp.nekowidget.plus.monthly", BILLING_SUBSCRIPTION_GROUP_ID: "22424520",
         BILLING_VERIFIER_TRANSPORT: "private-binding", BILLING_VERIFIER_ORIGIN: "https://billing-verifier.private.invalid",
@@ -351,6 +359,8 @@ async function verifyOriginState(
   fetchImpl,
   timeoutMilliseconds,
   healthPath = "/health",
+  ownerPolicySHA256 = null,
+  allowClosedOwnerRollback = false,
 ) {
   if (!Number.isSafeInteger(timeoutMilliseconds)
       || timeoutMilliseconds < 1
@@ -381,13 +391,19 @@ async function verifyOriginState(
         !== String(expected.generation)) {
     throw new Error("billing same-origin runtime gate verification failed");
   }
+  if (ownerPolicySHA256 !== null && (response.headers.get('neko-runtime-billing-owner-admission') !== 'READY'
+      || response.headers.get('neko-runtime-billing-owner-policy-sha256') !== ownerPolicySHA256)) {
+    throw new Error('billing same-origin owner admission verification failed');
+  }
   if (response.headers.get("neko-runtime-billing-apple-notification-rate-limiter")
       !== "READY") {
     throw new Error("billing same-origin runtime gate verification failed");
   }
+  const closedOwnerRollback = allowClosedOwnerRollback
+    && response.headers.get('neko-runtime-billing-owner-admission') === 'CLOSED';
   for (const key of activationOrder) {
     if (response.headers.get(healthHeaders[key])
-        !== (expected[key] === 1 ? "ON" : "OFF")) {
+        !== (!closedOwnerRollback && expected[key] === 1 ? "ON" : "OFF")) {
       throw new Error("billing same-origin runtime gate verification failed");
     }
   }
@@ -407,7 +423,7 @@ async function verifyOriginState(
 export async function verifyBillingRuntimeGateOrigin(
   manifestInput,
   fetchImpl = fetch,
-  { timeoutMilliseconds = 15_000, profile = "legacy-family" } = {},
+  { timeoutMilliseconds = 15_000, profile = "legacy-family", ownerPolicySHA256 = null } = {},
 ) {
   const manifest = validateBillingRuntimeGateManifest(manifestInput);
   await verifyOriginState(
@@ -416,6 +432,7 @@ export async function verifyBillingRuntimeGateOrigin(
     fetchImpl,
     timeoutMilliseconds,
     deploymentProfile(profile).healthPath,
+    ownerPolicySHA256,
   );
 }
 
@@ -478,6 +495,8 @@ export async function runBillingRuntimeGateControl(argv, {
     );
   }
   validateFixedConfig(config, manifest, profile);
+  const ownerPolicySHA256 = profile === 'private-gateway' && manifest.desiredState !== 'all-off'
+    ? createHash('sha256').update(config.vars.BILLING_SANDBOX_OWNER_ADMISSION).digest('hex') : null;
   if (mode.action === "plan") {
     const transition = isEmergencyAllOff(manifest)
       ? "emergency billing-all-off"
@@ -504,7 +523,7 @@ export async function runBillingRuntimeGateControl(argv, {
         billingRuntimeGateStatusCommand(projectDirectory, manifest, profile),
       ),
     );
-    await verifyOriginState(manifest, snapshot, fetchImpl, 15_000, deployment.healthPath);
+    await verifyOriginState(manifest, snapshot, fetchImpl, 15_000, deployment.healthPath, ownerPolicySHA256, profile === "private-gateway" && manifest.desiredState === "all-off");
     if (snapshot.generation !== manifest.expectedGeneration
         || !exactState(
           snapshot,
@@ -518,12 +537,13 @@ export async function runBillingRuntimeGateControl(argv, {
       return `PASS billing runtime gate status generation ${snapshot.generation} ${manifest.expectedState}; manifest reconciled for adjacent ${manifest.desiredState}.`;
     }
   }
+  if (ownerPolicySHA256 !== null) parseOwnerAdmission(config.vars.BILLING_SANDBOX_OWNER_ADMISSION);
   const output = await runCommand(
     billingRuntimeGateCommand(projectDirectory, manifest, profile),
   );
   parseBillingRuntimeGateUpdate(output, manifest);
   try {
-    await verifyBillingRuntimeGateOrigin(manifest, fetchImpl, { profile });
+    await verifyBillingRuntimeGateOrigin(manifest, fetchImpl, { profile, ownerPolicySHA256 });
   } catch {
     throw new Error("billing same-origin runtime gate verification failed; D1 may already have changed. Read status before any further operation");
   }

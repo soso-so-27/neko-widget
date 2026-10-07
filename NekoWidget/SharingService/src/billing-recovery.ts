@@ -7,6 +7,7 @@ import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
 import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from "./http";
 import { binaryField, exactKeys, protocolVersion, stringField, uuidField } from "./validation";
+import { requireOwnerSandboxAccount } from "./billing-sandbox-owner";
 
 interface Gate { account_recovery_enabled: 0 | 1 }
 interface Existing {
@@ -77,6 +78,8 @@ export async function recoverBillingAccount(
   catch { signatureValid = false; }
   if (!signatureValid) throw new ApiError(401, "invalid_billing_recovery_signature", "Billing authentication failed.");
   const requestHash = await sha256Base64url(transcript);
+  // Reject a different account before Apple/Container work or key rotation.
+  await requireOwnerSandboxAccount(env, billingAccountId);
   const replay = await existing(env, clientRequestId);
   if (replay !== null) {
     if (replay.request_hash !== requestHash) throw new ApiError(409, "billing_recovery_conflict", "The billing request ID was already used.");
@@ -130,6 +133,7 @@ export async function recoverBillingAccount(
   ).bind(billingAccountId).first<State>();
   if (state === null) throw new ApiError(409, "billing_recovery_conflict", "Billing recovery conflicted with another request.");
   const recoveredAt = Math.floor(Date.now() / 1_000);
+  await requireOwnerSandboxAccount(env, billingAccountId);
   const newKeyId = randomBase64url(16);
   try {
     await env.DB.prepare(
