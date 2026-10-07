@@ -94,6 +94,28 @@ class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
         self.assertEqual(scope.lanes(scope.APP_DATA_SCOPE),
                          ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other"))
 
+    def test_exact_billing_preparation_requires_all_three_owning_operations(self):
+        selected = scope.BILLING_LOCAL_PREPARATION_SCOPE
+        self.assertIn(selected, scope.SCOPES)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.native_tests(selected), (
+            "NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferPreviewReturnsToPurpose",
+            "NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferPreviewWaitingAndRestore",
+            "NekoWidgetUITests/SoloMemoriesUITests/testMembershipOfferExplainsExpiryWithoutChangingThePlan",
+        ))
+        required = planner.required_jobs_from_scope(selected)
+        self.assertEqual(set(required), {planner.BUILD, planner.BOOTSTRAP_SMOKE,
+            scope.lane_job(selected, "runtime"), scope.lane_job(selected, "app-ui")})
+        self.assertEqual(scope.smoke_tests(selected), scope.smoke_tests(scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE))
+        paths = set(scope.BILLING_LOCAL_PREPARATION_DIGESTS)
+        self.assertTrue(scope.accepts_paths(selected, paths))
+        for path in paths:
+            self.assertFalse(scope.accepts_paths(selected, paths - {path}))
+        self.assertFalse(scope.accepts_paths(selected, paths | {"NekoWidget/Shared/MembershipAccessPolicy.swift"}))
+        for lane in ("app-ui-solo-1", "app-ui-other", "gallery", "gallery-variants", "gallery-normal"):
+            with self.assertRaises(ValueError):
+                scope.lane_tests(selected, lane)
+
     def test_later_private_store_edit_needs_project_proof_not_frozen_product_hashes(self):
         path = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
         changes = {path: (self.changes[path][1], self.changes[path][1] + "\n// private storage change\n")}
