@@ -1961,13 +1961,23 @@ def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt
             raise ValueError("Preservation backend workflow identity unavailable")
         query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
         response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        expected_event = "push"
+        # A new branch can omit a path-filtered Sharing push when that code was
+        # already uploaded on a diagnostic ref. Only an entirely absent push
+        # index permits an explicit same-SHA backend dispatch; never replace a
+        # failed, pending, main-only or incomplete push with a different run.
+        if (workflow == "sharing-service.yml" and type(response.get("total_count")) is int
+                and response == {"total_count": 0, "workflow_runs": []}):
+            expected_event = "workflow_dispatch"
+            query = urllib.parse.urlencode({"head_sha": sha, "event": expected_event, "per_page": 100})
+            response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
         runs = response.get("workflow_runs")
         if (not isinstance(runs, list) or type(response.get("total_count")) is not int
                 or response["total_count"] != len(runs) or not runs):
             raise ValueError("Preservation backend run index incomplete or absent")
         for run in runs:
             if (type(run.get("id")) is not int or type(run.get("run_number")) is not int
-                    or run.get("head_sha") != sha or run.get("event") != "push"
+                    or run.get("head_sha") != sha or run.get("event") != expected_event
                     or run.get("workflow_id") != identity["id"]
                     or run.get("path") != identity["path"]
                     or run.get("repository", {}).get("full_name") != repository
@@ -1979,7 +1989,7 @@ def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt
         # Among codex candidate pushes, never hide a newer failed/pending run.
         runs = [run for run in runs if str(run.get("head_branch", "")).startswith("codex/")]
         if not runs:
-            raise ValueError("No same-SHA preservation candidate push")
+            raise ValueError("No same-SHA preservation candidate execution")
         if len({run["id"] for run in runs}) != len(runs) or len({run["run_number"] for run in runs}) != len(runs):
             raise ValueError("Duplicate preservation backend execution")
         latest = max(runs, key=lambda run: run["run_number"])
@@ -1987,7 +1997,7 @@ def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt
             raise ValueError("Latest preservation backend run has not succeeded")
         if not covers_jobs(executed_jobs(latest, repository, api), required, sha, now=now):
             raise ValueError("Preservation backend required jobs did not execute successfully")
-        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "required_jobs": list(required)}
+        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "event": expected_event, "required_jobs": list(required)}
     return evidence
 
 
