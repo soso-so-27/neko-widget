@@ -20,6 +20,8 @@ import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
 import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-limiter';
+import { payloadResponse, payloadWork } from './payload-work';
+import { recordResponse } from './record-frame';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -183,15 +185,22 @@ export async function route(request: Request, services: Services, context?: Pick
     }
     const limit = url.searchParams.get('limit') ?? '20';
     if (!/^\d{1,2}$/.test(limit)) throw new ServiceError('INVALID_PAGE_SIZE');
-    return response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit)));
+    return payloadResponse(request, async () =>
+      response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit))));
   }
   const id = /^\/v1\/records\/([0-9a-f-]+)$/.exec(path)?.[1];
-  if (id && request.method === 'GET') return response(await services.archive.read(token, id));
-  if (id && request.method === 'PUT') return response(await services.archive.put(token, id, await body(request, 29 * 1024 * 1024)));
+  if (id && request.method === 'GET') return payloadResponse(request, async signal => {
+    const session = await services.auth.requireSession(token);
+    const record = await services.archive.readBinary(token, id);
+    const revision = record.revision;
+    return recordResponse(record, () => services.archive.validateRead(token, id, revision, session.ownerId), signal);
+  });
+  if (id && request.method === 'PUT') return payloadWork.run(async () =>
+    response(await services.archive.put(token, id, await body(request, 29 * 1024 * 1024))), request.signal);
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
-    return response(await services.archive.remove(token, id, Number(revision)));
+    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision))), request.signal);
   }
   throw new ServiceError('NOT_FOUND', 404);
 }
@@ -395,7 +404,7 @@ export default {
         const services = configuredServices(env);
         if (!services.ownerRecovery) throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
         if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
-          const records = await services.archive.repairRecoveryBatch();
+          const records = await payloadWork.run(() => services.archive.repairRecoveryBatch());
           maintenanceFailures += records.failed;
         }
         const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());

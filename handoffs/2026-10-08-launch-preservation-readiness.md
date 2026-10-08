@@ -19,3 +19,11 @@ AWS `GetAccountPlanState` の実測はFREE/ACTIVE、残クレジット$119.59、
 残件はリクエスト・転送・共有無料枠を含む費用予測、販売条件と受付ペースの整合と承認、AWSの継続利用条件、利用者単位の制限の接続、および実際の解約・期限切れ時の確認。現時点のpublic readinessはfalse。公開可能・一般受付ONとは報告しない。
 
 証拠は `C:/dev/neko-evidence/launch-readiness-20261008/preservation/` の `live-readonly.json`、`r2-usage-readonly.json`、`public-cost-proposal.json`、`validation.json`、`aws-inventory-readonly.json`、`key-binding-readonly.json`、`aws-account-plan-readonly.json`、`aws-cost-and-continuity-assessment.json`。料金源は [AWS KMS](https://aws.amazon.com/kms/pricing/) と同ディレクトリの `aws-s3-price.json`（公式東京料金表、2026-10-08取得）。初回候補は12:38 JST。ローカルチェックだけでApple環境や配布を検証済みとはしない。
+
+19時時点では、保管写真を3人同時に書き出すローカルworkerdのメモリ問題を修正した。写真全体のbase64と日本語metadataを一つの文字列にする経路を除き、復号bytesから最大1MiBずつ送る。同一isolateの大きい処理は同時1件に制限し、通常取得・保存・写真を読む削除・修復との重複も抑える。待機は最大16件/30秒、写真応答120秒、session15分は延長しない。取消中の読込完了まで枠を保持し、各chunkの本人・更新・削除確認と最終complete判定を維持する。
+
+20MiBの暗号化写真を使う同一isolate計測で、3人同時exportは最大観測87.26MiB、detail混在/低速読取は67.28MiB。初期の疎な観測は243.26MiBで、同じ実配備互換設定での文字列分割だけの中間候補でも約250MiBだった。Inspectorのused/embedder/backing合計であり、本番128MiBへの適合保証ではない。実行中に強制GCせず、本文をため込まない外部consumerで測定した。最大PUT単独、販売5GB全体の実機完了は未確認。
+
+書き出し46件と影響する保存・復元・認証・payload補助の91件、合計137種類のテスト、型検査が成功。独立レビューでP1/P2なし。既存テストの本文未消費を修正し、30件準備する1ケースはUTC分境界の最大4秒待機を含めて10秒のテスト期限とした。製品期限・件数・429・本文検証は維持。初期失敗、npm経由のフィルター不適用による重複実行も費用/時間記録へ残した。証拠は同evidence rootの `export-memory-validation.json` と `export-memory-chunked-probe/encrypted-path-result.json`。今回のメモリ修正は約35分、12:38の初回候補からは約6時間24分（待機・他修正・診断を含む）で、CIだけの実行時間ではない。
+
+このメモリ修正は未配備。本人向けTestFlightは1.0(246)のまま。cf7fe22のApple再認証付きexport診断成功は保持するが、通常の配布用CI証拠には代用しない。最終の製品差分を固定し、既に調査した必須範囲を厳密なCI選択へ接続する工程が残る。公開費用は操作/転送/隔離復元を加えると無料枠なしの部分小計でも月3,883.60〜4,041.18円となり、従来の2,200円受付停止/3,000円目標と不整合。CPU/D1等の残額も未算定で、公開案・AWS契約・権限・受付・期限は変更していない。

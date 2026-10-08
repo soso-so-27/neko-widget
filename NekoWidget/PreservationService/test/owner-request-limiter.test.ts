@@ -236,7 +236,9 @@ it('preserves expired-member read/export/delete after cost-review expiry until r
   f.services.archive = new ArchiveStore({ ...options, membership: { status: async () => 'expired' },
     intakeControl: new IntakeControl(db, Date.now, { requireCostEvidence: true }), requireIntakeControl: true });
   expect(await db.prepare('SELECT enabled,valid_until FROM pa_intake_control WHERE singleton=1').first()).toEqual({ enabled: 0, valid_until: 0 });
-  expect((await route(request(f.first.token, '/v1/records'), f.services)).status).toBe(200);
+  const listing = await route(request(f.first.token, '/v1/records'), f.services);
+  expect(listing.status).toBe(200);
+  expect(await listing.json()).toMatchObject({ items: [{ recordId }] });
   expect(await (await route(request(f.first.token, `/v1/records/${recordId}`), f.services)).json()).toMatchObject({ recordId, document });
   const removal = request(f.first.token, `/v1/records/${recordId}`, 'DELETE'); removal.headers.set('if-match', '1');
   expect((await route(removal, f.services)).status).toBe(200);
@@ -275,9 +277,13 @@ it('reproduces the unresolved bulk-export failure: two pages plus 28 details exh
   } while (cursor);
   expect(records).toHaveLength(30);
   for (const recordId of records.slice(0, 28)) {
-    expect((await route(request(f.first.token, `/v1/records/${recordId}`), f.services)).status).toBe(200);
+    const detail = await route(request(f.first.token, `/v1/records/${recordId}`), f.services);
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ recordId, document });
   }
   await expect(route(request(f.first.token, `/v1/records/${records[28]}`), f.services))
     .rejects.toMatchObject({ code: 'RATE_LIMITED', status: 429 });
   expect(await count(f.first.ownerId)).toBe(30);
-});
+  // The existing UTC-boundary guard can wait up to four seconds, in addition
+  // to 30 fixture writes and fully authorized/consumed response bodies.
+}, 10_000);

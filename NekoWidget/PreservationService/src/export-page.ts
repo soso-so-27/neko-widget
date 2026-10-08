@@ -1,6 +1,8 @@
 import { ServiceError, type Session } from './contracts';
 import { recordId } from './documents';
 import type { ArchiveStore } from './storage';
+import { payloadWork } from './payload-work';
+import { RecordFrame } from './record-frame';
 
 const MAX_RECORDS = 50, MAX_TOTAL_RECORDS = 1000;
 const MAX_QUOTA_BYTES = 64 * 1024 * 1024, MAX_FRAME_BYTES = 29 * 1024 * 1024;
@@ -9,7 +11,7 @@ const utf8 = new TextEncoder();
 type Dependencies = {
   db: D1Database;
   auth: { requireSession(token: string): Promise<Session> };
-  read(token: string, id: string): ReturnType<ArchiveStore['read']>;
+  read(token: string, id: string): ReturnType<ArchiveStore['readBinary']>;
 };
 type Item = { record_id: string; quota_bytes: number; metadata_bytes: number; photo_bytes: number };
 const unavailable = () => new ServiceError('EXPORT_UNAVAILABLE', 503);
@@ -53,12 +55,19 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
     }
     return releasePromise;
   };
+  const payloadAbort = new AbortController();
+  let activeFrame: RecordFrame | undefined, releasePayload: (() => void) | undefined;
+  let payloadPending = false, payloadDeadline: ReturnType<typeof setTimeout> | undefined;
+  const clearPayload = () => {
+    activeFrame?.clear(); activeFrame = undefined;
+    if (!payloadPending) { clearTimeout(payloadDeadline); releasePayload?.(); releasePayload = undefined; }
+  };
   let stopped = false, controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const detach = () => { if (deadline !== undefined) clearTimeout(deadline); request.signal.removeEventListener('abort', cancel); };
   const cancel = () => {
     if (stopped) return;
-    stopped = true; detach(); controller?.error(interrupted());
+    stopped = true; detach(); payloadAbort.abort(); clearPayload(); controller?.error(interrupted());
     void release().catch(() => { /* The fixed lease expiry remains the fail-closed fallback. */ });
   };
   const open = () => { if (stopped || request.signal.aborted) throw interrupted(); };
@@ -130,25 +139,6 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
       if (bytes.length > MAX_FRAME_BYTES || wireBytes + bytes.length > MAX_WIRE_BYTES) throw unavailable();
       wireBytes += bytes.length; return bytes;
     };
-    const recordFrame = (record: Awaited<ReturnType<Dependencies['read']>>) => {
-      if (record.photoBase64 === null) return frame({ type: 'record', ...record });
-      const { photoBase64, ...metadata } = record;
-      // Keep a Japanese memo from widening a photo-sized JSON string to UTF-16.
-      // Only small metadata is stringified; the existing encoder's ASCII base64
-      // goes directly into the single, bounded output frame.
-      if (typeof photoBase64 !== 'string') throw unavailable();
-      const head = utf8.encode(JSON.stringify({ type: 'record', ...metadata }).slice(0, -1) + ',"photoBase64":"');
-      const size = head.length + photoBase64.length + 3; // closing quote, brace, newline
-      if (size > MAX_FRAME_BYTES || wireBytes + size > MAX_WIRE_BYTES) throw unavailable();
-      // ArchiveStore.read produces base64 internally. Verify that assumption
-      // before writing its content without JSON escaping.
-      if (!/^[A-Za-z0-9+/]*={0,2}(?![\s\S])/.test(photoBase64)) throw unavailable();
-      const bytes = new Uint8Array(size); bytes.set(head);
-      const encoded = utf8.encodeInto(photoBase64, bytes.subarray(head.length, size - 3));
-      if (encoded.read !== photoBase64.length || encoded.written !== photoBase64.length) throw unavailable();
-      bytes.set([34, 125, 10], size - 3);
-      wireBytes += size; return bytes;
-    };
     const body = new ReadableStream<Uint8Array>({
       start(value) { controller = value; },
       async pull(output) {
@@ -159,14 +149,32 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
             output.enqueue(frame({ version: 1, type: 'header', generation, totalRecords: snapshot.total_records }));
             phase = 'records'; return;
           }
-          if (index < page.length) {
-            const item = page[index]!;
+          while (index < page.length) {
+            if (!activeFrame) {
+              await fence();
+              releasePayload = await payloadWork.acquire(payloadAbort.signal);
+              payloadDeadline = setTimeout(cancel, 120_000);
+              payloadPending = true;
+              try {
+                open();
+                const record = await d.read(token, page[index]!.record_id);
+                open();
+                if (record.recordId !== page[index]!.record_id) throw interrupted();
+                activeFrame = new RecordFrame(record, true);
+                if (wireBytes + activeFrame.byteLength > MAX_WIRE_BYTES) throw unavailable();
+                wireBytes += activeFrame.byteLength;
+              } finally { payloadPending = false; if (stopped) clearPayload(); }
+            }
+            // Every bounded chunk is reauthorized, including a slow consumer's
+            // next pull. No photo-sized output buffer survives this await.
             await fence();
-            const record = await d.read(token, item.record_id);
-            const bytes = recordFrame(record);
-            await fence(); // Recheck after decrypt/read/serialization and before bytes leave this page.
-            if (record.recordId !== item.record_id) throw interrupted();
-            output.enqueue(bytes); index++; return;
+            const bytes = activeFrame!.next();
+            if (bytes) {
+              if (activeFrame!.done) { clearPayload(); index++; }
+              output.enqueue(bytes); return;
+            }
+            clearPayload(); index++;
+            // Queued owners acquire before this page requests its next record.
           }
           await fence();
           const bytes = frame({ type: 'complete', generation, recordCount: index, nextCursor });
@@ -180,11 +188,12 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
           releasePromise = Promise.resolve(true);
           open(); stopped = true; detach(); output.enqueue(bytes); output.close();
         } catch {
-          if (!stopped) { stopped = true; detach(); output.error(interrupted()); }
+          if (!stopped) { stopped = true; detach(); payloadAbort.abort(); output.error(interrupted()); }
+          clearPayload();
           await release().catch(() => { /* No complete frame on uncertain cleanup. */ });
         }
       },
-      async cancel() { stopped = true; detach(); await release(); },
+      async cancel() { stopped = true; detach(); payloadAbort.abort(); clearPayload(); await release(); },
     }, { highWaterMark: 0 });
     return new Response(body, { headers: { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store',
       'x-content-type-options': 'nosniff' } });

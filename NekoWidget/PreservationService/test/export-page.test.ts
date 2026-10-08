@@ -11,6 +11,7 @@ import type { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { exportPage } from '../src/export-page';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { syntheticKeyAuthority } from './key-fixture';
+import { payloadWork } from '../src/payload-work';
 
 const bindings = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket; TEST_MIGRATIONS: D1Migration[] };
 const db = bindings.DB;
@@ -65,8 +66,36 @@ async function fixture(count = 1, missingMarkers = false) {
     queries: () => queries, resetQueries: () => { queries = 0; },
     setBeforeQuery: (action?: (sql: string) => void) => { beforeQuery = action; } };
 }
+// HTTP chunks are not NDJSON frame boundaries. Reassemble complete lines
+// while retaining every existing whole-record/content/completion assertion.
+function lineReader(response: Response) {
+  const source = response.body!.getReader(); let remainder: Uint8Array = new Uint8Array();
+  return {
+    async read(): Promise<ReadableStreamReadResult<Uint8Array>> {
+      const chunks: Uint8Array[] = []; let size = 0;
+      while (true) {
+        if (!remainder.length) {
+          const piece = await source.read();
+          if (piece.done) { if (size) throw new Error('unterminated NDJSON frame'); return { done: true, value: undefined }; }
+          remainder = piece.value;
+        }
+        const newline = remainder.indexOf(10);
+        const part = newline < 0 ? remainder : remainder.subarray(0, newline + 1);
+        chunks.push(part); size += part.length;
+        remainder = newline < 0 ? new Uint8Array() : remainder.subarray(newline + 1);
+        if (newline >= 0) {
+          const value = new Uint8Array(size); let offset = 0;
+          for (const chunk of chunks) { value.set(chunk, offset); offset += chunk.length; }
+          return { done: false, value };
+        }
+      }
+    },
+    cancel() { remainder = new Uint8Array(); return source.cancel(); },
+    releaseLock() { source.releaseLock(); },
+  };
+}
 async function frames(response: Response): Promise<Record<string, unknown>[]> {
-  const reader = response.body!.getReader(); const result: Record<string, unknown>[] = [];
+  const reader = lineReader(response); const result: Record<string, unknown>[] = [];
   try { while (true) { const next = await reader.read(); if (next.done) break;
     result.push(JSON.parse(new TextDecoder().decode(next.value)) as Record<string, unknown>); } }
   finally { reader.releaseLock(); }
@@ -84,7 +113,7 @@ it('probes workerd zero-buffer pull and cancellation before the next record read
   }, { highWaterMark: 0 });
   const response = new Response(stream);
   await new Promise(resolve => setTimeout(resolve, 5)); expect(pulls).toBe(0);
-  const reader = response.body!.getReader(); await reader.read();
+  const reader = lineReader(response); await reader.read();
   await new Promise(resolve => setTimeout(resolve, 5)); expect(pulls).toBe(1);
   await reader.cancel(); expect(cancelled).toBe(1); expect(pulls).toBe(1);
 });
@@ -133,7 +162,7 @@ it('streams an actual 20 MiB encrypted photo with Japanese metadata through arch
   f.services.archive = new ArchiveStore({ db, bucket: bindings.ARCHIVE, keys, auth: f.auth, now: Date.now,
     quotaBytes: 5 * 1024 ** 3, maximumRecords: 1000, membership: { status: async () => 'expired' },
     photos: { validateJPEG: async () => { throw new Error('export must not call intake validator'); } } });
-  const reader = (await route(f.make(), f.services)).body!.getReader();
+  const reader = lineReader((await route(f.make(), f.services)));
   expect(JSON.parse(new TextDecoder().decode((await reader.read()).value!))).toMatchObject({ type: 'header', totalRecords: 1 });
   await (async () => {
     const next = await reader.read(); expect(next.done).toBe(false);
@@ -187,11 +216,11 @@ it('keeps the missing-marker repair path below 1000 SQL statements for 50 record
 }, 20_000);
 
 it('does not decrypt ahead of demand and releases the lease on consumer cancellation', async () => {
-  const f = await fixture(2); const reads = vi.spyOn(f.archive, 'read');
+  const f = await fixture(2); const reads = vi.spyOn(f.archive, 'readBinary');
   const pending: Promise<unknown>[] = [];
   const response = await route(f.make(), f.services, { waitUntil: promise => { pending.push(promise); } });
   expect(reads).not.toHaveBeenCalled();
-  const reader = response.body!.getReader(); await reader.read();
+  const reader = lineReader(response); await reader.read();
   expect(reads).not.toHaveBeenCalled();
   await reader.read(); expect(reads).toHaveBeenCalledTimes(1);
   await new Promise(resolve => setTimeout(resolve, 5)); expect(reads).toHaveBeenCalledTimes(1);
@@ -234,8 +263,8 @@ it('rejects changed generations and cross-owner/nonexistent cursors without outp
 it.each(['generation', 'session', 'owner', 'lease-expiry', 'abort'] as const)(
   'emits no record or complete after %s changes during an actual read', async kind => {
     const f = await fixture(2); const abort = new AbortController();
-    const original = f.archive.read.bind(f.archive);
-    vi.spyOn(f.archive, 'read').mockImplementationOnce(async (token, id) => {
+    const original = f.archive.readBinary.bind(f.archive);
+    vi.spyOn(f.archive, 'readBinary').mockImplementationOnce(async (token, id) => {
       const result = await original(token, id);
       if (kind === 'generation') await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?').bind(f.session.ownerId).run();
       if (kind === 'session') await f.auth.revokeSession(token);
@@ -244,7 +273,7 @@ it.each(['generation', 'session', 'owner', 'lease-expiry', 'abort'] as const)(
       if (kind === 'abort') abort.abort();
       return result;
     });
-    const reader = (await route(f.make('', f.session.token, abort.signal), f.services)).body!.getReader();
+    const reader = lineReader((await route(f.make('', f.session.token, abort.signal), f.services)));
     expect(JSON.parse(new TextDecoder().decode((await reader.read()).value)).type).toBe('header');
     await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
     await new Promise(resolve => setTimeout(resolve, 5));
@@ -252,14 +281,14 @@ it.each(['generation', 'session', 'owner', 'lease-expiry', 'abort'] as const)(
   });
 
 it('checks the final generation even after the last record was delivered', async () => {
-  const f = await fixture(); const reader = (await route(f.make(), f.services)).body!.getReader();
+  const f = await fixture(); const reader = lineReader((await route(f.make(), f.services)));
   await reader.read(); await reader.read();
   await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?').bind(f.session.ownerId).run();
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
 });
 
 it('fails closed on database failure during streaming and does not claim completion', async () => {
-  const f = await fixture(); const reader = (await route(f.make(), f.services)).body!.getReader();
+  const f = await fixture(); const reader = lineReader((await route(f.make(), f.services)));
   await reader.read();
   f.setBeforeQuery(sql => { if (sql.includes('SELECT 1 AS allowed')) throw new Error('synthetic DB outage'); });
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
@@ -269,7 +298,7 @@ it('fails closed on database failure during streaming and does not claim complet
 
 it('uses a fixed lease within the original session deadline and rejects an expired session mid-page', async () => {
   const f = await fixture(); const current = await f.auth.requireSession(f.session.token);
-  const reader = (await route(f.make(), f.services)).body!.getReader();
+  const reader = lineReader((await route(f.make(), f.services)));
   expect((await lease(f.session.ownerId))!.export_lease_expires_at).toBe(current.expiresAt);
   await reader.read();
   await db.prepare('UPDATE pa_sessions SET expires_at=created_at+1 WHERE session_hash=?').bind(current.sessionHash).run();
@@ -298,7 +327,7 @@ it('checks schema defaults, owner snapshot generation, and atomic final-release 
   const generation = () => db.prepare('SELECT generation FROM pa_owner_recovery_generations WHERE owner_id=?')
     .bind(f.session.ownerId).first();
   const before = await generation();
-  const reader = (await route(f.make(), f.services)).body!.getReader(); await reader.read(); await reader.read();
+  const reader = lineReader((await route(f.make(), f.services))); await reader.read(); await reader.read();
   expect(await generation()).toEqual(before);
   f.setBeforeQuery(sql => {
     if (sql.includes('UPDATE pa_owners SET export_lease_id=NULL') && sql.includes('AND disabled=0')) {
@@ -325,18 +354,18 @@ it('bounds declared total and refuses a non-empty owner without generation accou
 });
 
 it('rejects a frame over 29MiB without sending that record or a complete frame', async () => {
-  const f = await fixture(); const original = f.archive.read.bind(f.archive);
-  vi.spyOn(f.archive, 'read').mockImplementationOnce(async (token, id) => ({ ...await original(token, id),
-    photoBase64: 'A'.repeat(29 * 1024 * 1024) }));
-  const reader = (await route(f.make(), f.services)).body!.getReader(); await reader.read();
+  const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+  vi.spyOn(f.archive, 'readBinary').mockImplementationOnce(async (token, id) => ({ ...await original(token, id),
+    photo: new Uint8Array(20 * 1024 * 1024), document: { ...(await original(token, id)).document, text: 'A'.repeat(3 * 1024 * 1024) } }));
+  const reader = lineReader((await route(f.make(), f.services))); await reader.read();
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
 });
 
 it.each(['"}\n{"type":"complete"}', '写真', 'AAAA\n', 'AAAA\r', 'AAAA\r\n'])(
-  'refuses non-base64 photo content before writing unescaped NDJSON: %s', async photoBase64 => {
-    const f = await fixture(); const original = f.archive.read.bind(f.archive);
-    vi.spyOn(f.archive, 'read').mockImplementation(async (token, id) => ({ ...await original(token, id), photoBase64 }));
-    const reader = (await route(f.make(), f.services)).body!.getReader(); await reader.read();
+  'refuses non-byte photo content before encoding NDJSON: %s', async photo => {
+    const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+    vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({ ...await original(token, id), photo: photo as unknown as Uint8Array }));
+    const reader = lineReader((await route(f.make(), f.services))); await reader.read();
     await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
   });
 
@@ -364,8 +393,8 @@ it('rejects a generation mutation between the last fence and the atomic lease co
     };
     const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
   } });
-  const response = await exportPage({ db: racing, auth: f.auth, read: f.archive.read.bind(f.archive) }, f.make(), f.session.token);
-  const reader = response.body!.getReader(); await reader.read(); await reader.read();
+  const response = await exportPage({ db: racing, auth: f.auth, read: f.archive.readBinary.bind(f.archive) }, f.make(), f.session.token);
+  const reader = lineReader(response); await reader.read(); await reader.read();
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
 });
 
@@ -376,14 +405,14 @@ it('enforces the original absolute session deadline even when the consumer stops
   const response = await route(f.make(), f.services);
   await new Promise(resolve => setTimeout(resolve, 1250));
   expect((await lease(f.session.ownerId))!.export_lease_id).toBeNull();
-  await expect(response.body!.getReader().read()).rejects.toThrow('EXPORT_INTERRUPTED');
+  await expect(lineReader(response).read()).rejects.toThrow('EXPORT_INTERRUPTED');
 });
 
 it('bounds aggregate wire bytes without accumulating earlier records in the Worker', async () => {
-  const f = await fixture(50); const original = f.archive.read.bind(f.archive);
-  vi.spyOn(f.archive, 'read').mockImplementation(async (token, id) => ({ ...await original(token, id),
-    photoBase64: 'A'.repeat(2 * 1024 * 1024) }));
-  const reader = (await route(f.make(), f.services)).body!.getReader(); await reader.read();
+  const f = await fixture(50); const original = f.archive.readBinary.bind(f.archive);
+  vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({ ...await original(token, id),
+    photo: new Uint8Array(1.5 * 1024 * 1024) }));
+  const reader = lineReader((await route(f.make(), f.services))); await reader.read();
   for (let i = 0; i < 47; i++) expect((await reader.read()).value!.byteLength).toBeGreaterThan(2 * 1024 * 1024);
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
 }, 20_000);
@@ -400,3 +429,111 @@ it('upgrades an existing owner without changing quota or snapshot generation and
   expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
   expect((await frames(await route(f.make(), f.services))).at(-1)).toMatchObject({ type: 'complete', recordCount: 1 });
 });
+
+it.each(['generation', 'session', 'owner', 'abort'] as const)(
+  'rejects the next photo chunk when %s changes during slow consumption', async kind => {
+    const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+    vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({ ...await original(token, id),
+      photo: new Uint8Array(2 * 1024 * 1024) }));
+    const abort = new AbortController();
+    const reader = (await route(f.make('', f.session.token, abort.signal), f.services)).body!.getReader();
+    await reader.read();
+    const first = (await reader.read()).value!;
+    expect(first.length).toBeLessThanOrEqual(1024 * 1024); expect(first.includes(10)).toBe(false);
+    if (kind === 'generation') await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?').bind(f.session.ownerId).run();
+    if (kind === 'session') await f.auth.revokeSession(f.session.token);
+    if (kind === 'owner') await db.prepare('UPDATE pa_owners SET disabled=1,epoch=epoch+1 WHERE owner_id=?').bind(f.session.ownerId).run();
+    if (kind === 'abort') abort.abort();
+    await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
+    await expect(payloadWork.run(async () => 'released')).resolves.toBe('released');
+  });
+
+it('holds admission until a cancelled export read settles, with no bytes emitted', async () => {
+  const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+  let settle!: () => void, started!: () => void;
+  const delayed = new Promise<void>(resolve => { settle = resolve; });
+  const began = new Promise<void>(resolve => { started = resolve; });
+  vi.spyOn(f.archive, 'readBinary').mockImplementationOnce(async (token, id) => {
+    const result = await original(token, id); started(); await delayed; return result;
+  });
+  const abort = new AbortController();
+  const reader = (await route(f.make('', f.session.token, abort.signal), f.services)).body!.getReader();
+  await reader.read(); const pending = reader.read();
+  const rejected = expect(pending).rejects.toThrow('EXPORT_INTERRUPTED');
+  await began; abort.abort();
+  let entered = false; const next = payloadWork.run(async () => { entered = true; });
+  await new Promise(resolve => setTimeout(resolve, 5)); expect(entered).toBe(false);
+  settle(); await rejected; await next; expect(entered).toBe(true);
+});
+
+it('queues detail and upload behind a photo without consuming upload input, while revoke stays responsive', async () => {
+  const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+  const reads = vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({ ...await original(token, id),
+    photo: new Uint8Array(2 * 1024 * 1024) }));
+  const reader = (await route(f.make(), f.services)).body!.getReader(); await reader.read(); await reader.read();
+  const id = '00000001-0000-4000-8000-000000000001';
+  let uploadPulls = 0;
+  const uploadBody = new ReadableStream<Uint8Array>({ pull(controller) {
+    uploadPulls++; controller.enqueue(new TextEncoder().encode('{}')); controller.close();
+  } }, { highWaterMark: 0 });
+  const detail = route(new Request(`https://preservation.test/v1/records/${id}`,
+    { headers: { authorization: `Bearer ${f.session.token}` } }), f.services);
+  const upload = route(new Request(`https://preservation.test/v1/records/${id}`, { method: 'PUT', body: uploadBody,
+    headers: { authorization: `Bearer ${f.session.token}`, 'content-type': 'application/json' } }), f.services);
+  const outcomes = Promise.allSettled([detail, upload]);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  expect(reads).toHaveBeenCalledTimes(1); expect(uploadPulls).toBe(0);
+  const revoke = await route(new Request('https://preservation.test/v1/auth/session', { method: 'DELETE',
+    headers: { authorization: `Bearer ${f.session.token}` } }), f.services);
+  expect(revoke.status).toBe(204);
+  await reader.cancel();
+  expect(await outcomes).toMatchObject([
+    { status: 'rejected', reason: { code: 'unauthorized', status: 401 } },
+    { status: 'rejected', reason: { code: 'unauthorized', status: 401 } },
+  ]);
+});
+
+it.each(['revision', 'session'] as const)('reauthorizes each ordinary photo GET chunk after %s changes', async kind => {
+  const f = await fixture(); const original = f.archive.readBinary.bind(f.archive);
+  vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({ ...await original(token, id),
+    photo: new Uint8Array(2 * 1024 * 1024) }));
+  const id = '00000001-0000-4000-8000-000000000001';
+  const reader = (await route(new Request(`https://preservation.test/v1/records/${id}`,
+    { headers: { authorization: `Bearer ${f.session.token}` } }), f.services)).body!.getReader();
+  expect((await reader.read()).value!.length).toBeLessThanOrEqual(1024 * 1024);
+  if (kind === 'revision') await db.prepare('UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).run();
+  else await f.auth.revokeSession(f.session.token);
+  await expect(reader.read()).rejects.toMatchObject({ code: kind === 'revision' ? 'REVISION_CONFLICT' : 'unauthorized' });
+  await expect(payloadWork.run(async () => 'released')).resolves.toBe('released');
+});
+
+it('keeps a fifty-record page with three maximum photos and missing markers below1000 SQL statements', async () => {
+  const f = await fixture(50, true);
+  const ids = (await db.prepare('SELECT record_id FROM pa_records WHERE owner_id=? ORDER BY record_id LIMIT 3')
+    .bind(f.session.ownerId).all<{ record_id: string }>()).results.map(row => row.record_id);
+  // Use actual R2 reads and integrity validation, with the fixture's injected
+  // passthrough encryption. The separate maximum-photo test covers real GCM.
+  const photo = new Uint8Array(20 * 1024 * 1024); const digest = await sha256(photo);
+  for (const id of ids) {
+    const key = `synthetic-budget/${f.session.ownerId}/${id}`; await bindings.ARCHIVE.put(key, photo);
+    await db.prepare(`UPDATE pa_records SET photo_key=?,photo_bytes=?,quota_bytes=?+length(metadata),
+      metadata=CAST(json_set(CAST(metadata AS TEXT),'$.photoBytes',?,'$.photoSHA256',?,
+        '$.document.photoFile','photo.jpg') AS BLOB) WHERE owner_id=? AND record_id=?`)
+      .bind(key, photo.length, photo.length + 100, photo.length, digest, f.session.ownerId, id).run();
+  }
+  f.resetQueries(); const reader = (await route(f.make(), f.services)).body!.getReader();
+  let count = 0, wireBytes = 0;
+  while (true) {
+    const next = await reader.read(); if (next.done) break;
+    wireBytes += next.value.length; expect(next.value.length).toBeLessThanOrEqual(1024 * 1024);
+    // Small completion frame is directly inspectable; do not retain the large photos in this test.
+    if (next.value.length < 200) {
+      const value = JSON.parse(new TextDecoder().decode(next.value));
+      if (value.type === 'complete') count = value.recordCount;
+    }
+  }
+  expect(count).toBe(50); expect(wireBytes).toBeGreaterThan(80 * 1024 * 1024);
+  expect(wireBytes).toBeLessThan(96 * 1024 * 1024);
+  expect(f.queries()).toBeGreaterThan(613); expect(f.queries()).toBeLessThan(1000);
+}, 30_000);

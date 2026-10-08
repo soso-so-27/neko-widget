@@ -61,7 +61,7 @@ export class ArchiveStore {
     }
   }
   async exportPage(token: string, request: Request, context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
-    return exportPage({ db: this.d.db, auth: this.d.auth, read: (value, id) => this.read(value, id) }, request, token, context);
+    return exportPage({ db: this.d.db, auth: this.d.auth, read: (value, id) => this.readBinary(value, id) }, request, token, context);
   }
   private sessionBindings(session: Session): [string, string, number] {
     return [session.sessionHash, session.ownerId, this.d.now()];
@@ -381,6 +381,10 @@ export class ArchiveStore {
     return { items, generation, nextCursor: rows.results.length > limit ? items.at(-1)!.recordId : null };
   }
   async read(token: string, id: string) {
+    const { photo, ...record } = await this.readBinary(token, id);
+    return { ...record, photoBase64: encodePhoto(photo) };
+  }
+  async readBinary(token: string, id: string) {
     recordId(id);
     const session = await this.d.auth.requireSession(token);
     const row = await this.row(session.ownerId, id);
@@ -398,8 +402,16 @@ export class ArchiveStore {
       }
     }
     await this.unchanged(token, session, row);
-    return { recordId: id, revision: row.revision, document: data.document, photoBase64: encodePhoto(photo),
+    return { recordId: id, revision: row.revision, document: data.document, photo,
       photoSHA256: data.photoSHA256 };
+  }
+  async validateRead(token: string, id: string, revision: number, ownerId: string) {
+    const session = await this.d.auth.requireSession(token);
+    if (session.ownerId !== ownerId) throw new ServiceError('SESSION_INVALID', 401);
+    const row = await this.d.db.prepare('SELECT revision,deleted FROM pa_records WHERE owner_id=? AND record_id=?')
+      .bind(session.ownerId, id).first<{ revision: number; deleted: number }>();
+    if (!row || row.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
+    if (row.revision !== revision) throw new ServiceError('REVISION_CONFLICT', 409);
   }
   async put(token: string, id: string, input: unknown) {
     recordId(id);
