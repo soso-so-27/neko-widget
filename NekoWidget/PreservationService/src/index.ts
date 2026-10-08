@@ -19,6 +19,7 @@ import { PilotControl } from './pilot-control';
 import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
+import { OwnerRequestLimiter } from './owner-request-limiter';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -47,6 +48,7 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  ownerRequestLimiter?: OwnerRequestLimiter;
   ownerDeletion?: OwnerDeletionRequests;
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
 interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
@@ -110,18 +112,22 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
+  if (request.method === 'GET' && deletionOwner) {
+    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
+    // This bearer is the device's deletion receipt, not an expired login.
+    // Receipt polling and auth bootstrap retain the IP guard only.
+    return response(await services.ownerDeletion.status(deletionOwner, token));
+  }
+  if (services.ownerRequestLimiter) {
+    await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
+  }
   if (request.method === 'POST' && path === '/v1/account-deletion') {
     if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
     const input = await body(request, 1024);
     if (Object.keys(input).sort().join(',') !== 'confirmation,receipt'
       || input.confirmation !== 'delete-service-account') throw new ServiceError('INVALID_REQUEST');
     return response(await services.ownerDeletion.request(token, input.receipt), 202);
-  }
-  const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
-  if (request.method === 'GET' && deletionOwner) {
-    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
-    // This bearer is the device's deletion receipt, not an expired login.
-    return response(await services.ownerDeletion.status(deletionOwner, token));
   }
   if (request.method === 'GET' && path === '/v1/notice-contact') {
     return response({ version: 1, ...await services.auth.noticeContact(token) });
@@ -252,6 +258,7 @@ export function configuredServices(env: Env): Services {
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
     ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
   return { auth, archive, verifier, membership,
+    ...(general ? { ownerRequestLimiter: new OwnerRequestLimiter(env.DB) } : {}),
     ...(env.OWNER_DELETION_ENABLED === 'YES' ? { ownerDeletion: new OwnerDeletionRequests({
       db: env.DB, journal: deletionJournal, auth, now }) } : {}),
     ...(retention ? { retention } : {}),

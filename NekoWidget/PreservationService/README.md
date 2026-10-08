@@ -147,4 +147,10 @@ coversUnknownStatusAndUndeliveredNoticeExtension=true、evidenceReference が必
 appBuild、evidenceReference を必要とします。少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
 現アプリの逐次GETと15分sessionでは、30回/固定UTC分で1000件ZIPを完了できません。再試行だけでは解決しないため、
 取り出し方式と通信制限の両立を検証するまで、この一般提供用制限を配備・有効化しません。pilotには適用しません。
+一般提供用の制限候補は migration 0032 の owner 行を D1 の時刻で原子的に更新し、同じ本人の複数sessionを合算します。
+固定UTC分なので境界をまたぐ60秒間では最大60回になり、rolling 60秒の制限ではありません。失敗した下流処理も枠を消費します。
+認証準備と削除receipt照会は既存IP制限を維持し、削除後の照会に有効なログインを要求しません。
+quota更新は復旧generationを進めず、本人削除時にowner行と一緒に消えます。隔離復元はdisabled/sessionなしのままです。
+D1 Time Travelでcounterが巻き戻る可能性があるため、復元中は一般提供HTTPを停止し、少なくとも次のUTC分まで待ってから、
+別途承認・検証された復旧手順で受付を再開します。今回その操作や実環境の復旧確認は行っていません。
 この確認は承認・配備・受付有効化・期限延長・通知・消去を実行せず、remote permission を発行しません。

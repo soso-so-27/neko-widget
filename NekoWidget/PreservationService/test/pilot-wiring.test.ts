@@ -29,6 +29,9 @@ it('requires an explicit non-pilot general mode and does not create an unrestric
   expect(()=>configuredServices({...settings,PILOT_STORAGE_ACCESS_ENABLED:'YES'})).toThrow('PRESERVATION_NOT_CONFIGURED');
   expect(()=>configuredServices(missingEnvironment)).toThrow('PRESERVATION_NOT_CONFIGURED');
   const services=configuredServices(settings);
+  expect(services.ownerRequestLimiter).toBeDefined();
+  expect(configuredServices({ ...settings, GENERAL_STORAGE_MODE: 'NO', PILOT_MODE: 'YES' }).ownerRequestLimiter).toBeUndefined();
+  expect(configuredServices({ ...settings, GENERAL_STORAGE_MODE: 'yes', PILOT_MODE: 'YES' }).ownerRequestLimiter).toBeUndefined();
   await expect(services.auth.establish({issuer:'https://appleid.apple.com',subject:crypto.randomUUID(),
     refreshToken:randomToken()})).rejects.toMatchObject({code:'PRESERVATION_INTAKE_PAUSED'});
 });
