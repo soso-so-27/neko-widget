@@ -5716,6 +5716,39 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["window-support-unverified"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["window-support-active"].exists)
         attach(app, name: "window-support-unknown-is-not-purchase")
+        app.buttons["window-support-preview-scenarios"].tap()
+        app.buttons["window-support-preview-needsMembership"].tap()
+        let request = app.buttons["window-support-request"]
+        XCTAssertTrue(request.waitForExistence(timeout: 5))
+        request.tap()
+        let purchase = app.buttons["membership-offer-purchase"]
+        XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+        // Native swipe dismissal must refresh the parent just like Close.
+        app.navigationBars["ねこのまど"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        let refreshed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "自分の会員プランで再開"), object: request)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
+        XCTAssertFalse(purchase.exists)
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
+        request.tap()
+        XCTAssertTrue(purchase.waitForExistence(timeout: 5), "Dismissing must not manufacture membership")
+        app.buttons["membership-offer-close"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "自分の会員プランで再開"), object: request)], timeout: 5), .completed)
+        request.tap()
+        XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !purchase.isHittable { app.swipeUp() }
+        purchase.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@ AND enabled == true AND hittable == true",
+                                   "自分の会員プランで再開"), object: request)], timeout: 5), .completed)
+        XCTAssertFalse(app.staticTexts["window-support-pending"].exists)
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
+        request.tap()
+        XCTAssertTrue(app.staticTexts["window-support-pending"].waitForExistence(timeout: 5),
+                      "Joining only refreshes membership; support needs this separate request")
+        XCTAssertFalse(app.staticTexts["window-support-active"].exists)
         app.terminate()
     }
 
