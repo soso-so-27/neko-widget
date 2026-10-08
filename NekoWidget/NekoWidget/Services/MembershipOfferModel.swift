@@ -285,8 +285,10 @@ private final class MembershipStoreKitClient {
             case .verificationFailed, .failed: return .failed
             }
         } catch BillingClientError.billingAccountRecoveryRequired {
+            purchases.requirePurchaseVerification()
             return .waiting
         } catch {
+            purchases.requirePurchaseVerification()
             return .failed
         }
     }

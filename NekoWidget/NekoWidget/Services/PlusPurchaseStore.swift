@@ -328,6 +328,14 @@ final class PlusPurchaseStore: ObservableObject {
         hasStarted = false
     }
 
+    /// A failed explicit account preparation cannot retain an older scan's
+    /// permission to offer a new purchase. This never removes a current grant.
+    func requirePurchaseVerification() {
+        purchaseEligibilityGeneration &+= 1
+        canStartNewPurchase = false
+        if !entitlementState.grantsPlus { markServerConfirmationIndeterminate() }
+    }
+
     /// The live offer must obtain a stable independent BillingAccountID first.
     /// Internal previews never call this method; source-controlled gates stay off.
     func purchase(

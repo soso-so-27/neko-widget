@@ -319,6 +319,14 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         updates = section(self.store, "private func handleTransactionUpdate(", "private func reconcileCurrentEntitlements()")
         self.assertEqual(updates.count("canStartNewPurchase = false"), 2)
         self.assertEqual(updates.count("purchaseEligibilityGeneration &+= 1"), 2)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        live_purchase = section(model[model.index("private final class MembershipStoreKitClient"):],
+                                "func purchase() async", "func restore() async")
+        self.assertEqual(live_purchase.count("purchases.requirePurchaseVerification()"), 2)
+        invalidate = section(self.store, "func requirePurchaseVerification()", "func purchase(")
+        self.assertIn("purchaseEligibilityGeneration &+= 1", invalidate)
+        self.assertIn("canStartNewPurchase = false", invalidate)
+        self.assertIn("if !entitlementState.grantsPlus", invalidate)
 
     def test_shared_store_waits_for_initialization_and_reuses_inflight_scan(self) -> None:
         self.assertIn("if let startTask { await startTask.value; return }", self.store)
