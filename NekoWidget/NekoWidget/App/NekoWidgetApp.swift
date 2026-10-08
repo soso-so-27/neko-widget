@@ -122,7 +122,7 @@ struct NekoWidgetApp: App {
 private struct ProductionAppRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = AppViewModel()
-    @StateObject private var plusPurchases = PlusPurchaseStore()
+    @StateObject private var plusPurchases = PlusPurchaseStore.productionShared
     @State private var membershipNow = Date()
 
     var body: some View {

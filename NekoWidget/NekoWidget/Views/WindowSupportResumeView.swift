@@ -10,6 +10,7 @@ struct WindowSupportResumeView: View {
     @State private var approvalID: String?
     @State private var showsApproval = false
     @State private var showsMembership = false
+    @State private var membershipOfferResult: MembershipOfferActionResult?
     @State private var showsRestore = false
 
     init(windowName: String, model: WindowSupportResumeModel,
@@ -87,10 +88,22 @@ struct WindowSupportResumeView: View {
         .sheet(isPresented: $showsRestore, onDismiss: { Task { await model.refresh() } }) {
             if !model.isPreview { MembershipRestoreSheet() }
         }
-        .sheet(isPresented: $showsMembership) {
+        .sheet(isPresented: $showsMembership, onDismiss: {
+            let result = membershipOfferResult
+            membershipOfferResult = nil
+            Task {
+                if model.isPreview && result == .completed {
+                    await model.membershipOfferCompleted()
+                } else {
+                    // Every live dismissal only refreshes. Restarting a
+                    // window still requires its separate explicit action.
+                    await model.refresh()
+                }
+            }
+        }) {
             MembershipOfferSheet(model: model.isPreview ? .preview() : .live()) { result in
+                membershipOfferResult = result
                 showsMembership = false
-                if result == .completed { Task { await model.membershipOfferCompleted() } }
             }
         }
     }

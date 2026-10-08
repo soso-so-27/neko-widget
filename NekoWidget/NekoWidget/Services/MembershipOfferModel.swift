@@ -23,14 +23,29 @@ final class MembershipOfferModel: ObservableObject {
     @Published private(set) var isWorking = true
     @Published private(set) var message: String?
     @Published private(set) var isWaiting = false
+    @Published private(set) var isMember = false
+    @Published private(set) var verificationRequired = false
+    @Published private(set) var purchaseTitle: String?
+    private var purchases: PlusPurchaseStore?
+    private var observation: AnyCancellable?
+    private var expiryTask: Task<Void, Never>?
+    private var fixtureStatus: MembershipOfferFixtureStatus?
+    private var fixtureExpiresAt: Date?
+    private var fixtureAllowsPurchase = true
+
+    var canRefresh: Bool { !isWorking && !isMember && (verificationRequired || isWaiting) }
     let isPreview: Bool
     private var hasLoaded = false
     private let loadAction: () async -> MembershipOfferPresentation?
     private let purchaseAction: () async -> MembershipOfferActionResult
     private let restoreAction: () async -> MembershipOfferActionResult
 
-    var canPurchase: Bool { offer != nil && !isWorking && !isWaiting }
-    var canRestore: Bool { !isWorking }
+    var canPurchase: Bool {
+        offer != nil && !isWorking && !isWaiting && !isMember
+            && !verificationRequired && (purchases?.canStartNewPurchase ?? fixtureAllowsPurchase)
+            && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false)
+    }
+    var canRestore: Bool { !isWorking && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false) }
 
     private init(
         isPreview: Bool,
@@ -44,13 +59,16 @@ final class MembershipOfferModel: ObservableObject {
         restoreAction = restore
     }
 
+    deinit { expiryTask?.cancel() }
+
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true
         isWorking = true
         offer = await loadAction()
         isWorking = false
-        if offer == nil { message = "料金を確認できません。時間をおいて開き直してください。" }
+        updateMembershipState()
+        if offer == nil && !isMember { message = "料金を確認できません。時間をおいて開き直してください。" }
     }
 
     func purchase() async -> MembershipOfferActionResult {
@@ -58,7 +76,9 @@ final class MembershipOfferModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         let result = await purchaseAction()
+        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
         apply(result, restoring: false)
+        updateMembershipState()
         return result
     }
 
@@ -67,7 +87,9 @@ final class MembershipOfferModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         let result = await restoreAction()
+        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
         apply(result, restoring: true)
+        updateMembershipState()
         return result
     }
 
@@ -91,13 +113,97 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     static func live() -> MembershipOfferModel {
-        let client = MembershipStoreKitClient()
-        return MembershipOfferModel(
+        let store = PlusPurchaseStore.productionShared
+        let client = MembershipStoreKitClient(purchases: store)
+        let model = MembershipOfferModel(
             isPreview: false,
             load: { await client.load() },
             purchase: { await client.purchase() },
             restore: { await client.restore() }
         )
+        model.purchases = store
+        model.observation = store.objectWillChange.sink { [weak model] _ in
+            // @Published sends before its new value is installed.
+            Task { @MainActor in model?.updateMembershipState() }
+        }
+        model.updateMembershipState()
+        return model
+    }
+
+    func refresh() async {
+        guard canRefresh else { return }
+        isWorking = true
+        if let purchases {
+            await purchases.refreshAfterForegroundEntry()
+        } else if let fixtureStatus {
+            switch fixtureStatus {
+            case .unknown, .authorityPending: self.fixtureStatus = .active
+            case .expired: self.fixtureStatus = .fresh
+            case .fresh, .active, .applePending: break
+            }
+        }
+        updateMembershipState()
+        isWorking = false
+    }
+
+    private func updateMembershipState() {
+        expiryTask?.cancel()
+        if let purchases {
+            isMember = purchases.entitlementState.grantsPlus
+            isWaiting = purchases.pendingProductID != nil || purchases.awaitingServerConfirmation
+            verificationRequired = !isMember && !isWaiting && !purchases.canStartNewPurchase
+            if isMember, let expiry = purchases.entitlementState.lastServerConfirmed?.expirationDate {
+                expiryTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
+                    catch { return }
+                    guard !Task.isCancelled else { return }
+                    self?.updateMembershipState()
+                }
+            }
+        } else if let fixtureStatus {
+            if fixtureStatus == .active, let fixtureExpiresAt {
+                if fixtureExpiresAt <= .now {
+                    self.fixtureStatus = .expired
+                    updateMembershipState()
+                    return
+                }
+                expiryTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(max(0, fixtureExpiresAt.timeIntervalSinceNow))) }
+                    catch { return }
+                    guard !Task.isCancelled else { return }
+                    self?.updateMembershipState()
+                }
+            }
+            isMember = fixtureStatus == .active
+            isWaiting = fixtureStatus == .applePending || fixtureStatus == .authorityPending
+            verificationRequired = fixtureStatus == .unknown || fixtureStatus == .expired
+            fixtureAllowsPurchase = fixtureStatus == .fresh
+        } else { return }
+        if isMember {
+            purchaseTitle = "加入中です"
+            message = nil
+        } else if isWaiting {
+            purchaseTitle = "購入の確認待ちです"
+            message = purchases?.pendingProductID != nil || fixtureStatus == .applePending
+                ? "Appleの購入確認を待っています。追加の申し込みはしないでください。"
+                : "購入の確認を待っています。追加の申し込みはせず、会員情報を再確認してください。"
+        } else if verificationRequired {
+            purchaseTitle = "会員情報の確認が必要です"
+            message = "会員情報を確認できません。追加の申し込みはせず、会員情報を再確認してください。"
+        } else {
+            purchaseTitle = nil
+            message = nil
+        }
+    }
+
+    static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
+        let model = preview()
+        model.fixtureStatus = state
+        if state == .active, let expiresAfter {
+            model.fixtureExpiresAt = .now.addingTimeInterval(expiresAfter)
+        }
+        model.updateMembershipState()
+        return model
     }
 
     /// The preview has no StoreKit/session/Keychain dependency. Its results
@@ -123,10 +229,16 @@ final class MembershipOfferModel: ObservableObject {
     }
 }
 
+enum MembershipOfferFixtureStatus: String {
+    case fresh, active, applePending, authorityPending, unknown, expired
+}
+
 @MainActor
 private final class MembershipStoreKitClient {
     private let configuration = PlusPurchaseConfiguration.current
-    private let purchases = PlusPurchaseStore()
+    private let purchases: PlusPurchaseStore
+
+    init(purchases: PlusPurchaseStore) { self.purchases = purchases }
     private let session = PlusBillingSession.configured(purchaseConfiguration: .current)
 
     func load() async -> MembershipOfferPresentation? {
@@ -157,7 +269,12 @@ private final class MembershipStoreKitClient {
 
     func purchase() async -> MembershipOfferActionResult {
         guard configuration.isConfigured, let session else { return .unavailable }
+        // Re-evaluate eligibility immediately before the explicit purchase;
+        // an old offer must not turn a later unknown state into a new purchase.
+        await purchases.refreshAfterForegroundEntry()
         if purchases.entitlementState.grantsPlus { return .completed }
+        guard purchases.canStartNewPurchase, purchases.pendingProductID == nil,
+              !purchases.awaitingServerConfirmation else { return .unavailable }
         do {
             let account = try await session.prepareAccountForExplicitPurchase()
             switch await purchases.purchase(.monthly, billingAccountID: account) {
@@ -168,8 +285,10 @@ private final class MembershipStoreKitClient {
             case .verificationFailed, .failed: return .failed
             }
         } catch BillingClientError.billingAccountRecoveryRequired {
+            purchases.requirePurchaseVerification()
             return .waiting
         } catch {
+            purchases.requirePurchaseVerification()
             return .failed
         }
     }
@@ -226,19 +345,22 @@ struct MembershipOfferSheet: View {
                 photo: photo, offer: model.offer, isWorking: model.isWorking,
                 canPurchase: model.canPurchase, canRestore: model.canRestore,
                 message: model.message,
+                isMember: model.isMember, purchaseTitle: model.purchaseTitle,
+                canRefresh: model.canRefresh,
+                onRefresh: { Task { await model.refresh() } },
                 onPurchase: {
                     Task {
                         let result = await model.purchase()
-                        if result == .completed || result == .cancelled { onFinish(result) }
+                        if model.isPreview && (result == .completed || result == .cancelled) { onFinish(result) }
                     }
                 },
                 onRestore: {
                     Task {
                         let result = await model.restore()
-                        if result == .completed { onFinish(result) }
+                        if model.isPreview && result == .completed { onFinish(result) }
                     }
                 },
-                onClose: { onFinish(.cancelled) }
+                onClose: { onFinish(model.isMember ? .completed : .cancelled) }
             )
         }
         .interactiveDismissDisabled(model.isWorking)
@@ -263,6 +385,8 @@ struct MembershipOfferPreviewView: View {
     @State private var showsOffer = false
     @State private var resultText: String?
     var purchaseResult: MembershipOfferActionResult = .completed
+    var membershipState: MembershipOfferFixtureStatus?
+    var expiresAfter: TimeInterval?
 
     var body: some View {
         List {
@@ -279,7 +403,8 @@ struct MembershipOfferPreviewView: View {
         }
         .navigationTitle("会員案内の確認")
         .sheet(isPresented: $showsOffer) {
-            MembershipOfferSheet(model: .preview(purchaseResult: purchaseResult)) { result in
+            MembershipOfferSheet(model: membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
+                                 ?? .preview(purchaseResult: purchaseResult)) { result in
                 showsOffer = false
                 resultText = result == .completed
                     ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
@@ -461,7 +586,8 @@ struct MembershipOfferFixture: View {
             if CommandLine.arguments.contains("--billing-owner-enrollment-fixture") {
                 BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
             } else {
-                MembershipOfferPreviewView(purchaseResult: result)
+                MembershipOfferPreviewView(purchaseResult: result, membershipState: membershipState,
+                                           expiresAfter: CommandLine.arguments.contains("--membership-state-expiring") ? 2 : nil)
                 .safeAreaInset(edge: .bottom) {
                     Text(configurationPasses ? "構成確認OK" : "構成確認失敗")
                         .font(.caption)
@@ -475,6 +601,18 @@ struct MembershipOfferFixture: View {
         if CommandLine.arguments.contains("--membership-purchase-waiting") { return .waiting }
         if CommandLine.arguments.contains("--membership-purchase-cancelled") { return .cancelled }
         return .completed
+    }
+
+    private var membershipState: MembershipOfferFixtureStatus? {
+        let arguments = CommandLine.arguments
+        if arguments.contains("--membership-state-expiring") { return .active }
+        if arguments.contains("--membership-state-active") { return .active }
+        if arguments.contains("--membership-state-unknown") { return .unknown }
+        if arguments.contains("--membership-state-expired") { return .expired }
+        if arguments.contains("--membership-state-apple-pending") { return .applePending }
+        if arguments.contains("--membership-state-authority-pending") { return .authorityPending }
+        if arguments.contains("--membership-state-fresh") { return .fresh }
+        return nil
     }
 }
 #endif

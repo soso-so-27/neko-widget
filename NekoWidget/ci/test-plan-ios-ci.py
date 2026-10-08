@@ -111,6 +111,112 @@ class ImmediateBillingAuthorityScopeTests(unittest.TestCase):
             self.assertEqual(self.select(changes | changed, companions=bindings), scope.FULL_SCOPE)
 
 
+class MembershipStateScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def candidate(self):
+        products = {path: ("c" * 40, "d" * 40) for path in scope.MEMBERSHIP_STATE_PATHS}
+        pairs = {path: ("before " + path, "after " + path) for path in scope.MEMBERSHIP_STATE_COMPANIONS}
+        selector = "NekoWidget/ci/plan-ios-ci.py"
+        empty = "MEMBERSHIP_STATE_COMPANION_DIGESTS = {}\n"
+        pairs[selector] = (pairs[selector][0], empty + "# reviewed selector\n")
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in pairs.items()}
+        literal = "MEMBERSHIP_STATE_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        pairs[selector] = (pairs[selector][0], pairs[selector][1].replace(empty, literal))
+        rows = {path: f":100644 100644 {before} {after} M" for path, (before, after) in products.items()}
+        rows.update({path: f":100644 100644 {'e' * 40} {'f' * 40} M" for path in pairs})
+        source = "final class SoloMemoriesUITests: XCTestCase {\n" + "".join(
+            "    func " + test.rsplit("/", 1)[-1] + "() {}\n" for test in scope.MEMBERSHIP_STATE_TESTS[:4])
+        source += "}\nfinal class MomentDeliveryComposerUITests: XCTestCase {\n    func "
+        source += scope.MEMBERSHIP_STATE_TESTS[-1].rsplit("/", 1)[-1] + "() {}\n}\n"
+        return products, pairs, bindings, rows, source
+
+    def verify(self, rows, *, paths=None, mutated=None, extra="", source=None, workflow=None, runtime=False):
+        products, pairs, bindings, _, valid_source = self.candidate()
+        def git(*args):
+            if args[0] == "diff":
+                return "".join(header + "\0" + path + "\0" for path, header in rows.items()) + extra
+            if args[0] == "show":
+                ref, path = args[1].split(":", 1)
+                if path == scope.MEMORY_TEST_PATH:
+                    return valid_source if source is None else source
+                return pairs[path][int(ref == self.head)] + ("# altered" if path == mutated else "")
+            if args[0] == "rev-parse":
+                return workflow or planner.MEMBERSHIP_STATE_WORKFLOW_BLOB
+            if args[0] == "merge-base":
+                return self.base
+            raise AssertionError(args)
+        candidate_paths = list(rows) if paths is None else paths
+        with patch.object(planner, "git", side_effect=git), \
+                patch.object(planner, "comparison_base", return_value=self.base), \
+                patch.object(planner, "MEMBERSHIP_STATE_BLOBS", products), \
+                patch.object(planner, "MEMBERSHIP_STATE_COMPANION_DIGESTS", bindings):
+            if runtime:
+                return planner.runtime_scope(candidate_paths, {}, {"GITHUB_SHA": self.head})
+            return planner.membership_state_only(candidate_paths, self.base, self.head)
+
+    def test_complete_products_and_self_bound_controls_select_only_this_scope(self):
+        products, pairs, _, rows, _ = self.candidate()
+        self.assertTrue(self.verify(rows))
+        self.assertTrue(self.verify({path: rows[path] for path in products}))
+        self.assertEqual(self.verify(rows, runtime=True), scope.REVIEWED_MEMBERSHIP_STATE_SCOPE)
+        self.assertEqual(self.verify({path: rows[path] for path in products}, runtime=True), scope.REVIEWED_MEMBERSHIP_STATE_SCOPE)
+        self.assertFalse(planner.membership_state_only([], self.base, self.head))
+        # Before final product hash review, real pending values cannot select.
+        if any("pending-review" in pair for pair in scope.MEMBERSHIP_STATE_BLOBS.values()):
+            self.assertFalse(planner.membership_state_only(list(rows), self.base, self.head))
+
+    def test_partial_mutated_mode_unknown_or_workflow_changes_fail_closed(self):
+        products, pairs, _, rows, _ = self.candidate()
+        for path in rows:
+            with self.subTest(missing=path):
+                missing = {key: value for key, value in rows.items() if key != path}
+                self.assertFalse(self.verify(missing))
+                self.assertEqual(self.verify(missing, runtime=True), scope.FULL_SCOPE)
+            for mode in ("100755", "120000", "160000", "000000"):
+                changed = dict(rows); changed[path] = changed[path].replace("100644", mode)
+                self.assertFalse(self.verify(changed), (path, mode))
+            for status in ("A", "D", "T", "R100", "C100"):
+                changed = dict(rows); changed[path] = changed[path][:-1] + status
+                self.assertFalse(self.verify(changed), (path, status))
+        for path, pair in products.items():
+            for blob in pair:
+                changed = dict(rows); changed[path] = changed[path].replace(blob, "1" * 40)
+                self.assertFalse(self.verify(changed), (path, blob))
+                self.assertEqual(self.verify(changed, runtime=True), scope.FULL_SCOPE)
+        for path in pairs:
+            self.assertFalse(self.verify(rows, mutated=path), path)
+            self.assertEqual(self.verify(rows, mutated=path, runtime=True), scope.FULL_SCOPE)
+        for path in ("NekoWidget/Shared/MembershipAccessPolicy.swift", "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", scope.CI_WORKFLOW,
+                     "NekoWidget/ci/preflight-ci.py", "NekoWidget/NekoWidget/Services/NewStore.swift"):
+            changed = rows | {path: f":100644 100644 {'c' * 40} {'d' * 40} M"}
+            self.assertFalse(self.verify(changed), path)
+            self.assertEqual(self.verify(changed, runtime=True), scope.FULL_SCOPE)
+        self.assertFalse(self.verify(rows, workflow="1" * 40))
+        self.assertEqual(self.verify(rows, workflow="1" * 40, runtime=True), scope.FULL_SCOPE)
+        first = next(iter(rows))
+        self.assertFalse(self.verify(rows, paths=list(rows) + [first]))
+        self.assertFalse(self.verify(rows, extra=rows[first] + "\0" + first + "\0"))
+        handoff = rows | {"handoffs/membership-state.md": f":000000 100644 {'0' * 40} {'d' * 40} A"}
+        self.assertTrue(self.verify(handoff))
+        handoff["handoffs/membership-state.md"] = handoff["handoffs/membership-state.md"].replace("100644", "120000")
+        self.assertFalse(self.verify(handoff))
+
+    def test_all_five_methods_and_available_git_evidence_are_required(self):
+        _, _, _, rows, source = self.candidate()
+        for test in scope.MEMBERSHIP_STATE_TESTS:
+            method = test.rsplit("/", 1)[-1]
+            self.assertFalse(self.verify(rows, source=source.replace("func " + method, "func missing")), test)
+            self.assertEqual(self.verify(rows, source=source.replace("func " + method, "func missing"), runtime=True), scope.FULL_SCOPE)
+        self.assertFalse(self.verify(rows, source=source.replace("MomentDeliveryComposerUITests", "OtherUITests")))
+        self.assertFalse(self.verify(rows, source=source.replace("func testMembershipOfferPreviewReturnsToPurpose() {}",
+            "/* func testMembershipOfferPreviewReturnsToPurpose() {} */")))
+        with patch.object(planner, "comparison_base", return_value=self.base), \
+                patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            self.assertEqual(planner.runtime_scope(sorted(scope.MEMBERSHIP_STATE_PATHS), {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
+
+
 class PlanTests(unittest.TestCase):
     def test_billing_operator_scope_is_closed_and_requires_owning_tests(self):
         paths = sorted(planner.BILLING_OPERATOR_PATHS) + ["handoffs/operator.md"]

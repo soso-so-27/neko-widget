@@ -10,6 +10,10 @@ struct MembershipOfferView: View {
     let canPurchase: Bool
     let canRestore: Bool
     let message: String?
+    let isMember: Bool
+    let purchaseTitle: String?
+    let canRefresh: Bool
+    let onRefresh: (() -> Void)?
     let onPurchase: () -> Void
     let onRestore: () -> Void
     let onClose: () -> Void
@@ -21,6 +25,10 @@ struct MembershipOfferView: View {
         canPurchase: Bool,
         canRestore: Bool,
         message: String?,
+        isMember: Bool = false,
+        purchaseTitle: String? = nil,
+        canRefresh: Bool = false,
+        onRefresh: (() -> Void)? = nil,
         onPurchase: @escaping () -> Void,
         onRestore: @escaping () -> Void,
         onClose: @escaping () -> Void
@@ -31,6 +39,10 @@ struct MembershipOfferView: View {
         self.canPurchase = canPurchase
         self.canRestore = canRestore
         self.message = message
+        self.isMember = isMember
+        self.purchaseTitle = purchaseTitle
+        self.canRefresh = canRefresh
+        self.onRefresh = onRefresh
         self.onPurchase = onPurchase
         self.onRestore = onRestore
         self.onClose = onClose
@@ -131,7 +143,15 @@ struct MembershipOfferView: View {
 
     private var offerDetails: some View {
         VStack(spacing: 7) {
-            if let offer {
+            if isMember {
+                Label("会員プランに加入中です", systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.tint)
+                    .accessibilityIdentifier("membership-offer-active")
+                Text("会員機能を利用できます。新しく申し込む必要はありません。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if let offer {
                 if offer.isPreview {
                     Text("操作の確認用です。請求されません")
                         .font(.footnote.weight(.semibold))
@@ -164,7 +184,7 @@ struct MembershipOfferView: View {
             Button(action: onPurchase) {
                 HStack(spacing: 8) {
                     if isWorking { ProgressView().tint(.white) }
-                    Text(offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
+                    Text(purchaseTitle ?? offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -181,6 +201,13 @@ struct MembershipOfferView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("membership-offer-message")
+            }
+
+            if let onRefresh {
+                Button("会員情報を再確認", action: onRefresh)
+                    .frame(minHeight: 44)
+                    .disabled(isWorking || !canRefresh)
+                    .accessibilityIdentifier("membership-offer-refresh")
             }
 
             Button("購入を復元", action: onRestore)
