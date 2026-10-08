@@ -10,7 +10,8 @@ async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 4
   callerSecret?: string) {
   const response = await binding.fetch(`https://preservation-internal${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json',
-      ...(callerSecret ? { 'x-neko-preservation-key-token': callerSecret } : {}) }, body: JSON.stringify(body),
+      ...(callerSecret ? { 'x-neko-preservation-key-token': callerSecret } : {}) },
+    body: body instanceof ReadableStream ? body : JSON.stringify(body),
     // Workers supports manual/follow, not Request's browser-only error mode.
     // Never follow a provider redirect (response.ok below rejects every 3xx).
     redirect: 'manual', signal: AbortSignal.timeout(10_000),
@@ -86,7 +87,35 @@ export function boundBillingAuthority(binding: Fetcher): BillingLinkAuthority {
 }
 export function boundPhotoValidator(binding: Fetcher): PhotoValidator {
   return { async validateJPEG(bytes) {
-    const value = await invoke(binding, '/images/validate-jpeg', { photoBase64: encodePhoto(bytes) }, 4096);
-    return value.valid === true && value.mediaType === 'image/jpeg' && value.frames === 1;
+    // Keep the provider's JSON contract without two full-photo strings (base64
+    // and JSON.stringify). Pull only one 64 KiB encoded block at a time.
+    let photo: Uint8Array | null = bytes;
+    let at = -1;
+    const utf8 = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (photo === null) { controller.close(); return; }
+        if (at < 0) { at = 0; controller.enqueue(utf8.encode('{"photoBase64":"')); return; }
+        if (at < photo.length) {
+          const end = Math.min(photo.length, at + 3 * 16 * 1024);
+          controller.enqueue(utf8.encode(encodePhoto(photo.subarray(at, end))!));
+          at = end;
+          return;
+        }
+        photo = null;
+        controller.enqueue(utf8.encode('"}'));
+        controller.close();
+      },
+      cancel() { photo = null; },
+    }, { highWaterMark: 0 });
+    try {
+      const value = await invoke(binding, '/images/validate-jpeg', body, 4096);
+      return value.valid === true && value.mediaType === 'image/jpeg' && value.frames === 1;
+    } finally {
+      // A provider may reject before reading. Release only our reference; the
+      // caller still needs the original bytes for hashing/encryption/retry.
+      photo = null;
+      if (!body.locked) void body.cancel().catch(() => {});
+    }
   } };
 }
