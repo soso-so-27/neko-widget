@@ -857,6 +857,34 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(preflight.apply_task_gate(dict(plan), [blocked], now, measure_baseline=True)["ready"])
         self.assertFalse(preflight.apply_task_gate(dict(plan), [diagnostic, run], now, measure_baseline=True)["ready"])
 
+    def test_successful_backend_on_diagnostic_ref_is_not_a_native_baseline(self):
+        plan = {"ready": False, "head": "a" * 40, "target_minutes": 30,
+                "required_jobs": [planner.BUILD], "cost": {"status": "unmeasured"}}
+        run = {"id": 9, "created_at": "2026-09-20T11:00:00Z", "status": "completed",
+               "conclusion": "success", "path": planner.BILLING_WORKFLOW,
+               "event": "push", "head_branch": "diagnostic/task"}
+        now = dt.datetime(2026, 9, 20, 11, 15, tzinfo=dt.timezone.utc)
+        result = preflight.apply_task_gate(dict(plan), [run], now, measure_baseline=True)
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["task"]["first_baseline_measurement"])
+        self.assertEqual(result["task"]["runs"], 1)
+        self.assertEqual(result["task"]["minutes_since_first_ci"], 15)
+        self.assertIsNone(result["task"]["projected_total_minutes"])
+        for changes in ({"status": "in_progress", "conclusion": None},
+                        {"conclusion": "failure"}, {"conclusion": "skipped"},
+                        {"head_branch": "codex/task"}, {"head_branch": ""},
+                        {"event": "workflow_dispatch"}, {"event": "pull_request"},
+                        {"path": preflight.IOS_WORKFLOW}, {"path": "unknown.yml"}):
+            with self.subTest(changes=changes):
+                blocked = preflight.apply_task_gate(dict(plan), [{**run, **changes}], now, measure_baseline=True)
+                self.assertFalse(blocked["ready"])
+        native = {**run, "id": 10, "path": preflight.IOS_WORKFLOW, "head_branch": "codex/task"}
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [run, native], now, measure_baseline=True)["ready"])
+        self.assertFalse(preflight.apply_task_gate({**plan, "required_jobs": []}, [run], now, measure_baseline=True)["ready"])
+        self.assertFalse(preflight.apply_task_gate(dict(plan), [run], now)["ready"])
+        observed = {**plan, "cost": {"status": "observed", "with_upload_minutes": [20, 20]}}
+        self.assertFalse(preflight.apply_task_gate(observed, [run], now, measure_baseline=True)["ready"])
+
     def test_skipped_same_repo_pr_does_not_consume_first_baseline_attempt(self):
         plan = {"ready": False, "head": "a" * 40, "target_minutes": 30,
                 "cost": {"status": "unmeasured"}}

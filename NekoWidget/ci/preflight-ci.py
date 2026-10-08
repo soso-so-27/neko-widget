@@ -529,7 +529,20 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     # the one first-measurement attempt.
     # Same-repository PR checks deliberately skip their jobs because push CI
     # owns the candidate. A skipped PR is not a baseline measurement attempt.
+    # Sharing can automatically run on a diagnostic ref alongside a focused
+    # native diagnostic. Its completed success is not a measurement of a native
+    # candidate graph. Keep it in elapsed/history above; incomplete, failed,
+    # skipped, non-push and actual candidate-branch runs still consume the gate.
+    diagnostic_backend_successes = {
+        run["id"] for run in runs
+        if planner.BUILD in result.get("required_jobs", ())
+        and run["path"] == planner.BILLING_WORKFLOW
+        and run.get("head_branch", "").startswith("diagnostic/")
+        and run.get("event") == "push"
+        and run["status"] == "completed" and run.get("conclusion") == "success"
+    }
     candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW
+                      and run["id"] not in diagnostic_backend_successes
                       and not (run.get("event") == "pull_request" and run.get("conclusion") == "skipped")]
     first_measurement = measure_baseline and not candidate_runs and cost["status"] == "unmeasured"
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
