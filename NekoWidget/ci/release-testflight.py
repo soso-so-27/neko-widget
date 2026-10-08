@@ -194,6 +194,26 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
+    if correction is not None and plan.get("scope") == planner.PRESERVATION_EXPORT_SCOPE:
+        def export_api(path: str):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected preservation correction API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Preservation correction job identity unavailable.")
+                return gh.log(job["run_id"], job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            valid = planner.covers_preservation_export_correction(
+                current, sha, required, export_api, now, executed_jobs_for(gh, current))
+        except (OSError, AttributeError, KeyError, TypeError, ValueError):
+            raise Blocked("Fixed preservation correction evidence is unavailable or invalid.") from None
+        require(valid, "The fixed source graph and all four corrected UI operations must pass verification.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "reused_run": correction["run_id"], "reused_sha": correction["sha"],
+                "backend_evidence": correction["backend_evidence"]}
     if correction is not None:
         require(plan.get("scope") in (planner.LOST_CAT_UX_SCOPE, planner.REVIEWED_MANAGED_PRESERVATION_SCOPE, planner.VET_SAVED_CAT_SCOPE, planner.FULL_SCOPE)
                 and plan.get("evidence_run_id") is None and plan.get("evidence_sha") is None
@@ -250,6 +270,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 "Candidate CI evidence is stale or does not match the main commit/workflow.")
         jobs = executed_jobs_for(gh, source)
     covered = planner.covers_jobs(jobs, required, source_sha, now=now)
+    corrected = False
     if not covered and source_id != run_id:
         def candidate_api(path: str):
             prefix = f"/repos/{REPOSITORY}/"
@@ -262,6 +283,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             return gh.get(path[len(prefix):])
         try:
             covered = planner.covers_corrected_full_graph(source, sha, required, candidate_api, now, jobs)
+            corrected = covered
         except planner.CorrectionEvidenceUnavailable:
             raise Blocked("Corrected candidate evidence is unavailable or invalid.") from None
     require(covered,
@@ -274,7 +296,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             require(path.startswith(prefix + "actions/"), "Unexpected backend evidence API path.")
             return gh.get(path[len(prefix):])
         try:
-            result["backend_evidence"] = planner.preservation_export_backend_evidence(source_sha, REPOSITORY, backend_api, now)
+            backend_sha = planner.PRESERVATION_EXPORT_CORRECTION_SOURCE if corrected else source_sha
+            result["backend_evidence"] = planner.preservation_export_backend_evidence(backend_sha, REPOSITORY, backend_api, now)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
     return result

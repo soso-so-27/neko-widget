@@ -52,6 +52,7 @@ SMOKE = "Launch app and scan fixtures in Simulator"
 BOOTSTRAP_SMOKE = SMOKE + " [photo-bootstrap-v1]"
 SHARING = sharing_job(FULL_SCOPE)
 FULL = (BUILD, SMOKE) + sharing_jobs(FULL_SCOPE)
+PLAN_JOB = "Select iOS checks and verify reusable evidence"
 MOVIE_VIEW = "NekoWidget/NekoWidget/Views/SeasonalMovieView.swift"
 MOVIE_ADR = "NekoWidget/docs/ADR-023-季節の小さな映画.md"
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -63,6 +64,28 @@ TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
     "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
 ))
+# One test-only correction: the family fixture must cancel its real share sheet
+# before terminating the app. Every other native/backend input stays identical.
+PRESERVATION_EXPORT_CORRECTION_SOURCE = "feb9c7565122406b4bf1beeba98fe8fbc0afbc07"
+PRESERVATION_EXPORT_CORRECTION_RUN = 37765380586
+PRESERVATION_EXPORT_CORRECTION_BRANCH = "codex/launch-readiness-20261008"
+PRESERVATION_EXPORT_CORRECTION_BLOBS = (
+    "2da33158b4277cb282e103042dc64b60da4b1ace",
+    "3d38e13e9f938d3f21a86d27b22ed672738e0c72",
+)
+PRESERVATION_EXPORT_CORRECTION_CASES = frozenset({
+    "SoloMemoriesUITests/testMemoryNoteExportCancellationKeepsText",
+    "SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
+})
+PRESERVATION_EXPORT_SOURCE_JOB_IDS = {
+    PLAN_JOB: 113271637632,
+    BUILD: 113271805592,
+    BOOTSTRAP_SMOKE: 113271805575,
+    lane_job(PRESERVATION_EXPORT_SCOPE, "runtime"): 113271805588,
+    lane_job(PRESERVATION_EXPORT_SCOPE, "app-ui"): 113271805438,
+}
+PRESERVATION_EXPORT_SKIPPED_JOB_IDS = frozenset({113279965711, 113279965837})
+UNEXPANDED_SHARING_JOB = "Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]"
 PHOTO_SMOKE_CORRECTION_CONTROL_PATHS = TEST_CORRECTION_CONTROL_PATHS | frozenset({
     "NekoWidget/ci/test-ci-lanes.py", "NekoWidget/ci/test-release-flow.py",
 })
@@ -106,7 +129,6 @@ PHOTO_SMOKE_CORRECTION_NEW_BUDGET = (
 # existing orchestration tests always run in the plan job before selection.
 DEVELOPMENT_SCOPE = "development-tools-v1"
 ORCHESTRATION_SCOPE = "ci-orchestration-v1"
-PLAN_JOB = "Select iOS checks and verify reusable evidence"
 # Published static HTML is not compiled into the app or Widget. Keep this
 # closed to existing policy pages; scripts, workflows and mixed products do
 # not inherit the exception. Its success is never native release evidence.
@@ -1009,13 +1031,17 @@ PRESERVATION_EXPORT_WORKFLOWS = {
 
 
 def preservation_export_only(paths: list[str], base: str, head: str) -> bool:
-    all_blobs = PRESERVATION_EXPORT_BLOBS | PRESERVATION_EXPORT_DOC_BLOBS
+    products = PRESERVATION_EXPORT_BLOBS
+    if preservation_export_correction_inputs(PRESERVATION_EXPORT_CORRECTION_SOURCE, head):
+        products = dict(products)
+        products[MEMORY_TEST_PATH] = (products[MEMORY_TEST_PATH][0], PRESERVATION_EXPORT_CORRECTION_BLOBS[1])
+    all_blobs = products | PRESERVATION_EXPORT_DOC_BLOBS
     if (not paths or set(PRESERVATION_EXPORT_BLOBS) != PRESERVATION_EXPORT_PATHS
             or set(paths) not in (set(all_blobs), set(all_blobs) | PRESERVATION_EXPORT_COMPANIONS)
             or not all(len(pair) == 2 and all(SHA.fullmatch(value) for value in pair)
                        and pair[1] != "0" * 40 and pair[0] != pair[1] for pair in all_blobs.values())):
         return False
-    if not reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_EXPORT_BLOBS,
+    if not reviewed_hub_only(paths, base, head, product_blobs=products,
                              companion_paths=PRESERVATION_EXPORT_COMPANIONS,
                              companion_digests=PRESERVATION_EXPORT_COMPANION_DIGESTS,
                              companion_name="PRESERVATION_EXPORT_COMPANION_DIGESTS"):
@@ -1395,7 +1421,7 @@ def test_correction_scope(required: tuple[str, ...]) -> str | None:
     if required == required_jobs_from_scope(FULL_SCOPE) and required != ALBUM_CORRECTION_REQUIRED:
         return None
     if required == ALBUM_CORRECTION_REQUIRED: return FULL_SCOPE
-    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
+    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE, PRESERVATION_EXPORT_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
 
 
@@ -1537,7 +1563,134 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
         return False
 
 
+def preservation_export_correction_inputs(source: str, head: str) -> bool:
+    """One frozen XCTest blob plus complete, already-main control companions."""
+    if (source != PRESERVATION_EXPORT_CORRECTION_SOURCE or source == head
+            or not isinstance(head, str) or not SHA.fullmatch(head)):
+        return False
+    try:
+        git("merge-base", "--is-ancestor", source, head)
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]:
+            raw.pop()
+        if not raw or len(raw) % 2:
+            return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or path in seen or path not in TEST_CORRECTION_CONTROL_PATHS | {MEMORY_TEST_PATH}
+                    or not all(SHA.fullmatch(value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            if path == MEMORY_TEST_PATH and tuple(fields[2:4]) != PRESERVATION_EXPORT_CORRECTION_BLOBS:
+                return False
+            seen.add(path)
+        if MEMORY_TEST_PATH not in seen:
+            return False
+        approval = git("merge-base", head, "origin/main")
+        approved_plan = git("show", f"{approval}:NekoWidget/ci/plan-ios-ci.py")
+        registration = f'PRESERVATION_EXPORT_CORRECTION_SOURCE = "{source}"'
+        if approved_plan.splitlines().count(registration) != 1:
+            return False
+        return all(git("rev-parse", f"{head}:{path}") == git("rev-parse", f"{approval}:{path}")
+                   for path in TEST_CORRECTION_CONTROL_PATHS)
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def preservation_export_plan(log: str, sha: str, required: tuple[str, ...]) -> dict | None:
+    if not isinstance(log, str):
+        return None
+    try:
+        records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines()
+                   if "IOS_CI_PLAN_JSON=" in line]
+        records = [record for record in records if isinstance(record, dict)
+                   and record.get("repository") == "soso-so-27/neko-widget" and record.get("head_sha") == sha]
+        if len(records) != 1:
+            return None
+        record = records[0]
+        return record if (type(record.get("schema_version")) is int and record["schema_version"] == 1
+            and record.get("scope") == PRESERVATION_EXPORT_SCOPE and record.get("required_jobs") == list(required)
+            and record.get("evidence_run_id") is None and record.get("evidence_sha") is None) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def preservation_export_ui_results(log: str, failed=frozenset()) -> bool:
+    """Every owning operation must execute once; unknown/skip/duplicate is not proof."""
+    if not isinstance(log, str):
+        return False
+    expected = {test.removeprefix("NekoWidgetUITests/") for test in PRESERVATION_EXPORT_TESTS}
+    events = [(owner.removeprefix("NekoWidgetUITests.") + "/" + method, status)
+              for owner, method, status in re.findall(
+                  r"Test Case '-\[([\w.]+) (test\w+)\]' (started|passed|failed|skipped)", log)]
+    return (len(events) == 2 * len(expected) and {case for case, _ in events} == expected
+            and all([status for case, status in events if case == test]
+                    == ["started", "failed" if test in failed else "passed"] for test in expected))
+
+
+def preservation_export_correction_source(run: dict, head: str, branch: str, repository: str,
+                                         workflow_id: int, required: tuple[str, ...], api,
+                                         now: dt.datetime) -> dict | None:
+    try:
+        source = PRESERVATION_EXPORT_CORRECTION_SOURCE
+        if (repository != "soso-so-27/neko-widget" or branch != PRESERVATION_EXPORT_CORRECTION_BRANCH
+                or run.get("id") != PRESERVATION_EXPORT_CORRECTION_RUN or run.get("head_sha") != source
+                or run.get("head_branch") != branch or run.get("path") != ".github/workflows/ios-build.yml"
+                or run.get("workflow_id") != workflow_id or run.get("event") != "push"
+                or run.get("run_attempt") != 1
+                or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+                or run.get("repository", {}).get("full_name") != repository
+                or run.get("head_repository", {}).get("full_name") != repository
+                or required != required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE)
+                or not preservation_export_correction_inputs(source, head)):
+            return None
+        finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+        if not dt.timedelta(0) <= now - finished <= dt.timedelta(hours=24):
+            return None
+        jobs = executed_jobs(run, repository, api)
+        expected_ids = set(PRESERVATION_EXPORT_SOURCE_JOB_IDS.values()) | PRESERVATION_EXPORT_SKIPPED_JOB_IDS
+        if len(jobs) != len(expected_ids) or {job.get("id") for job in jobs} != expected_ids:
+            return None
+        for job in jobs:
+            if (job.get("head_sha") != source or job.get("run_id") != run["id"]
+                    or job.get("run_attempt") != 1 or job.get("status") != "completed"):
+                return None
+            if job["id"] in PRESERVATION_EXPORT_SKIPPED_JOB_IDS:
+                if (job.get("name") != UNEXPANDED_SHARING_JOB or job.get("conclusion") != "skipped"
+                        or job.get("steps") != []):
+                    return None
+            elif PRESERVATION_EXPORT_SOURCE_JOB_IDS.get(job.get("name")) != job["id"]:
+                return None
+        plan = next(job for job in jobs if job["id"] == PRESERVATION_EXPORT_SOURCE_JOB_IDS[PLAN_JOB])
+        if not covers_jobs([plan], (PLAN_JOB,), source, now):
+            return None
+        record = preservation_export_plan(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), source, required)
+        if record is None or record.get("test_correction_evidence") is not None:
+            return None
+        ui_name = lane_job(PRESERVATION_EXPORT_SCOPE, "app-ui")
+        ui = next(job for job in jobs if job["id"] == PRESERVATION_EXPORT_SOURCE_JOB_IDS[ui_name])
+        steps = ui.get("steps")
+        if (ui.get("conclusion") != "failure" or not isinstance(steps, list)
+                or [step.get("name") for step in steps if step.get("conclusion") == "failure"] != ["Run sharing runtime matrix"]
+                or any(step.get("status") != "completed" or step.get("conclusion") not in {"success", "failure"} for step in steps)
+                or not preservation_export_ui_results(api(f"/repos/{repository}/actions/jobs/{ui['id']}/logs"),
+                                                      PRESERVATION_EXPORT_CORRECTION_CASES)):
+            return None
+        reusable = tuple(name for name in required if name != ui_name)
+        if not covers_jobs(jobs, reusable, source, now):
+            return None
+        backends = preservation_export_backend_evidence(source, repository, api, now)
+        return {"run_id": run["id"], "sha": source,
+                "jobs": [{"name": name, "job_id": PRESERVATION_EXPORT_SOURCE_JOB_IDS[name]} for name in reusable],
+                "backend_evidence": backends}
+    except (OSError, AttributeError, KeyError, TypeError, ValueError, StopIteration) as error:
+        raise CorrectionEvidenceUnavailable("Fixed preservation source evidence is unavailable") from error
+
+
 def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SCOPE) -> bool:
+    if selected_scope == PRESERVATION_EXPORT_SCOPE:
+        return preservation_export_correction_inputs(source, head)
     """Only owned XCTest bodies and reviewed CI evidence controls may differ."""
     if selected_scope == FULL_SCOPE:
         return album_correction_inputs(source, head) or photo_smoke_correction_inputs(source, head)
@@ -1607,6 +1760,8 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                       required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     """Verify each reusable job in a failed same-task run; never reuse its UI."""
     selected_scope = test_correction_scope(required)
+    if selected_scope == PRESERVATION_EXPORT_SCOPE:
+        return preservation_export_correction_source(run, head, branch, repository, workflow_id, required, api, now)
     if selected_scope is None:
         return None
     try:
@@ -1705,6 +1860,19 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == PRESERVATION_EXPORT_SCOPE:
+        if not preservation_export_correction_inputs(PRESERVATION_EXPORT_CORRECTION_SOURCE, head):
+            return None
+        prefix = f"/repos/{repository}/actions"
+        workflow = api(f"{prefix}/workflows/ios-build.yml")
+        if (type(workflow.get("id")) is not int or workflow.get("path") != ".github/workflows/ios-build.yml"
+                or workflow.get("state") != "active"):
+            raise CorrectionEvidenceUnavailable("Native workflow identity unavailable")
+        source = api(f"{prefix}/runs/{PRESERVATION_EXPORT_CORRECTION_RUN}")
+        result = correction_source(source, head, branch, repository, workflow["id"], required, api, now)
+        if result is None:
+            raise CorrectionEvidenceUnavailable("Fixed preservation correction cannot reuse its source")
+        return result
     if test_correction_scope(required) == FULL_SCOPE and (
             branch not in (ALBUM_CORRECTION_BRANCH, PHOTO_SMOKE_CORRECTION_BRANCH)
             or repository != "soso-so-27/neko-widget"):
@@ -1731,6 +1899,45 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
     return None
 
 
+def covers_preservation_export_correction(run: dict, validation_head: str, required: tuple[str, ...], api,
+                                         now: dt.datetime, jobs: list[dict]) -> bool:
+    repository = "soso-so-27/neko-widget"
+    if (required != required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE)
+            or run.get("head_branch") != PRESERVATION_EXPORT_CORRECTION_BRANCH
+            or run.get("path") != ".github/workflows/ios-build.yml" or run.get("event") != "push"
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("run_attempt") != 1
+            or run.get("repository", {}).get("full_name") != repository
+            or run.get("head_repository", {}).get("full_name") != repository
+            or not preservation_export_correction_inputs(PRESERVATION_EXPORT_CORRECTION_SOURCE, run.get("head_sha"))
+            or not preservation_export_correction_inputs(PRESERVATION_EXPORT_CORRECTION_SOURCE, validation_head)):
+        return False
+    if any(type(job.get("id")) is not int for job in jobs) or len({job["id"] for job in jobs}) != len(jobs):
+        return False
+    plans = [job for job in jobs if job.get("name") == PLAN_JOB]
+    owning = (lane_job(PRESERVATION_EXPORT_SCOPE, "app-ui"),)
+    if len(plans) != 1 or not covers_jobs(jobs, (PLAN_JOB,) + owning, run.get("head_sha"), now):
+        return False
+    if any(job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"]
+           or job.get("run_attempt") != 1
+           or job.get("name") not in set(required) | {PLAN_JOB, UNEXPANDED_SHARING_JOB}
+           or (job.get("name") not in {PLAN_JOB, *owning}
+               and ((job.get("status"), job.get("conclusion")) != ("completed", "skipped")
+                    or job.get("steps") != [])) for job in jobs):
+        return False
+    record = preservation_export_plan(api(f"/repos/{repository}/actions/jobs/{plans[0]['id']}/logs"), run["head_sha"], required)
+    correction = record.get("test_correction_evidence") if record else None
+    if (not isinstance(correction, dict) or correction.get("run_id") != PRESERVATION_EXPORT_CORRECTION_RUN
+            or correction.get("sha") != PRESERVATION_EXPORT_CORRECTION_SOURCE):
+        return False
+    source = api(f"/repos/{repository}/actions/runs/{PRESERVATION_EXPORT_CORRECTION_RUN}")
+    verified = correction_source(source, validation_head, run["head_branch"], repository,
+                                 run["workflow_id"], required, api, now)
+    ui = next(job for job in jobs if job.get("name") == owning[0])
+    return verified == correction and preservation_export_ui_results(
+        api(f"/repos/{repository}/actions/jobs/{ui['id']}/logs"))
+
+
 def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple[str, ...], api,
                                now: dt.datetime, jobs: list[dict]) -> bool:
     """Qualify the same fixed correction graph for main and release callers.
@@ -1740,6 +1947,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
+        return covers_preservation_export_correction(run, validation_head, required, api, now, jobs)
     if required != ALBUM_CORRECTION_REQUIRED or run.get("head_branch") not in (
             ALBUM_CORRECTION_BRANCH, PHOTO_SMOKE_CORRECTION_BRANCH):
         return False
@@ -2036,13 +2245,15 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
             try:
                 jobs = executed_jobs(run, repo, api)
                 covered = covers_jobs(jobs, required, run["head_sha"], now, audit=True)
+                corrected = False
                 if not covered:
                     covered = covers_corrected_full_graph(run, env["GITHUB_SHA"], required, api, now, jobs)
+                    corrected = covered
             except (OSError, AttributeError, KeyError, TypeError, ValueError) as error:
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
                 continue
-            if covered and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
+            if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
             if covered:
                 evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])

@@ -7,6 +7,7 @@ import datetime as dt
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -764,6 +765,206 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn('--source-commit "$GITHUB_SHA"', source)
         self.assertIn('--source-commit "$RELEASE_SOURCE_SHA"', source)
         self.assertLess(source.index("Verify the requested main commit"), source.index("Install distribution certificate"))
+
+
+class PreservationExportCorrectionTests(unittest.TestCase):
+    set_plan = ReleaseTests.set_plan
+    set_export_backends = ReleaseTests.set_export_backends
+    export_plan = ReleaseTests.export_plan
+    prepare = ReleaseTests.prepare
+
+    def transcript(self, failures=frozenset()):
+        lines = []
+        for test in release.planner.PRESERVATION_EXPORT_TESTS:
+            case = test.removeprefix("NekoWidgetUITests/")
+            label = "NekoWidgetUITests." + case.replace("/", " ")
+            lines += [f"Test Case '-[{label}]' started.",
+                      f"Test Case '-[{label}]' {'failed' if case in failures else 'passed'} (1 seconds)."]
+        return "\n".join(lines)
+
+    def setUp(self):
+        ReleaseTests.setUp(self)
+        planner = release.planner
+        self.export_plan()
+        self.run.update(head_branch=planner.PRESERVATION_EXPORT_CORRECTION_BRANCH,
+                        path=".github/workflows/ios-build.yml", run_attempt=1)
+        self.source = dict(self.run, id=planner.PRESERVATION_EXPORT_CORRECTION_RUN,
+                           head_sha=planner.PRESERVATION_EXPORT_CORRECTION_SOURCE, conclusion="failure")
+        self.source_sha, self.source_id = self.source["head_sha"], self.source["id"]
+        self.required = tuple(self.plan["required_jobs"])
+        self.ui_name = planner.lane_job(planner.PRESERVATION_EXPORT_SCOPE, "app-ui")
+        self.ui_id = planner.PRESERVATION_EXPORT_SOURCE_JOB_IDS[self.ui_name]
+        self.source_jobs = []
+        for name, job_id in planner.PRESERVATION_EXPORT_SOURCE_JOB_IDS.items():
+            job = dict(self.plan_job, id=job_id, name=name, run_id=self.source_id,
+                       run_attempt=1, head_sha=self.source_sha, steps=[])
+            if name == self.ui_name:
+                job.update(conclusion="failure", steps=[{"name": "Run sharing runtime matrix",
+                            "status": "completed", "conclusion": "failure"}])
+            self.source_jobs.append(job)
+        self.source_jobs += [dict(self.plan_job, id=job_id, name=planner.UNEXPANDED_SHARING_JOB,
+            run_id=self.source_id, run_attempt=1, head_sha=self.source_sha, conclusion="skipped", steps=[])
+            for job_id in planner.PRESERVATION_EXPORT_SKIPPED_JOB_IDS]
+        self.source_jobs_key = f"actions/runs/{self.source_id}/jobs?filter=latest&per_page=100&page=1"
+        self.gh.values[f"actions/runs/{self.source_id}"] = self.source
+        self.gh.values[self.source_jobs_key] = {"total_count": len(self.source_jobs), "jobs": self.source_jobs}
+        self.source_plan_id = planner.PRESERVATION_EXPORT_SOURCE_JOB_IDS[planner.PLAN_JOB]
+        self.gh.logs[(self.source_id, self.source_plan_id)] = release.PLAN_MARKER + json.dumps(self.plan | {"head_sha": self.source_sha})
+        self.gh.logs[(self.source_id, self.ui_id)] = self.transcript(planner.PRESERVATION_EXPORT_CORRECTION_CASES)
+        for job in self.source_jobs:
+            self.gh.values[f"actions/jobs/{job['id']}"] = job
+        # Preserve actual same-source backend proof, including the reviewed
+        # Sharing dispatch when its push index is entirely absent.
+        self.source_backend_keys = []
+        for index, key in enumerate(self.backend_indexes):
+            target = key.replace(self.sha, self.source_sha)
+            value = copy.deepcopy(self.gh.values[key])
+            value["workflow_runs"][0]["head_sha"] = self.source_sha
+            if index == 1:
+                self.gh.values[target] = {"total_count": 0, "workflow_runs": []}
+                target = target.replace("event=push", "event=workflow_dispatch")
+                value["workflow_runs"][0]["event"] = "workflow_dispatch"
+            self.gh.values[target] = value
+            self.source_backend_keys.append(target)
+            for job in self.gh.values[self.backend_job_indexes[index]]["jobs"]:
+                job["head_sha"] = self.source_sha
+        inputs = patch.object(planner, "preservation_export_correction_inputs", return_value=True)
+        inputs.start(); self.addCleanup(inputs.stop)
+        self.correction = planner.correction_source(self.source, self.sha, self.run["head_branch"],
+            release.REPOSITORY, 5, self.required, self.api, self.now)
+        self.assertIsNotNone(self.correction)
+        self.plan["test_correction_evidence"] = self.correction
+        self.set_plan()
+        self.current_jobs_key = "actions/runs/20/jobs?filter=latest&per_page=100&page=1"
+        for job in self.gh.values[self.current_jobs_key]["jobs"]:
+            job.update(run_id=20, run_attempt=1, steps=[])
+            if job["name"] not in {planner.PLAN_JOB, self.ui_name}: job["conclusion"] = "skipped"
+            self.gh.values[f"actions/jobs/{job['id']}"] = job
+            if job["name"] == self.ui_name:
+                self.current_ui_id = job["id"]
+                self.gh.logs[(20, job["id"])] = self.transcript()
+
+    def api(self, path):
+        prefix = f"/repos/{release.REPOSITORY}/"
+        self.assertTrue(path.startswith(prefix))
+        local = path[len(prefix):]
+        if local.endswith("/logs"):
+            job_id = int(local.split("/")[-2])
+            return self.gh.log(self.gh.get(f"actions/jobs/{job_id}")["run_id"], job_id)
+        return self.gh.get(local)
+
+    def test_candidate_release_and_main_reuse_preserve_original_three_jobs_and_backends(self):
+        result = self.prepare()["ci"]
+        self.assertEqual(result["reused_sha"], self.source_sha)
+        self.assertEqual(result["tested_sha"], self.sha)
+        self.assertEqual(result["backend_evidence"]["sharing-service.yml"]["sha"], self.source_sha)
+        self.assertEqual(result["backend_evidence"]["sharing-service.yml"]["event"], "workflow_dispatch")
+        main = dict(self.run, id=21, head_branch="main")
+        self.gh.values["actions/runs/21"] = main
+        plan_job = dict(self.plan_job, id=301, run_id=21, run_attempt=1)
+        self.gh.values["actions/runs/21/jobs?filter=latest&per_page=100&page=1"] = {"total_count": 1, "jobs": [plan_job]}
+        main_plan = self.plan | {"test_correction_evidence": None, "evidence_run_id": 20, "evidence_sha": self.sha}
+        self.gh.logs[(21, 301)] = release.PLAN_MARKER + json.dumps(main_plan)
+        def api(path):
+            if "/workflows/ios-build.yml/runs?" in path:
+                return {"workflow_runs": [self.run]}
+            return self.api(path)
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": self.sha,
+               "GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_RUN_ID": "21"}
+        with patch.object(release.planner, "git", return_value=self.sha):
+            self.assertEqual(release.planner.find_evidence(env, self.required, api, self.now), (20, self.sha))
+        result = release.check_ci(self.gh, self.sha, 21, self.now)
+        self.assertEqual(result["tested_run"], 20)
+        self.assertEqual(result["backend_evidence"]["preservation-service.yml"]["sha"], self.source_sha)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_candidate_planner_executes_only_the_complete_owning_ui_lane(self):
+        from ios_ci_scope import lane_tests
+        planner = release.planner
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "event.json").write_text("{}")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/" + self.run["head_branch"],
+                   "GITHUB_SHA": self.sha, "GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_RUN_ID": "20",
+                   "GITHUB_WORKFLOW": "iOS build check", "GITHUB_SERVER_URL": "https://github.com",
+                   "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                   "GITHUB_STEP_SUMMARY": str(root / "summary")}
+            output = io.StringIO()
+            with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                    patch.object(planner, "changed_paths", return_value=list(planner.PRESERVATION_EXPORT_PATHS)), \
+                    patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_EXPORT_SCOPE), \
+                    patch.object(planner, "github_api", side_effect=lambda env, path: self.api(path)):
+                planner.main()
+            flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertEqual([flags[name] for name in ("build", "smoke", "sharing", "app_ui")],
+                             ["false", "false", "false", "true"])
+            self.assertEqual(flags["app_ui_lanes"], '["app-ui"]')
+            record = planner.preservation_export_plan(output.getvalue(), self.sha, self.required)
+            self.assertEqual(record["test_correction_evidence"], self.correction)
+            self.assertEqual(lane_tests(planner.PRESERVATION_EXPORT_SCOPE, "app-ui"),
+                             planner.PRESERVATION_EXPORT_TESTS)
+
+    def test_source_identity_full_graph_only_known_failures_and_fresh_successes_are_required(self):
+        planner = release.planner
+        for key, value in (("id", 99), ("head_sha", "b" * 40), ("head_branch", "codex/other"),
+                           ("event", "workflow_dispatch"), ("path", ".github/workflows/other.yml"),
+                           ("run_attempt", 2), ("conclusion", "success"), ("workflow_id", 9),
+                           ("repository", {"full_name": "other/repo"}),
+                           ("head_repository", {"full_name": "other/repo"})):
+            with self.subTest(field=key):
+                self.gh.values[f"actions/runs/{self.source_id}"] = self.source | {key: value}
+                with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[f"actions/runs/{self.source_id}"] = self.source
+        original = copy.deepcopy(self.source_jobs)
+        for index, job in enumerate(original):
+            mutations = [{"head_sha": "b" * 40}, {"id": 1}, {"conclusion": "skipped"}]
+            if job["conclusion"] == "success":
+                mutations += [{"completed_at": (self.now-dt.timedelta(hours=25)).isoformat()}]
+            for mutation in mutations:
+                changed = copy.deepcopy(original); changed[index].update(mutation)
+                if changed == original: continue
+                self.gh.values[self.source_jobs_key] = {"total_count": len(changed), "jobs": changed}
+                with self.subTest(job=job["id"], mutation=mutation), self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[self.source_jobs_key] = {"total_count": len(original), "jobs": original}
+        self.gh.values[self.source_jobs_key] = {"total_count": len(original), "jobs": original[:-1]}
+        with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[self.source_jobs_key] = {"total_count": len(original), "jobs": original}
+        plan_key = (self.source_id, self.source_plan_id)
+        saved = self.gh.logs[plan_key]
+        for invalid in (self.plan | {"head_sha": self.source_sha, "required_jobs": [planner.BUILD]},
+                        self.plan | {"head_sha": self.source_sha, "evidence_run_id": 99}):
+            self.gh.logs[plan_key] = release.PLAN_MARKER + json.dumps(invalid)
+            with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.logs[plan_key] = saved
+        saved = self.gh.logs[(self.source_id, self.ui_id)]
+        for log in (saved + "\nTest Case '-[NekoWidgetUITests.SoloMemoriesUITests testUnknown]' failed (1 seconds).",
+                    self.transcript(), saved.replace("failed", "skipped"), saved + saved):
+            self.gh.logs[(self.source_id, self.ui_id)] = log
+            with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.logs[(self.source_id, self.ui_id)] = saved
+        for key in self.source_backend_keys:
+            saved = self.gh.values[key]
+            self.gh.values[key] = {"total_count": 0, "workflow_runs": []}
+            with self.assertRaises(release.Blocked): self.prepare()
+            self.gh.values[key] = saved
+        with patch.object(planner, "preservation_export_correction_inputs", return_value=False):
+            with self.assertRaises(release.Blocked): self.prepare()
+
+    def test_corrected_ui_must_execute_all_four_and_never_replace_skips_or_failures(self):
+        key = (20, self.current_ui_id)
+        saved = self.gh.logs[key]
+        for log in ("", saved.replace("passed", "skipped", 1), saved.replace("passed", "failed", 1),
+                    "\n".join(saved.splitlines()[2:]), saved + saved):
+            self.gh.logs[key] = log
+            with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.logs[key] = saved
+        original = copy.deepcopy(self.gh.values[self.current_jobs_key])
+        for index in range(len(original["jobs"])):
+            changed = copy.deepcopy(original)
+            changed["jobs"][index]["conclusion"] = "failure"
+            self.gh.values[self.current_jobs_key] = changed
+            with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[self.current_jobs_key] = original
 
 
 if __name__ == "__main__":
