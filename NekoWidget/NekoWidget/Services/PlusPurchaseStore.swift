@@ -198,6 +198,8 @@ final class PlusPurchaseStore: ObservableObject {
     static let productionShared = PlusPurchaseStore()
     @Published private(set) var products: [Product] = []
     @Published private(set) var productAvailability: PlusProductAvailability
+    /// Changes when a catalog is invalidated or replaced; never grants access.
+    @Published private(set) var productCatalogRevision: UInt64 = 0
     @Published private(set) var entitlementState: PlusEntitlementState {
         didSet {
             let access = MembershipAccessContext(entitlement: entitlementState)
@@ -228,6 +230,9 @@ final class PlusPurchaseStore: ObservableObject {
     private let recordVerifiedTransactionEvent: PlusVerifiedTransactionEventRecorder?
     private let fetchAuthoritativeEntitlement: PlusAuthoritativeEntitlementFetcher?
     private var transactionUpdatesTask: Task<Void, Never>?
+    private var storefrontUpdatesTask: Task<Void, Never>?
+    private var productLoadGeneration: UInt64 = 0
+    private var productStorefrontID: String?
     private var hasStarted = false
     private var startTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -270,6 +275,7 @@ final class PlusPurchaseStore: ObservableObject {
 
     deinit {
         transactionUpdatesTask?.cancel()
+        storefrontUpdatesTask?.cancel()
     }
 
     func start() async {
@@ -296,6 +302,7 @@ final class PlusPurchaseStore: ObservableObject {
         }
 
         startTransactionUpdatesListener()
+        startStorefrontUpdatesListener()
         await reconcileCurrentEntitlements()
         await loadProducts()
     }
@@ -314,9 +321,15 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func performRefresh() async {
         await reconcileCurrentEntitlements()
-        if products.isEmpty {
-            await loadProducts()
-        }
+        await loadProducts()
+    }
+
+    /// Fetch a fresh offer when its sheet is opened. This does not purchase,
+    /// restore, prepare an account, or change subscription authority.
+    func refreshProductsForOffer() async {
+        await start()
+        guard configuration.isConfigured else { return }
+        await loadProducts()
     }
 
     func stop() {
@@ -325,6 +338,12 @@ final class PlusPurchaseStore: ObservableObject {
         reconciliationTask?.cancel()
         transactionUpdatesTask?.cancel()
         transactionUpdatesTask = nil
+        storefrontUpdatesTask?.cancel()
+        storefrontUpdatesTask = nil
+        productLoadGeneration &+= 1
+        products = []
+        productStorefrontID = nil
+        productCatalogRevision &+= 1
         hasStarted = false
     }
 
@@ -340,7 +359,8 @@ final class PlusPurchaseStore: ObservableObject {
     /// Internal previews never call this method; source-controlled gates stay off.
     func purchase(
         _ plan: PlusProductPlan,
-        billingAccountID: BillingAccountID
+        billingAccountID: BillingAccountID,
+        expectedCatalogRevision: UInt64
     ) async -> PlusPurchaseOutcome {
         guard configuration.isConfigured,
               recordVerifiedTransactionEvent != nil,
@@ -351,16 +371,30 @@ final class PlusPurchaseStore: ObservableObject {
               canStartNewPurchase,
               !awaitingServerConfirmation,
               pendingProductID == nil,
+              productAvailability == .available,
+              productCatalogRevision == expectedCatalogRevision,
               let productID = configuration.productID(for: plan),
               let product = products.first(where: { $0.id == productID })
         else { return .unavailable }
 
         isPurchasing = true
         purchaseEligibilityGeneration &+= 1
+        let eligibilityGeneration = purchaseEligibilityGeneration
         canStartNewPurchase = false
         defer { isPurchasing = false }
 
         do {
+            // Account preparation can suspend after the offer was displayed.
+            // Never use a Product from a storefront that changed in that gap.
+            let currentStorefrontID = await Storefront.current?.id
+            guard currentStorefrontID != nil,
+                  currentStorefrontID == productStorefrontID,
+                  productCatalogRevision == expectedCatalogRevision,
+                  purchaseEligibilityGeneration == eligibilityGeneration,
+                  !entitlementState.grantsPlus, !awaitingServerConfirmation,
+                  pendingProductID == nil, !isRestoring else {
+                return .unavailable
+            }
             let result = try await product.purchase(options: [
                 .appAccountToken(billingAccountID.rawValue)
             ])
@@ -464,9 +498,22 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     private func loadProducts() async {
+        productLoadGeneration &+= 1
+        let generation = productLoadGeneration
+        products = []
+        productStorefrontID = nil
         productAvailability = .loading
+        productCatalogRevision &+= 1
         do {
+            let storefrontID = await Storefront.current?.id
             let fetched = try await Product.products(for: configuration.productIDs)
+            let currentStorefrontID = await Storefront.current?.id
+            guard generation == productLoadGeneration, !Task.isCancelled else { return }
+            guard let storefrontID, storefrontID == currentStorefrontID else {
+                productAvailability = .unavailable
+                productCatalogRevision &+= 1
+                return
+            }
             let expectedIDs = Set(configuration.productIDs)
             let eligible = fetched.filter {
                 expectedIDs.contains($0.id) && $0.type == .autoRenewable
@@ -474,6 +521,7 @@ final class PlusPurchaseStore: ObservableObject {
             guard Set(eligible.map(\.id)) == expectedIDs else {
                 products = []
                 productAvailability = .unavailable
+                productCatalogRevision &+= 1
                 return
             }
             products = eligible.sorted { lhs, rhs in
@@ -482,9 +530,23 @@ final class PlusPurchaseStore: ObservableObject {
                 return left < right
             }
             productAvailability = .available
+            productStorefrontID = storefrontID
+            productCatalogRevision &+= 1
         } catch {
+            guard generation == productLoadGeneration, !Task.isCancelled else { return }
             products = []
             productAvailability = .unavailable
+            productCatalogRevision &+= 1
+        }
+    }
+
+    private func startStorefrontUpdatesListener() {
+        guard storefrontUpdatesTask == nil else { return }
+        storefrontUpdatesTask = Task { @MainActor [weak self] in
+            for await _ in Storefront.updates {
+                guard !Task.isCancelled else { return }
+                await self?.loadProducts()
+            }
         }
     }
 

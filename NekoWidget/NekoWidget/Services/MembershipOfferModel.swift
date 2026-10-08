@@ -12,7 +12,7 @@ struct MembershipOfferPresentation: Equatable {
 }
 
 enum MembershipOfferActionResult: Equatable {
-    case completed, cancelled, waiting, nothingToRestore, unavailable, failed
+    case completed, cancelled, waiting, nothingToRestore, unavailable, failed, offerChanged
 }
 
 /// Ephemeral presentation state only. It never grants an entitlement, writes
@@ -32,12 +32,15 @@ final class MembershipOfferModel: ObservableObject {
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
     private var fixtureAllowsPurchase = true
+    private var observedCatalogRevision: UInt64?
+    private var offerLoadGeneration: UInt64 = 0
 
     var canRefresh: Bool { !isWorking && !isMember && (verificationRequired || isWaiting) }
     let isPreview: Bool
     private var hasLoaded = false
     private let loadAction: () async -> MembershipOfferPresentation?
-    private let purchaseAction: () async -> MembershipOfferActionResult
+    private let prepareOfferAction: () async -> Void
+    private let purchaseAction: (MembershipOfferPresentation) async -> MembershipOfferActionResult
     private let restoreAction: () async -> MembershipOfferActionResult
 
     var canPurchase: Bool {
@@ -50,11 +53,13 @@ final class MembershipOfferModel: ObservableObject {
     private init(
         isPreview: Bool,
         load: @escaping () async -> MembershipOfferPresentation?,
-        purchase: @escaping () async -> MembershipOfferActionResult,
+        prepareOffer: @escaping () async -> Void = {},
+        purchase: @escaping (MembershipOfferPresentation) async -> MembershipOfferActionResult,
         restore: @escaping () async -> MembershipOfferActionResult
     ) {
         self.isPreview = isPreview
         loadAction = load
+        prepareOfferAction = prepareOffer
         purchaseAction = purchase
         restoreAction = restore
     }
@@ -65,20 +70,23 @@ final class MembershipOfferModel: ObservableObject {
         guard !hasLoaded else { return }
         hasLoaded = true
         isWorking = true
-        offer = await loadAction()
+        await prepareOfferAction()
+        await reloadOfferPresentation()
         isWorking = false
         updateMembershipState()
         if offer == nil && !isMember { message = "料金を確認できません。時間をおいて開き直してください。" }
     }
 
     func purchase() async -> MembershipOfferActionResult {
-        guard canPurchase else { return .unavailable }
+        guard canPurchase, let presentedOffer = offer else { return .unavailable }
         isWorking = true
         defer { isWorking = false }
-        let result = await purchaseAction()
+        let result = await purchaseAction(presentedOffer)
+        await reloadOfferPresentation()
         if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
         apply(result, restoring: false)
         updateMembershipState()
+        if result == .offerChanged { apply(result, restoring: false) }
         return result
     }
 
@@ -109,6 +117,8 @@ final class MembershipOfferModel: ObservableObject {
             message = restoring
                 ? "購入を確認できませんでした。写真やメモはそのままです。"
                 : "申し込みを確認できませんでした。購入を復元して状況を確認できます。"
+        case .offerChanged:
+            message = "料金または無料期間の情報が更新されました。表示内容を確認してからお申し込みください。"
         }
     }
 
@@ -118,16 +128,35 @@ final class MembershipOfferModel: ObservableObject {
         let model = MembershipOfferModel(
             isPreview: false,
             load: { await client.load() },
-            purchase: { await client.purchase() },
+            prepareOffer: { await store.refreshProductsForOffer() },
+            purchase: { await client.purchase(presentedOffer: $0) },
             restore: { await client.restore() }
         )
         model.purchases = store
         model.observation = store.objectWillChange.sink { [weak model] _ in
             // @Published sends before its new value is installed.
-            Task { @MainActor in model?.updateMembershipState() }
+            Task { @MainActor in
+                guard let model else { return }
+                model.updateMembershipState()
+                if model.observedCatalogRevision != store.productCatalogRevision {
+                    model.observedCatalogRevision = store.productCatalogRevision
+                    await model.reloadOfferPresentation()
+                }
+            }
         }
         model.updateMembershipState()
         return model
+    }
+
+    /// Reject an earlier eligibility/price lookup completing after a newer one.
+    /// Invalidating the offer also prevents taps from using its old price.
+    private func reloadOfferPresentation() async {
+        offerLoadGeneration &+= 1
+        let generation = offerLoadGeneration
+        offer = nil
+        let updated = await loadAction()
+        guard generation == offerLoadGeneration else { return }
+        offer = updated
     }
 
     func refresh() async {
@@ -234,10 +263,63 @@ final class MembershipOfferModel: ObservableObject {
                     isPreview: true
                 )
             },
-            purchase: { purchaseResult },
+            purchase: { _ in purchaseResult },
             restore: { restoreResult }
         )
     }
+
+#if DEBUG
+    /// Deterministic rendering regression for a quote changing between display
+    /// and an explicit tap. No StoreKit, identity, or network is involved.
+    static func catalogRefreshPreview() -> MembershipOfferModel {
+        var hasRefreshed = false
+        return MembershipOfferModel(
+            isPreview: true,
+            load: {
+                MembershipOfferPresentation(
+                    priceText: hasRefreshed ? "¥980 / 月" : "$5.99 / 月",
+                    renewalText: "月ごとに自動更新されます。",
+                    trialText: hasRefreshed ? "1週間無料" : nil,
+                    purchaseTitle: "会員プランを始める", isPreview: true
+                )
+            },
+            purchase: { _ in
+                if !hasRefreshed { hasRefreshed = true; return .offerChanged }
+                return .completed
+            },
+            restore: { .nothingToRestore }
+        )
+    }
+
+    static func verifyOutOfOrderOfferLoads() async -> Bool {
+        var pending: [CheckedContinuation<MembershipOfferPresentation?, Never>] = []
+        let model = MembershipOfferModel(isPreview: true,
+            load: { await withCheckedContinuation { pending.append($0) } },
+            purchase: { _ in .unavailable }, restore: { .unavailable })
+        let old = Task { await model.reloadOfferPresentation() }
+        while pending.count < 1 { await Task.yield() }
+        let current = Task { await model.reloadOfferPresentation() }
+        while pending.count < 2 { await Task.yield() }
+        let latest = MembershipOfferPresentation(priceText: "¥980 / 月", renewalText: "monthly",
+            trialText: "1週間無料", purchaseTitle: "start", isPreview: true)
+        pending[1].resume(returning: latest)
+        await current.value
+        pending[0].resume(returning: MembershipOfferPresentation(priceText: "$5.99 / 月",
+            renewalText: "monthly", trialText: nil, purchaseTitle: "start", isPreview: true))
+        await old.value
+        guard model.offer == latest else { return false }
+        let failed = Task { await model.reloadOfferPresentation() }
+        while pending.count < 3 { await Task.yield() }
+        guard model.offer == nil, !model.canPurchase else {
+            pending[2].resume(returning: nil)
+            await failed.value
+            return false
+        }
+        pending[2].resume(returning: nil)
+        await failed.value
+        return model.offer == nil && !model.canPurchase
+    }
+#endif
 }
 
 enum MembershipOfferFixtureStatus: String {
@@ -256,6 +338,8 @@ private final class MembershipStoreKitClient {
         guard configuration.isConfigured, session != nil,
               AppPublicLinksConfiguration.current.privacyURL != nil else { return nil }
         await purchases.start()
+        let revision = purchases.productCatalogRevision
+        guard purchases.productAvailability == .available else { return nil }
         guard let product = purchases.products.first(where: {
             $0.id == configuration.monthlyProductID
         }), let subscription = product.subscription,
@@ -269,6 +353,8 @@ private final class MembershipStoreKitClient {
            let period = Self.periodText(introductory.period, count: introductory.periodCount) {
             trial = "\(period)無料"
         }
+        guard purchases.productCatalogRevision == revision,
+              purchases.productAvailability == .available else { return nil }
         return MembershipOfferPresentation(
             priceText: "\(product.displayPrice) / 月",
             renewalText: trial == nil ? "月ごとに自動更新されます。" : "無料期間終了後、月ごとに自動更新されます。",
@@ -278,7 +364,7 @@ private final class MembershipStoreKitClient {
         )
     }
 
-    func purchase() async -> MembershipOfferActionResult {
+    func purchase(presentedOffer: MembershipOfferPresentation) async -> MembershipOfferActionResult {
         guard configuration.isConfigured, let session else { return .unavailable }
         // Re-evaluate eligibility immediately before the explicit purchase;
         // an old offer must not turn a later unknown state into a new purchase.
@@ -286,9 +372,13 @@ private final class MembershipStoreKitClient {
         if purchases.entitlementState.grantsPlus { return .completed }
         guard purchases.canStartNewPurchase, purchases.pendingProductID == nil,
               !purchases.awaitingServerConfirmation else { return .unavailable }
+        guard let currentOffer = await load() else { return .unavailable }
+        guard currentOffer == presentedOffer else { return .offerChanged }
+        let catalogRevision = purchases.productCatalogRevision
         do {
             let account = try await session.prepareAccountForExplicitPurchase()
-            switch await purchases.purchase(.monthly, billingAccountID: account) {
+            switch await purchases.purchase(.monthly, billingAccountID: account,
+                                            expectedCatalogRevision: catalogRevision) {
             case .purchased: return .completed
             case .cancelled: return .cancelled
             case .pending, .awaitingServerConfirmation: return .waiting
@@ -434,14 +524,21 @@ struct MembershipOfferPreviewView: View {
         }
         .navigationTitle("会員案内の確認")
         .sheet(isPresented: $showsOffer) {
-            MembershipOfferSheet(model: membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
-                                 ?? .preview(purchaseResult: purchaseResult)) { result in
+            MembershipOfferSheet(model: previewModel) { result in
                 showsOffer = false
                 resultText = result == .completed
                     ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
                     : "取り消して、元の画面に戻りました。"
             }
         }
+    }
+
+    private var previewModel: MembershipOfferModel {
+#if DEBUG
+        if CommandLine.arguments.contains("--membership-catalog-refresh") { return .catalogRefreshPreview() }
+#endif
+        return membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
+            ?? .preview(purchaseResult: purchaseResult)
     }
 }
 
@@ -598,6 +695,7 @@ final class BillingOwnerEnrollmentFixtureState {
 @MainActor
 struct MembershipOfferFixture: View {
     @State private var enrollmentFixture = BillingOwnerEnrollmentFixtureState()
+    @State private var catalogBoundaryResult = "未確認"
     private var configurationPasses: Bool {
         func config(_ enabled: Bool, _ monthly: String?, _ annual: String?) -> PlusPurchaseConfiguration {
             PlusPurchaseConfiguration(isEnabled: enabled, monthlyProductID: monthly, annualProductID: annual)
@@ -624,6 +722,16 @@ struct MembershipOfferFixture: View {
                         .font(.caption)
                         .accessibilityIdentifier("membership-fixture-configuration")
                 }
+            }
+        }
+        .task {
+            if CommandLine.arguments.contains("--membership-catalog-refresh") {
+                catalogBoundaryResult = await MembershipOfferModel.verifyOutOfOrderOfferLoads() ? "境界確認OK" : "境界確認失敗"
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if CommandLine.arguments.contains("--membership-catalog-refresh") {
+                Text(catalogBoundaryResult).accessibilityIdentifier("membership-catalog-boundary")
             }
         }
     }

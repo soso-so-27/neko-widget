@@ -3218,6 +3218,7 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testMembershipOfferPreviewWaitingAndRestore() {
+        checkMembershipCatalogRefreshRequiresReview()
         let app = XCUIApplication()
         app.launchArguments = ["--membership-offer-ui-fixture", "--membership-purchase-waiting"]
         app.launch()
@@ -3323,6 +3324,38 @@ final class SoloMemoriesUITests: XCTestCase {
                            "Status refresh must not invoke purchase, explicit restore, or close the sheet")
             app.terminate()
         }
+    }
+
+    @MainActor
+    private func checkMembershipCatalogRefreshRequiresReview() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-offer-ui-fixture", "--membership-catalog-refresh"]
+        app.launch()
+        let boundary = app.staticTexts["membership-catalog-boundary"]
+        XCTAssertTrue(boundary.waitForExistence(timeout: 10))
+        let checked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "境界確認OK"), object: boundary)
+        XCTAssertEqual(XCTWaiter.wait(for: [checked], timeout: 5), .completed)
+        app.buttons["membership-preview-open"].tap()
+        let price = app.staticTexts["membership-offer-price"]
+        XCTAssertTrue(price.waitForExistence(timeout: 5))
+        XCTAssertEqual(price.label, "$5.99 / 月")
+        let purchase = app.buttons["membership-offer-purchase"]
+        for _ in 0..<5 where !purchase.isHittable { app.swipeUp() }
+        purchase.tap()
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "¥980 / 月"), object: price)
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
+        XCTAssertEqual(app.staticTexts["membership-offer-trial"].label, "1週間無料")
+        XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("表示内容を確認"))
+        XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                       "An old quote must update in place without purchasing or dismissing")
+        XCTAssertTrue(purchase.isEnabled)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "membership-refreshed-price-requires-another-tap"
+        capture.lifetime = .keepAlways
+        add(capture)
+        purchase.tap()
+        XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        app.terminate()
     }
 
     @MainActor
