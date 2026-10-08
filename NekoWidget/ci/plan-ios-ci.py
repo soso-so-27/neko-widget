@@ -23,6 +23,9 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_P
                           CARE_HANDOFF_PATHS, CARE_HANDOFF_NEW_PATHS,
                           TOOLS_HUB_SCOPE, TOOLS_HUB_PATHS, TOOLS_HUB_COMPANIONS, TOOLS_HUB_BLOBS,
                           WINDOW_HUB_SCOPE, WINDOW_HUB_PATHS, WINDOW_HUB_COMPANIONS, WINDOW_HUB_BLOBS,
+                          REVIEWED_MEMBERSHIP_STATE_SCOPE, MEMBERSHIP_STATE_PATHS, MEMBERSHIP_STATE_BLOBS,
+                          MEMBERSHIP_STATE_COMPANIONS, MEMBERSHIP_STATE_TESTS, CI_WORKFLOW,
+                          memory_tests_available,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -899,6 +902,29 @@ WINDOW_HUB_COMPANION_DIGESTS = {
 }
 
 
+# Bind every changed control source on scope introduction. Finalize after all
+# four controls and product blobs are reviewed; canonicalize only this literal.
+MEMBERSHIP_STATE_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "70cc82a50e20f241d2db0030881b294a6c75ccb1d5fd40fb5a1c99bb25ca9afe",
+        "df975746e2992d31da12bc0542c539bd34cffff200fb30caec2e8f1611fabd5d"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "a4d2973ee48edb55a7f1f2e20536a5e347e022ce4db9e2cf073a756fb35824fd",
+        "18efdf6a71652ea79775d2ea73998dafd86b88d7e907e57e2712722c54cc1cd5"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "c5f4db7bd03942fa15471867a0a46ce2cf4d3f6c745cbf3ce7e1c555b9ca5a81",
+        "5ef2fccd0a6b954cd1d2dc34d149ff77c1839d8805c400d9f7b3763cf1dddfbb"
+    ],
+    "NekoWidget/ci/test-widget-ci-scope.py": [
+        "7a3d75a7f046fd4671bb31b84b9af63453be7565ee431fb932f559abb464931f",
+        "09210817a605f49eb1d4c44d5b4dda15a48fd5263a7fde424439ad2fe985e120"
+    ]
+}
+MEMBERSHIP_STATE_WORKFLOW_BLOB = "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90"
+
+
 def reviewed_hub_only(paths: list[str], base: str, head: str, *, product_blobs: dict,
                       companion_paths: frozenset, companion_digests: dict,
                       companion_name: str) -> bool:
@@ -964,6 +990,24 @@ def window_hub_only(paths: list[str], base: str, head: str) -> bool:
                              companion_name="WINDOW_HUB_COMPANION_DIGESTS")
 
 
+def membership_state_only(paths: list[str], base: str, head: str) -> bool:
+    # Pending review, malformed/zero identities and additions never qualify.
+    if (not paths or set(MEMBERSHIP_STATE_BLOBS) != MEMBERSHIP_STATE_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in MEMBERSHIP_STATE_BLOBS.values())):
+        return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=MEMBERSHIP_STATE_BLOBS,
+                             companion_paths=MEMBERSHIP_STATE_COMPANIONS,
+                             companion_digests=MEMBERSHIP_STATE_COMPANION_DIGESTS,
+                             companion_name="MEMBERSHIP_STATE_COMPANION_DIGESTS"):
+        return False
+    # No workflow change, and all five owning methods must parse in their class.
+    if any(git("rev-parse", f"{ref}:{CI_WORKFLOW}") != MEMBERSHIP_STATE_WORKFLOW_BLOB
+           for ref in (base, head)):
+        return False
+    return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), MEMBERSHIP_STATE_TESTS)
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
     if sources and sources <= BILLING_OPERATOR_PATHS:
@@ -979,6 +1023,16 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             base = comparison_base(event, env)
             if base and policy_docs_only(paths, base, env["GITHUB_SHA"]):
                 return POLICY_DOC_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
+    if (sources and sources <= MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS
+            and sources & {"NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift",
+                           "NekoWidget/NekoWidget/App/NekoWidgetApp.swift"}):
+        try:
+            base = comparison_base(event, env)
+            if base and membership_state_only(paths, base, env["GITHUB_SHA"]):
+                return REVIEWED_MEMBERSHIP_STATE_SCOPE
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE

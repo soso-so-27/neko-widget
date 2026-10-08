@@ -71,6 +71,7 @@ REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
+REVIEWED_MEMBERSHIP_STATE_SCOPE = "reviewed-membership-state-v1"
 REVIEWED_MEMBERSHIP_ACCESS_SCOPE = "reviewed-membership-access-v1"
 REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
@@ -80,7 +81,7 @@ SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
-          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
+          REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_MEMBERSHIP_STATE_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
 LANES = ("runtime", "app-ui", "gallery-normal", "gallery-variants")
 FULL_APP_UI_LANES = ("app-ui-solo-1", "app-ui-solo-2", "app-ui-other")
@@ -1330,6 +1331,31 @@ WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for n
 ))
 
 
+# One independently reviewed live membership presentation batch against main
+# 7e19afc. Complete Git blobs bind all behavior and tests after product review
+# at 7cee7e0. The selector cannot accept later edits.
+# This is a new unmeasured scope, not an extension of prior billing evidence.
+MEMBERSHIP_STATE_BLOBS = {
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": ("bed1b157f9c2de380aebcf43e85e4e46a4b3fa18", "8f72072aa64ccc7cb5c32c4c891cb6b59e1723be"),
+    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": ("7cdcffb550b7c1b10cd4dd1d257bdc64bde3d0cc", "2407e891849a6d696e4c2745cdf4dba851a33c16"),
+    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift": ("cde97dd160aacc3ce6179119b7c84d96d6ad6868", "d9954f019b72353f0f5a21b10cc12d8c02df6c7b"),
+    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": ("0b72ccb60649f9bc7842a9b28161d3036865ca68", "57f857d6a62ea499207552d2c46f89783acf8530"),
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ("7df2ccef0a9674522afab2e1b10bdd0aa3d5e91f", "a676ace0e4112b92bab1c68a1c8257638e80d88c"),
+    "NekoWidget/ci/test-plus-purchase-foundation.py": ("acd13c6510a1ef952e1285b2abc6a852b54f94e4", "fdb584a45609edcf2355228fa8bab1b2f8d791c3"),
+}
+MEMBERSHIP_STATE_PATHS = frozenset(MEMBERSHIP_STATE_BLOBS)
+MEMBERSHIP_STATE_COMPANIONS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-widget-ci-scope.py",
+))
+MEMBERSHIP_STATE_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testMembershipOfferPreviewReturnsToPurpose",
+    "testMembershipOfferPreviewWaitingAndRestore",
+    "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
+    "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
+)) + ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
+      "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",)
+
+
 # These private app stores are not Widget/cache/selection inputs. Storage,
 # migration, privacy, Photos, runtime and BOTH app UI shards remain required;
 # only the three unrelated Widget gallery lanes are omitted. Do not generalize
@@ -1558,7 +1584,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = (MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2504,6 +2530,8 @@ def accepts_paths(scope: str, paths) -> bool:
         return sources == EVACUATION_PATHS
     if scope == CARE_HANDOFF_SCOPE:
         return sources == CARE_HANDOFF_PATHS
+    if scope == REVIEWED_MEMBERSHIP_STATE_SCOPE:
+        return sources in (MEMBERSHIP_STATE_PATHS, MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS)
     if scope == TOOLS_HUB_SCOPE:
         return sources in (TOOLS_HUB_PATHS, TOOLS_HUB_PATHS | TOOLS_HUB_COMPANIONS)
     if scope == WINDOW_HUB_SCOPE:
@@ -2669,6 +2697,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == REVIEWED_MEMBERSHIP_STATE_SCOPE:
+        return MEMBERSHIP_STATE_TESTS
     if scope == BILLING_LOCAL_PREPARATION_SCOPE:
         return BILLING_LOCAL_PREPARATION_TESTS
     if scope == PRESERVATION_USAGE_SCOPE:
