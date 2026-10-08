@@ -332,7 +332,7 @@ it('rejects a frame over 29MiB without sending that record or a complete frame',
   await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
 });
 
-it.each(['"}\n{"type":"complete"}', '写真'])(
+it.each(['"}\n{"type":"complete"}', '写真', 'AAAA\n', 'AAAA\r', 'AAAA\r\n'])(
   'refuses non-base64 photo content before writing unescaped NDJSON: %s', async photoBase64 => {
     const f = await fixture(); const original = f.archive.read.bind(f.archive);
     vi.spyOn(f.archive, 'read').mockImplementation(async (token, id) => ({ ...await original(token, id), photoBase64 }));

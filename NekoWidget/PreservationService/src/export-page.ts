@@ -142,7 +142,7 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
       if (size > MAX_FRAME_BYTES || wireBytes + size > MAX_WIRE_BYTES) throw unavailable();
       // ArchiveStore.read produces base64 internally. Verify that assumption
       // before writing its content without JSON escaping.
-      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(photoBase64)) throw unavailable();
+      if (!/^[A-Za-z0-9+/]*={0,2}(?![\s\S])/.test(photoBase64)) throw unavailable();
       const bytes = new Uint8Array(size); bytes.set(head);
       const encoded = utf8.encodeInto(photoBase64, bytes.subarray(head.length, size - 3));
       if (encoded.read !== photoBase64.length || encoded.written !== photoBase64.length) throw unavailable();
