@@ -135,6 +135,50 @@ async function enableRecoveryWritePolicy() {
     WHERE singleton=1`).run();
 }
 
+it('preserves an owned ciphertext view through R2 verification and recovery without a second upload buffer', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  let sealedPhoto: Uint8Array | undefined;
+  let backing: Uint8Array | undefined;
+  let original: Uint8Array | undefined;
+  const keys: KeyCustody = { ...f.options.keys, async seal(value, context) {
+    const sealed = await f.options.keys.seal(value, context);
+    if (!context.recordId?.endsWith('/photo')) return sealed;
+    backing = new Uint8Array(sealed.length + 24).fill(0xa7);
+    backing.set(sealed, 11);
+    sealedPhoto = backing.subarray(11, 11 + sealed.length);
+    original = backing.slice();
+    return sealedPhoto;
+  } };
+  let writes = 0;
+  const bucket = new Proxy(binding.ARCHIVE, { get(target, property) {
+    if (property === 'put') return async (...args: Parameters<R2Bucket['put']>) => {
+      writes++;
+      // This guards the memory requirement as well as the view's privacy boundary.
+      expect(args[1]).toBe(sealedPhoto);
+      const stored = await target.put(...args);
+      expect(backing).toEqual(original);
+      expect(sealedPhoto!.byteLength).toBeGreaterThan(0);
+      return stored;
+    };
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const remote = syntheticRecovery(keys);
+  const archive = new ArchiveStore({ ...f.options, keys, bucket, recovery: remote.recovery });
+  expect(await archive.put(f.session.token, id, f.request())).toEqual({ recordId: id, revision: 1 });
+  expect(writes).toBe(1);
+  const row = await binding.DB.prepare('SELECT photo_key FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first<{ photo_key: string }>();
+  const stored = await binding.ARCHIVE.get(row!.photo_key);
+  expect(stored!.size).toBe(sealedPhoto!.byteLength);
+  expect(new Uint8Array(await stored!.arrayBuffer())).toEqual(sealedPhoto);
+  const copiedPhoto = remote.references.find(item => item.key.includes('/photo/'))!;
+  expect(remote.objects.get(`${copiedPhoto.key}:${copiedPhoto.versionId}`)).toEqual(sealedPhoto);
+  expect(backing).toEqual(original);
+  const restored = await archive.read(f.session.token, id);
+  expect(restored.document).toEqual(document);
+  expect(restored.photoBase64).toBe(encodePhoto(photo));
+});
+
 it('ties each acknowledged D1 revision to an exact recovery version and fails closed on S3 outage', async () => {
   const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
   const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
