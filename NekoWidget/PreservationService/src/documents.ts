@@ -56,10 +56,21 @@ export function decodePhoto(value: unknown): Uint8Array | null {
   if (value === null) return null;
   if (typeof value !== 'string' || value.length < 4 || value.length > Math.ceil(MAX_PHOTO_BYTES / 3) * 4
     || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return fail();
-  let binary: string;
-  try { binary = atob(value); } catch { return fail(); }
-  if (binary.length > MAX_PHOTO_BYTES || btoa(binary) !== value) return fail();
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const length = value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
+  if (length > MAX_PHOTO_BYTES) return fail();
+  const result = new Uint8Array(length);
+  let offset = 0;
+  // Uint8Array.from(string, mapper) first materializes an iterable-sized list.
+  // Decode aligned base64 blocks into the final bytes, keeping canonical checks.
+  for (let at = 0; at < value.length; at += 8192) {
+    const chunk = value.slice(at, at + 8192);
+    let binary: string;
+    try { binary = atob(chunk); } catch { return fail(); }
+    if (btoa(binary) !== chunk) return fail();
+    for (let index = 0; index < binary.length; index++) result[offset++] = binary.charCodeAt(index);
+  }
+  if (offset !== length) return fail();
+  return result;
 }
 export function encodePhoto(bytes: Uint8Array | null): string | null {
   if (bytes === null) return null;
