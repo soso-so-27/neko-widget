@@ -433,6 +433,68 @@ class PreservationExportScopeTests(unittest.TestCase):
             self.assertEqual(planner.runtime_scope(sorted(scope.PRESERVATION_EXPORT_PATHS), {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
 
 
+class PreservationExportCorrectionInputTests(unittest.TestCase):
+    def test_only_frozen_test_blob_and_all_approved_controls_can_change(self):
+        source, head = planner.PRESERVATION_EXPORT_CORRECTION_SOURCE, "a" * 40
+        before, after = planner.PRESERVATION_EXPORT_CORRECTION_BLOBS
+        path = planner.MEMORY_TEST_PATH
+        row = f":100644 100644 {before} {after} M\0{path}\0"
+        def verify(raw=row, *, unapproved=None, missing_source=False, registered=True):
+            def git(*args):
+                if args[0] == "diff": return raw
+                if args[:2] == ("merge-base", "--is-ancestor") and missing_source:
+                    raise subprocess.CalledProcessError(1, "git")
+                if args[0] == "merge-base": return "b" * 40
+                if args[0] == "show":
+                    return f'PRESERVATION_EXPORT_CORRECTION_SOURCE = "{source}"' if registered else "old planner"
+                if args[0] == "rev-parse":
+                    return "d" * 40 if args[1] == head + ":" + str(unapproved) else "c" * 40
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git):
+                return planner.preservation_export_correction_inputs(source, head)
+        self.assertTrue(verify())
+        for control in planner.TEST_CORRECTION_CONTROL_PATHS:
+            extra = f":100644 100644 {'e' * 40} {'c' * 40} M\0{control}\0"
+            self.assertTrue(verify(row + extra), control)
+            self.assertFalse(verify(row + extra, unapproved=control), control)
+            self.assertFalse(verify(unapproved=control), control)
+        for invalid in ("", row + row, row.replace(before, "c" * 40), row.replace(after, "d" * 40),
+                        row.replace("100644", "100755"), row.replace(" M\0", " A\0")):
+            self.assertFalse(verify(invalid))
+        for unknown in ("NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift",
+                        ".github/workflows/ios-build.yml", "NekoWidget/ci/ios_ci_scope.py",
+                        "NekoWidget/PreservationService/src/index.ts", "handoffs/extra.md"):
+            self.assertFalse(verify(row + f":100644 100644 {'e' * 40} {'c' * 40} M\0{unknown}\0"))
+        self.assertFalse(verify(missing_source=True))
+        self.assertFalse(verify(registered=False))
+        self.assertFalse(planner.preservation_export_correction_inputs(source, source))
+        self.assertFalse(planner.preservation_export_correction_inputs("c" * 40, head))
+
+    def test_corrected_selector_pins_all_original_products_and_new_test_blob(self):
+        base, head = "b" * 40, "a" * 40
+        products = dict(planner.PRESERVATION_EXPORT_BLOBS)
+        before = products[planner.MEMORY_TEST_PATH][0]
+        products[planner.MEMORY_TEST_PATH] = (before, planner.PRESERVATION_EXPORT_CORRECTION_BLOBS[1])
+        blobs = products | planner.PRESERVATION_EXPORT_DOC_BLOBS
+        raw = "".join(f":{'000000' if old == '0' * 40 else '100644'} 100644 {old} {new} {'A' if old == '0' * 40 else 'M'}\0{path}\0"
+                      for path, (old, new) in blobs.items())
+        def git(*args):
+            if args[0] == "diff": return raw
+            if args[0] == "rev-parse": return planner.PRESERVATION_EXPORT_WORKFLOWS[args[1].split(":", 1)[1]]
+            if args[0] == "show": return "new test contents"
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git), \
+                patch.object(planner, "preservation_export_correction_inputs", return_value=True), \
+                patch.object(planner, "memory_tests_available", return_value=True), \
+                patch.object(planner, "comparison_base", return_value=base):
+            self.assertTrue(planner.preservation_export_only(list(blobs), base, head))
+            self.assertEqual(planner.runtime_scope(list(blobs), {}, {"GITHUB_SHA": head}), planner.PRESERVATION_EXPORT_SCOPE)
+            self.assertEqual(planner.required_jobs(list(blobs), planner.PRESERVATION_EXPORT_SCOPE),
+                             planner.required_jobs_from_scope(planner.PRESERVATION_EXPORT_SCOPE))
+            with patch.object(planner, "preservation_export_correction_inputs", return_value=False):
+                self.assertFalse(planner.preservation_export_only(list(blobs), base, head))
+
+
 class PreservationSharingPlanTests(unittest.TestCase):
     def test_backend_plan_requires_actual_same_repo_workflow_and_never_uses_native_reuse(self):
         env = {"GITHUB_WORKFLOW": "Sharing service check", "GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "soso-so-27/neko-widget",

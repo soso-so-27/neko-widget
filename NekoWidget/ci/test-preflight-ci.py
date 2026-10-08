@@ -885,6 +885,31 @@ class PreflightTests(unittest.TestCase):
         observed = {**plan, "cost": {"status": "observed", "with_upload_minutes": [20, 20]}}
         self.assertFalse(preflight.apply_task_gate(observed, [run], now, measure_baseline=True)["ready"])
 
+    def test_fixed_export_correction_preserves_later_failure_active_and_cost_gates(self):
+        now = dt.datetime(2026, 10, 8, 12, tzinfo=dt.timezone.utc)
+        plan = {"ready": True, "head": "a" * 40, "target_minutes": 60,
+                "scope": planner.PRESERVATION_EXPORT_SCOPE,
+                "cost": {"status": "observed", "with_upload_minutes": [23, 23]}}
+        run = {"id": planner.PRESERVATION_EXPORT_CORRECTION_RUN,
+               "head_sha": planner.PRESERVATION_EXPORT_CORRECTION_SOURCE,
+               "path": preflight.IOS_WORKFLOW, "event": "push", "head_branch": planner.PRESERVATION_EXPORT_CORRECTION_BRANCH,
+               "created_at": "2026-10-08T11:50:00Z", "status": "completed", "conclusion": "failure",
+               "failed_tests": list(planner.PRESERVATION_EXPORT_CORRECTION_CASES)}
+        evidence = {"run_id": run["id"], "sha": run["head_sha"]}
+        def verify(runs, selected=plan, correction=evidence):
+            return preflight.apply_task_gate(dict(selected), runs, now, correction_evidence=correction)
+        result = verify([run])
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["failed_runs"], [run["id"]])
+        self.assertEqual(result["task"]["minutes_since_first_ci"], 10)
+        self.assertEqual(result["task"]["projected_total_minutes"], 33)
+        self.assertFalse(verify([run], correction=None)["ready"])
+        self.assertFalse(verify([run], correction=evidence | {"sha": "b" * 40})["ready"])
+        self.assertFalse(verify([run | {"failed_tests": run["failed_tests"] + ["SoloMemoriesUITests/testUnknown"]}])["ready"])
+        self.assertFalse(verify([run, run | {"id": 9}])["ready"])
+        self.assertFalse(verify([run, run | {"id": 9, "status": "in_progress", "conclusion": None}])["ready"])
+        self.assertFalse(verify([run], selected=plan | {"target_minutes": 30})["ready"])
+
     def test_skipped_same_repo_pr_does_not_consume_first_baseline_attempt(self):
         plan = {"ready": False, "head": "a" * 40, "target_minutes": 30,
                 "cost": {"status": "unmeasured"}}
