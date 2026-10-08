@@ -24,6 +24,103 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class PreservationUploadMemoryScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644",
+                       before, after, "A" if before == "0" * 40 else "M"]
+                for path, (before, after) in planner.PRESERVATION_UPLOAD_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, ancestor=True, workflow=None, event="push"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor:
+                    raise subprocess.CalledProcessError(1, args)
+                return self.base
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(fields) + "\0" + path + "\0"
+                                                         for path, fields in rows.items())
+            if args[0] == "rev-parse":
+                if args[1] == "HEAD": return self.head
+                if args[1].endswith(":" + planner.PRESERVATION_WORKFLOW):
+                    return (workflow or {}).get(args[1].split(":", 1)[0], planner.PRESERVATION_UPLOAD_WORKFLOW_BLOB)
+                return "0" * 40  # Never impersonate v26's frozen service tree.
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git):
+            return planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": event,
+                                                      "GITHUB_REF": "refs/heads/codex/upload-memory"})
+
+    def test_exact_m_and_a_pair_selects_existing_node_job_without_native_release_evidence(self):
+        paths = list(self.rows())
+        self.assertEqual(self.select(), planner.PRESERVATION_UPLOAD_SCOPE)
+        self.assertEqual(planner.required_jobs(paths, planner.PRESERVATION_UPLOAD_SCOPE), (planner.PRESERVATION_JOB,))
+        self.assertNotIn(planner.PRESERVATION_UPLOAD_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_UPLOAD_SCOPE)
+        self.assertFalse(planner.preservation_upload_paths_only(None))
+        self.assertFalse(planner.preservation_upload_paths_only([]))
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v26")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "a6299352e82577e33aa0faf3e20c867729505c6d")
+
+    def test_partial_unknown_mixed_modes_blobs_and_changed_workflow_fail_closed(self):
+        original = self.rows()
+        for path, fields in original.items():
+            self.assertEqual(self.select({key: row for key, row in original.items() if key != path}), scope.FULL_SCOPE)
+            for index, value in ((0, ":100755"), (1, "120000"), (2, "c" * 40), (3, "d" * 40), (4, "D"), (4, "R100")):
+                changed = copy.deepcopy(original); changed[path][index] = value
+                self.assertEqual(self.select(changed), scope.FULL_SCOPE, (path, index, value))
+            changed = copy.deepcopy(original)
+            changed[path][0], changed[path][4] = (":100644", "M") if fields[4] == "A" else (":000000", "A")
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE)
+        for unknown in ("NekoWidget/PreservationService/src/index.ts", "NekoWidget/PreservationService/test/other.test.ts",
+                        "NekoWidget/PreservationService/package.json", "NekoWidget/SharingService/src/index.ts",
+                        "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift", "handoffs/upload.md",
+                        planner.PRESERVATION_WORKFLOW, ".github/workflows/ios-build.yml",
+                        "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/preflight-ci.py",
+                        "NekoWidget/ci/test-plan-ios-ci.py", "NekoWidget/ci/test-preflight-ci.py"):
+            changed = original | {unknown: [":100644", "100644", "c" * 40, "d" * 40, "M"]}
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE, unknown)
+            self.assertEqual(planner.required_jobs(list(changed), planner.PRESERVATION_UPLOAD_SCOPE), planner.FULL)
+        raw = "".join(" ".join(row) + "\0" + path + "\0" for path, row in original.items())
+        for invalid in ("", raw + raw, raw.rsplit("\0", 2)[0]):
+            self.assertEqual(self.select(raw=invalid), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original) + [next(iter(original))]), scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(self.select(event="workflow_dispatch"), scope.FULL_SCOPE)
+        for revision in (self.base, self.head):
+            self.assertEqual(self.select(workflow={revision: "e" * 40}), scope.FULL_SCOPE)
+        with patch.object(planner, "PRESERVATION_UPLOAD_BLOBS", {path: ("0" * 40, "0" * 40) for path in original}):
+            self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_candidate_and_main_plan_only_schedule_the_separate_same_sha_node_workflow(self):
+        for ref in ("refs/heads/codex/upload-memory", "refs/heads/main"):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / "event.json").write_text("{}")
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": ref, "GITHUB_SHA": self.head,
+                       "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7",
+                       "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                       "GITHUB_STEP_SUMMARY": str(root / "summary")}
+                output = io.StringIO()
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_UPLOAD_SCOPE), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend is not native evidence")):
+                    planner.main()
+                flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual([flags[name] for name in ("build", "smoke", "sharing", "app_ui")], ["false"] * 4)
+                self.assertTrue(all(flags[name] == "[]" for name in ("lanes", "matrix_lanes", "app_ui_lanes")))
+                record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=", 1)[1].splitlines()[0])
+                self.assertEqual(record["head_sha"], self.head)
+                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB])
+                self.assertIsNone(record["evidence_run_id"])
+                self.assertIsNone(record["evidence_sha"])
+                summary = (root / "summary").read_text()
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("does not certify that job's success", summary)
+
+
 class ImmediateBillingAuthorityScopeTests(unittest.TestCase):
     def candidate(self):
         return {path: ("reviewed before " + path, "reviewed after " + path)
