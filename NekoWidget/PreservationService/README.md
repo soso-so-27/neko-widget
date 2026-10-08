@@ -118,3 +118,92 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 ## 購入・期限運用のローカル事前確認
 
 `node scripts/operating-readiness.mjs <aggregate-evidence.json>` は24時間以内の集計証拠を検査するだけで、remote変更・通知・削除は行いません。[入力と検証状況](../../handoffs/2026-10-04-billing-retention-readiness.md)を参照してください。
+
+
+公開容量の販売前確認は `node scripts/operating-readiness.mjs <aggregate-evidence.json> --public-offer <offer.json>`。
+既存 pilot の boolean 容量一致だけでは販売案を ready にしません。offer は version=1、ownerQuotaBytes、
+maximumRecordsPerOwner、maximumOwners と、承認済みを示す approval.status / evidenceReference を持ちます。
+その値を費用レビュー済み plan と配備読取 configuration の具体値に照合します。1GiB/200件の現 plan を
+5GB/1000件の販売案に流用できません。容量の単位と、quota が暗号化データ・metadata を数えることも販売条件として確定が必要です。
+
+公開 evidence は既存 usage/cost/sandbox に加え、configuration（confirmedAt、mode=general、ownerQuotaBytes、
+maximumRecordsPerOwner、maximumOwners、globalActiveBytesLimit、requestLimiterScope=owner、requestLimiterConsistency=global-atomic、requestLimiterWindow=fixed-utc-minute、perParticipantRequestsPerMinute）、usage.allocatedQuotaBytes / reservedQuotaBytes、
+intake（enabled、reviewedAt、validUntil、maximumOwners、dailyNewIntakeAttempts、monthlyNewIntakeAttempts、
+monthlyNewIntakeBytes、dailyMutationAttempts、monthlyMutationAttempts、forecastMonthlyYen、pauseForecastYen）を含めます。
+D1 の受付値と cost の予測額が一致し、24時間以内の有効 review で、1800円警告/2200円新規受付停止/3000円目標を維持します。
+全販売枠の quota を global capacity が収容できない場合も停止します。実配備・費用計測・予約容量の読取がない値を作って埋めません。
+offer.initialFill は basis=`calendar-quota-allocations`、monthlyAllocations、dailyAllocations、
+newAttemptReserve（失敗する新規試行の余裕）、editAttemptReserve を承認対象に含めます。
+全員分の初回件数・暗号化容量に新規試行の見積り overhead と失敗・編集余裕を加え、日次/月次の受付値を照合します。
+割当数は UTC 暦の予算単位で、経過日数での完了や個人に予約済みの残枠を保証しません。
+公開 evidence.awsAccount は confirmedAt、accountId、planType=`PAID`、planStatus=`ACTIVE`、
+planExpirationAt=null、approvalEvidenceReference を持ち、configuration.recoveryAwsAccountId と一致させます。
+無料クレジット残額だけでは12か月保管の継続証拠にしません。evidence.retentionFunding は reviewedAt、calendarMonths=12、
+minimumDaysAfterDeliveredFinalNotice>=30、includesRetainedOwnersAndHistoricalVersions=true、
+coversUnknownStatusAndUndeliveredNoticeExtension=true、evidenceReference が必要です。
+有料契約の観測と、保管中/過去世代/状態不明/通知未送達で延びる期間の費用を支える計画は別の証拠です。
+`bulkExport` は confirmedAt、recordCount（販売する maximumRecordsPerOwner と同数）、requestsPerMinute / window
+（配備と一致）、completed / archiveConsistent / cancellationStopsRequests / sessionChangeStopsRequests=true、
+appBuild、evidenceReference を必要とします。sourceQuotaBytes は販売する ownerQuotaBytes と一致させ、
+サーバー会計上の写真・metadataの実測量を記録します。ZIPの圧縮後サイズや通信量、小さい1000件で代用しません。
+認証の証拠には次の2経路があります。共通の容量・件数・通信制限・完了/整合/取消・公開承認条件はどちらも必須です。
+
+- `authorizationMode` 省略または `single-session` は従来経路です。startedAt / completedAt /
+  originalSessionExpiresAt により元の15分以内の期限前完了を照合し、authorizationRenewed=false、
+  expiredSessionStopsAndCleans=true を要求します。sessionSegments/finalAuthorizationCheckを混ぜて再開を暗黙に扱うことはできません。
+- `explicit-reauthentication` は本人操作によるApple再認証の証拠を要求する追加経路です。
+  authorizationRenewed=true、silentAuthorizationRenewed=false、expiredSessionStopsAndCleans /
+  cancellationStopsAndCleans / reauthenticationFailureStopsAndCleans=true、および inventoryGeneration、totalPages、
+  sessionSegments、finalAuthorizationCheck が必要です。未知mode、欠落、不正型、時刻矛盾、セッション切替漏れは拒否します。
+
+追加経路の `sessionSegments` は2個以上、最大totalPages+1個です。各要素は sessionEvidenceId、issuedAt、expiresAt、
+startedAt、completedAt、completedPagesBefore、completedPagesAfter、inventoryGeneration、reauthentication のみを持ちます。
+識別子は8〜64文字の英数字/`_`/`-`による証拠専用のopaque値（先頭は英数字）で、全要素で異なるものを用い、
+生token・owner ID・Apple subjectは収録しません。各sessionは発行から期限まで正の15分以内、読取開始は発行後、
+完了は開始より後かつ期限より厳密に前です。最初の開始/期限はbulkのstartedAt/originalSessionExpiresAtと一致させます。
+全segmentのgenerationは一致し、累計完了ページは0から欠落・重複なくtotalPagesまでつなぎます。
+最後の共有前確認だけを新sessionで行う場合に限り、最終segmentの読取ページ増分0を認めます。
+
+先頭のreauthenticationはnullです。後続では previousSessionEvidenceId、requestedAt、confirmedAt、verifiedAt と、
+userInitiated / appleIdentityConfirmed / sameOwner / newToken / newEpoch / inventoryUnchanged / pageBoundary=true が必要です。
+時刻は「前segment完了 ≤ 本人の再認証要求 ≤ 新session発行 ≤ Apple認証を含む新session確認 ≤ 同一本人・inventory再検査
+≤ 次segment開始」の順とします。newEpochはnativeの新checkpoint確認を指し、server owner epochの変更要求ではありません。
+途中pageの失効はその要求を停止して未完了一時データを片付け、取消・再認証失敗も停止/cleanupした証拠が必要です。
+再認証待ちの間に完了済みpageを保持する場合も保護された一時領域に限定し、共有は行いません。
+
+`finalAuthorizationCheck` は sessionEvidenceId、verifiedAt、sameOwner / sessionCurrent / inventoryUnchanged /
+beforeSharing=true のみを持ち、最後のsessionと一致させます。検査は最後の読取完了以後かつbulk.completedAt以前、
+共有準備完了を表すbulk.completedAtも最後のsession期限より前でなければなりません。全体の開始/完了は新鮮な観測期間内で、
+startedAt < completedAt ≤ confirmedAtを守ります。session/再認証/最終検査の未知フィールドも拒否します。
+Node試験の再開evidenceはschema境界を確認する合成例であり、販売容量全体を実機で完了した証拠ではありません。
+
+少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
+配布済みアプリの逐次GETと15分sessionでは、30回/固定UTC分で1000件ZIPを完了できません。再試行だけでは解決しないため、
+取り出し方式と通信制限の両立を検証するまで、この一般提供用制限を配備・有効化しません。pilotには適用しません。
+未配備候補の `GET /v1/export-page` は、同じ本人・session・generationを固定し、50件/64MiB quotaごとに
+NDJSONを返します（1frame 29MiB、1page 96MiB）。migration 0033のowner leaseは元sessionの期限で終了し、延長しません。
+アプリ候補は保護・backup除外した一時ファイルから1件ずつZIPへ移し、終端frameと最後のgeneration確認が揃うまで共有しません。
+ownerの429にはD1時計基準の `Retry-After: 1..60` を返し、書き出しのGETだけが元session内で1回待機・再試行します。
+保存/削除/通常閲覧の再試行は追加しません。取消、本人変更、削除、変更競合、不完全な応答は共有を止め、一時データを片付けます。
+ローカルworkerdでは1000件の小さい記録が20page、最大20MiB写真と日本語メモも完了しています。
+Appleの診断CI（候補 a621260）でも42項目と保管画面1操作が成功し、1000件ZIP、実URLSessionの保護ファイル書込・取消を確認しました。
+診断は配布用CIの代替ではなく、本番128MB isolateのピーク測定や販売容量全体の実機成功でもありません。
+明示Apple再認証でページ境界から再開する追加候補と上記evidence判定は、販売容量全体・低速回線での実証が未完了です。
+各sessionの15分上限と120秒/pageの通信期限は延長せず、`bulkExport` の公開条件は未達のままです。
+写真の通常取得・export候補は復号済みbytesから最大1MiBずつbase64/JSONを送ります。日本語metadataと写真全体のbase64を
+一つの文字列へ結合しません。wire形式・写真20MiB・frame29MiB・page96MiBの上限は維持し、各chunkの前に本人/sessionと
+更新・削除状態を照合します。exportでは同じgenerationとowner leaseも必要で、不完全なrecord/pageは利用できません。
+isolate内の大きいpayload処理は同時1件、FIFO待機最大16件・30秒です。exportは1写真ごとに枠を返し、通常のlist/detail、
+PUTの本文読取、写真を読む可能性のあるrecord削除・修復も同じ枠を使います。応答の枠は本文消費・取消まで保持し、
+読込中の取消では読込完了まで解放しません。写真応答は120秒で中断します。認証解除と本人削除はこの枠に入りません。
+2026-10-08のローカルworkerd計測では、暗号化20MiB写真を3人同時にexportした最大観測値は約87MiB、
+detail混在・低速読取では約67MiBでした（Inspectorのused/embedder/backing合計）。初期候補の約243MiBから改善しましたが、
+samplingはピークを取り逃す可能性があり、本番128MiBへの適合、PUT単独の最大メモリ、実機5GB完了の証明ではありません。
+元の本文検証を維持したexport46件と、途中取消・本人失効・更新競合・認証解除の優先処理を確認しています。
+一般提供用の制限候補は migration 0032 の owner 行を D1 の時刻で原子的に更新し、同じ本人の複数sessionを合算します。
+固定UTC分なので境界をまたぐ60秒間では最大60回になり、rolling 60秒の制限ではありません。失敗した下流処理も枠を消費します。
+認証準備と削除receipt照会は既存IP制限を維持し、削除後の照会に有効なログインを要求しません。
+quota更新は復旧generationを進めず、本人削除時にowner行と一緒に消えます。隔離復元はdisabled/sessionなしのままです。
+D1 Time Travelでcounterが巻き戻る可能性があるため、復元中は一般提供HTTPを停止し、少なくとも次のUTC分まで待ってから、
+別途承認・検証された復旧手順で受付を再開します。今回その操作や実環境の復旧確認は行っていません。
+この確認は承認・配備・受付有効化・期限延長・通知・消去を実行せず、remote permission を発行しません。

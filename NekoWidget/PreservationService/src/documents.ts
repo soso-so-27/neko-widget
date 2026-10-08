@@ -63,9 +63,13 @@ export function decodePhoto(value: unknown): Uint8Array | null {
 }
 export function encodePhoto(bytes: Uint8Array | null): string | null {
   if (bytes === null) return null;
-  let binary = '';
-  for (let at = 0; at < bytes.length; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
-  return btoa(binary);
+  // Multiples of three preserve base64 boundaries without a full-photo binary
+  // string in addition to the input and final encoded string.
+  const parts: string[] = [];
+  for (let at = 0; at < bytes.length; at += 8190) {
+    parts.push(btoa(String.fromCharCode(...bytes.subarray(at, at + 8190))));
+  }
+  return parts.join('');
 }
 export const recordId = (value: string): string => {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new ServiceError('INVALID_RECORD_ID');

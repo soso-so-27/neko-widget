@@ -2757,6 +2757,34 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["この記録を書き出す"].exists)
         capture("preservation-membership-expired-record-detail")
         app.terminate()
+
+        // Exercise the shipping pause UI before an expiring export session.
+        // Apple authentication itself remains a person-owned device operation.
+        app.launchArguments += ["--preservation-export-reauthentication-ui-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["preservation-membership-connect"].waitForExistence(timeout: 15))
+        tap("preservation-export-all", towardBottom: true)
+        let reauthentication = app.staticTexts["preservation-export-reauthentication"]
+        XCTAssertTrue(reauthentication.waitForExistence(timeout: 8))
+        for _ in 0..<4 where !reauthentication.isHittable { app.swipeDown() }
+        XCTAssertTrue(reauthentication.isHittable)
+        let prepareReauthentication = app.buttons["preservation-export-prepare-reauthentication"]
+        XCTAssertTrue(prepareReauthentication.exists)
+        XCTAssertTrue(prepareReauthentication.isEnabled)
+        XCTAssertFalse(app.buttons["preservation-record-a1223334-5556-4788-9990-aabbccddeeff"].exists)
+        XCTAssertFalse(app.buttons["preservation-export-all"].exists)
+        capture("preservation-export-reauthentication")
+        tap("preservation-export-prepare-reauthentication")
+        XCTAssertTrue(app.buttons["preservation-export-signin"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["preservation-export-signin"].isEnabled)
+        capture("preservation-export-reauthentication-prepared")
+        tap("preservation-export-cancel-reauthentication", towardBottom: true)
+        let cancelled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: reauthentication)
+        XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 5), .completed)
+        XCTAssertFalse(app.staticTexts["record-export-error"].exists)
+        XCTAssertTrue(app.buttons["Appleログインを準備し直す"].waitForExistence(timeout: 5))
+        capture("preservation-export-reauthentication-cancelled")
+        app.terminate()
     }
 
     @MainActor
@@ -5526,9 +5554,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["family-record-export"].tap()
         let share = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
         XCTAssertTrue(share.waitForExistence(timeout: 30))
-        // The system share sheet's close button is not consistently exposed as
-        // a descendant on iOS 26. Export is established by the opened sheet;
-        // restart this isolated fixture to continue the collection checks.
+        // The remote close button can be outside the container's descendants.
+        // Complete real cancellation before restarting this fixture, so its
+        // prepared ZIP does not survive into the next export-cleanup test.
+        let shareClose = app.buttons["header.closeButton"].firstMatch
+        XCTAssertTrue(shareClose.waitForExistence(timeout: 5))
+        shareClose.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: share
+        )], timeout: 5), .completed)
+        XCTAssertTrue(menu.isHittable)
         app.terminate()
         app.launch()
         XCTAssertTrue(menu.waitForExistence(timeout: 15))

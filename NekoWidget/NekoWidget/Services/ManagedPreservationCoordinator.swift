@@ -4,12 +4,59 @@ import Combine
 
 /// The same export transaction is used by the screen and the runtime boundary check.
 enum ManagedPreservationExport {
-    private actor BulkGeneration {
-        private var value: (generation: Int, session: ManagedPreservationClient.SessionCheckpoint)?
-        func set(_ generation: Int, session: ManagedPreservationClient.SessionCheckpoint) {
-            value = (generation, session)
+    typealias Reauthenticate = @MainActor @Sendable (ManagedPreservationClient.SessionCheckpoint) async throws -> ManagedPreservationClient.SessionCheckpoint
+
+    /// One explicit export owns this state. A replacement is accepted only after
+    /// visible user authentication, same-owner validation and a fresh inventory fence.
+    private actor ExportSession {
+        let client: ManagedPreservationClient
+        let reauthenticate: Reauthenticate?
+        var checkpoint: ManagedPreservationClient.SessionCheckpoint
+        var generation: Int?
+        init(client: ManagedPreservationClient, checkpoint: ManagedPreservationClient.SessionCheckpoint,
+             reauthenticate: Reauthenticate?) {
+            self.client = client; self.checkpoint = checkpoint; self.reauthenticate = reauthenticate
         }
-        func get() -> (generation: Int, session: ManagedPreservationClient.SessionCheckpoint)? { value }
+        func bind(_ value: Int) { generation = value }
+        func requireCurrent() async throws { try await client.requireSessionCheckpoint(checkpoint) }
+        func atCompleteBoundary() async throws {
+            try Task.checkCancellation()
+            // Leave room for a 120-second page and one bounded 60-second wait.
+            if try await client.exportNeedsReauthentication(checkpoint, minimumLifetime: 210),
+               let reauthenticate {
+                let previous = checkpoint
+                let replacement = try await reauthenticate(previous)
+                try Task.checkCancellation()
+                try await client.requireExportReplacement(replacement, for: previous)
+                if let generation {
+                    let current = try await client.list(forExport: true)
+                    try await client.requireSessionCheckpoint(replacement)
+                    guard current.generation == generation else { throw ManagedPreservationError.conflict }
+                }
+                checkpoint = replacement
+            }
+            try await requireCurrent()
+        }
+        func finalCheck(validate: ManagedPreservationCoordinator.ExportValidation? = nil) async throws {
+            try await atCompleteBoundary()
+            guard let generation else { throw ManagedPreservationError.invalidResponse }
+            if let validate { try await validate() }
+            try await requireCurrent()
+            let current = try await client.list(forExport: true)
+            try await requireCurrent()
+            guard current.generation == generation else { throw ManagedPreservationError.conflict }
+            if let validate { try await validate() }
+            try await requireCurrent()
+        }
+    }
+
+    private actor CompletedExport {
+        var session: ExportSession?
+        func set(_ value: ExportSession) { session = value }
+        func verify(validate: @escaping ManagedPreservationCoordinator.ExportValidation) async throws {
+            if let session { try await session.finalCheck(validate: validate) }
+            else { try await validate() }
+        }
     }
 
     @MainActor static func prepare(_ snapshot: ManagedPreservationExportSnapshot,
@@ -31,27 +78,113 @@ enum ManagedPreservationExport {
     @MainActor static func prepareAll(client: ManagedPreservationClient,
                                       using exporter: RecordExportController,
                                       validate: @escaping ManagedPreservationCoordinator.ExportValidation,
+                                      reauthenticate: Reauthenticate? = nil,
                                       progress: @escaping @Sendable (Int, Int) async -> Void) {
-        let completed = BulkGeneration()
+        let completed = CompletedExport()
         exporter.prepare(build: {
-            let (payload, generation, session) = try await archiveAll(client: client, progress: progress)
-            await completed.set(generation, session: session)
+            let (payload, session) = try await archiveAll(client: client, reauthenticate: reauthenticate, progress: progress)
+            await completed.set(session)
             return payload
         }, verify: {
-            try await validate()
-            if let (generation, session) = await completed.get() {
-                try await client.requireSessionCheckpoint(session)
-                let current = try await client.list()
-                try await client.requireSessionCheckpoint(session)
-                guard current.generation == generation else { throw ManagedPreservationError.conflict }
-                try await validate()
-                try await client.requireSessionCheckpoint(session)
-            }
+            // The first invocation precedes construction. Later verification may
+            // pause for explicit authentication before checking the view's owner.
+            try await completed.verify(validate: validate)
         })
     }
 
     private static func archiveAll(client: ManagedPreservationClient,
+                                   reauthenticate: Reauthenticate?,
                                    progress: @escaping @Sendable (Int, Int) async -> Void)
+        async throws -> (PhotoMemoryNoteExportPayload, ExportSession) {
+        let session = ExportSession(client: client, checkpoint: try await client.captureSessionCheckpoint(),
+                                    reauthenticate: reauthenticate)
+        try await session.atCompleteBoundary()
+        let first: ManagedPreservationExportPageFile
+        do { first = try await client.exportPage() }
+        catch ManagedPreservationError.exportUnsupported {
+            // Compatibility with deployed pilot servers predating export pages.
+            // Never use this fallback for throttling, malformed pages or partial data.
+            try await session.requireCurrent()
+            let (payload, generation, legacyCheckpoint) = try await archiveAllLegacy(client: client, progress: progress)
+            let legacySession = ExportSession(client: client, checkpoint: legacyCheckpoint, reauthenticate: nil)
+            await legacySession.bind(generation)
+            return (payload, legacySession)
+        }
+        await session.bind(first.generation)
+        let pages = ExportPages(client: client, session: session, first: first)
+        var payload: PhotoMemoryNoteExportPayload?
+        do {
+            try await session.requireCurrent()
+            let result = try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: first.totalRecords,
+                fetch: { index in try await pages.next(index) }, progress: progress)
+            payload = result
+            try await pages.finish()
+            try await session.requireCurrent()
+            try await session.finalCheck()
+            return (result, session)
+        } catch {
+            // Remove both incomplete page and archive, even if either removal fails.
+            var pending = (error as? PhotoMemoryNoteExportCleanupPending)?.payloads ?? []
+            do { try await pages.cleanup() }
+            catch let failure as PhotoMemoryNoteExportCleanupPending { pending += failure.payloads }
+            if let payload {
+                do { try payload.cleanup() }
+                catch { pending.append(payload) }
+            }
+            if let first = pending.first {
+                throw PhotoMemoryNoteExportCleanupPending(payload: first, additionalPayloads: Array(pending.dropFirst()))
+            }
+            throw error
+        }
+    }
+
+    private actor ExportPages {
+        let client: ManagedPreservationClient
+        let session: ExportSession
+        let generation: Int
+        let totalRecords: Int
+        var page: ManagedPreservationExportPageFile
+        var completed = 0
+        init(client: ManagedPreservationClient, session: ExportSession,
+             first: ManagedPreservationExportPageFile) {
+            self.client = client; self.session = session; self.page = first
+            self.generation = first.generation; self.totalRecords = first.totalRecords
+        }
+        func next(_ index: Int) async throws -> PhotoMemoryNoteBulkEntry {
+            guard index == completed, completed < totalRecords else { throw ManagedPreservationError.invalidResponse }
+            try await session.requireCurrent()
+            var data = try page.nextRecordData()
+            if data == nil {
+                guard let cursor = try page.nextCursor() else { throw ManagedPreservationError.invalidResponse }
+                try page.cleanup()
+                try await session.atCompleteBoundary()
+                page = try await client.exportPage(after: cursor, generation: generation)
+                guard page.generation == generation, page.totalRecords == totalRecords else {
+                    throw ManagedPreservationError.conflict
+                }
+                data = try page.nextRecordData()
+            }
+            guard let data else { throw ManagedPreservationError.invalidResponse }
+            let snapshot = try await client.decodeExportRecord(data)
+            try await session.requireCurrent()
+            let document = try snapshot.document.validated()
+            completed += 1
+            return PhotoMemoryNoteBulkEntry(recordID: snapshot.record.id, revision: snapshot.record.revision,
+                text: document.text, capturedAt: document.capturedAt, writtenAt: document.writtenAt,
+                updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
+        }
+        func finish() async throws {
+            try await session.requireCurrent()
+            guard completed == totalRecords, try page.nextRecordData() == nil, try page.nextCursor() == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            try page.cleanup()
+        }
+        func cleanup() throws { try page.cleanup() }
+    }
+
+    private static func archiveAllLegacy(client: ManagedPreservationClient,
+                                         progress: @escaping @Sendable (Int, Int) async -> Void)
         async throws -> (PhotoMemoryNoteExportPayload, Int, ManagedPreservationClient.SessionCheckpoint) {
         let session = try await client.captureSessionCheckpoint()
         var listing: [ManagedPreservationRecord] = []
@@ -167,6 +300,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var usageLoading = false
     @Published private(set) var usageMessage: String?
     @Published private(set) var exportProgress: (completed: Int, total: Int)?
+    @Published private(set) var exportAuthenticationNeeded = false
+    @Published private(set) var preparedExportSignIn: ManagedPreservationChallenge?
     @Published var consentToNewSave = false
     @Published var editedText = ""
 
@@ -188,6 +323,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
     private var volatileDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
     private var unsecuredMemoIDs: Set<UUID> = []
     private var copyStates: [String: CopyState] = [:]
+    private struct ExportRenewal {
+        let id: UUID
+        let ticket: UUID
+        let checkpoint: ManagedPreservationClient.SessionCheckpoint
+        let continuation: CheckedContinuation<ManagedPreservationClient.SessionCheckpoint, Error>
+    }
+    private var exportRenewal: ExportRenewal?
 
     private func setCopyState(_ state: CopyState, owner: String) {
         copyStates[owner] = state
@@ -567,6 +709,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard isSignedIn, !isBusy, canExport else { return }
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
+            self.usageTask?.cancel(); self.usageTask = nil; self.usageRequestID = UUID()
+            self.membershipTask?.cancel(); self.membershipTask = nil; self.membershipRequestID = UUID()
+            self.membershipLoading = false; self.usageLoading = false
             self.exportProgress = (0, 0)
             let validate: ExportValidation = {
                 try self.check(ticket)
@@ -575,7 +720,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             ManagedPreservationExport.prepareAll(client: self.client, using: exporter,
-                validate: validate, progress: { [weak self] completed, total in
+                validate: validate, reauthenticate: { [weak self] checkpoint in
+                    guard let self else { throw CancellationError() }
+                    return try await self.requestExportReauthentication(checkpoint, ticket: ticket)
+                }, progress: { [weak self] completed, total in
                     await MainActor.run {
                         guard let self, self.viewEpoch == ticket,
                               self.authenticatedOwnerID == owner else { return }
@@ -583,6 +731,93 @@ final class ManagedPreservationCoordinator: ObservableObject {
                     }
                 })
         }
+    }
+
+    private func requestExportReauthentication(_ checkpoint: ManagedPreservationClient.SessionCheckpoint,
+                                               ticket: UUID) async throws -> ManagedPreservationClient.SessionCheckpoint {
+        try check(ticket)
+        _ = try await client.exportNeedsReauthentication(checkpoint, minimumLifetime: 0)
+        try check(ticket)
+        guard exportRenewal == nil, authenticatedOwnerID == checkpoint.ownerID else {
+            throw ManagedPreservationError.staleSession
+        }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let progress = exportProgress
+                exportRenewal = ExportRenewal(id: id, ticket: ticket, checkpoint: checkpoint, continuation: continuation)
+                exportAuthenticationNeeded = true
+                clearAccountPresentation()
+                exportProgress = progress
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelExportReauthentication(id: id) }
+        }
+    }
+
+    /// A visible button is the only entry into a replacement Apple challenge.
+    func prepareExportSignIn() {
+        guard let renewal = exportRenewal, !isBusy else { return }
+        run { ticket in
+            do {
+                guard ticket == renewal.ticket, self.exportRenewal?.id == renewal.id else { throw CancellationError() }
+                let challenge = try await self.client.prepareExportSignIn(replacing: renewal.checkpoint)
+                try self.check(ticket)
+                guard self.exportRenewal?.id == renewal.id else { throw CancellationError() }
+                self.preparedExportSignIn = challenge
+            } catch {
+                self.finishExportReauthentication(id: renewal.id, result: .failure(error))
+                throw error
+            }
+        }
+    }
+
+    func completeExportSignIn(_ result: Result<ASAuthorization, Error>) {
+        guard let renewal = exportRenewal, preparedExportSignIn != nil, !isBusy else { return }
+        preparedExportSignIn = nil
+        run { ticket in
+            do {
+                guard ticket == renewal.ticket, self.exportRenewal?.id == renewal.id else { throw CancellationError() }
+                switch result {
+                case .success(let authorization):
+                    guard let apple = authorization.credential as? ASAuthorizationAppleIDCredential,
+                          let token = apple.identityToken, let code = apple.authorizationCode else {
+                        throw ManagedPreservationError.authenticationStepFailed(.credential)
+                    }
+                    try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code)
+                case .failure:
+                    await self.client.cancelSignIn()
+                    throw CancellationError()
+                }
+                let replacement = try await self.client.captureSessionCheckpoint()
+                try await self.client.requireExportReplacement(replacement, for: renewal.checkpoint)
+                try self.check(ticket)
+                guard self.exportRenewal?.id == renewal.id else { throw CancellationError() }
+                self.isSignedIn = true
+                try await self.loadFirstPage(ticket)
+                self.finishExportReauthentication(id: renewal.id, result: .success(replacement))
+            } catch {
+                self.finishExportReauthentication(id: renewal.id, result: .failure(error))
+                throw error
+            }
+        }
+    }
+
+    private func finishExportReauthentication(id: UUID,
+        result: Result<ManagedPreservationClient.SessionCheckpoint, Error>) {
+        guard let renewal = exportRenewal, renewal.id == id else { return }
+        exportRenewal = nil; exportAuthenticationNeeded = false; preparedExportSignIn = nil
+        renewal.continuation.resume(with: result)
+    }
+
+    func cancelExportReauthentication(id: UUID? = nil) {
+        guard let renewal = exportRenewal, id == nil || id == renewal.id else { return }
+        task?.cancel()
+        if let state = preparedExportSignIn?.state {
+            Task { await client.cancelSignIn(ifState: state) }
+        }
+        finishExportReauthentication(id: renewal.id, result: .failure(CancellationError()))
     }
 
     /// View disappearance cancels network work and drops this screen's sensitive copies.
@@ -840,6 +1075,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     private func cancelCurrentWork() {
+        cancelExportReauthentication()
         viewEpoch = UUID(); task?.cancel(); task = nil; usageTask?.cancel(); usageTask = nil
         usageRequestID = UUID(); isBusy = false
         membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false

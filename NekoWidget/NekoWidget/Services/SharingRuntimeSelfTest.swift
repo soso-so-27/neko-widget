@@ -15,6 +15,13 @@ final class PreservationFixtureKeys: @unchecked Sendable {
     func replace(_ value: BillingCredential?) { lock.lock(); defer { lock.unlock() }; self.value = value }
 }
 
+final class PreservationExportClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var offset: TimeInterval = 0
+    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; offset = seconds }
+    func now() -> Date { lock.lock(); defer { lock.unlock() }; return Date().addingTimeInterval(offset) }
+}
+
 enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
@@ -27,6 +34,25 @@ enum PreservationFixtureScenario: Sendable {
 }
 
 actor PreservationFixtureServer {
+    enum ExportMode: Sendable {
+        case single, thousand, truncated, changedGeneration, duplicate, gone, missing, unsupported
+        case throttledOnce, throttledAlways, invalidRetry, finalCheckThrottled
+    }
+    enum ExportRenewalOutcome { case sameOwner, otherOwner, changedGeneration, unchangedToken }
+    private var renewalOutcome: ExportRenewalOutcome = .sameOwner
+    private var renewedSession: ManagedPreservationSessionStore.Credential?
+    private var inventoryGeneration = 1
+    private var authIssues = 0, authExchanges = 0
+    func setRenewalOutcome(_ value: ExportRenewalOutcome) { renewalOutcome = value }
+    func authCounts() -> (issues: Int, exchanges: Int) { (authIssues, authExchanges) }
+    private var exportMode: ExportMode = .single
+    private var onFirstExportPage: (@Sendable () -> Void)?
+    private var exportRequests = 0
+    private var detailRequests = 0
+    func setExportMode(_ value: ExportMode, onFirstPage: (@Sendable () -> Void)? = nil) {
+        exportMode = value; exportRequests = 0; detailRequests = 0; onFirstExportPage = onFirstPage
+    }
+    func exportCounts() -> (pages: Int, details: Int) { (exportRequests, detailRequests) }
     static let recordID = UUID(uuidString: "a1223334-5556-4788-9990-aabbccddeeff")!
     let session: ManagedPreservationSessionStore.Credential
     let billing: BillingCredential
@@ -62,8 +88,10 @@ actor PreservationFixtureServer {
             throw ManagedPreservationError.invalidResponse
         }
         let deletionStatus = request.httpMethod == "GET" && url.path == "/v1/account-deletion/" + session.ownerId
-        let expectedToken = deletionStatus ? deletionToken : session.token
-        guard let expectedToken, request.value(forHTTPHeaderField: "Authorization") == "Bearer " + expectedToken else {
+        let authRequest = request.httpMethod == "POST" && ["/v1/auth/challenges", "/v1/auth/sessions"].contains(url.path)
+        let expectedToken = deletionStatus ? deletionToken : (renewedSession ?? session).token
+        guard authRequest ? request.value(forHTTPHeaderField: "Authorization") == nil
+            : expectedToken != nil && request.value(forHTTPHeaderField: "Authorization") == "Bearer " + expectedToken! else {
             throw ManagedPreservationError.invalidResponse
         }
         func reply(_ data: Data, code: Int = 200) throws -> (Data, URLResponse) {
@@ -75,6 +103,27 @@ actor PreservationFixtureServer {
             try reply(JSONSerialization.data(withJSONObject: body), code: code)
         }
         func fail(_ code: String, status: Int) throws -> (Data, URLResponse) { try json(["error": ["code": code]], code: status) }
+        func throttle(_ seconds: String = "1") throws -> (Data, URLResponse) {
+            (try JSONSerialization.data(withJSONObject: ["error": ["code": "RATE_LIMITED"]]),
+                HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json", "Retry-After": seconds])!)
+        }
+        if authRequest && url.path == "/v1/auth/challenges" {
+            authIssues += 1
+            return try json(["challengeId": "export-test-challenge", "challengeProof": "export-test-proof",
+                "nonce": "export-test-nonce", "expiresAt": ManagedPreservationWire.string(Date().addingTimeInterval(300))])
+        }
+        if authRequest && url.path == "/v1/auth/sessions" {
+            authExchanges += 1
+            let replacement = ManagedPreservationSessionStore.Credential(
+                token: renewalOutcome == .unchangedToken ? session.token
+                    : BillingProtocolCodec.base64URLEncode(Data((0..<32).map { _ in UInt8.random(in: 0...255) })),
+                ownerId: renewalOutcome == .otherOwner ? UUID().uuidString.lowercased() : session.ownerId,
+                expiresAt: Date().addingTimeInterval(900))
+            renewedSession = replacement
+            if renewalOutcome == .changedGeneration { inventoryGeneration += 1 }
+            return try reply(ManagedPreservationWire.encoder().encode(replacement))
+        }
         if request.httpMethod == "POST", url.path == "/v1/account-deletion" {
             let input = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String]
             guard input?.keys.sorted() == ["confirmation", "receipt"],
@@ -188,12 +237,56 @@ actor PreservationFixtureServer {
         let document = ManagedPreservationDocument(text: "はじめて膝で眠った日", capturedAt: nil, writtenAt: nil,
             updatedAt: nil, catNames: [], photoFile: nil)
         let record = ManagedPreservationRecord(recordId: Self.recordID, revision: 1, document: document)
+        if request.httpMethod == "GET", url.path == "/v1/export-page" {
+            exportRequests += 1
+            if exportMode == .unsupported { return try fail("NOT_FOUND", status: 404) }
+            if exportMode == .gone { return try fail("NOT_FOUND", status: 410) }
+            if exportMode == .missing { return try fail("RECORD_DELETED", status: 404) }
+            if exportMode == .throttledAlways || exportMode == .throttledOnce && exportRequests == 1 {
+                return try throttle()
+            }
+            if exportMode == .invalidRetry { return try throttle("61") }
+            let total = [ExportMode.thousand, .truncated, .changedGeneration, .duplicate].contains(exportMode) ? 1000 : 1
+            let parameters = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let after = parameters.first(where: { $0.name == "after" })?.value
+            if after != nil && parameters.first(where: { $0.name == "generation" })?.value != String(inventoryGeneration) {
+                return try fail("ARCHIVE_CHANGED", status: 409)
+            }
+            let start = after.flatMap { Int($0.suffix(12), radix: 16) } ?? 0
+            guard start < total else { throw ManagedPreservationError.invalidResponse }
+            let end = min(total, start + 50)
+            func id(_ index: Int) -> String {
+                total == 1 ? Self.recordID.uuidString.lowercased()
+                    : String(format: "00000000-0000-4000-8000-%012x", index + 1)
+            }
+            let wireGeneration = exportMode == .changedGeneration && after != nil ? 2 : inventoryGeneration
+            var lines: [[String: Any]] = [["version": 1, "type": "header", "generation": wireGeneration, "totalRecords": total]]
+            for index in start..<end {
+                lines.append(["type": "record", "recordId": id(exportMode == .duplicate ? start : index), "revision": 1,
+                    "document": try JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(document)),
+                    "photoBase64": NSNull(), "photoSHA256": NSNull()])
+            }
+            if exportMode != .truncated {
+                lines.append(["type": "complete", "generation": wireGeneration, "recordCount": end - start,
+                    "nextCursor": end < total ? id(end - 1) as Any : NSNull()])
+            }
+            var data = Data()
+            for line in lines { data.append(try JSONSerialization.data(withJSONObject: line)); data.append(10) }
+            guard data.count <= maximum, let response = HTTPURLResponse(url: url, statusCode: 200,
+                httpVersion: nil, headerFields: ["Content-Type": "application/x-ndjson"]) else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            if exportRequests == 1 { onFirstExportPage?() }
+            return (data, response)
+        }
         if request.httpMethod == "GET", url.path == "/v1/records" {
             reads += 1
+            if exportMode == .finalCheckThrottled && reads == 1 { return try throttle() }
             return try json(["items": [JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(record))],
-                             "nextCursor": NSNull(), "generation": 1])
+                             "nextCursor": NSNull(), "generation": inventoryGeneration])
         }
         if request.httpMethod == "GET", url.path == "/v1/records/" + Self.recordID.uuidString.lowercased() {
+            detailRequests += 1
             reads += 1
             if scenario == .copyNotCommitted || scenario == .saveTimedOut { return try fail("RECORD_NOT_FOUND", status: 404) }
             return try json(["recordId": Self.recordID.uuidString.lowercased(), "revision": 1,
@@ -225,13 +318,14 @@ struct PreservationNativeFixture: Sendable {
     let server: PreservationFixtureServer
     let store: ManagedPreservationSessionStore
     let session: ManagedPreservationSessionStore.Credential
-    static func make(_ scenario: PreservationFixtureScenario = .success) throws -> Self {
+    static func make(_ scenario: PreservationFixtureScenario = .success, sessionDuration: TimeInterval = 600,
+                     exportNow: @escaping @Sendable () -> Date = { Date() }) throws -> Self {
         let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".preservation-fixture.invalid")!
         let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin,
             membershipAudience: "preservation.native-fixture")
         let store = ManagedPreservationSessionStore(origin: origin.absoluteString)
         let prepared = ManagedPreservationSessionStore.Credential(token: String(repeating: "a", count: 43),
-            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
+            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(sessionDuration))
         guard try store.save(prepared, replacing: nil), let session = try store.load() else {
             throw ManagedPreservationError.secureStorage
         }
@@ -243,7 +337,7 @@ struct PreservationNativeFixture: Sendable {
         let server = PreservationFixtureServer(session: session, billing: billing, keys: keys, store: store, scenario: scenario)
         let client = ManagedPreservationClient(configuration: configuration,
             billingIdentity: .init(credential: { keys.load() }, installation: { scenario == .wrongInstallation ? UUID() : installation }),
-            requestOverride: { request, maximum in try await server.request(request, maximum: maximum) })
+            requestOverride: { request, maximum in try await server.request(request, maximum: maximum) }, exportNow: exportNow)
         return Self(configuration: configuration, client: client, server: server, store: store, session: session)
     }
     func cleanup() throws {
@@ -9986,6 +10080,232 @@ actor SharingRuntimeSelfTestRunner {
         try await finish()
         guard exporter.payload == nil, exporter.error != nil,
               try files() == before else { throw ManagedPreservationError.staleSession }
+        try await testManagedPreservationExportPagesBoundary()
+        try await testManagedPreservationExportReauthentication()
+    }
+
+    @MainActor
+    private static func testManagedPreservationExportPagesBoundary() async throws {
+        try await ManagedPreservationClient.testExportTransportFileBoundary()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
+        func files() throws -> Set<String> {
+            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+        }
+        let before = try files()
+        let exporter = RecordExportController()
+        func finish() async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while exporter.preparing && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard !exporter.preparing else { exporter.invalidate(); throw ManagedPreservationError.interrupted }
+        }
+        let full = try PreservationNativeFixture.make()
+        defer { try? full.cleanup() }
+        await full.server.setExportMode(.thousand)
+        ManagedPreservationExport.prepareAll(client: full.client, using: exporter, validate: {}, progress: { _, _ in })
+        try await finish()
+        let counts = await full.server.exportCounts()
+        guard counts.pages == 20, counts.details == 0, let archive = exporter.payload else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let bytes = try Data(contentsOf: archive.fileURL)
+        guard bytes.range(of: Data("00000000-0000-4000-8000-000000000001".utf8)) != nil,
+              bytes.range(of: Data("00000000-0000-4000-8000-0000000003e8".utf8)) != nil,
+              bytes.range(of: Data("manifest.json".utf8)) != nil else { throw ManagedPreservationError.invalidResponse }
+        exporter.finishSharing(archive)
+        guard try files() == before else { throw ManagedPreservationError.secureStorage }
+
+        for mode in [PreservationFixtureServer.ExportMode.truncated, .changedGeneration, .duplicate, .gone, .missing] {
+            let bad = try PreservationNativeFixture.make()
+            defer { try? bad.cleanup() }
+            await bad.server.setExportMode(mode)
+            ManagedPreservationExport.prepareAll(client: bad.client, using: exporter, validate: {}, progress: { _, _ in })
+            try await finish()
+            guard exporter.payload == nil, exporter.error != nil, try files() == before,
+                  await bad.server.exportCounts().details == 0 else { throw ManagedPreservationError.invalidResponse }
+        }
+        let legacy = try PreservationNativeFixture.make()
+        defer { try? legacy.cleanup() }
+        await legacy.server.setExportMode(.unsupported)
+        ManagedPreservationExport.prepareAll(client: legacy.client, using: exporter, validate: {}, progress: { _, _ in })
+        try await finish()
+        guard let fallback = exporter.payload, await legacy.server.exportCounts().details == 1 else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        exporter.finishSharing(fallback)
+
+        let changed = try PreservationNativeFixture.make()
+        defer { try? changed.cleanup() }
+        await changed.server.setExportMode(.thousand)
+        ManagedPreservationExport.prepareAll(client: changed.client, using: exporter, validate: {},
+            progress: { count, _ in if count == 1 { await changed.client.cancelSignIn() } })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil, try files() == before,
+              await changed.server.exportCounts().pages == 1 else { throw ManagedPreservationError.staleSession }
+
+        for mode in [PreservationFixtureServer.ExportMode.throttledOnce, .finalCheckThrottled] {
+            let retry = try PreservationNativeFixture.make()
+            defer { try? retry.cleanup() }
+            await retry.server.setExportMode(mode)
+            ManagedPreservationExport.prepareAll(client: retry.client, using: exporter, validate: {}, progress: { _, _ in })
+            try await finish()
+            guard let archive = exporter.payload, await retry.server.exportCounts().details == 0,
+                  await retry.server.exportCounts().pages == (mode == .throttledOnce ? 2 : 1),
+                  await retry.server.counts().reads == (mode == .finalCheckThrottled ? 3 : 2) else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            exporter.finishSharing(archive)
+        }
+        for mode in [PreservationFixtureServer.ExportMode.throttledAlways, .invalidRetry] {
+            let limited = try PreservationNativeFixture.make()
+            defer { try? limited.cleanup() }
+            await limited.server.setExportMode(mode)
+            ManagedPreservationExport.prepareAll(client: limited.client, using: exporter, validate: {}, progress: { _, _ in })
+            try await finish()
+            guard exporter.payload == nil, exporter.error != nil, try files() == before,
+                  await limited.server.exportCounts().pages == (mode == .throttledAlways ? 2 : 1),
+                  await limited.server.exportCounts().details == 0 else { throw ManagedPreservationError.invalidResponse }
+        }
+        let expiring = try PreservationNativeFixture.make(sessionDuration: 0.75)
+        defer { try? expiring.cleanup() }
+        await expiring.server.setExportMode(.throttledOnce)
+        ManagedPreservationExport.prepareAll(client: expiring.client, using: exporter, validate: {}, progress: { _, _ in })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil, try files() == before,
+              await expiring.server.exportCounts().pages <= 1 else { throw ManagedPreservationError.authenticationRequired }
+
+        for cancel in [false, true] {
+            let waiting = try PreservationNativeFixture.make()
+            defer { try? waiting.cleanup() }
+            await waiting.server.setExportMode(.throttledOnce)
+            ManagedPreservationExport.prepareAll(client: waiting.client, using: exporter, validate: {}, progress: { _, _ in })
+            let requestDeadline = ContinuousClock.now + .seconds(2)
+            while await waiting.server.exportCounts().pages == 0, ContinuousClock.now < requestDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard await waiting.server.exportCounts().pages == 1 else { throw ManagedPreservationError.invalidResponse }
+            if cancel { exporter.cancelPreparation() }
+            else { await waiting.client.cancelSignIn() }
+            try await finish()
+            let cleanupDeadline = ContinuousClock.now + .seconds(3)
+            while try files() != before, ContinuousClock.now < cleanupDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard exporter.payload == nil, try files() == before,
+                  await waiting.server.exportCounts().pages == 1 else { throw ManagedPreservationError.staleSession }
+        }
+        // A failed page cleanup must not hide the second private ZIP payload.
+        let pendingPage = try PhotoMemoryNoteExporter.createServicePageBuffer()
+        let pendingZIP = try PhotoMemoryNoteExporter.createServicePageBuffer()
+        exporter.prepare(build: {
+            throw PhotoMemoryNoteExportCleanupPending(payload: pendingPage, additionalPayloads: [pendingZIP])
+        })
+        try await finish()
+        guard exporter.payload == nil, exporter.error != nil, try files() == before else {
+            throw ManagedPreservationError.secureStorage
+        }
+    }
+
+    @MainActor
+    private static func testManagedPreservationExportReauthentication() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
+        func files() throws -> Set<String> {
+            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+        }
+        let before = try files()
+        let exporter = RecordExportController()
+        func finish() async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while exporter.preparing && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard !exporter.preparing else { exporter.invalidate(); throw ManagedPreservationError.interrupted }
+        }
+        for outcome in [PreservationFixtureServer.ExportRenewalOutcome.sameOwner, .otherOwner, .changedGeneration, .unchangedToken] {
+            let clock = PreservationExportClock()
+            let fixture = try PreservationNativeFixture.make(exportNow: { clock.now() })
+            defer { try? fixture.cleanup() }
+            await fixture.server.setExportMode(.thousand)
+            await fixture.server.setRenewalOutcome(outcome)
+            var renewals = 0
+            ManagedPreservationExport.prepareAll(client: fixture.client, using: exporter, validate: {},
+                reauthenticate: { previous in
+                    renewals += 1
+                    // A complete first page must precede the explicit sign-in handoff.
+                    guard await fixture.server.exportCounts().pages == 1 else { throw ManagedPreservationError.invalidResponse }
+                    let challenge = try await fixture.client.prepareExportSignIn(replacing: previous)
+                    try await fixture.client.finishSignIn(state: challenge.state, identityToken: Data("synthetic".utf8),
+                                                         authorizationCode: Data("synthetic".utf8))
+                    clock.advance(0)
+                    return try await fixture.client.captureSessionCheckpoint()
+                }, progress: { count, _ in if count == 50 { clock.advance(500) } })
+            try await finish()
+            guard renewals == 1, await fixture.server.authCounts().exchanges == 1 else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            if outcome == .sameOwner {
+                guard let archive = exporter.payload, await fixture.server.exportCounts().pages == 20,
+                      try Data(contentsOf: archive.fileURL).range(of: Data("00000000-0000-4000-8000-0000000003e8".utf8)) != nil else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+                exporter.finishSharing(archive)
+            } else {
+                guard exporter.payload == nil, exporter.error != nil, await fixture.server.exportCounts().pages == 1 else {
+                    throw ManagedPreservationError.staleSession
+                }
+            }
+            guard try files() == before else { throw ManagedPreservationError.secureStorage }
+        }
+        // A same-owner epoch change during the last UI validation still rejects sharing.
+        let changed = try PreservationNativeFixture.make(); defer { try? changed.cleanup() }
+        var validations = 0
+        ManagedPreservationExport.prepareAll(client: changed.client, using: exporter, validate: {
+            validations += 1
+            if validations == 3 { await changed.client.cancelSignIn() }
+        }, progress: { _, _ in })
+        try await finish()
+        guard validations == 3, exporter.payload == nil, exporter.error != nil, try files() == before else {
+            throw ManagedPreservationError.staleSession
+        }
+        // The production coordinator waits without any challenge call until an
+        // explicit button, and cancel/closing the view resolves its continuation.
+        for prepare in [false, true] {
+            let clock = PreservationExportClock()
+            let fixture = try PreservationNativeFixture.make(exportNow: { clock.now() })
+            defer { try? fixture.cleanup() }
+            await fixture.server.setExportMode(.thousand, onFirstPage: { clock.advance(500) })
+            let coordinator = ManagedPreservationCoordinator(configuration: fixture.configuration,
+                onExport: { _, _ in }, client: fixture.client)
+            coordinator.start()
+            let startDeadline = ContinuousClock.now + .seconds(5)
+            while coordinator.isBusy && ContinuousClock.now < startDeadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard coordinator.isSignedIn else { throw ManagedPreservationError.authenticationRequired }
+            coordinator.exportAllCopies(using: exporter)
+            let waitDeadline = ContinuousClock.now + .seconds(5)
+            while !coordinator.exportAuthenticationNeeded && ContinuousClock.now < waitDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard coordinator.exportAuthenticationNeeded, exporter.preparing,
+                  coordinator.exportProgress?.completed == 50, try files() != before,
+                  await fixture.server.authCounts().issues == 0, await fixture.server.exportCounts().pages == 1 else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            if prepare {
+                coordinator.prepareExportSignIn()
+                let prepareDeadline = ContinuousClock.now + .seconds(5)
+                while coordinator.isBusy && ContinuousClock.now < prepareDeadline { try await Task.sleep(for: .milliseconds(10)) }
+                guard coordinator.preparedExportSignIn != nil, await fixture.server.authCounts().issues == 1 else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+            }
+            exporter.cancelPreparation(); coordinator.stop()
+            let cleanupDeadline = ContinuousClock.now + .seconds(3)
+            while try files() != before, ContinuousClock.now < cleanupDeadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard !coordinator.exportAuthenticationNeeded, exporter.payload == nil,
+                  await fixture.server.authCounts().exchanges == 0, await fixture.server.exportCounts().pages == 1,
+                  try files() == before else {
+                throw ManagedPreservationError.secureStorage
+            }
+        }
     }
 
     @MainActor

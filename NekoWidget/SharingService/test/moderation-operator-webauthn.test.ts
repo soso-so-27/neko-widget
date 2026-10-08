@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MODERATION_OPERATOR_WEBAUTHN_FAILURE_CODE,
@@ -7,6 +7,13 @@ import {
   verifyPreparedModerationOperatorWebAuthnAssertion,
   type PrepareModerationOperatorWebAuthnAssertionOptions,
 } from "../src/moderation-operator-webauthn";
+import {
+  MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE,
+  MODERATION_OPERATOR_ASSERTION_BODY_DEADLINE_MS,
+  MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_READS,
+  MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_BYTES,
+  prepareModerationOperatorWebAuthnRequest,
+} from "../src/moderation-operator-request";
 
 const encoder = new TextEncoder();
 const origin = "https://moderation.operator.example.test";
@@ -487,5 +494,256 @@ describe("strict moderation operator WebAuthn verification", () => {
       credential: { ...test.options.credential, counter: 1 },
     });
     await fixedFailure(verifyPreparedModerationOperatorWebAuthnAssertion(replayPrepared));
+  });
+});
+
+describe("moderation operator assertion HTTP boundary", () => {
+  function request(body: string | ReadableStream<Uint8Array>, headers: Record<string, string> = {}): Request {
+    return new Request(`${origin}/operator/v1/assertions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body,
+    });
+  }
+
+  function trustedOptions(test: Fixture): Omit<PrepareModerationOperatorWebAuthnAssertionOptions, "response"> {
+    const { response: _response, ...options } = test.options;
+    return options;
+  }
+
+  async function requestFailure(promise: Promise<unknown>): Promise<void> {
+    await expect(promise).rejects.toEqual(expect.objectContaining({
+      name: "ModerationOperatorAssertionRequestError",
+      message: MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE,
+      code: MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE,
+    }));
+  }
+
+  it("prepares a real signed HTTP assertion and leaves signature verification separate", async () => {
+    const test = await fixture();
+    const body = JSON.stringify(test.response);
+    const prepared = await prepareModerationOperatorWebAuthnRequest(request(body, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": String(encoder.encode(body).byteLength),
+    }), trustedOptions(test));
+    const direct = await prepareModerationOperatorWebAuthnAssertion(test.options);
+    expect(prepared).toEqual(direct);
+    expect(Object.keys(prepared)).toEqual(["assertionSHA256"]);
+    expect(Object.isFrozen(prepared)).toBe(true);
+    expect(await verifyPreparedModerationOperatorWebAuthnAssertion(prepared)).toEqual({
+      assertionSHA256: prepared.assertionSHA256,
+      newCounter: 1,
+    });
+
+    const invalid = cloneResponse(test.response);
+    invalid.response.signature = base64url(new Uint8Array(64).fill(9));
+    const unverified = await prepareModerationOperatorWebAuthnRequest(
+      request(JSON.stringify(invalid)), trustedOptions(test),
+    );
+    await fixedFailure(verifyPreparedModerationOperatorWebAuthnAssertion(unverified));
+  });
+
+  it("rejects same-value and escaped duplicate keys before JSON can discard them", async () => {
+    const test = await fixture();
+    const body = JSON.stringify(test.response);
+    const nested = '"signature":' + JSON.stringify(test.response.response.signature);
+    for (const duplicate of [
+      body.replace('"type":"public-key"', '"type":"public-key","type":"public-key"'),
+      body.replace('"type":"public-key"', '"ty\\u0070e":"public-key","type":"public-key"'),
+      body.replace(nested, `${nested},${nested}`),
+      body.replace(nested, `${nested},"signat\\u0075re":${JSON.stringify(test.response.response.signature)}`),
+      body.replace('"clientExtensionResults":{}', '"clientExtensionResults":{},"clientExtensionResults":{}'),
+    ]) {
+      // Each would pass the existing object preflight after lossy JSON.parse.
+      await expect(prepareModerationOperatorWebAuthnAssertion({
+        ...test.options, response: JSON.parse(duplicate),
+      })).resolves.toEqual(expect.objectContaining({ assertionSHA256: expect.any(String) }));
+      await requestFailure(prepareModerationOperatorWebAuthnRequest(
+        request(duplicate), trustedOptions(test),
+      ));
+    }
+  });
+
+  it("rejects wrong shape, unknown fields, malformed JSON and excessive nesting", async () => {
+    const test = await fixture();
+    for (const body of [
+      "null", "[]", "{}", "true", "", " ", "{", "{}{}",
+      JSON.stringify({ ...test.response, expectedOrigin: origin }),
+      JSON.stringify({ assertion: test.response }),
+      JSON.stringify({ ...test.response, clientExtensionResults: { value: "sensitive-body" } }),
+      '{"response":[[[[[{"x":1,"x":2}]]]]]}',
+      JSON.stringify(test.response).replace('"type":"public-key"', '"type":"public-key",'),
+    ]) {
+      await requestFailure(prepareModerationOperatorWebAuthnRequest(
+        request(body), trustedOptions(test),
+      ));
+    }
+  });
+
+  it("rejects unsupported media, encoding and invalid lengths before reading the body", async () => {
+    const test = await fixture();
+    for (const headers of [
+      { "Content-Type": "text/plain" },
+      { "Content-Type": "application/json; charset=iso-8859-1" },
+      { "Content-Type": "application/json; arbitrary=secret" },
+      { "Content-Encoding": "gzip" },
+      { "Content-Encoding": "identity" },
+      ...["-1", "1.0", "01", "1, 1", "9007199254740993", "16385"].map(
+        (length) => ({ "Content-Length": length }),
+      ),
+    ]) {
+      let bodyRead = false;
+      const original = request(JSON.stringify(test.response), headers);
+      const guarded = new Proxy(original, {
+        get(target, property) {
+          if (property === "body") { bodyRead = true; throw new Error("sensitive-body"); }
+          return Reflect.get(target, property, target);
+        },
+      });
+      await requestFailure(prepareModerationOperatorWebAuthnRequest(guarded, trustedOptions(test)));
+      expect(bodyRead).toBe(false);
+    }
+  });
+
+  it("accepts the exact byte limit and refuses a mismatched declared length", async () => {
+    const test = await fixture();
+    const body = JSON.stringify(test.response);
+    const atLimit = body.padEnd(MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_BYTES, " ");
+    await expect(prepareModerationOperatorWebAuthnRequest(request(atLimit), trustedOptions(test)))
+      .resolves.toEqual(expect.objectContaining({ assertionSHA256: expect.any(String) }));
+    for (const length of ["0", String(body.length - 1), String(body.length + 1)]) {
+      await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body, {
+        "Content-Length": length,
+      }), trustedOptions(test)));
+    }
+  });
+
+  it("limits actual streamed bytes with no length header and cancels before preflight", async () => {
+    const test = await fixture();
+    let cancelled = false;
+    let prepared = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("あ".repeat(6_000)));
+      },
+      cancel() { cancelled = true; throw new Error("sensitive-cancel-error"); },
+    });
+    const options = new Proxy(trustedOptions(test), {
+      ownKeys() { prepared = true; throw new Error("preflight must not run"); },
+    });
+    await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body), options));
+    expect(cancelled).toBe(true);
+    expect(prepared).toBe(false);
+    expect(body.locked).toBe(false);
+  });
+
+  it("counts every chunk and rejects one byte beyond the allowed total", async () => {
+    const test = await fixture();
+    let cancelled = false;
+    const first = encoder.encode(JSON.stringify(test.response).padEnd(
+      MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_BYTES, " ",
+    ));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(first);
+        controller.enqueue(new Uint8Array([32]));
+      },
+      cancel() { cancelled = true; },
+    });
+    await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test)));
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+  });
+
+  it("rejects invalid UTF-8, a BOM, truncated input and stream failure without leaking details", async () => {
+    const test = await fixture();
+    const valid = encoder.encode(JSON.stringify(test.response));
+    for (const chunks of [
+      [new Uint8Array([0xef, 0xbb, 0xbf]), valid],
+      [new Uint8Array([0xe3]), new Uint8Array([0x28, 0xa1])],
+      [new Uint8Array([0xe3, 0x81])],
+      [valid.slice(0, valid.length - 1)],
+    ]) {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
+      });
+      await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test)));
+      expect(body.locked).toBe(false);
+    }
+    const failed = new ReadableStream<Uint8Array>({
+      start(controller) { controller.error(new Error("sensitive-stream-error")); },
+    });
+    await requestFailure(prepareModerationOperatorWebAuthnRequest(request(failed), trustedOptions(test)));
+    expect(failed.locked).toBe(false);
+  });
+
+  it("processes an assertion divided across chunks without changing its audit digest", async () => {
+    const test = await fixture();
+    const bytes = encoder.encode(JSON.stringify(test.response));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < bytes.length; index += 7) controller.enqueue(bytes.slice(index, index + 7));
+        controller.close();
+      },
+    });
+    const streamed = await prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test));
+    const direct = await prepareModerationOperatorWebAuthnAssertion(test.options);
+    expect(streamed.assertionSHA256).toBe(direct.assertionSHA256);
+    expect(body.locked).toBe(false);
+  });
+
+  it("uses one absolute deadline even with partial progress and a never-settling cancel hook", async () => {
+    const test = await fixture();
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(value) { controller = value; value.enqueue(encoder.encode("{")); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    });
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const pending = prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test));
+      const rejection = requestFailure(pending).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(MODERATION_OPERATOR_ASSERTION_BODY_DEADLINE_MS - 1_000);
+      expect(settled).toBe(false);
+      controller!.enqueue(encoder.encode('"id":'));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await rejection;
+      expect(settled).toBe(true);
+      expect(cancelled).toBe(true);
+      expect(body.locked).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects endless empty chunks without depending on timers receiving a turn", async () => {
+    const test = await fixture();
+    let reads = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { reads += 1; controller.enqueue(new Uint8Array()); },
+      cancel() { cancelled = true; },
+    });
+    await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test)));
+    expect(reads).toBeLessThanOrEqual(MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_READS + 1);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+  });
+
+  it("does not wait for cancellation after detecting an oversized body", async () => {
+    const test = await fixture();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MODERATION_OPERATOR_MAXIMUM_ASSERTION_BODY_BYTES + 1));
+      },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    });
+    await requestFailure(prepareModerationOperatorWebAuthnRequest(request(body), trustedOptions(test)));
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
   });
 });

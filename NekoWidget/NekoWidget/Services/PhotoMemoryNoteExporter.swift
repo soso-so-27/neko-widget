@@ -45,6 +45,8 @@ struct PhotoMemoryNoteExportPayload: Identifiable, Sendable {
 /// Retain this payload for cleanup retry; it must never be offered for sharing.
 struct PhotoMemoryNoteExportCleanupPending: Error, Sendable {
     let payload: PhotoMemoryNoteExportPayload
+    var additionalPayloads: [PhotoMemoryNoteExportPayload] = []
+    var payloads: [PhotoMemoryNoteExportPayload] { [payload] + additionalPayloads }
 }
 
 enum PhotoMemoryNoteExportError: Error, LocalizedError, Equatable {
@@ -264,6 +266,37 @@ enum PhotoMemoryNoteExporter {
         }
     }
 
+    /// A service page is never shareable. It has the same protection and cleanup
+    /// ownership as an unfinished archive, and is removed after its records are read.
+    static func createServicePageBuffer() throws -> PhotoMemoryNoteExportPayload {
+        let id = UUID()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports", isDirectory: true)
+        let directory = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        let payload = PhotoMemoryNoteExportPayload(id: id,
+            fileURL: directory.appendingPathComponent("service-page.ndjson"), directory: directory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+#if os(iOS)
+        let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.complete]
+#else
+        let attributes: [FileAttributeKey: Any] = [:]
+#endif
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: attributes)
+        do {
+            var protected = directory
+            var values = URLResourceValues(); values.isExcludedFromBackup = true
+            try protected.setResourceValues(values)
+            guard try protected.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true,
+                  FileManager.default.createFile(atPath: payload.fileURL.path, contents: nil, attributes: attributes) else {
+                throw PhotoMemoryNoteExportError.storageUnavailable
+            }
+            return payload
+        } catch {
+            do { try payload.cleanup() }
+            catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+            throw error
+        }
+    }
+
     /// Appends one record at a time. ZIP64 supports exports beyond the old 4 GiB
     /// single-volume limit; only one JPEG and its small metadata are in memory.
     static func createBulkArchive(
@@ -330,10 +363,14 @@ enum PhotoMemoryNoteExporter {
             try Task.checkCancellation()
             return payload
         } catch {
+            let originalFailure = error
             try? writer?.close()
             if createdDirectory {
                 do { try payload.cleanup(using: fileManager) }
-                catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+                catch {
+                    throw PhotoMemoryNoteExportCleanupPending(payload: payload,
+                        additionalPayloads: (originalFailure as? PhotoMemoryNoteExportCleanupPending)?.payloads ?? [])
+                }
             }
             if error is CancellationError { throw CancellationError() }
             if let known = error as? PhotoMemoryNoteExportError { throw known }

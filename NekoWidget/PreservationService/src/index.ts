@@ -19,6 +19,9 @@ import { PilotControl } from './pilot-control';
 import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
+import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-limiter';
+import { payloadResponse, payloadWork } from './payload-work';
+import { recordResponse } from './record-frame';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -47,6 +50,7 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  ownerRequestLimiter?: OwnerRequestLimiter;
   ownerDeletion?: OwnerDeletionRequests;
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
 interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
@@ -91,11 +95,11 @@ export function configuredS3(env: Env): S3RecoveryCopy {
 }
 
 // Local tests inject dependencies. The public Worker always checks the gate.
-export async function route(request: Request, services: Services): Promise<Response> {
+export async function route(request: Request, services: Services, context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (path !== '/v1/records' && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     if (Object.keys(await body(request, 1024)).length) throw new ServiceError('INVALID_REQUEST');
     return response(await services.auth.issueChallenge());
@@ -110,18 +114,25 @@ export async function route(request: Request, services: Services): Promise<Respo
     return response(await services.auth.establish(verified));
   }
   const token = bearer(request);
+  const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
+  if (request.method === 'GET' && deletionOwner) {
+    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
+    // This bearer is the device's deletion receipt, not an expired login.
+    // Receipt polling and auth bootstrap retain the IP guard only.
+    return response(await services.ownerDeletion.status(deletionOwner, token));
+  }
+  if (services.ownerRequestLimiter) {
+    await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
+  }
+  if (request.method === 'GET' && path === '/v1/export-page') {
+    return services.archive.exportPage(token, request, context);
+  }
   if (request.method === 'POST' && path === '/v1/account-deletion') {
     if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
     const input = await body(request, 1024);
     if (Object.keys(input).sort().join(',') !== 'confirmation,receipt'
       || input.confirmation !== 'delete-service-account') throw new ServiceError('INVALID_REQUEST');
     return response(await services.ownerDeletion.request(token, input.receipt), 202);
-  }
-  const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
-  if (request.method === 'GET' && deletionOwner) {
-    if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
-    // This bearer is the device's deletion receipt, not an expired login.
-    return response(await services.ownerDeletion.status(deletionOwner, token));
   }
   if (request.method === 'GET' && path === '/v1/notice-contact') {
     return response({ version: 1, ...await services.auth.noticeContact(token) });
@@ -174,15 +185,22 @@ export async function route(request: Request, services: Services): Promise<Respo
     }
     const limit = url.searchParams.get('limit') ?? '20';
     if (!/^\d{1,2}$/.test(limit)) throw new ServiceError('INVALID_PAGE_SIZE');
-    return response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit)));
+    return payloadResponse(request, async () =>
+      response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit))));
   }
   const id = /^\/v1\/records\/([0-9a-f-]+)$/.exec(path)?.[1];
-  if (id && request.method === 'GET') return response(await services.archive.read(token, id));
-  if (id && request.method === 'PUT') return response(await services.archive.put(token, id, await body(request, 29 * 1024 * 1024)));
+  if (id && request.method === 'GET') return payloadResponse(request, async signal => {
+    const session = await services.auth.requireSession(token);
+    const record = await services.archive.readBinary(token, id);
+    const revision = record.revision;
+    return recordResponse(record, () => services.archive.validateRead(token, id, revision, session.ownerId), signal);
+  });
+  if (id && request.method === 'PUT') return payloadWork.run(async () =>
+    response(await services.archive.put(token, id, await body(request, 29 * 1024 * 1024))), request.signal);
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
-    return response(await services.archive.remove(token, id, Number(revision)));
+    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision))), request.signal);
   }
   throw new ServiceError('NOT_FOUND', 404);
 }
@@ -252,6 +270,7 @@ export function configuredServices(env: Env): Services {
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
     ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
   return { auth, archive, verifier, membership,
+    ...(general ? { ownerRequestLimiter: new OwnerRequestLimiter(env.DB) } : {}),
     ...(env.OWNER_DELETION_ENABLED === 'YES' ? { ownerDeletion: new OwnerDeletionRequests({
       db: env.DB, journal: deletionJournal, auth, now }) } : {}),
     ...(retention ? { retention } : {}),
@@ -318,7 +337,7 @@ async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Pr
   return failed;
 }
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     try {
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
       const ip = request.headers.get('CF-Connecting-IP');
@@ -333,7 +352,7 @@ export default {
         throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
       }
       const services = configuredServices(env);
-      return await route(request, services);
+      return await route(request, services, context);
     } catch (error) {
       // Finite private-pilot probe: first fixed failure only. Never retain tokens,
       // subjects, email, request bodies, IP, nonce or raw exception text.
@@ -349,10 +368,14 @@ export default {
           }), { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'application/json' } });
         } catch { /* Diagnostics must not alter the authentication response. */ }
       }
-      return error instanceof ServiceError ? response({ error: { code: error.code,
-        ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
-          ? { registrationReference: error.registrationReference } : {}) } }, error.status)
-        : response({ error: { code: 'PRESERVATION_UNAVAILABLE' } }, 503);
+      if (error instanceof ServiceError) {
+        const result = response({ error: { code: error.code,
+          ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
+            ? { registrationReference: error.registrationReference } : {}) } }, error.status);
+        if (error instanceof OwnerRequestRateLimited) result.headers.set('retry-after', String(error.retryAfterSeconds));
+        return result;
+      }
+      return response({ error: { code: 'PRESERVATION_UNAVAILABLE' } }, 503);
     }
   },
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
@@ -381,7 +404,7 @@ export default {
         const services = configuredServices(env);
         if (!services.ownerRecovery) throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
         if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
-          const records = await services.archive.repairRecoveryBatch();
+          const records = await payloadWork.run(() => services.archive.repairRecoveryBatch());
           maintenanceFailures += records.failed;
         }
         const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());

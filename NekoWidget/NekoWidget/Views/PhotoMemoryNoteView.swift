@@ -42,7 +42,7 @@ final class RecordExportController: ObservableObject {
                 payload = result
                 prepared = nil
             } catch let pending as PhotoMemoryNoteExportCleanupPending {
-                remove(pending.payload)
+                for item in pending.payloads { remove(item) }
                 if generation == token { error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription }
             } catch is CancellationError {
                 // The immutable source and any other export remain unchanged.
