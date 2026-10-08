@@ -134,12 +134,46 @@ bindingしない。decisionと削除はcanonical evidence、hold、domain outbox
 npm run check:moderation-operator-control-plane-preflight
 ```
 
-将来routeへ接続するときは、HTTP bodyをJSON parseより前にbyte数で制限し、重複keyを失わないparserで
-top-level assertionを検証する。WebAuthn署名を検証する**前**に、そのchallengeとcanonical assertion digestの
-attemptを独立したD1 transactionでcommitし、検証失敗や後続transactionのrollbackでも同じchallengeを再利用
+HTTP assertionの入口は`src/moderation-operator-request.ts`に実装済みである。JSON parseより前に実際のstreamを
+16 KiBまで、読み取り全体を5秒・16,385回までに制限し、Content-Lengthとの不一致、不正UTF-8、BOM、全階層の
+重複key（Unicode escapeによる同名も含む）を拒否する。HTTP bodyはassertion本体だけとし、expected Origin／
+RP ID、challenge、credentialはtrustedな
+Server状態から渡す。既存のstrict WebAuthn preflightへ接続し、返すのはopaqueな準備結果とaudit用digestだけである。
+上限違反・deadline時はcancelの完了を待たずreaderを解放し、止まらないstreamでも拒否を完了する。
+この入口はAccess認証、署名検証、DB書込み、操作の承認を行わず、OFF shellにも接続していない。実Requestと
+合成署名によるlocal testは本番route統合や運営者の訓練を証明しない。
+
+将来routeへ接続するときはruntime／Access／quotaを先に適用し、WebAuthn署名を検証する**前**に、そのchallengeと
+canonical assertion digestのattemptを独立したD1 transactionでcommitし、検証失敗や後続transactionのrollbackでも同じchallengeを再利用
 できないようにする。署名検証後はchallenge consumption、credential counter更新、対象operation、audit startを
 同じ原子的transactionへ束ねる。attemptをこの後段transactionだけに含める実装は禁止する。これらを満たす
 route integration testがない限り、pure verifierと`0016` schemaが存在してもruntimeをONにしない。
+
+### 確認開始までのローカル統合候補
+
+`src/moderation-operator-triage-local.ts`は公開Workerからimportされないローカル統合候補である。
+exact `environment=local`かつ`runtimeEnabled=YES`の呼出しだけを受け付け、通常のOFF shell、tracked config、
+binding、migrationは変更しない。既に正しくadmitされたoperatorとversion付きcase referenceを前提にする。
+operator登録、case referenceの新規導出・backfill、R2取得、decision／delete、運営者UIは含まない。
+
+- `GET /operator/v1/cases`はAccess署名、current triage role／identity／credential admissionを照合し、
+  同じD1 batchで再確認、exact quota、audit、最大20件のHMAC参照・review状態・SLA超過・未確定intentの有無を扱う。
+  raw report／利用者ID、理由、鍵や画像は返さない。参照未boundのcaseは件数を明示し、queueから消えたと誤認させない。
+- `POST /operator/v1/cases/{HMAC}/review-start`は**空本文**の操作を予約し、固定method／path／空本文のSHA、
+  case、session、credentialへfresh challengeを束縛して202を返す。予約はreview開始ではない。
+- 返された`.../assertions/{challengeId}`へassertion本体をPOSTする。これは凍結済み操作への認証証明であり、
+  元の操作本文を差し替える入口ではない。対象の読取りをcurrent authority guardと同じbatchへ置き、署名検証前に
+  attemptを独立commitする。検証後のconsumption／counter／action／audit start／DB時刻intentは同じbatchへ束ねる。
+  続くcanonical evidenceのhash計算とfinalizeが成功したときだけ、既存triggerが`review_started`を記録する。
+
+署名不正や後続rollbackでattemptを再利用しない。finalizeが失敗した場合はcaseを未確認のままにし、pending intentを
+queueへ示す。自動resume、review済みの推測、署名なしのcase event作成は行わない。DB triggerによる120秒のintent期限を
+維持し、次の受付を永続占有しない。権限・credential失効、別session、期限切れ、同時送信、DB取引途中の失敗は
+workerd／MiniflareのD1と合成RS256／ES256による統合試験で扱う。fixtureのenrollmentは事前承認済み状態を模したもの
+であり、実在operatorの本人確認・attestation・bootstrap完了やProductionでの人手確認訓練を証明しない。
+
+本番接続にはlive Access／account照合、最小binding、正規enrollment、case reference作成、運営者の操作画面と訓練が
+引き続き必要である。このローカル候補を理由にreport ingestionやoperator runtimeをONにしない。
 
 ## 鍵の準備と保管
 
