@@ -266,8 +266,18 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             raise Blocked("Corrected candidate evidence is unavailable or invalid.") from None
     require(covered,
             "Required CI jobs are missing, skipped, failed, duplicated, or from another commit.")
-    return {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
-            "scope": plan["scope"], "required_jobs": list(required)}
+    result = {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
+              "scope": plan["scope"], "required_jobs": list(required)}
+    if plan["scope"] == planner.PRESERVATION_EXPORT_SCOPE:
+        def backend_api(path: str):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected backend evidence API path.")
+            return gh.get(path[len(prefix):])
+        try:
+            result["backend_evidence"] = planner.preservation_export_backend_evidence(source_sha, REPOSITORY, backend_api, now)
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
+    return result
 
 
 def recent_runs_path(page: int) -> str:

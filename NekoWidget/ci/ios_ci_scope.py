@@ -71,6 +71,7 @@ REVIEWED_MEMORY_FAMILY_SCOPE = "reviewed-memory-read-ui-v3"
 REVIEWED_CAT_NOTE_SCOPE = "reviewed-cat-note-ui-v1"
 REVIEWED_PHOTO_ACTIONS_SCOPE = "reviewed-photo-actions-ui-v1"
 REVIEWED_MEMBERSHIP_OFFER_SCOPE = "reviewed-membership-offer-ui-v1"
+PRESERVATION_EXPORT_SCOPE = "reviewed-preservation-export-v1"
 REVIEWED_PURCHASE_CATALOG_SCOPE = "reviewed-purchase-catalog-v1"
 REVIEWED_MEMBERSHIP_STATE_SCOPE = "reviewed-membership-state-v1"
 REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE = "reviewed-membership-management-v1"
@@ -79,7 +80,7 @@ REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
-SCOPES = (FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+SCOPES = (PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -1353,6 +1354,152 @@ MEMBERSHIP_STATE_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name f
 
 
 # Reviewed catalog refresh and explicit quote confirmation, frozen at db1b044.
+# Frozen launch batch. Native inputs, private backends and handoff are bound
+# separately; unreviewed contents and partial companion sets never qualify.
+PRESERVATION_EXPORT_BLOBS = {
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": [
+        "3e390cb7c3f7fe3e42efabc34a53516d1c04b017",
+        "213c8e93785b785635ec2d69618538e6450bb2e2"
+    ],
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": [
+        "9dcd9189ec3d7be03c4b83f9d0dd316c79646b0e",
+        "4f8b7f5b7518f59a012521e57b22cd51acb715d0"
+    ],
+    "NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift": [
+        "22f222640219fd4d17b9cd1b059645d209ad5f90",
+        "287e777c34e850b9d00e8f7f04edaeccc3f88a5e"
+    ],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": [
+        "40453cd843bd174036d950c8fc135a1908e82c52",
+        "3643a994993eb91ca8abc7a0d6bde1975e893977"
+    ],
+    "NekoWidget/NekoWidget/Views/ManagedPreservationView.swift": [
+        "d4becff00e659c4c9669a2f1268c84a6a02ac25a",
+        "3960967840c1520f840dc499c92e290020b04ab6"
+    ],
+    "NekoWidget/NekoWidget/Views/PhotoMemoryNoteView.swift": [
+        "296ae384347920e38deacb951f1cac6a99ec8955",
+        "3f773269272db6e02e46e846b0be5f7da8db5bfd"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "55f9e5b227b3c20b7c10cd1270eb365cf9e09090",
+        "2da33158b4277cb282e103042dc64b60da4b1ace"
+    ],
+    "NekoWidget/PreservationService/README.md": [
+        "a121271963a5b83dc7efcb6ef68f89e28b53d979",
+        "48bbfdb9da783bd79b2cbf257e019dea88b6908b"
+    ],
+    "NekoWidget/PreservationService/migrations/0032_owner_request_limit.sql": [
+        "0000000000000000000000000000000000000000",
+        "550a1620e0741c45a94b86c0ad3bab1aa24c96d5"
+    ],
+    "NekoWidget/PreservationService/migrations/0033_export_page_lease.sql": [
+        "0000000000000000000000000000000000000000",
+        "18e09a12c3ad40642e64909ec4bbbd05d9dcec24"
+    ],
+    "NekoWidget/PreservationService/scripts/operating-readiness.mjs": [
+        "12f2f1de4c49f28baf161cadd763e3386d5792fe",
+        "53a3cd7bc5382245a4a5350a6659b0c8e207c125"
+    ],
+    "NekoWidget/PreservationService/src/documents.ts": [
+        "37b7844d3690ebbbdbb830efd36a2f3c5c93c90a",
+        "40b134a436985b13ddf900b93c705e802e11e82d"
+    ],
+    "NekoWidget/PreservationService/src/export-page.ts": [
+        "0000000000000000000000000000000000000000",
+        "bb6f7922a2b246ce4d5f8c222e4dbc897ecec86c"
+    ],
+    "NekoWidget/PreservationService/src/index.ts": [
+        "30a980ae2e84341436b6f1976a27a3f4e4fadec9",
+        "6c87c8f9dbf049adeee04be2c8b078cdeac3f9be"
+    ],
+    "NekoWidget/PreservationService/src/owner-request-limiter.ts": [
+        "0000000000000000000000000000000000000000",
+        "aae4866036608a395abdc89635373688c141719c"
+    ],
+    "NekoWidget/PreservationService/src/payload-work.ts": [
+        "0000000000000000000000000000000000000000",
+        "5147e17fd70929411c7158479fda361daab4372c"
+    ],
+    "NekoWidget/PreservationService/src/record-frame.ts": [
+        "0000000000000000000000000000000000000000",
+        "e46135289835d7e06299dde3b3702c70e6967691"
+    ],
+    "NekoWidget/PreservationService/src/storage.ts": [
+        "4851ecb539ad694311731d021f9d70bcfc496dea",
+        "9ba3543c9a3150809e5895a41eb65611f58f0d6b"
+    ],
+    "NekoWidget/PreservationService/test/export-page.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "12713d016eff75a9480e86e14d55a5b2cd807669"
+    ],
+    "NekoWidget/PreservationService/test/operating-readiness.node-tests.mjs": [
+        "4fed0d83122741bdbc2eaa50156c642ca818fe55",
+        "2e311a4b59c60b5dff2030e1fbb441da1e7453e4"
+    ],
+    "NekoWidget/PreservationService/test/owner-deletion.test.ts": [
+        "33c8456d711f11e15a9f6b07e29f40375b6284c2",
+        "6f4e234206ec149d1efbbc95e9cfc9a9cd0c52b4"
+    ],
+    "NekoWidget/PreservationService/test/owner-quarantine-restore.test.ts": [
+        "03bc2c87df0664cd323fa327e380b22f3f5e9c8d",
+        "d64a0452b9b110f88cacdeb17d248a137fab7740"
+    ],
+    "NekoWidget/PreservationService/test/owner-request-limiter.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "f3e91b51f3ff396591c5e896bddcc5aec38fa3dd"
+    ],
+    "NekoWidget/PreservationService/test/payload-work.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "6f53da486341a7aea2c23e622c65c4977935d22b"
+    ],
+    "NekoWidget/PreservationService/test/pilot-wiring.test.ts": [
+        "52223e829dbeddc93a564080fc7bf726ed33397a",
+        "5908171abc820277af390b73ccb6026a8eb2ab74"
+    ],
+    "NekoWidget/PreservationService/test/record-frame.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "0002d138c1c6859f74f402b6b07519418dbfcb29"
+    ],
+    "NekoWidget/SharingService/MODERATION_RUNBOOK.md": [
+        "4d59f7b98301f7b67142ce49aa39d5a41a416d18",
+        "4af9f6539811abf240054de2f46301f25f19e694"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-request.ts": [
+        "0000000000000000000000000000000000000000",
+        "ef9f4df26f590a46477207e38f6854169f2d5ac8"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-triage-local.ts": [
+        "0000000000000000000000000000000000000000",
+        "3026bc15e4bca7faf5e62817bc08099d52b9adcb"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-triage.integration.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "d747ddda66b0d6d75087b3b765d2cdc2631327db"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-webauthn.test.ts": [
+        "41528ed2d0b25b566b44b1b81c38919bed44cde0",
+        "6424368e592cf8cd74c8f00ab80a79b0839d41a3"
+    ]
+}
+PRESERVATION_EXPORT_PATHS = frozenset(PRESERVATION_EXPORT_BLOBS)
+PRESERVATION_EXPORT_DOC_BLOBS = {
+    "handoffs/2026-10-08-launch-preservation-readiness.md": [
+        "0000000000000000000000000000000000000000",
+        "9bf3e860d3e4e2a475db4c9abb1dd4a04b112be7"
+    ]
+}
+PRESERVATION_EXPORT_COMPANIONS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-widget-ci-scope.py",
+    "release-testflight.py", "test-release-testflight.py",
+))
+PRESERVATION_EXPORT_TESTS = (
+    "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+    "NekoWidgetUITests/SoloMemoriesUITests/testMemoryNoteExportCancellationKeepsText",
+    "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
+    "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+)
+
 PURCHASE_CATALOG_BLOBS = {
     "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": [
         "331666f567faf759064142e99a100115b7cffdf5",
@@ -1641,7 +1788,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = (PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2567,6 +2714,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == PRESERVATION_EXPORT_SCOPE:
+        return sources in (PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS)
     if scope == PRESERVATION_USAGE_SCOPE:
         return sources == PRESERVATION_USAGE_PATHS
     if scope == MEMBERSHIP_TOOLS_SCOPE:
@@ -2758,6 +2907,8 @@ def sharing_job(scope: str) -> str:
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == PRESERVATION_EXPORT_SCOPE:
+        return PRESERVATION_EXPORT_TESTS
     if scope == REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE:
         return MEMBERSHIP_MANAGEMENT_TESTS
     if scope == REVIEWED_PURCHASE_CATALOG_SCOPE:

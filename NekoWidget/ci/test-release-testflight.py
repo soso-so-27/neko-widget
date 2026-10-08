@@ -68,6 +68,7 @@ class ReleaseTests(unittest.TestCase):
             release.recent_runs_path(1): {"total_count": 1, "workflow_runs": [self.previous]},
         }, {(29, None): "REQUESTED_BUILD_NUMBER: 160\nRELEASE_BUILD_NUMBER: 160"})
         self.set_plan()
+        self.set_export_backends()
         self.git_values = {
             ("remote", "get-url", "origin"): f"https://github.com/{release.REPOSITORY}.git",
             ("rev-parse", "HEAD"): self.sha,
@@ -85,6 +86,107 @@ class ReleaseTests(unittest.TestCase):
             for index, name in enumerate(self.plan["required_jobs"])
         ]
         self.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
+
+    def set_export_backends(self):
+        self.backend_indexes = []
+        self.backend_job_indexes = []
+        for index, (workflow, required) in enumerate(release.planner.PRESERVATION_EXPORT_BACKEND_JOBS.items()):
+            run_id = 500 + index
+            identity = {"id": 700 + index, "path": ".github/workflows/" + workflow, "state": "active"}
+            self.gh.values[f"actions/workflows/{workflow}"] = identity
+            key = f"actions/workflows/{workflow}/runs?head_sha={self.sha}&event=push&per_page=100"
+            run = dict(self.run, id=run_id, run_number=10, workflow_id=identity["id"],
+                       path=identity["path"], head_branch="codex/export", run_attempt=1)
+            self.gh.values[key] = {"total_count": 1, "workflow_runs": [run]}
+            jobs_key = f"actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1"
+            jobs = [dict(self.plan_job, id=run_id * 100 + n, name=name) for n, name in enumerate(required)]
+            self.gh.values[jobs_key] = {"total_count": len(jobs), "jobs": jobs}
+            self.backend_indexes.append(key); self.backend_job_indexes.append(jobs_key)
+
+    def export_plan(self):
+        selected = release.planner.PRESERVATION_EXPORT_SCOPE
+        self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)))
+        self.set_plan()
+
+    def test_export_requires_both_same_sha_backends_and_keeps_release_flags(self):
+        self.export_plan()
+        result = self.prepare()
+        self.assertEqual(set(result["ci"]["backend_evidence"]), {"preservation-service.yml", "sharing-service.yml"})
+        self.assertNotIn("preservation_pilot", result["inputs"])
+        self.assertNotIn("billing_sandbox", result["inputs"])
+        self.assertEqual(self.gh.dispatches, [])
+        self.candidate()
+        self.assertEqual(self.prepare()["ci"]["backend_evidence"]["preservation-service.yml"]["sha"], self.sha)
+
+    def test_export_preserves_candidate_proof_when_separate_main_backend_is_pending_or_failed(self):
+        self.export_plan()
+        for conclusion, status in ((None, "in_progress"), ("failure", "completed"), ("success", "completed")):
+            self.set_export_backends()
+            for key in self.backend_indexes:
+                value = self.gh.values[key]
+                value["workflow_runs"].append(dict(value["workflow_runs"][0], id=999,
+                    run_number=11, head_branch="main", status=status, conclusion=conclusion))
+                value["total_count"] = 2
+            # Real main-reuse lookup must connect to the same candidate backend
+            # proof, never to the independently executing main backend run.
+            self.candidate()
+            candidate = self.gh.values["actions/runs/10"]
+            def api(path):
+                prefix = f"/repos/{release.REPOSITORY}/"
+                self.assertTrue(path.startswith(prefix))
+                local = path[len(prefix):]
+                if local.startswith("actions/workflows/ios-build.yml/runs?"):
+                    return {"workflow_runs": [candidate]}
+                return self.gh.get(local)
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": self.sha,
+                   "GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_RUN_ID": "20"}
+            with patch.object(release.planner, "git", return_value=self.sha):
+                self.assertEqual(release.planner.find_evidence(env, tuple(self.plan["required_jobs"]), api, self.now), (10, self.sha))
+            result = self.prepare()
+            self.assertEqual(result["ci"]["backend_evidence"]["preservation-service.yml"]["run_id"], 500)
+            # Restore executed native jobs before preparing the next main event.
+            self.plan.update(evidence_run_id=None, evidence_sha=None); self.set_plan()
+        # Main alone cannot certify the release candidate.
+        for key in self.backend_indexes:
+            self.gh.values[key]["workflow_runs"].pop(0); self.gh.values[key]["total_count"] = 1
+        with self.assertRaises(release.Blocked): self.prepare()
+
+    def test_export_rejects_absent_wrong_identity_and_newer_unsuccessful_backends(self):
+        self.export_plan()
+        for key in self.backend_indexes:
+            valid = copy.deepcopy(self.gh.values[key])
+            cases = [{"total_count": 0, "workflow_runs": []},
+                     {"total_count": 2, "workflow_runs": valid["workflow_runs"]}]
+            for field, value in (("head_sha", "b" * 40), ("event", "workflow_dispatch"),
+                    ("workflow_id", 999), ("path", ".github/workflows/other.yml"),
+                    ("head_branch", "diagnostic/export"), ("repository", {"full_name": "other/repo"}),
+                    ("head_repository", {"full_name": "other/repo"}), ("status", "in_progress"),
+                    ("conclusion", "failure")):
+                changed = copy.deepcopy(valid); changed["workflow_runs"][0][field] = value; cases.append(changed)
+            newest = dict(valid["workflow_runs"][0], id=900, run_number=11, status="completed", conclusion="failure")
+            cases.append({"total_count": 2, "workflow_runs": valid["workflow_runs"] + [newest]})
+            cases.append({"total_count": 2, "workflow_runs": valid["workflow_runs"] * 2})
+            for invalid in cases:
+                self.gh.values[key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(release.Blocked): self.prepare()
+            self.gh.values[key] = valid
+
+    def test_export_rejects_every_missing_skipped_foreign_stale_or_duplicate_backend_job(self):
+        self.export_plan()
+        for key in self.backend_job_indexes:
+            valid = copy.deepcopy(self.gh.values[key])
+            for index in range(len(valid["jobs"])):
+                cases = []
+                jobs = copy.deepcopy(valid["jobs"]); jobs.pop(index); cases.append({"total_count": len(jobs), "jobs": jobs})
+                for field, value in (("status", "queued"), ("conclusion", "skipped"), ("conclusion", "failure"),
+                        ("head_sha", "b" * 40), ("completed_at", (self.now - dt.timedelta(hours=25)).isoformat()),
+                        ("completed_at", (self.now + dt.timedelta(minutes=1)).isoformat())):
+                    changed = copy.deepcopy(valid); changed["jobs"][index][field] = value; cases.append(changed)
+                jobs = copy.deepcopy(valid["jobs"]); jobs.append(jobs[index]); cases.append({"total_count": len(jobs), "jobs": jobs})
+                for invalid in cases:
+                    self.gh.values[key] = invalid
+                    with self.subTest(key=key, index=index, invalid=invalid), self.assertRaises(release.Blocked): self.prepare()
+            self.gh.values[key] = valid
 
     def prepare(self, build="165", sha=None):
         return release.prepare(self.gh, sha or self.sha, build, 20, self.now, {})

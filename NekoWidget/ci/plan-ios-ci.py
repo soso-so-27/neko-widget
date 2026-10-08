@@ -16,7 +16,9 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_PATHS, APP_DATA_NEW_PATHS,
+from ios_ci_scope import (PRESERVATION_EXPORT_SCOPE, PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_BLOBS,
+                          PRESERVATION_EXPORT_DOC_BLOBS, PRESERVATION_EXPORT_COMPANIONS, PRESERVATION_EXPORT_TESTS,
+                          FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_PATHS, APP_DATA_NEW_PATHS,
                           APP_DATA_PROJECT, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
                           LOST_CAT_UX_SCOPE, LOST_CAT_PHOTO_TEST_NAMES,
                           EVACUATION_PATHS, EVACUATION_NEW_PATHS,
@@ -973,6 +975,63 @@ PURCHASE_CATALOG_COMPANION_DIGESTS = {
 PURCHASE_CATALOG_WORKFLOW_BLOB = "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90"
 
 
+PRESERVATION_EXPORT_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "9a26f04cb3e683043ac41171f3d68f5cec4d39e86e19e7dd2fbf8d54d59b7500",
+        "8e6e6fd0e6030fb85cee73c2e2a726ad9629c0c6d02bbb7217b87fcc506f4a6d"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "d373d6948d481bbcf15e2b0afe9e9e21efe5d84db5bff4e68666c3b925b6b94e",
+        "2ec7bf0ac34e3b5aa0f229071dfbf85dbc2c0b602cc8a8c778e28d7fb7053663"
+    ],
+    "NekoWidget/ci/release-testflight.py": [
+        "e6129629199d83a622ba3585942cd8a5d7a5faa24c41d40b664d6ea09280f248",
+        "b13e30293f8ff4ba9d5b2212758742a36ce392ec07a5f6a7d1a9e564c92d0b11"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "d287b83e4a24a10195e59a91d955946c996a93967c7513e22286ff79bb0d5506",
+        "8410b8139798dd3b5910bd0d1b3e862ce833974d381cc54bb7d8ca636c68a0fe"
+    ],
+    "NekoWidget/ci/test-release-testflight.py": [
+        "356764df4b6e8bfbb1291f3320e546582ea404c3e4ca2d931ba27cf79a6389a7",
+        "95f8aa7253031efa800b3874fb32a82050d4b5ee161dea9a07e4a860783d56d8"
+    ],
+    "NekoWidget/ci/test-widget-ci-scope.py": [
+        "253e544eb831ffd7e05ca92cb10d3359050dd38f4038ab19579675ca81522085",
+        "e11f118fadc9d8218bb333358687a074e1e4835b527928d182b7cecdc1b28b15"
+    ]
+}
+PRESERVATION_EXPORT_WORKFLOWS = {
+    ".github/workflows/ios-build.yml": "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90",
+    ".github/workflows/preservation-service.yml": "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+    ".github/workflows/sharing-service.yml": "8038107503651173741b1502aa3e836a2cb2790a"
+}
+
+
+def preservation_export_only(paths: list[str], base: str, head: str) -> bool:
+    all_blobs = PRESERVATION_EXPORT_BLOBS | PRESERVATION_EXPORT_DOC_BLOBS
+    if (not paths or set(PRESERVATION_EXPORT_BLOBS) != PRESERVATION_EXPORT_PATHS
+            or set(paths) not in (set(all_blobs), set(all_blobs) | PRESERVATION_EXPORT_COMPANIONS)
+            or not all(len(pair) == 2 and all(SHA.fullmatch(value) for value in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1] for pair in all_blobs.values())):
+        return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_EXPORT_BLOBS,
+                             companion_paths=PRESERVATION_EXPORT_COMPANIONS,
+                             companion_digests=PRESERVATION_EXPORT_COMPANION_DIGESTS,
+                             companion_name="PRESERVATION_EXPORT_COMPANION_DIGESTS"):
+        return False
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).strip("\0").split("\0")
+    for path, (before, after) in PRESERVATION_EXPORT_DOC_BLOBS.items():
+        expected = ([":000000", "100644"] if before == "0" * 40 else [":100644", "100644"])
+        expected += [before, after, "A" if before == "0" * 40 else "M"]
+        if not any(raw[i + 1] == path and raw[i].split() == expected for i in range(0, len(raw), 2)):
+            return False
+    if any(git("rev-parse", f"{ref}:{path}") != blob
+           for path, blob in PRESERVATION_EXPORT_WORKFLOWS.items() for ref in (base, head)):
+        return False
+    return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), PRESERVATION_EXPORT_TESTS)
+
+
 def reviewed_hub_only(paths: list[str], base: str, head: str, *, product_blobs: dict,
                       companion_paths: frozenset, companion_digests: dict,
                       companion_name: str) -> bool:
@@ -1094,6 +1153,15 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources & PRESERVATION_EXPORT_PATHS and sources <= PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS:
+        try:
+            base = comparison_base(event, env)
+            if base and preservation_export_only(paths, base, env["GITHUB_SHA"]):
+                return PRESERVATION_EXPORT_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        # Existing scopes may own smaller independent changes. The frozen batch
+        # itself still fails closed through the normal selector on any mismatch.
     if sources and sources <= BILLING_OPERATOR_PATHS:
         try:
             base = comparison_base(event, env)
@@ -1871,6 +1939,58 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     return list(latest.values())
 
 
+PRESERVATION_EXPORT_BACKEND_JOBS = {
+    "preservation-service.yml": ("Validate preservation identity and storage",),
+    "sharing-service.yml": (
+        "Select backend checks", "Typecheck, test, and build Apple transaction verifier",
+        "Windows moderation key, drill, and report policy fixtures", "Typecheck, test, and bundle Worker",
+    ),
+}
+
+
+def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt.datetime) -> dict:
+    """Exact-SHA executed backend proof, independent of native workflow success."""
+    if not SHA.fullmatch(sha):
+        raise ValueError("Invalid preservation backend candidate")
+    evidence = {}
+    for workflow, required in PRESERVATION_EXPORT_BACKEND_JOBS.items():
+        prefix = f"/repos/{repository}/actions"
+        identity = api(f"{prefix}/workflows/{workflow}")
+        if (type(identity.get("id")) is not int or identity.get("state") != "active"
+                or identity.get("path") != ".github/workflows/" + workflow):
+            raise ValueError("Preservation backend workflow identity unavailable")
+        query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
+        response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        runs = response.get("workflow_runs")
+        if (not isinstance(runs, list) or type(response.get("total_count")) is not int
+                or response["total_count"] != len(runs) or not runs):
+            raise ValueError("Preservation backend run index incomplete or absent")
+        for run in runs:
+            if (type(run.get("id")) is not int or type(run.get("run_number")) is not int
+                    or run.get("head_sha") != sha or run.get("event") != "push"
+                    or run.get("workflow_id") != identity["id"]
+                    or run.get("path") != identity["path"]
+                    or run.get("repository", {}).get("full_name") != repository
+                    or run.get("head_repository", {}).get("full_name") != repository
+                    or not (run.get("head_branch") == "main" or str(run.get("head_branch", "")).startswith("codex/"))):
+                raise ValueError("Preservation backend run identity mismatch")
+        # Main is a separate integration execution, not the candidate proof.
+        # In particular Sharing's own main plan must not wait for itself.
+        # Among codex candidate pushes, never hide a newer failed/pending run.
+        runs = [run for run in runs if str(run.get("head_branch", "")).startswith("codex/")]
+        if not runs:
+            raise ValueError("No same-SHA preservation candidate push")
+        if len({run["id"] for run in runs}) != len(runs) or len({run["run_number"] for run in runs}) != len(runs):
+            raise ValueError("Duplicate preservation backend execution")
+        latest = max(runs, key=lambda run: run["run_number"])
+        if (latest.get("status"), latest.get("conclusion")) != ("completed", "success"):
+            raise ValueError("Latest preservation backend run has not succeeded")
+        if not covers_jobs(executed_jobs(latest, repository, api), required, sha, now=now):
+            raise ValueError("Preservation backend required jobs did not execute successfully")
+        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "required_jobs": list(required)}
+    return evidence
+
+
 def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -> tuple[int, str] | None:
     if env["GITHUB_EVENT_NAME"] != "push" or env["GITHUB_REF"] != "refs/heads/main":
         evidence_log("not_applicable", reason="not_main_push")
@@ -1912,6 +2032,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
                 continue
+            if covered and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
+                preservation_export_backend_evidence(run["head_sha"], repo, api, now)
             if covered:
                 evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])
                 return run_id, run["head_sha"]
@@ -1944,6 +2066,25 @@ def diagnose_reuse(run_id: int, selected_scope: str) -> None:
         raise SystemExit("No reusable evidence found by the read-only diagnosis")
 
 
+def preservation_sharing_plan(env: dict) -> bool:
+    if env.get("GITHUB_WORKFLOW") != "Sharing service check" or env.get("GITHUB_EVENT_NAME") != "push":
+        return False
+    repository, sha = env["GITHUB_REPOSITORY"], env["GITHUB_SHA"]
+    prefix = f"/repos/{repository}/actions"
+    identity = github_api(env, prefix + "/workflows/sharing-service.yml")
+    current = github_api(env, prefix + f"/runs/{int(env['GITHUB_RUN_ID'])}")
+    if (identity.get("path") != ".github/workflows/sharing-service.yml"
+            or type(identity.get("id")) is not int or identity.get("state") != "active"
+            or current.get("id") != int(env["GITHUB_RUN_ID"])
+            or current.get("workflow_id") != identity["id"] or current.get("path") != identity["path"]
+            or current.get("event") != "push" or current.get("head_sha") != sha
+            or current.get("repository", {}).get("full_name") != repository
+            or current.get("head_repository", {}).get("full_name") != repository
+            or not (current.get("head_branch") == "main" or str(current.get("head_branch", "")).startswith("codex/"))):
+        raise ValueError("Sharing backend plan run identity mismatch")
+    return True
+
+
 def main() -> None:
     env = dict(os.environ)
     event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
@@ -1953,6 +2094,16 @@ def main() -> None:
         paths = None
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
+
+    if selected_scope == PRESERVATION_EXPORT_SCOPE and preservation_sharing_plan(env):
+        # This job selects backend checks only; it is never native reuse proof.
+        with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"runtime_scope={selected_scope}\n")
+            for flag in ("build", "smoke", "sharing", "app_ui"):
+                output.write(f"{flag}=false\n")
+        print("PRESERVATION_BACKEND_PLAN_JSON=" + json.dumps({"repository": env["GITHUB_REPOSITORY"],
+              "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
+        return
 
     if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
