@@ -194,6 +194,8 @@ private enum PlusPurchaseRecordingFailure: Error {
 
 @MainActor
 final class PlusPurchaseStore: ObservableObject {
+    /// One live observer and one transaction recorder for the production app.
+    static let productionShared = PlusPurchaseStore()
     @Published private(set) var products: [Product] = []
     @Published private(set) var productAvailability: PlusProductAvailability
     @Published private(set) var entitlementState: PlusEntitlementState {
@@ -207,6 +209,9 @@ final class PlusPurchaseStore: ObservableObject {
     @Published private(set) var isPurchasing = false
     @Published private(set) var isRestoring = false
     @Published private(set) var pendingProductID: String?
+    @Published private(set) var awaitingServerConfirmation = false
+    /// Presentation eligibility only; this never grants an entitlement.
+    @Published private(set) var canStartNewPurchase = false
 
     private struct EntitlementScan {
         var events: [PlusVerifiedTransactionEvent] = []
@@ -224,6 +229,11 @@ final class PlusPurchaseStore: ObservableObject {
     private let fetchAuthoritativeEntitlement: PlusAuthoritativeEntitlementFetcher?
     private var transactionUpdatesTask: Task<Void, Never>?
     private var hasStarted = false
+    private var startTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var reconciliationTask: Task<Void, Never>?
+    private var authorityAllowsNewPurchase = false
+    private var purchaseEligibilityGeneration: UInt64 = 0
 
     init(
         configuration: PlusPurchaseConfiguration = .current,
@@ -263,8 +273,16 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     func start() async {
+        if let startTask { await startTask.value; return }
         guard !hasStarted else { return }
         hasStarted = true
+        let task = Task { await self.performStart() }
+        startTask = task
+        await task.value
+        startTask = nil
+    }
+
+    private func performStart() async {
 
         guard configuration.isEnabled else {
             productAvailability = .disabled
@@ -285,7 +303,16 @@ final class PlusPurchaseStore: ObservableObject {
     /// Reconciles time-sensitive subscription state after foreground entry.
     /// This remains a no-op while the source-controlled storefront flag is off.
     func refreshAfterForegroundEntry() async {
-        guard hasStarted, configuration.isConfigured else { return }
+        await start()
+        guard configuration.isConfigured else { return }
+        if let refreshTask { await refreshTask.value; return }
+        let task = Task { await self.performRefresh() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
+
+    private func performRefresh() async {
         await reconcileCurrentEntitlements()
         if products.isEmpty {
             await loadProducts()
@@ -293,6 +320,9 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     func stop() {
+        startTask?.cancel()
+        refreshTask?.cancel()
+        reconciliationTask?.cancel()
         transactionUpdatesTask?.cancel()
         transactionUpdatesTask = nil
         hasStarted = false
@@ -309,12 +339,17 @@ final class PlusPurchaseStore: ObservableObject {
               fetchAuthoritativeEntitlement != nil,
               !isPurchasing,
               !isRestoring,
+              !entitlementState.grantsPlus,
+              canStartNewPurchase,
+              !awaitingServerConfirmation,
               pendingProductID == nil,
               let productID = configuration.productID(for: plan),
               let product = products.first(where: { $0.id == productID })
         else { return .unavailable }
 
         isPurchasing = true
+        purchaseEligibilityGeneration &+= 1
+        canStartNewPurchase = false
         defer { isPurchasing = false }
 
         do {
@@ -347,9 +382,11 @@ final class PlusPurchaseStore: ObservableObject {
                         case .confirmed:
                             return .purchased
                         case .denied, .indeterminate:
+                            awaitingServerConfirmation = true
                             return .awaitingServerConfirmation
                         }
                     } catch {
+                        awaitingServerConfirmation = true
                         markServerConfirmationIndeterminate()
                         return .awaitingServerConfirmation
                     }
@@ -363,6 +400,7 @@ final class PlusPurchaseStore: ObservableObject {
                 pendingProductID = product.id
                 return .pending
             case .userCancelled:
+                await reconcileCurrentEntitlements()
                 return .cancelled
             @unknown default:
                 return .failed
@@ -458,6 +496,8 @@ final class PlusPurchaseStore: ObservableObject {
         switch result {
         case let .verified(transaction):
             guard configuration.plan(for: transaction.productID) != nil else { return }
+            purchaseEligibilityGeneration &+= 1
+            canStartNewPurchase = false
             guard let billingToken = transaction.appAccountToken,
                   recordVerifiedTransactionEvent != nil,
                   fetchAuthoritativeEntitlement != nil
@@ -487,6 +527,8 @@ final class PlusPurchaseStore: ObservableObject {
             }
         case let .unverified(transaction, _):
             guard configuration.plan(for: transaction.productID) != nil else { return }
+            purchaseEligibilityGeneration &+= 1
+            canStartNewPurchase = false
             entitlementState = .indeterminate(
                 lastServerConfirmed: entitlementState.lastServerConfirmed
             )
@@ -494,6 +536,16 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     private func reconcileCurrentEntitlements() async {
+        if let reconciliationTask { await reconciliationTask.value; return }
+        let task = Task { await self.performCurrentEntitlementReconciliation() }
+        reconciliationTask = task
+        await task.value
+        reconciliationTask = nil
+    }
+
+    private func performCurrentEntitlementReconciliation() async {
+        canStartNewPurchase = false
+        let eligibilityGeneration = purchaseEligibilityGeneration
         let scan = await scanCurrentEntitlements()
 
         guard !scan.encounteredUnverifiedOrUnsupported else {
@@ -524,7 +576,21 @@ final class PlusPurchaseStore: ObservableObject {
                     pendingProductID = nil
                 }
             }
+            if scan.events.isEmpty, pendingProductID == nil,
+               !awaitingServerConfirmation,
+               await hasFreshLocalPurchaseEligibility() {
+                guard purchaseEligibilityGeneration == eligibilityGeneration else { return }
+                markServerConfirmationIndeterminate()
+                canStartNewPurchase = true
+                return
+            }
             _ = await refreshServerAuthority()
+            guard scan.events.isEmpty, pendingProductID == nil,
+                  !awaitingServerConfirmation, !entitlementState.grantsPlus,
+                  purchaseEligibilityGeneration == eligibilityGeneration else { return }
+            if authorityAllowsNewPurchase {
+                canStartNewPurchase = true
+            }
         } catch {
             // Do not fetch after a newer StoreKit event failed to reach the
             // server; that could revive an older, now-revoked status.
@@ -534,6 +600,8 @@ final class PlusPurchaseStore: ObservableObject {
 
     @discardableResult
     private func refreshServerAuthority() async -> ServerAuthorityRefresh {
+        canStartNewPurchase = false
+        authorityAllowsNewPurchase = false
         guard let fetchAuthoritativeEntitlement else {
             markServerConfirmationIndeterminate()
             return .indeterminate
@@ -544,10 +612,13 @@ final class PlusPurchaseStore: ObservableObject {
             let response = try await fetchAuthoritativeEntitlement()
             let authority = try response.validated()
             if authority.status == .unconfirmed {
+                authorityAllowsNewPurchase = authority.productId == nil
+                    && authority.accessUntilMs == nil && authority.authorityStaleAtMs == nil
                 markServerConfirmationIndeterminate()
                 return .indeterminate
             }
             guard authority.status.grantsAccess else {
+                authorityAllowsNewPurchase = authority.status == .expired || authority.status == .revoked
                 entitlementState = .inactive
                 return .denied
             }
@@ -573,6 +644,7 @@ final class PlusPurchaseStore: ObservableObject {
                 return .denied
             }
             entitlementState = .serverConfirmed(entitlement)
+            awaitingServerConfirmation = false
             return .confirmed
         } catch {
             markServerConfirmationIndeterminate()
@@ -581,9 +653,33 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     private func markServerConfirmationIndeterminate() {
+        canStartNewPurchase = false
         entitlementState = .indeterminate(
             lastServerConfirmed: entitlementState.lastServerConfirmed
         )
+    }
+
+    private func hasFreshLocalPurchaseEligibility() async -> Bool {
+        do {
+            let existing = try BillingKeychainStore.load()
+            let marker = try BillingInstallationMarkerStore.loadExisting()
+            guard entitlementState.lastServerConfirmed == nil else { return false }
+            if let existing {
+                guard let marker else { return false }
+                _ = try BillingSandboxOwnerEnrollment.readExistingPending(
+                    credential: existing, installationMarker: marker
+                )
+            }
+            let authorization = try await BillingFreshAccountAuthorizer()
+                .authorizeAfterCurrentEntitlementScan()
+            try authorization.validatedForBootstrap()
+            // No other operation may have replaced credentials across the await.
+            guard try BillingKeychainStore.load() == existing,
+                  try BillingInstallationMarkerStore.loadExisting() == marker,
+                  pendingProductID == nil, !awaitingServerConfirmation,
+                  !entitlementState.grantsPlus else { return false }
+            return true
+        } catch { return false }
     }
 
     private func scanCurrentEntitlements() async -> EntitlementScan {

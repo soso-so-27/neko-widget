@@ -3213,6 +3213,7 @@ final class SoloMemoriesUITests: XCTestCase {
             app.terminate()
         }
         checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase()
+        checkJoinedMembershipCannotOfferAnotherPurchase()
     }
 
     @MainActor
@@ -3238,6 +3239,85 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["membership-preview-open"].isHittable)
         app.terminate()
+        checkMembershipConfirmationStates()
+    }
+
+    @MainActor
+    private func checkJoinedMembershipCannotOfferAnotherPurchase() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--membership-offer-ui-fixture", "--membership-state-active"]
+            if largeText {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+            app.buttons["membership-preview-open"].tap()
+            let purchase = app.buttons["membership-offer-purchase"]
+            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+            XCTAssertEqual(purchase.label, "加入中です")
+            XCTAssertFalse(purchase.isEnabled)
+            XCTAssertFalse(app.staticTexts["membership-offer-price"].exists)
+            XCTAssertFalse(app.staticTexts["membership-offer-trial"].exists)
+            let joined = app.descendants(matching: .any)["membership-offer-active"].firstMatch
+            for _ in 0..<5 where !joined.isHittable { app.swipeUp() }
+            XCTAssertTrue(joined.isHittable)
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = largeText ? "membership-joined-largest" : "membership-joined"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.buttons["membership-offer-close"].tap()
+            XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["membership-preview-result"].label.contains("確認を終えて"))
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    private func checkMembershipConfirmationStates() {
+        for state in ["unknown", "authority-pending", "apple-pending", "expired", "expiring"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--membership-offer-ui-fixture", "--membership-state-" + state]
+            app.launch()
+            XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+            app.buttons["membership-preview-open"].tap()
+            let purchase = app.buttons["membership-offer-purchase"]
+            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+            if state == "expiring" {
+                let expired = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "会員情報の確認が必要です"), object: purchase)
+                XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 5), .completed)
+            }
+            XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
+            XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("追加の申し込みはせず")
+                          || app.staticTexts["membership-offer-message"].label.contains("追加の申し込みはしない"))
+            let refresh = app.buttons["membership-offer-refresh"]
+            for _ in 0..<5 where !refresh.isHittable { app.swipeUp() }
+            XCTAssertTrue(refresh.isHittable)
+            XCTAssertTrue(refresh.isEnabled)
+            if state == "unknown" {
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-confirmation-required"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            refresh.tap()
+            if state == "expired" || state == "expiring" {
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: purchase)
+                XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+            } else if state == "apple-pending" {
+                XCTAssertFalse(purchase.isEnabled)
+                XCTAssertEqual(purchase.label, "購入の確認待ちです")
+            } else {
+                let joined = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "加入中です"), object: purchase)
+                XCTAssertEqual(XCTWaiter.wait(for: [joined], timeout: 5), .completed)
+                XCTAssertFalse(purchase.isEnabled)
+                XCTAssertFalse(app.staticTexts["membership-offer-price"].exists)
+            }
+            XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                           "Status refresh must not invoke purchase, explicit restore, or close the sheet")
+            app.terminate()
+        }
     }
 
     override func setUpWithError() throws {

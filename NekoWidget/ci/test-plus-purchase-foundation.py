@@ -30,7 +30,8 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("980", live)
         self.assertNotIn("7日", live)
         self.assertIn("case .pending, .awaitingServerConfirmation: return .waiting", live)
-        self.assertIn("if result == .completed || result == .cancelled", model)
+        self.assertIn("if model.isPreview && (result == .completed || result == .cancelled)", model)
+        self.assertIn("onClose: { onFinish(model.isMember ? .completed : .cancelled) }", model)
         self.assertIn("!isWorking && !isWaiting", model)
 
     def setUp(self) -> None:
@@ -146,7 +147,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         finished = reconcile.index("await transaction.finish()")
         matching = reconcile.index(guard)
         cleared = reconcile.index("pendingProductID = nil")
-        loop_end = reconcile.index("_ = await refreshServerAuthority()")
+        loop_end = reconcile.index("if scan.events.isEmpty, pendingProductID == nil,")
         self.assertLess(acknowledged, finished)
         self.assertLess(finished, matching)
         self.assertLess(matching, cleared)
@@ -247,7 +248,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("PlusPurchaseStore.swift in Sources", extension_sources)
 
         app = source("NekoWidget/App/NekoWidgetApp.swift")
-        self.assertIn("@StateObject private var plusPurchases = PlusPurchaseStore()", app)
+        self.assertIn("@StateObject private var plusPurchases = PlusPurchaseStore.productionShared", app)
         self.assertIn("await plusPurchases.start()", app)
         self.assertIn("await plusPurchases.refreshAfterForegroundEntry()", app)
         self.assertIn("guard newPhase == .active", app)
@@ -271,6 +272,58 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             self.assertNotIn("PlusStorefrontEnabled", ui)
             self.assertNotIn("ねこのまど Plus", ui)
             self.assertNotIn("¥980", ui)
+
+    def test_offer_observes_shared_authority_without_enabling_unknown_or_active_purchase(self) -> None:
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        live_factory = section(model, "static func live()", "func refresh() async")
+        self.assertIn("PlusPurchaseStore.productionShared", live_factory)
+        self.assertIn("store.objectWillChange.sink", live_factory)
+        self.assertNotIn("PlusPurchaseStore()", model)
+        eligibility = section(model, "var canPurchase: Bool", "private init(")
+        for guard in ("!isMember", "!isWaiting", "!verificationRequired", "purchases?.canStartNewPurchase"):
+            self.assertIn(guard, eligibility)
+        self.assertIn("purchases.entitlementState.grantsPlus", model)
+        self.assertIn("expirationDate", model)
+        self.assertIn("expiryTask?.cancel()", model)
+        refresh = section(model, "func refresh() async", "private func updateMembershipState()")
+        self.assertIn("refreshAfterForegroundEntry()", refresh)
+        self.assertNotIn("restorePurchases", refresh)
+        self.assertNotIn("purchaseAction", refresh)
+        self.assertIn("if isMember {", view)
+        self.assertLess(view.index("if isMember {"), view.index("Text(offer.priceText)"))
+        self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
+
+    def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:
+        reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")
+        fresh = section(self.store, "private func hasFreshLocalPurchaseEligibility()", "private func scanCurrentEntitlements()")
+        self.assertLess(reconcile.index("!scan.encounteredUnverifiedOrUnsupported"),
+                        reconcile.index("await hasFreshLocalPurchaseEligibility()"))
+        self.assertIn("scan.events.isEmpty, pendingProductID == nil", reconcile)
+        self.assertIn("!awaitingServerConfirmation", reconcile)
+        self.assertIn("purchaseEligibilityGeneration == eligibilityGeneration", reconcile)
+        self.assertIn("authorizeAfterCurrentEntitlementScan()", fresh)
+        self.assertIn("validatedForBootstrap()", fresh)
+        self.assertIn("BillingSandboxOwnerEnrollment.readExistingPending", fresh)
+        self.assertIn("BillingKeychainStore.load() == existing", fresh)
+        self.assertIn("BillingInstallationMarkerStore.loadExisting() == marker", fresh)
+        self.assertIn("catch { return false }", fresh)
+        catch = reconcile[reconcile.index("} catch {"):]
+        self.assertNotIn("hasFreshLocalPurchaseEligibility", catch)
+        self.assertNotIn("canStartNewPurchase = true", catch)
+        authority = section(self.store, "private func refreshServerAuthority() async", "private func markServerConfirmationIndeterminate()")
+        self.assertIn("canStartNewPurchase = false", authority)
+        self.assertIn("authority.productId == nil", authority)
+        self.assertIn("authority.accessUntilMs == nil", authority)
+        self.assertIn("authority.authorityStaleAtMs == nil", authority)
+        updates = section(self.store, "private func handleTransactionUpdate(", "private func reconcileCurrentEntitlements()")
+        self.assertEqual(updates.count("canStartNewPurchase = false"), 2)
+        self.assertEqual(updates.count("purchaseEligibilityGeneration &+= 1"), 2)
+
+    def test_shared_store_waits_for_initialization_and_reuses_inflight_scan(self) -> None:
+        self.assertIn("if let startTask { await startTask.value; return }", self.store)
+        self.assertIn("if let refreshTask { await refreshTask.value; return }", self.store)
+        self.assertIn("if let reconciliationTask { await reconciliationTask.value; return }", self.store)
 
 
 if __name__ == "__main__":
