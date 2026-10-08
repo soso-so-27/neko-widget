@@ -456,6 +456,19 @@ PRESERVATION_PROVIDER_WORKFLOWS = {
 PRESERVATION_PROVIDER_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
 
 
+# One reviewed R2 ciphertext-view correction and its storage boundary test.
+# Register the control separately; no mixed product/control companion exception.
+PRESERVATION_R2_VIEW_SCOPE = "preservation-r2-view-v1"
+PRESERVATION_R2_VIEW_BLOBS = {
+    "NekoWidget/PreservationService/src/storage.ts": (
+        "9ba3543c9a3150809e5895a41eb65611f58f0d6b", "5384f5c5cd45f6290748fad20adfbfd41a25066c"),
+    "NekoWidget/PreservationService/test/storage.integration.test.ts": (
+        "469fc636ff66ea6951b9502651bd81d71ef3927a", "f74ac499d0a32a3df5cf6484cf7a78048e0b2844"),
+}
+PRESERVATION_R2_VIEW_PATHS = frozenset(PRESERVATION_R2_VIEW_BLOBS)
+PRESERVATION_R2_VIEW_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
 BILLING_SCOPE = "billing-private-service-v2"
 BILLING_JOB = "Typecheck, test, and build Apple transaction verifier"
 BILLING_CALLER_JOB = "Validate private billing caller"
@@ -691,6 +704,34 @@ def preservation_provider_requirements(head):
             for workflow, job in PRESERVATION_PROVIDER_JOBS.items()]
 
 
+def preservation_r2_view_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_R2_VIEW_PATHS
+            and all(path in PRESERVATION_R2_VIEW_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_r2_view_backend_only(paths, base, head):
+    if (not preservation_r2_view_paths_only(paths)
+            or set(PRESERVATION_R2_VIEW_BLOBS) != PRESERVATION_R2_VIEW_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PRESERVATION_R2_VIEW_BLOBS.values())):
+        return False
+    blob = PRESERVATION_R2_VIEW_WORKFLOW_BLOB
+    if (not SHA.fullmatch(blob) or blob == "0" * 40
+            or any(git("ls-tree", revision, "--", PRESERVATION_WORKFLOW)
+                   != f"100644 blob {blob}\t{PRESERVATION_WORKFLOW}" for revision in (base, head))):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_R2_VIEW_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_R2_VIEW_COMPANION_DIGESTS")
+
+
+def preservation_r2_view_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "success_required": True}]
+
+
 def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS, allowed_additions=frozenset()):
     if not paths or not source_paths(paths) or not source_paths(paths) <= allowed:
         return False
@@ -906,6 +947,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_PROVIDER_SCOPE and preservation_provider_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
+    if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
+        return (PRESERVATION_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == CI_EVIDENCE_SCOPE and source_paths(paths) == CI_EVIDENCE_PATHS:
@@ -1343,7 +1386,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
+    for selected, matches, verify in ((PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
+                                       (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
                                        (PRESERVATION_UPLOAD_SCOPE, preservation_upload_paths_only, preservation_upload_backend_only),
                                        (BILLING_AUTHORITY_SCOPE, billing_authority_paths_only, billing_authority_backend_only),
                                        (JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
@@ -2416,7 +2460,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -2430,11 +2474,14 @@ def main() -> None:
               "scope": selected_scope, "required_jobs": required,
               "evidence_run_id": None, "evidence_sha": None,
               **({"required_backend_runs": preservation_provider_requirements(env["GITHUB_SHA"])}
-                 if selected_scope == PRESERVATION_PROVIDER_SCOPE else {})}))
+                 if selected_scope == PRESERVATION_PROVIDER_SCOPE else {}),
+              **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {})}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_UPLOAD_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             if selected_scope == PRESERVATION_PROVIDER_SCOPE:
