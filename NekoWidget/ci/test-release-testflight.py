@@ -836,9 +836,20 @@ class PreservationExportCorrectionTests(unittest.TestCase):
         self.plan["test_correction_evidence"] = self.correction
         self.set_plan()
         self.current_jobs_key = "actions/runs/20/jobs?filter=latest&per_page=100&page=1"
-        for job in self.gh.values[self.current_jobs_key]["jobs"]:
+        # Names and seven-job shape observed on corrected run 37772225394:
+        # plan + app-ui execute; Build, Photos and three matrices are skips.
+        current_jobs = [job for job in self.gh.values[self.current_jobs_key]["jobs"]
+                        if job["name"] in {planner.PLAN_JOB, self.ui_name}]
+        current_jobs += [dict(self.plan_job, id=job_id, name=name, conclusion="skipped") for job_id, name in (
+            (113294537928, "needs.plan.outputs.build_name"),
+            (113294538165, "needs.plan.outputs.smoke_name"),
+            (113294538596, planner.UNEXPANDED_SHARING_JOB),
+            (113294538768, planner.UNEXPANDED_SHARING_JOB),
+            (113294539255, planner.UNEXPANDED_SHARING_JOB),
+        )]
+        self.gh.values[self.current_jobs_key] = {"total_count": 7, "jobs": current_jobs}
+        for job in current_jobs:
             job.update(run_id=20, run_attempt=1, steps=[])
-            if job["name"] not in {planner.PLAN_JOB, self.ui_name}: job["conclusion"] = "skipped"
             self.gh.values[f"actions/jobs/{job['id']}"] = job
             if job["name"] == self.ui_name:
                 self.current_ui_id = job["id"]
@@ -965,6 +976,28 @@ class PreservationExportCorrectionTests(unittest.TestCase):
             self.gh.values[self.current_jobs_key] = changed
             with self.assertRaises(release.Blocked): self.prepare()
         self.gh.values[self.current_jobs_key] = original
+
+    def test_unexpanded_workflow_names_are_only_empty_skips_and_never_success_evidence(self):
+        original = copy.deepcopy(self.gh.values[self.current_jobs_key])
+        self.assertEqual(original["total_count"], 7)
+        self.assertEqual(sum(job["conclusion"] == "skipped" for job in original["jobs"]), 5)
+        self.prepare()
+        for index, job in enumerate(original["jobs"]):
+            if job["conclusion"] != "skipped": continue
+            for mutation in ({"conclusion": "success"}, {"conclusion": "failure"}, {"conclusion": "cancelled"},
+                             {"status": "in_progress"}, {"steps": [{"conclusion": "success"}]}, {"steps": None},
+                             {"name": "needs.plan.outputs.other_name"}):
+                changed = copy.deepcopy(original); changed["jobs"][index].update(mutation)
+                self.gh.values[self.current_jobs_key] = changed
+                with self.subTest(job=job["id"], mutation=mutation), self.assertRaises(release.Blocked):
+                    self.prepare()
+        self.gh.values[self.current_jobs_key] = original
+        # A placeholder cannot stand in for actual successful source Build.
+        source = copy.deepcopy(self.gh.values[self.source_jobs_key])
+        next(job for job in source["jobs"] if job["name"] == release.planner.BUILD).update(
+            name="needs.plan.outputs.build_name", conclusion="skipped", steps=[])
+        self.gh.values[self.source_jobs_key] = source
+        with self.assertRaises(release.Blocked): self.prepare()
 
 
 if __name__ == "__main__":
