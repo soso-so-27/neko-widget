@@ -323,6 +323,163 @@ class PurchaseCatalogScopeTests(unittest.TestCase):
             self.assertEqual(planner.runtime_scope(sorted(scope.PURCHASE_CATALOG_PATHS), {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
 
 
+class PreservationExportScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def candidate(self):
+        products = {path: ("0" * 40 if index % 2 else "c" * 40, "d" * 40)
+                    for index, path in enumerate(sorted(scope.PRESERVATION_EXPORT_PATHS))}
+        pairs = {path: ("before " + path, "after " + path) for path in scope.PRESERVATION_EXPORT_COMPANIONS}
+        selector = "NekoWidget/ci/plan-ios-ci.py"
+        empty = "PRESERVATION_EXPORT_COMPANION_DIGESTS = {}\n"
+        pairs[selector] = (pairs[selector][0], empty + "# reviewed selector\n")
+        bindings = {path: list(map(scope.source_digest, pair)) for path, pair in pairs.items()}
+        literal = "PRESERVATION_EXPORT_COMPANION_DIGESTS = " + json.dumps(bindings, indent=4, sort_keys=True) + "\n"
+        pairs[selector] = (pairs[selector][0], pairs[selector][1].replace(empty, literal))
+        rows = {path: f":{'000000' if before == '0' * 40 else '100644'} 100644 {before} {after} {'A' if before == '0' * 40 else 'M'}"
+                for path, (before, after) in products.items()}
+        rows["handoffs/export.md"] = f":000000 100644 {'0' * 40} {'d' * 40} A"
+        rows.update({path: f":100644 100644 {'e' * 40} {'f' * 40} M" for path in pairs})
+        source = "final class SoloMemoriesUITests: XCTestCase {\n" + "".join(
+            "    func " + test.rsplit("/", 1)[-1] + "() {}\n" for test in scope.PRESERVATION_EXPORT_TESTS[:3])
+        source += "}\nfinal class MomentDeliveryComposerUITests: XCTestCase {\n    func "
+        source += scope.PRESERVATION_EXPORT_TESTS[-1].rsplit("/", 1)[-1] + "() {}\n}\n"
+        return products, pairs, bindings, rows, source
+
+    def verify(self, rows, *, paths=None, mutated=None, extra="", source=None, workflow=None, runtime=False):
+        products, pairs, bindings, _, valid_source = self.candidate()
+        def git(*args):
+            if args[0] == "diff":
+                return "".join(header + "\0" + path + "\0" for path, header in rows.items()) + extra
+            if args[0] == "show":
+                ref, path = args[1].split(":", 1)
+                if path == scope.MEMORY_TEST_PATH:
+                    return valid_source if source is None else source
+                return pairs[path][int(ref == self.head)] + ("# altered" if path == mutated else "")
+            if args[0] == "rev-parse":
+                return workflow or planner.PRESERVATION_EXPORT_WORKFLOWS[args[1].split(":", 1)[1]]
+            if args[0] == "merge-base":
+                return self.base
+            raise AssertionError(args)
+        candidate_paths = list(rows) if paths is None else paths
+        with patch.object(planner, "git", side_effect=git), \
+                patch.object(planner, "comparison_base", return_value=self.base), \
+                patch.object(planner, "PRESERVATION_EXPORT_BLOBS", products), \
+                patch.object(planner, "PRESERVATION_EXPORT_DOC_BLOBS", {"handoffs/export.md": ("0" * 40, "d" * 40)}), \
+                patch.object(planner, "PRESERVATION_EXPORT_COMPANION_DIGESTS", bindings):
+            if runtime:
+                return planner.runtime_scope(candidate_paths, {}, {"GITHUB_SHA": self.head})
+            return planner.preservation_export_only(candidate_paths, self.base, self.head)
+
+    def test_complete_products_and_self_bound_controls_select_only_this_scope(self):
+        products, pairs, _, rows, _ = self.candidate()
+        self.assertTrue(self.verify(rows))
+        self.assertTrue(self.verify({path: rows[path] for path in rows if path not in pairs}))
+        self.assertEqual(self.verify(rows, runtime=True), scope.PRESERVATION_EXPORT_SCOPE)
+        self.assertEqual(self.verify({path: rows[path] for path in rows if path not in pairs}, runtime=True), scope.PRESERVATION_EXPORT_SCOPE)
+        self.assertFalse(planner.preservation_export_only([], self.base, self.head))
+        # Before final product hash review, real pending values cannot select.
+        if any("pending-review" in pair for pair in scope.PRESERVATION_EXPORT_BLOBS.values()):
+            self.assertFalse(planner.preservation_export_only(list(rows), self.base, self.head))
+
+    def test_partial_mutated_mode_unknown_or_workflow_changes_fail_closed(self):
+        products, pairs, _, rows, _ = self.candidate()
+        for path in rows:
+            with self.subTest(missing=path):
+                missing = {key: value for key, value in rows.items() if key != path}
+                self.assertFalse(self.verify(missing))
+                self.assertEqual(self.verify(missing, runtime=True), scope.FULL_SCOPE)
+            for mode in ("100755", "120000", "160000", "000000"):
+                changed = dict(rows); changed[path] = changed[path].replace("100644", mode)
+                self.assertFalse(self.verify(changed), (path, mode))
+            for status in ({"A", "M", "D", "T", "R100", "C100"} - {rows[path].split()[-1]}):
+                changed = dict(rows); changed[path] = changed[path][:-1] + status
+                self.assertFalse(self.verify(changed), (path, status))
+        for path, pair in products.items():
+            for blob in pair:
+                changed = dict(rows); changed[path] = changed[path].replace(blob, "1" * 40)
+                self.assertFalse(self.verify(changed), (path, blob))
+                self.assertEqual(self.verify(changed, runtime=True), scope.FULL_SCOPE)
+        for path in pairs:
+            self.assertFalse(self.verify(rows, mutated=path), path)
+            self.assertEqual(self.verify(rows, mutated=path, runtime=True), scope.FULL_SCOPE)
+        for path in ("NekoWidget/Shared/MembershipAccessPolicy.swift", "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", scope.CI_WORKFLOW,
+                     "NekoWidget/ci/preflight-ci.py", "NekoWidget/NekoWidget/Services/NewStore.swift"):
+            changed = rows | {path: f":100644 100644 {'c' * 40} {'d' * 40} M"}
+            self.assertFalse(self.verify(changed), path)
+            self.assertEqual(self.verify(changed, runtime=True), scope.FULL_SCOPE)
+        self.assertFalse(self.verify(rows, workflow="1" * 40))
+        self.assertEqual(self.verify(rows, workflow="1" * 40, runtime=True), scope.FULL_SCOPE)
+        first = next(iter(rows))
+        self.assertFalse(self.verify(rows, paths=list(rows) + [first]))
+        self.assertFalse(self.verify(rows, extra=rows[first] + "\0" + first + "\0"))
+        handoff = rows | {"handoffs/purchase-catalog.md": f":000000 100644 {'0' * 40} {'d' * 40} A"}
+        self.assertFalse(self.verify(handoff))
+        handoff["handoffs/purchase-catalog.md"] = handoff["handoffs/purchase-catalog.md"].replace("100644", "120000")
+        self.assertFalse(self.verify(handoff))
+
+    def test_all_four_methods_and_available_git_evidence_are_required(self):
+        _, _, _, rows, source = self.candidate()
+        for test in scope.PRESERVATION_EXPORT_TESTS:
+            method = test.rsplit("/", 1)[-1]
+            self.assertFalse(self.verify(rows, source=source.replace("func " + method, "func missing")), test)
+            self.assertEqual(self.verify(rows, source=source.replace("func " + method, "func missing"), runtime=True), scope.FULL_SCOPE)
+        self.assertFalse(self.verify(rows, source=source.replace("MomentDeliveryComposerUITests", "OtherUITests")))
+        self.assertFalse(self.verify(rows, source=source.replace("func testManagedPreservationMembershipLinkConsentAndRetry() {}",
+            "/* func testManagedPreservationMembershipLinkConsentAndRetry() {} */")))
+        with patch.object(planner, "comparison_base", return_value=self.base), \
+                patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            self.assertEqual(planner.runtime_scope(sorted(scope.PRESERVATION_EXPORT_PATHS), {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
+
+
+class PreservationSharingPlanTests(unittest.TestCase):
+    def test_backend_plan_requires_actual_same_repo_workflow_and_never_uses_native_reuse(self):
+        env = {"GITHUB_WORKFLOW": "Sharing service check", "GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "soso-so-27/neko-widget",
+               "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "7"}
+        identity = {"id": 5, "path": ".github/workflows/sharing-service.yml", "state": "active"}
+        run = {"id": 7, "workflow_id": 5, "path": identity["path"], "event": "push", "head_sha": env["GITHUB_SHA"],
+               "repository": {"full_name": env["GITHUB_REPOSITORY"]},
+               "head_repository": {"full_name": env["GITHUB_REPOSITORY"]}, "head_branch": "main"}
+        def verify(value):
+            with patch.object(planner, "github_api", side_effect=[identity, value]), \
+                    patch.object(planner, "find_evidence", side_effect=AssertionError("backend cannot reuse native evidence")):
+                return planner.preservation_sharing_plan(env)
+        self.assertTrue(verify(run))
+        self.assertTrue(verify(run | {"head_branch": "codex/export"}))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); event = root / "event.json"; event.write_text("{}")
+            main_env = env | {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main",
+                "GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(root / "output"),
+                "GITHUB_STEP_SUMMARY": str(root / "summary")}
+            with patch.dict(os.environ, main_env), \
+                    patch.object(planner, "changed_paths", return_value=list(scope.PRESERVATION_EXPORT_PATHS)), \
+                    patch.object(planner, "runtime_scope", return_value=scope.PRESERVATION_EXPORT_SCOPE), \
+                    patch.object(planner, "github_api", side_effect=[identity, run]), \
+                    patch.object(planner, "find_evidence", side_effect=AssertionError("backend cannot wait for itself")):
+                planner.main()
+            output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertEqual(output["runtime_scope"], scope.PRESERVATION_EXPORT_SCOPE)
+            self.assertTrue(all(output[flag] == "false" for flag in ("build", "smoke", "sharing", "app_ui")))
+            # PR remains a supported backend selection event, but cannot be
+            # treated as a successful candidate push or wait for native reuse.
+            (root / "output").write_text("")
+            event.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": env["GITHUB_REPOSITORY"]}}}}))
+            with patch.dict(os.environ, main_env | {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/pull/1/merge"}), \
+                    patch.object(planner, "changed_paths", return_value=list(scope.PRESERVATION_EXPORT_PATHS)), \
+                    patch.object(planner, "runtime_scope", return_value=scope.PRESERVATION_EXPORT_SCOPE), \
+                    patch.object(planner, "github_api", side_effect=AssertionError("PR is not candidate evidence")):
+                planner.main()
+            pr_output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertEqual(pr_output["runtime_scope"], scope.PRESERVATION_EXPORT_SCOPE)
+        for key, value in (("id", 8), ("workflow_id", 6), ("path", ".github/workflows/ios-build.yml"),
+                ("event", "pull_request"), ("head_sha", "b" * 40), ("head_branch", "diagnostic/export"),
+                ("repository", {"full_name": "other/repo"}), ("head_repository", {"full_name": "other/repo"})):
+            with self.subTest(key=key), self.assertRaises(ValueError): verify(run | {key: value})
+        with patch.object(planner, "github_api", side_effect=AssertionError("wrong audience")):
+            self.assertFalse(planner.preservation_sharing_plan(env | {"GITHUB_WORKFLOW": "iOS build check"}))
+
+
 class MembershipManagementScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
