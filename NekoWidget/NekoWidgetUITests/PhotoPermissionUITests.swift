@@ -5554,9 +5554,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["family-record-export"].tap()
         let share = app.otherElements["ShareSheet.RemoteContainerView"].firstMatch
         XCTAssertTrue(share.waitForExistence(timeout: 30))
-        // The system share sheet's close button is not consistently exposed as
-        // a descendant on iOS 26. Export is established by the opened sheet;
-        // restart this isolated fixture to continue the collection checks.
+        // The remote close button can be outside the container's descendants.
+        // Complete real cancellation before restarting this fixture, so its
+        // prepared ZIP does not survive into the next export-cleanup test.
+        let shareClose = app.buttons["header.closeButton"].firstMatch
+        XCTAssertTrue(shareClose.waitForExistence(timeout: 5))
+        shareClose.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: share
+        )], timeout: 5), .completed)
+        XCTAssertTrue(menu.isHittable)
         app.terminate()
         app.launch()
         XCTAssertTrue(menu.waitForExistence(timeout: 15))
