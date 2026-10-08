@@ -1918,9 +1918,12 @@ def covers_preservation_export_correction(run: dict, validation_head: str, requi
     owning = (lane_job(PRESERVATION_EXPORT_SCOPE, "app-ui"),)
     if len(plans) != 1 or not covers_jobs(jobs, (PLAN_JOB,) + owning, run.get("head_sha"), now):
         return False
+    # GitHub leaves these workflow names unexpanded when their jobs are
+    # skipped. They are accepted only as empty skips below, never as proof.
+    skipped_names = {UNEXPANDED_SHARING_JOB, "needs.plan.outputs.build_name", "needs.plan.outputs.smoke_name"}
     if any(job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"]
            or job.get("run_attempt") != 1
-           or job.get("name") not in set(required) | {PLAN_JOB, UNEXPANDED_SHARING_JOB}
+           or job.get("name") not in set(required) | {PLAN_JOB} | skipped_names
            or (job.get("name") not in {PLAN_JOB, *owning}
                and ((job.get("status"), job.get("conclusion")) != ("completed", "skipped")
                     or job.get("steps") != [])) for job in jobs):
