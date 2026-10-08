@@ -98,6 +98,7 @@ class ReleaseTests(unittest.TestCase):
             run = dict(self.run, id=run_id, run_number=10, workflow_id=identity["id"],
                        path=identity["path"], head_branch="codex/export", run_attempt=1)
             self.gh.values[key] = {"total_count": 1, "workflow_runs": [run]}
+            self.gh.values[key.replace("event=push", "event=workflow_dispatch")] = {"total_count": 0, "workflow_runs": []}
             jobs_key = f"actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1"
             jobs = [dict(self.plan_job, id=run_id * 100 + n, name=name) for n, name in enumerate(required)]
             self.gh.values[jobs_key] = {"total_count": len(jobs), "jobs": jobs}
@@ -117,6 +118,46 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.gh.dispatches, [])
         self.candidate()
         self.assertEqual(self.prepare()["ci"]["backend_evidence"]["preservation-service.yml"]["sha"], self.sha)
+
+    def test_export_sharing_dispatch_requires_absent_push_and_exact_executed_candidate(self):
+        self.export_plan()
+        key = self.backend_indexes[1]
+        push = copy.deepcopy(self.gh.values[key])
+        dispatch_key = key.replace("event=push", "event=workflow_dispatch")
+        dispatched = copy.deepcopy(push)
+        dispatched["workflow_runs"][0]["event"] = "workflow_dispatch"
+        self.gh.values[key] = {"total_count": 0, "workflow_runs": []}
+        self.gh.values[dispatch_key] = dispatched
+        self.assertEqual(self.prepare()["ci"]["backend_evidence"]["sharing-service.yml"]["event"], "workflow_dispatch")
+        for field, value in (("head_sha", "b" * 40), ("head_branch", "main"),
+                             ("head_branch", "diagnostic/export"), ("event", "pull_request"),
+                             ("workflow_id", 999), ("repository", {"full_name": "other/repo"}),
+                             ("status", "in_progress"), ("conclusion", "failure")):
+            invalid = copy.deepcopy(dispatched); invalid["workflow_runs"][0][field] = value
+            self.gh.values[dispatch_key] = invalid
+            with self.subTest(field=field, value=value), self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[dispatch_key] = dispatched
+        for changes in ({"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}, {"head_branch": "main"}):
+            invalid = copy.deepcopy(push); invalid["workflow_runs"][0].update(changes)
+            self.gh.values[key] = invalid
+            with self.subTest(push=changes), self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[key] = {"total_count": 1, "workflow_runs": []}
+        with self.assertRaises(release.Blocked): self.prepare()
+        for invalid_count in (False, 0.0):
+            self.gh.values[key] = {"total_count": invalid_count, "workflow_runs": []}
+            with self.subTest(total_count=invalid_count), self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[key] = {"total_count": 0, "workflow_runs": []}
+        latest = dict(dispatched["workflow_runs"][0], id=999, run_number=11, conclusion="failure")
+        self.gh.values[dispatch_key] = {"total_count": 2, "workflow_runs": dispatched["workflow_runs"]+[latest]}
+        with self.assertRaises(release.Blocked): self.prepare()
+        self.gh.values[dispatch_key] = dispatched
+        jobs = self.gh.values[self.backend_job_indexes[1]]["jobs"]
+        for job in jobs:
+            job["conclusion"] = "skipped"
+            with self.assertRaises(release.Blocked): self.prepare()
+            job["conclusion"] = "success"
+        self.gh.values[self.backend_indexes[0]] = {"total_count": 0, "workflow_runs": []}
+        with self.assertRaises(release.Blocked): self.prepare()
 
     def test_export_preserves_candidate_proof_when_separate_main_backend_is_pending_or_failed(self):
         self.export_plan()
