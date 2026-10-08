@@ -37,6 +37,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - `preservation-image-validator-v2` はv1の厳格JPEGデコーダーに、既定OFFの非公開Container gateway・HTTP bridge・Linux/amd64 Docker buildと人工画像でのコンテナ内検証を追加した既知23ファイルだけ。通常ファイルmode・固定専用workflow、CI4ファイルの完全before/afterを照合する。未知/native/他service/署名/検証基盤の未監査差分はfull。候補SHAで別workflow `preservation-image-validator.yml` の `Validate preservation JPEG provider` とiOS planの双方を確認する。Node/Docker/bundle成功は実Container配備・iOS release/TestFlightの証拠ではない。新scopeは初回計測し、10分job timeoutを実測時間としない。
 
+- `preservation-provider-stream-v1` はproviderへのJPEG要求をstream化する既定3ファイルだけ。Serviceのproviderと新規境界テスト、ImageValidatorのadapterテストの完全before/after blob・M/A/M・通常modeを固定し、両backend workflowの内容とmodeもbase/headで不変と確認する。制御登録は `ci-orchestration-v1` で先にmainへ反映し、製品との混在・未知・部分一致にこのscopeを使わない。候補の同一SHAで `preservation-service.yml` の `Validate preservation identity and storage` と `preservation-image-validator.yml` の `Validate preservation JPEG provider` の実行成功を両方確認する。plan成功はbackend成功を証明せず、既存固定scopeや必須backendは変更しない。Mac・TestFlightは対象外。所要時間は新scopeとして初回計測し、両workflowの失敗・稼働中履歴と初回候補からの累計を残す。
+
 - `reviewed-managed-preservation-app-v1` は2026-09-22の既定OFF個人保管接続＋既存共同記録アルバム表示だけを対象とする。既採用の固定companion方式を用い、製品変更とCI選択変更を独立レビュー・別commitに分離した後、完全before/after・manifest・companion一致の統合候補を1回計測する。Build・Photos・両OS runtime・変更経路のUI2操作・成功証拠条件は維持。汎用CI高速化の例外とせず、未知差分はfullへ戻す。未計測を時間短縮実績と扱わない。
 
 - 画面操作の原因切り分けは `diagnostic/<task>` に候補をpushし、`ios-ui-diagnostic.yml` をそのrefで手動起動する。入力は候補の完全SHA、既存 `MomentDeliveryComposerUITests` または `SoloMemoriesUITests` のclass、同じclass内の失敗したメソッド名1〜3個（カンマ区切り）。通常CIはこのbranchのpushで起動しない。例: `gh workflow run ios-ui-diagnostic.yml --ref diagnostic/<task> -f source_ref=<SHA> -f test_class=SoloMemoriesUITests -f test_method=<METHOD1,METHOD2>`。初回のビルドとfixture準備は必要で、跨runキャッシュや診断時間短縮の実測は別途確認する。
