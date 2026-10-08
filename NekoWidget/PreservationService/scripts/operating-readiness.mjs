@@ -95,6 +95,22 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
     || typeof bulk.evidenceReference !== 'string' || !bulk.evidenceReference.trim()) {
     blockers.push('full-export-with-request-limit-unconfirmed');
   }
+  // Count-only fixtures do not exercise the bytes sold. Use the server's quota
+  // accounting (metadata and photo), not compressed ZIP or base64 wire bytes.
+  if (!validOffer || !positive(bulk?.sourceQuotaBytes)
+    || bulk.sourceQuotaBytes !== offer.ownerQuotaBytes) {
+    blockers.push('full-export-byte-volume-unconfirmed');
+  }
+  // The current protocol has one original 15-minute authorization. Evidence
+  // from a renewed session cannot prove this path works within its deadline.
+  if (!bulk || !fresh(bulk.startedAt) || !fresh(bulk.completedAt)
+    || !Number.isSafeInteger(bulk.originalSessionExpiresAt)
+    || bulk.startedAt >= bulk.completedAt || bulk.completedAt > bulk.confirmedAt
+    || bulk.completedAt >= bulk.originalSessionExpiresAt
+    || bulk.originalSessionExpiresAt - bulk.startedAt > 15 * 60_000
+    || bulk.authorizationRenewed !== false || bulk.expiredSessionStopsAndCleans !== true) {
+    blockers.push('full-export-original-session-unconfirmed');
+  }
   if (!validOffer || !positive(plan?.archive?.globalActiveBytesLimit)
     || plan.archive.globalActiveBytesLimit < offer.ownerQuotaBytes * offer.maximumOwners) {
     blockers.push('sales-capacity-not-reserved');

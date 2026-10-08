@@ -86,6 +86,8 @@ const publicFixture = () => {
     includesRetainedOwnersAndHistoricalVersions: true, coversUnknownStatusAndUndeliveredNoticeExtension: true,
     evidenceReference: 'synthetic-only' };
   evidence.bulkExport = { confirmedAt: now, recordCount: offer.maximumRecordsPerOwner,
+    sourceQuotaBytes: offer.ownerQuotaBytes, startedAt: now - 60_000, completedAt: now - 1,
+    originalSessionExpiresAt: now + 1, authorizationRenewed: false, expiredSessionStopsAndCleans: true,
     requestsPerMinute: 30, window: 'fixed-utc-minute', completed: true, archiveConsistent: true,
     cancellationStopsRequests: true, sessionChangeStopsRequests: true,
     appBuild: 'synthetic-only', evidenceReference: 'synthetic-only' };
@@ -158,6 +160,7 @@ const largePublicFixture = () => {
   Object.assign(evidence.configuration, { ownerQuotaBytes: offer.ownerQuotaBytes,
     maximumRecordsPerOwner: 1000, globalActiveBytesLimit: 15_000_000_000 });
   evidence.bulkExport.recordCount = offer.maximumRecordsPerOwner;
+  evidence.bulkExport.sourceQuotaBytes = offer.ownerQuotaBytes;
   return { evidence, offer, publicPlan };
 };
 test('capacity approval cannot reuse an internally matching but insufficient monthly intake plan', () => {
@@ -227,4 +230,31 @@ test('full-capacity export must survive the matching request limit without losin
     const { evidence, offer } = publicFixture(); mutate(evidence);
     assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('full-export-with-request-limit-unconfirmed'));
   }
+});
+
+test('a count-complete small export cannot attest the sold byte volume', () => {
+  for (const bytes of [undefined, 1000, 4_999_999_999, 5_000_000_001, NaN, true, Number.MAX_SAFE_INTEGER + 1]) {
+    const { evidence, offer, publicPlan } = largePublicFixture();
+    evidence.bulkExport.sourceQuotaBytes = bytes;
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, publicPlan, now).blockers.includes('full-export-byte-volume-unconfirmed'));
+  }
+  const { evidence, offer, publicPlan } = largePublicFixture();
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, publicPlan, now).blockers.includes('full-export-byte-volume-unconfirmed'), false);
+});
+
+test('bulk export evidence must finish before the original deadline and prove expired-session cleanup', () => {
+  for (const mutate of [e => delete e.startedAt, e => e.startedAt = now + 1,
+    e => e.startedAt = now - 86400000, e => e.completedAt = e.startedAt,
+    e => e.completedAt = now + 1, e => e.completedAt = e.originalSessionExpiresAt,
+    e => e.originalSessionExpiresAt = e.completedAt - 1,
+    e => e.originalSessionExpiresAt = e.startedAt + 900001,
+    e => e.originalSessionExpiresAt = Number.MAX_SAFE_INTEGER + 1,
+    e => e.confirmedAt = e.completedAt - 1, e => delete e.authorizationRenewed,
+    e => e.authorizationRenewed = true, e => e.expiredSessionStopsAndCleans = false]) {
+    const { evidence, offer } = publicFixture(); mutate(evidence.bulkExport);
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('full-export-original-session-unconfirmed'));
+  }
+  const { evidence, offer } = publicFixture();
+  evidence.bulkExport.originalSessionExpiresAt = evidence.bulkExport.startedAt + 900000;
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, true);
 });

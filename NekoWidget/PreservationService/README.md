@@ -144,7 +144,11 @@ coversUnknownStatusAndUndeliveredNoticeExtension=true、evidenceReference が必
 有料契約の観測と、保管中/過去世代/状態不明/通知未送達で延びる期間の費用を支える計画は別の証拠です。
 `bulkExport` は confirmedAt、recordCount（販売する maximumRecordsPerOwner と同数）、requestsPerMinute / window
 （配備と一致）、completed / archiveConsistent / cancellationStopsRequests / sessionChangeStopsRequests=true、
-appBuild、evidenceReference を必要とします。少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
+appBuild、evidenceReference を必要とします。sourceQuotaBytes は販売する ownerQuotaBytes と一致させ、
+サーバー会計上の写真・metadataの実測量を記録します。ZIPの圧縮後サイズや通信量、小さい1000件で代用しません。
+startedAt / completedAt / originalSessionExpiresAt により元の15分以内の期限前完了を照合し、
+authorizationRenewed=false、expiredSessionStopsAndCleans=true も必要です。
+少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
 配布済みアプリの逐次GETと15分sessionでは、30回/固定UTC分で1000件ZIPを完了できません。再試行だけでは解決しないため、
 取り出し方式と通信制限の両立を検証するまで、この一般提供用制限を配備・有効化しません。pilotには適用しません。
 未配備候補の `GET /v1/export-page` は、同じ本人・session・generationを固定し、50件/64MiB quotaごとに
@@ -153,7 +157,8 @@ NDJSONを返します（1frame 29MiB、1page 96MiB）。migration 0033のowner l
 ownerの429にはD1時計基準の `Retry-After: 1..60` を返し、書き出しのGETだけが元session内で1回待機・再試行します。
 保存/削除/通常閲覧の再試行は追加しません。取消、本人変更、削除、変更競合、不完全な応答は共有を止め、一時データを片付けます。
 ローカルworkerdでは1000件の小さい記録が20page、最大20MiB写真と日本語メモも完了しています。
-これは本番128MiB isolateのピーク測定や販売容量全体の実機成功ではありません。低速回線で15分sessionまたは
+Appleの診断CI（候補 a621260）でも42項目と保管画面1操作が成功し、1000件ZIP、実URLSessionの保護ファイル書込・取消を確認しました。
+診断は配布用CIの代替ではなく、本番128MB isolateのピーク測定や販売容量全体の実機成功でもありません。低速回線で15分sessionまたは
 120秒/pageの通信期限を超える場合の再認証・再開も未解決で、`bulkExport` の公開条件は未達のままです。
 一般提供用の制限候補は migration 0032 の owner 行を D1 の時刻で原子的に更新し、同じ本人の複数sessionを合算します。
 固定UTC分なので境界をまたぐ60秒間では最大60回になり、rolling 60秒の制限ではありません。失敗した下流処理も枠を消費します。
