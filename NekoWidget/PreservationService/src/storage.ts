@@ -561,7 +561,7 @@ export class ArchiveStore {
     if (!reserved) { await this.d.auth.requireSession(token); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
     try {
       if (sealedPhoto !== null) {
-        const write = () => this.d.bucket.put(key, bytes(sealedPhoto), { httpMetadata: { contentType: 'application/octet-stream' } });
+        const write = () => this.d.bucket.put(key, sealedPhoto, { httpMetadata: { contentType: 'application/octet-stream' } });
         const stored = this.d.ownerWriteLease
           ? await this.d.ownerWriteLease.withOwnerWrite(session.ownerId, write) : await write();
         if (!stored) throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
