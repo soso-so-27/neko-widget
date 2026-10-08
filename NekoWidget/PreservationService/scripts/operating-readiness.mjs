@@ -2,6 +2,64 @@
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
+// Aggregate local evidence only: never include a bearer token or owner identity.
+// A closed shape keeps an unrecognized transition from silently being ignored.
+function explicitExportAuthorization(bulk, fresh) {
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const shape = (value, fields) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value, key));
+  const opaque = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{7,63}(?![\s\S])/.test(value);
+  const segments = bulk.sessionSegments;
+  if (bulk.authorizationRenewed !== true || bulk.silentAuthorizationRenewed !== false
+    || bulk.expiredSessionStopsAndCleans !== true || bulk.cancellationStopsAndCleans !== true
+    || bulk.reauthenticationFailureStopsAndCleans !== true
+    || !count(bulk.inventoryGeneration) || !count(bulk.recordCount) || bulk.recordCount < 1
+    || !count(bulk.totalPages) || bulk.totalPages < 1 || bulk.totalPages > bulk.recordCount
+    || !Array.isArray(segments) || segments.length < 2 || segments.length > bulk.totalPages + 1) return false;
+  const seen = new Set(); let previous;
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    if (!shape(segment, ['sessionEvidenceId', 'issuedAt', 'expiresAt', 'startedAt', 'completedAt',
+      'completedPagesBefore', 'completedPagesAfter', 'inventoryGeneration', 'reauthentication'])
+      || !opaque(segment.sessionEvidenceId) || seen.has(segment.sessionEvidenceId)
+      || !count(segment.issuedAt) || !count(segment.expiresAt)
+      || segment.expiresAt <= segment.issuedAt || segment.expiresAt - segment.issuedAt > 900_000
+      || !fresh(segment.startedAt) || !fresh(segment.completedAt)
+      || segment.issuedAt > segment.startedAt || segment.startedAt >= segment.completedAt
+      || segment.completedAt >= segment.expiresAt || segment.completedAt > bulk.completedAt
+      || segment.inventoryGeneration !== bulk.inventoryGeneration
+      || !count(segment.completedPagesBefore) || !count(segment.completedPagesAfter)
+      || segment.completedPagesAfter > bulk.totalPages
+      || segment.completedPagesBefore > segment.completedPagesAfter
+      || (index < segments.length - 1 && segment.completedPagesBefore === segment.completedPagesAfter)) return false;
+    if (!previous) {
+      if (segment.startedAt !== bulk.startedAt || segment.expiresAt !== bulk.originalSessionExpiresAt
+        || segment.completedPagesBefore !== 0 || segment.reauthentication !== null) return false;
+    } else {
+      const reauth = segment.reauthentication;
+      if (segment.completedPagesBefore !== previous.completedPagesAfter
+        || !shape(reauth, ['previousSessionEvidenceId', 'requestedAt', 'confirmedAt', 'verifiedAt',
+          'userInitiated', 'appleIdentityConfirmed', 'sameOwner', 'newToken', 'newEpoch',
+          'inventoryUnchanged', 'pageBoundary'])
+        || reauth.previousSessionEvidenceId !== previous.sessionEvidenceId
+        || !['userInitiated', 'appleIdentityConfirmed', 'sameOwner', 'newToken', 'newEpoch',
+          'inventoryUnchanged', 'pageBoundary'].every(key => reauth[key] === true)
+        || !fresh(reauth.requestedAt) || !fresh(reauth.confirmedAt) || !fresh(reauth.verifiedAt)
+        || reauth.requestedAt < previous.completedAt || reauth.requestedAt > segment.issuedAt
+        || segment.issuedAt > reauth.confirmedAt || reauth.confirmedAt > reauth.verifiedAt
+        || reauth.verifiedAt > segment.startedAt) return false;
+    }
+    seen.add(segment.sessionEvidenceId); previous = segment;
+  }
+  const final = bulk.finalAuthorizationCheck;
+  return previous.completedPagesAfter === bulk.totalPages
+    && shape(final, ['sessionEvidenceId', 'verifiedAt', 'sameOwner', 'sessionCurrent', 'inventoryUnchanged', 'beforeSharing'])
+    && final.sessionEvidenceId === previous.sessionEvidenceId && fresh(final.verifiedAt)
+    && final.verifiedAt >= previous.completedAt && final.verifiedAt <= bulk.completedAt
+    && bulk.completedAt < previous.expiresAt
+    && ['sameOwner', 'sessionCurrent', 'inventoryUnchanged', 'beforeSharing'].every(key => final[key] === true);
+}
+
 export function reviewOperatingEvidence(evidence, plan, now = Date.now()) {
   const blockers = [];
   const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -101,15 +159,23 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
     || bulk.sourceQuotaBytes !== offer.ownerQuotaBytes) {
     blockers.push('full-export-byte-volume-unconfirmed');
   }
-  // The current protocol has one original 15-minute authorization. Evidence
-  // from a renewed session cannot prove this path works within its deadline.
-  if (!bulk || !fresh(bulk.startedAt) || !fresh(bulk.completedAt)
-    || !Number.isSafeInteger(bulk.originalSessionExpiresAt)
-    || bulk.startedAt >= bulk.completedAt || bulk.completedAt > bulk.confirmedAt
-    || bulk.completedAt >= bulk.originalSessionExpiresAt
-    || bulk.originalSessionExpiresAt - bulk.startedAt > 15 * 60_000
-    || bulk.authorizationRenewed !== false || bulk.expiredSessionStopsAndCleans !== true) {
-    blockers.push('full-export-original-session-unconfirmed');
+  // Keep the original path intact. Only a complete, explicit page-boundary
+  // authorization chain can qualify a run spanning more than one session.
+  const timeline = bulk && fresh(bulk.startedAt) && fresh(bulk.completedAt)
+    && bulk.startedAt < bulk.completedAt && bulk.completedAt <= bulk.confirmedAt;
+  if (bulk?.authorizationMode === 'explicit-reauthentication') {
+    if (!timeline || !explicitExportAuthorization(bulk, fresh)) blockers.push('full-export-reauthentication-unconfirmed');
+  } else if (bulk?.authorizationMode === undefined || bulk.authorizationMode === 'single-session') {
+    if (!timeline || !Number.isSafeInteger(bulk.originalSessionExpiresAt)
+      || bulk.completedAt >= bulk.originalSessionExpiresAt
+      || bulk.originalSessionExpiresAt - bulk.startedAt > 15 * 60_000
+      || bulk.authorizationRenewed !== false || bulk.expiredSessionStopsAndCleans !== true
+      || bulk.sessionSegments !== undefined || bulk.finalAuthorizationCheck !== undefined
+      || (bulk.silentAuthorizationRenewed !== undefined && bulk.silentAuthorizationRenewed !== false)) {
+      blockers.push('full-export-original-session-unconfirmed');
+    }
+  } else {
+    blockers.push('full-export-authorization-mode-unconfirmed');
   }
   if (!validOffer || !positive(plan?.archive?.globalActiveBytesLimit)
     || plan.archive.globalActiveBytesLimit < offer.ownerQuotaBytes * offer.maximumOwners) {

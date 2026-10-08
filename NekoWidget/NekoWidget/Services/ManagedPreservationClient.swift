@@ -409,12 +409,14 @@ actor ManagedPreservationClient {
     struct SessionCheckpoint: Sendable {
         fileprivate let epoch: UInt64
         fileprivate let credential: ManagedPreservationSessionStore.Credential
+        var ownerID: String { credential.ownerId }
     }
     static let consentVersion = "managed-preservation-v1"
     private static let maximumPhotoBytes = 20 * 1024 * 1024
     private let configuration: ManagedPreservationConfiguration
     private let transport = ManagedPreservationTransport()
     private let requestOverride: RequestTransport?
+    private let exportNow: @Sendable () -> Date
     private let billingIdentity: ManagedPreservationBillingIdentity
     private let store: ManagedPreservationSessionStore
     private var credential: ManagedPreservationSessionStore.Credential?
@@ -453,8 +455,10 @@ actor ManagedPreservationClient {
     }
 
     init(configuration: ManagedPreservationConfiguration = .current,
-         billingIdentity: ManagedPreservationBillingIdentity = .init(), requestOverride: RequestTransport? = nil) {
+         billingIdentity: ManagedPreservationBillingIdentity = .init(), requestOverride: RequestTransport? = nil,
+         exportNow: @escaping @Sendable () -> Date = { Date() }) {
         self.configuration = configuration
+        self.exportNow = exportNow
         self.billingIdentity = billingIdentity; self.requestOverride = requestOverride
         self.store = ManagedPreservationSessionStore(origin: configuration.origin?.absoluteString ?? "disabled")
     }
@@ -561,6 +565,32 @@ actor ManagedPreservationClient {
               try store.load() == checkpoint.credential else {
             throw ManagedPreservationError.staleSession
         }
+    }
+
+    /// Export alone may ask the person to authenticate again at a complete page
+    /// boundary. Expiry is distinct from an unexpected credential/epoch change.
+    func exportNeedsReauthentication(_ checkpoint: SessionCheckpoint, minimumLifetime: TimeInterval) throws -> Bool {
+        try ensureEpoch(checkpoint.epoch)
+        guard credential == checkpoint.credential, try store.load() == checkpoint.credential,
+              try store.deletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
+        return checkpoint.credential.expiresAt.timeIntervalSince(exportNow()) <= minimumLifetime
+    }
+
+    func prepareExportSignIn(replacing checkpoint: SessionCheckpoint) async throws -> ManagedPreservationChallenge {
+        _ = try exportNeedsReauthentication(checkpoint, minimumLifetime: 0)
+        return try await prepareSignIn()
+    }
+
+    func requireExportReplacement(_ replacement: SessionCheckpoint, for previous: SessionCheckpoint) throws {
+        try requireSessionCheckpoint(replacement)
+        guard replacement.credential.ownerId == previous.credential.ownerId,
+              replacement.credential.token != previous.credential.token,
+              replacement.epoch != previous.epoch else { throw ManagedPreservationError.staleSession }
+    }
+
+    func cancelSignIn(ifState state: String) {
+        guard challenge?.state == state else { return }
+        cancelSignIn()
     }
 
     func membership() async throws -> ManagedPreservationMembership {

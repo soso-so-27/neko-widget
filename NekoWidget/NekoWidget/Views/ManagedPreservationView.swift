@@ -71,7 +71,10 @@ struct ManagedPreservationView: View {
             }
         }
         .onChange(of: coordinator.isSignedIn) { _, signedIn in
-            if !signedIn { exporter.invalidate(); confirmsMembershipLink = false }
+            if !signedIn && !coordinator.exportAuthenticationNeeded { exporter.invalidate(); confirmsMembershipLink = false }
+        }
+        .onChange(of: exporter.preparing) { _, preparing in
+            if !preparing { coordinator.cancelExportReauthentication() }
         }
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in
@@ -105,6 +108,9 @@ struct ManagedPreservationView: View {
 
     private var content: some View {
         List {
+            if coordinator.exportAuthenticationNeeded {
+                exportAuthenticationSection
+            } else {
             Section {
                 Text("選んだ写真・メモのコピーを、ねこのまどのサービスに保管します。写真原本や動画のバックアップではありません。")
                 Text("既存のiCloud保管とは別の保管先です。自動移行や、全写真の自動アップロードは行いません。")
@@ -186,8 +192,40 @@ struct ManagedPreservationView: View {
                     Text("ログインを解除しても保管記録は残ります。アカウントを削除すると、サービスに保管したコピーはすべて消えます。定期購読は別途Appleで解約してください。")
                 }
             }
+            }
         }
-        .disabled(coordinator.isBusy || exporter.preparing || exporter.payload != nil)
+        .disabled((!coordinator.exportAuthenticationNeeded && (coordinator.isBusy || exporter.preparing)) || exporter.payload != nil)
+    }
+
+    private var exportAuthenticationSection: some View {
+        Section {
+            Text("本人確認をして書き出しを続けます")
+                .font(.headline).accessibilityIdentifier("preservation-export-reauthentication")
+            Text("準備済みの分はこの端末に一時保存しています。同じApple Accountで確認すると、続きから再開します。")
+            if let progress = coordinator.exportProgress, progress.total > 0 {
+                Text("\(progress.completed) / \(progress.total) 件を準備済み")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let challenge = coordinator.preparedExportSignIn {
+                SignInWithAppleButton(.continue) { request in
+                    request.requestedScopes = [.email]
+                    request.nonce = challenge.nonce; request.state = challenge.state
+                } onCompletion: { coordinator.completeExportSignIn($0) }
+                    .frame(height: 48).signInWithAppleButtonStyle(.black)
+                    .accessibilityIdentifier("preservation-export-signin")
+                    .disabled(coordinator.isBusy)
+            } else {
+                Button("Appleで本人確認を準備") { coordinator.prepareExportSignIn() }
+                    .accessibilityIdentifier("preservation-export-prepare-reauthentication")
+                    .disabled(coordinator.isBusy)
+            }
+            if coordinator.isBusy { ProgressView("本人確認を進めています…") }
+            Button("書き出しをやめる", role: .cancel) {
+                exporter.cancelPreparation(); coordinator.cancelExportReauthentication()
+            }.accessibilityIdentifier("preservation-export-cancel-reauthentication")
+        } footer: {
+            Text("この画面を閉じるかアプリを離れると、準備中のファイルを消して終了します。保管した写真・メモは残ります。購入や新しい保管は始まりません。")
+        }
     }
 
     private func accountDeletionSection(_ state: ManagedPreservationSessionStore.DeletionReceipt.State) -> some View {
@@ -556,6 +594,7 @@ struct ManagedPreservationMembershipFixture: View {
     @State private var failure: String?
     private var testsCopyResult: Bool { CommandLine.arguments.contains("--preservation-copy-result-ui-fixture") }
     private var testsAccountDeletion: Bool { CommandLine.arguments.contains("--preservation-account-deletion-ui-fixture") }
+    private var testsExportReauthentication: Bool { CommandLine.arguments.contains("--preservation-export-reauthentication-ui-fixture") }
 
     private var fixtureDraft: ManagedPreservationDraft? {
         guard testsCopyResult else { return nil }
@@ -578,7 +617,8 @@ struct ManagedPreservationMembershipFixture: View {
                 try SharingRuntimeSelfTestRunner.testManagedPreservationUsageBoundary()
                 if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
                 fixture = try PreservationNativeFixture.make(testsAccountDeletion ? .deletionResultLost
-                    : testsCopyResult ? .pilotCopyResultLost : .firstFailure)
+                    : testsCopyResult ? .pilotCopyResultLost : .firstFailure,
+                    sessionDuration: testsExportReauthentication ? 180 : 600)
             }
             catch { failure = "試験用の保管画面を準備できませんでした。" }
         }

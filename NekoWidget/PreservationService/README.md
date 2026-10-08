@@ -146,8 +146,37 @@ coversUnknownStatusAndUndeliveredNoticeExtension=true、evidenceReference が必
 （配備と一致）、completed / archiveConsistent / cancellationStopsRequests / sessionChangeStopsRequests=true、
 appBuild、evidenceReference を必要とします。sourceQuotaBytes は販売する ownerQuotaBytes と一致させ、
 サーバー会計上の写真・metadataの実測量を記録します。ZIPの圧縮後サイズや通信量、小さい1000件で代用しません。
-startedAt / completedAt / originalSessionExpiresAt により元の15分以内の期限前完了を照合し、
-authorizationRenewed=false、expiredSessionStopsAndCleans=true も必要です。
+認証の証拠には次の2経路があります。共通の容量・件数・通信制限・完了/整合/取消・公開承認条件はどちらも必須です。
+
+- `authorizationMode` 省略または `single-session` は従来経路です。startedAt / completedAt /
+  originalSessionExpiresAt により元の15分以内の期限前完了を照合し、authorizationRenewed=false、
+  expiredSessionStopsAndCleans=true を要求します。sessionSegments/finalAuthorizationCheckを混ぜて再開を暗黙に扱うことはできません。
+- `explicit-reauthentication` は本人操作によるApple再認証の証拠を要求する追加経路です。
+  authorizationRenewed=true、silentAuthorizationRenewed=false、expiredSessionStopsAndCleans /
+  cancellationStopsAndCleans / reauthenticationFailureStopsAndCleans=true、および inventoryGeneration、totalPages、
+  sessionSegments、finalAuthorizationCheck が必要です。未知mode、欠落、不正型、時刻矛盾、セッション切替漏れは拒否します。
+
+追加経路の `sessionSegments` は2個以上、最大totalPages+1個です。各要素は sessionEvidenceId、issuedAt、expiresAt、
+startedAt、completedAt、completedPagesBefore、completedPagesAfter、inventoryGeneration、reauthentication のみを持ちます。
+識別子は8〜64文字の英数字/`_`/`-`による証拠専用のopaque値（先頭は英数字）で、全要素で異なるものを用い、
+生token・owner ID・Apple subjectは収録しません。各sessionは発行から期限まで正の15分以内、読取開始は発行後、
+完了は開始より後かつ期限より厳密に前です。最初の開始/期限はbulkのstartedAt/originalSessionExpiresAtと一致させます。
+全segmentのgenerationは一致し、累計完了ページは0から欠落・重複なくtotalPagesまでつなぎます。
+最後の共有前確認だけを新sessionで行う場合に限り、最終segmentの読取ページ増分0を認めます。
+
+先頭のreauthenticationはnullです。後続では previousSessionEvidenceId、requestedAt、confirmedAt、verifiedAt と、
+userInitiated / appleIdentityConfirmed / sameOwner / newToken / newEpoch / inventoryUnchanged / pageBoundary=true が必要です。
+時刻は「前segment完了 ≤ 本人の再認証要求 ≤ 新session発行 ≤ Apple認証を含む新session確認 ≤ 同一本人・inventory再検査
+≤ 次segment開始」の順とします。newEpochはnativeの新checkpoint確認を指し、server owner epochの変更要求ではありません。
+途中pageの失効はその要求を停止して未完了一時データを片付け、取消・再認証失敗も停止/cleanupした証拠が必要です。
+再認証待ちの間に完了済みpageを保持する場合も保護された一時領域に限定し、共有は行いません。
+
+`finalAuthorizationCheck` は sessionEvidenceId、verifiedAt、sameOwner / sessionCurrent / inventoryUnchanged /
+beforeSharing=true のみを持ち、最後のsessionと一致させます。検査は最後の読取完了以後かつbulk.completedAt以前、
+共有準備完了を表すbulk.completedAtも最後のsession期限より前でなければなりません。全体の開始/完了は新鮮な観測期間内で、
+startedAt < completedAt ≤ confirmedAtを守ります。session/再認証/最終検査の未知フィールドも拒否します。
+Node試験の再開evidenceはschema境界を確認する合成例であり、販売容量全体を実機で完了した証拠ではありません。
+
 少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
 配布済みアプリの逐次GETと15分sessionでは、30回/固定UTC分で1000件ZIPを完了できません。再試行だけでは解決しないため、
 取り出し方式と通信制限の両立を検証するまで、この一般提供用制限を配備・有効化しません。pilotには適用しません。
@@ -158,8 +187,9 @@ ownerの429にはD1時計基準の `Retry-After: 1..60` を返し、書き出し
 保存/削除/通常閲覧の再試行は追加しません。取消、本人変更、削除、変更競合、不完全な応答は共有を止め、一時データを片付けます。
 ローカルworkerdでは1000件の小さい記録が20page、最大20MiB写真と日本語メモも完了しています。
 Appleの診断CI（候補 a621260）でも42項目と保管画面1操作が成功し、1000件ZIP、実URLSessionの保護ファイル書込・取消を確認しました。
-診断は配布用CIの代替ではなく、本番128MB isolateのピーク測定や販売容量全体の実機成功でもありません。低速回線で15分sessionまたは
-120秒/pageの通信期限を超える場合の再認証・再開も未解決で、`bulkExport` の公開条件は未達のままです。
+診断は配布用CIの代替ではなく、本番128MB isolateのピーク測定や販売容量全体の実機成功でもありません。
+明示Apple再認証でページ境界から再開する追加候補と上記evidence判定は、販売容量全体・低速回線での実証が未完了です。
+各sessionの15分上限と120秒/pageの通信期限は延長せず、`bulkExport` の公開条件は未達のままです。
 一般提供用の制限候補は migration 0032 の owner 行を D1 の時刻で原子的に更新し、同じ本人の複数sessionを合算します。
 固定UTC分なので境界をまたぐ60秒間では最大60回になり、rolling 60秒の制限ではありません。失敗した下流処理も枠を消費します。
 認証準備と削除receipt照会は既存IP制限を維持し、削除後の照会に有効なログインを要求しません。

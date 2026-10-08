@@ -258,3 +258,145 @@ test('bulk export evidence must finish before the original deadline and prove ex
   evidence.bulkExport.originalSessionExpiresAt = evidence.bulkExport.startedAt + 900000;
   assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, true);
 });
+
+// Schema evidence only, not a completed device or sold-capacity rehearsal.
+const resumedFixture = () => {
+  const f = publicFixture(), bulk = f.evidence.bulkExport, start = now - 1_800_000;
+  Object.assign(bulk, { authorizationMode: 'explicit-reauthentication', authorizationRenewed: true,
+    silentAuthorizationRenewed: false, cancellationStopsAndCleans: true, reauthenticationFailureStopsAndCleans: true,
+    startedAt: start, originalSessionExpiresAt: start + 899_000, inventoryGeneration: 7, totalPages: 20,
+    sessionSegments: [
+      { sessionEvidenceId: 'synthetic-session-a', issuedAt: start - 1000, expiresAt: start + 899_000,
+        startedAt: start, completedAt: start + 600_000, completedPagesBefore: 0, completedPagesAfter: 10,
+        inventoryGeneration: 7, reauthentication: null },
+      { sessionEvidenceId: 'synthetic-session-b', issuedAt: start + 911_000, expiresAt: start + 1_811_000,
+        startedAt: start + 914_000, completedAt: start + 1_700_000, completedPagesBefore: 10, completedPagesAfter: 20,
+        inventoryGeneration: 7, reauthentication: { previousSessionEvidenceId: 'synthetic-session-a',
+          requestedAt: start + 910_000, confirmedAt: start + 912_000, verifiedAt: start + 913_000,
+          userInitiated: true, appleIdentityConfirmed: true, sameOwner: true, newToken: true, newEpoch: true,
+          inventoryUnchanged: true, pageBoundary: true } },
+    ], finalAuthorizationCheck: { sessionEvidenceId: 'synthetic-session-b', verifiedAt: start + 1_750_000,
+      sameOwner: true, sessionCurrent: true, inventoryUnchanged: true, beforeSharing: true } });
+  return f;
+};
+const resumedReview = f => reviewPublicPreservationOffer(f.evidence, f.offer, plan, now);
+const rejectsResume = f => {
+  const result = resumedReview(f);
+  assert.equal(result.publicOfferReviewReady, false);
+  assert.ok(result.blockers.includes('full-export-reauthentication-unconfirmed'));
+};
+
+test('explicit user reauthentication qualifies a contiguous synthetic chain without approving deployment', () => {
+  const f = resumedFixture(), bulk = f.evidence.bulkExport;
+  assert.ok(bulk.completedAt > bulk.originalSessionExpiresAt);
+  const result = resumedReview(f);
+  assert.equal(result.publicOfferReviewReady, true); assert.equal(result.advisoryOnly, true);
+  for (const key of ['deployPermission', 'salesApprovalPermission', 'remoteStateChanged',
+    'noticePermission', 'permanentDeletionPermission']) assert.equal(result[key], false);
+  assert.equal(JSON.stringify(result).includes('synthetic-session-'), false);
+  // Pilot review is independent of this additional public authorization gate.
+  delete bulk.sessionSegments;
+  assert.equal(reviewOperatingEvidence(f.evidence, plan, now).newIntakeReviewReady, true);
+  rejectsResume(f);
+});
+
+test('authorization modes cannot fall back to the legacy path with unknown modes or an ignored chain', () => {
+  for (const mode of [null, '', 'automatic-renewal', 1, true]) {
+    const f = publicFixture(); f.evidence.bulkExport.authorizationMode = mode;
+    assert.ok(resumedReview(f).blockers.includes('full-export-authorization-mode-unconfirmed'));
+  }
+  const f = publicFixture(); f.evidence.bulkExport.authorizationMode = 'single-session';
+  assert.equal(resumedReview(f).publicOfferReviewReady, true);
+  f.evidence.bulkExport.sessionSegments = [];
+  assert.ok(resumedReview(f).blockers.includes('full-export-original-session-unconfirmed'));
+});
+
+test('every session issuance, expiry and read segment has ordered bounded timestamps', () => {
+  for (const mutate of [
+    b => b.startedAt++, b => b.completedAt = b.startedAt, b => b.completedAt = now + 1,
+    b => b.confirmedAt = b.completedAt - 1, b => b.startedAt = now - 86_400_000,
+    b => b.originalSessionExpiresAt++, b => b.sessionSegments[0].issuedAt = -1,
+    b => b.sessionSegments[0].expiresAt = b.sessionSegments[0].issuedAt,
+    b => b.sessionSegments[0].issuedAt--, b => b.sessionSegments[1].expiresAt++,
+    b => b.sessionSegments[1].issuedAt = NaN, b => b.sessionSegments[1].expiresAt = Number.MAX_SAFE_INTEGER + 1,
+    b => b.sessionSegments[1].startedAt = b.sessionSegments[1].issuedAt - 1,
+    b => b.sessionSegments[1].completedAt = b.sessionSegments[1].startedAt,
+    b => b.sessionSegments[0].completedAt = b.sessionSegments[0].expiresAt,
+    b => b.sessionSegments[1].completedAt = b.sessionSegments[1].expiresAt,
+    b => b.completedAt = b.sessionSegments[1].expiresAt,
+  ]) { const f = resumedFixture(); mutate(f.evidence.bulkExport); rejectsResume(f); }
+});
+
+test('each transition proves user Apple confirmation, replacement checkpoint and unchanged inventory before reading', () => {
+  const flags = ['userInitiated', 'appleIdentityConfirmed', 'sameOwner', 'newToken', 'newEpoch', 'inventoryUnchanged', 'pageBoundary'];
+  for (const key of flags) for (const value of [false, undefined, 'true']) {
+    const f = resumedFixture(); f.evidence.bulkExport.sessionSegments[1].reauthentication[key] = value; rejectsResume(f);
+  }
+  for (const mutate of [r => r.previousSessionEvidenceId = 'synthetic-other-owner',
+    r => r.requestedAt = now - 1_200_001, r => r.requestedAt = r.confirmedAt,
+    r => r.confirmedAt = now - 889_001, r => r.verifiedAt = r.confirmedAt - 1,
+    r => r.verifiedAt = now - 885_999, r => delete r.confirmedAt,
+    r => r.token = 'must-not-be-supplied', r => r.ownerId = 'must-not-be-supplied']) {
+    const f = resumedFixture(); mutate(f.evidence.bulkExport.sessionSegments[1].reauthentication); rejectsResume(f);
+  }
+});
+
+test('page and session chains reject duplicate sessions, gaps, hidden switches, and mismatched final totals', () => {
+  for (const mutate of [b => delete b.sessionSegments, b => b.sessionSegments = {}, b => b.sessionSegments.pop(),
+    b => b.totalPages = 0, b => b.totalPages = b.recordCount + 1, b => b.totalPages = 19, b => b.totalPages = 21,
+    b => b.inventoryGeneration = -1, b => b.sessionSegments[0].inventoryGeneration++,
+    b => b.sessionSegments[1].sessionEvidenceId = b.sessionSegments[0].sessionEvidenceId,
+    b => b.sessionSegments[1].sessionEvidenceId += '\n', b => b.sessionSegments[1].sessionEvidenceId += '\r\n',
+    b => b.sessionSegments[1].sessionEvidenceId = '', b => b.sessionSegments[0].reauthentication = {},
+    b => b.sessionSegments[0].completedPagesBefore = 1, b => b.sessionSegments[0].completedPagesAfter = 0,
+    b => b.sessionSegments[1].completedPagesBefore--, b => b.sessionSegments[1].completedPagesBefore++,
+    b => b.sessionSegments[1].completedPagesAfter--, b => b.sessionSegments[1].completedPagesAfter++,
+    b => b.sessionSegments[1].unexpectedRenewal = true,
+    b => b.authorizationRenewed = false, b => b.silentAuthorizationRenewed = true,
+    b => delete b.silentAuthorizationRenewed, b => b.expiredSessionStopsAndCleans = false,
+    b => b.cancellationStopsAndCleans = false, b => b.reauthenticationFailureStopsAndCleans = false,
+  ]) { const f = resumedFixture(); mutate(f.evidence.bulkExport); rejectsResume(f); }
+});
+
+test('final shared output requires the last live session and a same-inventory check after all reads', () => {
+  for (const mutate of [b => delete b.finalAuthorizationCheck,
+    b => b.finalAuthorizationCheck.sessionEvidenceId = b.sessionSegments[0].sessionEvidenceId,
+    b => b.finalAuthorizationCheck.verifiedAt = b.sessionSegments[1].completedAt - 1,
+    b => b.finalAuthorizationCheck.verifiedAt = b.completedAt + 1,
+    b => b.finalAuthorizationCheck.sameOwner = false, b => b.finalAuthorizationCheck.sessionCurrent = false,
+    b => b.finalAuthorizationCheck.inventoryUnchanged = false, b => b.finalAuthorizationCheck.beforeSharing = false,
+  ]) { const f = resumedFixture(); mutate(f.evidence.bulkExport); rejectsResume(f); }
+  // Reauthentication after the last page may authorize only the final check.
+  const f = resumedFixture(), segments = f.evidence.bulkExport.sessionSegments;
+  segments[0].completedPagesAfter = 20; segments[1].completedPagesBefore = 20;
+  assert.equal(resumedReview(f).publicOfferReviewReady, true);
+});
+
+test('every transition in a longer chain is checked and only its final segment may read zero pages', () => {
+  const f = resumedFixture(), bulk = f.evidence.bulkExport, start = bulk.startedAt;
+  bulk.sessionSegments.push({ sessionEvidenceId: 'synthetic-session-c', issuedAt: start + 1_721_000,
+    expiresAt: start + 2_621_000, startedAt: start + 1_724_000, completedAt: start + 1_730_000,
+    completedPagesBefore: 20, completedPagesAfter: 20, inventoryGeneration: 7,
+    reauthentication: { ...bulk.sessionSegments[1].reauthentication, previousSessionEvidenceId: 'synthetic-session-b',
+      requestedAt: start + 1_720_000, confirmedAt: start + 1_722_000, verifiedAt: start + 1_723_000 } });
+  bulk.finalAuthorizationCheck.sessionEvidenceId = 'synthetic-session-c';
+  assert.equal(resumedReview(f).publicOfferReviewReady, true);
+  for (const mutate of [b => b.sessionSegments[2].sessionEvidenceId = b.sessionSegments[0].sessionEvidenceId,
+    b => b.sessionSegments[1].reauthentication.newToken = false,
+    b => b.sessionSegments[2].reauthentication.newToken = false,
+    b => { b.sessionSegments[0].completedPagesAfter = 20; b.sessionSegments[1].completedPagesBefore = 20; }]) {
+    const changed = structuredClone(f); mutate(changed.evidence.bulkExport); rejectsResume(changed);
+  }
+});
+
+test('explicit reauthentication does not waive sold volume, record count, request limit or any existing public approval', () => {
+  for (const mutate of [e => e.bulkExport.sourceQuotaBytes--, e => e.bulkExport.recordCount--,
+    e => e.bulkExport.requestsPerMinute = 120, e => e.bulkExport.window = 'rolling-minute',
+    e => e.bulkExport.archiveConsistent = false, e => e.bulkExport.sessionChangeStopsRequests = false,
+    e => e.bulkExport.cancellationStopsRequests = false, e => e.bulkExport.completed = false,
+    e => e.capacityMatchesDeployedConfiguration = false, e => e.configuration.mode = 'pilot']) {
+    const f = resumedFixture(); mutate(f.evidence); assert.equal(resumedReview(f).publicOfferReviewReady, false);
+  }
+  const f = resumedFixture(); f.offer.approval.status = 'proposed';
+  assert.equal(resumedReview(f).publicOfferReviewReady, false);
+});
