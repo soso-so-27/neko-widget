@@ -321,7 +321,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertEqual(updates.count("purchaseEligibilityGeneration &+= 1"), 2)
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         live_purchase = section(model[model.index("private final class MembershipStoreKitClient"):],
-                                "func purchase() async", "func restore() async")
+                                "func purchase(presentedOffer:", "func restore() async")
         self.assertEqual(live_purchase.count("purchases.requirePurchaseVerification()"), 2)
         invalidate = section(self.store, "func requirePurchaseVerification()", "func purchase(")
         self.assertIn("purchaseEligibilityGeneration &+= 1", invalidate)
@@ -332,6 +332,30 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("if let startTask { await startTask.value; return }", self.store)
         self.assertIn("if let refreshTask { await refreshTask.value; return }", self.store)
         self.assertIn("if let reconciliationTask { await reconciliationTask.value; return }", self.store)
+
+    def test_catalog_changes_cannot_purchase_an_old_quote(self) -> None:
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        refresh = section(self.store, "private func performRefresh()", "func stop()")
+        self.assertIn("await loadProducts()", refresh)
+        self.assertNotIn("if products.isEmpty", refresh)
+        self.assertIn("for await _ in Storefront.updates", self.store)
+        loader = section(self.store, "private func loadProducts()", "private func startStorefrontUpdatesListener()")
+        self.assertLess(loader.index("products = []"), loader.index("Product.products(for:"))
+        self.assertIn("generation == productLoadGeneration", loader)
+        self.assertIn("storefrontID == currentStorefrontID", loader)
+        purchase = section(self.store, "func purchase(", "func restorePurchases()")
+        self.assertLess(purchase.index("productCatalogRevision == expectedCatalogRevision"),
+                        purchase.index("product.purchase(options:"))
+        self.assertIn("currentStorefrontID == productStorefrontID", purchase)
+        final_gate = purchase[purchase.index("let currentStorefrontID"):purchase.index("product.purchase(options:")]
+        for required in ("purchaseEligibilityGeneration == eligibilityGeneration", "!entitlementState.grantsPlus",
+                         "!awaitingServerConfirmation", "pendingProductID == nil", "!isRestoring"):
+            self.assertIn(required, final_gate)
+        live = section(model, "private final class MembershipStoreKitClient", "struct MembershipOfferSheet")
+        self.assertLess(live.index("currentOffer == presentedOffer"), live.index("prepareAccountForExplicitPurchase()"))
+        self.assertIn("expectedCatalogRevision: catalogRevision", live)
+        self.assertIn("generation == offerLoadGeneration", model)
+        self.assertIn("store.productCatalogRevision", model)
 
 
 if __name__ == "__main__":
