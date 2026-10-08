@@ -146,6 +146,17 @@ final class MembershipOfferModel: ObservableObject {
         isWorking = false
     }
 
+    /// Closing Apple's management sheet is not evidence of cancellation or expiry.
+    /// Reconcile the shared authority even for a currently active member, without
+    /// purchasing, invoking AppStore.sync, or changing preview entitlements.
+    func refreshAfterSubscriptionManagement() async {
+        guard !isPreview, !isWorking, let purchases else { return }
+        isWorking = true
+        await purchases.refreshAfterForegroundEntry()
+        updateMembershipState()
+        isWorking = false
+    }
+
     private func updateMembershipState() {
         expiryTask?.cancel()
         if let purchases {
@@ -329,6 +340,8 @@ private final class MembershipStoreKitClient {
 @MainActor
 struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
+    @State private var showsSubscriptionManagement = false
+    @State private var showsManagementPreview = false
     let photo: UIImage?
     let onFinish: (MembershipOfferActionResult) -> Void
 
@@ -348,6 +361,13 @@ struct MembershipOfferSheet: View {
                 isMember: model.isMember, purchaseTitle: model.purchaseTitle,
                 canRefresh: model.canRefresh,
                 onRefresh: { Task { await model.refresh() } },
+                onManageSubscription: {
+                    if model.isPreview {
+                        showsManagementPreview = true
+                    } else {
+                        showsSubscriptionManagement = true
+                    }
+                },
                 onPurchase: {
                     Task {
                         let result = await model.purchase()
@@ -364,6 +384,17 @@ struct MembershipOfferSheet: View {
             )
         }
         .interactiveDismissDisabled(model.isWorking)
+        .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
+        .onChange(of: showsSubscriptionManagement) { _, isPresented in
+            if !isPresented {
+                Task { await model.refreshAfterSubscriptionManagement() }
+            }
+        }
+        .alert("契約管理の操作確認", isPresented: $showsManagementPreview) {
+            Button("閉じる", role: .cancel) { }
+        } message: {
+            Text("このプレビューではAppleの契約画面を開きません。契約や会員状態は変更していません。")
+        }
         .task { await model.load() }
     }
 }

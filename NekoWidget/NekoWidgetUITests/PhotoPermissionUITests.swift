@@ -3266,6 +3266,8 @@ final class SoloMemoriesUITests: XCTestCase {
             attachment.name = largeText ? "membership-joined-largest" : "membership-joined"
             attachment.lifetime = .keepAlways
             add(attachment)
+            checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "加入中です",
+                                                       captureName: largeText ? "largest" : "standard")
             app.buttons["membership-offer-close"].tap()
             XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.staticTexts["membership-preview-result"].label.contains("確認を終えて"))
@@ -3300,6 +3302,9 @@ final class SoloMemoriesUITests: XCTestCase {
                 attachment.name = "membership-confirmation-required"
                 attachment.lifetime = .keepAlways
                 add(attachment)
+                checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "会員情報の確認が必要です",
+                                                           captureName: "unknown")
+                for _ in 0..<5 where !refresh.isHittable { app.swipeDown() }
             }
             refresh.tap()
             if state == "expired" || state == "expiring" {
@@ -3318,6 +3323,32 @@ final class SoloMemoriesUITests: XCTestCase {
                            "Status refresh must not invoke purchase, explicit restore, or close the sheet")
             app.terminate()
         }
+    }
+
+    @MainActor
+    private func checkMembershipManagementPreviewKeepsState(_ app: XCUIApplication,
+                                                          expectedPurchaseTitle: String,
+                                                          captureName: String) {
+        let manage = app.buttons["membership-offer-manage"]
+        for _ in 0..<10 where !manage.isHittable { app.swipeUp() }
+        XCTAssertTrue(manage.isHittable, "Management must be reachable for active and unconfirmed members")
+        XCTAssertTrue(manage.isEnabled)
+        XCTAssertEqual(manage.label, "契約を管理・解約")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "membership-management-\(captureName)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        manage.tap()
+        let preview = app.alerts["契約管理の操作確認"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.staticTexts["このプレビューではAppleの契約画面を開きません。契約や会員状態は変更していません。"].exists)
+        preview.buttons["閉じる"].tap()
+        XCTAssertFalse(preview.exists)
+        let purchase = app.buttons["membership-offer-purchase"]
+        XCTAssertEqual(purchase.label, expectedPurchaseTitle,
+                       "Closing management must not invent a purchase, cancellation, or grant")
+        XCTAssertFalse(purchase.isEnabled)
+        XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
     }
 
     override func setUpWithError() throws {
