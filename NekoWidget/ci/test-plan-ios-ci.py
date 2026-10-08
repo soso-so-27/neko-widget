@@ -24,6 +24,135 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class PreservationR2ViewScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644",
+                       before, after, "A" if before == "0" * 40 else "M"]
+                for path, (before, after) in planner.PRESERVATION_R2_VIEW_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, ancestor=True, workflows=None, event="push"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor:
+                    raise subprocess.CalledProcessError(1, args)
+                return self.base
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(fields) + "\0" + path + "\0"
+                                                         for path, fields in rows.items())
+            if args[0] == "ls-tree":
+                revision, path = args[1], args[3]
+                return (workflows or {}).get((revision, path),
+                    f"100644 blob {planner.PRESERVATION_R2_VIEW_WORKFLOW_BLOB}\t{path}")
+            if args[0] == "rev-parse":
+                return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return "unreviewed other profile"
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git):
+            return planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": event,
+                                                      "GITHUB_REF": "refs/heads/codex/r2-view"})
+
+    def test_exact_two_paths_require_the_existing_backend_job_without_native_evidence(self):
+        self.assertEqual(self.select(), planner.PRESERVATION_R2_VIEW_SCOPE)
+        self.assertEqual(planner.required_jobs(list(self.rows()), planner.PRESERVATION_R2_VIEW_SCOPE),
+                         (planner.PRESERVATION_JOB,))
+        self.assertNotIn(planner.PRESERVATION_R2_VIEW_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_R2_VIEW_SCOPE)
+        for absent in (None, []):
+            self.assertFalse(planner.preservation_r2_view_paths_only(absent))
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v26")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "a6299352e82577e33aa0faf3e20c867729505c6d")
+        self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
+
+    def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
+        original = self.rows()
+        for path, fields in original.items():
+            self.assertEqual(self.select({p: row for p, row in original.items() if p != path}), scope.FULL_SCOPE)
+            for index, value in ((0, ":100755"), (1, "120000"), (2, "c" * 40), (3, "d" * 40), (4, "D"), (4, "R100")):
+                changed = copy.deepcopy(original); changed[path][index] = value
+                self.assertEqual(self.select(changed), scope.FULL_SCOPE, (path, index, value))
+            changed = copy.deepcopy(original)
+            changed[path][0], changed[path][4] = (":100644", "M") if fields[4] == "A" else (":000000", "A")
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE)
+        for unknown in ("NekoWidget/PreservationService/src/index.ts", "NekoWidget/PreservationService/package.json",
+                        "NekoWidget/PreservationImageValidator/src/provider.ts", "NekoWidget/SharingService/src/index.ts",
+                        "NekoWidget/Shared/MembershipAccessPolicy.swift", "docs/r2-view.md",
+                        planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW, ".github/workflows/ios-build.yml",
+                        *planner.PRESERVATION_COMPANION_PATHS):
+            changed = original | {unknown: [":100644", "100644", "c" * 40, "d" * 40, "M"]}
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE, unknown)
+            self.assertEqual(planner.required_jobs(list(changed), planner.PRESERVATION_R2_VIEW_SCOPE), planner.FULL)
+        raw = "".join(" ".join(row) + "\0" + path + "\0" for path, row in original.items())
+        first_path, first_row = next(iter(original.items()))
+        duplicate = (" ".join(first_row) + "\0" + first_path + "\0") * len(original)
+        for invalid in ("", raw + raw, duplicate, raw.rsplit("\0", 2)[0]):
+            self.assertEqual(self.select(raw=invalid), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original) + [next(iter(original))]), scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(self.select(event="workflow_dispatch"), scope.FULL_SCOPE)
+        with patch.object(planner, "PRESERVATION_R2_VIEW_BLOBS", {path: ("0" * 40, "0" * 40) for path in original}):
+            self.assertEqual(self.select(), scope.FULL_SCOPE)
+        for pair in (("0" * 40, "d" * 40), ("c" * 40, "0" * 40), ("c" * 40, "c" * 40), ("c", "d" * 40)):
+            with patch.object(planner, "PRESERVATION_R2_VIEW_BLOBS", {path: pair for path in original}):
+                self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_normal_handoff_additions_and_edits_are_allowed_but_unsafe_modes_are_not(self):
+        original = self.rows()
+        path = "handoffs/r2-view.md"
+        for fields in ([":000000", "100644", "0" * 40, "c" * 40, "A"],
+                       [":100644", "100644", "c" * 40, "d" * 40, "M"]):
+            changed = original | {path: fields}
+            self.assertEqual(self.select(changed), planner.PRESERVATION_R2_VIEW_SCOPE)
+            self.assertEqual(planner.required_jobs(list(changed), planner.PRESERVATION_R2_VIEW_SCOPE),
+                             (planner.PRESERVATION_JOB,))
+        for fields in ([":000000", "120000", "0" * 40, "c" * 40, "A"],
+                       [":100644", "100755", "c" * 40, "d" * 40, "M"],
+                       [":100644", "000000", "c" * 40, "0" * 40, "D"],
+                       [":120000", "100644", "c" * 40, "d" * 40, "T"]):
+            self.assertEqual(self.select(original | {path: fields}), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original) + [path, path]), scope.FULL_SCOPE)
+
+    def test_workflow_requires_exact_blob_and_regular_mode_at_base_and_head(self):
+        for path, blob in ((planner.PRESERVATION_WORKFLOW, planner.PRESERVATION_R2_VIEW_WORKFLOW_BLOB),):
+            for revision in (self.base, self.head):
+                for invalid in ("", f"100755 blob {blob}\t{path}", f"120000 blob {blob}\t{path}",
+                                f"100644 blob {'c' * 40}\t{path}", f"100644 blob {blob}\tother.yml"):
+                    self.assertEqual(self.select(workflows={(revision, path): invalid}), scope.FULL_SCOPE)
+        with patch.object(planner, "PRESERVATION_R2_VIEW_WORKFLOW_BLOB", "0" * 40):
+            self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_plan_declares_same_sha_backend_success_and_never_claims_it(self):
+        for ref in ("refs/heads/codex/r2-view", "refs/heads/main"):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / "event.json").write_text("{}")
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": ref, "GITHUB_SHA": self.head,
+                       "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7",
+                       "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                       "GITHUB_STEP_SUMMARY": str(root / "summary")}
+                output = io.StringIO()
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_R2_VIEW_SCOPE), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend is not native evidence")):
+                    planner.main()
+                flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual([flags[name] for name in ("build", "smoke", "sharing", "app_ui")], ["false"] * 4)
+                self.assertTrue(all(flags[name] == "[]" for name in ("lanes", "matrix_lanes", "app_ui_lanes")))
+                record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=", 1)[1].splitlines()[0])
+                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB])
+                self.assertEqual(record["required_backend_runs"], [
+                    {"workflow": planner.PRESERVATION_WORKFLOW, "job": planner.PRESERVATION_JOB,
+                     "head_sha": self.head, "success_required": True}])
+                self.assertIsNone(record["evidence_run_id"])
+                self.assertIsNone(record["evidence_sha"])
+                summary = (root / "summary").read_text()
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("does not certify that job's success", summary)
+
+
 class PreservationProviderStreamScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
