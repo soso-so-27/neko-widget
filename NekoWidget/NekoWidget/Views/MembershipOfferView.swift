@@ -14,6 +14,7 @@ struct MembershipOfferView: View {
     let purchaseTitle: String?
     let canRefresh: Bool
     let onRefresh: (() -> Void)?
+    let onManageSubscription: (() -> Void)?
     let onPurchase: () -> Void
     let onRestore: () -> Void
     let onClose: () -> Void
@@ -29,6 +30,7 @@ struct MembershipOfferView: View {
         purchaseTitle: String? = nil,
         canRefresh: Bool = false,
         onRefresh: (() -> Void)? = nil,
+        onManageSubscription: (() -> Void)? = nil,
         onPurchase: @escaping () -> Void,
         onRestore: @escaping () -> Void,
         onClose: @escaping () -> Void
@@ -43,6 +45,7 @@ struct MembershipOfferView: View {
         self.purchaseTitle = purchaseTitle
         self.canRefresh = canRefresh
         self.onRefresh = onRefresh
+        self.onManageSubscription = onManageSubscription
         self.onPurchase = onPurchase
         self.onRestore = onRestore
         self.onClose = onClose
@@ -215,6 +218,13 @@ struct MembershipOfferView: View {
                 .frame(minHeight: 44)
                 .disabled(isWorking || !canRestore)
                 .accessibilityIdentifier("membership-offer-restore")
+
+            if let onManageSubscription {
+                Button("契約を管理・解約", action: onManageSubscription)
+                    .frame(minHeight: 44)
+                    .disabled(isWorking)
+                    .accessibilityIdentifier("membership-offer-manage")
+            }
         }
     }
 
