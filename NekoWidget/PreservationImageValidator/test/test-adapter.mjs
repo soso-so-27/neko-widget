@@ -77,39 +77,68 @@ try {
   const photo = await jpeg();
   const unchangedPhoto = digest(photo);
 
-  function connect(getProvider, getCancellation = () => undefined) {
+  function connect(getProvider, getCancellation = () => undefined, expectedPhoto = photo) {
     const calls = [];
     const statuses = [];
+    const expectedWire = Buffer.from(JSON.stringify({ photoBase64: expectedPhoto.toString('base64') }));
     const binding = { async fetch(url, init) {
       assert.equal(url, 'https://preservation-internal/images/validate-jpeg');
       assert.equal(init.method, 'POST');
       assert.equal(init.redirect, 'manual');
       assert.ok(init.signal instanceof AbortSignal);
-      calls.push(init.body);
+      assert.ok(init.body instanceof ReadableStream);
+      const call = { bytes: 0, chunks: 0, mismatched: false, expectedBytes: expectedWire.length };
+      calls.push(call);
+      // Observe the provider's actual reads without teeing or collecting a
+      // second complete photo body. A rejected provider may read no bytes.
+      const reader = init.body.getReader();
+      const body = new ReadableStream({ async pull(controller) {
+        const next = await reader.read();
+        if (next.done) { reader.releaseLock(); controller.close(); return; }
+        call.chunks++;
+        if (next.value.length > 64 * 1024 || !Buffer.from(next.value)
+          .equals(expectedWire.subarray(call.bytes, call.bytes + next.value.length))) call.mismatched = true;
+        call.bytes += next.value.length;
+        controller.enqueue(next.value);
+      }, async cancel(reason) { try { await reader.cancel(reason); } finally { reader.releaseLock(); } } },
+      { highWaterMark: 0 });
       const cancellation = getCancellation();
       const signal = cancellation ? AbortSignal.any([init.signal, cancellation]) : init.signal;
-      const response = await getProvider().fetch(new Request(url, { ...init, signal }));
-      statuses.push(response.status);
-      return response;
+      try {
+        const response = await getProvider().fetch(new Request(url, { ...init, body, duplex: 'half', signal }));
+        statuses.push(response.status);
+        return response;
+      } finally { if (!body.locked) await body.cancel(); }
     } };
     return { adapter: boundPhotoValidator(binding), calls, statuses };
   }
   const unavailable = (error) => error instanceof ServiceError
     && error.status === 503 && error.code === 'DEPENDENCY_UNAVAILABLE';
+  function wire(call, complete) {
+    assert.equal(call.mismatched, false, 'every consumed byte must match independent base64 JSON');
+    assert.ok(call.bytes <= call.expectedBytes);
+    if (complete) assert.equal(call.bytes, call.expectedBytes);
+  }
+  function unchangedRetry(calls) {
+    wire(calls[0], false); wire(calls[1], true);
+    assert.equal(digest(photo), unchangedPhoto);
+  }
 
   await test('actual adapter accepts the real provider JPEG response without changing bytes', async () => {
     const provider = createImageValidator({ enabled: true });
     const { adapter, calls, statuses } = connect(() => provider);
     assert.equal(await adapter.validateJPEG(photo), true);
-    assert.deepEqual(JSON.parse(calls[0]), { photoBase64: photo.toString('base64') });
+    wire(calls[0], true);
     assert.deepEqual(statuses, [200]);
     assert.equal(digest(photo), unchangedPhoto);
   });
 
   await test('entropy truncation is false, not success or an availability error', async () => {
     const provider = createImageValidator({ enabled: true });
-    const { adapter, statuses } = connect(() => provider);
-    assert.equal(await adapter.validateJPEG(truncateEntropy(photo)), false);
+    const invalid = truncateEntropy(photo);
+    const { adapter, calls, statuses } = connect(() => provider, () => undefined, invalid);
+    assert.equal(await adapter.validateJPEG(invalid), false);
+    wire(calls[0], true);
     assert.deepEqual(statuses, [200]);
   });
 
@@ -120,7 +149,7 @@ try {
     provider = createImageValidator({ enabled: true });
     assert.equal(await adapter.validateJPEG(photo), true);
     assert.deepEqual(statuses, [503, 200]);
-    assert.equal(calls[0], calls[1]);
+    unchangedRetry(calls);
   });
 
   await test('in-flight cancellation rejects with 503; identical input can retry', async () => {
@@ -133,7 +162,7 @@ try {
     controller = new AbortController();
     assert.equal(await adapter.validateJPEG(photo), true);
     assert.deepEqual(statuses, [503, 200]);
-    assert.equal(calls[0], calls[1]);
+    unchangedRetry(calls);
   });
 
   await test('real provider overload rejects with 503 and releases capacity for identical retry', async () => {
@@ -151,7 +180,26 @@ try {
     }
     assert.equal(await adapter.validateJPEG(photo), true);
     assert.deepEqual(statuses, [503, 200]);
-    assert.equal(calls[0], calls[1]);
+    unchangedRetry(calls);
+  });
+
+  await test('maximum 20 MiB JPEG reaches the real decoder through bounded JSON chunks', async () => {
+    const padding = []; let remaining = 20 * 1024 * 1024 - photo.length;
+    while (remaining > 0) {
+      const length = Math.min(65537, remaining);
+      assert.ok(length >= 4);
+      const segment = Buffer.alloc(length, 0x5a);
+      segment[0] = 0xff; segment[1] = 0xfe; segment.writeUInt16BE(length - 2, 2);
+      padding.push(segment); remaining -= length;
+    }
+    const maximum = Buffer.concat([photo.subarray(0, 2), ...padding, photo.subarray(2)]);
+    const before = digest(maximum);
+    const provider = createImageValidator({ enabled: true });
+    const { adapter, calls, statuses } = connect(() => provider, () => undefined, maximum);
+    assert.equal(await adapter.validateJPEG(maximum), true);
+    wire(calls[0], true); assert.deepEqual(statuses, [200]);
+    assert.equal(calls[0].chunks, Math.ceil(maximum.length / 49152) + 2);
+    assert.equal(digest(maximum), before);
   });
 
   await test('all actual TypeScript input files remain byte-identical', async () => {
