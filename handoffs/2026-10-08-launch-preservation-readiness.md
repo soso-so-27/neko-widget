@@ -27,3 +27,23 @@ AWS `GetAccountPlanState` の実測はFREE/ACTIVE、残クレジット$119.59、
 書き出し46件と影響する保存・復元・認証・payload補助の91件、合計137種類のテスト、型検査が成功。独立レビューでP1/P2なし。既存テストの本文未消費を修正し、30件準備する1ケースはUTC分境界の最大4秒待機を含めて10秒のテスト期限とした。製品期限・件数・429・本文検証は維持。初期失敗、npm経由のフィルター不適用による重複実行も費用/時間記録へ残した。証拠は同evidence rootの `export-memory-validation.json` と `export-memory-chunked-probe/encrypted-path-result.json`。今回のメモリ修正は約35分、12:38の初回候補からは約6時間24分（待機・他修正・診断を含む）で、CIだけの実行時間ではない。
 
 このメモリ修正は未配備。本人向けTestFlightは1.0(246)のまま。cf7fe22のApple再認証付きexport診断成功は保持するが、通常の配布用CI証拠には代用しない。最終の製品差分を固定し、既に調査した必須範囲を厳密なCI選択へ接続する工程が残る。公開費用は操作/転送/隔離復元を加えると無料枠なしの部分小計でも月3,883.60〜4,041.18円となり、従来の2,200円受付停止/3,000円目標と不整合。CPU/D1等の残額も未算定で、公開案・AWS契約・権限・受付・期限は変更していない。
+
+## 21:14 JST以降の統合・実配備
+
+上の19時時点の未配備状態は更新済み。候補 `e8372960160b7fb520e01fafd94cae717e281686` の関連4 UIはrun `37772225394` で全件成功（24分03秒、23.75 runner分）。元候補 `feb9c756` のBuild/privacy/migration・Photos・両OS runtimeと両backendの実成功を、入力不変と実job/log照合で保持した。既存Family fixtureが共有シートを強制終了してZIPを残したため、実際のキャンセルを完了してから再起動するテスト修正だけを加えた。原本維持と一時ファイル0の条件は緩めていない。元の通常CI失敗22分58秒と、原因切り分けの3 UI成功19分01秒も時間記録に含む。
+
+main `b1925f9cbec6be0fe974b5f0697cc49ae3220081` へmerge commitで反映済み。mainとの差は承認済みCI制御2本だけで、製品・署名・backendは同じ。main側run `37775329413` はその制御差分による全tree不一致で停止し、Macを重複起動しなかった。この停止を成功扱いにせず、既存CLIの `--checkout` で検証済み固定候補を配布する。mainのPreservation `37775329301` とSharing `37775329480` は成功。
+
+既存非公開保管Workerをversion `6050c487-1b03-41e8-8993-2771f7dd39f1` へ更新し、migration32/33を適用した。実moduleはレビュー済みbundleと完全一致。保存済み1本人/1記録/3,358,122 quota bytes、設定・secret参照・DB/R2/service binding・公開範囲・cron・受付と期限を前後保持。本人データの削除0、一般受付の開始・期限延長・新契約・権限変更なし。旧246との互換を保持する。実機の新しい大量exportの完走は未確認。
+
+内部247はrun `37775869422` で21:29:42 JSTにAppleへアップロード成功。全配布runは11分56秒、11.083 runner分、追加dispatchなし。本人1名の「自分用」グループと既存の自動配布を実画面で確認済み。Apple処理完了後、1.0(247)の「テスト中」・「自分用」を確認し、本人が更新できる状態になった。247の実機インストールと新しいexportの完走は未確認。証拠は同evidence rootの `export-corrected-qualified-ci.json`、`export-main-integration.json`、`export-deployment/completion.json`、`testflight-247-apple-availability.json`、`testflight-247-completion.json`。初回候補12:38 JSTからアップロードまで約8時間51分（失敗・修正・診断・別の公開準備を含む）で、最終CI24分だけを作業全体の時間としない。当初60〜90分の見込みは超過した。
+
+公開残件は、実機のStoreKit価格一致と解約後の実失効、販売容量・受付ペース・費用停止の整合と承認、AWS無料プラン終了後の継続条件、本番メモリと実5GB export、通報の実運用・担当者の対応確認、最終公開構成とストア申告である。購入・復元の既確認結果を繰り返さず、既存の10月9日失効確認と公式配信保守automationは変更していない。public readinessは引き続きfalse。
+
+### 費用モデルの追加確認
+
+`preservation/public-cpu-d1-boundary-20261008.json` に現行経路と公式単価の照合を保存。月3,831〜10,530 requestは実測でなく作業量の仮定であり、CPU時間とD1課金行数の実測はない。SQL回数を課金行数やCPU時間で代用しない。1MiBごとの認証・削除確認を加えた現行exportと旧試算のsource hashは一致しないため、上記3,883.60〜4,041.18円も現在の完全な予測として再利用できない。
+
+[Workers CPU](https://developers.cloudflare.com/workers/platform/pricing/)は100万msあたり$0.02、[D1](https://developers.cloudflare.com/d1/platform/pricing/)は読取100万行$0.001・書込100万行$1・保存1GB月$0.75。計画換算198円/USD、無料枠なしでは、仮定した総平均CPU100ms/requestなら月1.52〜4.17円、1秒なら15.17〜41.70円となる。これは感度計算であり、実費・上限・forecastではない。実CPU、D1のrows_read/rows_writtenとDB保存量、共有無料枠を含む現行経路の観測が必要。
+
+既存の「無料枠0・固定費全額配賦・R2両操作クラスの正の使用を各100万件単位に切上げ・Container月10時間」仮定では、容量による保存/転送とCPU/D1を加える前で2,205.74円となり、受付停止2,200円を超える。同アカウントの限界費用の下限を示すものではないが、単に販売容量を小さくすれば通るという根拠もない。現在の完全な予測を先に確定し、容量/件数/人数/受付条件と予算・AWS継続契約の判断を分ける。料金枠・契約・実受付の変更は行っていない。
