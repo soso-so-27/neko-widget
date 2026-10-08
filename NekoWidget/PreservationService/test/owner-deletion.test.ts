@@ -100,9 +100,10 @@ describe('explicit owner-requested deletion', () => {
   it('erases all cloud versions and D1 content, resumes after interruption, leaves the other owner intact', async () => {
     const f = await fixture();
     const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+    const exportLease = crypto.randomUUID();
     await db.prepare(`UPDATE pa_owners SET http_request_count=30,
-      http_request_minute=CAST(unixepoch()/60 AS INTEGER) WHERE owner_id IN (?,?)`)
-      .bind(f.session.ownerId, other.ownerId).run();
+      http_request_minute=CAST(unixepoch()/60 AS INTEGER),export_lease_id=?,export_lease_expires_at=?
+      WHERE owner_id IN (?,?)`).bind(exportLease, Date.now() + 60_000, f.session.ownerId, other.ownerId).run();
     const photo = `personal/${f.session.ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`;
     const otherPhoto = `personal/${other.ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`;
     await bucket.put(photo, 'encrypted-photo');
@@ -135,8 +136,8 @@ describe('explicit owner-requested deletion', () => {
     const residue = await inspectOwnerD1Residue(db, f.session.ownerId);
     expect(await db.prepare('SELECT http_request_count FROM pa_owners WHERE owner_id=?')
       .bind(f.session.ownerId).first()).toBeNull();
-    expect(await db.prepare('SELECT http_request_count FROM pa_owners WHERE owner_id=?')
-      .bind(other.ownerId).first()).toEqual({ http_request_count: 30 });
+    expect(await db.prepare('SELECT http_request_count,export_lease_id FROM pa_owners WHERE owner_id=?')
+      .bind(other.ownerId).first()).toEqual({ http_request_count: 30, export_lease_id: exportLease });
     expect(residue.contentTotal).toBe(0);
     expect(residue.purgeWorkTotal).toBe(0);
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'completed' });

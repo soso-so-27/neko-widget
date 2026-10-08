@@ -41,7 +41,7 @@ enum ManagedPreservationExport {
             try await validate()
             if let (generation, session) = await completed.get() {
                 try await client.requireSessionCheckpoint(session)
-                let current = try await client.list()
+                let current = try await client.list(forExport: true)
                 try await client.requireSessionCheckpoint(session)
                 guard current.generation == generation else { throw ManagedPreservationError.conflict }
                 try await validate()
@@ -52,6 +52,92 @@ enum ManagedPreservationExport {
 
     private static func archiveAll(client: ManagedPreservationClient,
                                    progress: @escaping @Sendable (Int, Int) async -> Void)
+        async throws -> (PhotoMemoryNoteExportPayload, Int, ManagedPreservationClient.SessionCheckpoint) {
+        let session = try await client.captureSessionCheckpoint()
+        let first: ManagedPreservationExportPageFile
+        do { first = try await client.exportPage() }
+        catch ManagedPreservationError.exportUnsupported {
+            // Compatibility with deployed pilot servers predating export pages.
+            // Never use this fallback for throttling, malformed pages or partial data.
+            try await client.requireSessionCheckpoint(session)
+            return try await archiveAllLegacy(client: client, progress: progress)
+        }
+        let pages = ExportPages(client: client, session: session, first: first)
+        var payload: PhotoMemoryNoteExportPayload?
+        do {
+            try await client.requireSessionCheckpoint(session)
+            let result = try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: first.totalRecords,
+                fetch: { index in try await pages.next(index) }, progress: progress)
+            payload = result
+            try await pages.finish()
+            try await client.requireSessionCheckpoint(session)
+            let current = try await client.list(forExport: true)
+            try await client.requireSessionCheckpoint(session)
+            guard current.generation == first.generation else { throw ManagedPreservationError.conflict }
+            return (result, first.generation, session)
+        } catch {
+            // Remove both incomplete page and archive, even if either removal fails.
+            var pending = (error as? PhotoMemoryNoteExportCleanupPending)?.payloads ?? []
+            do { try await pages.cleanup() }
+            catch let failure as PhotoMemoryNoteExportCleanupPending { pending += failure.payloads }
+            if let payload {
+                do { try payload.cleanup() }
+                catch { pending.append(payload) }
+            }
+            if let first = pending.first {
+                throw PhotoMemoryNoteExportCleanupPending(payload: first, additionalPayloads: Array(pending.dropFirst()))
+            }
+            throw error
+        }
+    }
+
+    private actor ExportPages {
+        let client: ManagedPreservationClient
+        let session: ManagedPreservationClient.SessionCheckpoint
+        let generation: Int
+        let totalRecords: Int
+        var page: ManagedPreservationExportPageFile
+        var completed = 0
+        init(client: ManagedPreservationClient, session: ManagedPreservationClient.SessionCheckpoint,
+             first: ManagedPreservationExportPageFile) {
+            self.client = client; self.session = session; self.page = first
+            self.generation = first.generation; self.totalRecords = first.totalRecords
+        }
+        func next(_ index: Int) async throws -> PhotoMemoryNoteBulkEntry {
+            guard index == completed, completed < totalRecords else { throw ManagedPreservationError.invalidResponse }
+            try await client.requireSessionCheckpoint(session)
+            var data = try page.nextRecordData()
+            if data == nil {
+                guard let cursor = try page.nextCursor() else { throw ManagedPreservationError.invalidResponse }
+                try page.cleanup()
+                try await client.requireSessionCheckpoint(session)
+                page = try await client.exportPage(after: cursor, generation: generation)
+                guard page.generation == generation, page.totalRecords == totalRecords else {
+                    throw ManagedPreservationError.conflict
+                }
+                data = try page.nextRecordData()
+            }
+            guard let data else { throw ManagedPreservationError.invalidResponse }
+            let snapshot = try await client.decodeExportRecord(data)
+            try await client.requireSessionCheckpoint(session)
+            let document = try snapshot.document.validated()
+            completed += 1
+            return PhotoMemoryNoteBulkEntry(recordID: snapshot.record.id, revision: snapshot.record.revision,
+                text: document.text, capturedAt: document.capturedAt, writtenAt: document.writtenAt,
+                updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
+        }
+        func finish() async throws {
+            try await client.requireSessionCheckpoint(session)
+            guard completed == totalRecords, try page.nextRecordData() == nil, try page.nextCursor() == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            try page.cleanup()
+        }
+        func cleanup() throws { try page.cleanup() }
+    }
+
+    private static func archiveAllLegacy(client: ManagedPreservationClient,
+                                         progress: @escaping @Sendable (Int, Int) async -> Void)
         async throws -> (PhotoMemoryNoteExportPayload, Int, ManagedPreservationClient.SessionCheckpoint) {
         let session = try await client.captureSessionCheckpoint()
         var listing: [ManagedPreservationRecord] = []

@@ -19,7 +19,7 @@ import { PilotControl } from './pilot-control';
 import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
-import { OwnerRequestLimiter } from './owner-request-limiter';
+import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-limiter';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -93,11 +93,11 @@ export function configuredS3(env: Env): S3RecoveryCopy {
 }
 
 // Local tests inject dependencies. The public Worker always checks the gate.
-export async function route(request: Request, services: Services): Promise<Response> {
+export async function route(request: Request, services: Services, context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (path !== '/v1/records' && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     if (Object.keys(await body(request, 1024)).length) throw new ServiceError('INVALID_REQUEST');
     return response(await services.auth.issueChallenge());
@@ -121,6 +121,9 @@ export async function route(request: Request, services: Services): Promise<Respo
   }
   if (services.ownerRequestLimiter) {
     await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
+  }
+  if (request.method === 'GET' && path === '/v1/export-page') {
+    return services.archive.exportPage(token, request, context);
   }
   if (request.method === 'POST' && path === '/v1/account-deletion') {
     if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
@@ -325,7 +328,7 @@ async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Pr
   return failed;
 }
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     try {
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
       const ip = request.headers.get('CF-Connecting-IP');
@@ -340,7 +343,7 @@ export default {
         throw new ServiceError('RECOVERY_POLICY_INACTIVE', 503);
       }
       const services = configuredServices(env);
-      return await route(request, services);
+      return await route(request, services, context);
     } catch (error) {
       // Finite private-pilot probe: first fixed failure only. Never retain tokens,
       // subjects, email, request bodies, IP, nonce or raw exception text.
@@ -356,10 +359,14 @@ export default {
           }), { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'application/json' } });
         } catch { /* Diagnostics must not alter the authentication response. */ }
       }
-      return error instanceof ServiceError ? response({ error: { code: error.code,
-        ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
-          ? { registrationReference: error.registrationReference } : {}) } }, error.status)
-        : response({ error: { code: 'PRESERVATION_UNAVAILABLE' } }, 503);
+      if (error instanceof ServiceError) {
+        const result = response({ error: { code: error.code,
+          ...(error.code === 'PILOT_REGISTRATION_PENDING' && error.registrationReference
+            ? { registrationReference: error.registrationReference } : {}) } }, error.status);
+        if (error instanceof OwnerRequestRateLimited) result.headers.set('retry-after', String(error.retryAfterSeconds));
+        return result;
+      }
+      return response({ error: { code: 'PRESERVATION_UNAVAILABLE' } }, 503);
     }
   },
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {

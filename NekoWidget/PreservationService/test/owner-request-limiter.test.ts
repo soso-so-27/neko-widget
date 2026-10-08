@@ -3,12 +3,12 @@ import { applyD1Migrations, reset, type D1Migration } from 'cloudflare:test';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { randomToken, type KeyCustody } from '../src/contracts';
-import { OwnerRequestLimiter } from '../src/owner-request-limiter';
+import { OwnerRequestLimiter, OwnerRequestRateLimited } from '../src/owner-request-limiter';
 import { OwnerDeletionJournal } from '../src/owner-deletion-journal';
 import { OwnerDeletionRequests } from '../src/owner-deletion';
 import { ArchiveStore } from '../src/storage';
 import { IntakeControl } from '../src/intake-control';
-import { route, type Services } from '../src/index';
+import worker, { route, type Env, type Services } from '../src/index';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket; TEST_MIGRATIONS: D1Migration[] };
 const db = binding.DB;
@@ -121,6 +121,50 @@ it('fails closed on limiter storage failure before any downstream handler', asyn
   const downstream = vi.spyOn(f.auth, 'noticeContact');
   await expect(route(request(f.first.token), f.services)).rejects.toMatchObject({ code: 'OWNER_REQUEST_LIMIT_UNAVAILABLE', status: 503 });
   expect(downstream).not.toHaveBeenCalled(); expect(await count(f.first.ownerId)).toBe(0);
+});
+
+it('returns the primary D1 fixed-window Retry-After on the real HTTP response only for the owner limit', async () => {
+  const f = await fixture(); await awayFromBoundary(); await exhaust(f.first.ownerId);
+  const database = new Proxy(db, { get(target, property) {
+    if (property === 'prepare') return (sql: string) => sql.includes('SELECT delete_intent_required,owner_snapshot_required')
+      ? { first: async () => ({ delete_intent_required: 1, owner_snapshot_required: 1 }) } : target.prepare(sql);
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const provider = { fetch: async () => { throw new Error('must not call'); } } as unknown as Fetcher;
+  const settings: Env = { ...binding, DB: database, PRESERVATION_ENABLED: 'YES', ENVIRONMENT: 'staging',
+    PILOT_MODE: 'NO', GENERAL_STORAGE_MODE: 'YES', KEY_WRAPPER: provider, KEY_WRAPPER_CALLER_SECRET: randomToken(),
+    MEMBERSHIP_AUTHORITY: provider, PHOTO_VALIDATOR: provider, IDENTITY_INDEX_SECRET: randomToken(),
+    APPLE_CREDENTIALS_JSON: JSON.stringify({ clientId: 'test.neko.preservation' }),
+    PRESERVATION_LINK_AUDIENCE: 'neko-general-test', REQUEST_LIMITER: { limit: async () => ({ success: true }) },
+    OWNER_QUOTA_BYTES: '1073741824', MAXIMUM_RECORDS: '1000', GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES: '3221225472' };
+  const seconds = async () => (await db.prepare('SELECT 60-unixepoch()%60 AS seconds').first<{ seconds: number }>())!.seconds;
+  const before = await seconds();
+  const req = request(f.first.token, '/v1/export-page'); req.headers.set('CF-Connecting-IP', '192.0.2.1');
+  const result = await worker.fetch(req, settings);
+  expect(result.status).toBe(429); expect(await result.json()).toEqual({ error: { code: 'RATE_LIMITED' } });
+  const wait = Number(result.headers.get('retry-after'));
+  expect(Number.isInteger(wait)).toBe(true); expect(wait).toBeGreaterThanOrEqual(await seconds()); expect(wait).toBeLessThanOrEqual(before);
+  expect(wait).toBeGreaterThanOrEqual(1); expect(wait).toBeLessThanOrEqual(60);
+  expect(await count(f.first.ownerId)).toBe(30);
+  const ip = await worker.fetch(req, { ...settings, REQUEST_LIMITER: { limit: async () => ({ success: false }) } });
+  expect(ip.status).toBe(429); expect(ip.headers.get('retry-after')).toBeNull();
+});
+
+it('bounds denied retry time across database clock rollback and fails closed when its clock read fails', async () => {
+  const f = await fixture(); const session = await f.auth.requireSession(f.first.token);
+  await db.prepare(`UPDATE pa_owners SET http_request_count=30,http_request_minute=CAST(unixepoch()/60 AS INTEGER)+2
+    WHERE owner_id=?`).bind(session.ownerId).run();
+  await expect(f.ownerRequestLimiter.admit(session)).rejects.toMatchObject(new OwnerRequestRateLimited(60));
+  const broken = new Proxy(db, { get(target, property) {
+    if (property === 'prepare') return (sql: string) => {
+      if (sql.includes('AS seconds')) throw new Error('synthetic clock read unavailable');
+      return target.prepare(sql);
+    };
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  await expect(new OwnerRequestLimiter(broken).admit(session))
+    .rejects.toMatchObject({ code: 'OWNER_REQUEST_LIMIT_UNAVAILABLE', status: 503 });
+  expect(await count(session.ownerId)).toBe(30);
 });
 
 it.each([

@@ -1,5 +1,9 @@
 import { ServiceError, type Session } from './contracts';
 
+export class OwnerRequestRateLimited extends ServiceError {
+  constructor(readonly retryAfterSeconds: number) { super('RATE_LIMITED', 429); }
+}
+
 /** Thirty authenticated HTTP attempts per fixed UTC minute, not a rolling
  * sixty-second window. Failed downstream work is not refunded. All sessions
  * for an owner share one row; the D1 primary's clock sets every region's window.
@@ -36,7 +40,16 @@ export class OwnerRequestLimiter {
         .first<{ http_request_minute: number; http_request_count: number }>();
       // A session invalidated after requireSession also fails closed here;
       // no downstream handler runs and no quota is consumed for that session.
-      if (!admitted) throw new ServiceError('RATE_LIMITED', 429);
+      if (!admitted) {
+        // Only denied attempts need this primary read. A boundary crossed after
+        // the failed increment yields a conservative one-second wait; no edge
+        // clock or IP-limiter window is substituted for the owner's D1 window.
+        const wait = await this.db.prepare(`SELECT CAST(MAX(1,MIN(60,
+          (http_request_minute+1)*60-unixepoch())) AS INTEGER) AS seconds
+          FROM pa_owners WHERE owner_id=?`).bind(session.ownerId).first<{ seconds: number }>();
+        if (!wait || !Number.isSafeInteger(wait.seconds) || wait.seconds < 1 || wait.seconds > 60) throw new Error();
+        throw new OwnerRequestRateLimited(wait.seconds);
+      }
       if (!Number.isSafeInteger(admitted.http_request_minute) || admitted.http_request_minute < 0
         || !Number.isSafeInteger(admitted.http_request_count)
         || admitted.http_request_count < 1 || admitted.http_request_count > 30) throw new Error();

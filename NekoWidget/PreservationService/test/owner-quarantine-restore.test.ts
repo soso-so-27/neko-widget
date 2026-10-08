@@ -121,8 +121,10 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   purgeEvents.length = 0;
   expect(await restore.restore(ownerId, 1_001)).toEqual({ status: 'staged-disabled',
     ownerId, records: 1, photos: 1 });
-  expect(await binding.DB.prepare('SELECT disabled,epoch,http_request_minute,http_request_count FROM pa_owners WHERE owner_id=?')
-    .bind(ownerId).first()).toEqual({ disabled: 1, epoch: 0, http_request_minute: 0, http_request_count: 0 });
+  expect(await binding.DB.prepare(`SELECT disabled,epoch,http_request_minute,http_request_count,
+    export_lease_id,export_lease_expires_at FROM pa_owners WHERE owner_id=?`)
+    .bind(ownerId).first()).toEqual({ disabled: 1, epoch: 0, http_request_minute: 0, http_request_count: 0,
+      export_lease_id: null, export_lease_expires_at: 0 });
   await expect(new OwnerRequestLimiter(binding.DB).admit({ ownerId, sessionHash: 'a'.repeat(64), expiresAt: Date.now() + 60_000 }))
     .rejects.toMatchObject({ code: 'RATE_LIMITED' });
   expect(await binding.DB.prepare(`SELECT revision,deleted,photo_key FROM pa_records

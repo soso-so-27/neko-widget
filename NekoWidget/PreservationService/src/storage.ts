@@ -4,6 +4,7 @@ import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument }
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
+import { exportPage } from './export-page';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -58,6 +59,9 @@ export class ArchiveStore {
         && (!Number.isSafeInteger(d.globalActiveBytesLimit) || d.globalActiveBytesLimit < 1))) {
       throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
     }
+  }
+  async exportPage(token: string, request: Request, context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
+    return exportPage({ db: this.d.db, auth: this.d.auth, read: (value, id) => this.read(value, id) }, request, token, context);
   }
   private sessionBindings(session: Session): [string, string, number] {
     return [session.sessionHash, session.ownerId, this.d.now()];

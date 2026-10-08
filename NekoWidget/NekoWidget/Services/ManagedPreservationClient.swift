@@ -48,7 +48,8 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
     case requestRejected, uploadTimedOut, servicePaused
-    case deletionNotReceived, deletionPending, deletionNotAccepted
+    case deletionNotReceived, deletionPending, deletionNotAccepted, exportUnsupported
+    case exportThrottled(seconds: Int)
 
     /// Fixed support codes only: never include a URL, owner, token or raw error.
     var preservationSupportCode: String {
@@ -92,12 +93,13 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .consentRequired: "新しく保管する前に、保管方法への同意が必要です。"
         case .conflict: "記録が更新されています。最新の内容を読み込み直してください。"
         case .notFound: "この記録は見つからないか、削除されています。"
+        case .exportUnsupported: "保管先がこの書き出し方式に対応していません。"
         case .unavailable: "保管先と通信できませんでした。変更結果は再読み込みで確認してください。"
         case .interrupted: "操作を中断しました。変更が届いた可能性があるため、記録を読み込み直してください。"
         case .capacityReached: "保管できる容量または件数の上限に達しています。既存の記録は削除せず、保管先の案内を確認してください。"
         case .accessUnconfirmed: "会員資格を確認できないため、新しい保管はまだ行えません。既存の記録は引き続き利用できます。"
         case .photoReplacement: "保管済みの写真は差し替えられません。別の写真は新しい記録として選び直してください。"
-        case .rateLimited: "操作が続いたため一時的に制限されています。時間をおいてお試しください。"
+        case .rateLimited, .exportThrottled: "操作が続いたため一時的に制限されています。時間をおいてお試しください。"
         case .integrityFailure: "保管された記録の内容を安全に確認できませんでした。元の写真・メモを削除せず、保管先へお問い合わせください。"
         case .accountingUnavailable: "保管容量を安全に確認できません。空きがあるとは扱わず、時間をおいて確認してください。"
         case .membershipLinkConsent: "保管用の本人情報と会員情報をつなぐことを確認してください。"
@@ -715,11 +717,16 @@ actor ManagedPreservationClient {
         }
     }
 
-    func list(after: String? = nil) async throws -> ManagedPreservationPage {
+    func list(after: String? = nil, forExport: Bool = false) async throws -> ManagedPreservationPage {
         if let after, UUID(uuidString: after) == nil { throw ManagedPreservationError.invalidRecord }
         let query = [URLQueryItem(name: "limit", value: "20")]
             + (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
-        let data = try await authenticated("GET", path: "/v1/records", query: query, maximumBytes: 4 * 1024 * 1024)
+        let data: Data
+        if forExport {
+            data = try await exportRead(path: "/v1/records", query: query, maximumBytes: 4 * 1024 * 1024)
+        } else {
+            data = try await authenticated("GET", path: "/v1/records", query: query, maximumBytes: 4 * 1024 * 1024)
+        }
         let page: ManagedPreservationPage = try decode(data)
         guard page.items.count <= 20, page.generation >= 0,
               Set(page.items.map(\.recordId)).count == page.items.count,
@@ -731,9 +738,57 @@ actor ManagedPreservationClient {
 
     func detail(_ id: UUID) async throws -> ManagedPreservationExportSnapshot {
         let data = try await authenticated("GET", path: recordPath(id), maximumBytes: 30 * 1024 * 1024)
+        let snapshot = try decodeExportRecord(data)
+        guard snapshot.record.id == id else { throw ManagedPreservationError.invalidResponse }
+        return snapshot
+    }
+
+    func exportPage(after: String? = nil, generation: Int? = nil) async throws -> ManagedPreservationExportPageFile {
+        if let after, UUID(uuidString: after) == nil || generation == nil { throw ManagedPreservationError.invalidRecord }
+        if let generation, generation < 0 { throw ManagedPreservationError.invalidRecord }
+        let query = (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
+            + (generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [])
+        let payload = try PhotoMemoryNoteExporter.createServicePageBuffer()
+        do {
+            _ = try await exportRead(path: "/v1/export-page", query: query,
+                maximumBytes: 96 * 1024 * 1024, responseFile: payload.fileURL,
+                expectedMIMEType: "application/x-ndjson")
+            return try ManagedPreservationExportPageFile(payload: payload, after: after, generation: generation)
+        } catch {
+            do { try payload.cleanup() }
+            catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+            throw error
+        }
+    }
+
+    /// Only export reads may wait for the owner's next request window. The
+    /// original session stays fixed; mutations and ordinary browsing never retry.
+    private func exportRead(path: String, query: [URLQueryItem], maximumBytes: Int,
+                            responseFile: URL? = nil, expectedMIMEType: String = "application/json") async throws -> Data {
+        guard ["/v1/export-page", "/v1/records"].contains(path) else { throw ManagedPreservationError.invalidRecord }
+        let checkpoint = try captureSessionCheckpoint()
+        for attempt in 0...1 {
+            try requireSessionCheckpoint(checkpoint)
+            do {
+                let data = try await authenticated("GET", path: path, query: query, maximumBytes: maximumBytes,
+                    responseFile: responseFile, expectedMIMEType: expectedMIMEType)
+                try requireSessionCheckpoint(checkpoint)
+                return data
+            } catch ManagedPreservationError.exportThrottled(let seconds) where attempt == 0 {
+                try requireSessionCheckpoint(checkpoint)
+                guard checkpoint.credential.expiresAt > Date().addingTimeInterval(TimeInterval(seconds)) else {
+                    throw ManagedPreservationError.authenticationRequired
+                }
+                try await Task.sleep(for: .seconds(seconds))
+                try requireSessionCheckpoint(checkpoint)
+            }
+        }
+        throw ManagedPreservationError.rateLimited
+    }
+
+    func decodeExportRecord(_ data: Data) throws -> ManagedPreservationExportSnapshot {
         let value: Detail = try decode(data)
         let record = ManagedPreservationRecord(recordId: value.recordId, revision: value.revision, document: value.document)
-        guard value.recordId == id else { throw ManagedPreservationError.invalidResponse }
         try validate(record)
         var photo: Data?
         if let base64 = value.photoBase64 {
@@ -796,12 +851,14 @@ actor ManagedPreservationClient {
 
     private func authenticated(_ method: String, path: String, query: [URLQueryItem] = [],
                                body: Data? = nil, revision: Int? = nil,
-                               maximumBytes: Int = 65_536) async throws -> Data {
+                               maximumBytes: Int = 65_536, responseFile: URL? = nil,
+                               expectedMIMEType: String = "application/json") async throws -> Data {
         guard try hasSession(), let captured = credential else { throw ManagedPreservationError.authenticationRequired }
         let capturedEpoch = epoch
         do {
             let data = try await request(method, path: path, query: query, body: body,
-                                         token: captured.token, revision: revision, maximumBytes: maximumBytes)
+                                         token: captured.token, revision: revision, maximumBytes: maximumBytes,
+                                         responseFile: responseFile, expectedMIMEType: expectedMIMEType)
             try ensureEpoch(capturedEpoch)
             guard credential?.ownerId == captured.ownerId, credential?.token == captured.token,
                   captured.expiresAt > Date(), try store.load() == captured else {
@@ -819,7 +876,8 @@ actor ManagedPreservationClient {
 
     private func request(_ method: String, path: String, query: [URLQueryItem] = [], body: Data? = nil,
                          token: String? = nil, revision: Int? = nil, maximumBytes: Int = 65_536,
-                         expectedStatus: Int? = nil, beforeDispatch: (() throws -> Void)? = nil) async throws -> Data {
+                         expectedStatus: Int? = nil, beforeDispatch: (() throws -> Void)? = nil,
+                         responseFile: URL? = nil, expectedMIMEType: String = "application/json") async throws -> Data {
         try Task.checkCancellation()
         guard let origin = configuration.origin,
               var parts = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -830,7 +888,7 @@ actor ManagedPreservationClient {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 60)
         request.httpMethod = method; request.httpBody = body
         request.httpShouldHandleCookies = false
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(expectedMIMEType, forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
@@ -838,8 +896,17 @@ actor ManagedPreservationClient {
         do {
             let (data, response): (Data, URLResponse)
             try beforeDispatch?()
-            if let requestOverride { (data, response) = try await requestOverride(request, maximumBytes) }
-            else { (data, response) = try await transport.data(for: request, maximumBytes: maximumBytes) }
+            if let requestOverride {
+                let result = try await requestOverride(request, maximumBytes)
+                guard result.0.count <= maximumBytes else { throw ManagedPreservationError.responseTooLarge }
+                if let responseFile {
+                    let file = try FileHandle(forWritingTo: responseFile)
+                    do { try file.truncate(atOffset: 0); try file.write(contentsOf: result.0); try file.close() }
+                    catch { try? file.close(); throw error }
+                    data = Data(result.0.prefix(65_536))
+                } else { data = result.0 }
+                response = result.1
+            } else { (data, response) = try await transport.data(for: request, maximumBytes: maximumBytes, responseFile: responseFile) }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse, http.url == url else {
                 throw ManagedPreservationError.invalidResponse
@@ -847,6 +914,15 @@ actor ManagedPreservationClient {
             guard (200...299).contains(http.statusCode) else {
                 let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
                 let code = failure?.code
+                if method == "GET", path == "/v1/export-page", http.statusCode == 404, code == "NOT_FOUND" {
+                    throw ManagedPreservationError.exportUnsupported
+                }
+                if method == "GET", ["/v1/export-page", "/v1/records"].contains(path),
+                   http.statusCode == 429, code == "RATE_LIMITED",
+                   let value = http.value(forHTTPHeaderField: "Retry-After"),
+                   let seconds = Int(value), (1...60).contains(seconds) {
+                    throw ManagedPreservationError.exportThrottled(seconds: seconds)
+                }
                 if method == "POST", path == "/v1/account-deletion",
                    ["OWNER_DELETION_DISABLED", "PRESERVATION_DISABLED", "INVALID_REQUEST", "SESSION_INVALID", "unauthorized"].contains(code ?? "") {
                     throw ManagedPreservationError.deletionNotAccepted
@@ -885,7 +961,7 @@ actor ManagedPreservationClient {
                     throw ManagedPreservationError.unavailable
                 }
             }
-            guard http.statusCode == 204 || http.mimeType == "application/json" else {
+            guard http.statusCode == 204 || http.mimeType == expectedMIMEType else {
                 throw ManagedPreservationError.invalidResponse
             }
             if let expectedStatus, http.statusCode != expectedStatus {
@@ -920,14 +996,119 @@ actor ManagedPreservationClient {
     }
 }
 
+/// A completed HTTP page remains private until every record and the terminal
+/// frame have been checked. The ZIP writer reads only one bounded frame at a time.
+final class ManagedPreservationExportPageFile: @unchecked Sendable {
+    let generation: Int
+    let totalRecords: Int
+    private let payload: PhotoMemoryNoteExportPayload
+    private let file: FileHandle
+    private let lock = NSLock()
+    private var buffer: Data
+    private var count = 0
+    private var previousID: String?
+    private var finished = false
+    private var closed = false
+    private var cursor: String?
+
+    fileprivate init(payload: PhotoMemoryNoteExportPayload, after: String?, generation: Int?) throws {
+        let file = try FileHandle(forReadingFrom: payload.fileURL)
+        var buffer = Data()
+        do {
+            let line = try Self.readLine(file, buffer: &buffer, maximum: 1024)
+            guard let header = try JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  Set(header.keys) == ["version", "type", "generation", "totalRecords"],
+                  header["type"] as? String == "header", Self.integer(header["version"]) == 1,
+                  let actualGeneration = Self.integer(header["generation"]), actualGeneration >= 0,
+                  generation == nil || generation == actualGeneration,
+                  let total = Self.integer(header["totalRecords"]), (0...1000).contains(total) else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            self.generation = actualGeneration; self.totalRecords = total
+            self.payload = payload; self.file = file; self.buffer = buffer; self.previousID = after
+        } catch { try? file.close(); throw error }
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+              value.doubleValue.isFinite, value.doubleValue.rounded() == value.doubleValue,
+              value.doubleValue >= 0, value.doubleValue <= 9_007_199_254_740_991 else { return nil }
+        return value.intValue
+    }
+
+    private static func readLine(_ file: FileHandle, buffer: inout Data, maximum: Int) throws -> Data {
+        var scanned = 0
+        while true {
+            try Task.checkCancellation()
+            if let newline = buffer.dropFirst(scanned).firstIndex(of: 10) {
+                let length = buffer.distance(from: buffer.startIndex, to: newline)
+                guard length > 0, length <= maximum else { throw ManagedPreservationError.invalidResponse }
+                let line = Data(buffer.prefix(length)); buffer.removeFirst(length + 1)
+                return line
+            }
+            guard buffer.count <= maximum else { throw ManagedPreservationError.responseTooLarge }
+            scanned = buffer.count
+            guard let bytes = try file.read(upToCount: 65_536), !bytes.isEmpty else {
+                throw ManagedPreservationError.invalidResponse // EOF without terminal newline is truncated.
+            }
+            buffer.append(bytes)
+        }
+    }
+
+    func nextRecordData() throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { throw ManagedPreservationError.invalidResponse }
+        if finished { return nil }
+        let line = try Self.readLine(file, buffer: &buffer, maximum: 29 * 1024 * 1024)
+        guard let frame = try JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        if frame["type"] as? String == "record" {
+            guard count < 50, count < totalRecords,
+                  let id = frame["recordId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  previousID == nil || id > previousID! else { throw ManagedPreservationError.invalidResponse }
+            previousID = id; count += 1
+            return line
+        }
+        guard Set(frame.keys) == ["type", "generation", "recordCount", "nextCursor"],
+              frame["type"] as? String == "complete", Self.integer(frame["generation"]) == generation,
+              Self.integer(frame["recordCount"]) == count,
+              frame["nextCursor"] is NSNull || (count > 0 && frame["nextCursor"] as? String == previousID),
+              count > 0 || totalRecords == 0,
+              buffer.isEmpty, (try file.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        cursor = frame["nextCursor"] as? String; finished = true
+        return nil
+    }
+
+    func nextCursor() throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        guard finished else { throw ManagedPreservationError.invalidResponse }
+        return cursor
+    }
+
+    func cleanup() throws {
+        lock.lock(); defer { lock.unlock() }
+        do {
+            if !closed { try file.close(); closed = true }
+            try payload.cleanup()
+        } catch { throw PhotoMemoryNoteExportCleanupPending(payload: payload) }
+    }
+
+    deinit { try? file.close() } // Normal/error ownership always calls cleanup explicitly.
+}
+
 /// Streaming delegate bounds accumulated bytes before appending (not data(for:) after the fact).
 private final class ManagedPreservationTransport: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private final class Pending {
         let limit: Int
         let continuation: CheckedContinuation<(Data, URLResponse), Error>
+        let file: FileHandle?
+        var received = 0
         var data = Data(); var response: URLResponse?; var failure: Error?
-        init(_ limit: Int, _ continuation: CheckedContinuation<(Data, URLResponse), Error>) {
-            self.limit = limit; self.continuation = continuation
+        init(_ limit: Int, _ continuation: CheckedContinuation<(Data, URLResponse), Error>, file: FileHandle?) {
+            self.limit = limit; self.continuation = continuation; self.file = file
         }
     }
     private final class Cancellation: @unchecked Sendable {
@@ -944,9 +1125,12 @@ private final class ManagedPreservationTransport: NSObject, URLSessionDataDelega
     private var pending: [Int: Pending] = [:]
     private var session: URLSession!
 
-    override init() {
+    override convenience init() { self.init(protocolClasses: nil) }
+
+    fileprivate init(protocolClasses: [AnyClass]?) {
         super.init()
         let configuration = URLSessionConfiguration.ephemeral
+        if let protocolClasses { configuration.protocolClasses = protocolClasses }
         configuration.urlCache = nil; configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
         configuration.httpShouldSetCookies = false
@@ -957,12 +1141,15 @@ private final class ManagedPreservationTransport: NSObject, URLSessionDataDelega
 
     func invalidate() { session.invalidateAndCancel() }
 
-    func data(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+    func data(for request: URLRequest, maximumBytes: Int, responseFile: URL? = nil) async throws -> (Data, URLResponse) {
+        let file = try responseFile.map { try FileHandle(forWritingTo: $0) }
+        do { try file?.truncate(atOffset: 0) }
+        catch { try? file?.close(); throw error }
         let cancellation = Cancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let task = session.dataTask(with: request)
-                lock.lock(); pending[task.taskIdentifier] = Pending(maximumBytes, continuation); lock.unlock()
+                lock.lock(); pending[task.taskIdentifier] = Pending(maximumBytes, continuation, file: file); lock.unlock()
                 cancellation.set(task); task.resume()
             }
         } onCancel: { cancellation.cancel() }
@@ -986,16 +1173,29 @@ private final class ManagedPreservationTransport: NSObject, URLSessionDataDelega
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         lock.lock()
         guard let item = pending[dataTask.taskIdentifier], item.failure == nil else { lock.unlock(); return }
-        guard data.count <= item.limit - item.data.count else {
+        guard data.count <= item.limit - item.received else {
             item.failure = ManagedPreservationError.responseTooLarge
             lock.unlock(); dataTask.cancel(); return
         }
-        item.data.append(data); lock.unlock()
+        do {
+            if let file = item.file {
+                try file.write(contentsOf: data)
+                // Only retain the bounded error envelope in memory. Successful
+                // export pages are consumed record by record from protected disk.
+                item.data.append(data.prefix(max(0, 65_536 - item.data.count)))
+            } else { item.data.append(data) }
+            item.received += data.count
+            lock.unlock()
+        } catch {
+            item.failure = error; lock.unlock(); dataTask.cancel()
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         lock.lock(); let item = pending.removeValue(forKey: task.taskIdentifier); lock.unlock()
         guard let item else { return }
+        do { try item.file?.close() }
+        catch { if item.failure == nil { item.failure = error } }
         if let error = item.failure ?? error { item.continuation.resume(throwing: error) }
         else if let response = item.response { item.continuation.resume(returning: (item.data, response)) }
         else { item.continuation.resume(throwing: ManagedPreservationError.invalidResponse) }
@@ -1005,3 +1205,65 @@ private final class ManagedPreservationTransport: NSObject, URLSessionDataDelega
                     willCacheResponse proposedResponse: CachedURLResponse,
                     completionHandler: @escaping (CachedURLResponse?) -> Void) { completionHandler(nil) }
 }
+
+#if DEBUG
+/// Exercises the real URLSession delegate/file path without external traffic.
+private final class PreservationExportTransportFixture: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "export-transport-fixture.invalid"
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url else { return }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/x-ndjson"])!, cacheStoragePolicy: .notAllowed)
+        let chunk = Data(repeating: 42, count: 65_536)
+        client?.urlProtocol(self, didLoad: chunk)
+        if url.path == "/cancel" { return }
+        client?.urlProtocol(self, didLoad: chunk)
+        client?.urlProtocol(self, didLoad: chunk)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+extension ManagedPreservationClient {
+    static func testExportTransportFileBoundary() async throws {
+        let transport = ManagedPreservationTransport(protocolClasses: [PreservationExportTransportFixture.self])
+        defer { transport.invalidate() }
+        let payload = try PhotoMemoryNoteExporter.createServicePageBuffer()
+        defer { try? payload.cleanup() }
+        let request = URLRequest(url: URL(string: "https://export-transport-fixture.invalid/complete")!)
+        let (prefix, _) = try await transport.data(for: request, maximumBytes: 196_608, responseFile: payload.fileURL)
+        guard prefix.count == 65_536,
+              try Data(contentsOf: payload.fileURL) == Data(repeating: 42, count: 196_608) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        do {
+            _ = try await transport.data(for: request, maximumBytes: 100_000, responseFile: payload.fileURL)
+            throw ManagedPreservationError.invalidResponse
+        } catch ManagedPreservationError.responseTooLarge {}
+        let size = try FileManager.default.attributesOfItem(atPath: payload.fileURL.path)[.size] as? NSNumber
+        guard let size, size.intValue <= 100_000 else { throw ManagedPreservationError.responseTooLarge }
+        let empty = try FileHandle(forWritingTo: payload.fileURL)
+        try empty.truncate(atOffset: 0); try empty.close()
+        let cancelRequest = URLRequest(url: URL(string: "https://export-transport-fixture.invalid/cancel")!)
+        let task = Task { try await transport.data(for: cancelRequest, maximumBytes: 100_000, responseFile: payload.fileURL) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        var received = false
+        // Wait for the actual delegate write, then cancel the unfinished response.
+        while ContinuousClock.now < deadline {
+            let bytes = try FileManager.default.attributesOfItem(atPath: payload.fileURL.path)[.size] as? NSNumber
+            if bytes?.intValue == 65_536 { received = true; break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        task.cancel()
+        do { _ = try await task.value; throw ManagedPreservationError.invalidResponse }
+        catch is CancellationError {}
+        catch let error as URLError where error.code == .cancelled {}
+        guard received else { throw ManagedPreservationError.invalidResponse }
+        try payload.cleanup()
+        guard !FileManager.default.fileExists(atPath: payload.fileURL.path) else { throw ManagedPreservationError.secureStorage }
+    }
+}
+#endif
