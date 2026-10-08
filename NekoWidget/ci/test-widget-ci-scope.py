@@ -164,6 +164,75 @@ class PurchaseCatalogNativeBoundaryTests(unittest.TestCase):
         self.assertFalse(planner.covers_jobs(old_jobs, required, sha))
 
 
+class PreservationExportNativeBoundaryTests(unittest.TestCase):
+    def test_exact_owning_operations_keep_build_photos_and_both_os_runtime(self):
+        selected = scope.PRESERVATION_EXPORT_SCOPE
+        self.assertIn(selected, scope.SCOPES)
+        expected = (
+            "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+            "NekoWidgetUITests/SoloMemoriesUITests/testMemoryNoteExportCancellationKeepsText",
+            "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
+            "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
+        )
+        self.assertEqual(scope.native_tests(selected), expected)
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), expected)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
+        self.assertEqual(scope.app_ui_lanes(selected), ("app-ui",))
+        self.assertEqual(scope.smoke_tests(selected), (
+            "NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+            "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary",
+        ))
+        required = planner.required_jobs_from_scope(selected)
+        self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE,
+            scope.lane_job(selected, "runtime"), scope.lane_job(selected, "app-ui")))
+        # The unchanged runtime lane still executes the existing two-OS matrix.
+        self.assertEqual(scope.SHARING_JOB_PREFIX, "Sharing runtime self-test (iOS 18.5 / 26.2)")
+        source = (ROOT / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8")
+        self.assertTrue(scope.memory_tests_available(source, expected))
+        for lane in ("gallery-normal", "gallery-variants", "app-ui-solo-1", "app-ui-other"):
+            with self.assertRaises(ValueError): scope.lane_tests(selected, lane)
+
+    def test_exact_paths_reject_partial_or_shared_and_keep_old_scope_inventory(self):
+        selected = scope.PRESERVATION_EXPORT_SCOPE
+        self.assertEqual(len(scope.PRESERVATION_EXPORT_PATHS), 31)
+        self.assertEqual(len(scope.PRESERVATION_EXPORT_COMPANIONS), 6)
+        self.assertIn("NekoWidget/PreservationService/src/export-page.ts", scope.PRESERVATION_EXPORT_PATHS)
+        self.assertIn("NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift", scope.PRESERVATION_EXPORT_PATHS)
+        paths = scope.PRESERVATION_EXPORT_PATHS | scope.PRESERVATION_EXPORT_COMPANIONS
+        self.assertTrue(scope.accepts_paths(selected, paths))
+        self.assertTrue(scope.accepts_paths(selected, scope.PRESERVATION_EXPORT_PATHS))
+        self.assertTrue(scope.accepts_paths(selected, paths | {"handoffs/member.md"}))
+        for path in paths:
+            self.assertFalse(scope.accepts_paths(selected, paths - {path}), path)
+            self.assertEqual(planner.required_jobs(sorted(paths - {path}), selected), planner.FULL)
+        for extra in ("NekoWidget/Shared/MembershipAccessPolicy.swift", "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                      "NekoWidget/NekoWidget.xcodeproj/project.pbxproj", scope.CI_WORKFLOW):
+            self.assertFalse(scope.accepts_paths(selected, paths | {extra}))
+            self.assertEqual(planner.required_jobs(sorted(paths | {extra}), selected), planner.FULL)
+        self.assertFalse(scope.accepts_paths(selected, None))
+        self.assertFalse(scope.accepts_paths(selected, []))
+        self.assertEqual(len(scope.native_tests(scope.BILLING_LOCAL_PREPARATION_SCOPE)), 3)
+        self.assertEqual(scope.lanes(scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE), ("runtime", "app-ui"))
+        self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(selected))
+
+    def test_release_evidence_requires_all_four_successful_same_sha_jobs(self):
+        selected, sha = scope.PRESERVATION_EXPORT_SCOPE, "a" * 40
+        required = planner.required_jobs_from_scope(selected)
+        jobs = [{"name": name, "head_sha": sha, "status": "completed", "conclusion": "success"} for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, sha))
+        self.assertFalse(planner.covers_jobs(jobs, planner.FULL, sha))
+        self.assertFalse(planner.covers_jobs(jobs, required, "b" * 40))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, sha))
+            for conclusion in ("failure", "skipped", "cancelled", None):
+                changed = copy.deepcopy(jobs); changed[index]["conclusion"] = conclusion
+                self.assertFalse(planner.covers_jobs(changed, required, sha), (index, conclusion))
+        old = planner.required_jobs_from_scope(scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE)
+        old_jobs = [{"name": name, "head_sha": sha, "status": "completed", "conclusion": "success"} for name in old]
+        self.assertFalse(planner.covers_jobs(old_jobs, required, sha))
+
+
 class MembershipManagementNativeBoundaryTests(unittest.TestCase):
     def test_exact_owning_operations_keep_build_photos_and_both_os_runtime(self):
         selected = scope.REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE
