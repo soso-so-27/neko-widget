@@ -64,6 +64,8 @@ const publicFixture = () => {
   evidence.usage.allocatedQuotaBytes = 100;
   evidence.usage.reservedQuotaBytes = 200;
   evidence.configuration = { confirmedAt: now, mode: 'general', requestLimiterScope: 'owner',
+    requestLimiterConsistency: 'global-atomic', requestLimiterWindow: 'fixed-utc-minute',
+    recoveryAwsAccountId: '111122223333',
     perParticipantRequestsPerMinute: 30, ownerQuotaBytes: plan.archive.ownerQuotaBytes,
     maximumRecordsPerOwner: plan.archive.maximumRecordsPerOwner, maximumOwners: plan.maximumParticipants,
     globalActiveBytesLimit: plan.archive.globalActiveBytesLimit };
@@ -75,7 +77,18 @@ const publicFixture = () => {
     forecastMonthlyYen: 1700, pauseForecastYen: 2200 };
   const offer = { version: 1, ownerQuotaBytes: plan.archive.ownerQuotaBytes,
     maximumRecordsPerOwner: plan.archive.maximumRecordsPerOwner, maximumOwners: plan.maximumParticipants,
+    initialFill: { basis: 'calendar-quota-allocations', monthlyAllocations: 3, dailyAllocations: 15,
+      newAttemptReserve: 30, editAttemptReserve: 30 },
     approval: { status: 'approved', evidenceReference: 'fixture-only-not-real-approval' } };
+  evidence.awsAccount = { confirmedAt: now, accountId: '111122223333', planType: 'PAID', planStatus: 'ACTIVE',
+    planExpirationAt: null, approvalEvidenceReference: 'synthetic-only' };
+  evidence.retentionFunding = { reviewedAt: now, calendarMonths: 12, minimumDaysAfterDeliveredFinalNotice: 30,
+    includesRetainedOwnersAndHistoricalVersions: true, coversUnknownStatusAndUndeliveredNoticeExtension: true,
+    evidenceReference: 'synthetic-only' };
+  evidence.bulkExport = { confirmedAt: now, recordCount: offer.maximumRecordsPerOwner,
+    requestsPerMinute: 30, window: 'fixed-utc-minute', completed: true, archiveConsistent: true,
+    cancellationStopsRequests: true, sessionChangeStopsRequests: true,
+    appBuild: 'synthetic-only', evidenceReference: 'synthetic-only' };
   return { evidence, offer };
 };
 test('public offer review is distinct from pilot capacity attestation and cannot approve or deploy', () => {
@@ -105,7 +118,8 @@ test('public review rejects missing reservation accounting, changed costs, expir
     e => e.intake.maximumOwners = 4, e => e.intake.monthlyMutationAttempts = 501,
     e => e.intake.forecastMonthlyYen = 1600, e => e.intake.pauseForecastYen = 3000,
     e => e.configuration.maximumRecordsPerOwner = 1000, e => e.configuration.mode = 'pilot',
-    e => e.configuration.requestLimiterScope = 'ip', e => e.configuration.perParticipantRequestsPerMinute = 120]) {
+    e => e.configuration.requestLimiterScope = 'ip', e => e.configuration.perParticipantRequestsPerMinute = 120,
+    e => e.configuration.requestLimiterConsistency = 'colo-eventual', e => delete e.configuration.requestLimiterWindow]) {
     const { evidence, offer } = publicFixture(); mutate(evidence);
     assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, false);
   }
@@ -130,5 +144,87 @@ test('invalid public offer and missing approval evidence cannot fall back to val
     { ...offer, maximumOwners: Number.MAX_SAFE_INTEGER },
     { ...offer, approval: { status: 'approved', evidenceReference: '' } }]) {
     assert.equal(reviewPublicPreservationOffer(evidence, candidate, plan, now).publicOfferReviewReady, false);
+  }
+});
+
+const largePublicFixture = () => {
+  const { evidence, offer } = publicFixture();
+  const publicPlan = structuredClone(plan);
+  Object.assign(publicPlan.archive, { ownerQuotaBytes: 5_000_000_000, maximumRecordsPerOwner: 1000,
+    globalActiveBytesLimit: 15_000_000_000 });
+  Object.assign(offer, { ownerQuotaBytes: 5_000_000_000, maximumRecordsPerOwner: 1000 });
+  Object.assign(offer.initialFill, { monthlyAllocations: 1, dailyAllocations: 28,
+    newAttemptReserve: 300, editAttemptReserve: 300 });
+  Object.assign(evidence.configuration, { ownerQuotaBytes: offer.ownerQuotaBytes,
+    maximumRecordsPerOwner: 1000, globalActiveBytesLimit: 15_000_000_000 });
+  evidence.bulkExport.recordCount = offer.maximumRecordsPerOwner;
+  return { evidence, offer, publicPlan };
+};
+test('capacity approval cannot reuse an internally matching but insufficient monthly intake plan', () => {
+  const { evidence, offer, publicPlan } = largePublicFixture();
+  const result = reviewPublicPreservationOffer(evidence, offer, publicPlan, now);
+  assert.ok(result.blockers.includes('initial-fill-exceeds-intake-budget'));
+  assert.equal(result.blockers.includes('general-intake-controls-unconfirmed'), false);
+  assert.equal(result.initialFill.newAttempts, 3300);
+  assert.equal(result.initialFill.mutationAttempts, 3600);
+  assert.equal(result.initialFill.conservativeAdmissionBytes, 23_048_646_000);
+});
+test('explicit initial-fill allowance accounts for per-attempt metadata, retries and edits at exact boundaries', () => {
+  const { evidence, offer, publicPlan } = largePublicFixture();
+  Object.assign(publicPlan.archive, { monthlyNewIntakeAttempts: 3300, monthlyNewIntakeBytes: 23_048_646_000,
+    dailyNewIntakeAttempts: 118 });
+  Object.assign(publicPlan.additionalControlsRequired, { monthlyMutationAttemptsIncludingEditsAndRetries: 3600,
+    dailyMutationAttemptsIncludingEditsAndRetries: 129 });
+  Object.assign(evidence.intake, { monthlyNewIntakeAttempts: 3300, monthlyNewIntakeBytes: 23_048_646_000,
+    monthlyMutationAttempts: 3600, dailyNewIntakeAttempts: 118, dailyMutationAttempts: 129 });
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, publicPlan, now).publicOfferReviewReady, true);
+  for (const field of ['monthlyNewIntakeAttempts', 'monthlyNewIntakeBytes', 'monthlyMutationAttempts',
+    'dailyNewIntakeAttempts', 'dailyMutationAttempts']) {
+    const e = structuredClone(evidence); e.intake[field]--;
+    assert.ok(reviewPublicPreservationOffer(e, offer, publicPlan, now).blockers.includes('initial-fill-exceeds-intake-budget'), field);
+  }
+});
+test('invalid or absent allocation definitions and unsafe products cannot be treated as an elapsed time guarantee', () => {
+  for (const mutate of [o => delete o.initialFill, o => o.initialFill.monthlyAllocations = 0,
+    o => o.initialFill.dailyAllocations = NaN, o => o.initialFill.newAttemptReserve = -1,
+    o => o.initialFill.editAttemptReserve = Number.MAX_SAFE_INTEGER,
+    o => o.initialFill.monthlyAllocations = Number.MAX_SAFE_INTEGER,
+    o => o.initialFill.basis = 'elapsed-days']) {
+    const { evidence, offer } = publicFixture(); mutate(offer);
+    assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, false);
+  }
+  const { evidence, offer } = publicFixture();
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).initialFill.elapsedCompletionDeadlineGuaranteed, false);
+});
+test('a free, expired, stale, mismatched or unapproved AWS account cannot support the public retention promise', () => {
+  for (const mutate of [e => delete e.awsAccount, e => e.awsAccount.planType = 'FREE',
+    e => e.awsAccount.planStatus = 'EXPIRED', e => e.awsAccount.planExpirationAt = now + 20 * 86400000,
+    e => delete e.awsAccount.planExpirationAt, e => e.awsAccount.accountId = '999999999999',
+    e => e.configuration.recoveryAwsAccountId = 'unknown', e => e.awsAccount.confirmedAt = now - 86400000,
+    e => e.awsAccount.confirmedAt = now + 1, e => e.awsAccount.approvalEvidenceReference = ' ']) {
+    const { evidence, offer } = publicFixture(); mutate(evidence);
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('aws-account-continuity-unconfirmed'));
+  }
+});
+test('paid AWS alone does not prove funding for retained owners, historical versions or delayed notices', () => {
+  for (const mutate of [e => delete e.retentionFunding, e => e.retentionFunding.calendarMonths = 6,
+    e => e.retentionFunding.minimumDaysAfterDeliveredFinalNotice = 29,
+    e => e.retentionFunding.includesRetainedOwnersAndHistoricalVersions = false,
+    e => e.retentionFunding.coversUnknownStatusAndUndeliveredNoticeExtension = false,
+    e => e.retentionFunding.reviewedAt = now - 86400000, e => e.retentionFunding.evidenceReference = '']) {
+    const { evidence, offer } = publicFixture(); mutate(evidence);
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-funding-unconfirmed'));
+  }
+});
+
+test('full-capacity export must survive the matching request limit without losing cancellation or owner boundaries', () => {
+  for (const mutate of [e => delete e.bulkExport, e => e.bulkExport.recordCount--,
+    e => e.bulkExport.requestsPerMinute = 120, e => e.bulkExport.window = 'rolling-minute',
+    e => e.bulkExport.completed = false, e => e.bulkExport.archiveConsistent = false,
+    e => e.bulkExport.cancellationStopsRequests = false, e => e.bulkExport.sessionChangeStopsRequests = false,
+    e => e.bulkExport.confirmedAt = now - 86400000, e => e.bulkExport.appBuild = '',
+    e => e.bulkExport.evidenceReference = ' ']) {
+    const { evidence, offer } = publicFixture(); mutate(evidence);
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('full-export-with-request-limit-unconfirmed'));
   }
 });

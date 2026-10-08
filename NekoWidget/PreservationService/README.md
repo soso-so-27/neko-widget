@@ -127,9 +127,24 @@ maximumRecordsPerOwner、maximumOwners と、承認済みを示す approval.stat
 5GB/1000件の販売案に流用できません。容量の単位と、quota が暗号化データ・metadata を数えることも販売条件として確定が必要です。
 
 公開 evidence は既存 usage/cost/sandbox に加え、configuration（confirmedAt、mode=general、ownerQuotaBytes、
-maximumRecordsPerOwner、maximumOwners、globalActiveBytesLimit、requestLimiterScope=owner、perParticipantRequestsPerMinute）、usage.allocatedQuotaBytes / reservedQuotaBytes、
+maximumRecordsPerOwner、maximumOwners、globalActiveBytesLimit、requestLimiterScope=owner、requestLimiterConsistency=global-atomic、requestLimiterWindow=fixed-utc-minute、perParticipantRequestsPerMinute）、usage.allocatedQuotaBytes / reservedQuotaBytes、
 intake（enabled、reviewedAt、validUntil、maximumOwners、dailyNewIntakeAttempts、monthlyNewIntakeAttempts、
 monthlyNewIntakeBytes、dailyMutationAttempts、monthlyMutationAttempts、forecastMonthlyYen、pauseForecastYen）を含めます。
 D1 の受付値と cost の予測額が一致し、24時間以内の有効 review で、1800円警告/2200円新規受付停止/3000円目標を維持します。
 全販売枠の quota を global capacity が収容できない場合も停止します。実配備・費用計測・予約容量の読取がない値を作って埋めません。
+offer.initialFill は basis=`calendar-quota-allocations`、monthlyAllocations、dailyAllocations、
+newAttemptReserve（失敗する新規試行の余裕）、editAttemptReserve を承認対象に含めます。
+全員分の初回件数・暗号化容量に新規試行の見積り overhead と失敗・編集余裕を加え、日次/月次の受付値を照合します。
+割当数は UTC 暦の予算単位で、経過日数での完了や個人に予約済みの残枠を保証しません。
+公開 evidence.awsAccount は confirmedAt、accountId、planType=`PAID`、planStatus=`ACTIVE`、
+planExpirationAt=null、approvalEvidenceReference を持ち、configuration.recoveryAwsAccountId と一致させます。
+無料クレジット残額だけでは12か月保管の継続証拠にしません。evidence.retentionFunding は reviewedAt、calendarMonths=12、
+minimumDaysAfterDeliveredFinalNotice>=30、includesRetainedOwnersAndHistoricalVersions=true、
+coversUnknownStatusAndUndeliveredNoticeExtension=true、evidenceReference が必要です。
+有料契約の観測と、保管中/過去世代/状態不明/通知未送達で延びる期間の費用を支える計画は別の証拠です。
+`bulkExport` は confirmedAt、recordCount（販売する maximumRecordsPerOwner と同数）、requestsPerMinute / window
+（配備と一致）、completed / archiveConsistent / cancellationStopsRequests / sessionChangeStopsRequests=true、
+appBuild、evidenceReference を必要とします。少数件のアクセス確認だけでは全件ZIPの成功証拠にしません。
+現アプリの逐次GETと15分sessionでは、30回/固定UTC分で1000件ZIPを完了できません。再試行だけでは解決しないため、
+取り出し方式と通信制限の両立を検証するまで、この一般提供用制限を配備・有効化しません。pilotには適用しません。
 この確認は承認・配備・受付有効化・期限延長・通知・消去を実行せず、remote permission を発行しません。

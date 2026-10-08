@@ -76,9 +76,24 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
     || configuration.globalActiveBytesLimit !== plan?.archive?.globalActiveBytesLimit
     || configuration.mode !== 'general') blockers.push('public-deployed-limits-unconfirmed');
   if (configuration?.requestLimiterScope !== 'owner'
+    || configuration?.requestLimiterConsistency !== 'global-atomic'
+    || configuration?.requestLimiterWindow !== 'fixed-utc-minute'
     || !positive(plan?.additionalControlsRequired?.perParticipantRequestsPerMinute)
     || configuration?.perParticipantRequestsPerMinute !== plan.additionalControlsRequired.perParticipantRequestsPerMinute) {
     blockers.push('participant-request-limit-unconfirmed');
+  }
+  // Quota enforcement must not make the promised full export impossible.
+  // A one-record access check cannot prove compatibility at the sold capacity.
+  const bulk = evidence?.bulkExport;
+  if (!validOffer || !bulk || !fresh(bulk.confirmedAt)
+    || bulk.recordCount !== offer.maximumRecordsPerOwner
+    || bulk.requestsPerMinute !== configuration?.perParticipantRequestsPerMinute
+    || bulk.window !== configuration?.requestLimiterWindow
+    || bulk.completed !== true || bulk.archiveConsistent !== true
+    || bulk.cancellationStopsRequests !== true || bulk.sessionChangeStopsRequests !== true
+    || typeof bulk.appBuild !== 'string' || !bulk.appBuild.trim()
+    || typeof bulk.evidenceReference !== 'string' || !bulk.evidenceReference.trim()) {
+    blockers.push('full-export-with-request-limit-unconfirmed');
   }
   if (!validOffer || !positive(plan?.archive?.globalActiveBytesLimit)
     || plan.archive.globalActiveBytesLimit < offer.ownerQuotaBytes * offer.maximumOwners) {
@@ -109,9 +124,64 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
     || !Object.entries(expected).every(([key, value]) => positive(value) && intake[key] === value)) {
     blockers.push('general-intake-controls-unconfirmed');
   }
+  // Matching a plan is insufficient if it cannot admit the capacity it sells.
+  // These are explicitly approved calendar quota allocations, NOT elapsed days
+  // or a promise that unused allowance is reserved for one particular owner.
+  const sizing = offer?.initialFill;
+  let initialFill = null;
+  if (!validOffer || !sizing || sizing.basis !== 'calendar-quota-allocations'
+    || !positive(sizing.monthlyAllocations) || !positive(sizing.dailyAllocations)
+    || !count(sizing.newAttemptReserve) || !count(sizing.editAttemptReserve)) {
+    blockers.push('initial-fill-plan-missing');
+  } else {
+    const records = offer.maximumRecordsPerOwner * offer.maximumOwners;
+    const newAttempts = records + sizing.newAttemptReserve;
+    const mutations = newAttempts + sizing.editAttemptReserve;
+    // storage.ts estimates photo bytes + 512KiB + 8192 before validating a
+    // new PUT. Base64 padding can overestimate the photo by two bytes. Failed
+    // admissions consume budget; reserve each retry at the maximum 20MiB.
+    const bytes = offer.ownerQuotaBytes * offer.maximumOwners + records * 532482
+      + sizing.newAttemptReserve * (20 * 1024 * 1024 + 532480);
+    const capacity = [
+      [intake?.monthlyNewIntakeAttempts, sizing.monthlyAllocations, newAttempts],
+      [intake?.monthlyMutationAttempts, sizing.monthlyAllocations, mutations],
+      [intake?.monthlyNewIntakeBytes, sizing.monthlyAllocations, bytes],
+      [intake?.dailyNewIntakeAttempts, sizing.dailyAllocations, newAttempts],
+      [intake?.dailyMutationAttempts, sizing.dailyAllocations, mutations],
+    ];
+    if (![records, newAttempts, mutations, bytes].every(positive)
+      || !capacity.every(([limit, allocations]) => positive(limit) && positive(limit * allocations))) {
+      blockers.push('invalid-initial-fill-arithmetic');
+    } else {
+      initialFill = { newAttempts, mutationAttempts: mutations, conservativeAdmissionBytes: bytes,
+        monthlyAllocations: sizing.monthlyAllocations, dailyAllocations: sizing.dailyAllocations,
+        elapsedCompletionDeadlineGuaranteed: false };
+      if (capacity.some(([limit, allocations, required]) => limit * allocations < required)) {
+        blockers.push('initial-fill-exceeds-intake-budget');
+      }
+    }
+  }
+  // A free account's expiry is a service stop, not merely a price adjustment.
+  // The billing observation must refer to the account actually holding the
+  // recovery data. A paid plan alone does not prove future operating funding.
+  const aws = evidence?.awsAccount;
+  if (!aws || !fresh(aws.confirmedAt) || !/^[0-9]{12}$/u.test(configuration?.recoveryAwsAccountId ?? '')
+    || aws.accountId !== configuration.recoveryAwsAccountId || aws.planType !== 'PAID'
+    || aws.planStatus !== 'ACTIVE' || aws.planExpirationAt !== null
+    || typeof aws.approvalEvidenceReference !== 'string' || !aws.approvalEvidenceReference.trim()) {
+    blockers.push('aws-account-continuity-unconfirmed');
+  }
+  const funding = evidence?.retentionFunding;
+  if (!funding || !fresh(funding.reviewedAt) || funding.calendarMonths !== 12
+    || !count(funding.minimumDaysAfterDeliveredFinalNotice) || funding.minimumDaysAfterDeliveredFinalNotice < 30
+    || funding.includesRetainedOwnersAndHistoricalVersions !== true
+    || funding.coversUnknownStatusAndUndeliveredNoticeExtension !== true
+    || typeof funding.evidenceReference !== 'string' || !funding.evidenceReference.trim()) {
+    blockers.push('retention-funding-unconfirmed');
+  }
   return { ...operating, publicOfferReviewReady: blockers.length === 0,
     newIntakeReviewReady: blockers.length === 0, blockers: [...new Set(blockers)],
-    salesApprovalPermission: false, deployPermission: false };
+    initialFill, salesApprovalPermission: false, deployPermission: false };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
