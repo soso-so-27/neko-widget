@@ -1333,16 +1333,9 @@ WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for n
 
 # One independently reviewed live membership presentation batch against main
 # 7e19afc. Complete Git blobs bind all behavior and tests after product review
-# at 7cee7e0. The selector cannot accept later edits.
+# through 062ae81. The selector cannot accept later edits.
 # This is a new unmeasured scope, not an extension of prior billing evidence.
-MEMBERSHIP_STATE_BLOBS = {
-    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": ("bed1b157f9c2de380aebcf43e85e4e46a4b3fa18", "8f72072aa64ccc7cb5c32c4c891cb6b59e1723be"),
-    "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift": ("7cdcffb550b7c1b10cd4dd1d257bdc64bde3d0cc", "2407e891849a6d696e4c2745cdf4dba851a33c16"),
-    "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift": ("cde97dd160aacc3ce6179119b7c84d96d6ad6868", "d9954f019b72353f0f5a21b10cc12d8c02df6c7b"),
-    "NekoWidget/NekoWidget/Views/MembershipOfferView.swift": ("0b72ccb60649f9bc7842a9b28161d3036865ca68", "57f857d6a62ea499207552d2c46f89783acf8530"),
-    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ("7df2ccef0a9674522afab2e1b10bdd0aa3d5e91f", "a676ace0e4112b92bab1c68a1c8257638e80d88c"),
-    "NekoWidget/ci/test-plus-purchase-foundation.py": ("acd13c6510a1ef952e1285b2abc6a852b54f94e4", "fdb584a45609edcf2355228fa8bab1b2f8d791c3"),
-}
+MEMBERSHIP_STATE_BLOBS = {'NekoWidget/NekoWidget/App/NekoWidgetApp.swift': ('bed1b157f9c2de380aebcf43e85e4e46a4b3fa18', '8f72072aa64ccc7cb5c32c4c891cb6b59e1723be'), 'NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift': ('7cdcffb550b7c1b10cd4dd1d257bdc64bde3d0cc', '331666f567faf759064142e99a100115b7cffdf5'), 'NekoWidget/NekoWidget/Services/MembershipOfferModel.swift': ('cde97dd160aacc3ce6179119b7c84d96d6ad6868', 'f81dce1c4e52d2abc4f57bc1dfac2ab220095189'), 'NekoWidget/NekoWidget/Views/MembershipOfferView.swift': ('0b72ccb60649f9bc7842a9b28161d3036865ca68', '57f857d6a62ea499207552d2c46f89783acf8530'), 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('7df2ccef0a9674522afab2e1b10bdd0aa3d5e91f', 'a676ace0e4112b92bab1c68a1c8257638e80d88c'), 'NekoWidget/ci/test-plus-purchase-foundation.py': ('acd13c6510a1ef952e1285b2abc6a852b54f94e4', '257faaa54dc53effd0bd6dcdfa38b1325d6f73c5')}
 MEMBERSHIP_STATE_PATHS = frozenset(MEMBERSHIP_STATE_BLOBS)
 MEMBERSHIP_STATE_COMPANIONS = frozenset("NekoWidget/ci/" + name for name in (
     "ios_ci_scope.py", "plan-ios-ci.py", "test-plan-ios-ci.py", "test-widget-ci-scope.py",

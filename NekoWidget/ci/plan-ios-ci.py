@@ -907,7 +907,7 @@ WINDOW_HUB_COMPANION_DIGESTS = {
 MEMBERSHIP_STATE_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "70cc82a50e20f241d2db0030881b294a6c75ccb1d5fd40fb5a1c99bb25ca9afe",
-        "df975746e2992d31da12bc0542c539bd34cffff200fb30caec2e8f1611fabd5d"
+        "c6a2b8434c612796dc93450dc49acb6b9cca7f4db0627a95fe0bd6eec3ae0955"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "a4d2973ee48edb55a7f1f2e20536a5e347e022ce4db9e2cf073a756fb35824fd",
