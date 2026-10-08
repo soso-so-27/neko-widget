@@ -20,6 +20,64 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class PreservationProviderStreamBudgetTests(unittest.TestCase):
+    def test_two_job_scope_is_unmeasured_and_cannot_use_native_upload_or_old_timings(self):
+        selected = planner.PRESERVATION_PROVIDER_SCOPE
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": previous, "candidate_minutes": 1.1, "run_id": index, "outcome": "success"}
+            for index, previous in enumerate((planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.JPEG_SCOPE))]}
+        cost = preflight.observe_cost(selected, history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["samples"], [])
+        self.assertEqual(cost["measurement_job_timeouts_minutes"],
+                         {planner.PRESERVATION_WORKFLOW: 5, planner.JPEG_WORKFLOW: 10})
+        self.assertNotIn("with_upload_minutes", cost)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30,
+                  "required_jobs": [planner.PRESERVATION_JOB, planner.JPEG_JOB], "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        for workflow in (planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW):
+            for state, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+                run = {"id": 8, "path": workflow, "status": state, "conclusion": conclusion,
+                       "created_at": (now - dt.timedelta(minutes=8)).isoformat()}
+                gated = preflight.apply_task_gate(result, [run], now, measure_baseline=True)
+                self.assertFalse(gated["ready"])
+                self.assertFalse(gated["task"]["first_baseline_measurement"])
+                self.assertEqual(gated["task"]["minutes_since_first_ci"], 8)
+                self.assertEqual(gated["task"]["failed_runs"], [8] if conclusion == "failure" else [])
+                self.assertEqual(gated["task"]["active_runs"], [8] if state != "completed" else [])
+
+    def test_candidate_plan_binds_both_workflow_jobs_to_one_head(self):
+        head = "a" * 40
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.PRESERVATION_PROVIDER_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_PROVIDER_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["head"], head)
+        self.assertEqual(result["required_jobs"], [planner.PRESERVATION_JOB, planner.JPEG_JOB])
+        self.assertEqual({row["workflow"] for row in result["required_backend_runs"]},
+                         {planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW})
+        self.assertTrue(all(row["head_sha"] == head and row["success_required"]
+                            for row in result["required_backend_runs"]))
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertIn("both same-SHA", result["reason"])
+        self.assertIn("no native, live-cloud or release evidence", result["reason"])
+
+    def test_task_history_collects_both_backend_workflows_before_gating(self):
+        runs = [{"id": index, "path": workflow, "status": "in_progress", "conclusion": None}
+                for index, workflow in enumerate((planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW), 1)]
+        with patch.object(planner, "git", return_value="codex/provider-stream"), \
+                patch.object(preflight, "github", return_value={"total_count": 2, "workflow_runs": runs}):
+            result = preflight.read_task_runs("a" * 40)
+        self.assertEqual({row["path"] for row in result}, {planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW})
+        self.assertEqual({row["id"] for row in result}, {1, 2})
+
+
 class PreservationUploadMemoryBudgetTests(unittest.TestCase):
     def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
         selected = planner.PRESERVATION_UPLOAD_SCOPE
