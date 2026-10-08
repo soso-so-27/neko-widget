@@ -47,3 +47,13 @@ main `b1925f9cbec6be0fe974b5f0697cc49ae3220081` へmerge commitで反映済み�
 [Workers CPU](https://developers.cloudflare.com/workers/platform/pricing/)は100万msあたり$0.02、[D1](https://developers.cloudflare.com/d1/platform/pricing/)は読取100万行$0.001・書込100万行$1・保存1GB月$0.75。計画換算198円/USD、無料枠なしでは、仮定した総平均CPU100ms/requestなら月1.52〜4.17円、1秒なら15.17〜41.70円となる。これは感度計算であり、実費・上限・forecastではない。実CPU、D1のrows_read/rows_writtenとDB保存量、共有無料枠を含む現行経路の観測が必要。
 
 既存の「無料枠0・固定費全額配賦・R2両操作クラスの正の使用を各100万件単位に切上げ・Container月10時間」仮定では、容量による保存/転送とCPU/D1を加える前で2,205.74円となり、受付停止2,200円を超える。同アカウントの限界費用の下限を示すものではないが、単に販売容量を小さくすれば通るという根拠もない。現在の完全な予測を先に確定し、容量/件数/人数/受付条件と予算・AWS継続契約の判断を分ける。料金枠・契約・実受付の変更は行っていない。
+
+### 22時前後の実績取得で補えたこと
+
+Cloudflareの既存認証でGraphQLの集計を読み、10月1日00:00 UTCからの実績を保存した。アカウント全体でWorker呼出し21,068回、CPU 54.228秒、D1読取290,493行・書込3,704行。DBごとの最大サイズの合計は2,830,336 bytes。保管DBだけでは読取10,688行・書込236行、最大544,768 bytesだった。写真本文・SQL本文・個人の記録は取得していない。これは請求書や公開後の月額予測ではない。
+
+CPU・D1行数の3項目だけを、無料枠0・計画換算198円/USDで換算すると約1.006円。固定費・DB保存・リクエスト・Container・R2・AWS等を含まず、アプリ全体の費用とは呼ばない。実績が小さいことは分かったが、配備更新後の集計には新しいexport本体の呼出しが現れず、大容量の代表的な処理を測れた証拠にはならない。過去の少量利用を5GB提供時の原価へ直接外挿しない。
+
+請求期間を確定する公式のsubscription GETはHTTP403/code10000だった。Analytics読取の成功と請求情報の読取権限は別で、権限追加・回避・契約変更は行っていない。既存ログイン・請求権限での期間/無料枠確認と、現行経路の代表的な大容量操作の計測が残る。一般提供条件を勝手に変更せず、`publicReady=false`を維持する。
+
+追加証拠は同evidence rootの `preservation/cpu-d1-schema-readonly.json`、`cpu-d1-usage-readonly.json`、`cloudflare-subscription-period-readonly.json`、`observed-cpu-d1-assessment.json`。数値の意味は[公式D1集計仕様](https://developers.cloudflare.com/d1/observability/metrics-analytics/)と[Workers料金](https://developers.cloudflare.com/workers/platform/pricing/)、[D1料金](https://developers.cloudflare.com/d1/platform/pricing/)に照合。今回の操作は集計読取と記録のみで、製品・配備・検証用のクラウド負荷・CI・再配布・料金設定は変更しない。
