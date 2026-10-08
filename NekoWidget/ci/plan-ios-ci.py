@@ -907,7 +907,7 @@ WINDOW_HUB_COMPANION_DIGESTS = {
 MEMBERSHIP_STATE_COMPANION_DIGESTS = {
     "NekoWidget/ci/ios_ci_scope.py": [
         "70cc82a50e20f241d2db0030881b294a6c75ccb1d5fd40fb5a1c99bb25ca9afe",
-        "c6a2b8434c612796dc93450dc49acb6b9cca7f4db0627a95fe0bd6eec3ae0955"
+        "3dc34777a0b5d9a3d6728fb08fcad609e00ae8928cfd63b82110414d5b629c21"
     ],
     "NekoWidget/ci/plan-ios-ci.py": [
         "a4d2973ee48edb55a7f1f2e20536a5e347e022ce4db9e2cf073a756fb35824fd",
@@ -919,7 +919,7 @@ MEMBERSHIP_STATE_COMPANION_DIGESTS = {
     ],
     "NekoWidget/ci/test-widget-ci-scope.py": [
         "7a3d75a7f046fd4671bb31b84b9af63453be7565ee431fb932f559abb464931f",
-        "09210817a605f49eb1d4c44d5b4dda15a48fd5263a7fde424439ad2fe985e120"
+        "d0fc73d5401a333c695304de2c5a0398bea49507482cf0e3e8e4e35228b5e418"
     ]
 }
 MEMBERSHIP_STATE_WORKFLOW_BLOB = "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90"

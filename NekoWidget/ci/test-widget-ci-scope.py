@@ -59,6 +59,7 @@ class MembershipStateNativeBoundaryTests(unittest.TestCase):
             "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift",
             "NekoWidget/NekoWidget/Services/MembershipOfferModel.swift",
             "NekoWidget/NekoWidget/Views/MembershipOfferView.swift",
+            "NekoWidget/NekoWidget/Views/WindowSupportResumeView.swift",
             "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
             "NekoWidget/ci/test-plus-purchase-foundation.py",
         }))
