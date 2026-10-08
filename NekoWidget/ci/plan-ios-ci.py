@@ -26,6 +26,8 @@ from ios_ci_scope import (FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_P
                           REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE, MEMBERSHIP_MANAGEMENT_PATHS,
                           MEMBERSHIP_MANAGEMENT_BLOBS, MEMBERSHIP_MANAGEMENT_COMPANIONS,
                           MEMBERSHIP_MANAGEMENT_TESTS,
+                          REVIEWED_PURCHASE_CATALOG_SCOPE, PURCHASE_CATALOG_PATHS, PURCHASE_CATALOG_BLOBS,
+                          PURCHASE_CATALOG_COMPANIONS, PURCHASE_CATALOG_TESTS,
                           REVIEWED_MEMBERSHIP_STATE_SCOPE, MEMBERSHIP_STATE_PATHS, MEMBERSHIP_STATE_BLOBS,
                           MEMBERSHIP_STATE_COMPANIONS, MEMBERSHIP_STATE_TESTS, CI_WORKFLOW,
                           memory_tests_available,
@@ -950,6 +952,27 @@ MEMBERSHIP_MANAGEMENT_COMPANION_DIGESTS = {
 MEMBERSHIP_MANAGEMENT_WORKFLOW_BLOB = "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90"
 
 
+PURCHASE_CATALOG_COMPANION_DIGESTS = {
+    "NekoWidget/ci/ios_ci_scope.py": [
+        "2bfb5b7680a211694d24224227a07469ac6d9902c8eb0678d05951263b831466",
+        "9a26f04cb3e683043ac41171f3d68f5cec4d39e86e19e7dd2fbf8d54d59b7500"
+    ],
+    "NekoWidget/ci/plan-ios-ci.py": [
+        "14a0ee32724fba96e19f2550a22651ee3b5d35797d2609f92cc6c3f82c719706",
+        "d5409ddc9026b1e66fe44063376b4cb655fd89bc45e9bc8dbc98dc546f02ecde"
+    ],
+    "NekoWidget/ci/test-plan-ios-ci.py": [
+        "af40d2127a3208f1131d128c4fa68082717c680331186c33d8004aa2ef80ab75",
+        "d287b83e4a24a10195e59a91d955946c996a93967c7513e22286ff79bb0d5506"
+    ],
+    "NekoWidget/ci/test-widget-ci-scope.py": [
+        "eebb057d0691549c06fb9c9c9376f6b669d4f02ccca25e0fd787d9b66e503a2a",
+        "253e544eb831ffd7e05ca92cb10d3359050dd38f4038ab19579675ca81522085"
+    ]
+}
+PURCHASE_CATALOG_WORKFLOW_BLOB = "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90"
+
+
 def reviewed_hub_only(paths: list[str], base: str, head: str, *, product_blobs: dict,
                       companion_paths: frozenset, companion_digests: dict,
                       companion_name: str) -> bool:
@@ -1015,6 +1038,24 @@ def window_hub_only(paths: list[str], base: str, head: str) -> bool:
                              companion_name="WINDOW_HUB_COMPANION_DIGESTS")
 
 
+def purchase_catalog_only(paths: list[str], base: str, head: str) -> bool:
+    # Pending review, malformed/zero identities and additions never qualify.
+    if (not paths or set(PURCHASE_CATALOG_BLOBS) != PURCHASE_CATALOG_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PURCHASE_CATALOG_BLOBS.values())):
+        return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=PURCHASE_CATALOG_BLOBS,
+                             companion_paths=PURCHASE_CATALOG_COMPANIONS,
+                             companion_digests=PURCHASE_CATALOG_COMPANION_DIGESTS,
+                             companion_name="PURCHASE_CATALOG_COMPANION_DIGESTS"):
+        return False
+    # No workflow change, and all five owning methods must parse in their class.
+    if any(git("rev-parse", f"{ref}:{CI_WORKFLOW}") != PURCHASE_CATALOG_WORKFLOW_BLOB
+           for ref in (base, head)):
+        return False
+    return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), PURCHASE_CATALOG_TESTS)
+
+
 def membership_state_only(paths: list[str], base: str, head: str) -> bool:
     # Pending review, malformed/zero identities and additions never qualify.
     if (not paths or set(MEMBERSHIP_STATE_BLOBS) != MEMBERSHIP_STATE_PATHS
@@ -1075,6 +1116,15 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             base = comparison_base(event, env)
             if base and membership_management_only(paths, base, env["GITHUB_SHA"]):
                 return REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
+    if (sources and sources <= PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS
+            and "NekoWidget/NekoWidget/Services/PlusPurchaseStore.swift" in sources):
+        try:
+            base = comparison_base(event, env)
+            if base and purchase_catalog_only(paths, base, env["GITHUB_SHA"]):
+                return REVIEWED_PURCHASE_CATALOG_SCOPE
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
