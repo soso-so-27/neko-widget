@@ -57,3 +57,19 @@ CPU・D1行数の3項目だけを、無料枠0・計画換算198円/USDで換算
 請求期間を確定する公式のsubscription GETはHTTP403/code10000だった。Analytics読取の成功と請求情報の読取権限は別で、権限追加・回避・契約変更は行っていない。既存ログイン・請求権限での期間/無料枠確認と、現行経路の代表的な大容量操作の計測が残る。一般提供条件を勝手に変更せず、`publicReady=false`を維持する。
 
 追加証拠は同evidence rootの `preservation/cpu-d1-schema-readonly.json`、`cpu-d1-usage-readonly.json`、`cloudflare-subscription-period-readonly.json`、`observed-cpu-d1-assessment.json`。数値の意味は[公式D1集計仕様](https://developers.cloudflare.com/d1/observability/metrics-analytics/)と[Workers料金](https://developers.cloudflare.com/workers/platform/pricing/)、[D1料金](https://developers.cloudflare.com/d1/platform/pricing/)に照合。今回の操作は集計読取と記録のみで、製品・配備・検証用のクラウド負荷・CI・再配布・料金設定は変更しない。
+
+### 22時台：請求期間を本人ログイン後に確認、大容量exportの処理量を更新
+
+上記の請求期間未確認は解消した。本人が既存Cloudflareへログインした後、同じアカウントのBillable usageで周期9月22日〜10月21日、観測17/30日、次回更新10月22日を確認。Workers Paid/R2 PaidはActive。表示時点の従量費用とその周期予測は$0、全項目が含有枠内だった。R2 A約1,900/100万回、B約9,300/1,000万回、D1読取約450,380/250億行・書込約4,310/5,000万行、Workers約26,970/1,000万回、CPU約78,580/3,000万ms。丸められたUI値であり、将来の無料枠の予約・総請求額0円ではない。API403の過去記録は保持し、権限を追加せず本人認証済み画面の別証拠で補った。
+
+直近の請求書はWorkers Paidの9月26日〜10月21日日割り$4.33＋税$0.43=$4.76で支払済み。R2 Paidの9月22日〜10月21日の基本料は$0だった。Workers通常月額は[公式料金](https://developers.cloudflare.com/workers/platform/pricing/)の$5を計画へ保持する。契約一覧のImages Stream Basicを追加$5と即断せず、Hosted imagesの保存対象外表示とManage planのImages/Stream両方未選択・月額$0を確認した。追加ストレージを選択・契約していない。請求書の住所・決済情報は台帳に転記しない。証拠は `preservation/cloudflare-billing-ui-20261008.json`。
+
+現行製品ソースを変更せず、ローカルworkerdに1,000件・暗号化会計4,998,964,890 bytesの合成fixtureを準備した。写真1件4,998,000 bytesを個別のowner/record contextで暗号化。復旧記録・owner snapshotの承認済み状態をfixtureで作り、実装の本人session・削除journal・一般案の本人30回/分・1MiB出力ごとの確認を通した。実S3/KMS/Appleは呼ばず、復旧ackの作成自体やJPEG入力検証の成功証拠ではない。
+
+完了35ページ・455件・写真2,274,090,000 bytesは順番、ID、メモ、全写真SHA256、各ページcompleteを検証済み。処理メーターを同じ境界で保存したのは最初の30ページ・390件で、SQL8,609回、D1読取64,109行/書込90行、R2 GET8,490回（削除format4,050、存在しない削除request4,050、写真390）、鍵unwrap780回。`first()`は計測のため同一SQLの`all()`結果を先頭投影し、native firstとの7比較を先に通した。SQL回数とD1行数を混同しない。固定候補のsource raw hashを保持し、現mainとのtracked差分なしを確認。一部checkoutのCRLF/LF差分は記録し、製品差分扱いにしない。
+
+全件の完走は成功していない。最初の13件で約12.8秒、その後もローカル呼出しの待ち時間が増え、77ページは15分sessionと5〜12分の当初見込みを超えると分かったため、測定専用workerを特定して意図的に停止した。プロセス合計13分09秒（fixture準備約3分47秒を含む）。driverは未完了として終了し、途中のページは採用していない。実際のsession失効や製品固有障害が発生した証拠ではなく、本番CPU・速度・128MiB上限や実機ZIP・全5GB完走の証明にも使わない。期限・合格条件は変更せず、重い全件測定を反復しない。
+
+観測に合わせた同分布1,000件/77ページの**仮定**では、SQL22,077回、R2 GET21,770回、unwrap2,000回。D1行数は全77ページを観測した13件ページ相当で扱う保守的なfixture算定で、読取164,549/書込231行。計画198円/USD・無料枠0でもD1の2項目は約0.078円、KMS unwrapを実Decrypt1回ずつに対応させる場合は約1.188円。CPU・固定費・保存・初回upload・修正・S3転送・履歴・再認証等を含む総原価ではない。3人が30日毎日全量を出す仮定でもR2 GET約196万回、D1読取約1,481万/書込20,790行となり、今回見えた共有枠には収まる。他の将来利用やCPU分を保証しない。R2の100万回単位の切上げを1回のexportごとに課金して合算しない。
+
+この結果から、chunkごとの確認回数の増加だけを理由に予算超過とする根拠はなくなった。従来の無料枠0モデルを実際の現在請求と混同せず、初期保存・S3往復転送・復旧履歴・実CPU・AWS継続契約を残す。5GB/1,000件/3人の販売案、受付量、1,800円警告/2,200円停止/3,000円目標の変更は未承認・未適用。publicReady=false。新しいクラウド負荷・製品CI・再配布は0。外部probeの `plan.json`、`result.json`、`stop-decision.json`、`assessment.json` を `C:/dev/neko-evidence/launch-readiness-20261008/export-cost-probe/` に保存した。
