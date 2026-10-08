@@ -10,6 +10,12 @@
 
 料金の感度分析では15GB満量、復旧1世代、既存固定費・Container月10時間・予備500円を仮定すると、R2無料枠全量が使える場合は月1,828円、使えない場合は月2,820円。実請求予測ではない。履歴10世代ならそれぞれ2,450円/3,442円となり、既存の新規受付停止2,200円を超える。受付ペース・履歴を含む実測に合わせた案が必要で、費用上限を自動変更しない。
 
-残件はAWS本人再ログイン後の全世代一覧・鍵費用、販売条件と受付ペースの承認、利用者単位の制限の接続、および実際の解約・期限切れ時の確認。現時点のpublic readinessはfalse。公開可能・一般受付ONとは報告しない。
+14:45 JSTの本人ログイン後の読取で、個人AWSアカウントを照合し、S3の全ページ・全世代を集計した。10オブジェクト版・3,377,890 bytes、非現行版0、削除マーカー0。すべて `recovery/v1/` で、ほかのprefixは0。10枚の写真や10個の復旧世代を意味しない。ObjectLockとLifecycleは未設定であることをエラーコードから確認した。写真本文の読取・削除・設定変更は行っていない。
 
-証拠は `C:/dev/neko-evidence/launch-readiness-20261008/preservation/` の `live-readonly.json`、`r2-usage-readonly.json`、`public-cost-proposal.json`、`validation.json`。初回候補は12:38 JST。ローカルチェックだけでApple環境や配布を検証済みとはしない。
+実配備のKEY_WRAPPERが参照する東京の顧客管理KMS鍵と、AWSで読んだ鍵ARNは一致した。有効、単一リージョン、自動ローテーションOFF、完了したローテーション0。S3の既定AES256暗号化とは別にアプリの鍵ラップに使う鍵である。現在の鍵1本の通常月額は$1で、現在量を丸1か月保持するS3本体分は約$0.000079という試算になる。リクエスト・転送・ほかのサービスを含む請求額ではない。
+
+AWS `GetAccountPlanState` の実測はFREE/ACTIVE、残クレジット$119.59、期限2027-03-25 13:30 JST。残額が先に尽きればそれ以前に終了する。[AWSの仕様](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html)では無料プラン終了時に利用できなくなるため、現状の契約だけでは公開後12か月の保管継続を約束できない。公開前に予算を伴う有料プランへの移行条件を確定する。契約変更は未承認・未実行。無料クレジットを恒久的な原価0円や費用上限の証拠にはしない。
+
+残件はリクエスト・転送・共有無料枠を含む費用予測、販売条件と受付ペースの整合と承認、AWSの継続利用条件、利用者単位の制限の接続、および実際の解約・期限切れ時の確認。現時点のpublic readinessはfalse。公開可能・一般受付ONとは報告しない。
+
+証拠は `C:/dev/neko-evidence/launch-readiness-20261008/preservation/` の `live-readonly.json`、`r2-usage-readonly.json`、`public-cost-proposal.json`、`validation.json`、`aws-inventory-readonly.json`、`key-binding-readonly.json`、`aws-account-plan-readonly.json`、`aws-cost-and-continuity-assessment.json`。料金源は [AWS KMS](https://aws.amazon.com/kms/pricing/) と同ディレクトリの `aws-s3-price.json`（公式東京料金表、2026-10-08取得）。初回候補は12:38 JST。ローカルチェックだけでApple環境や配布を検証済みとはしない。
