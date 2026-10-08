@@ -118,3 +118,18 @@ owner復旧snapshot policyがONのとき、期限切れfenceのlease切れだけ
 ## 購入・期限運用のローカル事前確認
 
 `node scripts/operating-readiness.mjs <aggregate-evidence.json>` は24時間以内の集計証拠を検査するだけで、remote変更・通知・削除は行いません。[入力と検証状況](../../handoffs/2026-10-04-billing-retention-readiness.md)を参照してください。
+
+
+公開容量の販売前確認は `node scripts/operating-readiness.mjs <aggregate-evidence.json> --public-offer <offer.json>`。
+既存 pilot の boolean 容量一致だけでは販売案を ready にしません。offer は version=1、ownerQuotaBytes、
+maximumRecordsPerOwner、maximumOwners と、承認済みを示す approval.status / evidenceReference を持ちます。
+その値を費用レビュー済み plan と配備読取 configuration の具体値に照合します。1GiB/200件の現 plan を
+5GB/1000件の販売案に流用できません。容量の単位と、quota が暗号化データ・metadata を数えることも販売条件として確定が必要です。
+
+公開 evidence は既存 usage/cost/sandbox に加え、configuration（confirmedAt、mode=general、ownerQuotaBytes、
+maximumRecordsPerOwner、maximumOwners、globalActiveBytesLimit、requestLimiterScope=owner、perParticipantRequestsPerMinute）、usage.allocatedQuotaBytes / reservedQuotaBytes、
+intake（enabled、reviewedAt、validUntil、maximumOwners、dailyNewIntakeAttempts、monthlyNewIntakeAttempts、
+monthlyNewIntakeBytes、dailyMutationAttempts、monthlyMutationAttempts、forecastMonthlyYen、pauseForecastYen）を含めます。
+D1 の受付値と cost の予測額が一致し、24時間以内の有効 review で、1800円警告/2200円新規受付停止/3000円目標を維持します。
+全販売枠の quota を global capacity が収容できない場合も停止します。実配備・費用計測・予約容量の読取がない値を作って埋めません。
+この確認は承認・配備・受付有効化・期限延長・通知・消去を実行せず、remote permission を発行しません。

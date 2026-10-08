@@ -42,11 +42,86 @@ export function reviewOperatingEvidence(evidence, plan, now = Date.now()) {
     noticePermission: false, permanentDeletionPermission: false };
 }
 
+/** Public sales claims need concrete deployed limits, not the pilot's boolean
+ * capacity attestation. This is advisory evidence review; it never applies a
+ * configuration, approves a promise, renews intake, or changes retained data.
+ */
+export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.now()) {
+  const operating = reviewOperatingEvidence(evidence, plan, now);
+  const blockers = [...operating.blockers];
+  const positive = value => Number.isSafeInteger(value) && value > 0;
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const fresh = value => positive(plan?.archive?.reviewLifetimeHours)
+    && plan.archive.reviewLifetimeHours <= 24 && Number.isSafeInteger(now) && now >= 0
+    && Number.isSafeInteger(value) && value <= now
+    && value > now - plan.archive.reviewLifetimeHours * 3_600_000;
+  const validOffer = offer?.version === 1
+    && [offer.ownerQuotaBytes, offer.maximumRecordsPerOwner, offer.maximumOwners].every(positive)
+    && Number.isSafeInteger(offer.ownerQuotaBytes * offer.maximumOwners);
+  if (!validOffer) blockers.push('invalid-public-offer');
+  if (offer?.approval?.status !== 'approved' || typeof offer?.approval?.evidenceReference !== 'string'
+    || !offer.approval.evidenceReference.trim()) blockers.push('public-offer-not-approved');
+  // Keep the agreed currency boundaries. A candidate cannot increase them by
+  // passing a different local plan; prices and paid cloud usage still need review.
+  if (plan?.currency?.warningForecastYen !== 1800 || plan?.currency?.pauseNewIntakeForecastYen !== 2200
+    || plan?.currency?.monthlyTargetYen !== 3000) blockers.push('cost-boundaries-changed');
+  if (!validOffer || offer.ownerQuotaBytes !== plan?.archive?.ownerQuotaBytes
+    || offer.maximumRecordsPerOwner !== plan?.archive?.maximumRecordsPerOwner
+    || offer.maximumOwners !== plan?.maximumParticipants) blockers.push('offer-exceeds-reviewed-plan');
+  const configuration = evidence?.configuration;
+  if (!configuration || !fresh(configuration.confirmedAt)
+    || configuration.ownerQuotaBytes !== offer?.ownerQuotaBytes
+    || configuration.maximumRecordsPerOwner !== offer?.maximumRecordsPerOwner
+    || configuration.maximumOwners !== offer?.maximumOwners
+    || configuration.globalActiveBytesLimit !== plan?.archive?.globalActiveBytesLimit
+    || configuration.mode !== 'general') blockers.push('public-deployed-limits-unconfirmed');
+  if (configuration?.requestLimiterScope !== 'owner'
+    || !positive(plan?.additionalControlsRequired?.perParticipantRequestsPerMinute)
+    || configuration?.perParticipantRequestsPerMinute !== plan.additionalControlsRequired.perParticipantRequestsPerMinute) {
+    blockers.push('participant-request-limit-unconfirmed');
+  }
+  if (!validOffer || !positive(plan?.archive?.globalActiveBytesLimit)
+    || plan.archive.globalActiveBytesLimit < offer.ownerQuotaBytes * offer.maximumOwners) {
+    blockers.push('sales-capacity-not-reserved');
+  }
+  const usage = evidence?.usage;
+  if (!count(usage?.allocatedQuotaBytes) || !count(usage?.reservedQuotaBytes)
+    || !Number.isSafeInteger(usage.allocatedQuotaBytes + usage.reservedQuotaBytes)) {
+    blockers.push('quota-reservations-unaccounted');
+  } else if (plan?.archive?.globalActiveBytesLimit - usage.allocatedQuotaBytes - usage.reservedQuotaBytes < offer?.ownerQuotaBytes) {
+    blockers.push('no-quota-slot');
+  }
+  const intake = evidence?.intake;
+  const expected = {
+    maximumOwners: plan?.maximumParticipants,
+    dailyNewIntakeAttempts: plan?.archive?.dailyNewIntakeAttempts,
+    monthlyNewIntakeAttempts: plan?.archive?.monthlyNewIntakeAttempts,
+    monthlyNewIntakeBytes: plan?.archive?.monthlyNewIntakeBytes,
+    dailyMutationAttempts: plan?.additionalControlsRequired?.dailyMutationAttemptsIncludingEditsAndRetries,
+    monthlyMutationAttempts: plan?.additionalControlsRequired?.monthlyMutationAttemptsIncludingEditsAndRetries,
+  };
+  if (!intake || intake.enabled !== true || !fresh(intake.reviewedAt)
+    || !Number.isSafeInteger(intake.validUntil) || intake.validUntil <= now
+    || intake.validUntil > intake.reviewedAt + 86_400_000
+    || intake.pauseForecastYen !== 2200 || !count(intake.forecastMonthlyYen)
+    || intake.forecastMonthlyYen !== evidence?.cost?.forecastMonthlyYen
+    || intake.forecastMonthlyYen >= 2200
+    || !Object.entries(expected).every(([key, value]) => positive(value) && intake[key] === value)) {
+    blockers.push('general-intake-controls-unconfirmed');
+  }
+  return { ...operating, publicOfferReviewReady: blockers.length === 0,
+    newIntakeReviewReady: blockers.length === 0, blockers: [...new Set(blockers)],
+    salesApprovalPermission: false, deployPermission: false };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  if (process.argv.length !== 3) throw new Error('Usage: node scripts/operating-readiness.mjs <aggregate-evidence.json>');
+  if (![3, 5].includes(process.argv.length) || (process.argv.length === 5 && process.argv[3] !== '--public-offer'))
+    throw new Error('Usage: node scripts/operating-readiness.mjs <aggregate-evidence.json> [--public-offer <offer.json>]');
   const plan = JSON.parse(await readFile(new URL('../operations/pilot-plan.json', import.meta.url), 'utf8'));
   const evidence = JSON.parse(await readFile(process.argv[2], 'utf8'));
-  const report = reviewOperatingEvidence(evidence, plan);
+  const offer = process.argv.length === 5 ? JSON.parse(await readFile(process.argv[4], 'utf8')) : null;
+  const report = process.argv.length === 5 ? reviewPublicPreservationOffer(evidence, offer, plan)
+    : reviewOperatingEvidence(evidence, plan);
   console.log(JSON.stringify(report, null, 2));
   if (!report.newIntakeReviewReady) process.exitCode = 1;
 }
