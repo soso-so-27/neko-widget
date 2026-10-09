@@ -365,6 +365,204 @@ class ModerationProductionUIRecoveryTests(unittest.TestCase):
             self.assertIsNone(record["test_correction_evidence"]); self.assertEqual(record["production_ui_recovery"], proof)
 
 
+class ModerationChainedBuildRecoveryTests(unittest.TestCase):
+    # Actual owning step from 37954929706/113903266969, including its prior
+    # successful suites. No external artifact or network is needed for tests.
+    failure_slice = '2026-10-09T15:55:12.0350720Z ##[group]Run set -euo pipefail\n2026-10-09T15:55:12.0351150Z \x1b[36;1mset -euo pipefail\x1b[0m\n2026-10-09T15:55:12.0351420Z \x1b[36;1mxcrun --sdk macosx swiftc \\\x1b[0m\n2026-10-09T15:55:12.0351780Z \x1b[36;1m  -parse-as-library \\\x1b[0m\n2026-10-09T15:55:12.0352120Z \x1b[36;1m  Shared/Routing/DeepLink.swift \\\x1b[0m\n2026-10-09T15:55:12.0352470Z \x1b[36;1m  NekoWidget/Views/MomentSharingPresentation.swift \\\x1b[0m\n2026-10-09T15:55:12.0352930Z \x1b[36;1m  ci/verify-moment-sharing-presentation.swift \\\x1b[0m\n2026-10-09T15:55:12.0353510Z \x1b[36;1m  -o "$RUNNER_TEMP/verify-moment-sharing-presentation"\x1b[0m\n2026-10-09T15:55:12.0354030Z \x1b[36;1m"$RUNNER_TEMP/verify-moment-sharing-presentation"\x1b[0m\n2026-10-09T15:55:12.0354630Z \x1b[36;1mxcrun --sdk macosx swiftc \\\x1b[0m\n2026-10-09T15:55:12.0355020Z \x1b[36;1m  -parse-as-library \\\x1b[0m\n2026-10-09T15:55:12.0355350Z \x1b[36;1m  Shared/Sharing/PairingCore.swift \\\x1b[0m\n2026-10-09T15:55:12.0355690Z \x1b[36;1m  NekoWidget/Views/PairingPresentation.swift \\\x1b[0m\n2026-10-09T15:55:12.0356240Z \x1b[36;1m  ci/verify-pairing-presentation.swift \\\x1b[0m\n2026-10-09T15:55:12.0356700Z \x1b[36;1m  -o "$RUNNER_TEMP/verify-pairing-presentation"\x1b[0m\n2026-10-09T15:55:12.0357140Z \x1b[36;1m"$RUNNER_TEMP/verify-pairing-presentation"\x1b[0m\n2026-10-09T15:55:12.0357470Z \x1b[36;1mxcrun --sdk macosx swiftc \\\x1b[0m\n2026-10-09T15:55:12.0357810Z \x1b[36;1m  -parse-as-library \\\x1b[0m\n2026-10-09T15:55:12.0358090Z \x1b[36;1m  Shared/Models/WidgetManifest.swift \\\x1b[0m\n2026-10-09T15:55:12.0358470Z \x1b[36;1m  Shared/Models/WidgetRenderPlan.swift \\\x1b[0m\n2026-10-09T15:55:12.0358910Z \x1b[36;1m  ci/verify-private-window-display-name.swift \\\x1b[0m\n2026-10-09T15:55:12.0359300Z \x1b[36;1m  -o "$RUNNER_TEMP/verify-private-window-display-name"\x1b[0m\n2026-10-09T15:55:12.0359800Z \x1b[36;1m"$RUNNER_TEMP/verify-private-window-display-name"\x1b[0m\n2026-10-09T15:55:12.0360220Z \x1b[36;1mpython3 ci/test-inactive-window-name-sync.py\x1b[0m\n2026-10-09T15:55:12.0360680Z \x1b[36;1mpython3 ci/test-family-window-widget-boundaries.py\x1b[0m\n2026-10-09T15:55:12.0361040Z \x1b[36;1mpython3 ci/test-private-window-cover.py\x1b[0m\n2026-10-09T15:55:12.0361490Z \x1b[36;1mgrep -Fq \'MomentSharingPresentation.swift in Sources\' \\\x1b[0m\n2026-10-09T15:55:12.0361860Z \x1b[36;1m  NekoWidget.xcodeproj/project.pbxproj\x1b[0m\n2026-10-09T15:55:12.0410260Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-09T15:55:12.0410660Z env:\n2026-10-09T15:55:12.0411220Z   DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer\n2026-10-09T15:55:12.0411680Z ##[endgroup]\n2026-10-09T15:55:14.9341660Z Moment sharing presentation verifier passed\n2026-10-09T15:55:19.7006860Z Private window display name verifier passed\n2026-10-09T15:55:19.7628310Z .......\n2026-10-09T15:55:19.7628920Z ----------------------------------------------------------------------\n2026-10-09T15:55:19.7629340Z Ran 7 tests in 0.004s\n2026-10-09T15:55:19.7629540Z \n2026-10-09T15:55:19.7630220Z OK\n2026-10-09T15:55:20.4475140Z ...............................................................\n2026-10-09T15:55:20.4479100Z ----------------------------------------------------------------------\n2026-10-09T15:55:20.4481110Z Ran 63 tests in 0.606s\n2026-10-09T15:55:20.4481430Z \n2026-10-09T15:55:20.4481560Z OK\n2026-10-09T15:55:20.4489770Z sent-thumbnail-private-alias: legacy-comparisons-reproduced, creation-readable, symlinks-rejected\n2026-10-09T15:57:20.6471780Z ..E\n2026-10-09T15:57:20.6480670Z ======================================================================\n2026-10-09T15:57:20.6482910Z ERROR: test_shipping_reader_with_two_window_histories (__main__.PrivateWindowCoverTests.test_shipping_reader_with_two_window_histories)\n2026-10-09T15:57:20.6500840Z ----------------------------------------------------------------------\n2026-10-09T15:57:20.6502040Z Traceback (most recent call last):\n2026-10-09T15:57:20.6503770Z   File "/Users/runner/work/neko-widget/neko-widget/NekoWidget/ci/test-private-window-cover.py", line 274, in test_shipping_reader_with_two_window_histories\n2026-10-09T15:57:20.6505700Z     subprocess.run(["swiftc", str(script), "-o", str(executable)], check=True, timeout=120)\n2026-10-09T15:57:20.6512330Z     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n2026-10-09T15:57:20.6514240Z   File "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 557, in run\n2026-10-09T15:57:20.6515840Z     stdout, stderr = process.communicate(input, timeout=timeout)\n2026-10-09T15:57:20.6516930Z                      ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n2026-10-09T15:57:20.6518450Z   File "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1221, in communicate\n2026-10-09T15:57:20.6520370Z     stdout, stderr = self._communicate(input, endtime, timeout)\n2026-10-09T15:57:20.6521320Z                      ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n2026-10-09T15:57:20.6522760Z   File "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 2179, in _communicate\n2026-10-09T15:57:20.6524340Z     self.wait(timeout=self._remaining_time(endtime))\n2026-10-09T15:57:20.6525120Z     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n2026-10-09T15:57:20.6526600Z   File "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1279, in wait\n2026-10-09T15:57:20.6527970Z     return self._wait(timeout=timeout)\n2026-10-09T15:57:20.6528710Z            ~~~~~~~~~~^^^^^^^^^^^^^^^^^\n2026-10-09T15:57:20.6530150Z   File "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 2076, in _wait\n2026-10-09T15:57:20.6531580Z     raise TimeoutExpired(self.args, timeout)\n2026-10-09T15:57:20.6534200Z subprocess.TimeoutExpired: Command \'[\'swiftc\', \'/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/private-window-cover-_9h6_49m/main.swift\', \'-o\', \'/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/private-window-cover-_9h6_49m/verify-cover\']\' timed out after 120 seconds\n2026-10-09T15:57:20.6541550Z \n2026-10-09T15:57:20.6541720Z ----------------------------------------------------------------------\n2026-10-09T15:57:20.6542150Z Ran 3 tests in 120.125s\n2026-10-09T15:57:20.6542340Z \n2026-10-09T15:57:20.6542400Z FAILED (errors=1)\n2026-10-09T15:57:20.6742840Z ##[error]Process completed with exit code 1.\n2026-10-09T15:57:20.7234630Z ##[group]Run actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f\n'
+
+    def setUp(self):
+        old = ModerationProductionUIRecoveryTests(); old.setUp()
+        self.previous = old.prove() | {"candidate_sha": planner.MODERATION_CHAIN_SOURCE}
+        self.source, self.head = planner.MODERATION_CHAIN_SOURCE, planner.MODERATION_CHAIN_PRODUCT
+        self.repo, self.now, self.required = old.repo, old.now, old.required
+        self.run = old.run | {"id": planner.MODERATION_CHAIN_RUN, "head_sha": self.source}
+        self.build_steps = planner.moderation_build_steps()
+        self.workflow = planner.git("show", f"{self.source}:.github/workflows/ios-build.yml")
+        self.jobs = []
+        for name, job_id in planner.MODERATION_CHAIN_JOBS.items():
+            names = self.build_steps if name == planner.BUILD else ("Check out repository", "Test CI selection and evidence boundaries", "Select checks") if name == planner.PLAN_JOB else ("Check out repository", "Run Simulator smoke test", "Upload Simulator smoke-test artifacts") if name == planner.BOOTSTRAP_SMOKE else ("Check out repository", "Run sharing runtime matrix", "Upload sharing runtime matrix artifacts")
+            steps = [{"name": step, "number": i+2, "status": "completed", "conclusion": "success"} for i, step in enumerate(names)]
+            if name == planner.BUILD:
+                failure = names.index(planner.MODERATION_CHAIN_FAILED_STEP)
+                for i in range(failure, len(steps)): steps[i]["conclusion"] = "failure" if i == failure else "skipped"
+                steps[failure]["number"] = 13
+            self.jobs.append({"id": job_id, "name": name, "head_sha": self.source, "run_id": self.run["id"],
+                "run_attempt": 1, "status": "completed", "conclusion": "failure" if name == planner.BUILD else "success",
+                "completed_at": self.now.isoformat(), "steps": steps})
+        self.record = old.record | {"head_sha": self.source, "production_ui_recovery": self.previous}
+        self.failure = self.failure_slice; self.ui_log = old.transcript()
+        self.photos_failure = "fixed synthetic Photos snapshot failure\n"
+        self.photos_digest = planner.hashlib.sha256(self.photos_failure.strip("\n").encode()).hexdigest()
+        self.photos_success = ("Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' started.\n"
+            "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' passed (4 seconds).\n"
+            "Simulator smoke test passed at 2026-10-09T16:00:00Z")
+        photo = next(job for job in self.jobs if job["name"] == planner.BOOTSTRAP_SMOKE)
+        photo["conclusion"] = "failure"; photo["steps"][1].update(conclusion="failure", number=3)
+        self.jobs += [self.jobs[0] | {"id": identifier, "name": planner.UNEXPANDED_SHARING_JOB,
+            "conclusion": "skipped", "steps": []} for identifier in planner.MODERATION_CHAIN_SKIPS]
+        self.index = {"total_count": 0, "workflow_runs": []}
+
+    def api(self, path):
+        if path.endswith(f"/runs/{self.run['id']}"): return self.run
+        if "/jobs?" in path: return {"total_count": len(self.jobs), "jobs": self.jobs}
+        if path.endswith(f"/{planner.MODERATION_CHAIN_JOBS[planner.PLAN_JOB]}/logs"): return "IOS_CI_PLAN_JSON=" + json.dumps(self.record)
+        if path.endswith(f"/{planner.MODERATION_CHAIN_JOBS[planner.BUILD]}/logs"): return self.failure
+        if path.endswith(f"/{planner.MODERATION_CHAIN_JOBS[planner.BOOTSTRAP_SMOKE]}/logs"): return self.photos_failure
+        if path.endswith(f"/{planner.MODERATION_CHAIN_JOBS[planner.lane_job(planner.MODERATION_RESOLUTION_SCOPE, 'app-ui')]}/logs"): return self.ui_log
+        if "/runs?head_sha=" + self.head in path: return self.index
+        raise AssertionError(path)
+
+    def prove(self):
+        with patch.object(planner, "moderation_chained_inputs", return_value=True), \
+                patch.object(planner, "moderation_ui_recovery_evidence", return_value=self.previous) as old, \
+                patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                patch.object(planner, "git", return_value=self.workflow), \
+                patch.object(planner, "MODERATION_CHAIN_PHOTOS_LOG_SHA256", self.photos_digest):
+            result = planner.moderation_chained_evidence(self.head, self.repo, self.api, self.now)
+            old.assert_called_once_with(self.source, self.repo, self.api, self.now)
+            return result
+
+    def test_source_identity_pending_failure_skip_step_and_all_eleven_cases_are_strict(self):
+        proof = self.prove()
+        self.assertEqual(len(proof["native_jobs_reused"]), 2)
+        self.assertEqual(proof["owning_jobs_to_execute"], list(planner.MODERATION_CHAIN_OWNING))
+        self.assertEqual(proof["backend_evidence"], self.previous["backend_evidence"])
+        run = self.run.copy()
+        for field, value in (("status", "in_progress"), ("conclusion", "success"), ("head_sha", "a"*40),
+                ("event", "workflow_dispatch"), ("head_branch", "main"), ("run_attempt", 2), ("workflow_id", 7),
+                ("repository", {"full_name": "other/repo"}), ("head_repository", {"full_name": "other/repo"}),
+                ("updated_at", "2026-10-08T15:00:00Z")):
+            self.run = run | {field: value}
+            with self.subTest(field=field), self.assertRaises(ValueError): self.prove()
+        self.run = run; original = copy.deepcopy(self.jobs)
+        for n, job in enumerate(original):
+            for field, value in (("conclusion", "skipped"), ("status", "in_progress"), ("head_sha", "a"*40),
+                    ("run_attempt", 2), ("id", 1), ("steps", []), ("run_id", 2)):
+                if job["id"] in planner.MODERATION_CHAIN_SKIPS and (field, value) in (("conclusion", "skipped"), ("steps", [])): continue
+                self.jobs = copy.deepcopy(original); self.jobs[n][field] = value
+                with self.subTest(job=job["name"], field=field), self.assertRaises(ValueError): self.prove()
+            if job["name"] not in {planner.BUILD, planner.UNEXPANDED_SHARING_JOB}:
+                for step in range(len(job["steps"])):
+                    self.jobs = copy.deepcopy(original); self.jobs[n]["steps"][step]["conclusion"] = "skipped"
+                    with self.assertRaises(ValueError): self.prove()
+        self.jobs = original
+        for bad in (self.ui_log.replace("passed", "failed", 1), self.ui_log.replace("passed", "skipped", 1), self.ui_log.splitlines()[0], self.ui_log+self.ui_log):
+            saved = self.ui_log; self.ui_log = bad
+            with self.assertRaises(ValueError): self.prove()
+            self.ui_log = saved
+        self.jobs += [copy.deepcopy(original[0])]
+        with self.assertRaises(ValueError): self.prove()
+
+    def test_timeout_parser_requires_owning_command_and_only_actual_failure(self):
+        with patch.object(planner, "git", return_value=self.workflow):
+            self.assertTrue(planner.moderation_chained_build_failure(self.failure))
+            mutants = [self.failure.replace("120 seconds", "121 seconds"), self.failure.replace("Ran 3 tests", "Ran 4 tests"),
+                self.failure.replace("errors=1", "errors=2"), self.failure.replace("'swiftc'", "'swift'"),
+                self.failure.replace("python3 ci/test-private-window-cover.py", "python3 ci/other.py"),
+                self.failure.replace("##[group]Run set -euo pipefail", "Run set -euo pipefail"),
+                self.failure+self.failure, self.failure+"\nFAIL: extra", self.failure+"\nERROR: extra",
+                self.failure+"\nFAILED (failures=1)", self.failure+"\n##[error]another failure",
+                self.failure.replace("Process completed with exit code 1.", "Process completed with exit code 2."),
+                self.failure.replace("main.swift", "unrelated.swift")]
+            for bad in mutants:
+                self.assertFalse(planner.moderation_chained_build_failure(bad))
+
+    def test_photos_failure_is_an_exact_transcript_and_new_success_includes_permission_and_scan(self):
+        with patch.object(planner, "MODERATION_CHAIN_PHOTOS_LOG_SHA256", self.photos_digest):
+            self.assertTrue(planner.moderation_chained_photos_failure(self.photos_failure))
+            self.assertTrue(planner.moderation_chained_photos_failure(self.photos_failure.replace("\n", "\r\n")))
+            for changed in (self.photos_failure+"extra", "", self.photos_failure.replace("failure", "pass")):
+                self.assertFalse(planner.moderation_chained_photos_failure(changed))
+        self.assertTrue(planner.moderation_chained_photos_success(self.photos_success))
+        for changed in (self.photos_success.replace("passed (", "failed ("), self.photos_success.replace("passed at", "unfinished at"),
+                        self.photos_success+self.photos_success, self.photos_success+"\n##[error]extra", self.photos_success.replace("testGrantFullPhotoLibraryAccess", "testOther")):
+            self.assertFalse(planner.moderation_chained_photos_success(changed))
+
+    def test_candidate_backend_presence_and_old_proof_failure_cannot_be_hidden(self):
+        for bad in ({"total_count": 1, "workflow_runs": []}, {"total_count": False, "workflow_runs": []},
+                {"total_count": 0, "workflow_runs": [{}]}, {"total_count": 1, "workflow_runs": [{"conclusion": "success"}]},
+                {"total_count": 1, "workflow_runs": [{"conclusion": "failure"}]}, {"total_count": 1, "workflow_runs": [{"status": "in_progress"}]}):
+            self.index = bad
+            with self.assertRaises(ValueError): self.prove()
+        with patch.object(planner, "moderation_chained_inputs", return_value=True), \
+                patch.object(planner, "moderation_ui_recovery_evidence", side_effect=ValueError("old source incomplete")), self.assertRaises(ValueError):
+            planner.moderation_chained_evidence(self.head, self.repo, self.api, self.now)
+
+    def test_three_fixed_pairs_all_tracked_closure_modes_approval_and_missing_are_strict(self):
+        rows = [f":100644 100644 {a} {b} M\0{path}\0" for path,(a,b) in planner.MODERATION_CHAIN_BLOBS.items()]
+        raw = "".join(rows)
+        def check(value=raw, registered=True, mismatch=None):
+            def git(*args):
+                if args[0] == "diff": return value
+                if args[0] == "merge-base": return "a"*40
+                if args[0] == "show": return f'MODERATION_CHAIN_PRODUCT = "{self.head}"' if registered else "old"
+                if args[0] == "ls-tree": return f"100644 blob {'d'*40 if args[1] == self.head and args[3] == mismatch else 'c'*40}\t{args[3]}"
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git): return planner.moderation_chained_inputs(self.head)
+        self.assertTrue(check())
+        self.assertTrue(check(raw+f":000000 100644 {'0'*40} {'c'*40} A\0handoffs/fixed.md\0"))
+        for path in planner.MODERATION_BUILD_CORRECTION_CONTROLS: self.assertFalse(check(mismatch=path))
+        for bad in ("", raw+rows[0], raw.replace("100644", "100755"), raw.replace("100644", "120000"), raw.replace(" M\0", " D\0"),
+                raw.replace(planner.MODERATION_CHAIN_BLOBS[scope.MODERATION_RESOLUTION_PRIVATE_COVER_TEST][1], "b"*40),
+                *(raw.replace(row, "") for row in rows),
+                *(raw+f":100644 100644 {'b'*40} {'c'*40} M\0{path}\0" for path in (".gitattributes", ".github/workflows/ios-build.yml", "NekoWidget/Shared/Sharing/MomentSharingCore.swift"))):
+            self.assertFalse(check(bad))
+        self.assertFalse(check(registered=False))
+        self.assertTrue(scope.accepts_paths(scope.MODERATION_RESOLUTION_SCOPE, scope.MODERATION_RESOLUTION_PATHS | set(planner.MODERATION_CHAIN_BLOBS)))
+        self.assertFalse(scope.accepts_paths(scope.MODERATION_RESOLUTION_SCOPE, scope.MODERATION_RESOLUTION_PATHS | {scope.MODERATION_RESOLUTION_PRIVATE_COVER_TEST}))
+
+    def test_final_full_build_and_main_reuse_revalidate_the_same_chain(self):
+        proof = self.prove(); run = self.run | {"id": 123, "head_sha": self.head, "conclusion": "success"}
+        jobs = [copy.deepcopy(j) for j in self.jobs if j["name"] in {planner.BUILD, planner.BOOTSTRAP_SMOKE, planner.PLAN_JOB}]
+        for job in jobs:
+            job.update(id=job["id"]+100, head_sha=self.head, run_id=123, conclusion="success")
+            for step in job["steps"]: step["conclusion"] = "success"
+        record = self.record | {"head_sha": self.head, "production_ui_recovery": None, "chained_build_recovery": proof}
+        def check(values=jobs, proof_value=proof, main=False):
+            with patch.object(planner, "moderation_chained_inputs", return_value=True), \
+                    patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                    patch.object(planner, "moderation_chained_evidence", return_value=proof_value) as verify:
+                fn = planner.covers_corrected_full_graph if main else planner.covers_moderation_chained_recovery
+                def api(path):
+                    if path.endswith(f"/{planner.MODERATION_CHAIN_JOBS[planner.BOOTSTRAP_SMOKE]+100}/logs"): return self.photos_success
+                    return "IOS_CI_PLAN_JSON="+json.dumps(record)
+                result = fn(run, "f"*40, self.required, api, self.now, values)
+                if result: verify.assert_called_once_with(self.head, self.repo, unittest.mock.ANY, self.now)
+                return result
+        self.assertTrue(check()); self.assertTrue(check(main=True)); self.assertFalse(check(proof_value={}))
+        for index, job in enumerate(jobs):
+            for n in range(len(job["steps"])):
+                bad=copy.deepcopy(jobs); bad[index]["steps"][n]["conclusion"]="skipped"; self.assertFalse(check(bad))
+            for field,value in (("steps",[]),("run_attempt",2),("head_sha",self.source),("conclusion","failure")):
+                bad=copy.deepcopy(jobs);bad[index][field]=value;self.assertFalse(check(bad))
+        self.assertFalse(check(jobs+[jobs[0]]))
+        skipped=jobs[0]|{"id":1,"name":planner.UNEXPANDED_SHARING_JOB,"conclusion":"skipped","steps":[]}
+        self.assertTrue(check(jobs+[skipped]));self.assertFalse(check(jobs+[skipped|{"conclusion":"failure"}]))
+        record["production_ui_recovery"]={};self.assertFalse(check())
+
+    def test_planner_executes_build_and_photos_without_test_only_or_all_native_fallback(self):
+        proof=self.prove()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/"event").write_text("{}")
+            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/"+self.run["head_branch"],"GITHUB_SHA":self.head,
+                "GITHUB_REPOSITORY":self.repo,"GITHUB_RUN_ID":"123","GITHUB_WORKFLOW":"iOS build check","GITHUB_SERVER_URL":"https://github.com",
+                "GITHUB_EVENT_PATH":str(root/"event"),"GITHUB_OUTPUT":str(root/"output"),"GITHUB_STEP_SUMMARY":str(root/"summary")}
+            output=io.StringIO()
+            with patch.dict(os.environ,env),contextlib.redirect_stdout(output), \
+                    patch.object(planner,"changed_paths",return_value=list(scope.MODERATION_RESOLUTION_PATHS|set(planner.MODERATION_CHAIN_BLOBS))), \
+                    patch.object(planner,"runtime_scope",return_value=scope.MODERATION_RESOLUTION_SCOPE), \
+                    patch.object(planner,"find_evidence",return_value=None),patch.object(planner,"moderation_chained_inputs",return_value=True), \
+                    patch.object(planner,"moderation_chained_evidence",return_value=proof), \
+                    patch.object(planner,"find_test_correction_evidence",side_effect=AssertionError("old route")), \
+                    patch.object(planner,"moderation_ui_recovery_evidence",side_effect=AssertionError("all-native route")):
+                planner.main()
+            flags=dict(line.split("=",1) for line in (root/"output").read_text().splitlines())
+            self.assertEqual([flags[k] for k in ("build","smoke","sharing","app_ui")],["true","true","false","false"])
+            record=planner.moderation_build_plan(output.getvalue(),self.head,self.required)
+            self.assertEqual(record["chained_build_recovery"],proof);self.assertIsNone(record["test_correction_evidence"])
+            self.assertEqual(record["required_backend_runs"],planner.moderation_resolution_requirements(planner.MODERATION_BUILD_CORRECTION_SOURCE))
+
+
 class ModerationResolutionScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 

@@ -794,6 +794,62 @@ class ReleaseTests(unittest.TestCase):
         self.assertLess(source.index("Verify the requested main commit"), source.index("Install distribution certificate"))
 
 
+class ModerationChainedRecoveryReleaseTests(unittest.TestCase):
+    def setUp(self):
+        fixture=ReleaseTests();fixture.setUp();self.addCleanup(fixture.doCleanups);self.f=fixture
+        p=release.planner
+        fixture.run.update(head_branch=p.MODERATION_BUILD_CORRECTION_BRANCH,path=".github/workflows/ios-build.yml",run_attempt=1)
+        self.proof={"kind":"moderation-chained-build-photos-recovery-v1","backend_evidence":{"source_sha":p.MODERATION_BUILD_CORRECTION_SOURCE}}
+        fixture.plan.update(scope=p.MODERATION_RESOLUTION_SCOPE,required_jobs=list(p.required_jobs_from_scope(p.MODERATION_RESOLUTION_SCOPE)),
+            required_backend_runs=p.moderation_resolution_requirements(p.MODERATION_BUILD_CORRECTION_SOURCE),chained_build_recovery=self.proof)
+        fixture.set_plan()
+
+    def test_direct_release_requires_full_two_job_proof_and_reports_original_backend(self):
+        f=self.f;p=release.planner
+        with patch.object(p,"covers_moderation_chained_recovery",return_value=True) as verify:
+            result=release.check_ci(f.gh,f.sha,20,f.now)
+            self.assertEqual(result["chained_build_recovery"],self.proof)
+            self.assertEqual(result["backend_evidence"]["source_sha"],p.MODERATION_BUILD_CORRECTION_SOURCE)
+            self.assertEqual(verify.call_args.args[1],f.sha)
+        for value in (False,None):
+            with patch.object(p,"covers_moderation_chained_recovery",return_value=value),self.assertRaises(release.Blocked):
+                release.check_ci(f.gh,f.sha,20,f.now)
+        with patch.object(p,"covers_moderation_chained_recovery",side_effect=ValueError("source UI failed")),self.assertRaises(release.Blocked):
+            release.check_ci(f.gh,f.sha,20,f.now)
+        self.assertEqual(f.gh.dispatches,[])
+
+    def test_chained_raw_log_transport_does_not_use_formatted_run_view(self):
+        with patch.object(release,"command",return_value="raw") as command:
+            self.assertEqual(release.GitHub().raw_job_log(113903266687),"raw")
+            args=command.call_args.args[0]
+            self.assertEqual(args,["gh","api","--hostname","github.com","--method","GET",
+                "--allow-escape-sequences",f"repos/{release.REPOSITORY}/actions/jobs/113903266687/logs"])
+            command.assert_called_once()
+
+    def test_main_reuse_cannot_drop_chain_or_replace_it_with_generic_backend_success(self):
+        f=self.f;p=release.planner
+        candidate=f.run|{"id":30,"head_sha":"b"*40}
+        f.gh.values["actions/runs/30"]=candidate
+        jobs=copy.deepcopy(f.gh.values["actions/runs/20/jobs?filter=latest&per_page=100&page=1"])
+        for job in jobs["jobs"]: job["head_sha"]="b"*40
+        f.gh.values["actions/runs/30/jobs?filter=latest&per_page=100&page=1"]=jobs
+        f.plan.pop("chained_build_recovery");f.plan.update(evidence_run_id=30,evidence_sha="b"*40);f.set_plan()
+        for valid in (True,False):
+            with patch.object(p,"reusable_run",return_value=True),patch.object(p,"covers_jobs",return_value=False), \
+                    patch.object(p,"covers_corrected_full_graph",return_value=True), \
+                    patch.object(p,"moderation_ui_recovery_inputs",return_value=False),patch.object(p,"moderation_chained_inputs",return_value=True), \
+                    patch.object(p,"covers_moderation_chained_recovery",return_value=valid) as verify, \
+                    patch.object(p,"moderation_chained_evidence",return_value=self.proof), \
+                    patch.object(p,"moderation_resolution_backend_evidence",side_effect=AssertionError("generic proof forbidden")):
+                if valid:
+                    result=release.check_ci(f.gh,f.sha,20,f.now)
+                    self.assertEqual(result["chained_build_recovery"],self.proof)
+                    self.assertEqual(verify.call_args.args[1],f.sha)
+                else:
+                    with self.assertRaises(release.Blocked):release.check_ci(f.gh,f.sha,20,f.now)
+        self.assertEqual(f.gh.dispatches,[])
+
+
 class ModerationProductionUIRecoveryReleaseTests(unittest.TestCase):
     def test_full_native_release_requires_explicit_shipping_proof_and_original_backend_sha(self):
         fixture = ReleaseTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)

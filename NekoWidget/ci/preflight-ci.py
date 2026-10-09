@@ -245,7 +245,8 @@ def read_task_runs(head=None, recovery=None):
             if jobs["total_count"] >= 100:
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
-                if ("[app-ui" in job["name"] or job["name"] == planner.SMOKE) and job["conclusion"] in {"failure", "timed_out"}:
+                if ("[app-ui" in job["name"] or job["name"] == planner.SMOKE or
+                        run["id"] == planner.MODERATION_CHAIN_RUN and job["name"] == planner.BOOTSTRAP_SMOKE) and job["conclusion"] in {"failure", "timed_out"}:
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
                     cases = sorted(set(re.findall(
                         r"Test Case '-\[([\w.]+) (test\w+)\]' failed", log)))
@@ -335,9 +336,11 @@ def diagnostic_source_matches(source, head):
         return False
     if source == head:
         return True
-    if source == planner.MODERATION_UI_RECOVERY_PRODUCT and planner.moderation_ui_recovery_inputs(head):
+    if source == planner.MODERATION_UI_RECOVERY_PRODUCT and (planner.moderation_ui_recovery_inputs(head)
+            or planner.moderation_chained_inputs(head)):
         # Exact shipping UI/test pair unchanged since this diagnostic. Only the
-        # separately approved control8 and ordinary handoffs can differ.
+        # separately approved controls/handoffs or the fixed Build-only fixture
+        # may differ; the shipping UI and all diagnostic inputs remain exact.
         return True
     try:
         planner.git("merge-base", "--is-ancestor", source, head)
@@ -635,6 +638,29 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     blockers = []
     if active:
         blockers.append("ci_already_running")
+    chained = result.get("chained_build_recovery")
+    if chained is not None:
+        source = next((run for run in runs if run["id"] == planner.MODERATION_CHAIN_RUN), {})
+        if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE
+                or chained.get("kind") != "moderation-chained-build-photos-recovery-v1"
+                or chained.get("candidate_sha") != result.get("head")
+                or chained.get("source_sha") != planner.MODERATION_CHAIN_SOURCE
+                or chained.get("source_run_id") != planner.MODERATION_CHAIN_RUN
+                or chained.get("photos_failure_sha256") != planner.MODERATION_CHAIN_PHOTOS_LOG_SHA256
+                or chained.get("owning_jobs_to_execute") != list(planner.MODERATION_CHAIN_OWNING)
+                or source.get("head_sha") != planner.MODERATION_CHAIN_SOURCE
+                or source.get("head_branch") != planner.MODERATION_BUILD_CORRECTION_BRANCH
+                or source.get("event") != "push" or source.get("path") != ".github/workflows/ios-build.yml"
+                or (source.get("status"), source.get("conclusion")) != ("completed", "failure")):
+            raise ValueError("Chained failed-job retry proof differs from retained task history")
+        if any(run.get("path") == ".github/workflows/ios-build.yml" and run.get("event") == "push"
+               and run.get("head_branch") == planner.MODERATION_BUILD_CORRECTION_BRANCH
+               and parse(run["created_at"]) > parse(source["created_at"])
+               and (run.get("status"), run.get("conclusion")) != ("completed", "success") for run in runs):
+            blockers.append("chained_recovery_has_new_candidate_failure_or_active")
+    def repeated_photos(run, test):
+        return (chained is not None and run["id"] == planner.MODERATION_CHAIN_RUN
+                and test.removeprefix("NekoWidgetUITests.") == planner.MODERATION_CHAIN_PHOTOS_CASE)
     photo_smoke_correction = (result.get("scope") == scope.FULL_SCOPE and correction_evidence is not None
                              and correction_evidence.get("run_id") == planner.PHOTO_SMOKE_CORRECTION_RUN
                              and correction_evidence.get("sha") == planner.PHOTO_SMOKE_CORRECTION_SOURCE)
@@ -673,7 +699,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
-                          if not (photo_smoke_correction and run["id"] == planner.PHOTO_SMOKE_CORRECTION_RUN
+                          if not repeated_photos(run, test)
+                          and not (photo_smoke_correction and run["id"] == planner.PHOTO_SMOKE_CORRECTION_RUN
                                   and test.removeprefix("NekoWidgetUITests.") in correction_cases)})
     if unsupported:
         blockers.append("failed_test_needs_a_supported_focused_diagnostic_route")
@@ -728,6 +755,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
                       "test_correction_evidence": correction_evidence,
+                      **({"failed_jobs_to_repeat": chained["source_failed_jobs"]} if chained else {}),
                       "known_test_failure_diagnosis": diagnosed_failure,
                       "recovery": recovery,
                       "diagnostic_backend_recovery": diagnostic_backend_recovery,
@@ -762,6 +790,31 @@ def moderation_ui_recovery_cost(result, proof, include_upload, history):
         "includes_future_rework": False,
         "note": "30-40 minutes is a planning reference from the original completed-but-failed31m48 run, not a successful baseline or timeout guarantee. Re-run all four native jobs; backend source proof is separate. Preserve every failure, active gate and elapsed minute."}
     result["cost_review_required"] = 40 + upload > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
+
+
+def moderation_chained_cost(result, proof, include_upload, history):
+    """Build/Photos remain required; reserve the larger unchanged parallel timeout."""
+    if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE or not isinstance(proof, dict)
+            or proof.get("kind") != "moderation-chained-build-photos-recovery-v1"
+            or proof.get("candidate_sha") != result.get("head")
+            or proof.get("source_run_id") != planner.MODERATION_CHAIN_RUN
+            or proof.get("source_sha") != planner.MODERATION_CHAIN_SOURCE
+            or proof.get("owning_jobs_to_execute") != list(planner.MODERATION_CHAIN_OWNING)):
+        return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    result = dict(result)
+    result["full_cost_before_recovery"] = result["cost"]
+    result["chained_build_recovery"] = proof
+    upper = round(40 + upload, 2)
+    result["cost"] = {"status": "reference", "ci_minutes": [40, 40], "with_upload_minutes": [upper, upper],
+        "reference_runs": [planner.MODERATION_BUILD_CORRECTION_RUN, planner.MODERATION_CHAIN_RUN],
+        "source_run_conclusions": ["failure", "failure"], "new_build_full_success_observed": False,
+        "owning_jobs": list(planner.MODERATION_CHAIN_OWNING), "build_timeout_minutes": 30, "photos_timeout_minutes": 40, "includes_future_rework": False,
+        "note": "Execute complete Build and Photos after exact runtime/UI and five-backend proof. The parallel 40 minute workflow timeout is a planning upper bound, not an observed successful runtime or a guarantee against further failure. Photos cause is unresolved. Keep every failed/active/diagnostic run and cumulative time."}
+    result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
     return result
 
@@ -1118,10 +1171,13 @@ def main(argv=None):
                 recovery["control_sha"] = control_sha
             runs = read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"])
             correction = None
+            chained = (planner.moderation_chained_evidence(result["head"], REPOSITORY,
+                lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
+                if result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_chained_inputs(result["head"]) else None)
             production = (planner.moderation_ui_recovery_evidence(result["head"], REPOSITORY,
                 lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
-                if result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_ui_recovery_inputs(result["head"]) else None)
-            if production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
+                if chained is None and result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_ui_recovery_inputs(result["head"]) else None)
+            if chained is None and production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
@@ -1129,6 +1185,7 @@ def main(argv=None):
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
+            result = moderation_chained_cost(result, chained, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,
