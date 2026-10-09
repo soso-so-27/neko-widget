@@ -22,7 +22,7 @@ details{margin:14px 0}summary{cursor:pointer}#more{color:#87451e}footer{margin-t
 @media(max-width:560px){main{padding:24px 16px 48px}header{align-items:flex-start}h1{font-size:25px}.row{display:block}.label{display:inline-block;margin-bottom:12px}.case{padding:18px}button{width:100%}header button{width:auto}}
 </style></head><body><main>
 <header><div><div class="eyebrow">ねこのまど / 運営用</div><h1>通報の確認</h1></div><button id="refresh">一覧を更新</button></header>
-<div class="note"><strong>ローカル検証版</strong><p>受付状況とAIの補助結果を確認し、確認開始を署名して記録できます。写真・通報本文の閲覧、最終判断、非表示、返答の送信はまだ接続していません。</p></div>
+<div class="note"><strong>ローカル検証版</strong><p>受付状況とAIの補助結果を確認できます。本人に限定した写真の確認と「対応不要」の判断・返信案保存へ進めます。返信送信や非表示処理は行いません。</p></div>
 <p id="status" role="status" aria-live="polite">認証と通報一覧を確認しています…</p>
 <div id="cases" aria-label="通報一覧"></div><p id="more"></p><button id="next" hidden>次の20件</button>
 <footer class="muted">AIは判断の補助です。未処理・失敗した通報も確認対象に残ります。表示順は確認期限順です。</footer>
@@ -73,6 +73,7 @@ function render(item){
   if(!item.evidenceAvailable)card.append(el('p','有効な証拠を確認できません。期限切れ・削除・未準備の可能性があります。','muted'));
   const details=el('details');details.append(el('summary','照合番号を表示'),el('p',item.caseReferenceHmac,'ref'));card.append(details);
   if(item.reviewState==='unreviewed'&&!item.pendingFinalization){const button=el('button','確認開始を署名する','primary action');button.addEventListener('click',()=>begin(item));card.append(button)}
+  if(item.evidenceAvailable&&Number.isInteger(item.caseReferenceHmacKeyVersion)&&item.caseReferenceHmacKeyVersion>0&&item.caseReferenceHmacKeyVersion<=2147483647){const link=el('a','写真を確認する','action');link.href='/operator/owner/console/'+item.caseReferenceHmac+'/'+item.caseReferenceHmacKeyVersion;const paragraph=el('p');paragraph.append(link);card.append(paragraph)}
   list.append(card);
 }
 async function load(message,after=''){

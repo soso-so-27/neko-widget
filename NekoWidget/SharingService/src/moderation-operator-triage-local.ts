@@ -1,3 +1,5 @@
+import { actorSQL, guard, admitSession, type Actor } from "./moderation-operator-identity";
+import { routeLocalModerationOwner, type LocalOwnerReviewHost } from "./moderation-owner-local";
 import { base64urlEncode } from "./encoding";
 import {
   authenticateCloudflareAccessRequest,
@@ -17,15 +19,9 @@ export interface LocalModerationTriageEnvironment {
   origin: string;
   rpId: string;
   access: CloudflareAccessAuthenticationOptions;
+  reviewEvidence?: LocalOwnerReviewHost;
 }
 
-interface Actor {
-  operator_id: string;
-  credential_id_sha256: string;
-  public_key_cose: number[] | ArrayBuffer;
-  sign_count: number;
-  enrollment_admission_id: string;
-}
 interface Challenge {
   challenge_id: string;
   action_id: string;
@@ -80,68 +76,6 @@ function sqlFailure(error: unknown): TriageError {
   return unavailable();
 }
 
-// The newest admitted, unrevoked credential is the local candidate's credential
-// epoch. A second query inside every transaction prevents role/alias/credential
-// changes between the initial read and a write or protected metadata read.
-const actorSQL = `SELECT identity.operator_id, credential.credential_id_sha256,
-    credential.public_key_cose, admission.enrollment_admission_id,
-    MAX(credential.registration_sign_count, COALESCE((
-      SELECT MAX(authenticator_sign_count) FROM moderation_operator_challenge_consumptions
-      WHERE credential_id_sha256 = credential.credential_id_sha256), 0)) AS sign_count
-  FROM moderation_operator_subject_identities AS identity
-  JOIN moderation_operator_enrollment_requests AS enrollment
-    ON enrollment.target_operator_id = identity.operator_id
-   AND enrollment.target_access_subject_hmac_key_version = identity.access_subject_hmac_key_version
-   AND enrollment.target_access_subject_hmac = identity.access_subject_hmac
-  JOIN moderation_operator_enrollment_admissions AS admission
-    ON admission.enrollment_request_id = enrollment.enrollment_request_id
-  JOIN moderation_operator_credentials AS credential
-    ON credential.credential_id_sha256 = enrollment.target_credential_id_sha256
-   AND credential.operator_id = identity.operator_id
-   AND credential.public_key_cose = enrollment.target_public_key_cose_snapshot
-   AND credential.registration_sign_count = enrollment.target_registration_sign_count
-  WHERE identity.access_subject_hmac = ? AND identity.access_subject_hmac_key_version = ?
-    AND NOT EXISTS (SELECT 1 FROM moderation_operator_subject_identities AS newer
-      WHERE newer.operator_id = identity.operator_id
-        AND newer.access_subject_hmac_key_version > identity.access_subject_hmac_key_version)
-    AND EXISTS (SELECT 1 FROM moderation_operator_state_events
-      WHERE operator_id = identity.operator_id AND event_type = 'activated')
-    AND NOT EXISTS (SELECT 1 FROM moderation_operator_state_events
-      WHERE operator_id = identity.operator_id AND event_type = 'revoked')
-    AND EXISTS (SELECT 1 FROM moderation_operator_role_events
-      WHERE operator_id = identity.operator_id AND role_code = 'triage' AND event_type = 'granted')
-    AND NOT EXISTS (SELECT 1 FROM moderation_operator_role_events
-      WHERE operator_id = identity.operator_id AND role_code = 'triage' AND event_type = 'revoked')
-    AND EXISTS (SELECT 1 FROM moderation_operator_credential_events
-      WHERE credential_id_sha256 = credential.credential_id_sha256 AND event_type = 'registered')
-    AND NOT EXISTS (SELECT 1 FROM moderation_operator_credential_events
-      WHERE credential_id_sha256 = credential.credential_id_sha256 AND event_type = 'revoked')
-    AND NOT EXISTS (SELECT 1 FROM moderation_operator_enrollment_admissions AS newer_admission
-      JOIN moderation_operator_enrollment_requests AS newer_enrollment
-        ON newer_enrollment.enrollment_request_id = newer_admission.enrollment_request_id
-      WHERE newer_enrollment.target_operator_id = identity.operator_id
-        AND newer_admission.rowid > admission.rowid)
-  ORDER BY admission.rowid DESC LIMIT 1`;
-
-function guard(db: D1Database, access: AuthenticatedModerationOperatorAccess, actor: Actor): D1PreparedStatement {
-  // SQLite json() deliberately raises on denial so D1 rolls back the entire
-  // batch. A SELECT returning zero rows would silently permit later statements.
-  return db.prepare(`WITH current_actor AS (${actorSQL})
-    SELECT json(CASE WHEN EXISTS (SELECT 1 FROM current_actor
-      WHERE operator_id = ? AND credential_id_sha256 = ? AND enrollment_admission_id = ?)
-      AND ? <= unixepoch() AND ? > unixepoch() THEN 'true' ELSE 'denied' END) AS admitted`)
-    .bind(access.operatorSubjectHmac, access.subjectHmacKeyVersion,
-      actor.operator_id, actor.credential_id_sha256, actor.enrollment_admission_id,
-      access.issuedAt, access.expiresAt);
-}
-function admitSession(db: D1Database, access: AuthenticatedModerationOperatorAccess, actor: Actor): D1PreparedStatement {
-  return db.prepare(`INSERT INTO moderation_operator_access_sessions(
-    access_session_sha256, operator_id, access_subject_hmac_key_version, access_subject_hmac,
-    token_issued_at, token_expires_at)
-    SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM moderation_operator_access_sessions WHERE access_session_sha256 = ?)`)
-    .bind(access.accessSessionSHA256, actor.operator_id, access.subjectHmacKeyVersion,
-      access.operatorSubjectHmac, access.issuedAt, access.expiresAt, access.accessSessionSHA256);
-}
 function startAudit(db: D1Database, access: AuthenticatedModerationOperatorAccess, actor: Actor, audit: Audit): D1PreparedStatement {
   return db.prepare(`INSERT INTO moderation_operator_access_audit_starts(
     audit_request_id, operator_id, access_session_sha256, operation_code, request_sha256, case_reference_hmac)
@@ -167,6 +101,7 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
   const result = await batch(env.db, [guard(env.db, access, actor), admitSession(env.db, access, actor),
     startAudit(env.db, access, actor, audit),
     env.db.prepare(`SELECT reference.case_reference_hmac AS caseReferenceHmac,
+      reference.case_reference_hmac_key_version AS caseReferenceHmacKeyVersion,
       cases.review_due_at AS reviewDueAt,
       EXISTS (SELECT 1 FROM moderation_advisory_live_sources AS source
         WHERE source.case_reference_hmac=reference.case_reference_hmac) AS evidenceAvailable,
@@ -191,6 +126,7 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
       LEFT JOIN moderation_advisory_results AS result ON result.job_id=advisory.job_id
       WHERE NOT EXISTS (SELECT 1 FROM moderation_case_events AS event
         WHERE event.report_id = cases.report_id AND event.event_type = 'review_decided')
+        AND NOT EXISTS (SELECT 1 FROM moderation_owner_decisions WHERE case_reference_hmac=reference.case_reference_hmac)
         AND (cases.review_due_at > ? OR (cases.review_due_at = ? AND reference.case_reference_hmac > ?))
       ORDER BY cases.review_due_at, reference.case_reference_hmac LIMIT 21`).bind(afterDue, afterDue, afterReference),
     env.db.prepare(`SELECT COUNT(*) AS unboundCases FROM moderation_cases AS cases
@@ -328,6 +264,7 @@ export async function routeLocalModerationOperatorTriage(request: Request, env: 
   }
   try {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/operator/owner/")) return routeLocalModerationOwner(request, env);
     // Public, data-free LOCAL shell. Protected case data is fetched separately
     // through the same Access/actor/audit gate below. Never deployed by Worker.
     if (request.method === "GET" && url.pathname === "/operator/console"
