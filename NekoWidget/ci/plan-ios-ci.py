@@ -16,7 +16,10 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (PRESERVATION_EXPORT_SCOPE, PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_BLOBS,
+from ios_ci_scope import (MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+                          MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
+                          MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
+                          PRESERVATION_EXPORT_SCOPE, PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_BLOBS,
                           PRESERVATION_EXPORT_DOC_BLOBS, PRESERVATION_EXPORT_COMPANIONS, PRESERVATION_EXPORT_TESTS,
                           FULL_SCOPE, APP_VIEW_SCOPE, APP_DATA_SCOPE, APP_DATA_PATHS, APP_DATA_NEW_PATHS,
                           APP_DATA_PROJECT, MAPPED_PATHS, SCOPES, WIDGET_STYLE_SCOPE,
@@ -1650,6 +1653,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
+    if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
+        return required_jobs_from_scope(runtime_scope)
     sources = source_paths(paths)
     if not sources or not sources <= MAPPED_PATHS or not accepts_paths(runtime_scope, paths):
         runtime_scope = FULL_SCOPE
@@ -1932,6 +1937,34 @@ def reviewed_hub_only(paths: list[str], base: str, head: str, *, product_blobs: 
     return True
 
 
+def moderation_resolution_only(paths, base, head):
+    """One reviewed native/backend batch; no control companions or relaxed modes."""
+    if (not accepts_paths(MODERATION_RESOLUTION_SCOPE, paths)
+            or set(MODERATION_RESOLUTION_BLOBS) != MODERATION_RESOLUTION_PATHS
+            or not all(len(pair) == 2 and SHA.fullmatch(pair[0]) and pair[0] != pair[1]
+                       and (pair[0] != "0" * 40) == (path in MODERATION_RESOLUTION_MODIFIED_PATHS)
+                       and SHA.fullmatch(pair[1]) and pair[1] != "0" * 40
+                       for path, pair in MODERATION_RESOLUTION_BLOBS.items())
+            or set(MODERATION_RESOLUTION_IMMUTABLE_BLOBS) != MODERATION_RESOLUTION_IMMUTABLE_PATHS):
+        return False
+    for path, blob in MODERATION_RESOLUTION_IMMUTABLE_BLOBS.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", path) != f"100644 blob {blob}\t{path}"
+                       for revision in (base, head))):
+            return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=MODERATION_RESOLUTION_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="MODERATION_RESOLUTION_COMPANIONS"):
+        return False
+    return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), MODERATION_RESOLUTION_TESTS)
+
+
+def moderation_resolution_requirements(head):
+    return [{"workflow": ".github/workflows/" + workflow, "job": job,
+             "head_sha": head, "event": "push", "success_required": True}
+            for workflow, jobs in PRESERVATION_EXPORT_BACKEND_JOBS.items() for job in jobs]
+
+
 def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
     return reviewed_hub_only(paths, base, head, product_blobs=TOOLS_HUB_BLOBS,
                              companion_paths=TOOLS_HUB_COMPANIONS,
@@ -2002,6 +2035,14 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and moderation_resolution_only(paths, base, env["GITHUB_SHA"]):
+                return MODERATION_RESOLUTION_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        # Partial or modified batches must still pass pre-existing strict rules.
     if sources and sources & PRESERVATION_EXPORT_PATHS and sources <= PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS:
         try:
             base = comparison_base(event, env)
@@ -3163,6 +3204,82 @@ def moderation_ai_durable_backend_evidence(candidate_sha: str, repository: str, 
             "main_integration_verified": False, "native_or_release_evidence": False}
 
 
+def moderation_resolution_backend_evidence(sha: str, repository: str, api, now: dt.datetime,
+                                           *, branch: str | None = None) -> dict:
+    """Same-SHA owning push proof; no dispatch, previous-SHA or absent-run fallback."""
+    if (not SHA.fullmatch(sha) or repository != "soso-so-27/neko-widget"
+            or branch is not None and not branch.startswith("codex/")):
+        raise ValueError("Invalid moderation resolution candidate identity")
+    steps_required = {
+        "Select backend checks": ("Run python NekoWidget/ci/plan-ios-ci.py",),
+        "Typecheck, test, and build Apple transaction verifier": (
+            "Verify Apple transaction service boundary", "Verify durable nonce and capability credential boundaries",
+            "Build nonroot Node image and private Worker without publishing"),
+        "Windows moderation key, drill, and report policy fixtures": (
+            "Parse and exercise Windows path, volume, and ACL policy",),
+        "Typecheck, test, and bundle Worker": (
+            "Run Worker, D1, staging, moderation, and key ceremony tests", "Build deployment bundle without publishing"),
+        PRESERVATION_JOB: ("Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+            "Verify legacy notice evidence migration with synthetic owners",
+            "Bundle the private authority without deployment or provisioning",
+            "Bundle the private owner deletion executor without deployment"),
+    }
+    evidence = {}
+    for workflow, required in PRESERVATION_EXPORT_BACKEND_JOBS.items():
+        prefix = f"/repos/{repository}/actions"
+        identity = api(f"{prefix}/workflows/{workflow}")
+        if (type(identity.get("id")) is not int or identity.get("id", 0) <= 0
+                or identity.get("state") != "active" or identity.get("path") != ".github/workflows/" + workflow):
+            raise ValueError("Backend workflow identity mismatch")
+        query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
+        response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        runs = response.get("workflow_runs")
+        if (not isinstance(runs, list) or not runs or type(response.get("total_count")) is not int
+                or response["total_count"] != len(runs)):
+            raise ValueError("Backend push index is absent or incomplete")
+        for run in runs:
+            if (type(run.get("id")) is not int or run["id"] <= 0
+                    or type(run.get("run_number")) is not int or run["run_number"] <= 0
+                    or run.get("head_sha") != sha or run.get("event") != "push"
+                    or run.get("workflow_id") != identity["id"] or run.get("path") != identity["path"]
+                    or run.get("repository", {}).get("full_name") != repository
+                    or run.get("head_repository", {}).get("full_name") != repository
+                    or not (run.get("head_branch") == "main" or str(run.get("head_branch", "")).startswith("codex/"))):
+                raise ValueError("Backend push identity mismatch")
+        if len({run["id"] for run in runs}) != len(runs) or len({run["run_number"] for run in runs}) != len(runs):
+            raise ValueError("Duplicate backend push")
+        # Main runs do not replace the candidate's owning push or wait on themselves.
+        candidates = [run for run in runs if str(run["head_branch"]).startswith("codex/")]
+        if not candidates or len({run["head_branch"] for run in candidates}) != 1:
+            raise ValueError("No unique owning candidate branch")
+        latest = max(candidates, key=lambda run: run["run_number"])
+        branch = branch or latest["head_branch"]
+        if latest["head_branch"] != branch or (latest.get("status"), latest.get("conclusion")) != ("completed", "success"):
+            raise ValueError("Latest owning backend push has not succeeded")
+        updated = dt.datetime.fromisoformat(latest["updated_at"].replace("Z", "+00:00"))
+        if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+            raise ValueError("Backend push is outside the evidence window")
+        jobs = executed_jobs(latest, repository, api)
+        if (not isinstance(jobs, list) or any(not isinstance(job, dict) or type(job.get("id")) is not int
+                or job.get("run_id") != latest["id"] or job.get("head_sha") != sha for job in jobs)
+                or len({job["id"] for job in jobs}) != len(jobs)
+                or not covers_jobs(jobs, required, sha, now=now)):
+            raise ValueError("Backend required jobs are missing or invalid")
+        for name in required:
+            job = next(job for job in jobs if job["name"] == name)
+            steps = job.get("steps")
+            if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+                raise ValueError("Backend validation steps unavailable")
+            for step_name in steps_required[name]:
+                matches = [step for step in steps if step.get("name") == step_name]
+                if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+                    raise ValueError("Backend required validation step did not execute")
+        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "event": "push", "branch": branch,
+                              "required_jobs": list(required), "job_ids": [next(job["id"] for job in jobs
+                                  if job["name"] == name) for name in required]}
+    return evidence
+
+
 def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt.datetime) -> dict:
     """Exact-SHA executed backend proof, independent of native workflow success."""
     if not SHA.fullmatch(sha):
@@ -3261,6 +3378,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 continue
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
+            if covered and required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
+                moderation_resolution_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered:
                 evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])
                 return run_id, run["head_sha"]
@@ -3322,7 +3441,9 @@ def main() -> None:
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
 
-    if selected_scope == PRESERVATION_EXPORT_SCOPE and preservation_sharing_plan(env):
+    if (selected_scope == PRESERVATION_EXPORT_SCOPE
+            or selected_scope == MODERATION_RESOLUTION_SCOPE
+            and not env.get("GITHUB_REF", "").startswith("refs/heads/diagnostic/")) and preservation_sharing_plan(env):
         # This job selects backend checks only; it is never native reuse proof.
         with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             output.write(f"runtime_scope={selected_scope}\n")
@@ -3488,6 +3609,8 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"required_backend_runs": moderation_resolution_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+           if selected_scope == MODERATION_RESOLUTION_SCOPE else {}),
         "evidence_run_id": evidence[0] if evidence else None,
         "evidence_sha": evidence[1] if evidence else None,
         "test_correction_evidence": correction,

@@ -300,6 +300,20 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             result["backend_evidence"] = planner.preservation_export_backend_evidence(backend_sha, REPOSITORY, backend_api, now)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
+    if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:
+        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(source_sha),
+                "Moderation resolution plan must declare all five same-candidate backend jobs.")
+        def resolution_api(path: str):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected backend evidence API path.")
+            return gh.get(path[len(prefix):])
+        try:
+            owner = current if source_id == run_id else source
+            branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
+            result["backend_evidence"] = planner.moderation_resolution_backend_evidence(
+                source_sha, REPOSITORY, resolution_api, now, branch=branch)
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("All five same-candidate owning backend push jobs must succeed before release.") from None
     return result
 
 
