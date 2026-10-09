@@ -17,6 +17,7 @@ import urllib.request
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
 from ios_ci_scope import (MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+                          MODERATION_RESOLUTION_BUILD_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
                           PRESERVATION_EXPORT_SCOPE, PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_BLOBS,
@@ -67,6 +68,20 @@ TEST_CORRECTION_CONTROL_PATHS = frozenset("NekoWidget/ci/" + name for name in (
     "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
     "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
 ))
+MODERATION_BUILD_CORRECTION_SOURCE = "2c36487835241080dbc79f9ce9ee66aa40b3734e"
+MODERATION_BUILD_CORRECTION_PRODUCT = "09974e0b2d85fb4e962e387783489c9f5ba98bbb"
+MODERATION_BUILD_CORRECTION_RUN = 37944559850
+MODERATION_BUILD_CORRECTION_BRANCH = "codex/moderation-resolution-20261009"
+MODERATION_BUILD_CORRECTION_BLOBS = (
+    "c5bc2d07520b7d0c76b8007ce8e51cd6b804d8e4", "ad679674c63a50900ca2d95065189b87441e4ad5")
+MODERATION_BUILD_CORRECTION_CONTROLS = TEST_CORRECTION_CONTROL_PATHS | {
+    "NekoWidget/ci/ios_ci_scope.py", "handoffs/development-release-workflow.md"}
+MODERATION_BUILD_SOURCE_JOBS = {
+    PLAN_JOB: 113867372721, BUILD: 113867584091, BOOTSTRAP_SMOKE: 113867583921,
+    lane_job(MODERATION_RESOLUTION_SCOPE, "runtime"): 113867584304,
+    lane_job(MODERATION_RESOLUTION_SCOPE, "app-ui"): 113867584031,
+}
+MODERATION_BUILD_FAILED_STEP = "Verify window entry and cover presentation"
 # One test-only correction: the family fixture must cancel its real share sheet
 # before terminating the app. Every other native/backend input stays identical.
 PRESERVATION_EXPORT_CORRECTION_SOURCE = "feb9c7565122406b4bf1beeba98fe8fbc0afbc07"
@@ -1952,7 +1967,12 @@ def moderation_resolution_only(paths, base, head):
                 or any(git("ls-tree", revision, "--", path) != f"100644 blob {blob}\t{path}"
                        for revision in (base, head))):
             return False
-    if not reviewed_hub_only(paths, base, head, product_blobs=MODERATION_RESOLUTION_BLOBS,
+    products = MODERATION_RESOLUTION_BLOBS
+    if MODERATION_RESOLUTION_BUILD_TEST in source_paths(paths):
+        if not moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, head):
+            return False
+        products = products | {MODERATION_RESOLUTION_BUILD_TEST: MODERATION_BUILD_CORRECTION_BLOBS}
+    if not reviewed_hub_only(paths, base, head, product_blobs=products,
                              companion_paths=frozenset(), companion_digests={},
                              companion_name="MODERATION_RESOLUTION_COMPANIONS"):
         return False
@@ -2035,7 +2055,7 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
-    if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS:
+    if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS | {MODERATION_RESOLUTION_BUILD_TEST}:
         try:
             base = comparison_base(event, env)
             if base and moderation_resolution_only(paths, base, env["GITHUB_SHA"]):
@@ -2297,7 +2317,7 @@ def test_correction_scope(required: tuple[str, ...]) -> str | None:
     if required == required_jobs_from_scope(FULL_SCOPE) and required != ALBUM_CORRECTION_REQUIRED:
         return None
     if required == ALBUM_CORRECTION_REQUIRED: return FULL_SCOPE
-    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE, PRESERVATION_EXPORT_SCOPE)
+    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE, PRESERVATION_EXPORT_SCOPE, MODERATION_RESOLUTION_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
 
 
@@ -2310,6 +2330,8 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == MODERATION_RESOLUTION_SCOPE and source == MODERATION_BUILD_CORRECTION_SOURCE:
+        return (BUILD,)
     if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
         # This shared helper is compiled into photo and solo UI tests. Rerun
         # every lane with a known failure or incomplete result.
@@ -2437,6 +2459,212 @@ def reviewed_full_correction_inputs(source: str, head: str, reviewed_source: str
                 not photo_timeout_change or PHOTO_SMOKE_CORRECTION_WORKFLOW_PATH in changed)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return False
+
+
+def moderation_build_correction_inputs(source: str, head: str) -> bool:
+    """Fixed Build-test correction; every other tracked input is unchanged or approved control."""
+    if source != MODERATION_BUILD_CORRECTION_SOURCE or not isinstance(head, str) or not SHA.fullmatch(head):
+        return False
+    try:
+        git("merge-base", "--is-ancestor", MODERATION_BUILD_CORRECTION_PRODUCT, head)
+        git("merge-base", "--is-ancestor", source, MODERATION_BUILD_CORRECTION_PRODUCT)
+        approval = git("merge-base", head, "origin/main")
+        registration = f'MODERATION_BUILD_CORRECTION_SOURCE = "{source}"'
+        if git("show", f"{approval}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1:
+            return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if not raw or len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (len(fields) != 5 or path in seen or fields[1] != "100644"
+                    or fields[4] not in {"A", "M"}
+                    or fields[0] != (":000000" if fields[4] == "A" else ":100644")
+                    or not all(SHA.fullmatch(blob) for blob in fields[2:4])
+                    or (fields[2] == "0" * 40) != (fields[4] == "A") or fields[3] == "0" * 40):
+                return False
+            seen.add(path)
+            if path == MODERATION_RESOLUTION_BUILD_TEST:
+                if fields[4] != "M" or tuple(fields[2:4]) != MODERATION_BUILD_CORRECTION_BLOBS:
+                    return False
+            elif path in MODERATION_BUILD_CORRECTION_CONTROLS:
+                if fields[4] != "M": return False
+            elif not is_handoff(path):
+                return False
+        if MODERATION_RESOLUTION_BUILD_TEST not in seen: return False
+        for path in MODERATION_BUILD_CORRECTION_CONTROLS:
+            entry = git("ls-tree", head, "--", path)
+            if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), entry)
+                    or entry != git("ls-tree", approval, "--", path)):
+                return False
+        return True
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def moderation_build_plan(log, sha, required):
+    if not isinstance(log, str): return None
+    try:
+        records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines()
+                   if "IOS_CI_PLAN_JSON=" in line]
+        records = [record for record in records if isinstance(record, dict)
+                   and record.get("repository") == "soso-so-27/neko-widget" and record.get("head_sha") == sha]
+        if len(records) != 1: return None
+        record = records[0]
+        return record if (type(record.get("schema_version")) is int and record["schema_version"] == 1
+            and record.get("scope") == MODERATION_RESOLUTION_SCOPE and record.get("required_jobs") == list(required)
+            and record.get("required_backend_runs") == moderation_resolution_requirements(MODERATION_BUILD_CORRECTION_SOURCE)
+            and record.get("evidence_run_id") is None and record.get("evidence_sha") is None) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def moderation_build_steps():
+    # Read the immutable source workflow, not candidate-controlled step labels.
+    workflow = git("show", f"{MODERATION_BUILD_CORRECTION_SOURCE}:.github/workflows/ios-build.yml")
+    block = workflow.split("  build-without-signing:\n", 1)[1].split("  simulator-smoke-test:\n", 1)[0]
+    names = re.findall(r"^      - name: (.+)$", block, re.M)
+    excluded = {"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"}
+    required = tuple(name for name in names if name not in excluded)
+    if len(required) < 30 or len(required) != len(set(required)) or MODERATION_BUILD_FAILED_STEP not in required:
+        raise ValueError("Pinned Build graph unavailable")
+    return required
+
+
+def moderation_steps_succeeded(job, names):
+    steps = job.get("steps")
+    return (isinstance(steps, list) and all(isinstance(step, dict) for step in steps)
+            and all(len(matches := [step for step in steps if step.get("name") == name]) == 1
+                    and (matches[0].get("status"), matches[0].get("conclusion")) == ("completed", "success")
+                    for name in names)
+            and not any(step.get("conclusion") in {"failure", "cancelled", "timed_out"} for step in steps))
+
+
+def moderation_build_candidate_backend_gate(head, repository, api, now):
+    """Absent path-filter runs are allowed; never conceal a candidate failure/active run."""
+    for workflow in PRESERVATION_EXPORT_BACKEND_JOBS:
+        query = urllib.parse.urlencode({"head_sha": head, "event": "push", "per_page": 100})
+        data = api(f"/repos/{repository}/actions/workflows/{workflow}/runs?{query}")
+        runs = data.get("workflow_runs")
+        if (not isinstance(runs, list) or type(data.get("total_count")) is not int
+                or data["total_count"] != len(runs) or len(runs) > 100
+                or len({run.get("id") for run in runs}) != len(runs)):
+            raise ValueError("Candidate backend index incomplete")
+        identity = api(f"/repos/{repository}/actions/workflows/{workflow}")
+        if (identity.get("state") != "active" or identity.get("path") != ".github/workflows/" + workflow
+                or type(identity.get("id")) is not int):
+            raise ValueError("Candidate backend workflow unavailable")
+        for run in runs:
+            if (type(run.get("id")) is not int or run.get("head_sha") != head or run.get("event") != "push"
+                    or run.get("workflow_id") != identity["id"] or run.get("path") != identity["path"] or run.get("run_attempt") != 1
+                    or run.get("head_branch") not in {MODERATION_BUILD_CORRECTION_BRANCH, "main"}
+                    or run.get("repository", {}).get("full_name") != repository
+                    or run.get("head_repository", {}).get("full_name") != repository
+                    or (run.get("status"), run.get("conclusion")) != ("completed", "success")):
+                raise ValueError("Candidate backend failure/active or identity mismatch")
+
+
+def moderation_build_correction_source(run, head, branch, repository, workflow_id, required, api, now):
+    """Three actual native successes + five actual backend successes; failed Build stays failed."""
+    source = MODERATION_BUILD_CORRECTION_SOURCE
+    try:
+        if (repository != "soso-so-27/neko-widget" or branch != MODERATION_BUILD_CORRECTION_BRANCH
+                or workflow_id != 335014238 or run.get("workflow_id") != workflow_id
+                or run.get("id") != MODERATION_BUILD_CORRECTION_RUN or run.get("head_sha") != source
+                or run.get("head_branch") != branch or run.get("path") != ".github/workflows/ios-build.yml"
+                or run.get("event") != "push" or run.get("run_attempt") != 1
+                or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+                or run.get("repository", {}).get("full_name") != repository
+                or run.get("head_repository", {}).get("full_name") != repository
+                or required != required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE)
+                or not moderation_build_correction_inputs(source, head)):
+            return None
+        if not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24):
+            return None
+        jobs = executed_jobs(run, repository, api)
+        if (len(jobs) != len(MODERATION_BUILD_SOURCE_JOBS)
+                or {job.get("id") for job in jobs} != set(MODERATION_BUILD_SOURCE_JOBS.values())
+                or any(MODERATION_BUILD_SOURCE_JOBS.get(job.get("name")) != job.get("id")
+                       or job.get("head_sha") != source or job.get("run_id") != run["id"]
+                       or job.get("run_attempt") != 1 or job.get("status") != "completed" for job in jobs)):
+            return None
+        by_name = {job["name"]: job for job in jobs}
+        reusable = tuple(name for name in required if name != BUILD)
+        if not covers_jobs(jobs, (PLAN_JOB,) + reusable, source, now): return None
+        for name in (PLAN_JOB,) + reusable:
+            steps = ("Select checks",) if name == PLAN_JOB else ("Run Simulator smoke test",) if name == BOOTSTRAP_SMOKE else ("Run sharing runtime matrix",)
+            if not moderation_steps_succeeded(by_name[name], steps): return None
+        record = moderation_build_plan(api(f"/repos/{repository}/actions/jobs/{by_name[PLAN_JOB]['id']}/logs"), source, required)
+        if record is None or record.get("test_correction_evidence") is not None: return None
+        build = by_name[BUILD]
+        steps = build.get("steps")
+        if (build.get("conclusion") != "failure" or not isinstance(steps, list)
+                or any(not isinstance(step, dict) or step.get("status") != "completed" for step in steps)
+                or [step.get("name") for step in steps if step.get("conclusion") == "failure"] != [MODERATION_BUILD_FAILED_STEP]):
+            return None
+        required_steps = moderation_build_steps()
+        failure_index = required_steps.index(MODERATION_BUILD_FAILED_STEP)
+        for index, name in enumerate(required_steps):
+            matches = [step for step in steps if step.get("name") == name]
+            expected = "success" if index < failure_index else "failure" if index == failure_index else "skipped"
+            if len(matches) != 1 or matches[0].get("conclusion") != expected: return None
+        log = api(f"/repos/{repository}/actions/jobs/{build['id']}/logs")
+        if (not isinstance(log, str)
+                or re.findall(r"(?:FAIL|ERROR): ([^\r\n]+)", log) != ["test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)"]
+                or len(re.findall(r"Ran 9 tests in [0-9.]+s", log)) != 1
+                or log.count("FAILED (failures=1)") != 1
+                or "AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found" not in log):
+            return None
+        def source_backend_api(path):
+            value = api(path)
+            entries = value.get("workflow_runs", value.get("jobs", []))
+            if any(entry.get("run_attempt") != 1 for entry in entries):
+                raise ValueError("Fixed backend evidence must be attempt one")
+            return value
+        backends = moderation_resolution_backend_evidence(source, repository, source_backend_api, now, branch=branch)
+        expected_runs = {"sharing-service.yml": 37944559756, "preservation-service.yml": 37944559715}
+        if any(backends[key]["run_id"] != value for key, value in expected_runs.items()): return None
+        moderation_build_candidate_backend_gate(head, repository, api, now)
+        return {"run_id": run["id"], "sha": source,
+                "jobs": [{"name": name, "job_id": MODERATION_BUILD_SOURCE_JOBS[name]} for name in reusable],
+                "backend_evidence": backends, "corrected_product_sha": MODERATION_BUILD_CORRECTION_PRODUCT,
+                "changed_test": {"path": MODERATION_RESOLUTION_BUILD_TEST, "before": MODERATION_BUILD_CORRECTION_BLOBS[0], "after": MODERATION_BUILD_CORRECTION_BLOBS[1]},
+                "unchanged_inputs": "all tracked files except the fixed Build test, approved main controls and normal handoffs",
+                "owning_jobs_to_execute": [BUILD]}
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
+        raise CorrectionEvidenceUnavailable("Fixed moderation Build correction source is unavailable") from error
+
+
+def covers_moderation_build_correction(run, validation_head, required, api, now, jobs):
+    repository = "soso-so-27/neko-widget"
+    if (required != required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE)
+            or run.get("head_branch") != MODERATION_BUILD_CORRECTION_BRANCH or run.get("workflow_id") != 335014238
+            or run.get("path") != ".github/workflows/ios-build.yml" or run.get("event") != "push" or run.get("run_attempt") != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, run.get("head_sha"))
+            or not moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, validation_head)):
+        return False
+    if (any(type(job.get("id")) is not int for job in jobs) or len({job["id"] for job in jobs}) != len(jobs)
+            or not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now)):
+        return False
+    skipped_names = {UNEXPANDED_SHARING_JOB, "needs.plan.outputs.smoke_name"}
+    for job in jobs:
+        if (job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"] or job.get("run_attempt") != 1
+                or job.get("name") not in set(required) | {PLAN_JOB} | skipped_names
+                or job.get("name") not in {PLAN_JOB, BUILD} and
+                    ((job.get("status"), job.get("conclusion")) != ("completed", "skipped") or job.get("steps") != [])):
+            return False
+    plan = next(job for job in jobs if job["name"] == PLAN_JOB)
+    build = next(job for job in jobs if job["name"] == BUILD)
+    if not moderation_steps_succeeded(plan, ("Select checks",)) or not moderation_steps_succeeded(build, moderation_build_steps()):
+        return False
+    record = moderation_build_plan(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), run["head_sha"], required)
+    correction = record.get("test_correction_evidence") if record else None
+    source = api(f"/repos/{repository}/actions/runs/{MODERATION_BUILD_CORRECTION_RUN}")
+    verified = moderation_build_correction_source(source, run["head_sha"], run["head_branch"], repository, run["workflow_id"], required, api, now)
+    return verified is not None and verified == correction
 
 
 def preservation_export_correction_inputs(source: str, head: str) -> bool:
@@ -2636,6 +2864,8 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                       required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     """Verify each reusable job in a failed same-task run; never reuse its UI."""
     selected_scope = test_correction_scope(required)
+    if selected_scope == MODERATION_RESOLUTION_SCOPE:
+        return moderation_build_correction_source(run, head, branch, repository, workflow_id, required, api, now)
     if selected_scope == PRESERVATION_EXPORT_SCOPE:
         return preservation_export_correction_source(run, head, branch, repository, workflow_id, required, api, now)
     if selected_scope is None:
@@ -2736,6 +2966,25 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == MODERATION_RESOLUTION_SCOPE:
+        # Only this registered product can enter recovery. Pending/invalid source
+        # evidence stops planning rather than falling back to four Mac jobs.
+        try:
+            git("merge-base", "--is-ancestor", MODERATION_BUILD_CORRECTION_PRODUCT, head)
+        except subprocess.CalledProcessError:
+            return None
+        if not moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, head):
+            raise CorrectionEvidenceUnavailable("Fixed Build correction needs approved controls and exact inputs")
+        prefix = f"/repos/{repository}/actions"
+        workflow = api(f"{prefix}/workflows/ios-build.yml")
+        if (workflow.get("id") != 335014238 or workflow.get("path") != ".github/workflows/ios-build.yml"
+                or workflow.get("state") != "active"):
+            raise CorrectionEvidenceUnavailable("Native workflow identity unavailable")
+        run = api(f"{prefix}/runs/{MODERATION_BUILD_CORRECTION_RUN}")
+        result = moderation_build_correction_source(run, head, branch, repository, workflow["id"], required, api, now)
+        if result is None:
+            raise CorrectionEvidenceUnavailable("Fixed Build source is incomplete or invalid; no Mac checks authorized")
+        return result
     if test_correction_scope(required) == PRESERVATION_EXPORT_SCOPE:
         if not preservation_export_correction_inputs(PRESERVATION_EXPORT_CORRECTION_SOURCE, head):
             return None
@@ -2826,6 +3075,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
+        return covers_moderation_build_correction(run, validation_head, required, api, now, jobs)
     if required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
         return covers_preservation_export_correction(run, validation_head, required, api, now, jobs)
     if required != ALBUM_CORRECTION_REQUIRED or run.get("head_branch") not in (
@@ -3378,7 +3629,7 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 continue
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
-            if covered and required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
+            if covered and not corrected and required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
                 moderation_resolution_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered:
                 evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])
@@ -3588,12 +3839,12 @@ def main() -> None:
     correction_jobs = correction_owning_jobs(selected_scope, correction["sha"]) if correction else ()
     smoke_correction = SMOKE in correction_jobs
     values = {
-        "build": str(evidence is None and correction is None).lower(),
+        "build": str(evidence is None and (correction is None or BUILD in correction_jobs)).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
         "smoke": str(evidence is None and (correction is None or smoke_correction) and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
-        "app_ui": str(evidence is None and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
+        "app_ui": str(evidence is None and BUILD not in correction_jobs and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
         "app_ui_lanes": json.dumps(["app-ui-other", "app-ui-solo"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
                                     else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
@@ -3609,7 +3860,9 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
-        **({"required_backend_runs": moderation_resolution_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+        **({"required_backend_runs": moderation_resolution_requirements(
+              MODERATION_BUILD_CORRECTION_SOURCE if moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, env["GITHUB_SHA"])
+              else evidence[1] if evidence else env["GITHUB_SHA"])}
            if selected_scope == MODERATION_RESOLUTION_SCOPE else {}),
         "evidence_run_id": evidence[0] if evidence else None,
         "evidence_sha": evidence[1] if evidence else None,

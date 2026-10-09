@@ -738,6 +738,27 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     return result
 
 
+def moderation_build_correction_cost(result, correction, include_upload, history):
+    """Reserve the complete immutable Build timeout; do not invent an observed runtime."""
+    if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE or not isinstance(correction, dict)
+            or correction.get("run_id") != planner.MODERATION_BUILD_CORRECTION_RUN
+            or correction.get("sha") != planner.MODERATION_BUILD_CORRECTION_SOURCE):
+        return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    result = dict(result)
+    result["full_cost_before_correction"] = result["cost"]
+    upper = round(30 + upload, 2)
+    result["cost"] = {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [upper, upper],
+                      "reference_runs": [planner.MODERATION_BUILD_CORRECTION_RUN],
+                      "owning_jobs": [planner.BUILD], "build_timeout_minutes": 30,
+                      "includes_future_rework": False,
+                      "note": "Full Build timeout budget, not an observed completion or speedup. Original Build failed; only verified three native and five backend successes are reused. Retain failure, active and cumulative elapsed gates."}
+    result["cost_review_required"] = upper > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
+
+
 def photo_correction_replay_cost(result, correction, include_upload, history):
     """Bound replay cost by the new timeout and retain the incomplete-run evidence.
 
@@ -1069,12 +1090,13 @@ def main(argv=None):
                 recovery["control_sha"] = control_sha
             runs = read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"])
             correction = None
-            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE):
+            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
+            result = moderation_build_correction_cost(result, correction, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,

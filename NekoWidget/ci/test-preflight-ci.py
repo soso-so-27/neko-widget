@@ -21,6 +21,35 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class ModerationBuildCorrectionBudgetTests(unittest.TestCase):
+    def test_full_build_timeout_is_reference_and_all_history_gates_remain(self):
+        plan = {"ready": False, "head": planner.MODERATION_BUILD_CORRECTION_PRODUCT,
+                "scope": planner.MODERATION_RESOLUTION_SCOPE, "target_minutes": 180,
+                "cost": {"status": "unmeasured", "with_upload_minutes": [None, None]}}
+        proof = {"run_id": planner.MODERATION_BUILD_CORRECTION_RUN, "sha": planner.MODERATION_BUILD_CORRECTION_SOURCE}
+        result = preflight.moderation_build_correction_cost(plan, proof, True, {"upload_minutes": 12})
+        self.assertEqual(result["cost"]["status"], "reference")
+        self.assertEqual(result["cost"]["with_upload_minutes"], [42, 42])
+        self.assertEqual(result["full_cost_before_correction"], plan["cost"])
+        self.assertIs(preflight.moderation_build_correction_cost(plan, proof | {"sha": "a" * 40}, False, {}), plan)
+        now = dt.datetime(2026, 10, 9, 16, tzinfo=dt.timezone.utc)
+        failed = {"id": proof["run_id"], "head_sha": proof["sha"], "head_branch": planner.MODERATION_BUILD_CORRECTION_BRANCH,
+            "created_at": "2026-10-09T14:30:00Z", "path": ".github/workflows/ios-build.yml", "event": "push",
+            "status": "completed", "conclusion": "failure", "failed_tests": [], "unsupported_failed_tests": []}
+        actual = preflight.apply_task_gate(copy.deepcopy(result), [failed], now, correction_evidence=proof)
+        self.assertTrue(actual["ready"])
+        self.assertEqual(actual["task"]["failed_runs"], [proof["run_id"]])
+        self.assertEqual(actual["task"]["minutes_since_first_ci"], 90)
+        self.assertFalse(actual["task"]["first_baseline_measurement"])
+        for extra in ({"id": 2, "status": "in_progress"}, {"id": 2, "failed_tests": ["testUnknown"]},
+                      {"id": 2, "unsupported_failed_tests": ["OtherTests/testUnknown"]}):
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result), [failed, failed | extra], now,
+                                                      correction_evidence=proof)["ready"])
+        self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result), [failed], now + dt.timedelta(hours=1),
+                                                  correction_evidence=proof)["ready"])
+        with self.assertRaises(ValueError): preflight.moderation_build_correction_cost(plan, proof, True, {"upload_minutes": float("nan")})
+
+
 class ModerationResolutionDiagnosticBackendRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.head, self.source, self.old = "b" * 40, "a" * 40, "c" * 40

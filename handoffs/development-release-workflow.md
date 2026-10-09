@@ -4,6 +4,9 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIを起動する前
 
+- `reviewed-moderation-resolution-v1` の固定run `37944559850` / `2c36487835241080dbc79f9ce9ee66aa40b3734e` に限り、coverの旧1行source assertionだけの検査訂正を認める。訂正commit `09974e0b2d85fb4e962e387783489c9f5ba98bbb` の `test-window-entry-and-cover-presentation.py` 完全before/after blobを固定し、全tracked差分はその通常M、main承認済みcontrol8本と通常handoff A/Mだけに限定する。workflowや製品入力は不変。同repo・branch・push・attempt1・24時間内の固定job IDs、唯一のBuild失敗stepと9件中1件失敗の具体ログ、Photos/runtime/共有UIの3実成功と全必須step、元SHAのSharing4＋Preservation1の固定push実成功を確認してから、新候補でBuild全体を再実行する。未完了・追加失敗・取得不能は停止し、全件再起動へ逃がさない。訂正候補のbackend pushがpath filterで0件でも元入力一致証拠を使えるが、候補に存在する失敗/activeは隠さない。新Buildはprivacy/migration/Swift verifier/host/Widgetを含む全必須step成功が必要で、元のBuild失敗や後続skipは成功にしない。main再利用と配布でも原3native＋原5backend＋新Buildを再照合し、元SHAを候補同SHAと記載しない。失敗/稼働中/初回からの時間を保持し、30分は固定Build timeoutによる再計画用上限予算であって完了実測・速度改善実績ではない。制御を先にmain承認し、一般候補や他scopeには広げない。
+  今回の旧source assertionはWindowsでも安価に検出できた。次のcover/非表示変更では、変更挙動が所有する既存 `test-window-entry-and-cover-presentation.py` と関連cover/privacy境界を通常Mac CIより先に実行する。一般development14件の成功だけを、その未実行契約の成功として扱わない。
+
 - 実装途中の画面確認は `preflight-ci.py --feedback --test-class <既存class> --test-method <method1,method2>` で準備する。cleanな確定HEADと同一classの既存1〜3操作を検査し、`diagnostic/<task>` への固定SHA pushと既存診断workflowの起動コマンドをJSON配列で返す。コマンドは自動実行しない。同じ作業のCIが実行中ならコマンドを返さない。診断成功はrelease evidenceではなく、最終候補の必須jobを置き換えない。
 - `codex/<task>` の途中pushは通常CIを起動するため、修正中は上記診断経路と関連ローカル検証を使い、関連修正を一つの統合候補へまとめる。preflightの `other_active_ios_runs` は他作業の通常iOS CIを表示し、runner競合を避ける計画に使う。他作業を自動取消せず、全作業を直列化しない。待ち時間と実行時間を分けて記録する。
 

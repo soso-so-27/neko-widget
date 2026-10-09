@@ -16,6 +16,7 @@ from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, ICON_WORKFLOW_ST
 
 
 MODERATION_RESOLUTION_SCOPE = "reviewed-moderation-resolution-v1"
+MODERATION_RESOLUTION_BUILD_TEST = "NekoWidget/ci/test-window-entry-and-cover-presentation.py"
 MODERATION_RESOLUTION_BLOBS = {
     "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
         "05d8a051f63a73c19a12e2fa00d30a8a6bb55105",
@@ -2974,7 +2975,9 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == MODERATION_RESOLUTION_SCOPE:
-        return bool(paths) and len(paths) == len(set(paths)) and sources == MODERATION_RESOLUTION_PATHS
+        return (bool(paths) and len(paths) == len(set(paths))
+                and sources in (MODERATION_RESOLUTION_PATHS,
+                                MODERATION_RESOLUTION_PATHS | {MODERATION_RESOLUTION_BUILD_TEST}))
     if scope == PRESERVATION_EXPORT_SCOPE:
         return sources in (PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS)
     if scope == PRESERVATION_USAGE_SCOPE:

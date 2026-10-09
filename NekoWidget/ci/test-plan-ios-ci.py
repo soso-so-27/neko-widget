@@ -24,6 +24,172 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class ModerationBuildCorrectionTests(unittest.TestCase):
+    def setUp(self):
+        self.source, self.head = planner.MODERATION_BUILD_CORRECTION_SOURCE, planner.MODERATION_BUILD_CORRECTION_PRODUCT
+        self.now = dt.datetime(2026, 10, 9, 16, tzinfo=dt.timezone.utc)
+        self.repo = "soso-so-27/neko-widget"
+        self.required = planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)
+        self.run = {"id": planner.MODERATION_BUILD_CORRECTION_RUN, "head_sha": self.source,
+            "head_branch": planner.MODERATION_BUILD_CORRECTION_BRANCH, "workflow_id": 335014238,
+            "path": ".github/workflows/ios-build.yml", "event": "push", "run_attempt": 1,
+            "repository": {"full_name": self.repo}, "head_repository": {"full_name": self.repo},
+            "status": "completed", "conclusion": "failure", "updated_at": self.now.isoformat()}
+        self.build_steps = ("Check out repository", "Verify Xcode installation", "Verify sharing release privacy gates",
+                            planner.MODERATION_BUILD_FAILED_STEP, "Verify Swift pairing protocol vectors",
+                            "Build disabled app and extensions for iOS Simulator")
+        self.jobs = []
+        for name, job_id in planner.MODERATION_BUILD_SOURCE_JOBS.items():
+            names = self.build_steps if name == planner.BUILD else ("Select checks",) if name == planner.PLAN_JOB else ("Run Simulator smoke test",) if name == planner.BOOTSTRAP_SMOKE else ("Run sharing runtime matrix",)
+            steps = [{"name": step, "status": "completed", "conclusion": "success"} for step in names]
+            if name == planner.BUILD:
+                for n in range(3, len(steps)): steps[n]["conclusion"] = "failure" if n == 3 else "skipped"
+            self.jobs.append({"id": job_id, "name": name, "head_sha": self.source,
+                "run_id": self.run["id"], "run_attempt": 1, "status": "completed",
+                "conclusion": "failure" if name == planner.BUILD else "success",
+                "completed_at": self.now.isoformat(), "steps": steps})
+        self.record = {"repository": self.repo, "schema_version": 1, "head_sha": self.source,
+            "scope": planner.MODERATION_RESOLUTION_SCOPE, "required_jobs": list(self.required),
+            "required_backend_runs": planner.moderation_resolution_requirements(self.source),
+            "evidence_run_id": None, "evidence_sha": None, "test_correction_evidence": None}
+        self.failure = ("FAIL: test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)\n"
+            "AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found\nRan 9 tests in 4.217s\nFAILED (failures=1)")
+        self.backends = {name: {"run_id": identifier, "sha": self.source} for name, identifier in
+            (("sharing-service.yml", 37944559756), ("preservation-service.yml", 37944559715))}
+
+    def api(self, path):
+        if path.endswith(f"/{self.run['id']}"): return self.run
+        if "/jobs?" in path: return {"total_count": len(self.jobs), "jobs": self.jobs}
+        if path.endswith(f"/{planner.MODERATION_BUILD_SOURCE_JOBS[planner.PLAN_JOB]}/logs"):
+            return "IOS_CI_PLAN_JSON=" + json.dumps(self.record)
+        if path.endswith(f"/{planner.MODERATION_BUILD_SOURCE_JOBS[planner.BUILD]}/logs"): return self.failure
+        raise AssertionError(path)
+
+    def verify(self, run=None):
+        with patch.object(planner, "moderation_build_correction_inputs", return_value=True), \
+                patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                patch.object(planner, "moderation_resolution_backend_evidence", return_value=self.backends), \
+                patch.object(planner, "moderation_build_candidate_backend_gate"):
+            return planner.moderation_build_correction_source(run or self.run, self.head, self.run["head_branch"],
+                self.repo, 335014238, self.required, self.api, self.now)
+
+    def test_source_requires_actual_three_native_successes_and_only_known_build_failure(self):
+        proof = self.verify()
+        self.assertEqual(len(proof["jobs"]), 3)
+        self.assertEqual(proof["owning_jobs_to_execute"], [planner.BUILD])
+        self.assertEqual(planner.correction_owning_jobs(planner.MODERATION_RESOLUTION_SCOPE, self.source), (planner.BUILD,))
+        for field, value in (("status", "in_progress"), ("conclusion", "success"), ("event", "workflow_dispatch"),
+                ("head_sha", "f" * 40), ("run_attempt", 2), ("head_branch", "main"), ("workflow_id", 2),
+                ("updated_at", "2020-01-01T00:00:00Z"), ("head_repository", {"full_name": "other/repo"})):
+            with self.subTest(field=field): self.assertIsNone(self.verify(self.run | {field: value}))
+        original = copy.deepcopy(self.jobs)
+        for index, job in enumerate(original):
+            for field, value in (("status", "in_progress"), ("conclusion", "skipped"), ("head_sha", "e" * 40),
+                                 ("run_attempt", 2), ("id", 2), ("completed_at", "2020-01-01T00:00:00Z")):
+                if job["name"] == planner.BUILD and field == "completed_at": continue
+                self.jobs = copy.deepcopy(original); self.jobs[index][field] = value
+                with self.subTest(job=job["name"], field=field): self.assertIsNone(self.verify())
+            self.jobs = copy.deepcopy(original); self.jobs[index]["steps"] = []
+            self.assertIsNone(self.verify())
+        self.jobs = original + [copy.deepcopy(original[0])]; self.assertIsNone(self.verify())
+        self.jobs = original
+        failure = self.failure
+        for invalid in (failure + "\nERROR: another", failure.replace("failures=1", "failures=2"), "", failure.replace("test_source_does_not", "test_other")):
+            self.failure = invalid; self.assertIsNone(self.verify())
+        self.failure = failure
+        self.record["test_correction_evidence"] = {"run_id": 1}; self.assertIsNone(self.verify())
+
+    def test_input_closure_fixed_pair_approved_controls_and_normal_handoffs_only(self):
+        before, after = planner.MODERATION_BUILD_CORRECTION_BLOBS
+        row = f":100644 100644 {before} {after} M\0{planner.MODERATION_RESOLUTION_BUILD_TEST}\0"
+        def check(raw=row, *, unapproved=None, registered=True, ancestor=True):
+            def git(*args):
+                if args[0] == "diff": return raw
+                if args[:2] == ("merge-base", "--is-ancestor") and not ancestor: raise subprocess.CalledProcessError(1, "git")
+                if args[0] == "merge-base": return "a" * 40
+                if args[0] == "show": return f'MODERATION_BUILD_CORRECTION_SOURCE = "{self.source}"' if registered else "old"
+                if args[0] == "ls-tree":
+                    return f"100644 blob {'d' * 40 if args[1] == self.head and args[3] == unapproved else 'c' * 40}\t{args[3]}"
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git): return planner.moderation_build_correction_inputs(self.source, self.head)
+        self.assertTrue(check())
+        for path in planner.MODERATION_BUILD_CORRECTION_CONTROLS:
+            self.assertTrue(check(row + f":100644 100644 {'b' * 40} {'c' * 40} M\0{path}\0"))
+            self.assertFalse(check(unapproved=path))
+        self.assertTrue(check(row + f":000000 100644 {'0' * 40} {'c' * 40} A\0handoffs/review.md\0"))
+        for invalid in ("", row + row, row.replace(before, "d" * 40), row.replace(after, "c" * 40),
+                row.replace("100644", "100755"), row.replace("100644", "120000"), row.replace(" M\0", " D\0"),
+                row + f":100644 100644 {'b' * 40} {'c' * 40} M\0.gitattributes\0",
+                row + f":100644 100644 {'b' * 40} {'c' * 40} M\0.github/workflows/ios-build.yml\0"):
+            self.assertFalse(check(invalid), invalid)
+        self.assertFalse(check(registered=False)); self.assertFalse(check(ancestor=False))
+
+    def test_candidate_backend_absence_allowed_failure_active_and_wrong_identity_block(self):
+        identity = {"id": 8, "state": "active", "path": ".github/workflows/sharing-service.yml"}
+        candidate = self.run | {"id": 88, "head_sha": self.head, "conclusion": "success", "workflow_id": 8, "path": identity["path"]}
+        def check(rows, count=None):
+            def api(path):
+                workflow = path.split("/workflows/", 1)[1].split("/", 1)[0]
+                if "/runs?" not in path: return identity | {"path": ".github/workflows/" + workflow}
+                return {"total_count": len(rows) if count is None else count,
+                        "workflow_runs": [run | {"path": ".github/workflows/" + workflow} for run in rows]}
+            return planner.moderation_build_candidate_backend_gate(self.head, self.repo, api, self.now)
+        check([]); check([candidate])
+        for field, value in (("status", "in_progress"), ("conclusion", "failure"), ("head_sha", self.source),
+                             ("head_branch", "codex/other"), ("run_attempt", 2), ("workflow_id", 9)):
+            with self.subTest(field=field), self.assertRaises(ValueError): check([candidate | {field: value}])
+        with self.assertRaises(ValueError): check([], 1)
+        with self.assertRaises(ValueError): check([candidate, candidate])
+
+    def test_corrected_graph_requires_complete_new_build_and_revalidates_source(self):
+        proof = self.verify()
+        candidate = self.run | {"id": 123, "head_sha": self.head, "conclusion": "success"}
+        jobs = [copy.deepcopy(job) for job in self.jobs if job["name"] in {planner.PLAN_JOB, planner.BUILD}]
+        for job in jobs:
+            job.update(id=job["id"] + 1000, head_sha=self.head, run_id=123, conclusion="success")
+            for step in job["steps"]: step["conclusion"] = "success"
+        record = self.record | {"head_sha": self.head, "test_correction_evidence": proof}
+        def check(values=jobs, verified=proof):
+            with patch.object(planner, "moderation_build_correction_inputs", return_value=True), \
+                    patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                    patch.object(planner, "moderation_build_correction_source", return_value=verified):
+                return planner.covers_moderation_build_correction(candidate, self.head, self.required,
+                    lambda path: "IOS_CI_PLAN_JSON=" + json.dumps(record) if path.endswith("/logs") else self.run, self.now, values)
+        self.assertTrue(check())
+        self.assertFalse(check(verified=None))
+        for index, job in enumerate(jobs):
+            for field, value in (("conclusion", "skipped"), ("steps", []), ("run_attempt", 2), ("head_sha", self.source)):
+                invalid = copy.deepcopy(jobs); invalid[index][field] = value
+                self.assertFalse(check(invalid))
+            for n in range(len(job["steps"])):
+                invalid = copy.deepcopy(jobs); invalid[index]["steps"][n]["conclusion"] = "skipped"
+                self.assertFalse(check(invalid))
+        self.assertFalse(check(jobs + [copy.deepcopy(jobs[0])]))
+        skipped = jobs[0] | {"id": 1, "name": planner.UNEXPANDED_SHARING_JOB, "conclusion": "skipped", "steps": []}
+        self.assertTrue(check(jobs + [skipped, skipped | {"id": 2}]))
+        self.assertFalse(check(jobs + [skipped | {"conclusion": "failure"}]))
+
+    def test_planner_runs_full_build_only_and_declares_original_backend_sha(self):
+        proof = self.verify()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event").write_text("{}")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/" + self.run["head_branch"],
+                "GITHUB_SHA": self.head, "GITHUB_REPOSITORY": self.repo, "GITHUB_RUN_ID": "123",
+                "GITHUB_WORKFLOW": "iOS build check", "GITHUB_SERVER_URL": "https://github.com",
+                "GITHUB_EVENT_PATH": str(root / "event"), "GITHUB_OUTPUT": str(root / "output"), "GITHUB_STEP_SUMMARY": str(root / "summary")}
+            output = io.StringIO()
+            with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                    patch.object(planner, "changed_paths", return_value=list(scope.MODERATION_RESOLUTION_PATHS | {scope.MODERATION_RESOLUTION_BUILD_TEST})), \
+                    patch.object(planner, "runtime_scope", return_value=scope.MODERATION_RESOLUTION_SCOPE), \
+                    patch.object(planner, "find_evidence", return_value=None), \
+                    patch.object(planner, "find_test_correction_evidence", return_value=proof), \
+                    patch.object(planner, "moderation_build_correction_inputs", return_value=True):
+                planner.main()
+            flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertEqual([flags[key] for key in ("build", "smoke", "sharing", "app_ui")], ["true", "false", "false", "false"])
+            self.assertEqual(planner.moderation_build_plan(output.getvalue(), self.head, self.required)["test_correction_evidence"], proof)
+
+
 class ModerationResolutionScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
@@ -31,6 +197,18 @@ class ModerationResolutionScopeTests(unittest.TestCase):
         return {path: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
                        "A" if before == "0" * 40 else "M"]
                 for path, (before, after) in planner.MODERATION_RESOLUTION_BLOBS.items()}
+
+    def test_fixed_build_test_correction_variant_requires_approved_complete_inputs(self):
+        rows = self.rows()
+        before, after = planner.MODERATION_BUILD_CORRECTION_BLOBS
+        rows[planner.MODERATION_RESOLUTION_BUILD_TEST] = [":100644", "100644", before, after, "M"]
+        with patch.object(planner, "moderation_build_correction_inputs", return_value=True):
+            self.assertEqual(self.select(rows), planner.MODERATION_RESOLUTION_SCOPE)
+            for n, value in ((0, ":100755"), (1, "120000"), (2, "d" * 40), (3, "e" * 40), (4, "D")):
+                invalid = copy.deepcopy(rows); invalid[planner.MODERATION_RESOLUTION_BUILD_TEST][n] = value
+                self.assertEqual(self.select(invalid), scope.FULL_SCOPE)
+        with patch.object(planner, "moderation_build_correction_inputs", return_value=False):
+            self.assertEqual(self.select(rows), scope.FULL_SCOPE)
 
     def select(self, rows=None, *, paths=None, raw=None, immutable=None, methods=True):
         rows = self.rows() if rows is None else rows
