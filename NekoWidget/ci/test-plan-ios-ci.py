@@ -191,8 +191,30 @@ class ModerationBuildCorrectionTests(unittest.TestCase):
 
 
 class ModerationProductionUIRecoveryTests(unittest.TestCase):
+    # Bounded lines from run37944559850, job113867584091: the earlier nine-test
+    # success is real. Omit unrelated successful output and the huge Swift dump
+    # after the exact AssertionError prefix; preserve the owning group/command.
+    build_failure_slice = """2026-10-09T14:30:40.4139140Z Ran 9 tests in 0.037s
+2026-10-09T14:30:40.4140680Z OK
+2026-10-09T14:30:57.7451720Z ##[group]Run set -euo pipefail
+2026-10-09T14:30:57.7452090Z \x1b[36;1mset -euo pipefail\x1b[0m
+2026-10-09T14:30:57.7453130Z \x1b[36;1mcommand -v swift > /dev/null\x1b[0m
+2026-10-09T14:30:57.7453580Z \x1b[36;1mpython3 ci/test-window-entry-and-cover-presentation.py\x1b[0m
+2026-10-09T14:30:57.7567620Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-09T14:30:57.7568270Z env:
+2026-10-09T14:30:57.7568980Z   DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+2026-10-09T14:30:57.7569480Z ##[endgroup]
+2026-10-09T14:31:02.0904120Z FAIL: test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)
+2026-10-09T14:31:02.0960050Z AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found
+2026-10-09T14:31:02.1001590Z Ran 9 tests in 4.217s
+2026-10-09T14:31:02.1002360Z FAILED (failures=1)
+2026-10-09T14:31:02.1102050Z ##[error]Process completed with exit code 1.
+2026-10-09T14:31:02.1526510Z ##[group]Run actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+"""
+
     def setUp(self):
         ModerationBuildCorrectionTests.setUp(self)
+        self.failure = self.build_failure_slice
         self.head = planner.MODERATION_UI_RECOVERY_PRODUCT
         self.ui_name = planner.lane_job(planner.MODERATION_RESOLUTION_SCOPE, "app-ui")
         for job in self.jobs:
@@ -250,6 +272,28 @@ class ModerationProductionUIRecoveryTests(unittest.TestCase):
                 {"total_count": 1, "workflow_runs": [{"conclusion": "failure"}]}):
             self.candidate_index = index
             with self.assertRaises(ValueError): self.prove()
+
+    def test_build_failure_is_bounded_to_owning_command_and_rejects_unknown_or_ambiguous_output(self):
+        log = self.build_failure_slice
+        self.assertTrue(planner.moderation_ui_build_failure(log))
+        self.assertEqual(len(re.findall(r"Ran 9 tests in", log)), 2)
+        mutants = [log + "FAIL: another_failure\n", log + "ERROR: another_error\n",
+            log + "FAILED (failures=2)\n", log + "##[error]Another error\n",
+            log.replace("Ran 9 tests in 4.217s", "Ran 8 tests in 4.217s"),
+            log.replace("Ran 9 tests in 4.217s", "Ran 9 tests in 4.217s\nRan 9 tests in 0.1s"),
+            log.replace("##[group]Run set -euo pipefail", "Run set -euo pipefail"),
+            log.replace("##[endgroup]", ""),
+            log.replace("python3 ci/test-window-entry-and-cover-presentation.py", "python3 ci/another.py"),
+            log.replace("python3 ci/test-window-entry-and-cover-presentation.py", "python3 ci/test-window-entry-and-cover-presentation.py\npython3 ci/another.py"),
+            log.replace("##[group]Run actions/upload-artifact", "Run actions/upload-artifact"),
+            log.replace("FAIL: test_source", "FAIL: unknown_source"),
+            log.replace("FAILED (failures=1)", "OK"),
+            log.replace("Ran 9 tests in 4.217s", "##[group]other\nRan 9 tests in 4.217s"),
+            log + log]
+        for invalid in mutants:
+            with self.subTest(log=invalid[-150:]): self.assertFalse(planner.moderation_ui_build_failure(invalid))
+        self.failure = mutants[4]
+        with self.assertRaises(ValueError): self.prove()
 
     def test_exact_two_product_pairs_controls_modes_handoffs_and_registration(self):
         rows = {path: [":100644", "100644", *pair, "M"] for path, pair in planner.MODERATION_UI_RECOVERY_BLOBS.items()}
