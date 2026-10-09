@@ -2955,10 +2955,14 @@ def moderation_chained_photos_failure(log):
 
 def moderation_chained_photos_success(log):
     if not isinstance(log, str): return False
-    events = re.findall(r"Test Case '-\[([\w.]+) (test\w+)\]' (started|passed|failed|skipped)", log)
-    case = ("NekoWidgetUITests.PhotoPermissionUITests", "testGrantFullPhotoLibraryAccess")
-    return (events == [(*case, "started"), (*case, "passed")]
-            and len(re.findall(r"Simulator smoke test passed at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", log)) == 1
+    # The fixed smoke scope requests permission, then checks authorized screens.
+    events = list(re.finditer(r"Test Case '-\[([\w.]+) (\w+)\]' (\w+)", log))
+    cases = ("testGrantFullPhotoLibraryAccess", "testMainlineAcceptanceScreensWithAuthorizedLibrary")
+    expected = [("NekoWidgetUITests.PhotoPermissionUITests", case, status)
+                for case in cases for status in ("started", "passed")]
+    terminal = list(re.finditer(r"Simulator smoke test passed at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", log))
+    return ([event.groups() for event in events] == expected and log.count("Test Case '-[") == len(expected)
+            and len(terminal) == 1 and terminal[0].start() > events[-1].end()
             and not re.search(r"(?:FAIL|ERROR): |: error: |\*\* TEST FAILED \*\*|##\[error\]", log))
 
 

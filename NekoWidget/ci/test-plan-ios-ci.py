@@ -394,7 +394,9 @@ class ModerationChainedBuildRecoveryTests(unittest.TestCase):
         self.photos_failure = "fixed synthetic Photos snapshot failure\n"
         self.photos_digest = planner.hashlib.sha256(self.photos_failure.strip("\n").encode()).hexdigest()
         self.photos_success = ("Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' started.\n"
-            "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' passed (4 seconds).\n"
+            "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' passed (22.857 seconds).\n"
+            "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testMainlineAcceptanceScreensWithAuthorizedLibrary]' started.\n"
+            "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testMainlineAcceptanceScreensWithAuthorizedLibrary]' passed (109.435 seconds).\n"
             "Simulator smoke test passed at 2026-10-09T16:00:00Z")
         photo = next(job for job in self.jobs if job["name"] == planner.BOOTSTRAP_SMOKE)
         photo["conclusion"] = "failure"; photo["steps"][1].update(conclusion="failure", number=3)
@@ -477,6 +479,25 @@ class ModerationChainedBuildRecoveryTests(unittest.TestCase):
         for changed in (self.photos_success.replace("passed (", "failed ("), self.photos_success.replace("passed at", "unfinished at"),
                         self.photos_success+self.photos_success, self.photos_success+"\n##[error]extra", self.photos_success.replace("testGrantFullPhotoLibraryAccess", "testOther")):
             self.assertFalse(planner.moderation_chained_photos_success(changed))
+
+    def test_photos_success_requires_both_ordered_cases_and_rejects_any_extra_or_incomplete_event(self):
+        lines = self.photos_success.splitlines()
+        for index in range(4):
+            with self.subTest(missing=index):
+                self.assertFalse(planner.moderation_chained_photos_success("\n".join(lines[:index]+lines[index+1:])))
+            with self.subTest(duplicate=index):
+                self.assertFalse(planner.moderation_chained_photos_success("\n".join(lines[:index]+[lines[index]]+lines[index:])))
+        for order in ((2,3,0,1,4),(0,2,1,3,4),(1,0,2,3,4),(0,1,3,2,4),(4,0,1,2,3)):
+            self.assertFalse(planner.moderation_chained_photos_success("\n".join(lines[i] for i in order)))
+        for method in ("testGrantFullPhotoLibraryAccess", "testMainlineAcceptanceScreensWithAuthorizedLibrary"):
+            for status in ("failed", "skipped", "aborted"):
+                text=self.photos_success.replace(f"{method}]' passed",f"{method}]' {status}")
+                self.assertFalse(planner.moderation_chained_photos_success(text))
+        for extra in ("Test Case '-[NekoWidgetUITests.OtherTests testUnknown]' started.",
+                      "Test Case '-[NekoWidgetUITests.PhotoPermissionUITests unknownMethod]' passed.",
+                      "Test Case '-[malformed", "ERROR: extra", "FAIL: extra", ": error: extra", "** TEST FAILED **"):
+            self.assertFalse(planner.moderation_chained_photos_success(self.photos_success+"\n"+extra))
+        self.assertFalse(planner.moderation_chained_photos_success("\n".join(lines[:2]+lines[-1:])))
 
     def test_candidate_backend_presence_and_old_proof_failure_cannot_be_hidden(self):
         for bad in ({"total_count": 1, "workflow_runs": []}, {"total_count": False, "workflow_runs": []},
