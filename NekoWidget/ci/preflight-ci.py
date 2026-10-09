@@ -335,6 +335,10 @@ def diagnostic_source_matches(source, head):
         return False
     if source == head:
         return True
+    if source == planner.MODERATION_UI_RECOVERY_PRODUCT and planner.moderation_ui_recovery_inputs(head):
+        # Exact shipping UI/test pair unchanged since this diagnostic. Only the
+        # separately approved control8 and ordinary handoffs can differ.
+        return True
     try:
         planner.git("merge-base", "--is-ancestor", source, head)
         raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head)
@@ -738,6 +742,30 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     return result
 
 
+def moderation_ui_recovery_cost(result, proof, include_upload, history):
+    if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE or not isinstance(proof, dict)
+            or proof.get("kind") != "moderation-production-ui-recovery-v1" or proof.get("candidate_sha") != result.get("head")
+            or proof.get("source_run_id") != planner.MODERATION_BUILD_CORRECTION_RUN
+            or proof.get("source_sha") != planner.MODERATION_BUILD_CORRECTION_SOURCE
+            or proof.get("native_success_reused") is not False):
+        return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    result = dict(result)
+    result["full_cost_before_recovery"] = result["cost"]
+    result["production_ui_recovery"] = proof
+    result["cost"] = {"status": "reference", "ci_minutes": [30, 40],
+        "with_upload_minutes": [round(30 + upload, 2), round(40 + upload, 2)],
+        "reference_runs": [planner.MODERATION_BUILD_CORRECTION_RUN], "source_run_conclusion": "failure",
+        "source_failed_wall_minutes": 31.8, "new_graph_full_success_observed": False,
+        "native_jobs_to_execute": list(planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)),
+        "includes_future_rework": False,
+        "note": "30-40 minutes is a planning reference from the original completed-but-failed31m48 run, not a successful baseline or timeout guarantee. Re-run all four native jobs; backend source proof is separate. Preserve every failure, active gate and elapsed minute."}
+    result["cost_review_required"] = 40 + upload > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
+
+
 def moderation_build_correction_cost(result, correction, include_upload, history):
     """Reserve the complete immutable Build timeout; do not invent an observed runtime."""
     if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE or not isinstance(correction, dict)
@@ -1090,13 +1118,17 @@ def main(argv=None):
                 recovery["control_sha"] = control_sha
             runs = read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"])
             correction = None
-            if result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
+            production = (planner.moderation_ui_recovery_evidence(result["head"], REPOSITORY,
+                lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
+                if result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_ui_recovery_inputs(result["head"]) else None)
+            if production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
+            result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,

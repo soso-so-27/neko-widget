@@ -21,6 +21,49 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class ModerationProductionUIRecoveryTests(unittest.TestCase):
+    def test_only_fixed_diagnosed_product_can_follow_approved_control_merge(self):
+        source, head = planner.MODERATION_UI_RECOVERY_PRODUCT, "a" * 40
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True):
+            self.assertTrue(preflight.diagnostic_source_matches(source, head))
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=False), \
+                patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            self.assertFalse(preflight.diagnostic_source_matches(source, head))
+            self.assertFalse(preflight.diagnostic_source_matches(planner.MODERATION_BUILD_CORRECTION_SOURCE, head))
+
+    def test_old_failures_need_real_later_diagnosis_and_keep_elapsed_active_and_cost(self):
+        now = dt.datetime(2026, 10, 9, 16, tzinfo=dt.timezone.utc)
+        head = "a" * 40
+        plan = {"head": head, "scope": planner.MODERATION_RESOLUTION_SCOPE, "target_minutes": 180,
+                "ready": False, "cost": {"status": "unmeasured", "with_upload_minutes": [None, None]}}
+        proof = {"kind": "moderation-production-ui-recovery-v1", "candidate_sha": head,
+            "source_run_id": planner.MODERATION_BUILD_CORRECTION_RUN, "source_sha": planner.MODERATION_BUILD_CORRECTION_SOURCE,
+            "native_success_reused": False}
+        result = preflight.moderation_ui_recovery_cost(plan, proof, True, {"upload_minutes": 12.183})
+        self.assertEqual(result["cost"]["status"], "reference")
+        self.assertEqual(result["cost"]["with_upload_minutes"], [42.18, 52.18])
+        self.assertFalse(result["cost"]["new_graph_full_success_observed"])
+        self.assertEqual(result["full_cost_before_recovery"], plan["cost"])
+        failed = {"id": planner.MODERATION_BUILD_CORRECTION_RUN, "head_sha": planner.MODERATION_BUILD_CORRECTION_SOURCE,
+            "created_at": "2026-10-09T14:29:30Z", "path": ".github/workflows/ios-build.yml", "event": "push",
+            "status": "completed", "conclusion": "failure", "failed_tests": [planner.MODERATION_UI_RECOVERY_CASE]}
+        self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result), [failed], now)["ready"])
+        diagnosis = {"id": 37949876378, "path": preflight.DIAGNOSTIC_WORKFLOW, "event": "workflow_dispatch",
+            "created_at": "2026-10-09T15:10:00Z", "status": "completed", "conclusion": "success", "run_attempt": 1,
+            "head_branch": "diagnostic/moderation-resolution-20261009", "head_sha": planner.MODERATION_UI_RECOVERY_PRODUCT,
+            "display_title": "UI diagnosis: " + planner.MODERATION_UI_RECOVERY_CASE,
+            "diagnostic_evidence": {"head": head, "source_sha": planner.MODERATION_UI_RECOVERY_PRODUCT, "run_attempt": 1,
+                "started_at": "2026-10-09T15:10:01Z", "job_id": 123, "results": {planner.MODERATION_UI_RECOVERY_CASE: "passed"}}}
+        ready = preflight.apply_task_gate(copy.deepcopy(result), [failed, diagnosis], now)
+        self.assertTrue(ready["ready"]); self.assertEqual(ready["task"]["failed_runs"], [failed["id"]])
+        self.assertEqual(ready["task"]["minutes_since_first_ci"], 90.5); self.assertFalse(ready["task"]["first_baseline_measurement"])
+        for change in ({"status": "in_progress"}, {"diagnostic_evidence": diagnosis["diagnostic_evidence"] | {"head": "b" * 40}},
+                {"diagnostic_evidence": diagnosis["diagnostic_evidence"] | {"results": {planner.MODERATION_UI_RECOVERY_CASE: "failed"}}}):
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result), [failed, diagnosis | change], now)["ready"])
+        self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result), [failed, diagnosis], now + dt.timedelta(hours=1))["ready"])
+        self.assertIs(preflight.moderation_ui_recovery_cost(plan, proof | {"native_success_reused": True}, False, {}), plan)
+
+
 class ModerationBuildCorrectionBudgetTests(unittest.TestCase):
     def test_full_build_timeout_is_reference_and_all_history_gates_remain(self):
         plan = {"ready": False, "head": planner.MODERATION_BUILD_CORRECTION_PRODUCT,

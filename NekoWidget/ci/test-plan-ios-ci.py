@@ -190,6 +190,137 @@ class ModerationBuildCorrectionTests(unittest.TestCase):
             self.assertEqual(planner.moderation_build_plan(output.getvalue(), self.head, self.required)["test_correction_evidence"], proof)
 
 
+class ModerationProductionUIRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        ModerationBuildCorrectionTests.setUp(self)
+        self.head = planner.MODERATION_UI_RECOVERY_PRODUCT
+        self.ui_name = planner.lane_job(planner.MODERATION_RESOLUTION_SCOPE, "app-ui")
+        for job in self.jobs:
+            if job["name"] == self.ui_name:
+                job["conclusion"] = "failure"; job["steps"][0]["conclusion"] = "failure"
+        self.jobs += [self.jobs[0] | {"id": job_id, "name": planner.UNEXPANDED_SHARING_JOB,
+            "conclusion": "skipped", "steps": []} for job_id in planner.MODERATION_UI_SOURCE_SKIPS]
+        self.ui_log = self.transcript({planner.MODERATION_UI_RECOVERY_CASE}) + '\n"header.closeButton" Button\nXCTAssertTrue failed'
+        self.candidate_index = {"total_count": 0, "workflow_runs": []}
+
+    def transcript(self, failures=frozenset()):
+        lines = []
+        for case in planner.MODERATION_RESOLUTION_TESTS:
+            name = case.removeprefix("NekoWidgetUITests/"); label = "NekoWidgetUITests." + name.replace("/", " ")
+            lines += [f"Test Case '-[{label}]' started.", f"Test Case '-[{label}]' {'failed' if name in failures else 'passed'} (1 seconds)."]
+        return "\n".join(lines)
+
+    def api(self, path):
+        if path.endswith("/workflows/ios-build.yml"):
+            return {"id": 335014238, "path": ".github/workflows/ios-build.yml", "state": "active"}
+        if "/runs?head_sha=" + self.head in path: return self.candidate_index
+        if path.endswith(f"/{planner.MODERATION_BUILD_SOURCE_JOBS[self.ui_name]}/logs"): return self.ui_log
+        return ModerationBuildCorrectionTests.api(self, path)
+
+    def prove(self):
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True), \
+                patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                patch.object(planner, "moderation_resolution_backend_evidence", return_value=self.backends):
+            return planner.moderation_ui_recovery_evidence(self.head, self.repo, self.api, self.now)
+
+    def test_shipping_recovery_never_reuses_native_and_requires_both_specific_failures(self):
+        proof = self.prove()
+        self.assertFalse(proof["native_success_reused"])
+        self.assertEqual(proof["required_native_jobs"], list(self.required))
+        self.assertEqual(len(proof["historical_native_success_job_ids"]), 2)
+        self.assertEqual(json.loads(json.dumps(proof)), proof)
+        original = copy.deepcopy(self.jobs)
+        for n, job in enumerate(original):
+            for field, value in (("conclusion", "cancelled"), ("status", "in_progress"), ("head_sha", "f" * 40),
+                    ("run_attempt", 2), ("id", 1), ("steps", [])):
+                if field == "steps" and job["id"] in planner.MODERATION_UI_SOURCE_SKIPS: continue
+                self.jobs = copy.deepcopy(original); self.jobs[n][field] = value
+                with self.subTest(job=job["name"], field=field), self.assertRaises(ValueError): self.prove()
+        self.jobs = original
+        self.ui_log = self.transcript()
+        with self.assertRaises(ValueError): self.prove()
+        self.ui_log = self.transcript({planner.MODERATION_UI_RECOVERY_CASE, "OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce"})
+        with self.assertRaises(ValueError): self.prove()
+
+    def test_no_candidate_backend_push_may_be_hidden_even_success_or_incomplete_index(self):
+        self.prove()
+        for index in ({"total_count": 1, "workflow_runs": []}, {"total_count": 0, "workflow_runs": [{}]},
+                {"total_count": 1, "workflow_runs": [{"conclusion": "success"}]},
+                {"total_count": 1, "workflow_runs": [{"status": "in_progress"}]},
+                {"total_count": 1, "workflow_runs": [{"conclusion": "failure"}]}):
+            self.candidate_index = index
+            with self.assertRaises(ValueError): self.prove()
+
+    def test_exact_two_product_pairs_controls_modes_handoffs_and_registration(self):
+        rows = {path: [":100644", "100644", *pair, "M"] for path, pair in planner.MODERATION_UI_RECOVERY_BLOBS.items()}
+        def check(values=rows, *, unapproved=False, registered=True, ancestor=True):
+            def git(*args):
+                if args[0] == "diff": return "".join(" ".join(value) + "\0" + path + "\0" for path, value in values.items())
+                if args[:2] == ("merge-base", "--is-ancestor") and not ancestor: raise subprocess.CalledProcessError(1, "git")
+                if args[0] == "merge-base": return "a" * 40
+                if args[0] == "show": return f'MODERATION_UI_RECOVERY_PRODUCT = "{self.head}"' if registered else "old"
+                if args[0] == "ls-tree": return f"100644 blob {'c' * 40 if unapproved and args[1] == self.head else 'b' * 40}\t{args[3]}"
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git): return planner.moderation_ui_recovery_inputs(self.head)
+        self.assertTrue(check()); self.assertFalse(check(unapproved=True)); self.assertFalse(check(registered=False)); self.assertFalse(check(ancestor=False))
+        for path in rows:
+            self.assertFalse(check({k: v for k, v in rows.items() if k != path}))
+            for index, value in ((0, ":100755"), (1, "120000"), (2, "c" * 40), (3, "d" * 40), (4, "D")):
+                invalid = copy.deepcopy(rows); invalid[path][index] = value; self.assertFalse(check(invalid))
+        self.assertTrue(check(rows | {"handoffs/review.md": [":000000", "100644", "0" * 40, "b" * 40, "A"]}))
+        self.assertFalse(check(rows | {"NekoWidget/Shared/Sharing/MomentSharingCore.swift": [":100644", "100644", "a" * 40, "b" * 40, "M"]}))
+
+    def test_all_new_native_jobs_steps_and_all_eleven_ui_must_execute(self):
+        proof = self.prove()
+        run = self.run | {"id": 700, "head_sha": self.head, "conclusion": "success"}
+        jobs = copy.deepcopy(self.jobs)
+        for job in jobs:
+            job.update(id=job["id"] + 1000, head_sha=self.head, run_id=700)
+            if job["name"] != planner.UNEXPANDED_SHARING_JOB:
+                job["conclusion"] = "success"
+                for step in job["steps"]: step["conclusion"] = "success"
+        record = self.record | {"head_sha": self.head, "production_ui_recovery": proof}
+        def check(values=jobs, ui_log=None):
+            def api(path):
+                if path.endswith(f"/{planner.MODERATION_BUILD_SOURCE_JOBS[planner.PLAN_JOB] + 1000}/logs"):
+                    return "IOS_CI_PLAN_JSON=" + json.dumps(record)
+                return self.transcript() if ui_log is None else ui_log
+            with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True), \
+                    patch.object(planner, "moderation_build_steps", return_value=self.build_steps), \
+                    patch.object(planner, "moderation_ui_recovery_evidence", return_value=proof):
+                return planner.covers_moderation_ui_recovery(run, self.head, self.required, api, self.now, values)
+        self.assertTrue(check())
+        for n, job in enumerate(jobs):
+            if job["name"] == planner.UNEXPANDED_SHARING_JOB: continue
+            for field, value in (("conclusion", "skipped"), ("steps", []), ("run_attempt", 2)):
+                invalid = copy.deepcopy(jobs); invalid[n][field] = value; self.assertFalse(check(invalid))
+            for step in range(len(job["steps"])):
+                invalid = copy.deepcopy(jobs); invalid[n]["steps"][step]["conclusion"] = "skipped"; self.assertFalse(check(invalid))
+        self.assertFalse(check(jobs + [jobs[0]])); self.assertFalse(check(ui_log=self.transcript({planner.MODERATION_UI_RECOVERY_CASE})))
+        self.assertFalse(check(ui_log=self.transcript().replace(" passed ", " skipped ", 1)))
+
+    def test_main_planner_runs_four_native_and_is_not_test_only_correction(self):
+        proof = self.prove()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event").write_text("{}")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/" + self.run["head_branch"],
+                "GITHUB_SHA": self.head, "GITHUB_REPOSITORY": self.repo, "GITHUB_RUN_ID": "123",
+                "GITHUB_WORKFLOW": "iOS build check", "GITHUB_SERVER_URL": "https://github.com",
+                "GITHUB_EVENT_PATH": str(root / "event"), "GITHUB_OUTPUT": str(root / "output"), "GITHUB_STEP_SUMMARY": str(root / "summary")}
+            output = io.StringIO()
+            with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                    patch.object(planner, "changed_paths", return_value=list(scope.MODERATION_RESOLUTION_PATHS | set(planner.MODERATION_UI_RECOVERY_BLOBS))), \
+                    patch.object(planner, "runtime_scope", return_value=scope.MODERATION_RESOLUTION_SCOPE), \
+                    patch.object(planner, "find_evidence", return_value=None), \
+                    patch.object(planner, "find_test_correction_evidence", side_effect=AssertionError("shipping change cannot use test-only route")), \
+                    patch.object(planner, "moderation_ui_recovery_inputs", return_value=True), \
+                    patch.object(planner, "moderation_ui_recovery_evidence", return_value=proof): planner.main()
+            flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            self.assertEqual([flags[key] for key in ("build", "smoke", "sharing", "app_ui")], ["true"] * 4)
+            record = planner.moderation_build_plan(output.getvalue(), self.head, self.required)
+            self.assertIsNone(record["test_correction_evidence"]); self.assertEqual(record["production_ui_recovery"], proof)
+
+
 class ModerationResolutionScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
@@ -208,6 +339,15 @@ class ModerationResolutionScopeTests(unittest.TestCase):
                 invalid = copy.deepcopy(rows); invalid[planner.MODERATION_RESOLUTION_BUILD_TEST][n] = value
                 self.assertEqual(self.select(invalid), scope.FULL_SCOPE)
         with patch.object(planner, "moderation_build_correction_inputs", return_value=False):
+            self.assertEqual(self.select(rows), scope.FULL_SCOPE)
+
+    def test_shipping_ui_recovery_variant_keeps_complete_four_job_scope(self):
+        rows = self.rows() | {path: [":100644", "100644", *pair, "M"] for path, pair in planner.MODERATION_UI_RECOVERY_BLOBS.items()}
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True):
+            self.assertEqual(self.select(rows), planner.MODERATION_RESOLUTION_SCOPE)
+            invalid = copy.deepcopy(rows); invalid[planner.MODERATION_RESOLUTION_EXPORT_VIEW][3] = "f" * 40
+            self.assertEqual(self.select(invalid), scope.FULL_SCOPE)
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=False):
             self.assertEqual(self.select(rows), scope.FULL_SCOPE)
 
     def select(self, rows=None, *, paths=None, raw=None, immutable=None, methods=True):
