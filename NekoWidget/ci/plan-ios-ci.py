@@ -17,7 +17,7 @@ import urllib.request
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
 from ios_ci_scope import (MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
-                          MODERATION_RESOLUTION_BUILD_TEST,
+                          MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
                           PRESERVATION_EXPORT_SCOPE, PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_BLOBS,
@@ -82,6 +82,13 @@ MODERATION_BUILD_SOURCE_JOBS = {
     lane_job(MODERATION_RESOLUTION_SCOPE, "app-ui"): 113867584031,
 }
 MODERATION_BUILD_FAILED_STEP = "Verify window entry and cover presentation"
+MODERATION_UI_RECOVERY_PRODUCT = "f448acca27305935f45ca4b5f6d5cf133e01b08e"
+MODERATION_UI_RECOVERY_BLOBS = {
+    MODERATION_RESOLUTION_BUILD_TEST: MODERATION_BUILD_CORRECTION_BLOBS,
+    MODERATION_RESOLUTION_EXPORT_VIEW: ("3f773269272db6e02e46e846b0be5f7da8db5bfd", "2f765abd8a2492435f1a87c41ae8563d55ca8891"),
+}
+MODERATION_UI_RECOVERY_CASE = "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess"
+MODERATION_UI_SOURCE_SKIPS = frozenset({113876597430, 113876597654})
 # One test-only correction: the family fixture must cancel its real share sheet
 # before terminating the app. Every other native/backend input stays identical.
 PRESERVATION_EXPORT_CORRECTION_SOURCE = "feb9c7565122406b4bf1beeba98fe8fbc0afbc07"
@@ -1968,7 +1975,10 @@ def moderation_resolution_only(paths, base, head):
                        for revision in (base, head))):
             return False
     products = MODERATION_RESOLUTION_BLOBS
-    if MODERATION_RESOLUTION_BUILD_TEST in source_paths(paths):
+    if MODERATION_RESOLUTION_EXPORT_VIEW in source_paths(paths):
+        if not moderation_ui_recovery_inputs(head): return False
+        products = products | MODERATION_UI_RECOVERY_BLOBS
+    elif MODERATION_RESOLUTION_BUILD_TEST in source_paths(paths):
         if not moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, head):
             return False
         products = products | {MODERATION_RESOLUTION_BUILD_TEST: MODERATION_BUILD_CORRECTION_BLOBS}
@@ -2055,7 +2065,7 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
-    if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS | {MODERATION_RESOLUTION_BUILD_TEST}:
+    if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS | {MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW}:
         try:
             base = comparison_base(event, env)
             if base and moderation_resolution_only(paths, base, env["GITHUB_SHA"]):
@@ -2665,6 +2675,161 @@ def covers_moderation_build_correction(run, validation_head, required, api, now,
     source = api(f"/repos/{repository}/actions/runs/{MODERATION_BUILD_CORRECTION_RUN}")
     verified = moderation_build_correction_source(source, run["head_sha"], run["head_branch"], repository, run["workflow_id"], required, api, now)
     return verified is not None and verified == correction
+
+
+def moderation_ui_recovery_inputs(head):
+    """Shipping UI change, never test-only: two exact products and approved controls."""
+    if not isinstance(head, str) or not SHA.fullmatch(head): return False
+    try:
+        git("merge-base", "--is-ancestor", MODERATION_UI_RECOVERY_PRODUCT, head)
+        git("merge-base", "--is-ancestor", MODERATION_BUILD_CORRECTION_SOURCE, MODERATION_UI_RECOVERY_PRODUCT)
+        approval = git("merge-base", head, "origin/main")
+        registration = f'MODERATION_UI_RECOVERY_PRODUCT = "{MODERATION_UI_RECOVERY_PRODUCT}"'
+        if git("show", f"{approval}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", MODERATION_BUILD_CORRECTION_SOURCE, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if not raw or len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (len(fields) != 5 or path in seen or fields[1] != "100644" or fields[4] not in {"A", "M"}
+                    or fields[0] != (":000000" if fields[4] == "A" else ":100644")
+                    or not all(SHA.fullmatch(blob) for blob in fields[2:4])
+                    or (fields[2] == "0" * 40) != (fields[4] == "A") or fields[3] == "0" * 40): return False
+            seen.add(path)
+            if path in MODERATION_UI_RECOVERY_BLOBS:
+                if fields[4] != "M" or tuple(fields[2:4]) != MODERATION_UI_RECOVERY_BLOBS[path]: return False
+            elif path in MODERATION_BUILD_CORRECTION_CONTROLS:
+                if fields[4] != "M": return False
+            elif not is_handoff(path): return False
+        if not set(MODERATION_UI_RECOVERY_BLOBS) <= seen: return False
+        for path in MODERATION_BUILD_CORRECTION_CONTROLS:
+            entry = git("ls-tree", head, "--", path)
+            if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), entry)
+                    or entry != git("ls-tree", approval, "--", path)): return False
+        return True
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def moderation_ui_results(log, failed=frozenset()):
+    if not isinstance(log, str): return False
+    expected = {test.removeprefix("NekoWidgetUITests/") for test in MODERATION_RESOLUTION_TESTS}
+    events = [(owner.removeprefix("NekoWidgetUITests.") + "/" + method, status)
+              for owner, method, status in re.findall(r"Test Case '-\[([\w.]+) (test\w+)\]' (started|passed|failed|skipped)", log)]
+    return (len(events) == 2 * len(expected) and {case for case, _ in events} == expected
+            and all([status for case, status in events if case == test] ==
+                    ["started", "failed" if test in failed else "passed"] for test in expected))
+
+
+def moderation_ui_recovery_evidence(head, repository, api, now):
+    """Retain source failures and reuse only backend evidence for this shipping correction."""
+    if repository != "soso-so-27/neko-widget" or not moderation_ui_recovery_inputs(head):
+        raise ValueError("Production UI recovery inputs/approval are invalid")
+    source_sha = MODERATION_BUILD_CORRECTION_SOURCE
+    prefix = f"/repos/{repository}/actions"
+    identity = api(f"{prefix}/workflows/ios-build.yml")
+    run = api(f"{prefix}/runs/{MODERATION_BUILD_CORRECTION_RUN}")
+    if (identity.get("id") != 335014238 or identity.get("state") != "active"
+            or identity.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("id") != MODERATION_BUILD_CORRECTION_RUN or run.get("head_sha") != source_sha
+            or run.get("workflow_id") != identity["id"] or run.get("path") != identity["path"]
+            or run.get("head_branch") != MODERATION_BUILD_CORRECTION_BRANCH or run.get("event") != "push"
+            or run.get("run_attempt") != 1 or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)):
+        raise ValueError("Production UI source identity/freshness invalid")
+    jobs = executed_jobs(run, repository, api)
+    expected_ids = set(MODERATION_BUILD_SOURCE_JOBS.values()) | MODERATION_UI_SOURCE_SKIPS
+    if len(jobs) != len(expected_ids) or {job.get("id") for job in jobs} != expected_ids:
+        raise ValueError("Production UI source graph incomplete")
+    for job in jobs:
+        if (job.get("head_sha") != source_sha or job.get("run_id") != run["id"] or job.get("run_attempt") != 1
+                or job.get("status") != "completed"): raise ValueError("Production UI source job identity mismatch")
+        if job["id"] in MODERATION_UI_SOURCE_SKIPS:
+            if job.get("name") != UNEXPANDED_SHARING_JOB or job.get("conclusion") != "skipped" or job.get("steps") != []:
+                raise ValueError("Unknown source skip")
+        elif MODERATION_BUILD_SOURCE_JOBS.get(job.get("name")) != job["id"]: raise ValueError("Unexpected source job")
+    by_name = {job["name"]: job for job in jobs if job["id"] not in MODERATION_UI_SOURCE_SKIPS}
+    runtime = lane_job(MODERATION_RESOLUTION_SCOPE, "runtime")
+    ui = lane_job(MODERATION_RESOLUTION_SCOPE, "app-ui")
+    historical = (PLAN_JOB, BOOTSTRAP_SMOKE, runtime)
+    if not covers_jobs(jobs, historical, source_sha, now): raise ValueError("Historical native success missing")
+    for name, step in ((PLAN_JOB, "Select checks"), (BOOTSTRAP_SMOKE, "Run Simulator smoke test"), (runtime, "Run sharing runtime matrix")):
+        if not moderation_steps_succeeded(by_name[name], (step,)): raise ValueError("Historical native owning step missing")
+    record = moderation_build_plan(api(f"{prefix}/jobs/{by_name[PLAN_JOB]['id']}/logs"), source_sha, required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE))
+    if record is None or record.get("test_correction_evidence") is not None or record.get("production_ui_recovery") is not None:
+        raise ValueError("Source plan is not original resolution graph")
+    for name, failed_step in ((BUILD, MODERATION_BUILD_FAILED_STEP), (ui, "Run sharing runtime matrix")):
+        job, steps = by_name[name], by_name[name].get("steps")
+        if (job.get("conclusion") != "failure" or not isinstance(steps, list)
+                or any(not isinstance(step, dict) or step.get("status") != "completed" for step in steps)
+                or [step.get("name") for step in steps if step.get("conclusion") == "failure"] != [failed_step]
+                or any(step.get("conclusion") not in {"success", "failure", "skipped"} for step in steps)):
+            raise ValueError("Source has unknown/additional failure")
+    build_steps = moderation_build_steps(); failed_index = build_steps.index(MODERATION_BUILD_FAILED_STEP)
+    for index, name in enumerate(build_steps):
+        matches = [step for step in by_name[BUILD]["steps"] if step.get("name") == name]
+        expected = "success" if index < failed_index else "failure" if index == failed_index else "skipped"
+        if len(matches) != 1 or matches[0].get("conclusion") != expected: raise ValueError("Source Build execution differs")
+    build_log = api(f"{prefix}/jobs/{by_name[BUILD]['id']}/logs")
+    ui_log = api(f"{prefix}/jobs/{by_name[ui]['id']}/logs")
+    if (not isinstance(build_log, str)
+            or re.findall(r"(?:FAIL|ERROR): ([^\r\n]+)", build_log) != ["test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)"]
+            or len(re.findall(r"Ran 9 tests in [0-9.]+s", build_log)) != 1 or build_log.count("FAILED (failures=1)") != 1
+            or "AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found" not in build_log
+            or not moderation_ui_results(ui_log, {MODERATION_UI_RECOVERY_CASE})
+            or '"header.closeButton" Button' not in ui_log or "XCTAssertTrue failed" not in ui_log):
+        raise ValueError("Known source failure transcripts differ")
+    def source_api(path):
+        value = api(path)
+        if any(entry.get("run_attempt") != 1 for entry in value.get("workflow_runs", value.get("jobs", []))):
+            raise ValueError("Backend source attempt changed")
+        return value
+    backends = moderation_resolution_backend_evidence(source_sha, repository, source_api, now, branch=MODERATION_BUILD_CORRECTION_BRANCH)
+    for workflow, expected in (("sharing-service.yml", 37944559756), ("preservation-service.yml", 37944559715)):
+        if backends[workflow]["run_id"] != expected: raise ValueError("Backend source run changed")
+        query = urllib.parse.urlencode({"head_sha": head, "event": "push", "per_page": 100})
+        index = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        if type(index.get("total_count")) is not int or index["total_count"] != 0 or index.get("workflow_runs") != []:
+            raise ValueError("Candidate backend push exists; do not hide or replace it with source evidence")
+    return {"kind": "moderation-production-ui-recovery-v1", "candidate_sha": head,
+        "source_sha": source_sha, "source_run_id": run["id"], "product_sha": MODERATION_UI_RECOVERY_PRODUCT,
+        "source_failed_jobs": [by_name[BUILD]["id"], by_name[ui]["id"]],
+        "historical_native_success_job_ids": [by_name[BOOTSTRAP_SMOKE]["id"], by_name[runtime]["id"]],
+        "native_success_reused": False, "required_native_jobs": list(required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE)),
+        "backend_evidence": backends, "candidate_backend_push_counts": {key: 0 for key in backends},
+        "fixed_product_blobs": {path: list(pair) for path, pair in MODERATION_UI_RECOVERY_BLOBS.items()},
+        "input_closure": "whole tracked raw delta: two exact products, main-approved control8, ordinary handoffs only"}
+
+
+def covers_moderation_ui_recovery(run, validation_head, required, api, now, jobs):
+    repository = "soso-so-27/neko-widget"
+    if (required != required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE)
+            or run.get("head_branch") != MODERATION_BUILD_CORRECTION_BRANCH or run.get("workflow_id") != 335014238
+            or run.get("path") != ".github/workflows/ios-build.yml" or run.get("event") != "push" or run.get("run_attempt") != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not moderation_ui_recovery_inputs(run.get("head_sha")) or not moderation_ui_recovery_inputs(validation_head)
+            or any(type(job.get("id")) is not int for job in jobs) or len({job["id"] for job in jobs}) != len(jobs)
+            or not covers_jobs(jobs, (PLAN_JOB,) + required, run["head_sha"], now)):
+        return False
+    for job in jobs:
+        if (job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"] or job.get("run_attempt") != 1
+                or job.get("name") not in set(required) | {PLAN_JOB, UNEXPANDED_SHARING_JOB}
+                or job.get("name") == UNEXPANDED_SHARING_JOB and
+                    ((job.get("status"), job.get("conclusion")) != ("completed", "skipped") or job.get("steps") != [])):
+            return False
+    by_name = {job["name"]: job for job in jobs if job["name"] != UNEXPANDED_SHARING_JOB}
+    for name in (PLAN_JOB,) + required:
+        steps = moderation_build_steps() if name == BUILD else ("Select checks",) if name == PLAN_JOB else ("Run Simulator smoke test",) if name == BOOTSTRAP_SMOKE else ("Run sharing runtime matrix",)
+        if not moderation_steps_succeeded(by_name[name], steps): return False
+    prefix = f"/repos/{repository}/actions"
+    record = moderation_build_plan(api(f"{prefix}/jobs/{by_name[PLAN_JOB]['id']}/logs"), run["head_sha"], required)
+    if record is None or record.get("test_correction_evidence") is not None: return False
+    proof = moderation_ui_recovery_evidence(run["head_sha"], repository, api, now)
+    ui = by_name[lane_job(MODERATION_RESOLUTION_SCOPE, "app-ui")]
+    return record.get("production_ui_recovery") == proof and moderation_ui_results(api(f"{prefix}/jobs/{ui['id']}/logs"))
 
 
 def preservation_export_correction_inputs(source: str, head: str) -> bool:
@@ -3630,7 +3795,10 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
             if covered and not corrected and required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
-                moderation_resolution_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
+                if moderation_ui_recovery_inputs(run["head_sha"]):
+                    covered = covers_moderation_ui_recovery(run, env["GITHUB_SHA"], required, api, now, jobs)
+                else:
+                    moderation_resolution_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered:
                 evidence_log("evidence_selected", run_id=run_id, sha=run["head_sha"])
                 return run_id, run["head_sha"]
@@ -3823,10 +3991,14 @@ def main() -> None:
         api = lambda path: github_api(env, path)
         now = dt.datetime.now(dt.timezone.utc)
         evidence = find_evidence(env, required, api, now)
+        production_ui_recovery = (moderation_ui_recovery_evidence(env["GITHUB_SHA"], env["GITHUB_REPOSITORY"], api, now)
+            if evidence is None and selected_scope == MODERATION_RESOLUTION_SCOPE
+            and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/" + MODERATION_BUILD_CORRECTION_BRANCH
+            and moderation_ui_recovery_inputs(env["GITHUB_SHA"]) else None)
         correction = (find_test_correction_evidence(
             env["GITHUB_SHA"], env["GITHUB_REF"].removeprefix("refs/heads/"),
             env["GITHUB_REPOSITORY"], required, api, now)
-            if evidence is None and env["GITHUB_EVENT_NAME"] == "push"
+            if evidence is None and production_ui_recovery is None and env["GITHUB_EVENT_NAME"] == "push"
             and env["GITHUB_REF"].startswith("refs/heads/codex/") else None)
     except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
         evidence_log("lookup_blocked", reason="evidence_lookup_failed", error=type(error).__name__)
@@ -3861,12 +4033,14 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"required_backend_runs": moderation_resolution_requirements(
-              MODERATION_BUILD_CORRECTION_SOURCE if moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, env["GITHUB_SHA"])
+              MODERATION_BUILD_CORRECTION_SOURCE if production_ui_recovery is not None or moderation_ui_recovery_inputs(env["GITHUB_SHA"])
+                  or moderation_build_correction_inputs(MODERATION_BUILD_CORRECTION_SOURCE, env["GITHUB_SHA"])
               else evidence[1] if evidence else env["GITHUB_SHA"])}
            if selected_scope == MODERATION_RESOLUTION_SCOPE else {}),
         "evidence_run_id": evidence[0] if evidence else None,
         "evidence_sha": evidence[1] if evidence else None,
         "test_correction_evidence": correction,
+        **({"production_ui_recovery": production_ui_recovery} if production_ui_recovery is not None else {}),
     }, separators=(",", ":")))
     summary = f"## iOS CI plan\n\nCommit: `{env['GITHUB_SHA']}`\n\nScope: `{scope}`.\n\n"
     if evidence is not None:

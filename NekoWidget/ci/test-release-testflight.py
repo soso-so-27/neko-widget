@@ -794,6 +794,34 @@ class ReleaseTests(unittest.TestCase):
         self.assertLess(source.index("Verify the requested main commit"), source.index("Install distribution certificate"))
 
 
+class ModerationProductionUIRecoveryReleaseTests(unittest.TestCase):
+    def test_full_native_release_requires_explicit_shipping_proof_and_original_backend_sha(self):
+        fixture = ReleaseTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        planner = release.planner
+        fixture.run.update(head_branch=planner.MODERATION_BUILD_CORRECTION_BRANCH, path=".github/workflows/ios-build.yml", run_attempt=1)
+        fixture.plan.update(scope=planner.MODERATION_RESOLUTION_SCOPE,
+            required_jobs=list(planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)),
+            required_backend_runs=planner.moderation_resolution_requirements(planner.MODERATION_BUILD_CORRECTION_SOURCE))
+        fixture.set_plan()
+        proof = {"kind": "moderation-production-ui-recovery-v1", "native_success_reused": False,
+                 "backend_evidence": {"source_sha": planner.MODERATION_BUILD_CORRECTION_SOURCE}}
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True), \
+                patch.object(planner, "covers_moderation_ui_recovery", return_value=True) as verify, \
+                patch.object(planner, "moderation_ui_recovery_evidence", return_value=proof), \
+                patch.object(planner, "moderation_resolution_backend_evidence", side_effect=AssertionError("must use bounded source proof")):
+            result = release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+            self.assertEqual(result["production_ui_recovery"], proof)
+            self.assertEqual(result["tested_sha"], fixture.sha)
+            self.assertEqual(verify.call_args.args[1], fixture.sha)
+        with patch.object(planner, "moderation_ui_recovery_inputs", return_value=True), \
+                patch.object(planner, "covers_moderation_ui_recovery", return_value=False), self.assertRaises(release.Blocked):
+            release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+        key = "actions/runs/20/jobs?filter=latest&per_page=100&page=1"
+        fixture.gh.values[key]["jobs"][1]["conclusion"] = "skipped"
+        with self.assertRaises(release.Blocked): release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+        self.assertEqual(fixture.gh.dispatches, [])
+
+
 class ModerationBuildCorrectionReleaseTests(unittest.TestCase):
     def test_direct_release_requires_fixed_full_build_graph_and_reports_original_backend_sha(self):
         fixture = ReleaseTests()
