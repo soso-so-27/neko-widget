@@ -5,6 +5,8 @@ import { base64urlEncode } from "../src/encoding";
 import { ModerationAccessJwksCache, verifyCloudflareAccessJWT, type CloudflareAccessAuthenticationOptions } from "../src/moderation-operator-auth";
 import { deriveModerationOperatorCaseReference } from "../src/moderation-operator-case-reference";
 import { routeLocalModerationOperatorTriage, type LocalModerationTriageEnvironment } from "../src/moderation-operator-triage-local";
+import { runDurableModerationAdvisory } from "../src/moderation-ai-durable";
+import { routeModerationOperatorRequest } from "../src/moderation-operator-worker";
 
 const db = (env as unknown as { DB: D1Database }).DB;
 beforeEach(async () => {
@@ -119,11 +121,28 @@ async function fixture(): Promise<Fixture> {
     { reportId, caseReferenceHmacKeyVersion: 1 }, crypto.getRandomValues(new Uint8Array(32)),
   )).caseReferenceHmac;
   const lineage = crypto.randomUUID();
+  const id = () => base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+  const sha = () => base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const owner=id(),receiver=id(),ownerDevice=id(),receiverDevice=id(),moment=id();
   await db.batch([
     db.prepare("INSERT INTO moment_space_lineages(id, created_at) VALUES (?, unixepoch())").bind(lineage),
-    db.prepare(`INSERT INTO moment_report_tombstones(report_id, lineage_id, dedupe_key, moderation_key_id,
-      reason_code, committed_at, content_expires_at) VALUES (?, ?, ?, 'moderation-v1', 'privacy', unixepoch(), unixepoch() + 604800)`)
-      .bind(reportId, lineage, crypto.randomUUID()),
+    db.prepare("INSERT INTO moment_spaces(space_id,lineage_id,state,created_at,updated_at) VALUES (?,?,'active',?,?)").bind(lineage,lineage,now,now),
+    ...[owner,receiver].map((p,i)=>db.prepare("INSERT INTO moment_participants(id,space_id,role,state,created_at,activated_at) VALUES (?, ?, ?, 'active',?,?)").bind(p,lineage,i===0?'owner':'member',now,now)),
+    ...[[owner,ownerDevice],[receiver,receiverDevice]].map(([p,d])=>db.prepare("INSERT INTO moment_devices(id,participant_id,agreement_public_key,signing_public_key,state,created_at,activated_at) VALUES (?,?,?,?,'active',?,?)").bind(d!,p!,sha(),sha(),now,now)),
+    db.prepare(`INSERT INTO moments(id,client_moment_id,space_id,sender_participant_id,sender_device_id,kind,key_epoch,state,
+      object_key,ciphertext_size,ciphertext_sha256,client_moderation_version,sender_policy_version,sender_policy_accepted_at,
+      quota_day_key,quota_counted,reservation_attempt,reserve_request_hash,created_at,upload_expires_at,uploaded_at,committed_at,unreceived_expires_at)
+      VALUES (?,?,?,?,?,'live',1,'committed',?,32,?,1,1,?,1,0,1,?,?,?, ?,?,?)`)
+      .bind(moment,crypto.randomUUID(),lineage,owner,ownerDevice,`moments/${moment}`,sha(),now,sha(),now,now+3600,now,now,now+604800),
+    db.prepare("INSERT INTO moment_deliveries(moment_id,recipient_participant_id,state,created_at,access_expires_at) VALUES (?,?,'pending',?,?)").bind(moment,receiver,now,now+604800),
+    db.prepare(`INSERT INTO moment_reports(id,moment_id,space_id,lineage_id,reporter_participant_id,reporter_device_id,
+      accused_participant_id,reason_code,moderation_key_id,state,object_key,ciphertext_size,ciphertext_sha256,
+      reporter_consent_version,reporter_consented_at,quota_day_key,reserve_request_hash,dedupe_key,created_at,upload_expires_at)
+      VALUES (?,?,?,?,?,?,?,'privacy','moderation-v1','reserved',?,32,?,1,?,1,?,?,?,?)`)
+      .bind(reportId,moment,lineage,lineage,receiver,receiverDevice,owner,`reports/${reportId}`,sha(),now,sha(),sha(),now,now+3600),
+    db.prepare("UPDATE moment_reports SET state='uploaded',uploaded_at=? WHERE id=?").bind(now,reportId),
+    db.prepare("INSERT INTO moment_report_commit_events(id,report_id,reporter_participant_id,committed_at,content_expires_at) VALUES (?,?,?,?,?)")
+      .bind(crypto.randomUUID(),reportId,receiver,now,now+604800),
     db.prepare(`INSERT INTO moderation_operator_versioned_case_references(report_id, case_reference_hmac,
       case_reference_hmac_key_version, derivation_protocol_version, derivation_domain)
       VALUES (?, ?, 1, 1, 'NW.MODERATION-OPERATOR.CASE-REFERENCE')`).bind(reportId, caseReference),
@@ -188,6 +207,83 @@ function withBatchHook(test: Fixture, hook: (ordinal: number, statements: D1Prep
 }
 
 describe("local authenticated moderation triage", () => {
+  it("provides a data-free CSP console only locally; production never exposes it", async () => {
+    const test = await fixture();
+    const response = await routeLocalModerationOperatorTriage(new Request(origin+'/operator/console'), test.local);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('通報の確認');
+    for (const secret of [test.token,test.reportId,test.caseReference,test.credentialDigest]) expect(html).not.toContain(secret);
+    const nonce = /script nonce="([a-f0-9]{32})"/.exec(html)![1];
+    expect(response.headers.get('Content-Security-Policy')).toContain(`script-src 'nonce-${nonce}'`);
+    expect(response.headers.get('Content-Security-Policy')).toContain("connect-src 'self'");
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await count('moderation_operator_access_audit_starts')).toBe(0);
+    expect((await routeLocalModerationOperatorTriage(new Request(origin+'/operator/console'), {...test.local,environment:'production'})).status).toBe(503);
+    expect(routeModerationOperatorRequest(new Request(origin+'/operator/console'), {OPERATOR_RUNTIME_ENABLED:'YES'}).status).toBe(404);
+  });
+
+  it("uses authenticated audited POST read without weakening the GET Origin boundary", async () => {
+    const test = await fixture();
+    const response = await routeLocalModerationOperatorTriage(test.request('/operator/v1/cases/read','POST'),test.local);
+    expect(response.status).toBe(200);
+    const value = await response.json();
+    expect(value).toMatchObject({cases:[{caseReferenceHmac:test.caseReference,evidenceAvailable:1,advisoryReason:'not_requested',advisoryPriority:'preserve'}]});
+    expect(JSON.stringify(value)).not.toContain(test.reportId);
+    const readAudit=await db.prepare("SELECT request_sha256 FROM moderation_operator_access_audit_starts").first<{request_sha256:string}>();
+    expect(readAudit!.request_sha256).toBe(await hex(encoder.encode(JSON.stringify(['NW.MODERATION-OPERATOR.TRIAGE-REQUEST.v1','POST','/operator/v1/cases/read']))));
+    for(const [path,method,body,headers] of [
+      ['/operator/v1/cases/read','POST',undefined,{Origin:'https://foreign.invalid'}],
+      ['/operator/v1/cases/read','POST','{}',{}],
+      ['/operator/v1/cases/read?x=1','POST',undefined,{}],
+      ['/operator/v1/cases','GET',undefined,{Origin:''}],
+      ['/operator/v1/cases/read','POST',undefined,{'Cf-Access-Jwt-Assertion':''}],
+    ] as const)expect((await routeLocalModerationOperatorTriage(test.request(path,method,body,headers),test.local)).status).toBeGreaterThanOrEqual(400);
+    expect(await count('moderation_operator_access_audit_starts')).toBe(1);
+    await db.prepare("INSERT INTO moderation_operator_role_events(operator_id,role_code,event_type) VALUES (?,'triage','revoked')").bind(test.operatorId).run();
+    expect((await routeLocalModerationOperatorTriage(test.request('/operator/v1/cases/read','POST'),test.local)).status).toBe(403);
+  });
+
+  it("shows only current AI metadata and retains expired cases without stale hints", async () => {
+    const test=await fixture();
+    const ref={caseReferenceHmac:test.caseReference,caseReferenceHmacKeyVersion:1};
+    await runDurableModerationAdvisory(db,ref,{safetyRoute:'child_safety_hold'},{apiKey:'unused-local'});
+    const read=async()=> (await routeLocalModerationOperatorTriage(test.request('/operator/v1/cases/read','POST'),test.local)).json();
+    expect(await read()).toMatchObject({cases:[{evidenceAvailable:1,advisoryReason:'child_safety_hold',advisoryPriority:'raise'}]});
+    await runDurableModerationAdvisory(db,ref,{safetyRoute:'unreviewed'},{apiKey:'unused-local'});
+    expect(await read()).toMatchObject({cases:[{advisoryReason:'safety_route_unreviewed',advisoryPriority:'preserve'}]});
+    await db.prepare("UPDATE moment_reports SET state='expired',closed_at=unixepoch() WHERE id=?").bind(test.reportId).run();
+    expect(await read()).toMatchObject({cases:[{evidenceAvailable:0,advisoryReason:'not_requested',reviewState:'unreviewed'}]});
+    expect(await count('moderation_operator_challenges')).toBe(0);
+    expect(await count('moderation_case_events')).toBe(0);
+  });
+
+  it("pages beyond twenty cases without skipping equal deadlines or admitting a foreign origin", async () => {
+    const test=await fixture();
+    for(let index=0;index<21;index++) {
+      const report=base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+      const reference=(await deriveModerationOperatorCaseReference({reportId:report,caseReferenceHmacKeyVersion:1},new Uint8Array(32).fill(9))).caseReferenceHmac;
+      await db.batch([
+        db.prepare(`INSERT INTO moment_report_tombstones(report_id,lineage_id,dedupe_key,moderation_key_id,reason_code,committed_at,content_expires_at)
+          SELECT ?,lineage_id,?,'moderation-v1','privacy',committed_at,content_expires_at FROM moment_report_tombstones WHERE report_id=?`)
+          .bind(report,crypto.randomUUID(),test.reportId),
+        db.prepare(`INSERT INTO moderation_operator_versioned_case_references(report_id,case_reference_hmac,case_reference_hmac_key_version,derivation_protocol_version,derivation_domain)
+          VALUES (?,?,1,1,'NW.MODERATION-OPERATOR.CASE-REFERENCE')`).bind(report,reference),
+      ]);
+    }
+    const first=await (await routeLocalModerationOperatorTriage(test.request('/operator/v1/cases/read','POST'),test.local))
+      .json<{cases:{reviewDueAt:number;caseReferenceHmac:string}[];hasMore:boolean}>();
+    expect(first.cases).toHaveLength(20);expect(first.hasMore).toBe(true);
+    const cursor=first.cases.at(-1)!;const path=`/operator/v1/cases/read/${cursor.reviewDueAt}/${cursor.caseReferenceHmac}`;
+    const second=await (await routeLocalModerationOperatorTriage(test.request(path,'POST'),test.local))
+      .json<{cases:{caseReferenceHmac:string}[];hasMore:boolean}>();
+    expect(second.cases).toHaveLength(2);expect(second.hasMore).toBe(false);
+    const expected=await db.prepare('SELECT case_reference_hmac FROM moderation_operator_versioned_case_references ORDER BY case_reference_hmac').all<{case_reference_hmac:string}>();
+    expect([...first.cases,...second.cases].map(x=>x.caseReferenceHmac)).toEqual(expected.results.map(x=>x.case_reference_hmac));
+    expect((await routeLocalModerationOperatorTriage(test.request(path,'POST',undefined,{Origin:'https://foreign.invalid'}),test.local)).status).toBe(403);
+    expect((await routeLocalModerationOperatorTriage(test.request('/operator/v1/cases/read/9999999999/'+test.caseReference,'POST'),test.local)).status).toBe(404);
+  });
+
   it("runs a real Access/WebAuthn/D1 review start without granting export or decision", async () => {
     const test = await fixture();
     const queue = await routeLocalModerationOperatorTriage(test.request("/operator/v1/cases"), test.local);
@@ -251,7 +347,10 @@ describe("local authenticated moderation triage", () => {
     const result = await routeLocalModerationOperatorTriage(test.request("/operator/v1/cases"), test.local);
     const text = await result.clone().text();
     for (const secret of [test.reportId, unboundReport, test.token, test.operatorId, test.credentialDigest]) expect(text).not.toContain(secret);
+    const due = await db.prepare('SELECT review_due_at FROM moderation_cases WHERE report_id=?')
+      .bind(test.reportId).first<{review_due_at:number}>();
     expect(await result.json()).toEqual({ cases: [{ caseReferenceHmac: test.caseReference,
+      reviewDueAt: due!.review_due_at, evidenceAvailable: 1, advisoryReason: 'not_requested', advisoryPriority: 'preserve',
       reviewState: "unreviewed", slaExceeded: 0, pendingFinalization: 0 }], hasMore: false, unboundCases: 1 });
     expect(await count("moderation_case_events")).toBe(0);
   });
