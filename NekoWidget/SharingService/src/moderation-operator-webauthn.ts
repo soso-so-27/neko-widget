@@ -1,7 +1,11 @@
 import {
   verifyAuthenticationResponse,
+  verifyRegistrationResponse,
   type AuthenticationResponseJSON,
+  type RegistrationResponseJSON,
+  type AuthenticatorTransportFuture,
 } from "@simplewebauthn/server";
+import { isoCBOR } from "@simplewebauthn/server/helpers";
 
 export const MODERATION_OPERATOR_WEBAUTHN_FAILURE_CODE =
   "operator_webauthn_verification_failed" as const;
@@ -579,6 +583,266 @@ export async function verifyPreparedModerationOperatorWebAuthnAssertion(
         || info.authenticatorExtensionResults !== undefined) fail();
     const newCounter = uint32(info.newCounter);
     return Object.freeze({ assertionSHA256: internal.assertionSHA256, newCounter });
+  } catch {
+    fail();
+  }
+}
+
+export const MODERATION_OPERATOR_REGISTRATION_POLICY =
+  "es256-single-device-none-or-packed-self-v1" as const;
+
+const MAX_REGISTRATION_CANONICAL_BYTES = 16_384;
+const MAX_ATTESTATION_OBJECT_BYTES = 8_192;
+const ATTESTED_CREDENTIAL_OFFSET = 55;
+const REGISTRATION_AUTHENTICATOR_FLAGS = 0x45; // UP | UV | AT only
+const registrationTransports: readonly AuthenticatorTransportFuture[] = [
+  "ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb",
+];
+
+export interface PrepareModerationOperatorWebAuthnRegistrationOptions {
+  /** Compact browser projection, not an HTTP body parser. Unknown fields reject. */
+  response: unknown;
+  /** Trusted server policy, never request-selected or evidence of Access identity. */
+  expectedOrigin: string;
+  expectedRPID: string;
+  /** Digest of a server-generated 32-byte enrollment challenge. */
+  expectedChallengeSHA256: string;
+}
+
+declare const preparedRegistrationBrand: unique symbol;
+
+/**
+ * Unverified preflight digest backed by private, copied state. Verification
+ * consumes this object once in this isolate, including on signature failure.
+ * It does not consume a durable challenge or enforce expiry, identity or roles.
+ */
+export interface PreparedModerationOperatorWebAuthnRegistration {
+  readonly registrationSHA256: string;
+  readonly [preparedRegistrationBrand]: true;
+}
+
+/**
+ * Cryptographic result only: neither none nor packed self-attestation establishes
+ * trusted hardware or a real human. none has no attestation signature at all.
+ * The credential is deliberately nested: admission and storage require a separate
+ * authorized, durable ceremony. Raw ID/client data/attestation are not returned.
+ */
+export interface UnadmittedModerationOperatorWebAuthnRegistration {
+  readonly kind: "unadmitted-operator-registration";
+  readonly registrationSHA256: string;
+  readonly credential: Readonly<ModerationOperatorStoredCredential>;
+  readonly publicKeyCoseSHA256: string;
+  readonly authenticatorAAGUIDSHA256: string;
+  readonly attestationPolicy: typeof MODERATION_OPERATOR_REGISTRATION_POLICY;
+  readonly attestationFormat: "none" | "packed";
+  readonly selfAttestationSignatureVerified: boolean;
+  readonly hardwareProvenanceVerified: false;
+  readonly realHumanVerified: false;
+  readonly enrollmentAdmissionAuthorized: false;
+}
+
+interface PreparedRegistrationInternals {
+  response: RegistrationResponseJSON;
+  expectedOrigin: string;
+  expectedRPID: string;
+  challenge: string;
+  format: "none" | "packed";
+  counter: number;
+  publicKeyCose: Uint8Array<ArrayBuffer>;
+  credentialIdSHA256: string;
+  publicKeyCoseSHA256: string;
+  authenticatorAAGUIDSHA256: string;
+  registrationSHA256: string;
+}
+
+const preparedRegistrationInternals = new WeakMap<object, PreparedRegistrationInternals>();
+
+function exactRegistrationMap(
+  value: unknown,
+  keys: readonly (string | number)[],
+): asserts value is Map<string | number, unknown> {
+  if (!(value instanceof Map) || value.size !== keys.length
+      || keys.some((key) => !value.has(key))) fail();
+}
+
+function validatedRegistrationResponse(value: unknown): {
+  response: RegistrationResponseJSON;
+  credentialIdBytes: Uint8Array;
+  clientDataBytes: Uint8Array;
+  attestationBytes: Uint8Array<ArrayBuffer>;
+} {
+  if (!isPlainRecord(value)) fail();
+  exactOwnKeys(value, ["id", "rawId", "type", "response", "clientExtensionResults"], [
+    "authenticatorAttachment",
+  ]);
+  const id = canonicalBase64url(value.id, 1, MAX_CREDENTIAL_ID_BYTES);
+  if (value.rawId !== id.value || value.type !== "public-key") fail();
+  if (!isPlainRecord(value.clientExtensionResults)) fail();
+  exactOwnKeys(value.clientExtensionResults, []);
+  const attachment = value.authenticatorAttachment;
+  if (attachment !== undefined && attachment !== "platform" && attachment !== "cross-platform") fail();
+  if (!isPlainRecord(value.response)) fail();
+  // Browser-derived publicKey/authenticatorData/algorithm fields are not authority.
+  exactOwnKeys(value.response, ["clientDataJSON", "attestationObject"], ["transports"]);
+  const suppliedTransports = value.response.transports;
+  let transports: AuthenticatorTransportFuture[] | undefined;
+  if (suppliedTransports !== undefined) {
+    if (!Array.isArray(suppliedTransports) || suppliedTransports.length > registrationTransports.length) fail();
+    transports = [];
+    for (const transport of suppliedTransports) {
+      if (typeof transport !== "string"
+          || !registrationTransports.includes(transport as AuthenticatorTransportFuture)) fail();
+      transports.push(transport as AuthenticatorTransportFuture);
+    }
+    if (new Set(transports).size !== transports.length) fail();
+  }
+  const client = canonicalBase64url(value.response.clientDataJSON, 2, MAX_CLIENT_DATA_BYTES);
+  const attestation = canonicalBase64url(value.response.attestationObject, 3, MAX_ATTESTATION_OBJECT_BYTES);
+  return {
+    response: {
+      id: id.value, rawId: id.value, type: "public-key", clientExtensionResults: {},
+      response: {
+        clientDataJSON: client.value, attestationObject: attestation.value,
+        ...(transports === undefined ? {} : { transports }),
+      },
+      ...(attachment === undefined ? {} : { authenticatorAttachment: attachment }),
+    },
+    credentialIdBytes: id.bytes,
+    clientDataBytes: client.bytes,
+    attestationBytes: new Uint8Array(attestation.bytes),
+  };
+}
+
+/**
+ * Strict local registration preflight; no route, storage or admission is wired.
+ * Reuses assertion origin/client-data/COSE rules. Actual authenticator support
+ * and client attestation preference require a separately reviewed browser policy.
+ */
+export async function prepareModerationOperatorWebAuthnRegistration(
+  options: PrepareModerationOperatorWebAuthnRegistrationOptions,
+): Promise<PreparedModerationOperatorWebAuthnRegistration> {
+  try {
+    if (!isPlainRecord(options)) fail();
+    exactOwnKeys(options as unknown as Record<string, unknown>, [
+      "response", "expectedOrigin", "expectedRPID", "expectedChallengeSHA256",
+    ]);
+    const scope = validateExpectedScope(options.expectedOrigin, options.expectedRPID);
+    const expectedChallengeDigest = hexToBytes(sha256HexValue(options.expectedChallengeSHA256));
+    // Snapshot every caller-owned field before the first await.
+    const validated = validatedRegistrationResponse(options.response);
+    const client = new StrictClientDataParser(fatalDecoder.decode(validated.clientDataBytes)).parse();
+    if (client.type !== "webauthn.create" || client.origin !== scope.origin) fail();
+    const challenge = canonicalBase64url(client.challenge, 32, 32);
+    if (!constantTimeEqual(await sha256(challenge.bytes), expectedChallengeDigest)) fail();
+    const decoded = isoCBOR.decodeFirst<unknown>(validated.attestationBytes);
+    exactRegistrationMap(decoded, ["fmt", "authData", "attStmt"]);
+    // The decoder is general-purpose. Exact round-trip also rejects duplicate,
+    // noncanonical and trailing CBOR content before invoking the verifier.
+    if (!constantTimeEqual(
+      isoCBOR.encode(decoded as Parameters<typeof isoCBOR.encode>[0]),
+      validated.attestationBytes,
+    )) fail();
+    const format = decoded.get("fmt");
+    const auth = decoded.get("authData");
+    const statement = decoded.get("attStmt");
+    if (!(auth instanceof Uint8Array) || auth.length < ATTESTED_CREDENTIAL_OFFSET + 1
+        || auth.length > ATTESTED_CREDENTIAL_OFFSET + MAX_CREDENTIAL_ID_BYTES + MAX_COSE_PUBLIC_KEY_BYTES
+        || auth[FLAGS_OFFSET] !== REGISTRATION_AUTHENTICATOR_FLAGS) fail();
+    if (!constantTimeEqual(auth.subarray(0, 32), await sha256(encoder.encode(scope.rpID)))) fail();
+    const counter = uint32(new DataView(auth.buffer, auth.byteOffset + COUNTER_OFFSET, 4).getUint32(0, false));
+    const credentialLength = new DataView(auth.buffer, auth.byteOffset + 53, 2).getUint16(0, false);
+    if (credentialLength < 1 || credentialLength > MAX_CREDENTIAL_ID_BYTES
+        || ATTESTED_CREDENTIAL_OFFSET + credentialLength >= auth.length) fail();
+    if (!constantTimeEqual(
+      auth.subarray(ATTESTED_CREDENTIAL_OFFSET, ATTESTED_CREDENTIAL_OFFSET + credentialLength),
+      validated.credentialIdBytes,
+    )) fail();
+    const publicKeyCose = copyBytes(auth.subarray(ATTESTED_CREDENTIAL_OFFSET + credentialLength),
+      MIN_COSE_PUBLIC_KEY_BYTES, MAX_COSE_PUBLIC_KEY_BYTES);
+    new StrictCBORCursor(publicKeyCose).parseES256PublicKey();
+    if (format === "none") {
+      exactRegistrationMap(statement, []);
+    } else if (format === "packed") {
+      exactRegistrationMap(statement, ["alg", "sig"]);
+      const signature = statement.get("sig");
+      if (statement.get("alg") !== -7 || !(signature instanceof Uint8Array)
+          || signature.length < MIN_ES256_SIGNATURE_BYTES || signature.length > MAX_ES256_SIGNATURE_BYTES) fail();
+    } else fail();
+    // none verifies no signature, so validate the P-256 point independently too.
+    const cose = isoCBOR.decodeFirst<unknown>(publicKeyCose);
+    exactRegistrationMap(cose, [1, 3, -1, -2, -3]);
+    const x = cose.get(-2); const y = cose.get(-3);
+    if (!(x instanceof Uint8Array) || !(y instanceof Uint8Array)) fail();
+    const raw = new Uint8Array(65); raw[0] = 4; raw.set(x, 1); raw.set(y, 33);
+    await crypto.subtle.importKey("raw", raw, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    const canonical = encoder.encode(JSON.stringify({
+      policy: MODERATION_OPERATOR_REGISTRATION_POLICY, response: validated.response,
+    }));
+    if (canonical.length > MAX_REGISTRATION_CANONICAL_BYTES) fail();
+    const registrationSHA256 = bytesToHex(await sha256(canonical));
+    const prepared = Object.freeze({ registrationSHA256 }) as unknown as PreparedModerationOperatorWebAuthnRegistration;
+    preparedRegistrationInternals.set(prepared, {
+      response: validated.response, expectedOrigin: scope.origin, expectedRPID: scope.rpID,
+      challenge: challenge.value, format, counter, publicKeyCose, registrationSHA256,
+      credentialIdSHA256: bytesToHex(await sha256(validated.credentialIdBytes)),
+      publicKeyCoseSHA256: bytesToHex(await sha256(publicKeyCose)),
+      authenticatorAAGUIDSHA256: bytesToHex(await sha256(auth.subarray(37, 53))),
+    });
+    return prepared;
+  } catch {
+    fail();
+  }
+}
+
+/**
+ * Consumes the opaque prepared object before invoking registration verification.
+ * Re-preparing the same response is possible: durable replay/expiry, Access
+ * identity, role and approval checks must precede any future admission.
+ */
+export async function verifyPreparedModerationOperatorWebAuthnRegistration(
+  prepared: PreparedModerationOperatorWebAuthnRegistration,
+): Promise<UnadmittedModerationOperatorWebAuthnRegistration> {
+  try {
+    if (prepared === null || typeof prepared !== "object") fail();
+    const internal = preparedRegistrationInternals.get(prepared);
+    if (internal === undefined) fail();
+    preparedRegistrationInternals.delete(prepared);
+    const result = await verifyRegistrationResponse({
+      response: internal.response,
+      expectedChallenge: internal.challenge,
+      expectedOrigin: internal.expectedOrigin,
+      expectedRPID: internal.expectedRPID,
+      expectedType: "webauthn.create",
+      supportedAlgorithmIDs: [-7],
+      requireUserPresence: true,
+      requireUserVerification: true,
+    });
+    if (!result.verified) fail();
+    const info = result.registrationInfo;
+    if (info.credential.id !== internal.response.id || info.origin !== internal.expectedOrigin
+        || info.rpID !== internal.expectedRPID || info.fmt !== internal.format
+        || info.credentialType !== "public-key" || info.userVerified !== true
+        || info.credentialDeviceType !== "singleDevice" || info.credentialBackedUp !== false
+        || info.authenticatorExtensionResults !== undefined
+        || info.credential.counter !== internal.counter
+        || !constantTimeEqual(info.credential.publicKey, internal.publicKeyCose)) fail();
+    return Object.freeze({
+      kind: "unadmitted-operator-registration",
+      registrationSHA256: internal.registrationSHA256,
+      credential: Object.freeze({
+        credentialIdSHA256: internal.credentialIdSHA256,
+        publicKeyCose: new Uint8Array(internal.publicKeyCose),
+        counter: internal.counter,
+      }),
+      publicKeyCoseSHA256: internal.publicKeyCoseSHA256,
+      authenticatorAAGUIDSHA256: internal.authenticatorAAGUIDSHA256,
+      attestationPolicy: MODERATION_OPERATOR_REGISTRATION_POLICY,
+      attestationFormat: internal.format,
+      selfAttestationSignatureVerified: internal.format === "packed",
+      hardwareProvenanceVerified: false,
+      realHumanVerified: false,
+      enrollmentAdmissionAuthorized: false,
+    });
   } catch {
     fail();
   }
