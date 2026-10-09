@@ -1,3 +1,8 @@
+## 2026-10-09 通報写真のsource照合と隔離復号
+
+- versioned caseからDBの正しいreport metadataを取得し、削除待ち・期限切れを拒否する内部adapterと、Node隔離復号をそのsourceへ束縛する部品を追加。詳細は [記録](2026-10-09-moderation-review-evidence.md)。
+- 合成暗号/表示検証と本番権限を分離。content-readの本人grant/一回署名scope、最終判断・返答はまだ接続前。production Worker/実画像/AI通信/課金/配布対象は不変、native247の再配布は不要。
+
 # 現在のタスクと優先順位
 
 ## 2026-10-09 通報確認のローカル画面
