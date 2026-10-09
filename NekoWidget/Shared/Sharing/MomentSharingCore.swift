@@ -107,7 +107,7 @@ struct MomentReportResponsesPage: Decodable, Sendable {
               cursor == nil || Self.isCursor(cursor!),
               responses.allSatisfy({ row in
                   Self.isCursor(row.id) && row.id != cursor
-                    && PairingValidation.isOpaqueIdentifier(row.reportID)
+                    && PrivateWindowNameSyncProtocol.isOpaqueIdentifier(row.reportID)
                     && row.createdAt > 0 && row.expiresAt > row.createdAt
                     && Double(row.createdAt) <= now.timeIntervalSince1970
                         + MomentSharingProtocol.maximumRelayClockSkewSeconds
