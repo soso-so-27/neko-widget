@@ -625,7 +625,7 @@ def photo_correction_replay_cost(result, correction, include_upload, history):
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_OWNER_FLOW_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.BILLING_LOCAL_PREPARATION_SCOPE):
@@ -664,6 +664,10 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
         if selected == planner.MODERATION_AI_DURABLE_SCOPE:
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeouts_minutes": dict(planner.MODERATION_AI_DURABLE_JOB_TIMEOUTS),
+                    "note": "First measurement of all four same-SHA Sharing push jobs and the automatically triggered Preservation job. Their 5/10/10/20/5 minute timeouts are not observed durations or a queue/total-time guarantee."}
+        if selected == planner.MODERATION_OWNER_FLOW_SCOPE:
+            return {"status": "unmeasured", "samples": [],
+                    "measurement_job_timeouts_minutes": dict(planner.MODERATION_OWNER_FLOW_JOB_TIMEOUTS),
                     "note": "First measurement of all four same-SHA Sharing push jobs and the automatically triggered Preservation job. Their 5/10/10/20/5 minute timeouts are not observed durations or a queue/total-time guarantee."}
         if selected == planner.MODERATION_REVIEW_EVIDENCE_SCOPE:
             return {"status": "unmeasured", "samples": [],
@@ -775,6 +779,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.MODERATION_ENROLLMENT_SCOPE else
               planner.moderation_ai_durable_reason(head)
               if selected == planner.MODERATION_AI_DURABLE_SCOPE else
+              "Exact local owner review, signed no_action decision, saved reporter reply and migration; public/disabled entrypoints and crypto stay fixed; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
+              if selected == planner.MODERATION_OWNER_FLOW_SCOPE else
               "Exact local review DB snapshot, Node ciphertext binding and tests with one package test suffix; existing crypto, public and disabled operator entrypoints remain fixed; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
               if selected == planner.MODERATION_REVIEW_EVIDENCE_SCOPE else
               "Exact local moderation console, local triage and integration tests; public and disabled operator entrypoints remain fixed; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
@@ -809,6 +815,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                if selected == planner.MODERATION_ENROLLMENT_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_ai_durable_requirements(head)}
                if selected == planner.MODERATION_AI_DURABLE_SCOPE else {}),
+            **({"required_backend_runs": planner.moderation_owner_flow_requirements(head)}
+               if selected == planner.MODERATION_OWNER_FLOW_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_review_evidence_requirements(head)}
                if selected == planner.MODERATION_REVIEW_EVIDENCE_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_console_requirements(head)}

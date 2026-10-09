@@ -530,6 +530,104 @@ MODERATION_ENROLLMENT_JOB_TIMEOUTS = {
 MODERATION_ENROLLMENT_JOBS = tuple(MODERATION_ENROLLMENT_JOB_TIMEOUTS)
 
 
+# Exact local owner read/no_action decision/reply, migration and owning checks.
+# Complete18-path product pin; public/disabled entrypoints and crypto stay fixed.
+MODERATION_OWNER_FLOW_SCOPE = "moderation-owner-flow-v1"
+MODERATION_OWNER_FLOW_BLOBS = {
+    "NekoWidget/SharingService/migrations/0031_moderation_owner_flow.sql": (
+        "0000000000000000000000000000000000000000", "dca28e3506c7cbfb0347961370b73804da2fcbf9"),
+    "NekoWidget/SharingService/package.json": (
+        "de42f7aa9fa6eee6edee295fe212be307b99f0aa", "acba8c0d598a0ae9ba32e9169fc9ec49dac74ee6"),
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": (
+        "5db483e71e8b05b652edff3c609939c70a90245e", "ba673e772c1239747b325393af315d4138126b43"),
+    "NekoWidget/SharingService/scripts/moderation-owner-review-host.mjs": (
+        "0000000000000000000000000000000000000000", "c5116996231ef4af9dc647c8470ec4c2451e26b1"),
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": (
+        "df97e0531fef9de6e0e8876909700fae1b081f6f", "0cf5c0eeee8cd44af93b28ac205a527735544bca"),
+    "NekoWidget/SharingService/src/moderation-operator-console.ts": (
+        "0763ce38fe60a1000aa64ed3917c9f35617e96ff", "4ab861f87d096387a0d1ae84d224d7842854e99b"),
+    "NekoWidget/SharingService/src/moderation-operator-identity.ts": (
+        "0000000000000000000000000000000000000000", "8f18c5a99be3218182d743ceee14b627456105cc"),
+    "NekoWidget/SharingService/src/moderation-operator-triage-local.ts": (
+        "1361a7c41d0faae81d06b39c9f7d3ce0831766c2", "e3f300e141418cf7b0ff5a3824589479d6fbdc00"),
+    "NekoWidget/SharingService/src/moderation-owner-browser.ts": (
+        "0000000000000000000000000000000000000000", "596c2f10c47a9f6b797feeedab1e2e051f302977"),
+    "NekoWidget/SharingService/src/moderation-owner-console.ts": (
+        "0000000000000000000000000000000000000000", "0400b6856d111f48c13b1608c668f76b60fe26df"),
+    "NekoWidget/SharingService/src/moderation-owner-local.ts": (
+        "0000000000000000000000000000000000000000", "4fa477e34b456d5a26e4713df0f4e13a55495080"),
+    "NekoWidget/SharingService/src/moderation-review-binding.ts": (
+        "0000000000000000000000000000000000000000", "acd1267768536f395894c3c40bad71f571bebe66"),
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs": (
+        "5cabdaee5ba4fd7bbb36528026931c11321f2a5f", "1db4e89ea35816c40f92c53dc8968340cd5cfdbe"),
+    "NekoWidget/SharingService/test/fixtures/moderation-operator.ts": (
+        "0000000000000000000000000000000000000000", "d9896f894d489ed119a94e38f817f4d79b163d94"),
+    "NekoWidget/SharingService/test/moderation-operator-triage.integration.test.ts": (
+        "8996d6c4653081a096165309a9ed1a15ba6724ce", "4bc5039cd3ddd84fb78161069a1fc552fe3e1bcc"),
+    "NekoWidget/SharingService/test/moderation-owner-flow.test.ts": (
+        "0000000000000000000000000000000000000000", "fd6b7c73ba72787e15486085148662053a73be5e"),
+    "NekoWidget/SharingService/test/moderation-owner-review-host.node-tests.mjs": (
+        "0000000000000000000000000000000000000000", "09aded641e92a8aa8da0430d1b41376da18c94d4"),
+    "NekoWidget/SharingService/test/moderation-owner.integration.test.ts": (
+        "0000000000000000000000000000000000000000", "264ff54d275ddab79ad7adf46ff4141036e13e8c"),
+}
+MODERATION_OWNER_FLOW_MODIFIED_PATHS = frozenset((
+    "NekoWidget/SharingService/package.json",
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs",
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs",
+    "NekoWidget/SharingService/src/moderation-operator-console.ts",
+    "NekoWidget/SharingService/src/moderation-operator-triage-local.ts",
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs",
+    "NekoWidget/SharingService/test/moderation-operator-triage.integration.test.ts",
+))
+MODERATION_OWNER_FLOW_PATHS = frozenset(MODERATION_OWNER_FLOW_BLOBS)
+MODERATION_OWNER_FLOW_WORKFLOW = ".github/workflows/sharing-service.yml"
+MODERATION_OWNER_FLOW_WORKFLOW_BLOBS = {
+    MODERATION_OWNER_FLOW_WORKFLOW: "8038107503651173741b1502aa3e836a2cb2790a",
+    PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+}
+MODERATION_OWNER_FLOW_INPUT_BLOBS = {
+    "NekoWidget/SharingService/src/index.ts": "55b3b5131ccf67df8f5e167abbdeaf216991ab72",
+    "NekoWidget/SharingService/src/moderation-operator-worker.ts": "6e72b99b16a093f7f83b0d13fe50e6e7ad57b7ec",
+    "NekoWidget/SharingService/wrangler.jsonc": "66333343d7aeb71bb64c1de76ba5205d82989f25",
+    "NekoWidget/SharingService/wrangler.moderation-operator.disabled.jsonc": "da7c48551cd1db4f90033ac01d6285cd135a5b2e",
+    "NekoWidget/SharingService/package-lock.json": "33b3fad11913776e790374c165bea00ce938232f",
+    "NekoWidget/SharingService/vitest.config.ts": "4f676f517cb2481e5ad6cc076457e18dd9180a9a",
+    "NekoWidget/SharingService/test/setup.ts": "9d7bef258a554d026d8253159997bd3e154415b2",
+    "NekoWidget/SharingService/scripts/moderation-report-lib.mjs": "1450993f3bd0183c6faf8cab9919effea37689a9",
+    "NekoWidget/SharingService/scripts/moderation-report-tool.mjs": "f6e5603be92fc8bef73e2b7f97170418fd24d579",
+    "NekoWidget/SharingService/test/moderation-report-tool.node-tests.mjs": "d915e3dcb89c78988d823dc380e04d599a3a3486",
+    "NekoWidget/SharingService/test/moderation-report-windows-boundary.node-tests.mjs": "de598d77063b3e177a68175913c8e4bdb19f0dd9",
+    "NekoWidget/SharingService/src/encoding.ts": "80953281b1d4823bcca2728b2490d4083f69f700",
+    "NekoWidget/SharingService/migrations/0003_append_only_moments.sql": "751f131b511cdd5dab52bada39cebee4c4e714e9",
+    "NekoWidget/SharingService/migrations/0012_moderation_case_lifecycle.sql": "8ead7ad4aa37849ce85c7bd0eaf73bc777fa0f1f",
+    "NekoWidget/SharingService/migrations/0018_moderation_operator_case_reference_binding.sql": "662edd000130325944440352a44e48702f6596ec",
+    "NekoWidget/SharingService/migrations/0030_moderation_advisory_jobs.sql": "9eccf8ef17e074b90505126ff25c49c2afeeff31",
+    "NekoWidget/SharingService/src/moderation-operator-auth.ts": "64946255c70caeef181699b51e12c8bb4c0c2970",
+    "NekoWidget/SharingService/src/moderation-operator-webauthn.ts": "33b4201b20fb7077815e3dbe6b2aac23f5ee1aee",
+    "NekoWidget/SharingService/src/moderation-operator-case-reference.ts": "24201118902d513b7ecf4706a9367d00716f4d29",
+    "NekoWidget/SharingService/src/moderation-evidence-export.ts": "baea9219c50f1d857f09a8771110e09a5086b8c1",
+    "NekoWidget/SharingService/src/moderation-review-source.ts": "96fff2fdbc641f79089f7b6e35a007ad9c5b3192",
+    "NekoWidget/SharingService/scripts/moderation-bound-review-lib.mjs": "55ad1ceb205fddd5d3e4f85354625a563083a3a4",
+    "NekoWidget/SharingService/test/moderation-bound-review.node-tests.mjs": "5ac92957287a6d11c22c5f0275ea68f5dcec493c",
+    "NekoWidget/SharingService/test/moderation-review-source.test.ts": "f862d8d385042c3ba6bc151e6eb60b1fb313e122",
+    "NekoWidget/SharingService/migrations/0013_moderation_operator_control_plane.sql": "18001937269dc39abcb6e123dc227e686927c10d",
+    "NekoWidget/SharingService/migrations/0014_moderation_evidence_ledger.sql": "e68eec69b1e91a40352f0c849d40b02ab8ff9add",
+    "NekoWidget/SharingService/migrations/0015_moderation_operator_routes.sql": "e25d6e6078e5fba09fa629badb13ee2e5b52fccd",
+    "NekoWidget/SharingService/migrations/0016_moderation_operator_access_audit.sql": "a99ff8f96b252a10b2926495c710fef3f2231af5",
+    "NekoWidget/SharingService/migrations/0017_moderation_operator_enrollment_trust.sql": "a508ca77ec3e23ee0981d7f8f56780444d2ec187",
+}
+MODERATION_OWNER_FLOW_INPUT_PATHS = frozenset(MODERATION_OWNER_FLOW_INPUT_BLOBS)
+MODERATION_OWNER_FLOW_JOB_TIMEOUTS = {
+    "Select backend checks": 5,
+    "Typecheck, test, and build Apple transaction verifier": 10,
+    "Windows moderation key, drill, and report policy fixtures": 10,
+    "Typecheck, test, and bundle Worker": 20,
+    PRESERVATION_JOB: 5,
+}
+MODERATION_OWNER_FLOW_JOBS = tuple(MODERATION_OWNER_FLOW_JOB_TIMEOUTS)
+
+
 # Exact local DB source / isolated Node review binding and owning tests.
 # Exact package check suffix plus four additions; no crypto/entrypoint mutation.
 MODERATION_REVIEW_EVIDENCE_SCOPE = "moderation-review-evidence-v1"
@@ -1145,6 +1243,40 @@ def moderation_ai_durable_reason(head):
             + "; no native, live-cloud or release evidence")
 
 
+def moderation_owner_flow_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_OWNER_FLOW_PATHS
+            and all(path in MODERATION_OWNER_FLOW_PATHS or is_handoff(path) for path in paths))
+
+
+def moderation_owner_flow_backend_only(paths, base, head):
+    if (not moderation_owner_flow_paths_only(paths)
+            or set(MODERATION_OWNER_FLOW_BLOBS) != MODERATION_OWNER_FLOW_PATHS
+            or not all(len(pair) == 2 and SHA.fullmatch(pair[0]) and pair[0] != pair[1]
+                       and (pair[0] != "0" * 40) == (path in MODERATION_OWNER_FLOW_MODIFIED_PATHS)
+                       and SHA.fullmatch(pair[1]) and pair[1] != "0" * 40
+                       for path, pair in MODERATION_OWNER_FLOW_BLOBS.items())
+            or set(MODERATION_OWNER_FLOW_WORKFLOW_BLOBS) != {MODERATION_OWNER_FLOW_WORKFLOW, PRESERVATION_WORKFLOW}
+            or set(MODERATION_OWNER_FLOW_INPUT_BLOBS) != MODERATION_OWNER_FLOW_INPUT_PATHS):
+        return False
+    for workflow, blob in (MODERATION_OWNER_FLOW_WORKFLOW_BLOBS | MODERATION_OWNER_FLOW_INPUT_BLOBS).items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", workflow)
+                       != f"100644 blob {blob}\t{workflow}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=MODERATION_OWNER_FLOW_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="MODERATION_OWNER_FLOW_COMPANION_DIGESTS")
+
+
+def moderation_owner_flow_requirements(head):
+    # Four Sharing jobs plus the automatically triggered Preservation job.
+    # Every owning push must succeed at this SHA; a plan is not proof.
+    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_OWNER_FLOW_WORKFLOW,
+             "job": job, "head_sha": head, "event": "push", "success_required": True}
+            for job in MODERATION_OWNER_FLOW_JOBS]
+
+
 def moderation_review_evidence_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == MODERATION_REVIEW_EVIDENCE_PATHS
@@ -1500,6 +1632,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PRESERVATION_JOB,)
     if runtime_scope == MODERATION_ENROLLMENT_SCOPE and moderation_enrollment_paths_only(paths):
         return MODERATION_ENROLLMENT_JOBS
+    if runtime_scope == MODERATION_OWNER_FLOW_SCOPE and moderation_owner_flow_paths_only(paths):
+        return MODERATION_OWNER_FLOW_JOBS
     if runtime_scope == MODERATION_REVIEW_EVIDENCE_SCOPE and moderation_review_evidence_paths_only(paths):
         return MODERATION_REVIEW_EVIDENCE_JOBS
     if runtime_scope == MODERATION_CONSOLE_SCOPE and moderation_console_paths_only(paths):
@@ -1947,7 +2081,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((MODERATION_REVIEW_EVIDENCE_SCOPE, moderation_review_evidence_paths_only, moderation_review_evidence_backend_only),
+    for selected, matches, verify in ((MODERATION_OWNER_FLOW_SCOPE, moderation_owner_flow_paths_only, moderation_owner_flow_backend_only),
+                                       (MODERATION_REVIEW_EVIDENCE_SCOPE, moderation_review_evidence_paths_only, moderation_review_evidence_backend_only),
                                        (MODERATION_CONSOLE_SCOPE, moderation_console_paths_only, moderation_console_backend_only),
                                        (MODERATION_AI_DURABLE_SCOPE, moderation_ai_durable_paths_only, moderation_ai_durable_backend_only),
                                        (MODERATION_AI_TRANSPORT_SCOPE, moderation_ai_transport_paths_only, moderation_ai_transport_backend_only),
@@ -3197,7 +3332,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -3222,6 +3357,8 @@ def main() -> None:
                  if selected_scope == MODERATION_ENROLLMENT_SCOPE else {}),
               **({"required_backend_runs": moderation_ai_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_AI_SCOPE else {}),
+              **({"required_backend_runs": moderation_owner_flow_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_OWNER_FLOW_SCOPE else {}),
               **({"required_backend_runs": moderation_review_evidence_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_REVIEW_EVIDENCE_SCOPE else {}),
               **({"required_backend_runs": moderation_console_requirements(env["GITHUB_SHA"])}
@@ -3248,6 +3385,13 @@ def main() -> None:
                                        for row in moderation_ai_durable_requirements(env["GITHUB_SHA"]))
                            + ". This plan does not certify their success. "
                            "The Sharing Worker job must apply the full local D1 migration chain and execute the durable integration tests. Mac jobs are not requested. Not production migration, iOS release or live AI evidence.\n")
+            elif selected_scope == MODERATION_OWNER_FLOW_SCOPE:
+                summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
+                           "push at the same candidate SHA: "
+                           + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
+                                       for row in moderation_owner_flow_requirements(env["GITHUB_SHA"]))
+                           + ". This plan does not certify their success. "
+                           "The Sharing Worker applies all local D1 migrations and checks owner boundaries; existing Node policy and isolated-host tests execute. Mac jobs are not requested. Not a live owner grant, production migration, delivery or iOS release.\n")
             elif selected_scope == MODERATION_REVIEW_EVIDENCE_SCOPE:
                 summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
                            "push at the same candidate SHA: "
