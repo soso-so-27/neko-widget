@@ -34,6 +34,7 @@ struct MomentChange: Sendable {
     let committedAt: Date
     let accessExpiresAt: Date
     let deliveryState: String
+    var moderation: MomentModerationStatus = .unrestricted
 }
 
 struct MomentChangesResult: Sendable {
@@ -766,7 +767,8 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
                 ciphertextSHA256: hash,
                 committedAt: Date(timeIntervalSince1970: TimeInterval(value.moment.committedAt)),
                 accessExpiresAt: Date(timeIntervalSince1970: TimeInterval(value.moment.accessExpiresAt)),
-                deliveryState: value.moment.deliveryState
+                deliveryState: value.moment.deliveryState,
+                moderation: value.moment.moderation
             )
         }
         return MomentChangesResult(changes: changes, nextCursor: nextCursor)
@@ -1045,6 +1047,18 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
                 timeIntervalSince1970: TimeInterval(response.report.contentExpiresAt)
             )
         )
+    }
+
+    func reportResponses(after cursor: String?, pairingState: PairingState,
+                         credential: PairingCredential) async throws -> MomentReportResponsesPage {
+        guard cursor == nil || MomentReportResponsesPage.isCursor(cursor!) else {
+            throw MomentSharingError.invalidPayload
+        }
+        let path = "/v2/reports/responses" + (cursor.map { "/\($0)" } ?? "")
+        let response: MomentReportResponsesPage = try await send(path: path, method: "GET",
+            body: Data(), contentType: nil, maximumResponseBytes: 256 * 1_024,
+            pairingState: pairingState, credential: credential)
+        return try response.validated(after: cursor)
     }
 
     private func sendJSON<Request: Encodable, Response: Decodable>(
@@ -1376,6 +1390,27 @@ private struct ChangesResponse: Decodable {
             let committedAt: Int
             let accessExpiresAt: Int
             let deliveryState: String
+            let moderation: MomentModerationStatus
+
+            private enum CodingKeys: String, CodingKey {
+                case id, clientMomentId, senderParticipantId, kind, keyEpoch
+                case ciphertextSize, ciphertextSHA256, committedAt, accessExpiresAt, deliveryState
+            }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                id = try values.decode(String.self, forKey: .id)
+                clientMomentId = try values.decode(String.self, forKey: .clientMomentId)
+                senderParticipantId = try values.decode(String.self, forKey: .senderParticipantId)
+                kind = try values.decode(String.self, forKey: .kind)
+                keyEpoch = try values.decode(Int.self, forKey: .keyEpoch)
+                ciphertextSize = try values.decode(Int.self, forKey: .ciphertextSize)
+                ciphertextSHA256 = try values.decode(String.self, forKey: .ciphertextSHA256)
+                committedAt = try values.decode(Int.self, forKey: .committedAt)
+                accessExpiresAt = try values.decode(Int.self, forKey: .accessExpiresAt)
+                deliveryState = try values.decode(String.self, forKey: .deliveryState)
+                moderation = try MomentModerationStatus(from: decoder)
+            }
         }
         let cursor: String
         let sequence: Int?

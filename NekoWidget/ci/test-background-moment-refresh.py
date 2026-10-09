@@ -90,6 +90,17 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("didReceiveRemoteNotification", self.service)
         self.assertIn("didReceive response: UNNotificationResponse", self.service)
 
+    def test_moderation_fixture_suppresses_real_identity_and_export_lifecycle(self) -> None:
+        flag = 'CommandLine.arguments.contains("--moderation-resolution-ui-fixture")'
+        debug_guard = self.service.split(
+            "private static var suppressesNormalServicesForDebugLaunch: Bool {", 1
+        )[1].split("#endif", 1)[0]
+        self.assertIn(flag, debug_guard)
+        launch_debug = self.app.split("init() {", 1)[1].split("#else", 1)[0]
+        self.assertIn("&& !" + flag, launch_debug)
+        onboarding_reset = self.app.split("if !BillingInternalDiagnosticsLaunch.isActive,", 1)[1]
+        self.assertLess(onboarding_reset.index("!" + flag), onboarding_reset.index("defaults.removeObject"))
+
     def test_background_sync_is_eligible_and_fail_closed(self) -> None:
         eligibility = self.service.split(
             "static func isEligible(", 1

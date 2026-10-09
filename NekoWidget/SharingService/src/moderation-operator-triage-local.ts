@@ -1,5 +1,6 @@
 import { actorSQL, guard, admitSession, type Actor } from "./moderation-operator-identity";
 import { routeLocalModerationOwner, type LocalOwnerReviewHost } from "./moderation-owner-local";
+import { routeLocalModerationResolution } from "./moderation-resolution-local";
 import { base64urlEncode } from "./encoding";
 import {
   authenticateCloudflareAccessRequest,
@@ -103,6 +104,9 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
     env.db.prepare(`SELECT reference.case_reference_hmac AS caseReferenceHmac,
       reference.case_reference_hmac_key_version AS caseReferenceHmacKeyVersion,
       cases.review_due_at AS reviewDueAt,
+      EXISTS (SELECT 1 FROM moderation_resolution_case_states state
+        WHERE state.case_reference_hmac=reference.case_reference_hmac
+          AND state.case_reference_hmac_key_version=reference.case_reference_hmac_key_version AND state.operation='hide') AS restrictionActive,
       EXISTS (SELECT 1 FROM moderation_advisory_live_sources AS source
         WHERE source.case_reference_hmac=reference.case_reference_hmac) AS evidenceAvailable,
       CASE WHEN advisory.job_id IS NULL THEN 'not_requested'
@@ -127,6 +131,7 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
       WHERE NOT EXISTS (SELECT 1 FROM moderation_case_events AS event
         WHERE event.report_id = cases.report_id AND event.event_type = 'review_decided')
         AND NOT EXISTS (SELECT 1 FROM moderation_owner_decisions WHERE case_reference_hmac=reference.case_reference_hmac)
+        AND NOT EXISTS (SELECT 1 FROM moderation_resolution_case_states WHERE case_reference_hmac=reference.case_reference_hmac AND operation='no_action')
         AND (cases.review_due_at > ? OR (cases.review_due_at = ? AND reference.case_reference_hmac > ?))
       ORDER BY cases.review_due_at, reference.case_reference_hmac LIMIT 21`).bind(afterDue, afterDue, afterReference),
     env.db.prepare(`SELECT COUNT(*) AS unboundCases FROM moderation_cases AS cases
@@ -264,7 +269,8 @@ export async function routeLocalModerationOperatorTriage(request: Request, env: 
   }
   try {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/operator/owner/")) return routeLocalModerationOwner(request, env);
+  if (url.pathname.startsWith("/operator/resolution/")) return routeLocalModerationResolution(request, env);
+  if (url.pathname.startsWith("/operator/owner/")) return routeLocalModerationOwner(request, env);
     // Public, data-free LOCAL shell. Protected case data is fetched separately
     // through the same Access/actor/audit gate below. Never deployed by Worker.
     if (request.method === "GET" && url.pathname === "/operator/console"

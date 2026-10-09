@@ -23,6 +23,7 @@ struct NekoWidgetApp: App {
         let shouldRunLaunchCleanup = !BillingInternalDiagnosticsLaunch.isActive
             && !CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")
             && !CommandLine.arguments.contains("--photo-window-ui-fixture")
+            && !CommandLine.arguments.contains("--moderation-resolution-ui-fixture")
 #else
         let shouldRunLaunchCleanup = true
 #endif
@@ -45,6 +46,7 @@ struct NekoWidgetApp: App {
         if !BillingInternalDiagnosticsLaunch.isActive,
            !CommandLine.arguments.contains("--cat-profile-photo-flow-fixture"),
            !CommandLine.arguments.contains("--photo-window-ui-fixture"),
+           !CommandLine.arguments.contains("--moderation-resolution-ui-fixture"),
            ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
             let defaults = UserDefaults.standard
             defaults.removeObject(
@@ -63,6 +65,12 @@ struct NekoWidgetApp: App {
 #if DEBUG
             if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
+            } else if CommandLine.arguments.contains("--moderation-resolution-ui-fixture") {
+#if targetEnvironment(simulator)
+                ModerationResolutionUIFixture()
+#else
+                Color.clear
+#endif
             } else if CommandLine.arguments.contains("--managed-preservation-membership-ui-fixture") {
                 ManagedPreservationMembershipFixture()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {

@@ -2320,7 +2320,8 @@ final class AppViewModel: ObservableObject {
                 imageURL: validatedReceivedMomentImageURL(for: item),
                 committedAt: item.committedAt,
                 receivedAt: item.receivedAt,
-                changeSequence: item.changeSequence
+                changeSequence: item.changeSequence,
+                moderationHidden: state.isModerationHidden(item.id)
             )
         }
     }

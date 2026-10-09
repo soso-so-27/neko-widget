@@ -597,7 +597,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("heartExpiresAt: current.item.accessExpiresAt", builder)
 
         entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
-        self.assertIn("case needsApp", entry)
+        self.assertIn("let emptyStateReason: WidgetEmptyStateReason", entry)
+        reason = section(reader, "enum WidgetEmptyStateReason:", "enum WidgetManifestReader")
+        self.assertEqual([line.strip().removeprefix("case ") for line in reason.splitlines()
+                          if line.strip().startswith("case ")],
+                         ["none", "waiting", "needsApp", "sourceUnavailable"])
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn('return "写真を表示できません"', view)
@@ -1642,7 +1646,16 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertEqual(publication.count("focusedFullBleedPlan("), 3)
         self.assertIn("let catBoundingBox = Self.familyCatBoundingBox", publication)
         self.assertIn("VNRecognizeAnimalsRequest()", builder)
-        self.assertIn("family-widget-v3-cat-focused-full-bleed", builder)
+        self.assertIn("item.familyWidgetSourceDigest", builder)
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        digest = section(store, "var familyWidgetSourceDigest: String", "func validated() throws -> Self")
+        self.assertIn("family-widget-v3-cat-focused-full-bleed", digest)
+        self.assertIn("committedAt.timeIntervalSinceReferenceDate.bitPattern", digest)
+        self.assertIn("receivedAt.timeIntervalSinceReferenceDate.bitPattern", digest)
+        self.assertIn("PairingCrypto.sha256(Data(identity.utf8))", digest)
+        widget_gate = section(store, "static func isFamilyWidgetCacheVisible", "static func isLocalSharedImageVisible")
+        self.assertIn("item.familyWidgetSourceDigest", widget_gate)
+        self.assertIn("!state.isModerationHidden(item.id)", widget_gate)
         self.assertNotIn("family-widget-v2-full-bleed-bookmark", builder)
         self.assertIn("momentID: current.item.id", publication)
 
@@ -2104,6 +2117,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # the same refresh, even when no heart or window-name request has ended.
         self.assertIn(
             "if photoState.inbox != localSharingState.inbox\n"
+            "                    || photoState.moderationOverlays != localSharingState.moderationOverlays\n"
             "                    || photoState.outbox != localSharingState.outbox\n"
             "                    || photoState.outgoingOutcomes != localSharingState.outgoingOutcomes {",
             photo,
@@ -3882,7 +3896,18 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "static func completeMemoryImport(",
             "/// Removes only a stale mapping",
         )
-        self.assertIn("static let schemaVersion = 9", store)
+        sharing_state = section(store, "struct MomentSharingState:", "mutating func normalizePersistedDiagnosticErrors")
+        self.assertIn("static let schemaVersion = 10", sharing_state)
+        self.assertIn("var moderationOverlays: [MomentModerationOverlay]", sharing_state)
+        self.assertIn("if decodedSchema >= 10", sharing_state)
+        self.assertIn("decode([MomentModerationOverlay].self, forKey: .moderationOverlays)", sharing_state)
+        self.assertIn("overlay.status.revision > 0 || overlay.downloadHidden", sharing_state)
+        overlay = section(sharing_state, "mutating func applyModeration", "@discardableResult")
+        self.assertIn("moderationOverlays[index].committedAt == committedAt", overlay)
+        self.assertIn("moderationOverlays[index].apply(status, downloadHidden: downloadHidden)", overlay)
+        self.assertNotIn("removeAll", overlay)
+        self.assertNotIn("removeItem", overlay)
+        self.assertNotIn("state = .revoked", overlay)
         self.assertIn("momentID", record)
         self.assertIn("photoLocalIdentifier", record)
         self.assertIn("importedAt", record)

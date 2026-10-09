@@ -42,7 +42,10 @@ enum WidgetCacheImageLoader {
             )
             return nil
         }
-        return decodedImage(data: data, maximumPixelSize: maximumPixelSize, fileHash: fileHash)
+        let image = decodedImage(data: data, maximumPixelSize: maximumPixelSize, fileHash: fileHash)
+        guard WidgetManifestReader.cacheURL(for: cacheFilename,
+            photoSourceIdentifier: photoSourceIdentifier) == fileURL else { return nil }
+        return image
     }
 
     /// Both real cache files and explicitly injected Gallery cache JPEGs use

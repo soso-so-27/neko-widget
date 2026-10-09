@@ -679,6 +679,97 @@ require(MomentOutboxRetryPolicy.shouldAttempt(lastErrorCode: "window-support-req
 require(!MomentOutboxRetryPolicy.shouldAttempt(lastErrorCode: "window-support-unavailable", retryAt: Date().addingTimeInterval(60),
     awaitingReservation: true, explicitlyCheckingSupport: true, now: Date()), "uncertain support bypassed its backoff")
 require(!(supportUnknown.localizedDescription.contains("private payer")), "payer information reached client copy")
+let legacyModeration = try JSONDecoder().decode(MomentModerationStatus.self, from: Data("{}".utf8))
+require(legacyModeration == .unrestricted, "legacy moderation pair was not preserved")
+for invalid in [
+    #"{"moderationRevision":1}"#, #"{"moderationHidden":false}"#,
+    #"{"moderationRevision":null,"moderationHidden":false}"#,
+    #"{"moderationRevision":1,"moderationHidden":null}"#,
+    #"{"moderationRevision":true,"moderationHidden":false}"#,
+    #"{"moderationRevision":1,"moderationHidden":1}"#,
+    #"{"moderationRevision":-1,"moderationHidden":false}"#,
+    #"{"moderationRevision":0,"moderationHidden":true}"#,
+    #"{"moderationRevision":1.5,"moderationHidden":false}"#,
+    #"{"moderationRevision":9007199254740992,"moderationHidden":false}"#
+] {
+    do {
+        _ = try JSONDecoder().decode(MomentModerationStatus.self, from: Data(invalid.utf8))
+        fatalError("malformed moderation pair was accepted")
+    } catch {}
+}
+let parsedModeration = try JSONDecoder().decode(MomentModerationStatus.self,
+    from: Data(#"{"moderationRevision":2,"moderationHidden":true}"#.utf8))
+var overlay = MomentModerationOverlay(momentID: "overlay_fixture", status: parsedModeration,
+    downloadHidden: false, committedAt: capturedAt)
+try overlay.apply(MomentModerationStatus(revision: 1, hidden: false))
+require(overlay.isHidden && overlay.status.revision == 2, "stale release reopened a hidden copy")
+try overlay.apply(MomentModerationStatus(revision: 2, hidden: false))
+require(overlay.isHidden, "conflicting equal revision reopened a hidden copy")
+try overlay.apply(MomentModerationStatus(revision: 3, hidden: false))
+require(!overlay.isHidden, "new release did not restore the overlay")
+try overlay.apply(overlay.status, downloadHidden: true)
+try overlay.apply(.unrestricted)
+try overlay.apply(MomentModerationStatus(revision: 3, hidden: false))
+require(overlay.isHidden && overlay.status.revision == 3, "404 uncertainty was cleared by an old snapshot")
+let persistedOverlay = try JSONDecoder().decode(MomentModerationOverlay.self,
+    from: JSONEncoder().encode(overlay))
+require(persistedOverlay == overlay && persistedOverlay.isHidden, "404 uncertainty was not durable")
+try overlay.apply(MomentModerationStatus(revision: 4, hidden: false))
+require(!overlay.isHidden, "newer release did not clear 404 uncertainty")
+let responseNow = Date(timeIntervalSince1970: 1_800_000_000)
+let responseID = "11111111-1111-4111-8111-111111111111"
+let responseRow: [String: Any] = ["id": responseID, "reportId": "report_fixture",
+    "templateCode": "hide", "createdAt": 1_799_999_900, "expiresAt": 1_800_000_100]
+func responsePage(_ rows: [[String: Any]], cursor: String, more: Bool = false, version: Int = 2) throws -> MomentReportResponsesPage {
+    let data = try JSONSerialization.data(withJSONObject: ["protocolVersion": version,
+        "responses": rows, "hasMore": more, "nextCursor": cursor])
+    return try JSONDecoder().decode(MomentReportResponsesPage.self, from: data)
+}
+let response = try responsePage([responseRow], cursor: responseID).validated(after: nil, now: responseNow)
+require(response.responses[0].templateCode.message == "通報いただいた共有写真を一時的に非表示にしました。",
+    "report response did not use the fixed template")
+let responseDeadline = responseNow.addingTimeInterval(1)
+require(response.responses[0].isVisible(reportOnlyUntil: responseDeadline, now: responseNow),
+    "report response closed before its known report-only deadline")
+// No model update, notification or network result: only the clock advances.
+for clock in [responseDeadline, responseDeadline.addingTimeInterval(1)] {
+    require(!MomentReportResponse.isReadWindowOpen(reportOnlyUntil: responseDeadline, now: clock)
+        && !response.responses[0].isVisible(reportOnlyUntil: responseDeadline, now: clock),
+        "known report-only expiry retained response text or read permission")
+}
+require(response.responses[0].isVisible(reportOnlyUntil: nil, now: responseNow)
+    && !response.responses[0].isVisible(reportOnlyUntil: responseNow.addingTimeInterval(1_000),
+        now: Date(timeIntervalSince1970: Double(response.responses[0].expiresAt))),
+    "report response did not use the earlier response/authorization expiry")
+_ = try responsePage([], cursor: "").validated(after: nil, now: responseNow)
+for template in ["hide", "release", "no_action"] {
+    var row = responseRow; row["templateCode"] = template
+    _ = try responsePage([row], cursor: responseID).validated(after: nil, now: responseNow)
+}
+var unknownTemplate = responseRow; unknownTemplate["templateCode"] = "sender supplied prose"
+var badExpiry = responseRow; badExpiry["expiresAt"] = 1_799_999_900
+var futureReply = responseRow; futureReply["createdAt"] = 1_800_000_301; futureReply["expiresAt"] = 1_800_000_500
+var badReport = responseRow; badReport["reportId"] = "another/report"
+for invalid in [
+    ([responseRow, responseRow], responseID, false, 2),
+    ([responseRow], "", false, 2),
+    ([], "", true, 2),
+    ([responseRow], responseID, false, 1),
+    ([unknownTemplate], responseID, false, 2),
+    ([badExpiry], responseID, false, 2),
+    ([futureReply], responseID, false, 2),
+    ([badReport], responseID, false, 2)
+] {
+    do {
+        _ = try responsePage(invalid.0, cursor: invalid.1, more: invalid.2, version: invalid.3)
+            .validated(after: nil, now: responseNow)
+        fatalError("malformed report response was accepted")
+    } catch {}
+}
+do {
+    _ = try response.validated(after: responseID, now: responseNow)
+    fatalError("report response cursor did not advance")
+} catch {}
 print("Moment sharing core verifier passed")
 }
 }

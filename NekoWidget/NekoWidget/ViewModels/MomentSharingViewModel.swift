@@ -48,6 +48,18 @@ final class MomentSharingViewModel: ObservableObject {
     private var photoProgressSpaceID: String?
     private var photoProgressExpiryTask: Task<Void, Never>?
     private var photoProgressExpiry: Date?
+#if DEBUG
+    private var moderationUIResponses: (() throws -> MomentReportResponsesPage)?
+
+    func configureModerationUIResponses(memberID: String, until: Date?,
+                                        provider: @escaping () throws -> MomentReportResponsesPage) {
+        precondition(CommandLine.arguments.contains("--moderation-resolution-ui-fixture"))
+        var state = PairingState.unpaired(installationMarker: "moderation-ui-fixture")
+        state.phase = .paired; state.spaceID = "fixture_family_space"; state.memberID = memberID
+        pairingState = state; sharingState.reportOnlyUntil = until
+        moderationUIResponses = provider
+    }
+#endif
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -65,9 +77,28 @@ final class MomentSharingViewModel: ObservableObject {
     var isEncryptedReportAvailable: Bool {
         configuration.isEncryptedReportAvailable
     }
+    func reportResponses(after cursor: String?, spaceID: String,
+                         memberID: String) async throws -> MomentReportResponsesPage {
+#if DEBUG
+        if let moderationUIResponses {
+            guard CommandLine.arguments.contains("--moderation-resolution-ui-fixture"),
+                  pairingState?.spaceID == spaceID, pairingState?.memberID == memberID,
+                  MomentReportResponse.isReadWindowOpen(reportOnlyUntil: reportOnlyUntil, now: .now)
+            else { throw MomentSharingError.notPaired }
+            return try moderationUIResponses().validated(after: cursor)
+        }
+#endif
+        guard !isShowingLastKnownState, isEncryptedReportAvailable,
+              pairingState?.spaceID == spaceID, pairingState?.memberID == memberID else {
+            throw MomentSharingError.notPaired
+        }
+        return try await coordinator.reportResponses(after: cursor,
+            expectedSpaceID: spaceID, expectedMemberID: memberID)
+    }
     var receivedMoments: [MomentInboxItem] {
         sharingState.inbox
-            .filter { $0.state == .available || $0.state == .acknowledged }
+            .filter { ($0.state == .available || $0.state == .acknowledged)
+                && !sharingState.isModerationHidden($0.id) }
             .sorted {
                 if $0.committedAt != $1.committedAt { return $0.committedAt > $1.committedAt }
                 if let lhsSequence = $0.changeSequence,
@@ -783,6 +814,7 @@ final class MomentSharingViewModel: ObservableObject {
               let id = UUID(uuidString: recordID),
               let record = sharingState.outbox.first(where: { $0.id == id }),
               record.phase == .committed,
+              record.serverMomentID.map({ MomentSharingStateStore.isModerationVisible(momentID: $0) }) ?? true,
               record.context.spaceID == pairingState?.spaceID else { return nil }
         return record.localDetail
     }
@@ -803,6 +835,7 @@ final class MomentSharingViewModel: ObservableObject {
         guard !Task.isCancelled, !isShowingLastKnownState, isPaired,
               pairingState?.spaceID == spaceID,
               sharingState.outbox.first(where: { $0.id == id })?.localDetail == reference,
+              record.serverMomentID.map({ MomentSharingStateStore.isModerationVisible(momentID: $0) }) ?? true,
               (try? SharingLifecycleGate.validate(token)) != nil
         else { return nil }
         return url
@@ -810,6 +843,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     func imageURL(for item: MomentInboxItem) -> URL? {
         guard item.state == .available || item.state == .acknowledged,
+              MomentSharingStateStore.isModerationVisible(momentID: item.id),
               let name = item.localJPEGFileName
         else { return nil }
         return SharedContainer.momentSharingReceivedDirectoryURL?
@@ -1075,9 +1109,10 @@ final class MomentSharingViewModel: ObservableObject {
                         receivedHeartMomentIDs.contains($0)
                     } ?? false,
                     serverMomentID: $0.serverMomentID,
-                    localThumbnailJPEG: MomentSharingStateStore
-                        .readLocalThumbnail(for: $0),
-                    localCaption: $0.localCaption,
+                    localThumbnailJPEG: $0.serverMomentID.map({ sharingState.isModerationHidden($0) }) == true
+                        ? nil : MomentSharingStateStore.readLocalThumbnail(for: $0),
+                    localCaption: $0.serverMomentID.map({ sharingState.isModerationHidden($0) }) == true
+                        ? nil : $0.localCaption,
                     senderPolicyVersion: $0.senderPolicyVersion,
                     createdAt: $0.createdAt
                 )

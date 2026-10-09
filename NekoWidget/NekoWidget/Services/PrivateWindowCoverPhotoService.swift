@@ -6,8 +6,14 @@ struct PrivateWindowCoverPhoto: Sendable {
     let jpeg: Data
     let displayUntil: Date
     let origin: Origin
+    var momentID: String? = nil
+    var localWindowID: String? = nil
 
-    func isVisible(at now: Date) -> Bool { now < displayUntil }
+    func isVisible(at now: Date) -> Bool {
+        now < displayUntil && (momentID.map {
+            MomentSharingStateStore.isModerationVisible(momentID: $0, localWindowID: localWindowID)
+        } ?? true)
+    }
 }
 
 struct PrivateWindowCoverPresentation: Sendable {
@@ -73,7 +79,8 @@ enum PrivateWindowCoverPhotoService {
                     }
                     return PrivateWindowCoverPresentation(
                         photo: PrivateWindowCoverPhoto(jpeg: jpeg, displayUntil: candidate.displayUntil,
-                                                       origin: candidate.origin),
+                            origin: candidate.origin, momentID: candidate.momentID,
+                            localWindowID: window.localWindowID),
                         status: .photo
                     )
                 }
@@ -116,16 +123,24 @@ enum PrivateWindowCoverPhotoService {
             case .sent: .sent
             }
         }
+        var momentID: String? {
+            switch self {
+            case let .received(item): item.id
+            case let .sent(item): item.serverMomentID
+            }
+        }
     }
 
     private static func candidates(in state: MomentSharingState, spaceID: String, now: Date) -> [Candidate] {
         let received = state.inbox.filter {
             ($0.state == .available || $0.state == .acknowledged)
+                && !state.isModerationHidden($0.id)
                 && $0.receivedAt <= now && $0.committedAt <= now
                 && now < $0.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration)
         }.map(Candidate.received)
         let sent = state.outbox.filter {
             $0.phase == .committed && $0.context.spaceID == spaceID
+                && !($0.serverMomentID.map { state.isModerationHidden($0) } ?? false)
                 && $0.createdAt <= now && ($0.committedAt ?? $0.createdAt) <= now
                 && now < $0.createdAt.addingTimeInterval(MomentSharingStateStore.completedOutboxMetadataSeconds)
         }.map(Candidate.sent)

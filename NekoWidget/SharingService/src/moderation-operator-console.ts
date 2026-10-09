@@ -73,7 +73,7 @@ function render(item){
   if(!item.evidenceAvailable)card.append(el('p','有効な証拠を確認できません。期限切れ・削除・未準備の可能性があります。','muted'));
   const details=el('details');details.append(el('summary','照合番号を表示'),el('p',item.caseReferenceHmac,'ref'));card.append(details);
   if(item.reviewState==='unreviewed'&&!item.pendingFinalization){const button=el('button','確認開始を署名する','primary action');button.addEventListener('click',()=>begin(item));card.append(button)}
-  if(item.evidenceAvailable&&Number.isInteger(item.caseReferenceHmacKeyVersion)&&item.caseReferenceHmacKeyVersion>0&&item.caseReferenceHmacKeyVersion<=2147483647){const link=el('a','写真を確認する','action');link.href='/operator/owner/console/'+item.caseReferenceHmac+'/'+item.caseReferenceHmacKeyVersion;const paragraph=el('p');paragraph.append(link);card.append(paragraph)}
+  if((item.evidenceAvailable||item.restrictionActive)&&Number.isInteger(item.caseReferenceHmacKeyVersion)&&item.caseReferenceHmacKeyVersion>0&&item.caseReferenceHmacKeyVersion<=2147483647){const link=el('a',item.restrictionActive?'非表示への対応を確認する':'写真を確認する','action');link.href='/operator/owner/console/'+item.caseReferenceHmac+'/'+item.caseReferenceHmacKeyVersion;const paragraph=el('p');paragraph.append(link);card.append(paragraph)}
   list.append(card);
 }
 async function load(message,after=''){

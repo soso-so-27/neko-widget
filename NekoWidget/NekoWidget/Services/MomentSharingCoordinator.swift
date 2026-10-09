@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 
 enum MomentSynchronizationNotice: Equatable, Sendable {
     case inboundModerationDisabled
@@ -664,6 +665,7 @@ actor MomentSharingCoordinator {
                     validating: loadedAuthorization.lifecycleToken
                 )
                 if photoState.inbox != localSharingState.inbox
+                    || photoState.moderationOverlays != localSharingState.moderationOverlays
                     || photoState.outbox != localSharingState.outbox
                     || photoState.outgoingOutcomes != localSharingState.outgoingOutcomes {
                     try await MainActor.run {
@@ -805,6 +807,42 @@ actor MomentSharingCoordinator {
 
     func synchronizationNotice() -> MomentSynchronizationNotice? {
         latestSynchronizationNotice
+    }
+
+    func reportResponses(after cursor: String?, expectedSpaceID: String,
+                         expectedMemberID: String) async throws -> MomentReportResponsesPage {
+        guard configuration.isEncryptedReportAvailable else { throw MomentSharingError.featureDisabled }
+        let auth = try loadAuthorization()
+        guard auth.state.spaceID == expectedSpaceID, auth.state.memberID == expectedMemberID else {
+            throw MomentSharingError.notPaired
+        }
+        try requireReportResponseWindow(validating: auth.lifecycleToken)
+        let api = try makeNetworkClient()
+        let result = try await api.reportResponses(after: cursor, pairingState: auth.state,
+            credential: auth.credential)
+        try Task.checkCancellation()
+        try SharingLifecycleGate.validate(auth.lifecycleToken)
+        let current = try loadAuthorization()
+        guard current.lifecycleToken == auth.lifecycleToken,
+              current.state.spaceID == expectedSpaceID, current.state.memberID == expectedMemberID,
+              current.state.credentialAccount == auth.state.credentialAccount else {
+            throw MomentSharingError.notPaired
+        }
+        try requireReportResponseWindow(validating: current.lifecycleToken)
+        return result
+    }
+
+    private func requireReportResponseWindow(validating token: SharingLifecycleGate.Token,
+                                            now: Date = .now) throws {
+        // The same durable marker and local deadline consulted by report()
+        // and foreground sync also constrain direct response reads. A corrupt
+        // marker fails closed here; normal sync retains its recovery path.
+        let markerUntil = try MomentShareHandoffStore.reportOnlyHandoffDeadline(validating: token, now: now)
+        let stateUntil = try MomentSharingStateStore.load(validating: token).reportOnlyUntil
+        let until = [markerUntil, stateUntil].compactMap { $0 }.min()
+        guard MomentReportResponse.isReadWindowOpen(reportOnlyUntil: until, now: now) else {
+            throw MomentSharingError.notPaired
+        }
     }
 
     func report(
@@ -2415,6 +2453,7 @@ actor MomentSharingCoordinator {
                 break
             }
             for change in result.changes {
+                let moderationHidden = try await applyModeration(change, lifecycleToken: lifecycleToken)
                 switch try MomentDeliveryActionPolicy.action(
                     changeType: change.type,
                     deliveryState: change.deliveryState
@@ -2422,6 +2461,9 @@ actor MomentSharingCoordinator {
                 case .revokeWithoutDownload:
                     try revokeInboxMoment(change, lifecycleToken: lifecycleToken)
                 case .download:
+                    // Hide is an overlay, never an ACK or a terminal tombstone.
+                    // Advancing this event lets the following release be reached.
+                    guard !moderationHidden else { break }
                     guard change.senderParticipantID != localMemberID else {
                         if change.deliveryState == "acknowledged" {
                             _ = try MomentSharingStateStore
@@ -2445,11 +2487,20 @@ actor MomentSharingCoordinator {
                         break
                     }
                     try SharingLifecycleGate.validate(lifecycleToken)
-                    let ciphertext = try await api.download(
-                        momentID: change.momentID,
-                        pairingState: pairing,
-                        credential: credential
-                    )
+                    let ciphertext: Data
+                    do {
+                        ciphertext = try await api.download(
+                            momentID: change.momentID,
+                            pairingState: pairing,
+                            credential: credential
+                        )
+                    } catch let error as MomentSharingError {
+                        guard case .requestRejected(404, "moment_moderation_hidden", _) = error
+                        else { throw error }
+                        _ = try await applyModeration(change, downloadHidden: true,
+                            lifecycleToken: lifecycleToken)
+                        break
+                    }
                     try SharingLifecycleGate.validate(lifecycleToken)
                     guard ciphertext.count == change.ciphertextSize,
                           PairingCrypto.sha256(ciphertext) == change.ciphertextSHA256,
@@ -2485,15 +2536,29 @@ actor MomentSharingCoordinator {
                         manifest: opened.manifest,
                         lifecycleToken: lifecycleToken
                     )
-                    guard inbox.state != .revoked else { break }
+                    guard inbox.state != .revoked,
+                          !(try MomentSharingStateStore.load(validating: lifecycleToken))
+                            .isModerationHidden(change.momentID) else { break }
                     try SharingLifecycleGate.validate(lifecycleToken)
-                    let acknowledgement = try await api.acknowledge(
-                        momentID: change.momentID,
-                        ciphertextSHA256: change.ciphertextSHA256,
-                        clientRequestID: UUID(),
-                        pairingState: pairing,
-                        credential: credential
-                    )
+                    let acknowledgement: MomentAcknowledgementResult
+                    do {
+                        acknowledgement = try await api.acknowledge(
+                            momentID: change.momentID,
+                            ciphertextSHA256: change.ciphertextSHA256,
+                            clientRequestID: UUID(),
+                            pairingState: pairing,
+                            credential: credential
+                        )
+                    } catch let error as MomentSharingError {
+                        guard case .requestRejected(404, "moment_moderation_hidden", _) = error
+                        else { throw error }
+                        // The server may hide the copy after download and local
+                        // storage. Preserve that JPEG, but suppress publication
+                        // immediately and reach a later release without an ACK.
+                        _ = try await applyModeration(change, downloadHidden: true,
+                            lifecycleToken: lifecycleToken)
+                        break
+                    }
                     try SharingLifecycleGate.validate(lifecycleToken)
                     _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
                         guard let index = state.inbox.firstIndex(where: { $0.id == inbox.id }) else {
@@ -2523,6 +2588,24 @@ actor MomentSharingCoordinator {
             else { break }
         }
         return receivedCount
+    }
+
+    private func applyModeration(_ change: MomentChange, downloadHidden: Bool = false,
+                                 lifecycleToken: SharingLifecycleGate.Token) async throws -> Bool {
+        let before = try MomentSharingStateStore.load(validating: lifecycleToken)
+        let hidden = try MomentSharingStateStore.applyModeration(momentID: change.momentID,
+            status: change.moderation, committedAt: change.committedAt,
+            downloadHidden: downloadHidden, validating: lifecycleToken)
+        if before.moderationOverlays != (try MomentSharingStateStore.load(validating: lifecycleToken)).moderationOverlays {
+            // Publish a hide even if an unrelated following download fails.
+            try await MainActor.run {
+                try SharingLifecycleGate.validate(lifecycleToken)
+                NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
+                NotificationCenter.default.post(name: .momentSharingContentNeedsReload, object: nil)
+                WidgetCenter.shared.reloadAllTimelines()
+            }
+        }
+        return hidden
     }
 
 #if DEBUG

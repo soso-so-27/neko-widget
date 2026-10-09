@@ -5646,6 +5646,100 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testModerationOverlayHidesAndReleasesLinkedPhotoWithoutLosingPrivateData() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--moderation-resolution-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let photos = app.buttons.matching(identifier: "family-record-album-photo")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 2"), object: photos)], timeout: 15), .completed)
+        photos.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["共有写真Aのメモ"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.images["family-record-loaded-photo"].waitForExistence(timeout: 10))
+        app.buttons["moderation-fixture-hide"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["共有写真Aのメモ"])], timeout: 10), .completed)
+        XCTAssertFalse(app.images["family-record-loaded-photo"].exists)
+        app.buttons["family-record-back-to-album"].tap()
+        XCTAssertEqual(photos.count, 1)
+        photos.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["別の写真のメモ"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.images["family-record-loaded-photo"].waitForExistence(timeout: 10))
+        app.buttons["moderation-fixture-release"].tap()
+        app.buttons["family-record-back-to-album"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 2"), object: photos)], timeout: 10), .completed)
+        photos.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["共有写真Aのメモ"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.images["family-record-loaded-photo"].waitForExistence(timeout: 10))
+        // The retained shared record can be released after delivery expiry;
+        // the delivery tombstone and private original/memo remain unchanged.
+        app.buttons["moderation-fixture-delivery-expire"].tap()
+        XCTAssertTrue(app.staticTexts["配信終了・原本と共有記録は別"].waitForExistence(timeout: 5))
+        app.buttons["moderation-fixture-hide"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["共有写真Aのメモ"])], timeout: 10), .completed)
+        app.buttons["moderation-fixture-release"].tap()
+        XCTAssertTrue(app.staticTexts["共有写真Aのメモ"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.images["family-record-loaded-photo"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["原JPEG・個人メモ・共有メモを保持"].exists)
+        XCTAssertTrue(app.staticTexts["配信終了・原本と共有記録は別"].exists)
+        XCTAssertFalse(app.staticTexts["moderation-fixture-failed"].exists)
+        attach(app, name: "moderation-release-retains-original-memos-and-terminal-delivery")
+        app.terminate()
+    }
+
+    @MainActor
+    func testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--moderation-resolution-ui-fixture", "--moderation-responses",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["通報いただいた共有写真を一時的に非表示にしました。"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["確認の結果、この通報による非表示を解除しました。他の制限や共有期限がある場合は表示されません。"].exists)
+        XCTAssertTrue(app.staticTexts["通報いただいた内容を確認しました。今回は追加の対応は行いません。"].exists)
+        attach(app, name: "report-responses-three-fixed-templates")
+        app.buttons["moderation-fixture-empty"].tap()
+        app.buttons["report-responses-reload"].tap()
+        XCTAssertTrue(app.staticTexts["report-responses-empty"].waitForExistence(timeout: 5))
+        app.buttons["moderation-fixture-failure"].tap()
+        app.buttons["report-responses-reload"].tap()
+        XCTAssertTrue(app.staticTexts["report-responses-failed"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["通報いただいた共有写真を一時的に非表示にしました。"].exists)
+        app.buttons["moderation-fixture-replies"].tap()
+        app.buttons["report-responses-reload"].tap()
+        XCTAssertTrue(app.staticTexts["通報いただいた共有写真を一時的に非表示にしました。"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["report-responses-failed"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testReportResponsesExpireAndClearWhenIdentityChanges() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--moderation-resolution-ui-fixture", "--moderation-responses",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let reply = app.staticTexts["通報いただいた共有写真を一時的に非表示にしました。"]
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        app.buttons["moderation-fixture-identity"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: reply)], timeout: 5), .completed)
+        app.buttons["report-responses-reload"].tap()
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        app.buttons["moderation-fixture-expire"].tap()
+        // No refresh, background transition, network event or notification.
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: reply)], timeout: 8), .completed)
+        XCTAssertFalse(app.staticTexts["通報いただいた内容を確認しました。今回は追加の対応は行いません。"].exists)
+        XCTAssertFalse(app.buttons["report-responses-reload"].isEnabled)
+        attach(app, name: "report-responses-expire-without-refresh")
+        app.terminate()
+    }
+
+    @MainActor
     func testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess() {
         exerciseWindowCollectionRetentionAndRoomBoundaries()
         exerciseSharedRecordEditingAndWithdrawal()

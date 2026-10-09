@@ -1,5 +1,12 @@
 import Foundation
 
+enum WidgetEmptyStateReason: Equatable, Sendable {
+    case none
+    case waiting
+    case needsApp
+    case sourceUnavailable
+}
+
 enum WidgetManifestReader {
     private static let manifestFilename = "widget-manifest.json"
     private static let cacheDirectoryName = "widget-cache"
@@ -76,7 +83,9 @@ enum WidgetManifestReader {
               now < item.displayUntil
         else { return nil }
         let filename = item.cacheFilenames.filename(for: variant)
-        guard let fileURL = cacheURL(for: filename, in: cacheDirectory),
+        guard MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: filename,
+                  localWindowID: localWindowID, now: now),
+              let fileURL = cacheURL(for: filename, in: cacheDirectory),
               FileManager.default.fileExists(atPath: fileURL.path),
               let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
               let size = values.fileSize,
@@ -136,7 +145,13 @@ enum WidgetManifestReader {
         case WidgetPhotoSource.personalLibraryID:
             return cacheURL(for: filename)
         case let identifier where WidgetPhotoSource.isFamilyWindowSourceID(identifier):
-            guard let directory = SharedContainer.familyWidgetCacheDirectoryURL(
+            if let windowID = WidgetPhotoSource.localWindowID(from: identifier),
+               !PrivateWindowCatalogStore.widgetEntries().contains(where: { $0.localWindowID == windowID }) {
+                return nil
+            }
+            guard MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: filename,
+                localWindowID: WidgetPhotoSource.localWindowID(from: identifier)),
+                let directory = SharedContainer.familyWidgetCacheDirectoryURL(
                 localWindowID: WidgetPhotoSource.localWindowID(from: identifier)
             ) else {
                 return nil

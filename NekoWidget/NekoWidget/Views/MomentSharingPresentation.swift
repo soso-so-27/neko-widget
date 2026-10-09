@@ -131,6 +131,7 @@ struct MomentFamilyWindowPresentationInput: Equatable, Sendable {
     let committedAt: Date
     let receivedAt: Date
     let changeSequence: Int?
+    let moderationHidden: Bool
 
     init(
         stableID: String,
@@ -138,7 +139,8 @@ struct MomentFamilyWindowPresentationInput: Equatable, Sendable {
         imageURL: URL?,
         committedAt: Date,
         receivedAt: Date,
-        changeSequence: Int? = nil
+        changeSequence: Int? = nil,
+        moderationHidden: Bool = false
     ) {
         self.stableID = stableID
         self.state = state
@@ -146,6 +148,7 @@ struct MomentFamilyWindowPresentationInput: Equatable, Sendable {
         self.committedAt = committedAt
         self.receivedAt = receivedAt
         self.changeSequence = changeSequence
+        self.moderationHidden = moderationHidden
     }
 }
 
@@ -179,6 +182,7 @@ enum MomentFamilyWindowPresentationPolicy {
     ) -> MomentFamilyWindowPresentation {
         let displayable = inputs.filter {
             ($0.state == .available || $0.state == .acknowledged)
+                && !$0.moderationHidden
                 && $0.imageURL != nil
         }.sorted {
             if $0.committedAt != $1.committedAt {

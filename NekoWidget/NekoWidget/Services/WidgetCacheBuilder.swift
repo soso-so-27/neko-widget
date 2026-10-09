@@ -1199,6 +1199,7 @@ actor WidgetCacheBuilder {
         in state: MomentSharingState
     ) throws -> FamilyWidgetSourceSnapshot {
         guard let current = state.inbox.first(where: { $0.id == expected.id }),
+              !state.isModerationHidden(current.id),
               current.state == .available || current.state == .acknowledged,
               current.senderParticipantID == expected.senderParticipantID,
               current.committedAt == expected.committedAt,
@@ -1222,15 +1223,7 @@ actor WidgetCacheBuilder {
     }
 
     private static func familySourceDigest(for item: MomentInboxItem) -> String {
-        let identity = [
-            "family-widget-v3-cat-focused-full-bleed",
-            item.id,
-            String(item.committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
-            String(item.receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16)
-        ].joined(separator: "|")
-        return SHA256.hash(data: Data(identity.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        item.familyWidgetSourceDigest
     }
 
     /// One best-effort, on-device pass for the single received photo being

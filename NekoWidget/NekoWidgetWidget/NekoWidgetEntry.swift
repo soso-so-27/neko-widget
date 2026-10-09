@@ -8,13 +8,6 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
     case serverAccepted
 }
 
-enum WidgetEmptyStateReason: Equatable, Sendable {
-    case none
-    case waiting
-    case needsApp
-    case sourceUnavailable
-}
-
 /// Timeline entries carry image references and bounded optional text, never
 /// decoded images. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds

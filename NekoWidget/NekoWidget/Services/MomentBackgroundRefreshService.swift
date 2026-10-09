@@ -183,6 +183,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
             || CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")
             || CommandLine.arguments.contains("--photo-window-ui-fixture")
             || CommandLine.arguments.contains("--moment-shared-album-ui-fixture")
+            || CommandLine.arguments.contains("--moderation-resolution-ui-fixture")
             || CommandLine.arguments.contains(
                 AppStoreScreenshotFixture.launchArgument
             )
@@ -1333,7 +1334,8 @@ actor MomentBackgroundRefreshService {
                     imageURL: validatedReceivedMomentImageURL(for: item),
                     committedAt: item.committedAt,
                     receivedAt: item.receivedAt,
-                    changeSequence: item.changeSequence
+                    changeSequence: item.changeSequence,
+                    moderationHidden: state.isModerationHidden(item.id)
                 )
             },
             now: now
@@ -1342,7 +1344,7 @@ actor MomentBackgroundRefreshService {
 
     private static func visibleMomentIDs(in state: MomentSharingState) -> Set<String> {
         Set(state.inbox.compactMap { item in
-            validatedReceivedMomentImageURL(for: item) == nil ? nil : item.id
+            state.isModerationHidden(item.id) || validatedReceivedMomentImageURL(for: item) == nil ? nil : item.id
         })
     }
 

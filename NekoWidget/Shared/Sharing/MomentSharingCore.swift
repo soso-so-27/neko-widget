@@ -1,6 +1,128 @@
 import CryptoKit
 import Foundation
 
+/// Relay restriction on the shared copy, independent of delivery revocation.
+/// Only an entirely absent pair is a legacy response; null/partial pairs fail.
+struct MomentModerationStatus: Codable, Equatable, Sendable {
+    let revision: Int
+    let hidden: Bool
+    static let unrestricted = Self(revision: 0, hidden: false)
+
+    private enum CodingKeys: String, CodingKey {
+        case revision = "moderationRevision", hidden = "moderationHidden"
+    }
+
+    init(revision: Int, hidden: Bool) {
+        self.revision = revision
+        self.hidden = hidden
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        if !values.contains(.revision) && !values.contains(.hidden) {
+            self = .unrestricted
+            return
+        }
+        revision = try values.decode(Int.self, forKey: .revision)
+        hidden = try values.decode(Bool.self, forKey: .hidden)
+        _ = try validated()
+    }
+
+    func validated() throws -> Self {
+        guard revision >= 0, revision <= 9_007_199_254_740_991,
+              revision != 0 || !hidden else { throw MomentSharingError.invalidPayload }
+        return self
+    }
+}
+
+/// A 404 received after a changes snapshot hides without inventing a revision.
+/// Equal/older releases cannot clear that uncertainty; a newer event can.
+struct MomentModerationOverlay: Codable, Equatable, Sendable {
+    let momentID: String
+    var status: MomentModerationStatus
+    var downloadHidden: Bool
+    let committedAt: Date
+
+    var isHidden: Bool { status.hidden || downloadHidden }
+
+    mutating func apply(_ incoming: MomentModerationStatus, downloadHidden: Bool = false) throws {
+        _ = try incoming.validated()
+        if incoming.revision > status.revision {
+            status = incoming
+            self.downloadHidden = downloadHidden
+        } else if incoming.revision == status.revision {
+            // Inconsistent equal revisions fail closed and cannot be used as a release.
+            status = MomentModerationStatus(revision: status.revision,
+                hidden: status.hidden || incoming.hidden)
+            self.downloadHidden = self.downloadHidden || downloadHidden
+        } else if downloadHidden {
+            self.downloadHidden = true
+        }
+    }
+}
+
+struct MomentReportResponse: Decodable, Equatable, Identifiable, Sendable {
+    enum Template: String, Decodable, Sendable {
+        case hide, release
+        case noAction = "no_action"
+
+        var message: String {
+            switch self {
+            case .hide: "通報いただいた共有写真を一時的に非表示にしました。"
+            case .release: "確認の結果、この通報による非表示を解除しました。他の制限や共有期限がある場合は表示されません。"
+            case .noAction: "通報いただいた内容を確認しました。今回は追加の対応は行いません。"
+            }
+        }
+    }
+    let id: String
+    let reportID: String
+    let templateCode: Template
+    let createdAt: Int
+    let expiresAt: Int
+
+    static func isReadWindowOpen(reportOnlyUntil: Date?, now: Date) -> Bool {
+        reportOnlyUntil.map { now < $0 } ?? true
+    }
+
+    func isVisible(reportOnlyUntil: Date?, now: Date) -> Bool {
+        Self.isReadWindowOpen(reportOnlyUntil: reportOnlyUntil, now: now)
+            && now < Date(timeIntervalSince1970: Double(expiresAt))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, reportID = "reportId", templateCode, createdAt, expiresAt
+    }
+}
+
+/// This is an authenticated read result, never a read receipt or a sending ACK.
+struct MomentReportResponsesPage: Decodable, Sendable {
+    let protocolVersion: Int
+    let responses: [MomentReportResponse]
+    let hasMore: Bool
+    let nextCursor: String
+
+    func validated(after cursor: String?, now: Date = .now) throws -> Self {
+        guard protocolVersion == MomentSharingProtocol.version, responses.count <= 100,
+              Set(responses.map(\.id)).count == responses.count,
+              cursor == nil || Self.isCursor(cursor!),
+              responses.allSatisfy({ row in
+                  Self.isCursor(row.id) && row.id != cursor
+                    && PairingValidation.isOpaqueIdentifier(row.reportID)
+                    && row.createdAt > 0 && row.expiresAt > row.createdAt
+                    && Double(row.createdAt) <= now.timeIntervalSince1970
+                        + MomentSharingProtocol.maximumRelayClockSkewSeconds
+              }),
+              nextCursor == (responses.last?.id ?? ""),
+              !hasMore || !responses.isEmpty
+        else { throw MomentSharingError.invalidPayload }
+        return self
+    }
+
+    static func isCursor(_ value: String) -> Bool {
+        UUID(uuidString: value)?.uuidString.lowercased() == value
+    }
+}
+
 enum MomentSharingProtocol {
     static let version = 2
     static let APIPathVersion = "v2"

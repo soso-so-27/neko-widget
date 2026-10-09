@@ -180,7 +180,7 @@ describe("local authenticated moderation triage", () => {
     const due = await db.prepare('SELECT review_due_at FROM moderation_cases WHERE report_id=?')
       .bind(test.reportId).first<{review_due_at:number}>();
     expect(await result.json()).toEqual({ cases: [{ caseReferenceHmac: test.caseReference, caseReferenceHmacKeyVersion: 1,
-      reviewDueAt: due!.review_due_at, evidenceAvailable: 1, advisoryReason: 'not_requested', advisoryPriority: 'preserve',
+      reviewDueAt: due!.review_due_at, evidenceAvailable: 1, restrictionActive: 0, advisoryReason: 'not_requested', advisoryPriority: 'preserve',
       reviewState: "unreviewed", slaExceeded: 0, pendingFinalization: 0 }], hasMore: false, unboundCases: 1 });
     expect(await count("moderation_case_events")).toBe(0);
   });
