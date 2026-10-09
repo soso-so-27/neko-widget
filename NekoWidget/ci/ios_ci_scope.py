@@ -15,6 +15,265 @@ import re
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, ICON_WORKFLOW_STEPS, LEGACY_ICON_WORKFLOW_STEPS, icon_workflow_wired
 
 
+MODERATION_RESOLUTION_SCOPE = "reviewed-moderation-resolution-v1"
+MODERATION_RESOLUTION_BLOBS = {
+    "NekoWidget/NekoWidget.xcodeproj/project.pbxproj": [
+        "05d8a051f63a73c19a12e2fa00d30a8a6bb55105",
+        "ec3aa65cd43617a6b6a0e4f255b8f4386cd41b9e"
+    ],
+    "NekoWidget/NekoWidget/App/NekoWidgetApp.swift": [
+        "8f72072aa64ccc7cb5c32c4c891cb6b59e1723be",
+        "f76e457d6787d77462f5e9d6f612a023407cf872"
+    ],
+    "NekoWidget/NekoWidget/Services/FamilyRecordClient.swift": [
+        "890ca61c986e590a11ac3793646d1ebaf4d97a11",
+        "5097f68931ad5645e01f99c6211cb057f8595da9"
+    ],
+    "NekoWidget/NekoWidget/Services/MomentBackgroundRefreshService.swift": [
+        "f196a788d6760c333dbf3fbdc09e74c0a6d5e5e0",
+        "34572e452ffd1dd025eaf456bcd459a85702dc54"
+    ],
+    "NekoWidget/NekoWidget/Services/MomentSharingAPIClient.swift": [
+        "4078882475c77d2cc84a9dee72b63ded454bcac2",
+        "9205aa70488ab5108368ae37feb8b378137db108"
+    ],
+    "NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift": [
+        "4fa3d65a5955d2dd259a8e4cd5a5b5f96db1bb9a",
+        "5850c5950f225292918d3837fd4f80320601f641"
+    ],
+    "NekoWidget/NekoWidget/Services/PrivateWindowCoverPhotoService.swift": [
+        "77956563c50ac31528a98ce0a2f32877bde87adb",
+        "d903a10b35de8e81a826ca1924634d6852920cf7"
+    ],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": [
+        "3643a994993eb91ca8abc7a0d6bde1975e893977",
+        "8a54062ac6254b0a4232bd0264e00ddedf887126"
+    ],
+    "NekoWidget/NekoWidget/Services/WidgetCacheBuilder.swift": [
+        "ff2cecbbaf2a922a540a9e8bbf6863edad91f95c",
+        "03e0467d81176007dd9a8d915b3847b276481b8b"
+    ],
+    "NekoWidget/NekoWidget/ViewModels/AppViewModel.swift": [
+        "d9dfc95d7cb55877857c5027abeba591921cd676",
+        "89c57083c3ec2285b100bea2bdfe550f1aef3156"
+    ],
+    "NekoWidget/NekoWidget/ViewModels/MomentSharingViewModel.swift": [
+        "728635b74b5efc1a9727aedb026c4c0d0a20fb16",
+        "7fd609cc49e45c4335d609e967dd439e87f5e67d"
+    ],
+    "NekoWidget/NekoWidget/Views/FamilyRecordView.swift": [
+        "5da1fce827115488ae2bec69fbc4a7fd8a7c2ab7",
+        "179fe710987fad1d6de06e50657b750ba416f76f"
+    ],
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": [
+        "77847befbce3640c0a4529ea863ffc772f88ae71",
+        "64afd57a5a20687145745c4298e01e938084f64e"
+    ],
+    "NekoWidget/NekoWidget/Views/MomentSharingPresentation.swift": [
+        "f0e9adae55543195e8b64e7e890269fbe5ae64b1",
+        "cf4546d2832a45b670112700536f780b3c7a82f6"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "3d38e13e9f938d3f21a86d27b22ed672738e0c72",
+        "20ddec85b8a34ec1369bf503adf0a6582e7dcd8a"
+    ],
+    "NekoWidget/NekoWidgetWidget/NekoWidgetEntry.swift": [
+        "ff981ffa551cc98502ffdc79c5a2afd0dbdec746",
+        "dc7a62101a9058f5958ec99d25c54a7f531bc06d"
+    ],
+    "NekoWidget/NekoWidgetWidget/WidgetCacheImageLoader.swift": [
+        "2e6413172c1a23793c10d3501a7552ee0ae829bb",
+        "b2a94d91adbce7c651decd9790f315632cc0dfa9"
+    ],
+    "NekoWidget/NekoWidgetWidget/WidgetManifestReader.swift": [
+        "d5efceb69937261adde5756e8c37206388ab1437",
+        "de26b9163f91fc1f1b2613059d9a874a2bb203b2"
+    ],
+    "NekoWidget/Shared/AppGroup/SharedContainer.swift": [
+        "6ce836a5193e8649299790e6f9b86c64794ca041",
+        "7faacacc5a2bdd8b06ec62e8aa7662e020426560"
+    ],
+    "NekoWidget/Shared/Sharing/MomentSharingCore.swift": [
+        "4fe26da7b2b9cab8e5edd2ea0614c0c1f4581cff",
+        "540f208fdcfc6b0c3d89aa527af0546636995752"
+    ],
+    "NekoWidget/Shared/Sharing/MomentSharingStore.swift": [
+        "3298079f00d1525fbcc8f1473e8aab2a06fd6c34",
+        "566ceab07f5b759f48bb9a99b0776755504f5079"
+    ],
+    "NekoWidget/SharingService/migrations/0032_moderation_resolution.sql": [
+        "0000000000000000000000000000000000000000",
+        "37221fcee436a87b38d9858afb1c4442b98f9778"
+    ],
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": [
+        "ba673e772c1239747b325393af315d4138126b43",
+        "2fb8df62521efc1c554b6083695d238562b7458f"
+    ],
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": [
+        "0cf5c0eeee8cd44af93b28ac205a527735544bca",
+        "66c5fa922690035a3ad0dffbb84fa4fc17e2ded2"
+    ],
+    "NekoWidget/SharingService/src/family-records.ts": [
+        "577bbfbd71302fb28b9df09741bd09332d7e4990",
+        "43969741a346f65ae2e8b34ff0e7611495e54fcc"
+    ],
+    "NekoWidget/SharingService/src/index.ts": [
+        "55b3b5131ccf67df8f5e167abbdeaf216991ab72",
+        "6ef6f77789f9cf4e93ba341c1a405b51e33a8c48"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-console.ts": [
+        "4ab861f87d096387a0d1ae84d224d7842854e99b",
+        "0943d4d7cbe8613429570c49d4646df4282aa4c2"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-triage-local.ts": [
+        "e3f300e141418cf7b0ff5a3824589479d6fbdc00",
+        "4417406391bed3a7be308ebf275a2191b53c7fee"
+    ],
+    "NekoWidget/SharingService/src/moderation-owner-console.ts": [
+        "0400b6856d111f48c13b1608c668f76b60fe26df",
+        "ed14463d049c71a71eaf7d24d9022011e25cb89d"
+    ],
+    "NekoWidget/SharingService/src/moderation-resolution-local.ts": [
+        "0000000000000000000000000000000000000000",
+        "dc8f9086b588f6ed5b4a1d68126028056ed63b47"
+    ],
+    "NekoWidget/SharingService/src/moments.ts": [
+        "795152141fb9061535727151cebeface7624f75a",
+        "9099b1bfaa3080df2896462fed7efcedcf66b482"
+    ],
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs": [
+        "1db4e89ea35816c40f92c53dc8968340cd5cfdbe",
+        "b19220d345e266cb69fb808ed4420f4b37b5deb5"
+    ],
+    "NekoWidget/SharingService/test/fixtures/moderation-operator.ts": [
+        "d9896f894d489ed119a94e38f817f4d79b163d94",
+        "0d38eb7e8297f2a580fd9141117e90ed8f84422a"
+    ],
+    "NekoWidget/SharingService/test/fixtures/moderation-resolution.ts": [
+        "0000000000000000000000000000000000000000",
+        "cc3dd2374341ff3af4eda193ffb999c450bad0fd"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-triage.integration.test.ts": [
+        "4bc5039cd3ddd84fb78161069a1fc552fe3e1bcc",
+        "7efabe76a4cc06203e915c44db73c15f2596e8e0"
+    ],
+    "NekoWidget/SharingService/test/moderation-resolution.integration.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "6ef6bdb6b88612816b02fbcb423ec7b718de56c5"
+    ],
+    "NekoWidget/SharingService/test/moments.integration.test.ts": [
+        "1a8280130e24fa07c71ba7000d030218e2dac375",
+        "5953eddb0753cc4c591e58a64b6c03e66e43e161"
+    ],
+    "NekoWidget/ci/test-app-store-screenshot-workflow.py": [
+        "afd713b100858f4d2a0550df3bb43b81c8e522ac",
+        "b78922e7115223a21b5db6bc4c9f3ac0c80a402b"
+    ],
+    "NekoWidget/ci/test-background-moment-refresh.py": [
+        "a66d25a884c69c10eab3913560f1aecb550027de",
+        "cdb5d0f8990e8419eebc67a00ad845d7fc0c842f"
+    ],
+    "NekoWidget/ci/test-family-window-widget-boundaries.py": [
+        "07f10dd0faf855a81fd17b8ce1e07b0eaf31ef35",
+        "93ab8c7f314fa612e71d58bf72168d13f3767bf7"
+    ],
+    "NekoWidget/ci/verify-moment-sharing-core.swift": [
+        "9f695d4adeb93384ce713a06fb0e0da0d8b3759f",
+        "9c41aeddf0b13a62715305739cec9fdcf84f6d95"
+    ],
+    "NekoWidget/ci/verify-moment-sharing-presentation.swift": [
+        "c8ea1c6461d8466449d1b361b9ee872945a38e8d",
+        "5a379006a90cc70e48cdc8812b705fc0c43e648f"
+    ]
+}
+MODERATION_RESOLUTION_PATHS = frozenset(MODERATION_RESOLUTION_BLOBS)
+MODERATION_RESOLUTION_MODIFIED_PATHS = frozenset((
+    'NekoWidget/NekoWidget.xcodeproj/project.pbxproj',
+    'NekoWidget/NekoWidget/App/NekoWidgetApp.swift',
+    'NekoWidget/NekoWidget/Services/FamilyRecordClient.swift',
+    'NekoWidget/NekoWidget/Services/MomentBackgroundRefreshService.swift',
+    'NekoWidget/NekoWidget/Services/MomentSharingAPIClient.swift',
+    'NekoWidget/NekoWidget/Services/MomentSharingCoordinator.swift',
+    'NekoWidget/NekoWidget/Services/PrivateWindowCoverPhotoService.swift',
+    'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift',
+    'NekoWidget/NekoWidget/Services/WidgetCacheBuilder.swift',
+    'NekoWidget/NekoWidget/ViewModels/AppViewModel.swift',
+    'NekoWidget/NekoWidget/ViewModels/MomentSharingViewModel.swift',
+    'NekoWidget/NekoWidget/Views/FamilyRecordView.swift',
+    'NekoWidget/NekoWidget/Views/FamilyWindowView.swift',
+    'NekoWidget/NekoWidget/Views/MomentSharingPresentation.swift',
+    'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift',
+    'NekoWidget/NekoWidgetWidget/NekoWidgetEntry.swift',
+    'NekoWidget/NekoWidgetWidget/WidgetCacheImageLoader.swift',
+    'NekoWidget/NekoWidgetWidget/WidgetManifestReader.swift',
+    'NekoWidget/Shared/AppGroup/SharedContainer.swift',
+    'NekoWidget/Shared/Sharing/MomentSharingCore.swift',
+    'NekoWidget/Shared/Sharing/MomentSharingStore.swift',
+    'NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs',
+    'NekoWidget/SharingService/scripts/staging-config.node-tests.mjs',
+    'NekoWidget/SharingService/src/family-records.ts',
+    'NekoWidget/SharingService/src/index.ts',
+    'NekoWidget/SharingService/src/moderation-operator-console.ts',
+    'NekoWidget/SharingService/src/moderation-operator-triage-local.ts',
+    'NekoWidget/SharingService/src/moderation-owner-console.ts',
+    'NekoWidget/SharingService/src/moments.ts',
+    'NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs',
+    'NekoWidget/SharingService/test/fixtures/moderation-operator.ts',
+    'NekoWidget/SharingService/test/moderation-operator-triage.integration.test.ts',
+    'NekoWidget/SharingService/test/moments.integration.test.ts',
+    'NekoWidget/ci/test-app-store-screenshot-workflow.py',
+    'NekoWidget/ci/test-background-moment-refresh.py',
+    'NekoWidget/ci/test-family-window-widget-boundaries.py',
+    'NekoWidget/ci/verify-moment-sharing-core.swift',
+    'NekoWidget/ci/verify-moment-sharing-presentation.swift',
+))
+MODERATION_RESOLUTION_IMMUTABLE_BLOBS = {
+    ".github/workflows/ios-build.yml": "5e8de065dc2c11a0085d9c04cf5e2462f3a98f90",
+    ".github/workflows/ios-ui-diagnostic.yml": "862c2d00497dd20349440edd1010c5633971684e",
+    ".github/workflows/preservation-service.yml": "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+    ".github/workflows/sharing-service.yml": "8038107503651173741b1502aa3e836a2cb2790a",
+    ".github/workflows/testflight.yml": "a7025c9d71bd20a43765df7ce9e52b00412b02c6",
+    "NekoWidget/PreservationService/package-lock.json": "21124c4a904cac48b81253276b723c845c3cb308",
+    "NekoWidget/PreservationService/package.json": "5af1d4ce4e5633db6b508ef10c8f7919245fe085",
+    "NekoWidget/SharingService/migrations/0003_append_only_moments.sql": "751f131b511cdd5dab52bada39cebee4c4e714e9",
+    "NekoWidget/SharingService/migrations/0012_moderation_case_lifecycle.sql": "8ead7ad4aa37849ce85c7bd0eaf73bc777fa0f1f",
+    "NekoWidget/SharingService/migrations/0013_moderation_operator_control_plane.sql": "18001937269dc39abcb6e123dc227e686927c10d",
+    "NekoWidget/SharingService/migrations/0014_moderation_evidence_ledger.sql": "e68eec69b1e91a40352f0c849d40b02ab8ff9add",
+    "NekoWidget/SharingService/migrations/0015_moderation_operator_routes.sql": "e25d6e6078e5fba09fa629badb13ee2e5b52fccd",
+    "NekoWidget/SharingService/migrations/0016_moderation_operator_access_audit.sql": "a99ff8f96b252a10b2926495c710fef3f2231af5",
+    "NekoWidget/SharingService/migrations/0017_moderation_operator_enrollment_trust.sql": "a508ca77ec3e23ee0981d7f8f56780444d2ec187",
+    "NekoWidget/SharingService/migrations/0018_moderation_operator_case_reference_binding.sql": "662edd000130325944440352a44e48702f6596ec",
+    "NekoWidget/SharingService/migrations/0030_moderation_advisory_jobs.sql": "9eccf8ef17e074b90505126ff25c49c2afeeff31",
+    "NekoWidget/SharingService/migrations/0031_moderation_owner_flow.sql": "dca28e3506c7cbfb0347961370b73804da2fcbf9",
+    "NekoWidget/SharingService/package-lock.json": "33b3fad11913776e790374c165bea00ce938232f",
+    "NekoWidget/SharingService/package.json": "acba8c0d598a0ae9ba32e9169fc9ec49dac74ee6",
+    "NekoWidget/SharingService/scripts/moderation-bound-review-lib.mjs": "55ad1ceb205fddd5d3e4f85354625a563083a3a4",
+    "NekoWidget/SharingService/scripts/moderation-report-lib.mjs": "1450993f3bd0183c6faf8cab9919effea37689a9",
+    "NekoWidget/SharingService/scripts/moderation-report-tool.mjs": "f6e5603be92fc8bef73e2b7f97170418fd24d579",
+    "NekoWidget/SharingService/src/encoding.ts": "80953281b1d4823bcca2728b2490d4083f69f700",
+    "NekoWidget/SharingService/src/moderation-evidence-export.ts": "baea9219c50f1d857f09a8771110e09a5086b8c1",
+    "NekoWidget/SharingService/src/moderation-operator-auth.ts": "64946255c70caeef181699b51e12c8bb4c0c2970",
+    "NekoWidget/SharingService/src/moderation-operator-case-reference.ts": "24201118902d513b7ecf4706a9367d00716f4d29",
+    "NekoWidget/SharingService/src/moderation-operator-identity.ts": "8f18c5a99be3218182d743ceee14b627456105cc",
+    "NekoWidget/SharingService/src/moderation-operator-webauthn.ts": "33b4201b20fb7077815e3dbe6b2aac23f5ee1aee",
+    "NekoWidget/SharingService/src/moderation-operator-worker.ts": "6e72b99b16a093f7f83b0d13fe50e6e7ad57b7ec",
+    "NekoWidget/SharingService/src/moderation-owner-local.ts": "4fa477e34b456d5a26e4713df0f4e13a55495080",
+    "NekoWidget/SharingService/src/moderation-review-source.ts": "96fff2fdbc641f79089f7b6e35a007ad9c5b3192",
+    "NekoWidget/SharingService/test/moderation-bound-review.node-tests.mjs": "5ac92957287a6d11c22c5f0275ea68f5dcec493c",
+    "NekoWidget/SharingService/test/moderation-report-tool.node-tests.mjs": "d915e3dcb89c78988d823dc380e04d599a3a3486",
+    "NekoWidget/SharingService/test/moderation-report-windows-boundary.node-tests.mjs": "de598d77063b3e177a68175913c8e4bdb19f0dd9",
+    "NekoWidget/SharingService/test/moderation-review-source.test.ts": "f862d8d385042c3ba6bc151e6eb60b1fb313e122",
+    "NekoWidget/SharingService/test/setup.ts": "9d7bef258a554d026d8253159997bd3e154415b2",
+    "NekoWidget/SharingService/vitest.config.ts": "4f676f517cb2481e5ad6cc076457e18dd9180a9a",
+    "NekoWidget/SharingService/wrangler.jsonc": "66333343d7aeb71bb64c1de76ba5205d82989f25",
+    "NekoWidget/SharingService/wrangler.moderation-operator.disabled.jsonc": "da7c48551cd1db4f90033ac01d6285cd135a5b2e",
+    "NekoWidget/ci/run-sharing-runtime-matrix.sh": "875b4e1e1cf3cb084a164a9df09ee08f6ef85164",
+    "NekoWidget/ci/run-simulator-smoke.sh": "077161146c780ae191abcf3bb39408f0a596b154",
+    "NekoWidget/ci/validate-sharing-release.py": "ea80e02c35ecff1bf6a64f0e8e49b552e34583e8",
+    "NekoWidget/ci/validate-sharing-runtime-self-test.py": "8a49ea121717b26ee5a21e16d835ab4742907cea"
+}
+MODERATION_RESOLUTION_IMMUTABLE_PATHS = frozenset(MODERATION_RESOLUTION_IMMUTABLE_BLOBS)
+
 FULL_SCOPE = "full-v1"
 PHOTO_SCOPE = "photo-ui-v1"
 OFFICIAL_SCOPE = "official-ui-v1"
@@ -80,7 +339,7 @@ REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
-SCOPES = (PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+SCOPES = (MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -2714,6 +2973,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == MODERATION_RESOLUTION_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == MODERATION_RESOLUTION_PATHS
     if scope == PRESERVATION_EXPORT_SCOPE:
         return sources in (PRESERVATION_EXPORT_PATHS, PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS)
     if scope == PRESERVATION_USAGE_SCOPE:
@@ -2906,7 +3167,19 @@ def sharing_job(scope: str) -> str:
     return f"{SHARING_JOB_PREFIX} [scope {scope}]"
 
 
+MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
+    'NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce',
+    'NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsActiveAppReplacesPhotosAndRestoresPresentations',
+    'NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsMissingPhotoNeverSubstituteAvailableFixturePhoto',
+    'NekoWidgetUITests/MomentDeliveryComposerUITests/testModerationOverlayHidesAndReleasesLinkedPhotoWithoutLosingPrivateData',
+    'NekoWidgetUITests/MomentDeliveryComposerUITests/testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure',
+    'NekoWidgetUITests/MomentDeliveryComposerUITests/testReportResponsesExpireAndClearWhenIdentityChanges',
+)
+
+
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == MODERATION_RESOLUTION_SCOPE:
+        return MODERATION_RESOLUTION_TESTS
     if scope == PRESERVATION_EXPORT_SCOPE:
         return PRESERVATION_EXPORT_TESTS
     if scope == REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE:

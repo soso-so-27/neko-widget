@@ -2,6 +2,7 @@
 """Budget decisions do not waive release checks; helpers cannot certify iOS."""
 
 import importlib.util
+import copy
 import contextlib
 import io
 import json
@@ -18,6 +19,204 @@ preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 planner = preflight.planner
 scope = preflight.scope
+
+
+class ModerationResolutionDiagnosticBackendRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.head, self.source, self.old = "b" * 40, "a" * 40, "c" * 40
+        self.now = dt.datetime(2026, 10, 9, 11, 15, tzinfo=dt.timezone.utc)
+        self.result = {"scope": planner.MODERATION_RESOLUTION_SCOPE, "head": self.head, "ready": False,
+                       "target_minutes": 50, "required_jobs": list(planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)),
+                       "cost": {"status": "unmeasured", "samples": []}}
+        self.branch = "diagnostic/moderation-resolution-20261009"
+        self.identity = {"id": 3, "state": "active", "path": planner.BILLING_WORKFLOW}
+        self.success = {"id": 20, "run_number": 2, "workflow_id": 3, "head_sha": self.source, "head_branch": self.branch,
+            "path": planner.BILLING_WORKFLOW, "event": "push", "status": "completed", "conclusion": "success", "run_attempt": 1,
+            "repository": {"full_name": preflight.REPOSITORY}, "head_repository": {"full_name": preflight.REPOSITORY},
+            "created_at": "2026-10-09T11:05:00Z", "run_started_at": "2026-10-09T11:05:00Z", "updated_at": "2026-10-09T11:10:00Z"}
+        self.failure = self.success | {"id": 10, "run_number": 1, "head_sha": self.old, "conclusion": "failure",
+            "created_at": "2026-10-09T11:00:00Z", "updated_at": "2026-10-09T11:01:00Z"}
+        self.runs = [self.failure, self.success]
+        steps = [["Run python NekoWidget/ci/plan-ios-ci.py"],
+            ["Verify Apple transaction service boundary", "Verify durable nonce and capability credential boundaries",
+             "Build nonroot Node image and private Worker without publishing"],
+            ["Parse and exercise Windows path, volume, and ACL policy"],
+            ["Run Worker, D1, staging, moderation, and key ceremony tests", "Build deployment bundle without publishing"]]
+        self.jobs = [{"id": 100 + i, "name": name, "run_id": 20, "run_attempt": 1, "head_sha": self.source,
+            "status": "completed", "conclusion": "success", "started_at": "2026-10-09T11:06:00Z", "completed_at": "2026-10-09T11:09:00Z",
+            "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps[i]]}
+            for i, name in enumerate(planner.PRESERVATION_EXPORT_BACKEND_JOBS["sharing-service.yml"])]
+        prefix = f"repos/{preflight.REPOSITORY}/actions"
+        self.jobs_path = prefix + "/runs/20/jobs?filter=latest&per_page=100&page=1"
+        self.responses = {prefix + "/workflows/sharing-service.yml": self.identity,
+            prefix + "/runs/20": self.success, self.jobs_path: {"total_count": 4, "jobs": self.jobs}}
+        self.git_changes = {}
+
+    def git(self, *args):
+        if args in self.git_changes: return self.git_changes[args]
+        if args[0] == "branch": return "codex/moderation-resolution-20261009"
+        if args[0] == "merge-base": return ""
+        if args[0] == "diff": return ""
+        if args[0] == "ls-tree":
+            path = args[-1]
+            if "-r" in args: return f"100644 blob {'d' * 40}\t{path}/file.ts\0"
+            if path.endswith(".yml"):
+                return f"100644 blob {planner.MODERATION_RESOLUTION_IMMUTABLE_BLOBS[path]}\t{path}"
+            return f"040000 tree {'e' * 40}\t{path}"
+        raise AssertionError(args)
+
+    def prove(self, result=None, runs=None):
+        with patch.object(planner, "git", side_effect=self.git), patch.object(preflight, "github", side_effect=self.responses.__getitem__):
+            return preflight.moderation_resolution_diagnostic_backend_recovery(
+                self.result if result is None else result, self.runs if runs is None else runs, self.now)
+
+    def test_corrected_backend_diagnostic_preserves_failure_time_and_all_native_gates(self):
+        proof = self.prove()
+        self.assertEqual(proof["failed_run_ids"], [10]); self.assertEqual(proof["source_sha"], self.source)
+        self.assertEqual(proof["candidate_sha"], self.head); self.assertEqual(len(proof["jobs"]), 4)
+        self.assertEqual(len(proof["verified_inputs"]), 5)
+        self.assertFalse(proof["native_evidence"]); self.assertFalse(proof["release_evidence"])
+        gate = lambda runs, **kw: preflight.apply_task_gate(copy.deepcopy(self.result), runs, self.now,
+                                                          measure_baseline=True, diagnostic_backend_recovery=proof, **kw)
+        result = gate(self.runs)
+        self.assertTrue(result["ready"]); self.assertTrue(result["task"]["first_baseline_measurement"])
+        self.assertEqual(result["task"]["diagnostic_backend_recovery"], proof)
+        self.assertEqual(result["task"]["failed_runs"], [10]); self.assertEqual(result["task"]["runs"], 2)
+        self.assertEqual(result["task"]["minutes_since_first_ci"], 15)
+        self.assertIsNone(result["task"]["projected_total_minutes"])
+        self.assertEqual(result["cost"], {"status": "unmeasured", "samples": []})
+        ui = self.failure | {"id": 30, "path": preflight.DIAGNOSTIC_WORKFLOW, "event": "workflow_dispatch"}
+        for update in ({"status": "in_progress", "conclusion": None}, {"failed_tests": ["testMissing"]},
+                       {"unsupported_failed_tests": ["Other/testMissing"]}):
+            self.assertFalse(gate(self.runs + [ui | update])["ready"])
+        normal = self.success | {"id": 40, "path": preflight.IOS_WORKFLOW, "head_branch": "codex/moderation-resolution-20261009"}
+        self.assertFalse(gate(self.runs + [normal])["task"]["first_baseline_measurement"])
+        self.assertFalse(preflight.apply_task_gate(copy.deepcopy(self.result), self.runs, self.now, measure_baseline=True)["ready"])
+        with self.assertRaises(ValueError):
+            preflight.apply_task_gate(copy.deepcopy(self.result), self.runs, self.now, measure_baseline=True,
+                                     diagnostic_backend_recovery=proof | {"candidate_sha": self.old})
+
+    def test_other_scopes_observed_cost_normal_candidates_and_latest_non_success_do_not_qualify(self):
+        for changes in ({"scope": planner.MODERATION_OWNER_FLOW_SCOPE}, {"required_jobs": [planner.BUILD]},
+                        {"cost": {"status": "observed", "with_upload_minutes": [20, 20]}}):
+            self.assertIsNone(self.prove(result=self.result | changes))
+        for state, outcome in (("completed", "failure"), ("in_progress", None), ("completed", "skipped")):
+            self.assertIsNone(self.prove(runs=[self.failure, self.success | {"status": state, "conclusion": outcome}]))
+        for path in (planner.BILLING_WORKFLOW, planner.PRESERVATION_WORKFLOW, preflight.IOS_WORKFLOW):
+            self.assertIsNone(self.prove(runs=self.runs + [self.success | {"id": 40, "path": path, "head_branch": "codex/moderation-resolution-20261009"}]))
+        self.assertIsNone(self.prove(runs=[self.success]))
+
+    def test_identity_attempt_freshness_and_later_failure_are_not_hidden(self):
+        for field, value in (("workflow_id", 8), ("repository", {"full_name": "other/repo"}),
+                             ("head_repository", {"full_name": "other/repo"}), ("run_number", None)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.prove(runs=[self.failure, self.success | {field: value}])
+        original = copy.deepcopy(self.success)
+        for field, value in (("head_sha", self.old), ("run_attempt", 0), ("updated_at", "2020-01-01T00:00:00Z")):
+            self.success[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): self.prove()
+            self.success.clear(); self.success.update(original)
+        for field, value in (("event", "workflow_dispatch"), ("head_branch", "diagnostic/other")):
+            self.assertIsNone(self.prove(runs=[self.failure, self.success | {field: value}]))
+        with self.assertRaises(ValueError): self.prove(runs=[self.failure, self.success, self.success])
+        with self.assertRaises(ValueError): self.prove(runs=[self.failure | {"updated_at": "2026-10-09T11:12:00Z"}, self.success])
+        with patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preflight.moderation_resolution_diagnostic_backend_recovery(self.result, self.runs, self.now)
+
+    def test_all_backend_tree_content_modes_and_both_workflows_match_candidate(self):
+        paths = ("NekoWidget/SharingService", "NekoWidget/PreservationService", "NekoWidget/BillingVerificationService",
+                 planner.BILLING_WORKFLOW, planner.PRESERVATION_WORKFLOW)
+        for path in paths:
+            for ref in (self.source, self.head):
+                key = ("ls-tree", ref, "--", path)
+                self.git_changes[key] = "120000 blob " + "f" * 40 + "\t" + path
+                with self.subTest(path=path, ref=ref), self.assertRaises(ValueError): self.prove()
+                self.git_changes.clear()
+        self.git_changes[("ls-tree", "-r", "-z", self.head, "--", paths[0])] = "different-child-mode"
+        with self.assertRaises(ValueError): self.prove()
+
+    def test_entire_external_input_closure_only_allows_exact_fixture_and_approved_controls(self):
+        diff = ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", self.source, self.head)
+        fixture = "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"
+        approved = f":100644 100644 fcb6e70b66160587052876f61022039adef433a7 8a54062ac6254b0a4232bd0264e00ddedf887126 M\0{fixture}\0"
+        self.git_changes[diff] = approved
+        self.assertEqual(self.prove()["whole_tracked_delta"][0]["kind"], "exact-reviewed-debug-fixture")
+        for invalid in (approved.replace("8a54062ac6254b0a4232bd0264e00ddedf887126", "a" * 40),
+                        approved.replace(":100644", ":100755"), approved + approved):
+            self.git_changes[diff] = invalid
+            with self.assertRaises(ValueError): self.prove()
+        for path in ("NekoWidget/PreservationImageValidator/src/runtime-budget.mjs", "NekoWidget/ci/fixtures/sharing-protocol-v1.json",
+                     "NekoWidget/Shared/Sharing/MomentSharingCore.swift", ".github/workflows/sharing-staging-monitor.yml",
+                     ".gitattributes", "NekoWidget/NekoWidget/Views/FamilyWindowView.swift", "NekoWidget/ci/unknown.py"):
+            self.git_changes[diff] = f":100644 100644 {'d' * 40} {'e' * 40} M\0{path}\0"
+            with self.subTest(path=path), self.assertRaises(ValueError): self.prove()
+        path = "NekoWidget/ci/ios_ci_scope.py"
+        self.git_changes[diff] = f":100644 100644 {'d' * 40} {'e' * 40} M\0{path}\0"
+        with self.assertRaises(ValueError): self.prove()
+        self.git_changes[("ls-tree", "origin/main", "--", path)] = f"100644 blob {'e' * 40}\t{path}"
+        self.assertEqual(self.prove()["whole_tracked_delta"][0]["kind"], "approved-main-control")
+        self.git_changes[diff] = f":000000 100644 {'0' * 40} {'e' * 40} A\0handoffs/resolution.md\0"
+        self.assertEqual(self.prove()["whole_tracked_delta"][0]["kind"], "handoff")
+        self.git_changes[diff] = self.git_changes[diff].replace(" 100644 ", " 120000 ")
+        with self.assertRaises(ValueError): self.prove()
+
+    def test_every_required_job_and_owning_step_must_really_succeed(self):
+        original = copy.deepcopy(self.jobs)
+        for index in range(4):
+            for field, value in (("conclusion", "skipped"), ("head_sha", self.head), ("run_id", 1),
+                                 ("run_attempt", 2), ("started_at", "2026-10-09T10:00:00Z"), ("steps", [])):
+                self.jobs[index][field] = value
+                with self.subTest(job=index, field=field), self.assertRaises(ValueError): self.prove()
+                self.jobs[:] = copy.deepcopy(original)
+            for n in range(len(self.jobs[index]["steps"])):
+                self.jobs[index]["steps"][n]["conclusion"] = "skipped"
+                with self.subTest(job=index, step=n), self.assertRaises(ValueError): self.prove()
+                self.jobs[:] = copy.deepcopy(original)
+        self.responses[self.jobs_path]["total_count"] = 5
+        with self.assertRaises(ValueError): self.prove()
+        self.responses[self.jobs_path]["total_count"] = 4
+        self.jobs[1] = copy.deepcopy(self.jobs[0])
+        with self.assertRaises(ValueError): self.prove()
+
+
+class ModerationResolutionBudgetTests(unittest.TestCase):
+    def test_new_combined_scope_is_unmeasured_and_retains_failure_active_time_gates(self):
+        selected = planner.MODERATION_RESOLUTION_SCOPE
+        history = {"upload_minutes": 9, "observations": [{"scope": scope.FAMILY_WINDOW_UI_SCOPE,
+                    "candidate_minutes": 28, "run_id": 1, "outcome": "success"}]}
+        cost = preflight.observe_cost(selected, history, True)
+        self.assertEqual(cost, {"status": "unmeasured", "samples": []})
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 50,
+                  "required_jobs": list(planner.required_jobs_from_scope(selected)), "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        for path in (planner.BILLING_WORKFLOW, planner.PRESERVATION_WORKFLOW, ".github/workflows/ios-build.yml"):
+            for status, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+                run = {"id": 8, "path": path, "status": status, "conclusion": conclusion,
+                       "created_at": (now - dt.timedelta(minutes=8)).isoformat()}
+                gated = preflight.apply_task_gate(result, [run], now, measure_baseline=True)
+                self.assertFalse(gated["ready"])
+                self.assertFalse(gated["task"]["first_baseline_measurement"])
+                self.assertEqual(gated["task"]["minutes_since_first_ci"], 8)
+                self.assertEqual(gated["task"]["failed_runs"], [8] if conclusion == "failure" else [])
+                self.assertEqual(gated["task"]["active_runs"], [8] if status != "completed" else [])
+
+    def test_candidate_plan_declares_native_graph_and_separate_same_sha_backend_contract(self):
+        head, selected = "a" * 40, planner.MODERATION_RESOLUTION_SCOPE
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.MODERATION_RESOLUTION_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=selected):
+            result = preflight.candidate_plan("origin/main", 50, True, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["required_jobs"], list(planner.required_jobs_from_scope(selected)))
+        self.assertEqual(result["required_backend_runs"], planner.moderation_resolution_requirements(head))
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertIn("both runtime OS", result["reason"])
+        self.assertIn("direct Apple feedback", result["reason"])
 
 
 class PreservationProviderStreamBudgetTests(unittest.TestCase):

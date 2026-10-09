@@ -256,8 +256,35 @@ class ReleaseTests(unittest.TestCase):
         for scope in (*release.planner.SCOPES, "movie-screen-only"):
             with self.subTest(scope=scope):
                 self.plan.update(scope=scope, required_jobs=list(release.planner.required_jobs_from_scope(scope)))
+                if scope == release.planner.MODERATION_RESOLUTION_SCOPE:
+                    self.plan["required_backend_runs"] = release.planner.moderation_resolution_requirements(self.sha)
                 self.set_plan()
-                self.assertEqual(self.prepare()["ci"]["scope"], scope)
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}):
+                    self.assertEqual(self.prepare()["ci"]["scope"], scope)
+
+    def test_resolution_release_calls_owning_backend_verifier_and_propagates_rejection(self):
+        selected = release.planner.MODERATION_RESOLUTION_SCOPE
+        self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)),
+                         required_backend_runs=release.planner.moderation_resolution_requirements(self.sha))
+        self.set_plan()
+        with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}) as verify:
+            self.assertEqual(self.prepare()["ci"]["backend_evidence"], {"verified": True})
+            self.assertEqual(verify.call_args.args[:2], (self.sha, release.REPOSITORY))
+            self.assertEqual(verify.call_args.kwargs, {"branch": None})
+        for failure in (ValueError("missing push"), KeyError("incomplete"), OSError("API unavailable")):
+            with patch.object(release.planner, "moderation_resolution_backend_evidence", side_effect=failure), self.assertRaises(release.Blocked):
+                self.prepare()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_resolution_release_rejects_absent_partial_or_wrong_sha_backend_declaration(self):
+        selected = release.planner.MODERATION_RESOLUTION_SCOPE
+        self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)))
+        for required in (None, [], release.planner.moderation_resolution_requirements("b" * 40),
+                         release.planner.moderation_resolution_requirements(self.sha)[:-1]):
+            self.plan["required_backend_runs"] = required; self.set_plan()
+            with patch.object(release.planner, "moderation_resolution_backend_evidence") as verify, self.assertRaises(release.Blocked):
+                self.prepare()
+            verify.assert_not_called()
 
     def test_internal_preservation_flag_is_explicit_and_normal_release_is_unchanged(self):
         self.assertNotIn("preservation_pilot", self.prepare()["inputs"])
