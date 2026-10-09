@@ -2722,6 +2722,34 @@ def moderation_ui_results(log, failed=frozenset()):
                     ["started", "failed" if test in failed else "passed"] for test in expected))
 
 
+def moderation_ui_build_failure(log):
+    """Bind the nine-test failure to its owning command, not earlier successful suites."""
+    if not isinstance(log, str): return False
+    lines = [re.sub(r"\x1b\[[0-9;]*m", "", re.sub(
+        r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line)) for line in log.splitlines()]
+    header = ["##[group]Run set -euo pipefail", "set -euo pipefail", "command -v swift > /dev/null",
+              "python3 ci/test-window-entry-and-cover-presentation.py",
+              "shell: /bin/bash --noprofile --norc -e -o pipefail {0}", "env:",
+              "  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer", "##[endgroup]"]
+    starts = [index for index in range(len(lines)) if lines[index:index + len(header)] == header]
+    if len(starts) != 1 or lines.count(header[3]) != 1: return False
+    start = starts[0] + len(header)
+    end = next((index for index in range(start, len(lines)) if lines[index].startswith("##[group]")), None)
+    if end is None: return False
+    owning = lines[start:end]
+    summaries = [line for line in owning if re.fullmatch(r"Ran \d+ tests in [0-9.]+s", line)]
+    known = "test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)"
+    assertion = "AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found"
+    return (re.findall(r"(?:FAIL|ERROR): ([^\r\n]+)", log) == [known]
+            and [line for line in lines if line.startswith("FAILED") or line.startswith("##[error]")]
+                == ["FAILED (failures=1)", "##[error]Process completed with exit code 1."]
+            and len(summaries) == 1 and re.fullmatch(r"Ran 9 tests in [0-9.]+s", summaries[0]) is not None
+            and "FAIL: " + known in owning and any(line.startswith(assertion) for line in owning)
+            and "FAILED (failures=1)" in owning and "##[error]Process completed with exit code 1." in owning
+            and owning.index(summaries[0]) < owning.index("FAILED (failures=1)")
+                < owning.index("##[error]Process completed with exit code 1."))
+
+
 def moderation_ui_recovery_evidence(head, repository, api, now):
     """Retain source failures and reuse only backend evidence for this shipping correction."""
     if repository != "soso-so-27/neko-widget" or not moderation_ui_recovery_inputs(head):
@@ -2774,10 +2802,7 @@ def moderation_ui_recovery_evidence(head, repository, api, now):
         if len(matches) != 1 or matches[0].get("conclusion") != expected: raise ValueError("Source Build execution differs")
     build_log = api(f"{prefix}/jobs/{by_name[BUILD]['id']}/logs")
     ui_log = api(f"{prefix}/jobs/{by_name[ui]['id']}/logs")
-    if (not isinstance(build_log, str)
-            or re.findall(r"(?:FAIL|ERROR): ([^\r\n]+)", build_log) != ["test_source_does_not_advance_expiry_boundary (__main__.WindowPresentation.test_source_does_not_advance_expiry_boundary)"]
-            or len(re.findall(r"Ran 9 tests in [0-9.]+s", build_log)) != 1 or build_log.count("FAILED (failures=1)") != 1
-            or "AssertionError: 'func isVisible(at now: Date) -> Bool { now < displayUntil }' not found" not in build_log
+    if (not moderation_ui_build_failure(build_log)
             or not moderation_ui_results(ui_log, {MODERATION_UI_RECOVERY_CASE})
             or '"header.closeButton" Button' not in ui_log or "XCTAssertTrue failed" not in ui_log):
         raise ValueError("Known source failure transcripts differ")
