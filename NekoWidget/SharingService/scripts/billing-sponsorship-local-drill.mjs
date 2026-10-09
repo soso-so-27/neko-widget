@@ -49,6 +49,7 @@ const expectedMigrationNames = [
   "0027_family_records.sql",
   "0028_window_support_requests.sql",
   "0029_family_record_moments.sql",
+  "0030_moderation_advisory_jobs.sql",
 ];
 
 const databaseGateColumns = [
