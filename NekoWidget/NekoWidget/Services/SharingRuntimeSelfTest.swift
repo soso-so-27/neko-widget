@@ -5420,6 +5420,11 @@ actor SharingRuntimeSelfTestRunner {
             try? FileManager.default.removeItem(at: moderationDirectory)
         }
 
+        // The relay and durable store use whole-second ISO-8601 timestamps.
+        // Keep a single wire-precision anchor: repeated overlay events must
+        // retain the same committedAt after a disk round trip, and ACK must
+        // preserve exactly the existing access deadline.
+        let fixtureNow = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         let preview = try MomentCanonicalPreviewBuilder.build(
             image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
@@ -5463,7 +5468,7 @@ actor SharingRuntimeSelfTestRunner {
                 caption: "受信した写真のひとこと"
             )
             let momentID = "moment_inbound_\(suffix)"
-            let committedAt = Date().addingTimeInterval(-60)
+            let committedAt = fixtureNow.addingTimeInterval(-60)
             let change = MomentChange(
                 cursor: "cursor_inbound_\(suffix)",
                 sequence: nil,
