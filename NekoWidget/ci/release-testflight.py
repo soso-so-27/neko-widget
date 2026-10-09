@@ -88,6 +88,12 @@ class GitHub:
             args.extend(["--job", str(job_id)])
         return command(args)
 
+    def raw_job_log(self, job_id: int) -> str:
+        # Chained proofs pin the actual API transcript. gh run view adds tabular
+        # job/step prefixes and must not transform the fixed input to its digest.
+        return command(["gh", "api", "--hostname", "github.com", "--method", "GET",
+                        "--allow-escape-sequences", f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs"])
+
     def dispatch(self, inputs: dict) -> None:
         # Exactly one POST. A lost response is ambiguous: never retry here.
         try:
@@ -193,6 +199,25 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             "CI plan identity/version does not match this release.")
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
+    chained = plan.get("chained_build_recovery")
+    if chained is not None:
+        require(plan.get("scope") == planner.MODERATION_RESOLUTION_SCOPE, "Chained Build recovery scope differs.")
+        def chained_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected chained recovery API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2]); job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Chained recovery job identity unavailable.")
+                return gh.raw_job_log(job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            valid = planner.covers_moderation_chained_recovery(current, sha, required, chained_api, now, executed_jobs_for(gh, current))
+        except (OSError, AttributeError, KeyError, TypeError, ValueError):
+            raise Blocked("Chained Build/Photos/source-native/backend proof unavailable or invalid.") from None
+        require(valid, "Complete new Build and Photos, exact two source native jobs and original backend proof are required.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "chained_build_recovery": chained, "backend_evidence": chained["backend_evidence"]}
     correction = plan.get("test_correction_evidence")
     if correction is not None and plan.get("scope") == planner.MODERATION_RESOLUTION_SCOPE:
         def moderation_api(path):
@@ -299,7 +324,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 job_id = int(path.split("/")[-2])
                 job = gh.get(f"actions/jobs/{job_id}")
                 require(type(job.get("run_id")) is int, "Corrected candidate job identity unavailable.")
-                return gh.log(job["run_id"], job_id)
+                return gh.raw_job_log(job_id) if planner.moderation_chained_inputs(source_sha) else gh.log(job["run_id"], job_id)
             return gh.get(path[len(prefix):])
         try:
             covered = planner.covers_corrected_full_graph(source, sha, required, candidate_api, now, jobs)
@@ -322,7 +347,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
     if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:
         production = planner.moderation_ui_recovery_inputs(source_sha)
-        backend_sha = planner.MODERATION_BUILD_CORRECTION_SOURCE if corrected or production else source_sha
+        chained = planner.moderation_chained_inputs(source_sha)
+        backend_sha = planner.MODERATION_BUILD_CORRECTION_SOURCE if corrected or production or chained else source_sha
         require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(backend_sha),
                 "Moderation resolution plan must declare all five same-candidate backend jobs.")
         def resolution_api(path: str):
@@ -331,12 +357,18 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             if path.endswith("/logs"):
                 job_id = int(path.split("/")[-2]); job = gh.get(f"actions/jobs/{job_id}")
                 require(type(job.get("run_id")) is int, "Production UI evidence job identity unavailable.")
-                return gh.log(job["run_id"], job_id)
+                return gh.raw_job_log(job_id) if chained else gh.log(job["run_id"], job_id)
             return gh.get(path[len(prefix):])
         try:
             owner = current if source_id == run_id else source
             branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
-            if production:
+            if chained:
+                require(planner.covers_moderation_chained_recovery(owner, sha, required, resolution_api, now, jobs),
+                        "Chained recovery requires complete Build/Photos and revalidated source runtime/UI/backend proof.")
+                proof = planner.moderation_chained_evidence(source_sha, REPOSITORY, resolution_api, now)
+                result["chained_build_recovery"] = proof
+                result["backend_evidence"] = proof["backend_evidence"]
+            elif production:
                 require(planner.covers_moderation_ui_recovery(owner, sha, required, resolution_api, now, jobs),
                         "Production UI recovery requires all four new native jobs and original backend proof.")
                 proof = planner.moderation_ui_recovery_evidence(source_sha, REPOSITORY, resolution_api, now)

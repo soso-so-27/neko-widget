@@ -21,6 +21,62 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class ModerationChainedRecoveryBudgetTests(unittest.TestCase):
+    def setUp(self):
+        self.head=planner.MODERATION_CHAIN_PRODUCT
+        self.now=dt.datetime(2026,10,9,16,30,tzinfo=dt.timezone.utc)
+        self.plan={"head":self.head,"scope":planner.MODERATION_RESOLUTION_SCOPE,"target_minutes":300,
+                   "ready":False,"cost":{"status":"unmeasured","with_upload_minutes":[None,None]}}
+        self.proof={"kind":"moderation-chained-build-photos-recovery-v1","candidate_sha":self.head,
+            "source_run_id":planner.MODERATION_CHAIN_RUN,"source_sha":planner.MODERATION_CHAIN_SOURCE,
+            "photos_failure_sha256":planner.MODERATION_CHAIN_PHOTOS_LOG_SHA256,
+            "source_failed_jobs":[planner.MODERATION_CHAIN_JOBS[x] for x in planner.MODERATION_CHAIN_OWNING],
+            "owning_jobs_to_execute":list(planner.MODERATION_CHAIN_OWNING)}
+        self.source={"id":planner.MODERATION_CHAIN_RUN,"head_sha":planner.MODERATION_CHAIN_SOURCE,
+            "head_branch":planner.MODERATION_BUILD_CORRECTION_BRANCH,"event":"push","path":".github/workflows/ios-build.yml",
+            "status":"completed","conclusion":"failure","created_at":"2026-10-09T15:52:18Z",
+            "failed_tests":[],"unsupported_failed_tests":["NekoWidgetUITests."+planner.MODERATION_CHAIN_PHOTOS_CASE]}
+        self.earliest=self.source|{"id":77,"created_at":"2026-10-09T12:50:53Z","unsupported_failed_tests":[]}
+
+    def cost(self):
+        return preflight.moderation_chained_cost(self.plan,self.proof,True,{"upload_minutes":12.183})
+
+    def test_two_complete_jobs_reserve_parallel_timeout_not_observed_success(self):
+        result=self.cost()
+        self.assertEqual(result["cost"]["with_upload_minutes"],[52.18,52.18])
+        self.assertEqual(result["cost"]["owning_jobs"],list(planner.MODERATION_CHAIN_OWNING))
+        self.assertEqual((result["cost"]["build_timeout_minutes"],result["cost"]["photos_timeout_minutes"]),(30,40))
+        self.assertFalse(result["cost"]["new_build_full_success_observed"])
+        self.assertIs(preflight.moderation_chained_cost(self.plan,self.proof|{"candidate_sha":"a"*40},False,{}),self.plan)
+        with self.assertRaises(ValueError): preflight.moderation_chained_cost(self.plan,self.proof,True,{"upload_minutes":float("nan")})
+
+    def test_exact_failed_photos_is_repeated_and_every_failure_and_first_candidate_time_remain(self):
+        result=preflight.apply_task_gate(self.cost(),[self.earliest,self.source],self.now)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["failed_runs"],[77,planner.MODERATION_CHAIN_RUN])
+        self.assertEqual(result["task"]["minutes_since_first_ci"],219.1)
+        self.assertFalse(result["task"]["first_baseline_measurement"])
+        self.assertEqual(result["task"]["failed_jobs_to_repeat"],self.proof["source_failed_jobs"])
+        for extra in ({"id":99,"created_at":"2026-10-09T16:10:00Z","unsupported_failed_tests":[]},
+                      {"id":99,"status":"in_progress"},
+                      {"id":99,"unsupported_failed_tests":["NekoWidgetUITests."+planner.MODERATION_CHAIN_PHOTOS_CASE]},
+                      {"id":99,"failed_tests":["MomentDeliveryComposerUITests/testUnknown"]}):
+            self.assertFalse(preflight.apply_task_gate(self.cost(),[self.earliest,self.source,self.source|extra],self.now)["ready"])
+        result=self.cost();result["chained_build_recovery"]=self.proof|{"photos_failure_sha256":"0"*64}
+        with self.assertRaises(ValueError): preflight.apply_task_gate(result,[self.earliest,self.source],self.now)
+        self.assertFalse(preflight.apply_task_gate(self.cost(),[self.earliest,self.source],self.now+dt.timedelta(hours=1))["ready"])
+        self.assertFalse(preflight.apply_task_gate(self.cost(),[self.earliest,self.source|{"unsupported_failed_tests":["Other/testFailure"]}],self.now)["ready"])
+
+    def test_focused_ui_diagnosis_maps_only_through_exact_chain_inputs(self):
+        with patch.object(planner,"moderation_ui_recovery_inputs",return_value=False), \
+                patch.object(planner,"moderation_chained_inputs",return_value=True):
+            self.assertTrue(preflight.diagnostic_source_matches(planner.MODERATION_UI_RECOVERY_PRODUCT,self.head))
+        with patch.object(planner,"moderation_ui_recovery_inputs",return_value=False), \
+                patch.object(planner,"moderation_chained_inputs",return_value=False), \
+                patch.object(planner,"git",side_effect=subprocess.CalledProcessError(1,"git")):
+            self.assertFalse(preflight.diagnostic_source_matches(planner.MODERATION_UI_RECOVERY_PRODUCT,self.head))
+
+
 class ModerationProductionUIRecoveryTests(unittest.TestCase):
     def test_only_fixed_diagnosed_product_can_follow_approved_control_merge(self):
         source, head = planner.MODERATION_UI_RECOVERY_PRODUCT, "a" * 40
