@@ -78,6 +78,50 @@ class PreservationProviderStreamBudgetTests(unittest.TestCase):
         self.assertEqual({row["id"] for row in result}, {1, 2})
 
 
+class PreservationRecoveryReadBudgetTests(unittest.TestCase):
+    def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
+        selected = planner.PRESERVATION_RECOVERY_READ_SCOPE
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": previous, "candidate_minutes": 1.1, "run_id": index, "outcome": "success"}
+            for index, previous in enumerate((planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE))]}
+        cost = preflight.observe_cost(selected, history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["samples"], [])
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 5)
+        self.assertNotIn("with_upload_minutes", cost)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30, "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        for state, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+            run = {"id": 8, "path": planner.PRESERVATION_WORKFLOW, "status": state, "conclusion": conclusion,
+                   "created_at": (now - dt.timedelta(minutes=8)).isoformat()}
+            gated = preflight.apply_task_gate(result, [run], now, measure_baseline=True)
+            self.assertFalse(gated["ready"])
+            self.assertFalse(gated["task"]["first_baseline_measurement"])
+            self.assertEqual(gated["task"]["minutes_since_first_ci"], 8)
+            self.assertEqual(gated["task"]["failed_runs"], [8] if conclusion == "failure" else [])
+            self.assertEqual(gated["task"]["active_runs"], [8] if state != "completed" else [])
+
+    def test_candidate_plan_names_owning_node_job_on_the_fixed_head(self):
+        head = "a" * 40
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.PRESERVATION_RECOVERY_READ_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_RECOVERY_READ_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["head"], head)
+        self.assertEqual(result["required_jobs"], [planner.PRESERVATION_JOB])
+        self.assertEqual(result["required_backend_runs"], [{"workflow": planner.PRESERVATION_WORKFLOW,
+                         "job": planner.PRESERVATION_JOB, "head_sha": head, "success_required": True}])
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertIn("same-SHA preservation Node job", result["reason"])
+        self.assertIn("no native, live-cloud or release evidence", result["reason"])
+
+
 class PreservationRequestBufferBudgetTests(unittest.TestCase):
     def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
         selected = planner.PRESERVATION_REQUEST_BUFFER_SCOPE

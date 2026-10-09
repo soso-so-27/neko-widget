@@ -488,6 +488,22 @@ PRESERVATION_REQUEST_BUFFER_ADDITIONS = frozenset((
 PRESERVATION_REQUEST_BUFFER_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
 
 
+# One reviewed S3 recovery exact-size reader and its owning boundary tests.
+# Product commit ddcbab19d3244166ba44a17ee7392e113fc57ffe; control lands first.
+PRESERVATION_RECOVERY_READ_SCOPE = "preservation-recovery-read-v1"
+PRESERVATION_RECOVERY_READ_BLOBS = {
+    "NekoWidget/PreservationService/src/s3-recovery-copy.ts": (
+        "2c49ba7fdb9997f32297ef6e16ea43efce148870", "0c97d8f15d02d8633917f502fa2614b900e22149"),
+    "NekoWidget/PreservationService/test/s3-recovery-read.test.ts": (
+        "0" * 40, "18093c2e83cabe9231eeda08c15decd122ef1c54"),
+}
+PRESERVATION_RECOVERY_READ_PATHS = frozenset(PRESERVATION_RECOVERY_READ_BLOBS)
+PRESERVATION_RECOVERY_READ_ADDITIONS = frozenset((
+    "NekoWidget/PreservationService/test/s3-recovery-read.test.ts",
+))
+PRESERVATION_RECOVERY_READ_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
 BILLING_SCOPE = "billing-private-service-v2"
 BILLING_JOB = "Typecheck, test, and build Apple transaction verifier"
 BILLING_CALLER_JOB = "Validate private billing caller"
@@ -781,6 +797,36 @@ def preservation_request_buffer_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_recovery_read_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_RECOVERY_READ_PATHS
+            and all(path in PRESERVATION_RECOVERY_READ_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_recovery_read_backend_only(paths, base, head):
+    if (not preservation_recovery_read_paths_only(paths)
+            or set(PRESERVATION_RECOVERY_READ_BLOBS) != PRESERVATION_RECOVERY_READ_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       and (pair[0] == "0" * 40) == (path in PRESERVATION_RECOVERY_READ_ADDITIONS)
+                       for path, pair in PRESERVATION_RECOVERY_READ_BLOBS.items())):
+        return False
+    blob = PRESERVATION_RECOVERY_READ_WORKFLOW_BLOB
+    if (not SHA.fullmatch(blob) or blob == "0" * 40
+            or any(git("ls-tree", revision, "--", PRESERVATION_WORKFLOW)
+                   != f"100644 blob {blob}\t{PRESERVATION_WORKFLOW}" for revision in (base, head))):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_RECOVERY_READ_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_RECOVERY_READ_COMPANION_DIGESTS")
+
+
+def preservation_recovery_read_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "success_required": True}]
+
+
 def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS, allowed_additions=frozenset()):
     if not paths or not source_paths(paths) or not source_paths(paths) <= allowed:
         return False
@@ -999,6 +1045,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_REQUEST_BUFFER_SCOPE and preservation_request_buffer_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_RECOVERY_READ_SCOPE and preservation_recovery_read_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
         return (PLAN_JOB,)
@@ -1437,7 +1485,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
+    for selected, matches, verify in ((PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
+                                       (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
                                        (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
                                        (PRESERVATION_UPLOAD_SCOPE, preservation_upload_paths_only, preservation_upload_backend_only),
@@ -2512,7 +2561,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -2530,13 +2579,16 @@ def main() -> None:
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
               **({"required_backend_runs": preservation_request_buffer_requirements(env["GITHUB_SHA"])}
-                 if selected_scope == PRESERVATION_REQUEST_BUFFER_SCOPE else {})}))
+                 if selected_scope == PRESERVATION_REQUEST_BUFFER_SCOPE else {}),
+              **({"required_backend_runs": preservation_recovery_read_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_RECOVERY_READ_SCOPE else {})}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_UPLOAD_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             if selected_scope == PRESERVATION_PROVIDER_SCOPE:
