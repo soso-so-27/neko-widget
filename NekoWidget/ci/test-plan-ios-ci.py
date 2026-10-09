@@ -230,6 +230,77 @@ class ModerationAIDurableScopeTests(unittest.TestCase):
                       planner.MODERATION_AI_DURABLE_PATHS)
 
 
+    def corrected_rows(self):
+        return self.rows() | {path: [":100644", "100644", before, after, "M"]
+                              for path, (before, after) in planner.MODERATION_AI_DURABLE_FIXTURE_BLOBS.items()}
+
+    def test_exact_fixture_correction_retains_original_shape_scope_and_five_jobs(self):
+        original, corrected = self.rows(), self.corrected_rows()
+        self.assertEqual([row[4] for row in corrected.values()], ["A", "A", "A", "M", "M", "M"])
+        for rows in (original, corrected):
+            self.assertEqual(self.select(rows), planner.MODERATION_AI_DURABLE_SCOPE)
+            self.assertEqual(planner.required_jobs(list(rows), planner.MODERATION_AI_DURABLE_SCOPE),
+                             planner.MODERATION_AI_DURABLE_JOBS)
+        for fields in ([":000000", "100644", "0" * 40, "c" * 40, "A"],
+                       [":100644", "100644", "c" * 40, "d" * 40, "M"]):
+            self.assertEqual(self.select(corrected | {"handoffs/correction.md": fields}),
+                             planner.MODERATION_AI_DURABLE_SCOPE)
+        for fields in ([":000000", "120000", "0" * 40, "c" * 40, "A"],
+                       [":100644", "000000", "c" * 40, "0" * 40, "D"]):
+            self.assertEqual(self.select(corrected | {"handoffs/correction.md": fields}), scope.FULL_SCOPE)
+
+    def test_fixture_only_partial_unknown_modes_and_blobs_cannot_borrow_correction(self):
+        corrected = self.corrected_rows()
+        fixtures = list(planner.MODERATION_AI_DURABLE_FIXTURE_BLOBS)
+        for mask in range(1, 7):
+            subset = {path: corrected[path] for index, path in enumerate(fixtures) if mask & (1 << index)}
+            self.assertEqual(self.select(subset), scope.FULL_SCOPE)
+            self.assertEqual(self.select(self.rows() | subset), scope.FULL_SCOPE)
+            self.assertEqual(planner.required_jobs(list(self.rows() | subset), planner.MODERATION_AI_DURABLE_SCOPE), planner.FULL)
+        for path in planner.MODERATION_AI_DURABLE_PATHS:
+            incomplete = {key: value for key, value in corrected.items() if key != path}
+            self.assertEqual(self.select(incomplete), scope.FULL_SCOPE)
+            self.assertEqual(planner.required_jobs(list(incomplete), planner.MODERATION_AI_DURABLE_SCOPE), planner.FULL)
+        for fixture in fixtures:
+            for index, value in ((0, ":000000"), (0, ":100755"), (1, "120000"), (1, "100755"),
+                                 (2, "0" * 40), (2, "c" * 40), (3, "d" * 40),
+                                 (4, "A"), (4, "D"), (4, "T"), (4, "R100")):
+                changed = copy.deepcopy(corrected); changed[fixture][index] = value
+                self.assertEqual(self.select(changed), scope.FULL_SCOPE, (fixture, index, value))
+        for unknown in ("NekoWidget/SharingService/scripts/other.node-tests.mjs",
+                        "NekoWidget/ci/plan-ios-ci.py", *planner.MODERATION_AI_TRANSPORT_PATHS):
+            changed = corrected | {unknown: [":100644", "100644", "c" * 40, "d" * 40, "M"]}
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE)
+            self.assertEqual(planner.required_jobs(list(changed), planner.MODERATION_AI_DURABLE_SCOPE), planner.FULL)
+        raw = "".join(" ".join(row) + "\0" + path + "\0" for path, row in corrected.items())
+        fixture = fixtures[0]
+        fixture_raw = " ".join(corrected[fixture]) + "\0" + fixture + "\0"
+        self.assertEqual(self.select(raw=raw + fixture_raw, rows=corrected), scope.FULL_SCOPE)
+        self.assertEqual(self.select(corrected, paths=list(corrected) + [fixture]), scope.FULL_SCOPE)
+
+    def test_correction_still_requires_original_ancestry_and_fixed_execution_inputs(self):
+        corrected = self.corrected_rows()
+        self.assertEqual(self.select(corrected, ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(self.select(corrected, event="workflow_dispatch"), scope.FULL_SCOPE)
+        for path in planner.MODERATION_AI_DURABLE_WORKFLOW_BLOBS | planner.MODERATION_AI_DURABLE_MIGRATION_INPUT_BLOBS:
+            for revision in (self.base, self.head):
+                self.assertEqual(self.select(corrected, workflows={(revision, path): ""}), scope.FULL_SCOPE)
+
+    def test_invalid_fixture_registration_fails_closed_without_disabling_original_shape(self):
+        corrected = self.corrected_rows()
+        original = planner.MODERATION_AI_DURABLE_FIXTURE_BLOBS
+        invalid_maps = [{}, {"other.mjs": ("c" * 40, "d" * 40)}]
+        for fixture in original:
+            invalid_maps.append({path: pair for path, pair in original.items() if path != fixture})
+            invalid_maps.extend(original | {fixture: pair} for pair in (
+                ("0" * 40, "d" * 40), ("c" * 40, "0" * 40), ("c" * 40, "c" * 40),
+                ("bad", "d" * 40), ("c" * 40, "d" * 40, "extra")))
+        for invalid in invalid_maps:
+            with patch.object(planner, "MODERATION_AI_DURABLE_FIXTURE_BLOBS", invalid):
+                self.assertEqual(self.select(corrected), scope.FULL_SCOPE)
+                self.assertEqual(self.select(), planner.MODERATION_AI_DURABLE_SCOPE)
+
+
 class ModerationAITransportScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
