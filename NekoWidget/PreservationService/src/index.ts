@@ -5,7 +5,7 @@ import { AppleIdentityVerifier, AppleSignInFailure, createAppleClientSecret } fr
 import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './providers';
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
-import { readBoundedBody } from './bounded-body';
+import { readRequestJSON as body } from './request-json';
 import { RetentionLedger, type VerifiedMembershipStatus } from './retention-ledger';
 import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions';
 import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
@@ -62,21 +62,6 @@ const string = (value: unknown) => {
   if (typeof value !== 'string' || !value || value.length > 20_000) throw new ServiceError('INVALID_REQUEST');
   return value;
 };
-async function body(request: Request, maximum: number): Promise<Record<string, unknown>> {
-  if (request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json' || !request.body) {
-    throw new ServiceError('INVALID_REQUEST');
-  }
-  try {
-    const merged = await readBoundedBody(request.body, maximum, () => new ServiceError('INVALID_REQUEST'), request.signal,
-      () => new ServiceError('REQUEST_TOO_LARGE', 413));
-    const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(merged));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
-    return parsed as Record<string, unknown>;
-  } catch (error) {
-    if (error instanceof ServiceError) throw error;
-    throw new ServiceError('INVALID_REQUEST');
-  }
-}
 const bearer = (request: Request) => {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') ?? '');
   if (!match?.[1]) throw new ServiceError('SESSION_INVALID', 401);
