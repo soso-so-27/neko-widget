@@ -7,6 +7,7 @@ import {
 import { canonicalModerationEvidenceBytes, MODERATION_EVIDENCE_EVENT_SCHEMA } from "./moderation-evidence-export";
 import { prepareModerationOperatorWebAuthnRequest } from "./moderation-operator-request";
 import { verifyPreparedModerationOperatorWebAuthnAssertion } from "./moderation-operator-webauthn";
+import { localModerationConsole } from "./moderation-operator-console";
 
 /** Local integration candidate only. No Worker imports or exposes this handler. */
 export interface LocalModerationTriageEnvironment {
@@ -56,6 +57,7 @@ const unavailable = () => new TriageError(503, "operator_dependency_unavailable"
 const headers = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8", "X-Content-Type-Options": "nosniff" };
 const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const operationPattern = /^\/operator\/v1\/cases\/([0-9a-f]{64})\/review-start$/u;
+const queuePattern = /^\/operator\/v1\/cases\/read(?:\/([1-9][0-9]{0,9})\/([0-9a-f]{64}))?$/u;
 const assertionPattern = new RegExp(`^(/operator/v1/cases/([0-9a-f]{64})/review-start)/assertions/(${uuid})$`, "u");
 const encoder = new TextEncoder();
 
@@ -158,12 +160,21 @@ async function batch(db: D1Database, statements: D1PreparedStatement[]): Promise
   try { return await db.batch(statements); } catch (error) { throw sqlFailure(error); }
 }
 
-async function queue(env: LocalModerationTriageEnvironment, access: AuthenticatedModerationOperatorAccess, actor: Actor): Promise<Response> {
+async function queue(env: LocalModerationTriageEnvironment, access: AuthenticatedModerationOperatorAccess, actor: Actor,
+  method: string, pathname: string, afterDue = 0, afterReference = ""): Promise<Response> {
   const audit: Audit = { id: crypto.randomUUID(), operation: "case_read", caseReference: null,
-    requestDigest: await requestDigest("GET", "/operator/v1/cases") };
+    requestDigest: await requestDigest(method, pathname) };
   const result = await batch(env.db, [guard(env.db, access, actor), admitSession(env.db, access, actor),
     startAudit(env.db, access, actor, audit),
     env.db.prepare(`SELECT reference.case_reference_hmac AS caseReferenceHmac,
+      cases.review_due_at AS reviewDueAt,
+      EXISTS (SELECT 1 FROM moderation_advisory_live_sources AS source
+        WHERE source.case_reference_hmac=reference.case_reference_hmac) AS evidenceAvailable,
+      CASE WHEN advisory.job_id IS NULL THEN 'not_requested'
+        WHEN result.job_id IS NULL THEN 'pending'
+        ELSE json_extract(result.result_json, '$.reason') END AS advisoryReason,
+      CASE WHEN json_extract(result.result_json, '$.priorityHint')='raise' THEN 'raise'
+        ELSE 'preserve' END AS advisoryPriority,
       CASE WHEN EXISTS (SELECT 1 FROM moderation_case_events AS event
         WHERE event.report_id = cases.report_id AND event.event_type = 'review_started')
         THEN 'in_review' ELSE 'unreviewed' END AS reviewState,
@@ -176,9 +187,12 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
           AND NOT EXISTS (SELECT 1 FROM moderation_evidence_event_finalizations WHERE event_id = intent.event_id)) AS pendingFinalization
       FROM moderation_cases AS cases JOIN moderation_operator_versioned_case_references AS reference
         ON reference.report_id = cases.report_id
+      LEFT JOIN moderation_advisory_current_jobs AS advisory ON advisory.report_id=cases.report_id
+      LEFT JOIN moderation_advisory_results AS result ON result.job_id=advisory.job_id
       WHERE NOT EXISTS (SELECT 1 FROM moderation_case_events AS event
         WHERE event.report_id = cases.report_id AND event.event_type = 'review_decided')
-      ORDER BY cases.review_due_at, reference.case_reference_hmac LIMIT 21`),
+        AND (cases.review_due_at > ? OR (cases.review_due_at = ? AND reference.case_reference_hmac > ?))
+      ORDER BY cases.review_due_at, reference.case_reference_hmac LIMIT 21`).bind(afterDue, afterDue, afterReference),
     env.db.prepare(`SELECT COUNT(*) AS unboundCases FROM moderation_cases AS cases
       WHERE NOT EXISTS (SELECT 1 FROM moderation_operator_versioned_case_references WHERE report_id = cases.report_id)
         AND NOT EXISTS (SELECT 1 FROM moderation_case_events WHERE report_id = cases.report_id AND event_type = 'review_decided')`),
@@ -314,9 +328,16 @@ export async function routeLocalModerationOperatorTriage(request: Request, env: 
   }
   try {
     const url = new URL(request.url);
+    // Public, data-free LOCAL shell. Protected case data is fetched separately
+    // through the same Access/actor/audit gate below. Never deployed by Worker.
+    if (request.method === "GET" && url.pathname === "/operator/console"
+        && url.origin === env.origin && url.search === "") return localModerationConsole();
     const operation = operationPattern.exec(url.pathname);
     const assertion = assertionPattern.exec(url.pathname);
-    if (!((request.method === "GET" && url.pathname === "/operator/v1/cases")
+    const page = queuePattern.exec(url.pathname);
+    const readQueue = (request.method === "GET" && url.pathname === "/operator/v1/cases")
+      || (request.method === "POST" && page !== null && Number(page[1] ?? 0) <= 2_147_483_647);
+    if (!(readQueue
         || (request.method === "POST" && (operation !== null || assertion !== null)))) {
       return response({ error: { code: "not_found" } }, 404);
     }
@@ -330,7 +351,10 @@ export async function routeLocalModerationOperatorTriage(request: Request, env: 
     const actor = await env.db.prepare(actorSQL)
       .bind(access.operatorSubjectHmac, access.subjectHmacKeyVersion).first<Actor>();
     if (actor === null) throw denied();
-    if (request.method === "GET") return await queue(env, access, actor);
+    // Same-origin browser GET omits Origin. POST read preserves the strict
+    // existing Origin gate without trusting a JS-supplied substitute header.
+    if (readQueue) return await queue(env, access, actor, request.method, url.pathname,
+      Number(page?.[1] ?? 0), page?.[2] ?? "");
     if (operation !== null) return await beginReview(env, access, actor, url.pathname, operation[1]!);
     return await proveReview(request, env, access, actor, assertion![1]!, assertion![2]!, assertion![3]!);
   } catch (error) {
