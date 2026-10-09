@@ -24,6 +24,174 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class ModerationResolutionScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                       "A" if before == "0" * 40 else "M"]
+                for path, (before, after) in planner.MODERATION_RESOLUTION_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, immutable=None, methods=True):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if args[0] == "merge-base": return self.base
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(fields) + "\0" + path + "\0" for path, fields in rows.items())
+            if args[0] == "ls-tree":
+                ref, path = args[1], args[3]
+                return (immutable or {}).get((ref, path), f"100644 blob {planner.MODERATION_RESOLUTION_IMMUTABLE_BLOBS.get(path, 'missing')}\t{path}")
+            if args[0] == "rev-parse": return self.head
+            if args[0] == "show": return "synthetic owning methods"
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git), patch.object(planner, "memory_tests_available", return_value=methods):
+            return planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": "push",
+                                                    "GITHUB_REF": "refs/heads/codex/resolution"})
+
+    def test_complete_batch_selects_four_native_classes_and_five_backends(self):
+        self.assertEqual(len(self.rows()), 42)
+        self.assertEqual(sum(row[-1] == "A" for row in self.rows().values()), 4)
+        selected = planner.MODERATION_RESOLUTION_SCOPE
+        self.assertEqual(self.select(), selected)
+        self.assertIn(selected, scope.SCOPES)
+        expected = (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected)
+        self.assertEqual(planner.required_jobs(list(self.rows()), selected), expected)
+        self.assertEqual(len(expected), 4)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.matrix_lanes(selected), ("runtime",))
+        self.assertEqual(scope.native_tests(selected), scope.native_tests(scope.FAMILY_WINDOW_UI_SCOPE) + scope.MODERATION_RESOLUTION_TESTS[-3:])
+        self.assertEqual(len(scope.native_tests(selected)), 11)
+        self.assertEqual(scope.smoke_tests(selected), scope.smoke_tests(scope.FAMILY_WINDOW_UI_SCOPE))
+        required = planner.moderation_resolution_requirements(self.head)
+        self.assertEqual(len(required), 5)
+        self.assertEqual({item["workflow"] for item in required}, {planner.BILLING_WORKFLOW, planner.PRESERVATION_WORKFLOW})
+        self.assertTrue(all(item["head_sha"] == self.head and item["event"] == "push" and item["success_required"] for item in required))
+
+    def test_incomplete_unknown_duplicate_control_modes_and_changed_blobs_fail_closed(self):
+        rows = self.rows()
+        for path, row in rows.items():
+            with self.subTest(missing=path):
+                self.assertEqual(self.select({p: r for p, r in rows.items() if p != path}), scope.FULL_SCOPE)
+            for index, value in ((0, ":120000"), (1, "100755"), (2, "c" * 40), (3, "d" * 40), (4, "D")):
+                altered = copy.deepcopy(rows); altered[path][index] = value
+                with self.subTest(path=path, field=index): self.assertEqual(self.select(altered), scope.FULL_SCOPE)
+        for path in ("unknown.swift", "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/SharingService/src/unreviewed.ts"):
+            self.assertEqual(self.select(rows | {path: [":000000", "100644", "0" * 40, "c" * 40, "A"]}), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(rows) + [next(iter(rows))]), scope.FULL_SCOPE)
+        raw = "".join(" ".join(row) + "\0" + path + "\0" for path, row in rows.items())
+        self.assertEqual(self.select(raw=raw + raw.split("\0", 2)[0] + "\0" + next(iter(rows)) + "\0"), scope.FULL_SCOPE)
+        self.assertEqual(self.select(methods=False), scope.FULL_SCOPE)
+
+    def test_pending_or_malformed_registration_cannot_select_the_new_scope(self):
+        rows, original = self.rows(), planner.MODERATION_RESOLUTION_BLOBS
+        path = next(iter(original))
+        for invalid in ({}, {key: pair for key, pair in original.items() if key != path},
+                        original | {path: (original[path][0], "0" * 40)},
+                        original | {path: (original[path][0], original[path][0])},
+                        original | {path: ("bad", "a" * 40)}, original | {path: ("a" * 40,)}):
+            with patch.object(planner, "MODERATION_RESOLUTION_BLOBS", invalid):
+                self.assertEqual(self.select(rows), scope.FULL_SCOPE)
+        with patch.object(planner, "MODERATION_RESOLUTION_IMMUTABLE_BLOBS", {}):
+            self.assertEqual(self.select(rows), scope.FULL_SCOPE)
+
+    def test_plan_outputs_native_graph_and_backend_main_does_not_wait_for_itself(self):
+        selected = planner.MODERATION_RESOLUTION_SCOPE
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / "event").write_text("{}")
+            env = {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/codex/resolution",
+                   "GITHUB_REPOSITORY": "soso-so-27/neko-widget", "GITHUB_WORKFLOW": "iOS build check",
+                   "GITHUB_EVENT_PATH": str(root / "event"), "GITHUB_OUTPUT": str(root / "output"),
+                   "GITHUB_STEP_SUMMARY": str(root / "summary")}
+            for backend in (False, True):
+                output = io.StringIO()
+                with patch.dict(os.environ, env | ({"GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW": "Sharing service check"} if backend else {})), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=selected), \
+                        patch.object(planner, "preservation_sharing_plan", return_value=backend), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("must not await self") if backend else None, return_value=None), \
+                        patch.object(planner, "find_test_correction_evidence", return_value=None), contextlib.redirect_stdout(output):
+                    planner.main()
+                values = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual(values["runtime_scope"], selected)
+                self.assertTrue(all(values[key] == str(not backend).lower() for key in ("build", "smoke", "sharing", "app_ui")))
+                if not backend:
+                    marker = "IOS_CI_PLAN_JSON="
+                    plan = json.loads(next(line[len(marker):] for line in output.getvalue().splitlines() if line.startswith(marker)))
+                    self.assertEqual(plan["required_backend_runs"], planner.moderation_resolution_requirements(self.head))
+                    self.assertEqual(json.loads(values["matrix_lanes"]), ["runtime"])
+                    self.assertEqual(json.loads(values["app_ui_lanes"]), ["app-ui"])
+
+    def test_ordinary_handoffs_only_and_both_endpoint_immutable_modes(self):
+        for row in ([":000000", "100644", "0" * 40, "e" * 40, "A"], [":100644", "100644", "d" * 40, "e" * 40, "M"]):
+            self.assertEqual(self.select(self.rows() | {"handoffs/resolution.md": row}), planner.MODERATION_RESOLUTION_SCOPE)
+        for row in ([":100644", "000000", "d" * 40, "0" * 40, "D"], [":000000", "120000", "0" * 40, "e" * 40, "A"]):
+            self.assertEqual(self.select(self.rows() | {"handoffs/resolution.md": row}), scope.FULL_SCOPE)
+        for path in planner.MODERATION_RESOLUTION_IMMUTABLE_BLOBS:
+            for ref in (self.base, self.head):
+                for value in ("", f"100755 blob {'d' * 40}\t{path}", f"100644 blob {'d' * 40}\t{path}"):
+                    with self.subTest(path=path, ref=ref):
+                        self.assertEqual(self.select(immutable={(ref, path): value}), scope.FULL_SCOPE)
+
+
+class ModerationResolutionBackendEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        # Reuse only the synthetic API fixture shape; no fixed durable reuse is invoked.
+        self.fixture = ModerationAIDurableBackendReuseTests()
+        self.fixture.setUp()
+        f = self.fixture
+        self.sha, self.now, self.responses = f.candidate, f.now, copy.deepcopy(f.responses)
+        old = self.responses.pop(f.index("preservation-service.yml", f.source))
+        self.responses[f.index("preservation-service.yml", self.sha)] = old
+        for response in self.responses.values():
+            if "workflow_runs" in response:
+                for run in response["workflow_runs"]: run["head_sha"] = self.sha
+            if "jobs" in response:
+                for job in response["jobs"]: job["head_sha"] = self.sha
+        self.indexes = [f.index(w, self.sha) for w in ("preservation-service.yml", "sharing-service.yml")]
+        self.job_keys = [f.jobs_path(r) for r in (37911654217, 37913531637)]
+
+    def prove(self):
+        return planner.moderation_resolution_backend_evidence(self.sha, self.fixture.repo, self.responses.__getitem__, self.now,
+                                                              branch="codex/moderation-ai-durable-20261009")
+
+    def test_same_sha_push_and_all_executed_owning_steps_required(self):
+        result = self.prove()
+        self.assertEqual(sum(len(row["job_ids"]) for row in result.values()), 5)
+        self.assertTrue(all(row["sha"] == self.sha and row["event"] == "push" for row in result.values()))
+        for key in self.job_keys:
+            original = copy.deepcopy(self.responses[key])
+            for n, job in enumerate(original["jobs"]):
+                for field, value in (("head_sha", "d" * 40), ("conclusion", "skipped"), ("status", "in_progress"), ("run_id", 4)):
+                    self.responses[key] = copy.deepcopy(original); self.responses[key]["jobs"][n][field] = value
+                    with self.subTest(job=job["name"], field=field), self.assertRaises(ValueError): self.prove()
+                for step in range(len(job["steps"])):
+                    if job["steps"][step]["name"] in ("Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts"): continue
+                    self.responses[key] = copy.deepcopy(original); self.responses[key]["jobs"][n]["steps"][step]["conclusion"] = "skipped"
+                    with self.subTest(job=job["name"], step=step), self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+            self.responses[key]["jobs"].append(copy.deepcopy(original["jobs"][0])); self.responses[key]["total_count"] += 1
+            with self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+
+    def test_absent_dispatch_pr_wrong_owner_stale_newer_failure_and_incomplete_fail_closed(self):
+        for key in self.indexes:
+            original = copy.deepcopy(self.responses[key])
+            for field, value in (("head_sha", "d" * 40), ("event", "workflow_dispatch"), ("event", "pull_request"),
+                    ("head_branch", "main"), ("head_branch", "diagnostic/resolution"), ("workflow_id", 88),
+                    ("path", ".github/workflows/other.yml"), ("head_repository", {"full_name": "other/repo"}),
+                    ("updated_at", "2020-01-01T00:00:00Z"), ("status", "in_progress"), ("conclusion", "failure")):
+                self.responses[key] = copy.deepcopy(original); self.responses[key]["workflow_runs"][0][field] = value
+                with self.subTest(key=key, field=field), self.assertRaises(ValueError): self.prove()
+            for invalid in ({"total_count": 0, "workflow_runs": []}, {"total_count": 2, "workflow_runs": original["workflow_runs"]}):
+                self.responses[key] = invalid
+                with self.assertRaises(ValueError): self.prove()
+            newer = copy.deepcopy(original["workflow_runs"][0]); newer.update(id=123456, run_number=2, conclusion="failure")
+            self.responses[key] = {"total_count": 2, "workflow_runs": original["workflow_runs"] + [newer]}
+            with self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+
+
 class ModerationAIDurableBackendReuseTests(unittest.TestCase):
     def setUp(self):
         self.candidate = planner.MODERATION_AI_DURABLE_REUSE_CANDIDATE
@@ -5224,6 +5392,17 @@ class PlanTests(unittest.TestCase):
         if "/runs/10/jobs?filter=latest" in path:
             return {"total_count": len(self.jobs), "jobs": self.jobs}
         self.fail(f"Unexpected API endpoint: {path}")
+
+    def test_resolution_main_reuse_also_requires_same_candidate_backends(self):
+        required = planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)
+        self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
+                      "completed_at": "2026-09-07T11:00:00Z"} for name in required]
+        with patch.object(planner, "moderation_resolution_backend_evidence", return_value={}) as backend:
+            self.assertEqual(planner.find_evidence(self.env, required, self.api, self.now), (10, self.sha))
+            self.assertEqual(backend.call_args.args[:2], (self.sha, "owner/repo"))
+            self.assertEqual(backend.call_args.kwargs, {"branch": "codex/movie"})
+        with patch.object(planner, "moderation_resolution_backend_evidence", side_effect=ValueError("missing")), self.assertRaises(ValueError):
+            planner.find_evidence(self.env, required, self.api, self.now)
 
     def test_main_uses_exact_commit_evidence(self):
         self.assertEqual(planner.find_evidence(self.env, planner.FULL, self.api, self.now), (10, self.sha))

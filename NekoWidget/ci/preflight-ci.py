@@ -453,7 +453,155 @@ def known_deletion_test_diagnosis(result, runs):
             "reviewed_test_fix": corrected, "reuses_successful_jobs": False}
 
 
-def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None):
+def moderation_resolution_diagnostic_backend_recovery(result, runs, now=None):
+    """Planning proof only: corrected diagnostic backend work is not a native baseline.
+
+    Native/UI inputs may change after diagnosis. All backend execution inputs must
+    remain identical; neither this proof nor its diagnostic branch authorizes release.
+    The selector/plan may acquire the reviewed control registration: its required
+    four Sharing jobs are verified as executed, never inferred from plan success.
+    """
+    if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE
+            or tuple(result.get("required_jobs", ())) != planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)
+            or result.get("cost", {}).get("status") != "unmeasured"):
+        return None
+    branch = planner.git("branch", "--show-current")
+    if not branch.startswith("codex/"):
+        return None
+    diagnostic_branch = "diagnostic/" + branch.removeprefix("codex/")
+    # Any normal candidate execution still consumes the first-measurement gate.
+    if any(run.get("head_branch", "").startswith("codex/")
+           and not (run.get("event") == "pull_request" and run.get("conclusion") == "skipped") for run in runs):
+        return None
+    backend = [run for run in runs if run.get("path") == planner.BILLING_WORKFLOW
+               and run.get("head_branch") == diagnostic_branch and run.get("event") == "push"]
+    failed = [run for run in backend if run.get("status") == "completed"
+              and run.get("conclusion") in {"failure", "timed_out", "cancelled", "startup_failure"}]
+    if not failed:
+        return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    head = result["head"]
+    if not isinstance(head, str) or not planner.SHA.fullmatch(head):
+        raise ValueError("Invalid diagnostic backend recovery candidate")
+    prefix = f"repos/{REPOSITORY}/actions"
+    identity = github(prefix + "/workflows/sharing-service.yml")
+    if (type(identity.get("id")) is not int or identity.get("state") != "active"
+            or identity.get("path") != planner.BILLING_WORKFLOW):
+        raise ValueError("Diagnostic backend workflow identity unavailable")
+    for run in backend:
+        if (type(run.get("id")) is not int or type(run.get("run_number")) is not int
+                or run.get("workflow_id") != identity["id"]
+                or run.get("repository", {}).get("full_name") != REPOSITORY
+                or run.get("head_repository", {}).get("full_name") != REPOSITORY
+                or not isinstance(run.get("head_sha"), str) or not planner.SHA.fullmatch(run["head_sha"])):
+            raise ValueError("Diagnostic backend history identity mismatch")
+    if len({run["id"] for run in backend}) != len(backend) or len({run["run_number"] for run in backend}) != len(backend):
+        raise ValueError("Duplicate diagnostic backend history")
+    latest = max(backend, key=lambda run: run["run_number"])
+    if (latest.get("status"), latest.get("conclusion")) != ("completed", "success"):
+        return None
+    source = github(prefix + f"/runs/{latest['id']}")
+    fields = ("id", "head_sha", "head_branch", "event", "workflow_id", "path", "status", "conclusion", "run_number", "run_attempt", "updated_at")
+    if (any(source.get(key) != latest.get(key) for key in fields)
+            or source.get("repository", {}).get("full_name") != REPOSITORY
+            or source.get("head_repository", {}).get("full_name") != REPOSITORY):
+        raise ValueError("Diagnostic backend source changed during verification")
+    parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    updated, started = parse(source["updated_at"]), parse(source["run_started_at"])
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24) or not started <= updated:
+        raise ValueError("Diagnostic backend source is stale or invalid")
+    source_sha = source["head_sha"]
+    planner.git("merge-base", "--is-ancestor", source_sha, head)
+    for run in failed:
+        if run["run_number"] >= source["run_number"] or parse(run["updated_at"]) > started:
+            raise ValueError("Diagnostic backend failure is not followed by this success")
+        planner.git("merge-base", "--is-ancestor", run["head_sha"], source_sha)
+    # Close external imports/read fixtures too. Unknown native/CI/config changes
+    # cannot inherit the backend result. Only one reviewed DEBUG fixture pair,
+    # normal handoffs, or these already-main-approved controls may differ.
+    controls = frozenset("NekoWidget/ci/" + name for name in (
+        "ios_ci_scope.py", "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
+        "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py",
+    )) | {"handoffs/development-release-workflow.md"}
+    fixture = "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift"
+    fixture_pair = ("fcb6e70b66160587052876f61022039adef433a7", "8a54062ac6254b0a4232bd0264e00ddedf887126")
+    raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source_sha, head).split("\0")
+    if raw[-1:] == [""]: raw.pop()
+    if len(raw) % 2:
+        raise ValueError("Incomplete diagnostic backend input diff")
+    delta, seen = [], set()
+    for index in range(0, len(raw), 2):
+        fields, path = raw[index].split(), raw[index + 1]
+        if (len(fields) != 5 or path in seen or fields[1] != "100644"
+                or not all(planner.SHA.fullmatch(blob) for blob in fields[2:4])
+                or fields[3] == "0" * 40):
+            raise ValueError("Invalid diagnostic backend input diff")
+        seen.add(path)
+        if path == fixture:
+            if fields != [":100644", "100644", *fixture_pair, "M"]:
+                raise ValueError("Unreviewed native fixture change after backend diagnosis")
+            kind = "exact-reviewed-debug-fixture"
+        elif path in controls:
+            if (fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or planner.git("ls-tree", "origin/main", "--", path) != f"100644 blob {fields[3]}\t{path}"):
+                raise ValueError("Backend diagnosis control change is not approved on main")
+            kind = "approved-main-control"
+        elif scope.is_handoff(path) and (fields[:2], fields[4]) in (
+                ([":100644", "100644"], "M"), ([":000000", "100644"], "A")):
+            kind = "handoff"
+        else:
+            raise ValueError("Unchanged backend external input closure is not proven")
+        delta.append({"path": path, "before": fields[2], "after": fields[3], "kind": kind})
+    roots = {}
+    for path in ("NekoWidget/SharingService", "NekoWidget/PreservationService", "NekoWidget/BillingVerificationService"):
+        entry = planner.git("ls-tree", source_sha, "--", path)
+        if (not re.fullmatch(r"040000 tree [0-9a-f]{40}\t" + re.escape(path), entry)
+                or entry != planner.git("ls-tree", head, "--", path)
+                or planner.git("ls-tree", "-r", "-z", source_sha, "--", path)
+                != planner.git("ls-tree", "-r", "-z", head, "--", path)):
+            raise ValueError("Diagnostic backend content/mode/type differs from candidate")
+        roots[path] = entry.split()[2]
+    for path in (planner.BILLING_WORKFLOW, planner.PRESERVATION_WORKFLOW):
+        blob = planner.MODERATION_RESOLUTION_IMMUTABLE_BLOBS[path]
+        if any(planner.git("ls-tree", ref, "--", path) != f"100644 blob {blob}\t{path}" for ref in (source_sha, head)):
+            raise ValueError("Diagnostic backend workflow changed")
+        roots[path] = blob
+    required = planner.PRESERVATION_EXPORT_BACKEND_JOBS["sharing-service.yml"]
+    steps_required = {
+        required[0]: ("Run python NekoWidget/ci/plan-ios-ci.py",),
+        required[1]: ("Verify Apple transaction service boundary", "Verify durable nonce and capability credential boundaries",
+                      "Build nonroot Node image and private Worker without publishing"),
+        required[2]: ("Parse and exercise Windows path, volume, and ACL policy",),
+        required[3]: ("Run Worker, D1, staging, moderation, and key ceremony tests", "Build deployment bundle without publishing"),
+    }
+    jobs = planner.executed_jobs(source, REPOSITORY, lambda path: github(path.removeprefix("/")))
+    if (any(not isinstance(job, dict) or type(job.get("id")) is not int
+            or job.get("run_id") != source["id"] or job.get("head_sha") != source_sha for job in jobs)
+            or len({job["id"] for job in jobs}) != len(jobs)
+            or not planner.covers_jobs(jobs, required, source_sha, now=now)):
+        raise ValueError("Diagnostic backend required jobs did not execute")
+    accepted = []
+    for name in required:
+        job = next(job for job in jobs if job["name"] == name)
+        if (type(job.get("run_attempt")) is not int or not 1 <= job["run_attempt"] <= source["run_attempt"]
+                or not started <= parse(job["started_at"]) <= parse(job["completed_at"]) <= updated):
+            raise ValueError("Diagnostic backend job attempt/timestamps mismatch")
+        steps = job.get("steps")
+        if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+            raise ValueError("Diagnostic backend steps unavailable")
+        for step_name in steps_required[name]:
+            matches = [step for step in steps if step.get("name") == step_name]
+            if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+                raise ValueError("Diagnostic backend required step missing/skipped/failed")
+        accepted.append({"name": name, "job_id": job["id"], "run_attempt": job["run_attempt"]})
+    return {"kind": "moderation-resolution-diagnostic-backend-recovery-v1", "candidate_sha": head,
+            "source_sha": source_sha, "source_run_id": source["id"], "source_branch": diagnostic_branch,
+            "failed_run_ids": sorted(run["id"] for run in failed), "verified_inputs": roots,
+            "whole_tracked_delta": delta, "jobs": accepted,
+            "checked_at": now.isoformat(), "native_evidence": False, "release_evidence": False}
+
+
+def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None, diagnostic_backend_recovery=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -537,6 +685,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     # native diagnostic. Its completed success is not a measurement of a native
     # candidate graph. Keep it in elapsed/history above; incomplete, failed,
     # skipped, non-push and actual candidate-branch runs still consume the gate.
+    # The one reviewed resolution proof below can classify a corrected diagnostic
+    # backend failure separately while retaining the failure/time/active records.
     diagnostic_backend_successes = {
         run["id"] for run in runs
         if planner.BUILD in result.get("required_jobs", ())
@@ -545,8 +695,26 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         and run.get("event") == "push"
         and run["status"] == "completed" and run.get("conclusion") == "success"
     }
+    recovered_backend_failures = set()
+    if diagnostic_backend_recovery is not None:
+        proof = diagnostic_backend_recovery
+        source = next((run for run in runs if run["id"] == proof.get("source_run_id")), {})
+        failed_ids = {run["id"] for run in failed if run.get("path") == planner.BILLING_WORKFLOW
+                      and run.get("head_branch") == proof.get("source_branch") and run.get("event") == "push"}
+        if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE
+                or proof.get("kind") != "moderation-resolution-diagnostic-backend-recovery-v1"
+                or proof.get("candidate_sha") != result["head"] or not failed_ids
+                or set(proof.get("failed_run_ids", [])) != failed_ids
+                or source.get("head_sha") != proof.get("source_sha")
+                or source.get("path") != planner.BILLING_WORKFLOW or source.get("event") != "push"
+                or source.get("head_branch") != proof.get("source_branch")
+                or not str(source.get("head_branch", "")).startswith("diagnostic/")
+                or (source.get("status"), source.get("conclusion")) != ("completed", "success")
+                or proof.get("native_evidence") is not False or proof.get("release_evidence") is not False):
+            raise ValueError("Diagnostic backend recovery proof is not bound to this task")
+        recovered_backend_failures = failed_ids
     candidate_runs = [run for run in runs if run["path"] != DIAGNOSTIC_WORKFLOW
-                      and run["id"] not in diagnostic_backend_successes
+                      and run["id"] not in diagnostic_backend_successes | recovered_backend_failures
                       and not (run.get("event") == "pull_request" and run.get("conclusion") == "skipped")]
     first_measurement = measure_baseline and not candidate_runs and cost["status"] == "unmeasured"
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
@@ -558,6 +726,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       "test_correction_evidence": correction_evidence,
                       "known_test_failure_diagnosis": diagnosed_failure,
                       "recovery": recovery,
+                      "diagnostic_backend_recovery": diagnostic_backend_recovery,
                       "unsupported_failed_tests": unsupported,
                       "minutes_since_first_ci": round(elapsed, 1),
                       "projected_total_minutes": projected, "blockers": blockers}
@@ -757,7 +926,9 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
         and "NekoWidget/ci/run-recorded-command.py" in paths
         and scope.CI_DIAGNOSTIC_MATRIX in paths)
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Native CI execution graph and command/attachment wrapper changed. Verify both Solo shards, other UI and runtime/Gallery execution plus the existing build/privacy/Photos contract; do not reuse the historical seven-job graph as eight-job evidence"
+    reason = ("Exact moderation hide/release and reporter response batch; preserve build/privacy/migration, Photos bootstrap, both runtime OS, shared5 + WidgetURL3 + moderation3 UI and all five same-SHA owning backend push jobs; no Gallery variants. New UI requires direct Apple feedback before the first normal candidate measurement"
+              if selected == planner.MODERATION_RESOLUTION_SCOPE else
+              "Native CI execution graph and command/attachment wrapper changed. Verify both Solo shards, other UI and runtime/Gallery execution plus the existing build/privacy/Photos contract; do not reuse the historical seven-job graph as eight-job evidence"
               if runtime_graph_change else
               "Private app data only; Widget source membership/render inputs unchanged. Keep build, storage/privacy/migration, Photos, runtime and both app UI shards; omit Widget gallery only"
               if selected == scope.APP_DATA_SCOPE else
@@ -803,6 +974,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     return {"head": head, "base": comparison, "changed_files": paths, "scope": selected,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
             "required_jobs": list(required), "cost": cost, "target_minutes": target_minutes,
+            **({"required_backend_runs": planner.moderation_resolution_requirements(head)}
+               if selected == planner.MODERATION_RESOLUTION_SCOPE else {}),
             **({"required_backend_runs": planner.preservation_provider_requirements(head)}
                if selected == planner.PRESERVATION_PROVIDER_SCOPE else {}),
             **({"required_backend_runs": planner.preservation_r2_view_requirements(head)}
@@ -904,7 +1077,9 @@ def main(argv=None):
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
-                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery)
+                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,
+                                     diagnostic_backend_recovery=moderation_resolution_diagnostic_backend_recovery(result, runs)
+                                     if args.measure_baseline else None)
             result["other_active_ios_runs"] = read_other_active_ios_runs(planner.git("branch", "--show-current"))
             if recovery and result["ready"] and args.recover_run is not None:
                 result["next_action"] = "Dispatch the verified recovery ref with --dispatch-recovery; confirm the actual owning push run separately"
