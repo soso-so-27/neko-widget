@@ -10,6 +10,11 @@
 
 # 現在のタスクと優先順位
 
+## 2026-10-10 運営者初回登録の永続検証
+
+- 初回challenge・登録attempt・同じ鍵の所有確認を別の永続phaseへ接続。元registration counterを保ち、成功した所有確認だけを共通counter viewへ反映する。固定scope/authority集合に結ぶcanonical requestと2つの実Ed25519署名を検証しても、未承認として返す。
+- [実装契約・検証・残る接続](2026-10-10-operator-enrollment-local.md)。実Access/認証器、登録画面、actual approval時刻を使う最終admission writerは未完。権限・公開・クラウド・アプリ配布の変更は行っていない。ローカル検査と厳密なbackend CI選択を進める。
+
 ## 2026-10-09 通報確認のローカル画面
 
 - 認証付きの通報一覧・現在のAI補助状態・署名による確認開始を既存local triageへ接続。ブラウザでGETにOriginが付かない実観測を踏まえ、同じ認証条件のPOST readを追加。期限同値も含むページ送り、認証/通信失敗時の表示消去を検証。
