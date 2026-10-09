@@ -78,6 +78,62 @@ class PreservationProviderStreamBudgetTests(unittest.TestCase):
         self.assertEqual({row["id"] for row in result}, {1, 2})
 
 
+class ModerationEnrollmentBudgetTests(unittest.TestCase):
+    def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
+        selected = planner.MODERATION_ENROLLMENT_SCOPE
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": previous, "candidate_minutes": 1.1, "run_id": index, "outcome": "success"}
+            for index, previous in enumerate((planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.BILLING_AUTHORITY_SCOPE))]}
+        cost = preflight.observe_cost(selected, history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["samples"], [])
+        self.assertEqual(cost["measurement_job_timeouts_minutes"], planner.MODERATION_ENROLLMENT_JOB_TIMEOUTS)
+        self.assertNotIn("with_upload_minutes", cost)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30, "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        for state, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+            run = {"id": 8, "path": planner.MODERATION_ENROLLMENT_WORKFLOW, "status": state, "conclusion": conclusion,
+                   "created_at": (now - dt.timedelta(minutes=8)).isoformat()}
+            gated = preflight.apply_task_gate(result, [run], now, measure_baseline=True)
+            self.assertFalse(gated["ready"])
+            self.assertFalse(gated["task"]["first_baseline_measurement"])
+            self.assertEqual(gated["task"]["minutes_since_first_ci"], 8)
+            self.assertEqual(gated["task"]["failed_runs"], [8] if conclusion == "failure" else [])
+            self.assertEqual(gated["task"]["active_runs"], [8] if state != "completed" else [])
+
+    def test_candidate_plan_names_owning_node_job_on_the_fixed_head(self):
+        head = "a" * 40
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.MODERATION_ENROLLMENT_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=planner.MODERATION_ENROLLMENT_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["head"], head)
+        self.assertEqual(result["required_jobs"], list(planner.MODERATION_ENROLLMENT_JOBS))
+        self.assertEqual(result["required_backend_runs"], [{"workflow": planner.MODERATION_ENROLLMENT_WORKFLOW,
+                         "job": job, "head_sha": head, "event": "push", "success_required": True}
+                         for job in planner.MODERATION_ENROLLMENT_JOBS])
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertIn("same-SHA Sharing workflow jobs", result["reason"])
+        self.assertIn("no native, live-cloud or release evidence", result["reason"])
+
+
+    def test_task_history_keeps_sharing_failures_and_active_runs(self):
+        runs = [{"id": i, "path": planner.MODERATION_ENROLLMENT_WORKFLOW, "status": status,
+                 "conclusion": conclusion} for i, status, conclusion in
+                ((1, "completed", "failure"), (2, "in_progress", None))]
+        with patch.object(planner, "git", return_value="codex/moderation-enrollment"), \
+                patch.object(preflight, "github", return_value={"total_count": 2, "workflow_runs": runs}):
+            result = preflight.read_task_runs("a" * 40)
+        self.assertEqual({row["id"] for row in result}, {1, 2})
+        self.assertEqual({row["path"] for row in result}, {planner.MODERATION_ENROLLMENT_WORKFLOW})
+
+
 class PreservationRecoveryReadBudgetTests(unittest.TestCase):
     def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
         selected = planner.PRESERVATION_RECOVERY_READ_SCOPE
