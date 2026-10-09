@@ -74,6 +74,12 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 - 最初の具体的なエラーへ絞って修正し、同一SHAでgreenの検証を理由なく繰り返さない。
 - CIの失敗は製品の不具合・検証コードの不具合・実行環境の障害に分ける。環境障害と確認した同一SHAは失敗したjobだけ再実行する。原因が不明なまま成功するまで再試行しない。コードを直した場合は新SHAの必要範囲を検証する。
 
+- 上記 `moderation-ai-durable-v1` の同SHA Preservation push要件には、候補 `51ef62bf6bddb8a772db1e90066c6aa18a450b09` だけの限定代替を設ける。検査inventory訂正でPreservation入力が変わらず、増分pushのpath filterが発火しなかった場合の証拠接続であり、plan宣言だけでは合格しない。main承認済みの `plan-ios-ci.py` をimportしてread-only関数 `moderation_ai_durable_backend_evidence(candidate_sha, repository, api, now, runtime_scope=...)` を実行する。`api` はGitHub GET JSONのcallback、`now` はUTC等のtimezone付き日時、gitは両固定commitを持つrepositoryを読む。import自体はAPIやGitを呼ばない。
+  - candidateのPreservation push indexが取得の前後とも厳密に0件であることを要求する。存在する成功・失敗・稼働中、取得不能・欠落・余分な応答は旧成功に置き換えない。
+  - 再利用元はsource `95bff0fcc79f124427e00b9edcdeac29cd46242e` のpush run `37911654217` のみ。同repo `soso-so-27/neko-widget`、同branch `codex/moderation-ai-durable-20261009`、workflow identity/path、head、attempt 1、24時間以内、required jobと各検査stepの実行成功を照合する。source ancestryと、PreservationService全tree・SharingService/src全tree・SharingService/migrations全tree・Preservation workflowのcontent/mode/type完全一致をGit objectと再帰entryで検証する。
+  - Sharing4jobは候補同SHA push `37913531637`、iOS planは候補同SHA push `37913531658` の成功を別々に必須とする。各workflowのpush indexは固定run1件だけ、run detail/jobsも同一identity・新鮮な実行成功が必要。PR成功・skip・別event・別attempt・追加runは代用しない。返却値はsource/candidate SHA、verified roots、各実run/job、`same_candidate_sha` を分け、旧成功を候補SHAの実行と表示しない。
+  - この制御は独立レビュー・必須ローカル検査・制御CI後に先にmainへ反映し、そのhelperで実API証拠を確定してからPR209の固定HEADをmergeする。新製品push・空commit・別branchで発火させない。最終mainについては候補ancestry、新差分が承認済み制御だけであること、backend入力完全一致を別途証明する。このhelper単独はmain統合・native・配布の証拠ではない。実失敗履歴・初回候補時刻・累計時間・費用判定は保持する。一般候補、元3追加の初回、他scopeへ再利用条件を広げない。
+
 ## 候補からmainへ反映するとき
 
 - 配布時は固定した候補SHAのCI成功 → そのSHAをmainへ反映 → 同じSHAでTestFlight。配布CLIの `--ci-run` は成功した候補push CIを直接受け付ける。main CIをもう一度待つ必要はない。既存の `--main-ci-run` も互換引数として利用できる。

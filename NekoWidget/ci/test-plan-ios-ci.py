@@ -24,6 +24,243 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class ModerationAIDurableBackendReuseTests(unittest.TestCase):
+    def setUp(self):
+        self.candidate = planner.MODERATION_AI_DURABLE_REUSE_CANDIDATE
+        self.source = planner.MODERATION_AI_DURABLE_REUSE_SOURCE
+        self.repo = "soso-so-27/neko-widget"
+        self.now = dt.datetime(2026, 10, 9, 10, tzinfo=dt.timezone.utc)
+        self.prefix = f"/repos/{self.repo}/actions"
+        self.responses = {}
+        self.git_changes = {}
+        self.steps = {
+            planner.PRESERVATION_JOB: ["Check out repository", "Set up Node.js",
+                "Install locked dependencies without lifecycle scripts", "Typecheck the disabled service",
+                "Verify local identity, custody and storage boundaries",
+                "Verify legacy notice evidence migration with synthetic owners",
+                "Bundle the private authority without deployment or provisioning",
+                "Bundle the private owner deletion executor without deployment"],
+            planner.MODERATION_AI_DURABLE_JOBS[0]: ["Run python NekoWidget/ci/plan-ios-ci.py"],
+            planner.MODERATION_AI_DURABLE_JOBS[1]: ["Verify Apple transaction service boundary",
+                "Verify durable nonce and capability credential boundaries",
+                "Build nonroot Node image and private Worker without publishing"],
+            planner.MODERATION_AI_DURABLE_JOBS[2]: ["Parse and exercise Windows path, volume, and ACL policy"],
+            planner.MODERATION_AI_DURABLE_JOBS[3]: ["Run Worker, D1, staging, moderation, and key ceremony tests",
+                "Build deployment bundle without publishing"],
+            "Select iOS checks and verify reusable evidence": ["Test CI selection and evidence boundaries", "Select checks"],
+        }
+        self.specs = (("preservation-service.yml", self.source, 37911654217, (planner.PRESERVATION_JOB,)),
+                      ("sharing-service.yml", self.candidate, 37913531637, planner.MODERATION_AI_DURABLE_JOBS[:-1]),
+                      ("ios-build.yml", self.candidate, 37913531658, ("Select iOS checks and verify reusable evidence",)))
+        self.responses[self.index("preservation-service.yml", self.candidate)] = {"total_count": 0, "workflow_runs": []}
+        for number, (workflow, sha, run_id, required) in enumerate(self.specs, 1):
+            identity = {"id": number, "path": ".github/workflows/" + workflow, "state": "active"}
+            run = {"id": run_id, "workflow_id": number, "path": identity["path"],
+                   "repository": {"full_name": self.repo}, "head_repository": {"full_name": self.repo},
+                   "head_sha": sha, "head_branch": "codex/moderation-ai-durable-20261009", "event": "push",
+                   "status": "completed", "conclusion": "success", "run_attempt": 1, "run_number": 1,
+                   "run_started_at": "2026-10-09T09:00:00Z", "updated_at": "2026-10-09T09:05:00Z"}
+            jobs = [{"id": run_id * 10 + i, "name": name, "run_id": run_id, "run_attempt": 1,
+                     "head_sha": sha, "status": "completed", "conclusion": "success",
+                     "started_at": "2026-10-09T09:01:00Z", "completed_at": "2026-10-09T09:04:00Z",
+                     "steps": [{"name": step, "number": j, "status": "completed", "conclusion": "success"}
+                               for j, step in enumerate(self.steps[name], 1)]}
+                    for i, name in enumerate(required, 1)]
+            self.responses[f"{self.prefix}/workflows/{workflow}"] = identity
+            self.responses[self.index(workflow, sha)] = {"total_count": 1, "workflow_runs": [copy.deepcopy(run)]}
+            self.responses[f"{self.prefix}/runs/{run_id}"] = run
+            self.responses[self.jobs_path(run_id)] = {"total_count": len(jobs), "jobs": jobs}
+
+    def index(self, workflow, sha):
+        return f"{self.prefix}/workflows/{workflow}/runs?head_sha={sha}&event=push&per_page=100"
+
+    def jobs_path(self, run_id):
+        return f"{self.prefix}/runs/{run_id}/jobs?filter=latest&per_page=100&page=1"
+
+    def git(self, *args):
+        if args in self.git_changes:
+            return self.git_changes[args]
+        if args[0] == "rev-parse":
+            return args[-1].removesuffix("^{commit}")
+        if args[0] == "merge-base":
+            return self.source
+        if args[0] == "ls-tree":
+            path = args[-1]
+            if path.endswith(".yml"):
+                blob = planner.MODERATION_AI_DURABLE_WORKFLOW_BLOBS[path]
+                return f"100644 blob {blob}\t{path}"
+            if "-r" in args:
+                return f"100644 blob {'a' * 40}\t{path}/file.ts\0"
+            return f"040000 tree {'b' * 40}\t{path}"
+        raise AssertionError(args)
+
+    def prove(self, **kwargs):
+        params = {"candidate_sha": self.candidate, "repository": self.repo, "api": self.responses.__getitem__,
+                  "now": self.now, "runtime_scope": planner.MODERATION_AI_DURABLE_SCOPE} | kwargs
+        with patch.object(planner, "git", side_effect=self.git):
+            return planner.moderation_ai_durable_backend_evidence(**params)
+
+    def test_fixed_proof_keeps_source_distinct_and_candidate_jobs_on_candidate(self):
+        result = self.prove()
+        self.assertEqual(result["source_sha"], self.source)
+        self.assertEqual(result["candidate_sha"], self.candidate)
+        self.assertEqual(result["candidate_preservation_push_count"], 0)
+        self.assertEqual([root["path"] for root in result["verified_roots"]], list(planner.MODERATION_AI_DURABLE_REUSE_ROOTS))
+        for workflow, sha, run_id, required in self.specs:
+            record = result["workflows"][workflow]
+            self.assertEqual((record["head_sha"], record["run_id"]), (sha, run_id))
+            self.assertEqual(record["same_candidate_sha"], workflow != "preservation-service.yml")
+            self.assertEqual([job["name"] for job in record["jobs"]], list(required))
+        self.assertFalse(result["main_integration_verified"])
+        self.assertFalse(result["native_or_release_evidence"])
+
+    def test_any_candidate_push_or_incomplete_index_prohibits_reuse(self):
+        key = self.index("preservation-service.yml", self.candidate)
+        invalid = [{}, {"total_count": False, "workflow_runs": []}, {"total_count": "0", "workflow_runs": []},
+                   {"total_count": 0, "workflow_runs": [], "incomplete": True}, {"total_count": 1, "workflow_runs": []}]
+        invalid += [{"total_count": 1, "workflow_runs": [{"status": status, "conclusion": conclusion}]}
+                    for status, conclusion in (("completed", "success"), ("completed", "failure"),
+                                               ("queued", None), ("in_progress", None))]
+        for response in invalid:
+            with self.subTest(response=response), patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                self.prove()
+
+    def test_other_candidate_repository_scope_or_clock_is_rejected(self):
+        for values in ({"candidate_sha": self.source}, {"candidate_sha": "a" * 40}, {"repository": "other/repo"},
+                       {"runtime_scope": planner.MODERATION_AI_TRANSPORT_SCOPE}, {"now": self.now.replace(tzinfo=None)}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.prove(**values)
+
+    def test_ancestry_content_mode_type_missing_and_recursive_difference_are_rejected(self):
+        cases = [(('merge-base', self.source, self.candidate), "c" * 40),
+                 (("rev-parse", "--verify", self.source + "^{commit}"), "c" * 40)]
+        for path in planner.MODERATION_AI_DURABLE_REUSE_ROOTS:
+            cases += [(("ls-tree", self.candidate, "--", path), value) for value in
+                      ("", f"100755 blob {'b' * 40}\t{path}", f"120000 blob {'b' * 40}\t{path}",
+                       f"040000 tree {'c' * 40}\t{path}")]
+            cases.append((("ls-tree", "-r", "-z", self.candidate, "--", path), "changed-child-mode-or-content"))
+        for args, value in cases:
+            with self.subTest(args=args, value=value), patch.dict(self.git_changes, {args: value}), self.assertRaises(ValueError):
+                self.prove()
+
+    def test_wrong_workflow_and_run_identity_event_branch_or_attempt_rejected(self):
+        for workflow, sha, run_id, _ in self.specs:
+            key = f"{self.prefix}/workflows/{workflow}"
+            for field, value in (("id", True), ("id", 0), ("state", "disabled_manually"), ("path", ".github/workflows/other.yml")):
+                with patch.dict(self.responses, {key: self.responses[key] | {field: value}}), self.assertRaises(ValueError):
+                    self.prove()
+            for in_index in (True, False):
+                key = self.index(workflow, sha) if in_index else f"{self.prefix}/runs/{run_id}"
+                original = self.responses[key]
+                run = original["workflow_runs"][0] if in_index else original
+                mutations = (("id", 7), ("workflow_id", True), ("path", "wrong"), ("head_sha", "a" * 40),
+                             ("head_branch", "main"), ("head_branch", "codex/other"), ("event", "pull_request"),
+                             ("event", "workflow_dispatch"), ("run_attempt", 2), ("run_attempt", True),
+                             ("repository", {"full_name": "other/repo"}), ("head_repository", {"full_name": "other/repo"}),
+                             ("status", "in_progress"), ("conclusion", "failure"))
+                for field, value in mutations:
+                    changed = run | {field: value}
+                    response = {"total_count": 1, "workflow_runs": [changed]} if in_index else changed
+                    with self.subTest(workflow=workflow, index=in_index, field=field), \
+                            patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                        self.prove()
+
+    def test_old_future_missing_or_inconsistent_timestamps_rejected(self):
+        for workflow, sha, run_id, _ in self.specs:
+            key = f"{self.prefix}/runs/{run_id}"
+            for value in ("2026-10-08T09:00:00Z", "2026-10-09T10:00:01Z", "2026-10-09T09:00:00", None, "bad"):
+                for field in ("updated_at", "run_started_at"):
+                    with patch.dict(self.responses, {key: self.responses[key] | {field: value}}), self.assertRaises(ValueError):
+                        self.prove()
+            key = self.jobs_path(run_id)
+            for field, value in (("completed_at", "2026-10-08T09:00:00Z"), ("completed_at", "2026-10-09T10:00:01Z"),
+                                 ("completed_at", None), ("started_at", "2026-10-09T09:04:30Z"),
+                                 ("started_at", "2026-10-09T08:59:00Z")):
+                response = copy.deepcopy(self.responses[key]); response["jobs"][0][field] = value
+                with patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                    self.prove()
+
+    def test_ambiguous_indexes_and_missing_duplicate_failed_skipped_or_wrong_sha_jobs_rejected(self):
+        for workflow, sha, run_id, _ in self.specs:
+            key = self.index(workflow, sha)
+            for response in ({"total_count": 0, "workflow_runs": []}, {"total_count": 2, "workflow_runs": self.responses[key]["workflow_runs"] * 2}):
+                with patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                    self.prove()
+            key = self.jobs_path(run_id)
+            original = self.responses[key]
+            cases = [{"total_count": len(original["jobs"]) + 1, "jobs": original["jobs"]},
+                     {"total_count": 0, "jobs": []},
+                     {"total_count": len(original["jobs"]) + 1, "jobs": original["jobs"] + [original["jobs"][0]]}]
+            for field, value in (("run_id", 7), ("run_attempt", 2), ("head_sha", "a" * 40), ("name", "unknown"),
+                                 ("conclusion", "skipped"), ("conclusion", "failure"), ("status", "in_progress"),
+                                 ("steps", []), ("steps", [{"name": "Set up job", "status": "completed", "conclusion": "success"}])):
+                response = copy.deepcopy(original); response["jobs"][0][field] = value; cases.append(response)
+            for response in cases:
+                with self.subTest(workflow=workflow), patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                    self.prove()
+
+    def test_validation_step_missing_duplicate_or_skipped_is_not_job_success(self):
+        for _, _, run_id, required in self.specs:
+            key = self.jobs_path(run_id)
+            for job_index in range(len(required)):
+                for action in ("missing", "duplicate", "skipped", "failure"):
+                    response = copy.deepcopy(self.responses[key]); steps = response["jobs"][job_index]["steps"]
+                    if action == "missing":
+                        steps.pop()
+                    elif action == "duplicate":
+                        steps.append(copy.deepcopy(steps[-1]))
+                    else:
+                        steps[-1]["conclusion"] = action
+                    with patch.dict(self.responses, {key: response}), self.assertRaises(ValueError):
+                        self.prove()
+
+    def test_push_appearing_during_collection_is_not_hidden(self):
+        key = self.index("preservation-service.yml", self.candidate)
+        calls = 0
+
+        def api(path):
+            nonlocal calls
+            if path == key:
+                calls += 1
+                if calls > 1:
+                    return {"total_count": 1, "workflow_runs": [{"status": "queued"}]}
+            return self.responses[path]
+
+        with self.assertRaises(ValueError):
+            self.prove(api=api)
+
+    def test_actual_unexpanded_skipped_ios_matrix_names_are_not_executed_jobs(self):
+        key = self.jobs_path(37913531658)
+        job = self.responses[key]["jobs"][0]
+        placeholders = [job | {"id": job["id"] + i + 10,
+                        "name": "Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]",
+                        "conclusion": "skipped", "steps": []} for i in range(4)]
+        response = {"total_count": 5, "jobs": [job] + placeholders}
+        with patch.dict(self.responses, {key: response}):
+            result = self.prove()
+        self.assertEqual(len(result["workflows"]["ios-build.yml"]["jobs"]), 1)
+        for field, value in (("id", job["id"]), ("conclusion", "success"), ("conclusion", "failure"),
+                             ("steps", [{"name": "unexpected execution"}]), ("name", job["name"]),
+                             ("name", "unknown duplicate")):
+            changed = copy.deepcopy(response)
+            for item in changed["jobs"][1:]:
+                item[field] = value
+            with self.subTest(field=field, value=value), patch.dict(self.responses, {key: changed}), self.assertRaises(ValueError):
+                self.prove()
+
+    def test_fixed_contract_is_conditional_and_ordinary_contract_unchanged(self):
+        ordinary = planner.moderation_ai_durable_requirements("a" * 40)
+        self.assertTrue(all(set(row) == {"workflow", "job", "head_sha", "event", "success_required"} for row in ordinary))
+        fixed = planner.moderation_ai_durable_requirements(self.candidate)
+        self.assertTrue(all("absent_push_reuse" not in row for row in fixed[:-1]))
+        alternate = fixed[-1]["absent_push_reuse"]
+        self.assertEqual((alternate["source_sha"], alternate["source_run_id"]), (self.source, 37911654217))
+        self.assertTrue(alternate["verification_required"])
+        self.assertFalse(alternate["same_candidate_sha"])
+        self.assertIn("exactly absent Preservation push", planner.moderation_ai_durable_reason(self.candidate))
+        self.assertNotIn("older push", planner.moderation_ai_durable_reason("a" * 40))
+
+
 class ModerationAIDurableScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 

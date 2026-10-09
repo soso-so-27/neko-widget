@@ -765,7 +765,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.PRESERVATION_RECOVERY_READ_SCOPE else
               "Exact moderation enrollment verifier and tests; all four same-SHA Sharing workflow jobs must execute successfully on the owning push; no native, live-cloud or release evidence"
               if selected == planner.MODERATION_ENROLLMENT_SCOPE else
-              "Exact disconnected moderation durable jobs, migration and tests; Sharing Worker job must apply the full local D1 migration chain and execute durable integration tests; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
+              planner.moderation_ai_durable_reason(head)
               if selected == planner.MODERATION_AI_DURABLE_SCOPE else
               "Exact disconnected moderation AI transport and tests; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
               if selected == planner.MODERATION_AI_TRANSPORT_SCOPE else

@@ -567,6 +567,16 @@ MODERATION_AI_DURABLE_JOB_TIMEOUTS = {
 }
 MODERATION_AI_DURABLE_JOBS = tuple(MODERATION_AI_DURABLE_JOB_TIMEOUTS)
 
+# One frozen correction whose incremental push omitted unchanged Preservation inputs.
+# This is an evidence alternative, never a same-SHA success or a general skip rule.
+MODERATION_AI_DURABLE_REUSE_CANDIDATE = "51ef62bf6bddb8a772db1e90066c6aa18a450b09"
+MODERATION_AI_DURABLE_REUSE_SOURCE = "95bff0fcc79f124427e00b9edcdeac29cd46242e"
+MODERATION_AI_DURABLE_REUSE_RUN = 37911654217
+MODERATION_AI_DURABLE_REUSE_ROOTS = (
+    "NekoWidget/PreservationService", "NekoWidget/SharingService/src",
+    "NekoWidget/SharingService/migrations", PRESERVATION_WORKFLOW,
+)
+
 
 # The existing Worker job must retain the all-migrations local D1 setup.
 MODERATION_AI_DURABLE_MIGRATION_INPUT_BLOBS = {
@@ -1019,11 +1029,32 @@ def moderation_ai_durable_backend_only(paths, base, head):
 
 
 def moderation_ai_durable_requirements(head):
-    # Four Sharing jobs plus the automatically triggered Preservation job.
-    # Every owning push must succeed at this SHA; a plan is not proof.
-    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_AI_DURABLE_WORKFLOW,
+    requirements = [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_AI_DURABLE_WORKFLOW,
              "job": job, "head_sha": head, "event": "push", "success_required": True}
             for job in MODERATION_AI_DURABLE_JOBS]
+    if head == MODERATION_AI_DURABLE_REUSE_CANDIDATE:
+        # Keep the preferred same-SHA contract, with one separately verified alternative.
+        requirements[-1]["absent_push_reuse"] = {
+            "source_sha": MODERATION_AI_DURABLE_REUSE_SOURCE,
+            "source_run_id": MODERATION_AI_DURABLE_REUSE_RUN,
+            "candidate_sha": head, "same_candidate_sha": False,
+            "verifier": "moderation_ai_durable_backend_evidence",
+            "verified_roots_required": list(MODERATION_AI_DURABLE_REUSE_ROOTS),
+            "verification_required": True,
+        }
+    return requirements
+
+
+def moderation_ai_durable_reason(head):
+    requirement = ("all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job "
+                   "must execute successfully on the owning push")
+    if head == MODERATION_AI_DURABLE_REUSE_CANDIDATE:
+        requirement = ("all four Sharing jobs and the iOS plan require same-candidate owning push success; "
+                       "only an exactly absent Preservation push permits the fixed older push after "
+                       "moderation_ai_durable_backend_evidence verifies identity, execution, freshness and identical inputs")
+    return ("Exact disconnected moderation durable jobs, migration and tests; Sharing Worker job must apply "
+            "the full local D1 migration chain and execute durable integration tests; " + requirement
+            + "; no native, live-cloud or release evidence")
 
 
 def moderation_ai_transport_paths_only(paths):
@@ -2667,6 +2698,174 @@ PRESERVATION_EXPORT_BACKEND_JOBS = {
 }
 
 
+def moderation_ai_durable_backend_evidence(candidate_sha: str, repository: str, api,
+                                          now: dt.datetime, *, runtime_scope: str) -> dict:
+    """Read-only proof for one frozen correction; no API or Git mutation, no waiver.
+
+    Call from reviewed control on main, with git reading the repository containing
+    both frozen commits and api performing GitHub GETs. This does not certify main
+    integration, authorize a deployment, or alter any preflight history/cost gate.
+    """
+    source = MODERATION_AI_DURABLE_REUSE_SOURCE
+    branch = "codex/moderation-ai-durable-20261009"
+    if (candidate_sha != MODERATION_AI_DURABLE_REUSE_CANDIDATE
+            or repository != "soso-so-27/neko-widget" or runtime_scope != MODERATION_AI_DURABLE_SCOPE
+            or now.tzinfo is None or now.utcoffset() is None):
+        raise ValueError("Outside fixed durable backend evidence contract")
+    for sha in (source, candidate_sha):
+        if git("rev-parse", "--verify", sha + "^{commit}") != sha:
+            raise ValueError("Frozen commit is unavailable")
+    if git("merge-base", source, candidate_sha) != source:
+        raise ValueError("Preservation source is not a candidate ancestor")
+    roots = []
+    for path in MODERATION_AI_DURABLE_REUSE_ROOTS:
+        entry = git("ls-tree", source, "--", path)
+        mode, kind = ("100644", "blob") if path == PRESERVATION_WORKFLOW else ("040000", "tree")
+        match = re.fullmatch(mode + " " + kind + r" ([0-9a-f]{40})\t" + re.escape(path), entry)
+        if (not match or entry != git("ls-tree", candidate_sha, "--", path)
+                or git("ls-tree", "-r", "-z", source, "--", path)
+                != git("ls-tree", "-r", "-z", candidate_sha, "--", path)):
+            raise ValueError("Preservation input content, mode or type differs")
+        if path == PRESERVATION_WORKFLOW and match[1] != MODERATION_AI_DURABLE_WORKFLOW_BLOBS[path]:
+            raise ValueError("Preservation workflow is not the reviewed definition")
+        roots.append({"path": path, "mode": mode, "type": kind, "object_id": match[1],
+                      "source_sha": source, "candidate_sha": candidate_sha})
+    sharing_workflow = MODERATION_AI_DURABLE_WORKFLOW
+    if git("ls-tree", candidate_sha, "--", sharing_workflow) != (
+            f"100644 blob {MODERATION_AI_DURABLE_WORKFLOW_BLOBS[sharing_workflow]}\t{sharing_workflow}"):
+        raise ValueError("Sharing workflow is not the reviewed definition")
+
+    prefix = f"/repos/{repository}/actions"
+
+    def get(path):
+        result = api(path)
+        if not isinstance(result, dict):
+            raise ValueError("Expected complete GitHub object")
+        return result
+
+    def fresh(value):
+        if not isinstance(value, str):
+            raise ValueError("Missing execution timestamp")
+        stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is None or not dt.timedelta(0) <= now - stamp <= dt.timedelta(hours=24):
+            raise ValueError("Execution timestamp outside 24 hours")
+        return stamp
+
+    def index(workflow, sha):
+        query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
+        return get(f"{prefix}/workflows/{workflow}/runs?{query}")
+
+    # ANY existing push, including failure/active/success or incomplete metadata,
+    # prohibits this older-source alternative. Never filter it out by branch.
+    absent = index("preservation-service.yml", candidate_sha)
+    if type(absent.get("total_count")) is not int or absent != {"total_count": 0, "workflow_runs": []}:
+        raise ValueError("Candidate Preservation push is not strictly absent")
+
+    steps_required = {
+        PRESERVATION_JOB: (
+            "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
+            "Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+            "Verify legacy notice evidence migration with synthetic owners",
+            "Bundle the private authority without deployment or provisioning",
+            "Bundle the private owner deletion executor without deployment",
+        ),
+        MODERATION_AI_DURABLE_JOBS[0]: ("Run python NekoWidget/ci/plan-ios-ci.py",),
+        MODERATION_AI_DURABLE_JOBS[1]: ("Verify Apple transaction service boundary",
+            "Verify durable nonce and capability credential boundaries",
+            "Build nonroot Node image and private Worker without publishing"),
+        MODERATION_AI_DURABLE_JOBS[2]: ("Parse and exercise Windows path, volume, and ACL policy",),
+        MODERATION_AI_DURABLE_JOBS[3]: ("Run Worker, D1, staging, moderation, and key ceremony tests",
+                                       "Build deployment bundle without publishing"),
+        "Select iOS checks and verify reusable evidence": ("Test CI selection and evidence boundaries", "Select checks"),
+    }
+    specifications = (
+        ("preservation-service.yml", source, MODERATION_AI_DURABLE_REUSE_RUN, (PRESERVATION_JOB,)),
+        ("sharing-service.yml", candidate_sha, 37913531637, MODERATION_AI_DURABLE_JOBS[:-1]),
+        ("ios-build.yml", candidate_sha, 37913531658, ("Select iOS checks and verify reusable evidence",)),
+    )
+    evidence = {}
+    for workflow, sha, run_id, required in specifications:
+        identity = get(f"{prefix}/workflows/{workflow}")
+        if (type(identity.get("id")) is not int or identity["id"] <= 0
+                or identity.get("path") != ".github/workflows/" + workflow or identity.get("state") != "active"):
+            raise ValueError("Workflow identity mismatch")
+        response = index(workflow, sha)
+        runs = response.get("workflow_runs")
+        if (type(response.get("total_count")) is not int or response["total_count"] != 1
+                or not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict)):
+            raise ValueError("Fixed owning push index is ambiguous or incomplete")
+        run = get(f"{prefix}/runs/{run_id}")
+        for metadata in (runs[0], run):
+            if (type(metadata.get("id")) is not int or metadata["id"] != run_id
+                    or metadata.get("head_sha") != sha or metadata.get("event") != "push"
+                    or metadata.get("head_branch") != branch or metadata.get("path") != identity["path"]
+                    or type(metadata.get("workflow_id")) is not int or metadata["workflow_id"] != identity["id"]
+                    or type(metadata.get("run_number")) is not int or metadata["run_number"] <= 0
+                    or type(metadata.get("run_attempt")) is not int or metadata["run_attempt"] != 1
+                    or metadata.get("repository", {}).get("full_name") != repository
+                    or metadata.get("head_repository", {}).get("full_name") != repository
+                    or (metadata.get("status"), metadata.get("conclusion")) != ("completed", "success")):
+                raise ValueError("Fixed owning push did not succeed with the required identity")
+            fresh(metadata.get("updated_at"))
+        if any(runs[0].get(key) != run.get(key) for key in ("run_number", "run_attempt", "updated_at")):
+            raise ValueError("Run changed during evidence collection")
+        started = fresh(run.get("run_started_at"))
+        result = get(f"{prefix}/runs/{run_id}/jobs?filter=latest&per_page=100&page=1")
+        jobs = result.get("jobs")
+        if (not isinstance(jobs, list) or type(result.get("total_count")) is not int
+                or result["total_count"] != len(jobs) or not jobs):
+            raise ValueError("Job index is incomplete")
+        ids, names, empty_matrix_names = set(), set(), set()
+        for job in jobs:
+            # GitHub repeats this unexpanded name for four unexecuted matrix
+            # placeholders. It is never a required job or execution evidence.
+            empty_matrix = (isinstance(job, dict) and workflow == "ios-build.yml"
+                            and job.get("name") == "Sharing checks [${{ matrix.lane }}; scope ${{ needs.plan.outputs.runtime_scope }}]"
+                            and job.get("conclusion") == "skipped" and job.get("steps") == [])
+            if (not isinstance(job, dict) or type(job.get("id")) is not int or job["id"] <= 0
+                    or job["id"] in ids or not isinstance(job.get("name"), str)
+                    or (job["name"] in names and not (empty_matrix and job["name"] in empty_matrix_names))
+                    or type(job.get("run_id")) is not int or job["run_id"] != run_id
+                    or type(job.get("run_attempt")) is not int or job["run_attempt"] != 1
+                    or job.get("head_sha") != sha or job.get("status") != "completed"
+                    or job.get("conclusion") not in ("success", "skipped")):
+                raise ValueError("Job identity, attempt or execution is invalid")
+            ids.add(job["id"]); names.add(job["name"])
+            if empty_matrix:
+                empty_matrix_names.add(job["name"])
+        if not covers_jobs(jobs, required, sha, now=now):
+            raise ValueError("Required job missing, skipped or unsuccessful")
+        accepted = []
+        for name in required:
+            job = next(job for job in jobs if job["name"] == name)
+            if not started <= fresh(job.get("started_at")) <= fresh(job.get("completed_at")) <= fresh(run.get("updated_at")):
+                raise ValueError("Job execution timestamps do not belong to this run")
+            steps = job.get("steps")
+            if (not isinstance(steps, list) or not steps or any(not isinstance(step, dict) for step in steps)
+                    or not any(step.get("status") == "completed" and step.get("conclusion") == "success"
+                               and step.get("name") not in ("Set up job", "Complete job")
+                               and not str(step.get("name", "")).startswith("Post ") for step in steps)):
+                raise ValueError("Required job has no executed steps")
+            for name_required in steps_required.get(name, ()):
+                matches = [step for step in steps if step.get("name") == name_required]
+                if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+                    raise ValueError("Required validation step did not execute successfully")
+            accepted.append({"name": name, "job_id": job["id"], "head_sha": sha,
+                             "completed_at": job["completed_at"]})
+        evidence[workflow] = {"run_id": run_id, "workflow_id": identity["id"], "path": identity["path"],
+                              "head_sha": sha, "event": "push", "branch": branch, "run_attempt": 1,
+                              "same_candidate_sha": sha == candidate_sha, "jobs": accepted}
+    # Recheck absence after collecting the three runs; a newly visible push is
+    # not hidden by the initial empty response. This proof is a dated snapshot.
+    if index("preservation-service.yml", candidate_sha) != absent:
+        raise ValueError("Candidate Preservation push index changed during verification")
+    return {"kind": "fixed-moderation-durable-backend-evidence-v1", "scope": runtime_scope,
+            "candidate_sha": candidate_sha, "source_sha": source, "repository": repository,
+            "candidate_preservation_push_count": 0, "verified_roots": roots,
+            "checked_at": now.isoformat(), "workflows": evidence,
+            "main_integration_verified": False, "native_or_release_evidence": False}
+
+
 def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt.datetime) -> dict:
     """Exact-SHA executed backend proof, independent of native workflow success."""
     if not SHA.fullmatch(sha):
@@ -2875,8 +3074,10 @@ def main() -> None:
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
             if selected_scope == MODERATION_AI_DURABLE_SCOPE:
-                summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
-                           "push at the same candidate SHA: "
+                requirement = (moderation_ai_durable_reason(env["GITHUB_SHA"]) + ": "
+                               if env["GITHUB_SHA"] == MODERATION_AI_DURABLE_REUSE_CANDIDATE else
+                               "All five jobs must execute successfully on the owning push at the same candidate SHA: ")
+                summary = ("## Backend-only verification\n\n" + requirement
                            + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
                                        for row in moderation_ai_durable_requirements(env["GITHUB_SHA"]))
                            + ". This plan does not certify their success. "
