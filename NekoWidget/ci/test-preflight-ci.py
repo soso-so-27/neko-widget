@@ -153,6 +153,82 @@ class ModerationAIDurableBudgetTests(unittest.TestCase):
         self.assertEqual(set(gated["task"]["active_runs"]), {2, 4})
 
 
+class ModerationOwnerFlowBudgetTests(unittest.TestCase):
+    def test_unmeasured_scope_keeps_both_workflow_history_and_disallows_old_timings_or_upload(self):
+        selected = planner.MODERATION_OWNER_FLOW_SCOPE
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": previous, "candidate_minutes": 1.1, "run_id": index, "outcome": "success"}
+            for index, previous in enumerate((planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.PRESERVATION_SCOPE,
+                                               planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.BILLING_AUTHORITY_SCOPE))]}
+        cost = preflight.observe_cost(selected, history, False)
+        self.assertEqual(cost["status"], "unmeasured")
+        self.assertEqual(cost["samples"], [])
+        self.assertEqual(cost["measurement_job_timeouts_minutes"], planner.MODERATION_OWNER_FLOW_JOB_TIMEOUTS)
+        self.assertNotIn("with_upload_minutes", cost)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30, "cost": cost}
+        self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        for workflow in (planner.MODERATION_OWNER_FLOW_WORKFLOW, planner.PRESERVATION_WORKFLOW):
+            for state, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+                run = {"id": 8, "path": workflow, "status": state, "conclusion": conclusion,
+                       "created_at": (now - dt.timedelta(minutes=8)).isoformat()}
+                gated = preflight.apply_task_gate(result, [run], now, measure_baseline=True)
+                self.assertFalse(gated["ready"])
+                self.assertFalse(gated["task"]["first_baseline_measurement"])
+                self.assertEqual(gated["task"]["minutes_since_first_ci"], 8)
+                self.assertEqual(gated["task"]["failed_runs"], [8] if conclusion == "failure" else [])
+                self.assertEqual(gated["task"]["active_runs"], [8] if state != "completed" else [])
+
+    def test_candidate_plan_requires_all_five_owning_push_jobs_on_the_same_head(self):
+        head = "a" * 40
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.MODERATION_OWNER_FLOW_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=planner.MODERATION_OWNER_FLOW_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["head"], head)
+        self.assertEqual(result["required_jobs"], list(planner.MODERATION_OWNER_FLOW_JOBS))
+        self.assertEqual(result["required_backend_runs"], [
+            {"workflow": planner.MODERATION_OWNER_FLOW_WORKFLOW, "job": job,
+             "head_sha": head, "event": "push", "success_required": True}
+            for job in planner.MODERATION_OWNER_FLOW_JOBS[:-1]] + [
+            {"workflow": planner.PRESERVATION_WORKFLOW, "job": planner.PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True}])
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertFalse(result["ready"])
+        self.assertIn("all four same-SHA Sharing workflow jobs", result["reason"])
+        self.assertIn("automatically triggered Preservation job", result["reason"])
+        self.assertIn("no native, live-cloud or release evidence", result["reason"])
+
+    def test_task_history_keeps_failures_and_active_runs_from_both_workflows(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        runs = [{"id": i, "path": workflow, "status": status, "conclusion": conclusion,
+                 "created_at": (now - dt.timedelta(minutes=12 - i)).isoformat()}
+                for i, workflow, status, conclusion in (
+                    (1, planner.MODERATION_OWNER_FLOW_WORKFLOW, "completed", "failure"),
+                    (2, planner.MODERATION_OWNER_FLOW_WORKFLOW, "in_progress", None),
+                    (3, planner.PRESERVATION_WORKFLOW, "completed", "failure"),
+                    (4, planner.PRESERVATION_WORKFLOW, "in_progress", None))]
+        with patch.object(planner, "git", return_value="codex/moderation-owner-flow"), \
+                patch.object(preflight, "github", return_value={"total_count": 4, "workflow_runs": runs}):
+            history = preflight.read_task_runs("a" * 40)
+        self.assertEqual({row["id"] for row in history}, {1, 2, 3, 4})
+        self.assertEqual({row["path"] for row in history}, {planner.MODERATION_OWNER_FLOW_WORKFLOW, planner.PRESERVATION_WORKFLOW})
+        result = {"scope": planner.MODERATION_OWNER_FLOW_SCOPE, "head": "a" * 40, "ready": False,
+                  "target_minutes": 30, "cost": {"status": "unmeasured", "samples": []}}
+        gated = preflight.apply_task_gate(result, history, now, measure_baseline=True)
+        self.assertFalse(gated["ready"])
+        self.assertFalse(gated["task"]["first_baseline_measurement"])
+        self.assertEqual(gated["task"]["minutes_since_first_ci"], 11)
+        self.assertEqual(set(gated["task"]["failed_runs"]), {1, 3})
+        self.assertEqual(set(gated["task"]["active_runs"]), {2, 4})
+
+
+
+
 class ModerationReviewEvidenceBudgetTests(unittest.TestCase):
     def test_unmeasured_scope_keeps_both_workflow_history_and_disallows_old_timings_or_upload(self):
         selected = planner.MODERATION_REVIEW_EVIDENCE_SCOPE
