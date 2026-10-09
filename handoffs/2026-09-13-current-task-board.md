@@ -1,5 +1,17 @@
 # 現在のタスクと優先順位
 
+## 2026-10-09 運営者登録の検証部品を実装
+
+- 実装前のNode37件/workerd30件を根拠に、既存の唯一のWebAuthn wrapperへ登録応答の厳格な検証を追加。既存操作時署名検証本文は不変。型検査・新旧workerd51件・依存境界2件と独立レビューを完了した。
+- 結果は未承認として返し、同isolate内の一度限りの消費と、永続challenge/Access/登録承認を分ける。実機・画面・登録権限の有効化は未完。同期passkey等の既存拒否方針は緩めていない。
+- [実装範囲・必須CI・未確認事項](2026-10-09-moderation-enrollment-verifier.md)。固定3製品fileの専用CI登録を先行し、同SHAの既存Sharing全jobとplanで確認する。アプリ変更・新TestFlight・live gate/権限/料金変更は含まない。
+
+## 2026-10-09 10:00 JST 復旧読戻しの重複保持を改善・内部反映
+
+- S3復旧用暗号文を検証済み長さのbufferへ順次コピーし、元chunk全量の保持を除去。version/hash/正確なEOF・長さ/5秒/4096chunkを維持し、20MiB写真のlocal保存はHTTP200・復旧確定・最終owner ackまで成功。局所の保持差約20MiBは確認したが、全経路の本番128MiBとCPU適合は未証明。
+- 制御PR200→製品PR201、同SHAのService434＋27件/plan成功、main `aaf3eb6`へ統合。private Worker version `bea8cb9f`の全文一致を確認し、設定/期限/schema/本人1名・記録1件を保持。今回25分29秒、前のprovider候補から累計2時間1分34秒。native/Gallery/TestFlight追加なし。
+- [完了・実測・限界](2026-10-09-preservation-recovery-read.md)。次は運営者登録の検証部品を製品へ組み込み、通報の内容確認・判断/返答へ進める。実機ZIP・本番容量/CPU・提供条件/一般公開は未完として維持する。
+
 ## 2026-10-09 09:25 JST 受信bufferの解放を内部反映
 
 - 写真入りJSONを読む際の専有bufferを、UTF-8 decode後・JSON.parse前に解放。入力chunkは保持し、同じ20MiB写真の局所観測で約27MiBの重複を削減。byte/4096chunk/5秒/エラー優先順・暗号化・復旧条件は不変。

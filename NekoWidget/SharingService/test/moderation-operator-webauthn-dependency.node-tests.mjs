@@ -44,8 +44,9 @@ test("allows the package API only behind the strict operator wrapper", async () 
       imports.push(relative(projectDirectory, path).replaceAll("\\", "/"));
       assert.doesNotMatch(
         content,
-        /generateRegistrationOptions|verifyRegistrationResponse|generateAuthenticationOptions/u,
+        /generateRegistrationOptions|generateAuthenticationOptions/u,
       );
+      assert.match(content, /verifyRegistrationResponse/u);
     }
   }
   assert.deepEqual(imports, [reviewedModule]);
