@@ -530,6 +530,41 @@ MODERATION_ENROLLMENT_JOB_TIMEOUTS = {
 MODERATION_ENROLLMENT_JOBS = tuple(MODERATION_ENROLLMENT_JOB_TIMEOUTS)
 
 
+# Disconnected moderation durable jobs, migration and owning test; control lands first.
+# Independently reviewed migration/source/test blobs; exact A/A/A only.
+MODERATION_AI_DURABLE_SCOPE = "moderation-ai-durable-v1"
+MODERATION_AI_DURABLE_BLOBS = {
+    "NekoWidget/SharingService/migrations/0030_moderation_advisory_jobs.sql": (
+        "0" * 40, "9eccf8ef17e074b90505126ff25c49c2afeeff31"),
+    "NekoWidget/SharingService/src/moderation-ai-durable.ts": (
+        "0" * 40, "971be7198af22e4aa9bfc6f1fbe3f0d820a4234e"),
+    "NekoWidget/SharingService/test/moderation-ai-durable.test.ts": (
+        "0" * 40, "f08fd4cafbf3f34aab9dba50ec12e5f5559d0e2a"),
+}
+MODERATION_AI_DURABLE_PATHS = frozenset(MODERATION_AI_DURABLE_BLOBS)
+MODERATION_AI_DURABLE_WORKFLOW = ".github/workflows/sharing-service.yml"
+MODERATION_AI_DURABLE_WORKFLOW_BLOBS = {
+    MODERATION_AI_DURABLE_WORKFLOW: "8038107503651173741b1502aa3e836a2cb2790a",
+    PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+}
+MODERATION_AI_DURABLE_JOB_TIMEOUTS = {
+    "Select backend checks": 5,
+    "Typecheck, test, and build Apple transaction verifier": 10,
+    "Windows moderation key, drill, and report policy fixtures": 10,
+    "Typecheck, test, and bundle Worker": 20,
+    PRESERVATION_JOB: 5,
+}
+MODERATION_AI_DURABLE_JOBS = tuple(MODERATION_AI_DURABLE_JOB_TIMEOUTS)
+
+
+# The existing Worker job must retain the all-migrations local D1 setup.
+MODERATION_AI_DURABLE_MIGRATION_INPUT_BLOBS = {
+    "NekoWidget/SharingService/package.json": "8283e5b509913a86c7632b1551b4dfc21d7de86b",
+    "NekoWidget/SharingService/vitest.config.ts": "4f676f517cb2481e5ad6cc076457e18dd9180a9a",
+    "NekoWidget/SharingService/test/setup.ts": "9d7bef258a554d026d8253159997bd3e154415b2",
+}
+
+
 # Disconnected moderation transport and its owning test; control lands first.
 # Independently reviewed source/test blobs; exact A/A only, control lands first.
 MODERATION_AI_TRANSPORT_SCOPE = "moderation-ai-transport-v1"
@@ -934,6 +969,42 @@ def moderation_enrollment_requirements(head):
             for job in MODERATION_ENROLLMENT_JOBS]
 
 
+def moderation_ai_durable_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_AI_DURABLE_PATHS
+            and all(path in MODERATION_AI_DURABLE_PATHS or is_handoff(path) for path in paths))
+
+
+def moderation_ai_durable_backend_only(paths, base, head):
+    if (not moderation_ai_durable_paths_only(paths)
+            or set(MODERATION_AI_DURABLE_BLOBS) != MODERATION_AI_DURABLE_PATHS
+            or not all(len(pair) == 2 and pair[0] == "0" * 40
+                       and SHA.fullmatch(pair[1]) and pair[1] != "0" * 40
+                       for pair in MODERATION_AI_DURABLE_BLOBS.values())
+            or set(MODERATION_AI_DURABLE_WORKFLOW_BLOBS) != {MODERATION_AI_DURABLE_WORKFLOW, PRESERVATION_WORKFLOW}
+            or set(MODERATION_AI_DURABLE_MIGRATION_INPUT_BLOBS) != {
+                "NekoWidget/SharingService/package.json", "NekoWidget/SharingService/vitest.config.ts",
+                "NekoWidget/SharingService/test/setup.ts"}):
+        return False
+    fixed_inputs = MODERATION_AI_DURABLE_WORKFLOW_BLOBS | MODERATION_AI_DURABLE_MIGRATION_INPUT_BLOBS
+    for path, blob in fixed_inputs.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", path)
+                       != f"100644 blob {blob}\t{path}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=MODERATION_AI_DURABLE_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="MODERATION_AI_DURABLE_COMPANION_DIGESTS")
+
+
+def moderation_ai_durable_requirements(head):
+    # Four Sharing jobs plus the automatically triggered Preservation job.
+    # Every owning push must succeed at this SHA; a plan is not proof.
+    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_AI_DURABLE_WORKFLOW,
+             "job": job, "head_sha": head, "event": "push", "success_required": True}
+            for job in MODERATION_AI_DURABLE_JOBS]
+
+
 def moderation_ai_transport_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == MODERATION_AI_TRANSPORT_PATHS
@@ -1221,6 +1292,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PRESERVATION_JOB,)
     if runtime_scope == MODERATION_ENROLLMENT_SCOPE and moderation_enrollment_paths_only(paths):
         return MODERATION_ENROLLMENT_JOBS
+    if runtime_scope == MODERATION_AI_DURABLE_SCOPE and moderation_ai_durable_paths_only(paths):
+        return MODERATION_AI_DURABLE_JOBS
     if runtime_scope == MODERATION_AI_TRANSPORT_SCOPE and moderation_ai_transport_paths_only(paths):
         return MODERATION_AI_TRANSPORT_JOBS
     if runtime_scope == MODERATION_AI_SCOPE and moderation_ai_paths_only(paths):
@@ -1662,7 +1735,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((MODERATION_AI_TRANSPORT_SCOPE, moderation_ai_transport_paths_only, moderation_ai_transport_backend_only),
+    for selected, matches, verify in ((MODERATION_AI_DURABLE_SCOPE, moderation_ai_durable_paths_only, moderation_ai_durable_backend_only),
+                                       (MODERATION_AI_TRANSPORT_SCOPE, moderation_ai_transport_paths_only, moderation_ai_transport_backend_only),
                                        (MODERATION_AI_SCOPE, moderation_ai_paths_only, moderation_ai_backend_only),
                                        (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
@@ -2741,7 +2815,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -2767,7 +2841,9 @@ def main() -> None:
               **({"required_backend_runs": moderation_ai_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_AI_SCOPE else {}),
               **({"required_backend_runs": moderation_ai_transport_requirements(env["GITHUB_SHA"])}
-                 if selected_scope == MODERATION_AI_TRANSPORT_SCOPE else {})}))
+                 if selected_scope == MODERATION_AI_TRANSPORT_SCOPE else {}),
+              **({"required_backend_runs": moderation_ai_durable_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_AI_DURABLE_SCOPE else {})}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
@@ -2777,7 +2853,14 @@ def main() -> None:
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
-            if selected_scope == MODERATION_AI_TRANSPORT_SCOPE:
+            if selected_scope == MODERATION_AI_DURABLE_SCOPE:
+                summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
+                           "push at the same candidate SHA: "
+                           + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
+                                       for row in moderation_ai_durable_requirements(env["GITHUB_SHA"]))
+                           + ". This plan does not certify their success. "
+                           "The Sharing Worker job must apply the full local D1 migration chain and execute the durable integration tests. Mac jobs are not requested. Not production migration, iOS release or live AI evidence.\n")
+            elif selected_scope == MODERATION_AI_TRANSPORT_SCOPE:
                 summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
                            "push at the same candidate SHA: "
                            + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
