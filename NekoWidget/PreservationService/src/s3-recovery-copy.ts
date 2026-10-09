@@ -75,6 +75,35 @@ function version(response: Response): string {
   return value;
 }
 
+// Exact-size recovery references let us copy each source view immediately,
+// without retaining all chunks alongside a second full-object allocation.
+// The reference, never Content-Length, bounds allocation. Still require EOF,
+// the existing chunk/wall limits and getVerified's version/checksum checks.
+async function readRecoveryObject(body: ReadableStream<Uint8Array>, expected: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(expected) || expected < 1 || expected > maxObjectBytes) throw unavailable();
+  const reader = body.getReader();
+  let size = 0; let count = 0; let timer: ReturnType<typeof setTimeout> | undefined;
+  const until = performance.now() + 5000;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { void reader.cancel().catch(() => {}); reject(unavailable()); }, 5000);
+  });
+  try {
+    const result = new Uint8Array(expected);
+    while (true) {
+      if (performance.now() >= until) throw unavailable();
+      const { value, done } = await Promise.race([reader.read(), expired]);
+      if (done) break;
+      if (++count > 4096 || !(value instanceof Uint8Array)) throw unavailable();
+      if (value.length > expected - size) throw unavailable();
+      result.set(value, size); size += value.length;
+      if (count % 64 === 0) await Promise.race([new Promise(resolve => setTimeout(resolve, 0)), expired]);
+    }
+    if (performance.now() >= until || size !== expected) throw unavailable();
+    return result;
+  } catch { void reader.cancel().catch(() => {}); throw unavailable(); }
+  finally { clearTimeout(timer); reader.releaseLock(); }
+}
+
 /** Requires a versioned, private S3 bucket. S3 validates the supplied SHA-256
  * checksum; HEAD confirms the committed version and checksum before success.
  * Writer IAM must not have DeleteObjectVersion; bucket lifecycle and purge-role
@@ -146,7 +175,7 @@ export class S3RecoveryCopy {
     try {
       const reply = await this.request('GET', item.key, {}, undefined, item.versionId);
       if (reply.status !== 200 || !reply.body || version(reply) !== item.versionId) throw unavailable();
-      const data = await readBoundedBody(reply.body, maxObjectBytes, unavailable);
+      const data = await readRecoveryObject(reply.body, item.bytes);
       if (data.length !== item.bytes || (await checksum(data)).hex !== item.sha256) throw unavailable();
       return data;
     } catch { throw unavailable(); }
