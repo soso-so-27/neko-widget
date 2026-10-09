@@ -794,6 +794,35 @@ class ReleaseTests(unittest.TestCase):
         self.assertLess(source.index("Verify the requested main commit"), source.index("Install distribution certificate"))
 
 
+class ModerationBuildCorrectionReleaseTests(unittest.TestCase):
+    def test_direct_release_requires_fixed_full_build_graph_and_reports_original_backend_sha(self):
+        fixture = ReleaseTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        planner = release.planner
+        fixture.run.update(head_branch=planner.MODERATION_BUILD_CORRECTION_BRANCH,
+                           path=".github/workflows/ios-build.yml", run_attempt=1)
+        fixture.plan.update(scope=planner.MODERATION_RESOLUTION_SCOPE,
+            required_jobs=list(planner.required_jobs_from_scope(planner.MODERATION_RESOLUTION_SCOPE)),
+            required_backend_runs=planner.moderation_resolution_requirements(planner.MODERATION_BUILD_CORRECTION_SOURCE),
+            test_correction_evidence={"run_id": planner.MODERATION_BUILD_CORRECTION_RUN,
+                "sha": planner.MODERATION_BUILD_CORRECTION_SOURCE,
+                "backend_evidence": {"source_sha": planner.MODERATION_BUILD_CORRECTION_SOURCE}})
+        fixture.set_plan()
+        with patch.object(planner, "covers_moderation_build_correction", return_value=True) as verify:
+            result = release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+            self.assertEqual(result["tested_sha"], fixture.sha)
+            self.assertEqual(result["reused_sha"], planner.MODERATION_BUILD_CORRECTION_SOURCE)
+            self.assertEqual(result["backend_evidence"]["source_sha"], planner.MODERATION_BUILD_CORRECTION_SOURCE)
+            self.assertEqual(verify.call_args.args[1], fixture.sha)
+        for value in (False, None):
+            with patch.object(planner, "covers_moderation_build_correction", return_value=value), self.assertRaises(release.Blocked):
+                release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+        with patch.object(planner, "covers_moderation_build_correction", side_effect=planner.CorrectionEvidenceUnavailable()), self.assertRaises(release.Blocked):
+            release.check_ci(fixture.gh, fixture.sha, 20, fixture.now)
+        self.assertEqual(fixture.gh.dispatches, [])
+
+
 class PreservationExportCorrectionTests(unittest.TestCase):
     set_plan = ReleaseTests.set_plan
     set_export_backends = ReleaseTests.set_export_backends
