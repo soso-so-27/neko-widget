@@ -530,6 +530,31 @@ MODERATION_ENROLLMENT_JOB_TIMEOUTS = {
 MODERATION_ENROLLMENT_JOBS = tuple(MODERATION_ENROLLMENT_JOB_TIMEOUTS)
 
 
+# Reviewed offline AI-advisory policy and its owning test; control lands first.
+# Product commit 3010cbf5c6fc84aa8b40bc44f9d216458052ade7; exact A/A only.
+MODERATION_AI_SCOPE = "moderation-ai-advisory-v1"
+MODERATION_AI_BLOBS = {
+    "NekoWidget/SharingService/src/moderation-ai-advisory.ts": (
+        "0" * 40, "24fa1a5a75c98db6c118858b0cb1d17de6e1a423"),
+    "NekoWidget/SharingService/test/moderation-ai-advisory.test.ts": (
+        "0" * 40, "cc745e39aee09ff1751b06f2f7f7bc5817149fc3"),
+}
+MODERATION_AI_PATHS = frozenset(MODERATION_AI_BLOBS)
+MODERATION_AI_WORKFLOW = ".github/workflows/sharing-service.yml"
+MODERATION_AI_WORKFLOW_BLOBS = {
+    MODERATION_AI_WORKFLOW: "8038107503651173741b1502aa3e836a2cb2790a",
+    PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+}
+MODERATION_AI_JOB_TIMEOUTS = {
+    "Select backend checks": 5,
+    "Typecheck, test, and build Apple transaction verifier": 10,
+    "Windows moderation key, drill, and report policy fixtures": 10,
+    "Typecheck, test, and bundle Worker": 20,
+    PRESERVATION_JOB: 5,
+}
+MODERATION_AI_JOBS = tuple(MODERATION_AI_JOB_TIMEOUTS)
+
+
 BILLING_SCOPE = "billing-private-service-v2"
 BILLING_JOB = "Typecheck, test, and build Apple transaction verifier"
 BILLING_CALLER_JOB = "Validate private billing caller"
@@ -884,6 +909,38 @@ def moderation_enrollment_requirements(head):
             for job in MODERATION_ENROLLMENT_JOBS]
 
 
+def moderation_ai_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_AI_PATHS
+            and all(path in MODERATION_AI_PATHS or is_handoff(path) for path in paths))
+
+
+def moderation_ai_backend_only(paths, base, head):
+    if (not moderation_ai_paths_only(paths)
+            or set(MODERATION_AI_BLOBS) != MODERATION_AI_PATHS
+            or not all(len(pair) == 2 and pair[0] == "0" * 40
+                       and SHA.fullmatch(pair[1]) and pair[1] != "0" * 40
+                       for pair in MODERATION_AI_BLOBS.values())
+            or set(MODERATION_AI_WORKFLOW_BLOBS) != {MODERATION_AI_WORKFLOW, PRESERVATION_WORKFLOW}):
+        return False
+    for workflow, blob in MODERATION_AI_WORKFLOW_BLOBS.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", workflow)
+                       != f"100644 blob {blob}\t{workflow}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=MODERATION_AI_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="MODERATION_AI_COMPANION_DIGESTS")
+
+
+def moderation_ai_requirements(head):
+    # Four Sharing jobs plus the automatically triggered Preservation job.
+    # Every owning push must succeed at this SHA; a plan is not proof.
+    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_AI_WORKFLOW,
+             "job": job, "head_sha": head, "event": "push", "success_required": True}
+            for job in MODERATION_AI_JOBS]
+
+
 def development_tools_only(paths, base, head, allowed=DEVELOPMENT_PATHS, allowed_additions=frozenset()):
     if not paths or not source_paths(paths) or not source_paths(paths) <= allowed:
         return False
@@ -1107,6 +1164,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PRESERVATION_JOB,)
     if runtime_scope == MODERATION_ENROLLMENT_SCOPE and moderation_enrollment_paths_only(paths):
         return MODERATION_ENROLLMENT_JOBS
+    if runtime_scope == MODERATION_AI_SCOPE and moderation_ai_paths_only(paths):
+        return MODERATION_AI_JOBS
     if runtime_scope == DEVELOPMENT_SCOPE and source_paths(paths) and source_paths(paths) <= DEVELOPMENT_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == CI_EVIDENCE_SCOPE and source_paths(paths) == CI_EVIDENCE_PATHS:
@@ -1544,7 +1603,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
+    for selected, matches, verify in ((MODERATION_AI_SCOPE, moderation_ai_paths_only, moderation_ai_backend_only),
+                                       (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
@@ -2621,7 +2681,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -2643,7 +2703,9 @@ def main() -> None:
               **({"required_backend_runs": preservation_recovery_read_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_RECOVERY_READ_SCOPE else {}),
               **({"required_backend_runs": moderation_enrollment_requirements(env["GITHUB_SHA"])}
-                 if selected_scope == MODERATION_ENROLLMENT_SCOPE else {})}))
+                 if selected_scope == MODERATION_ENROLLMENT_SCOPE else {}),
+              **({"required_backend_runs": moderation_ai_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_AI_SCOPE else {})}))
         with Path(env["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
@@ -2653,7 +2715,14 @@ def main() -> None:
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
-            if selected_scope == MODERATION_ENROLLMENT_SCOPE:
+            if selected_scope == MODERATION_AI_SCOPE:
+                summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
+                           "push at the same candidate SHA: "
+                           + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
+                                       for row in moderation_ai_requirements(env["GITHUB_SHA"]))
+                           + ". This plan does not certify their success. "
+                           "Mac jobs are not requested. Not iOS release or live AI evidence.\n")
+            elif selected_scope == MODERATION_ENROLLMENT_SCOPE:
                 summary = ("## Backend-only verification\n\nAll four jobs must execute successfully on the owning "
                            "push at the same candidate SHA: " + "; ".join(MODERATION_ENROLLMENT_JOBS)
                            + " in `" + MODERATION_ENROLLMENT_WORKFLOW + "`. This plan does not certify their success. "
