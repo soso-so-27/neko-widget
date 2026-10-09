@@ -1,3 +1,8 @@
+## 2026-10-09 本人の写真確認と判断・返信案保存
+
+- local専用のAccess/WebAuthn認証から、一回限りの写真取得・Node隔離復号・新署名による対応不要判断・通報者宛の返信案保存まで接続。別source/失効/再利用を拒否し、判断とoutboxは原子的に確定する。対応が必要な案件は未完、返信は未送信。
+- [実装・検証・本番接続の残件](2026-10-09-moderation-owner-flow.md)。実認証器/鍵transport、対象限定制限・復旧、実返信、AI事前screen、live接続は残る。owner policyは空で、旧privacy承認・production Worker・費用/配布範囲・TestFlight247は不変。
+
 ## 2026-10-09 通報写真のsource照合と隔離復号
 
 - versioned caseからDBの正しいreport metadataを取得し、削除待ち・期限切れを拒否する内部adapterと、Node隔離復号をそのsourceへ束縛する部品を追加。詳細は [記録](2026-10-09-moderation-review-evidence.md)。
