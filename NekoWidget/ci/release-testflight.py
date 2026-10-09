@@ -194,6 +194,26 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
     correction = plan.get("test_correction_evidence")
+    if correction is not None and plan.get("scope") == planner.MODERATION_RESOLUTION_SCOPE:
+        def moderation_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected moderation correction API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Moderation correction job identity unavailable.")
+                return gh.log(job["run_id"], job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            valid = planner.covers_moderation_build_correction(
+                current, sha, required, moderation_api, now, executed_jobs_for(gh, current))
+        except (OSError, AttributeError, KeyError, TypeError, ValueError):
+            raise Blocked("Fixed moderation Build correction evidence is unavailable or invalid.") from None
+        require(valid, "Full corrected Build and original three native/five backend jobs must pass verification.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "reused_run": correction["run_id"], "reused_sha": correction["sha"],
+                "backend_evidence": correction["backend_evidence"]}
     if correction is not None and plan.get("scope") == planner.PRESERVATION_EXPORT_SCOPE:
         def export_api(path: str):
             prefix = f"/repos/{REPOSITORY}/"
@@ -301,7 +321,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
     if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:
-        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(source_sha),
+        backend_sha = planner.MODERATION_BUILD_CORRECTION_SOURCE if corrected else source_sha
+        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(backend_sha),
                 "Moderation resolution plan must declare all five same-candidate backend jobs.")
         def resolution_api(path: str):
             prefix = f"/repos/{REPOSITORY}/"
@@ -311,7 +332,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             owner = current if source_id == run_id else source
             branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
             result["backend_evidence"] = planner.moderation_resolution_backend_evidence(
-                source_sha, REPOSITORY, resolution_api, now, branch=branch)
+                backend_sha, REPOSITORY, resolution_api, now, branch=branch)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("All five same-candidate owning backend push jobs must succeed before release.") from None
     return result
