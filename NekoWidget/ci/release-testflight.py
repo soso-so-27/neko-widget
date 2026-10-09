@@ -321,18 +321,30 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
     if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:
-        backend_sha = planner.MODERATION_BUILD_CORRECTION_SOURCE if corrected else source_sha
+        production = planner.moderation_ui_recovery_inputs(source_sha)
+        backend_sha = planner.MODERATION_BUILD_CORRECTION_SOURCE if corrected or production else source_sha
         require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(backend_sha),
                 "Moderation resolution plan must declare all five same-candidate backend jobs.")
         def resolution_api(path: str):
             prefix = f"/repos/{REPOSITORY}/"
             require(path.startswith(prefix + "actions/"), "Unexpected backend evidence API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2]); job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Production UI evidence job identity unavailable.")
+                return gh.log(job["run_id"], job_id)
             return gh.get(path[len(prefix):])
         try:
             owner = current if source_id == run_id else source
             branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
-            result["backend_evidence"] = planner.moderation_resolution_backend_evidence(
-                backend_sha, REPOSITORY, resolution_api, now, branch=branch)
+            if production:
+                require(planner.covers_moderation_ui_recovery(owner, sha, required, resolution_api, now, jobs),
+                        "Production UI recovery requires all four new native jobs and original backend proof.")
+                proof = planner.moderation_ui_recovery_evidence(source_sha, REPOSITORY, resolution_api, now)
+                result["production_ui_recovery"] = proof
+                result["backend_evidence"] = proof["backend_evidence"]
+            else:
+                result["backend_evidence"] = planner.moderation_resolution_backend_evidence(
+                    backend_sha, REPOSITORY, resolution_api, now, branch=branch)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("All five same-candidate owning backend push jobs must succeed before release.") from None
     return result
