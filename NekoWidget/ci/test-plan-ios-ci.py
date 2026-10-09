@@ -538,6 +538,209 @@ class ModerationAIDurableScopeTests(unittest.TestCase):
                 self.assertEqual(self.select(), planner.MODERATION_AI_DURABLE_SCOPE)
 
 
+class ModerationOwnerFlowScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644",
+                       before, after, "A" if before == "0" * 40 else "M"]
+                for path, (before, after) in planner.MODERATION_OWNER_FLOW_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, ancestor=True, workflows=None, event="push"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor:
+                    raise subprocess.CalledProcessError(1, args)
+                return self.base
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(fields) + "\0" + path + "\0"
+                                                         for path, fields in rows.items())
+            if args[0] == "ls-tree":
+                revision, path = args[1], args[3]
+                return (workflows or {}).get((revision, path),
+                    f"100644 blob {(planner.MODERATION_OWNER_FLOW_WORKFLOW_BLOBS | planner.MODERATION_OWNER_FLOW_INPUT_BLOBS).get(path, 'unregistered')}\t{path}")
+            if args[0] == "rev-parse":
+                return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return "unreviewed other profile"
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git):
+            return planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": event,
+                                                      "GITHUB_REF": "refs/heads/codex/moderation-owner-flow"})
+
+    def test_exact_owner_product_batch_require_five_backend_jobs_without_native_evidence(self):
+        self.assertEqual(len(self.rows()), 18)
+        self.assertEqual(sum(row[4] == "M" for row in self.rows().values()), 7)
+        self.assertEqual(sum(row[4] == "A" for row in self.rows().values()), 11)
+        self.assertEqual(self.select(), planner.MODERATION_OWNER_FLOW_SCOPE)
+        self.assertEqual(planner.required_jobs(list(self.rows()), planner.MODERATION_OWNER_FLOW_SCOPE),
+                         planner.MODERATION_OWNER_FLOW_JOBS)
+        self.assertNotIn(planner.MODERATION_OWNER_FLOW_SCOPE, scope.SCOPES)
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_OWNER_FLOW_SCOPE)
+        for absent in (None, []):
+            self.assertFalse(planner.moderation_owner_flow_paths_only(absent))
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v26")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "a6299352e82577e33aa0faf3e20c867729505c6d")
+        self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
+
+    def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
+        original = self.rows()
+        for path, fields in original.items():
+            self.assertEqual(self.select({p: row for p, row in original.items() if p != path}), scope.FULL_SCOPE)
+            for index, value in ((0, ":100755"), (1, "120000"), (2, "c" * 40), (3, "d" * 40), (4, "D"), (4, "T"), (4, "R100")):
+                changed = copy.deepcopy(original); changed[path][index] = value
+                self.assertEqual(self.select(changed), scope.FULL_SCOPE, (path, index, value))
+            changed = copy.deepcopy(original)
+            changed[path][0], changed[path][4] = (":100644", "M") if fields[4] == "A" else (":000000", "A")
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE)
+        for unknown in (*planner.MODERATION_AI_PATHS, "NekoWidget/SharingService/src/moderation-operator-router.ts", "NekoWidget/SharingService/package-lock.json",
+                        "NekoWidget/SharingService/wrangler.moderation-operator.disabled.jsonc", "NekoWidget/PreservationService/src/request-json.ts",
+                        "NekoWidget/PreservationService/src/index.ts", "NekoWidget/PreservationService/package.json",
+                        "NekoWidget/PreservationImageValidator/src/provider.ts", "NekoWidget/SharingService/src/index.ts",
+                        "NekoWidget/Shared/MembershipAccessPolicy.swift", "docs/moderation-owner-flow.md",
+                        planner.MODERATION_OWNER_FLOW_WORKFLOW, planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW, ".github/workflows/ios-build.yml",
+                        *planner.PRESERVATION_COMPANION_PATHS):
+            changed = original | {unknown: [":100644", "100644", "c" * 40, "d" * 40, "M"]}
+            self.assertEqual(self.select(changed), scope.FULL_SCOPE, unknown)
+            self.assertEqual(planner.required_jobs(list(changed), planner.MODERATION_OWNER_FLOW_SCOPE), planner.FULL)
+        raw = "".join(" ".join(row) + "\0" + path + "\0" for path, row in original.items())
+        first_path, first_row = next(iter(original.items()))
+        duplicate = (" ".join(first_row) + "\0" + first_path + "\0") * len(original)
+        for invalid in ("", raw + raw, duplicate, raw.rsplit("\0", 2)[0]):
+            self.assertEqual(self.select(raw=invalid), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original) + [next(iter(original))]), scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False), scope.FULL_SCOPE)
+        self.assertEqual(self.select(event="workflow_dispatch"), scope.FULL_SCOPE)
+        with patch.object(planner, "MODERATION_OWNER_FLOW_BLOBS", {path: ("0" * 40, "0" * 40) for path in original}):
+            self.assertEqual(self.select(), scope.FULL_SCOPE)
+        for pair in (("c" * 40, "0" * 40), ("c" * 40, "c" * 40), ("c" * 40, "d" * 40),
+                     ("c", "d" * 40), ("0" * 40, "invalid"), ("0" * 40, "d" * 40, "extra")):
+            with patch.object(planner, "MODERATION_OWNER_FLOW_BLOBS", {path: pair for path in original}):
+                self.assertEqual(self.select(original), scope.FULL_SCOPE)
+
+    def test_normal_handoff_additions_and_edits_are_allowed_but_unsafe_modes_are_not(self):
+        original = self.rows()
+        path = "handoffs/moderation-owner-flow.md"
+        for fields in ([":000000", "100644", "0" * 40, "c" * 40, "A"],
+                       [":100644", "100644", "c" * 40, "d" * 40, "M"]):
+            changed = original | {path: fields}
+            self.assertEqual(self.select(changed), planner.MODERATION_OWNER_FLOW_SCOPE)
+            self.assertEqual(planner.required_jobs(list(changed), planner.MODERATION_OWNER_FLOW_SCOPE),
+                             planner.MODERATION_OWNER_FLOW_JOBS)
+        for fields in ([":000000", "120000", "0" * 40, "c" * 40, "A"],
+                       [":100644", "100755", "c" * 40, "d" * 40, "M"],
+                       [":100644", "000000", "c" * 40, "0" * 40, "D"],
+                       [":120000", "100644", "c" * 40, "d" * 40, "T"]):
+            self.assertEqual(self.select(original | {path: fields}), scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original) + [path, path]), scope.FULL_SCOPE)
+
+    def test_workflow_requires_exact_blob_and_regular_mode_at_base_and_head(self):
+        for path, blob in planner.MODERATION_OWNER_FLOW_WORKFLOW_BLOBS.items():
+            for revision in (self.base, self.head):
+                for invalid in ("", f"100755 blob {blob}\t{path}", f"120000 blob {blob}\t{path}",
+                                f"100644 blob {'c' * 40}\t{path}", f"100644 blob {blob}\tother.yml"):
+                    self.assertEqual(self.select(workflows={(revision, path): invalid}), scope.FULL_SCOPE)
+        original = planner.MODERATION_OWNER_FLOW_WORKFLOW_BLOBS
+        for path in original:
+            with patch.object(planner, "MODERATION_OWNER_FLOW_WORKFLOW_BLOBS", original | {path: "0" * 40}):
+                self.assertEqual(self.select(), scope.FULL_SCOPE)
+        for invalid in ({}, {planner.MODERATION_OWNER_FLOW_WORKFLOW: original[planner.MODERATION_OWNER_FLOW_WORKFLOW]},
+                        original | {planner.JPEG_WORKFLOW: "c" * 40}):
+            with patch.object(planner, "MODERATION_OWNER_FLOW_WORKFLOW_BLOBS", invalid):
+                self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_plan_declares_same_sha_backend_success_and_never_claims_it(self):
+        for ref in ("refs/heads/codex/moderation-owner-flow", "refs/heads/main"):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / "event.json").write_text("{}")
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": ref, "GITHUB_SHA": self.head,
+                       "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7",
+                       "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                       "GITHUB_STEP_SUMMARY": str(root / "summary")}
+                output = io.StringIO()
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=planner.MODERATION_OWNER_FLOW_SCOPE), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend is not native evidence")):
+                    planner.main()
+                flags = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual([flags[name] for name in ("build", "smoke", "sharing", "app_ui")], ["false"] * 4)
+                self.assertTrue(all(flags[name] == "[]" for name in ("lanes", "matrix_lanes", "app_ui_lanes")))
+                record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=", 1)[1].splitlines()[0])
+                self.assertEqual(record["required_jobs"], list(planner.MODERATION_OWNER_FLOW_JOBS))
+                self.assertEqual(record["required_backend_runs"], [
+                    {"workflow": planner.PRESERVATION_WORKFLOW if job == planner.PRESERVATION_JOB else planner.MODERATION_OWNER_FLOW_WORKFLOW, "job": job,
+                     "head_sha": self.head, "event": "push", "success_required": True}
+                    for job in planner.MODERATION_OWNER_FLOW_JOBS])
+                self.assertIsNone(record["evidence_run_id"])
+                self.assertIsNone(record["evidence_sha"])
+                summary = (root / "summary").read_text()
+                self.assertIn(planner.MODERATION_OWNER_FLOW_WORKFLOW, summary)
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("All five jobs", summary)
+                self.assertIn("does not certify their success", summary)
+
+
+    def test_existing_graph_runs_four_sharing_jobs_and_preservation_for_this_source(self):
+        workflow = (Path(__file__).resolve().parents[2] / planner.MODERATION_OWNER_FLOW_WORKFLOW).read_text()
+        blocks = dict(re.findall(r"(?ms)^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", workflow))
+        ids = ("plan", "billing-verifier-check", "moderation-keygen-windows-policy", "check")
+        self.assertEqual(tuple(re.search(r"(?m)^    name: (.+)$", blocks[name]).group(1)
+                               for name in ids), planner.MODERATION_OWNER_FLOW_JOBS[:-1])
+        self.assertEqual({re.search(r"(?m)^    name: (.+)$", blocks[name]).group(1):
+                          int(re.search(r"(?m)^    timeout-minutes: (\d+)$", blocks[name]).group(1))
+                          for name in ids}, {job: timeout for job, timeout in planner.MODERATION_OWNER_FLOW_JOB_TIMEOUTS.items()
+                                            if job != planner.PRESERVATION_JOB})
+        for name in ids[1:]:
+            condition = re.search(r"(?m)^    if: (.+)$", blocks[name]).group(1)
+            self.assertEqual("    if: " + condition,
+                             planner.SHARING_FULL_CHECK_CONDITION + planner.SHARING_OPERATOR_GUARD)
+            excluded = re.findall(r"needs.plan.outputs.scope != '([^']+)'", condition)
+            self.assertNotIn(planner.MODERATION_OWNER_FLOW_SCOPE, excluded)
+        self.assertNotIn(planner.MODERATION_OWNER_FLOW_SCOPE, blocks["private-billing-caller"])
+        preservation = (Path(__file__).resolve().parents[2] / planner.PRESERVATION_WORKFLOW).read_text()
+        self.assertIn('      - "NekoWidget/SharingService/src/**"', preservation)
+        self.assertIn("    name: " + planner.PRESERVATION_JOB, preservation)
+        self.assertIn("    timeout-minutes: 5", preservation)
+        self.assertNotIn("    if:", preservation)
+        self.assertEqual(planner.MODERATION_OWNER_FLOW_JOBS[-1], planner.PRESERVATION_JOB)
+
+
+    def test_crypto_public_disabled_entrypoints_and_test_inputs_are_fixed_at_both_ends(self):
+        original = planner.MODERATION_OWNER_FLOW_INPUT_BLOBS
+        for path, blob in original.items():
+            for revision in (self.base, self.head):
+                for invalid in ("", f"100755 blob {blob}\t{path}", f"120000 blob {blob}\t{path}",
+                                f"100644 blob {'c' * 40}\t{path}"):
+                    self.assertEqual(self.select(workflows={(revision, path): invalid}), scope.FULL_SCOPE)
+            for replacement in ({key: value for key, value in original.items() if key != path},
+                                original | {path: "0" * 40}, original | {"other.ts": "c" * 40}):
+                with patch.object(planner, "MODERATION_OWNER_FLOW_INPUT_BLOBS", replacement):
+                    self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+
+    def test_worker_and_windows_checks_cover_migration_inventory_and_isolated_host(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / planner.MODERATION_OWNER_FLOW_WORKFLOW).read_text()
+        self.assertIn("run: npm run check", workflow)
+        self.assertIn("npm run check:moderation-tool", workflow)
+        config = (root / "NekoWidget/SharingService/vitest.config.ts").read_text()
+        setup = (root / "NekoWidget/SharingService/test/setup.ts").read_text()
+        self.assertIn('readD1Migrations(path.join(import.meta.dirname, "migrations"))', config)
+        self.assertIn('test/**/*.test.ts', config)
+        self.assertIn('applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS)', setup)
+        for suffix in ("migrations/0031_moderation_owner_flow.sql", "scripts/staging-config.node-tests.mjs",
+                       "scripts/billing-sponsorship-local-drill.mjs", "test/billing-sponsorship-local-drill.node-tests.mjs",
+                       "test/moderation-owner-flow.test.ts", "test/moderation-owner.integration.test.ts",
+                       "test/moderation-owner-review-host.node-tests.mjs"):
+            self.assertIn("NekoWidget/SharingService/" + suffix, planner.MODERATION_OWNER_FLOW_PATHS)
+        self.assertEqual(planner.moderation_owner_flow_requirements(planner.MODERATION_AI_DURABLE_REUSE_CANDIDATE), [
+            {"workflow": planner.PRESERVATION_WORKFLOW if job == planner.PRESERVATION_JOB else planner.MODERATION_OWNER_FLOW_WORKFLOW,
+             "job": job, "head_sha": planner.MODERATION_AI_DURABLE_REUSE_CANDIDATE, "event": "push", "success_required": True}
+            for job in planner.MODERATION_OWNER_FLOW_JOBS])
+
+
 class ModerationReviewEvidenceScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
