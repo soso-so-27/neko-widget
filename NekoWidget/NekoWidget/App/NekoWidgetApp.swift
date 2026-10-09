@@ -66,11 +66,7 @@ struct NekoWidgetApp: App {
             if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--moderation-resolution-ui-fixture") {
-#if targetEnvironment(simulator)
-                ModerationResolutionUIFixture()
-#else
-                Color.clear
-#endif
+                moderationResolutionFixture
             } else if CommandLine.arguments.contains("--managed-preservation-membership-ui-fixture") {
                 ManagedPreservationMembershipFixture()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
@@ -124,6 +120,17 @@ struct NekoWidgetApp: App {
 #endif
         }
     }
+
+#if DEBUG
+    @ViewBuilder
+    private var moderationResolutionFixture: some View {
+#if targetEnvironment(simulator)
+        ModerationResolutionUIFixture()
+#else
+        Color.clear
+#endif
+    }
+#endif
 }
 
 @MainActor

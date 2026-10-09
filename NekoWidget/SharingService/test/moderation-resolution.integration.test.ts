@@ -10,6 +10,15 @@ import {base64urlEncode} from '../src/encoding';
 beforeEach(async()=>{await reset();await applyD1Migrations(db,(env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS)});
 const count=async(table:string)=>(await db.prepare(`SELECT COUNT(*) n FROM ${table}`).first<{n:number}>())!.n;
 describe('case-bound signed reversible moderation',()=>{
+ it('admits a scope across the challenge issue clock boundary without extending its expiry',async()=>{
+  const f=await resolutionFixture(undefined,'scope'),receipt=await f.read();
+  const issued=await f.issue('hide',receipt,0);
+  const row=await db.prepare(`SELECT unixepoch()-issued_at AS elapsed,expires_at-issued_at AS lifetime
+   FROM moderation_resolution_current_challenges WHERE challenge_id=?`).bind(issued.challengeId).first<{elapsed:number;lifetime:number}>();
+  expect(row?.elapsed).toBeGreaterThanOrEqual(1);
+  expect(row?.lifetime).toBeLessThanOrEqual(300);
+  expect(await count('moderation_resolution_events')).toBe(0);
+ });
  it('combines two independent cases and releasing one never releases the other',async()=>{
   const f=await resolutionFixture();
   const row=(await db.prepare('SELECT * FROM moment_reports WHERE id=?').bind(f.reportId).first())!;
@@ -53,13 +62,17 @@ describe('case-bound signed reversible moderation',()=>{
     WHERE reply.recipient_participant_id<>r.reporter_participant_id`).first()).toEqual({n:0});
   expect(await count('moderation_resolution_reply_receipts')).toBe(0);
  });
- it('burns a bad signature, refuses replay, stale concurrent revisions and old credential counters',async()=>{
-  const f=await resolutionFixture(),receipt=await f.read(),bad=await f.issue('hide',receipt,0);
+ it.each(['event','reply'] as const)('burns a bad signature, refuses replay, stale concurrent revisions and old credential counters across the %s clock boundary',async boundary=>{
+  const f=await resolutionFixture(undefined,boundary),receipt=await f.read(),bad=await f.issue('hide',receipt,0);
   expect((await f.prove(bad,true)).status).toBeGreaterThanOrEqual(400);
   expect((await f.prove(bad)).status).toBeGreaterThanOrEqual(400);
   expect(await count('moderation_resolution_events')).toBe(0);
   const a=await f.issue('hide',receipt,0),b=await f.issue('no_action',receipt,0);
-  expect((await f.prove(a)).status).toBe(200);
+  expect((await f.prove(a)).status,JSON.stringify(f.databaseFailures)).toBe(200);
+  const elapsed=await db.prepare(`SELECT e.recorded_at-consumed.consumed_at AS event_seconds,reply.created_at-e.recorded_at AS reply_seconds
+   FROM moderation_resolution_events e JOIN moderation_resolution_consumptions consumed USING(challenge_id)
+   JOIN moderation_resolution_replies reply ON reply.event_id=e.event_id`).first<{event_seconds:number;reply_seconds:number}>();
+  expect(elapsed![boundary==='event'?'event_seconds':'reply_seconds']).toBeGreaterThanOrEqual(1);
   expect((await f.prove(b)).status).toBe(409);
   const start=await routeLocalModerationOperatorTriage(f.request(f.operationPath,'POST'),f.local);
   expect(start.status).toBe(202);

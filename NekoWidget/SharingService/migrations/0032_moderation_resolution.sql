@@ -145,7 +145,7 @@ BEGIN
   THEN RAISE(ABORT,'resolution case target cannot change') END);
  SELECT (CASE WHEN EXISTS(SELECT 1 FROM moderation_resolution_scopes WHERE challenge_id=NEW.challenge_id)
   OR NOT EXISTS(SELECT 1 FROM moderation_resolution_challenges c JOIN moments m ON m.id=NEW.moment_id
-   WHERE c.challenge_id=NEW.challenge_id AND c.issued_at=unixepoch() AND m.space_id=NEW.space_id AND m.key_epoch=NEW.key_epoch
+   WHERE c.challenge_id=NEW.challenge_id AND c.issued_at<=unixepoch() AND c.expires_at>unixepoch() AND m.space_id=NEW.space_id AND m.key_epoch=NEW.key_epoch
     AND m.ciphertext_sha256=NEW.ciphertext_sha256 AND m.committed_at=NEW.committed_at AND m.unreceived_expires_at=NEW.unreceived_expires_at
     AND ((c.operation='release' AND EXISTS(SELECT 1 FROM moderation_resolution_case_states cs WHERE cs.event_id=c.restriction_event_id AND cs.moment_id=m.id))
       OR EXISTS(SELECT 1 FROM moderation_owner_read_claims claim JOIN moderation_owner_source_snapshots s USING(challenge_id)
@@ -184,7 +184,7 @@ CREATE TRIGGER moderation_resolution_event_insert BEFORE INSERT ON moderation_re
 BEGIN
  SELECT (CASE WHEN NEW.recorded_at<>unixepoch() OR EXISTS(SELECT 1 FROM moderation_resolution_events WHERE event_id=NEW.event_id OR challenge_id=NEW.challenge_id)
   OR NOT EXISTS(SELECT 1 FROM moderation_resolution_current_challenges c JOIN moderation_resolution_consumptions consumed USING(challenge_id)
-    WHERE c.challenge_id=NEW.challenge_id AND consumed.consumed_at=unixepoch())
+    WHERE c.challenge_id=NEW.challenge_id AND consumed.consumed_at>=c.issued_at AND consumed.consumed_at<=NEW.recorded_at)
  THEN RAISE(ABORT,'resolution event requires current signed scope') END);
 END;
 CREATE TRIGGER moderation_resolution_event_apply AFTER INSERT ON moderation_resolution_events
@@ -214,9 +214,11 @@ BEGIN
  SELECT (CASE WHEN NEW.created_at<>unixepoch() OR EXISTS(SELECT 1 FROM moderation_resolution_replies WHERE event_id=NEW.event_id)
   OR NOT EXISTS(SELECT 1 FROM moderation_resolution_events e JOIN moderation_resolution_challenges c USING(challenge_id)
    JOIN moderation_resolution_targets target ON target.event_id=e.event_id
+   JOIN moderation_resolution_case_states current ON current.event_id=e.event_id
    JOIN moderation_operator_versioned_case_references ref ON ref.case_reference_hmac=c.case_reference_hmac
    JOIN moment_reports r ON r.id=ref.report_id JOIN moment_report_tombstones t ON t.report_id=r.id
-   WHERE e.event_id=NEW.event_id AND e.recorded_at=unixepoch() AND r.id=NEW.report_id AND r.moment_id=target.moment_id
+   WHERE e.event_id=NEW.event_id AND e.recorded_at<=NEW.created_at AND c.expires_at>unixepoch()
+    AND r.id=NEW.report_id AND r.moment_id=target.moment_id
     AND r.reporter_participant_id=NEW.recipient_participant_id AND c.operation=NEW.template_code
     AND r.state='committed' AND r.closed_at IS NULL AND r.content_expires_at>unixepoch() AND t.content_deleted_at IS NULL
     AND NEW.expires_at=MIN(r.content_expires_at,unixepoch()+86400)
