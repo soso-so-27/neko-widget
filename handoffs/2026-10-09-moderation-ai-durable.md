@@ -13,6 +13,10 @@ workerdの実D1で、trigger拒否時のbatch全rollback、同時claimの勝者1
 
 見つかった失敗: fixtureの非同期HMAC導出のawait漏れ（製品処理前の14失敗）を修正。D1の`meta.changes`がcascade行も数えるため掃除のjob件数が3となる製品不具合を`RETURNING job_id`の件数へ修正。独立レビューでは別jobへのattempt ID移植と最終読戻しの非同期例外漏れを修正し、それぞれ回帰試験を追加した。合格条件は変更していない。
 
+初回owning CI `37911654185` は、既存 `staging-config.node-tests.mjs` の配備互換性検査一覧に0030がないことを正しく検出して停止した。`["0030_moderation_advisory_jobs.sql", 17]` の1行を加え、新migrationにもLF/CASE/文数の既存検査を適用する。20件の同Node検査成功を確認し、3製品blobは変更していない。未到達の後続検査はまずlocalで回収し、billing sponsorship drillも一覧29件固定で止まることを確認した。drillの一覧に0030を加え、所有テスト2箇所の件数を30へ更新した（12項目の検査・識別子0・全migration一致は不変）。drill3件成功後、残る未実行項目から検証を再開。失敗したpush/PRを履歴に保持し、同じ製品branch/PRを続行する。旧3ファイルの専用CI判定は保持し、この厳密な3検査fileの訂正を含む6ファイル形を別途レビューして登録する。
+
+訂正後、未到達だったNode検査を最後まで回収し、workerdの全29ファイル・427件が成功した（Vitest実測125.32秒、コマンド経過128.36秒）。既存の環境条件付きskip 1件は成功件数へ含めない。全migration一致・30件適用・drillの12検査は維持し、3製品blobは初回候補から不変。3検査fileの訂正も独立レビューでP1/P2なし。最終候補の同SHA CIはこのローカル成功と別に確認する。
+
 ## 接続条件と残件
 
 Worker route・実secret・実写真・実AI API・運営者権限へは接続していない。この関数は、入力がその通報の復号結果であること、最小化/事前screenや本人の認証を証明しない。これらを行うtrusted callerが必要。内容由来情報を含むため本番接続前に期限掃除の実scheduleと保持方針を必ず結ぶ。今回migrationをlive DBへ適用していない。
