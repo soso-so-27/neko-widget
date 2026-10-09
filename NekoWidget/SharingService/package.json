@@ -17,7 +17,7 @@
     "check:billing-sponsorship-local-drill": "node --no-warnings --test test/billing-sponsorship-local-drill.node-tests.mjs",
     "check:staging-runtime": "node --test test/staging-runtime-check.node-tests.mjs",
     "check:public-policy-site": "node --test test/public-policy-site-check.node-tests.mjs",
-    "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs test/moderation-report-windows-boundary.node-tests.mjs",
+    "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs test/moderation-report-windows-boundary.node-tests.mjs test/moderation-bound-review.node-tests.mjs",
     "check:moderation-keygen": "node --test test/moderation-staging-keygen.node-tests.mjs",
     "check:moderation-drill": "node --test test/moderation-staging-drill.node-tests.mjs",
     "check:moderation-case-lifecycle": "node --test test/moderation-case-lifecycle.node-tests.mjs",
