@@ -24,7 +24,18 @@
 
 製品3ファイルの完全before/after blob、通常mode、M/A/Aと既存Service workflowを固定する `preservation-request-buffer-v1` を、独立したcontrol候補で先に確認・main反映する。製品候補では同SHAのService全検査とplanを必要とする。製品と制御を混在してチェックを回避せず、既存JPEG/native入力不変の成功を保持する。配備は現在の非公開Workerと全設定・期限・schema/migration・本人データ集計を固定し、実module全体を確認する。
 
-CI・main・内部配備の最終結果は完了後に追記する。まだ公開可能や新しいTestFlight配布とは扱わない。
+## 完了結果
+
+- [制御PR197](https://github.com/soso-so-27/neko-widget/pull/197) は固定候補 `f91257e3ba07436e40377b2cba28b2e40b31a763`、development-flow必須14項目183.5秒とpreflight、[control CI 37864065913](https://github.com/soso-so-27/neko-widget/actions/runs/37864065913)41秒で成功。独立レビュー後、main `beaac64` へ先行反映した。
+- [製品PR198](https://github.com/soso-so-27/neko-widget/pull/198) の最終候補 `f72979e8a47a55f9211a93bf844848bb358c0d98` へ反映済controlを取り込み、CI/workflow treeと製品Service treeが各ローカル成功時点と同一であることを確認。成功済み一式は再実行せず、preflightだけ再実行した。
+- [Service CI 37864305833](https://github.com/soso-so-27/neko-widget/actions/runs/37864305833) は424 Vitest＋27運用テスト、型検査、全既存migration/private bundle成功、93秒。[同SHA plan 37864305837](https://github.com/soso-so-27/neko-widget/actions/runs/37864305837)42秒。既存workflowが自動起動したPR側Service37864312037も92秒成功、PR iOSはskip。skipを成功証拠にせず、手動再実行や追加JPEG/native/Gallery/TestFlightは0。
+- main `3274698980ea0842fb71a6a13ba4e51aafbb6faf` へmerge commitで統合し、検証候補の祖先関係と全tracked tree一致を確認。
+- 09:25:27 JST、既存private Workerへ1回反映。version `e46ce4dd-5734-4084-b9cc-3250e71a44de`、bundle SHA256 `14cf64923a9691f7c893e80663a06950ce8ea4d8ff29a3e7ca113acd51128147`。関数移動・コンパイラの変数名変更と専有buffer解放だけを実bundle全体で照合し、反映後全文一致。全設定/secret参照/公開範囲/予定/schema135/migration33/pilotとintake期限、本人1名・記録1件・quota3,358,122byteを維持した。追加契約・料金・権限・一般受付・本人データ操作なし。
+- 開始08:59:49から内部反映まで25分38秒。採用案だけへ時間を切り詰めず、不採用2案、全経路probeの結果保存失敗、ローカル・制御・CI・配備を含む。前のprovider改善の最初の候補07:59:07からは累計1時間26分20秒。並行CIの秒数を合算して経過時間と呼ばない。
+
+配備helperは106境界、独立した主担当の差分レビューと、準備/最終dry-run/実配備の全文一致を通した。`request-buffer-deployment/{helper-review,root-helper-review,bundle-review,completion}.json` に固定。PR197/198のチャット添付は既存100件上限により失敗したため実URLをこの記録へ保存し、過去の添付や会話履歴は変更しない。
+
+本人向けTestFlightは1.0(247)のまま。今回のサーバー反映を、本番メモリ条件の合格、実機ZIP成功、一般公開の完了と混同しない。
 
 ## 証拠と残件
 

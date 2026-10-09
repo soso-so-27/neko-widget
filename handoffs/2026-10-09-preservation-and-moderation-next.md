@@ -2,6 +2,8 @@
 
 2026-10-09。利用者の「共有・保管を含めて完成させて提供したい」を継続する。今回の写真検査への送信修正はmain・既存非公開サーバーへ反映済みで、[完了記録](2026-10-09-preservation-provider-stream.md)の成功を保持する。この文書は追加観測と次の実装順序であり、一般公開の完了記録ではない。
 
+09:25 JST更新: [受信buffer解放の完了記録](2026-10-09-preservation-request-buffer.md)が最新。下記の最初の全経路未完は過去の観測で、その後の直前mainでは検証専用輸送の修正により20MiB PUTがHTTP200・復旧確定・最終owner ackまで成功した。今回の専有buffer解放もService424＋27件とplanを通し、main3274698/private version e46ce4ddへ反映済み。本番128MiB適合、実CPU/実機ZIPと共有運営機能は残る。新候補の追加probeは結果保存ミスを伴うためHTTP200成功証拠へ流用しない。
+
 ## 大容量保存：復旧までの追加観測
 
 main `05984519b6ab7d5158bb414cee9edce35de8ae13` で同じ20MiB人工JPEGを1回だけ保存し、実route/body・ArchiveStore・暗号化・local D1/R2・実S3署名/復旧adapterの境界を観測した。JPEG provider、KMS、S3 HTTP、会員状態は合成。クラウド操作と本人データへの操作は0回。
