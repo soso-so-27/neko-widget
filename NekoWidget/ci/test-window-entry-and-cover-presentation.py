@@ -94,20 +94,56 @@ class WindowPresentation(unittest.TestCase):
         self.assertIn('!Task.isCancelled',cover)
         self.assertIn('photo?.displayUntil == deadline',cover)
         self.assertIn('coverClock = max(Date.now, deadline)',cover)
+    def assert_cover_visibility_boundary(self, service):
+        body=service.split('func isVisible(at now: Date) -> Bool {',1)[1].split('\n}\n',1)[0]
+        self.assertEqual(' '.join(body.split()), ' '.join('''
+            now < displayUntil && (momentID.map {
+                MomentSharingStateStore.isModerationVisible(momentID: $0, localWindowID: localWindowID)
+            } ?? true)
+        }
+        '''.split()))
+
     def test_source_does_not_advance_expiry_boundary(self):
         service=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")
-        self.assertIn('func isVisible(at now: Date) -> Bool { now < displayUntil }',service)
+        self.assert_cover_visibility_boundary(service)
         self.assertIn('初回はおすすめ、あとから選べる',MAIN)
+
+    def test_expiry_and_moderation_boundary_regressions_are_rejected(self):
+        service=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")
+        for before,after in [('now < displayUntil', 'now <= displayUntil'),
+                             ('now < displayUntil &&', 'now < displayUntil ||'),
+                             ('now < displayUntil &&', 'true &&'),
+                             ('MomentSharingStateStore.isModerationVisible(momentID: $0, localWindowID: localWindowID)', 'true')]:
+            with self.subTest(regression=after), self.assertRaises(AssertionError):
+                self.assert_cover_visibility_boundary(service.replace(before,after))
 
     @unittest.skipUnless(shutil.which("swift"), "Requires Swift; UI rendering remains an Apple check")
     def test_shipping_official_status_at_exact_deadlines(self):
         official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
+        cover=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")
+        cover='struct PrivateWindowCoverPhoto: Sendable {'+cover.split(
+            'struct PrivateWindowCoverPhoto: Sendable {',1)[1].split(
+            'struct PrivateWindowCoverPresentation:',1)[0]
+        cover_stub='''
+enum MomentSharingStateStore {
+    static func isModerationVisible(momentID: String, localWindowID: String?) -> Bool {
+        momentID != "hidden"
+    }
+}
+'''
         presentation="struct OfficialWindowStatusPresentation {"+official.split(
             "struct OfficialWindowStatusPresentation {",1)[1].split(
             "@MainActor\nstruct PublicWindowDiscoveryView",1)[0]
         catalog=(ROOT/"Shared/Models/OfficialWindowCatalog.swift").read_text(encoding="utf-8")
         checks=r'''
 let now = Date(timeIntervalSince1970: 1_790_380_000)
+for momentID: String? in [nil, "visible", "hidden"] {
+    let cover = PrivateWindowCoverPhoto(jpeg: Data([0]), displayUntil: now,
+        origin: .received, momentID: momentID, localWindowID: "fixture-window")
+    precondition(cover.isVisible(at: now.addingTimeInterval(-0.001)) == (momentID != "hidden"))
+    precondition(!cover.isVisible(at: now), "Exact expiry stays invisible even after release")
+    precondition(!cover.isVisible(at: now.addingTimeInterval(0.001)))
+}
 func catalog(_ enabled: Bool = true, deadline: Date? = nil,
              photos: [OfficialCatPhoto] = []) -> OfficialWindowCatalog {
     OfficialWindowCatalog(schemaVersion: 1, channelID: OfficialWindowCatalog.sourceID,
@@ -163,7 +199,7 @@ print("official-status: empty/failure/pause/catalog/photo deadlines and priority
 '''
         with tempfile.TemporaryDirectory(prefix="neko-window-status-") as temporary:
             path=Path(temporary)/"verify.swift"
-            path.write_text(catalog+"\n"+presentation+"\n"+checks,encoding="utf-8")
+            path.write_text(catalog+"\n"+presentation+"\n"+cover_stub+"\n"+cover+"\n"+checks,encoding="utf-8")
             result=subprocess.run([shutil.which("swift"),str(path)],capture_output=True,
                 text=True,encoding="utf-8",timeout=60)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
