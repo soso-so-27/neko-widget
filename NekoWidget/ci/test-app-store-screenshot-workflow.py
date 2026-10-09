@@ -290,7 +290,11 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("WidgetCacheImageLoader.decodedImage(", self.widget_view)
         self.assertNotIn("CGImageSourceCreateThumbnailAtIndex", self.widget_view)
         self.assertEqual(self.widget_loader.count("CGImageSourceCreateThumbnailAtIndex("), 1)
-        self.assertIn("return decodedImage(data: data,", self.widget_loader)
+        decode = self.widget_loader.index("let image = decodedImage(data: data,")
+        visibility = self.widget_loader.index("guard WidgetManifestReader.cacheURL(for: cacheFilename,", decode)
+        returned = self.widget_loader.index("return image", visibility)
+        self.assertLess(decode, visibility)
+        self.assertLess(visibility, returned)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

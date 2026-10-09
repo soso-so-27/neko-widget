@@ -118,6 +118,7 @@ struct FamilyWindowView: View {
     @State private var nameEditingSpaceID: String?
     @State private var nameEditError: String?
     @State private var reportTarget: MomentInboxItem?
+    @State private var showsReportResponses = false
     @State private var blockTarget: MomentInboxItem?
     @State private var deleteReceivedTarget: MomentInboxItem?
     @State private var showsPendingCancelConfirmation = false
@@ -947,6 +948,12 @@ struct FamilyWindowView: View {
                     sharedPhotoContent
                 }
 
+                if model.isEncryptedReportAvailable && !model.isShowingLastKnownState {
+                    Button("通報への返答", systemImage: "text.bubble") { showsReportResponses = true }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("family-window-report-responses")
+                }
+
                 if !model.isReportOnly {
                     manualRefreshResult
                 }
@@ -957,6 +964,9 @@ struct FamilyWindowView: View {
         .refreshable { await model.synchronize() }
         .sheet(isPresented: $showsSharedPhotoInformation) {
             sharedPhotoInformation
+        }
+        .sheet(isPresented: $showsReportResponses) {
+            MomentReportResponsesView(model: model)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -2022,8 +2032,11 @@ struct FamilyWindowView: View {
     private func sentRecordThumbnail(
         _ record: MomentSentRecordPresentation
     ) -> UIImage? {
-        guard let data = record.localThumbnailJPEG else { return nil }
-        return UIImage(data: data)
+        guard record.momentID.map({ MomentSharingStateStore.isModerationVisible(momentID: $0) }) ?? true,
+              let data = record.localThumbnailJPEG else { return nil }
+        let image = UIImage(data: data)
+        guard record.momentID.map({ MomentSharingStateStore.isModerationVisible(momentID: $0) }) ?? true else { return nil }
+        return image
     }
 
     private func outgoingStatusCard(
@@ -3223,7 +3236,11 @@ private struct MomentSentPhotoDetail: View {
 
     private var record: MomentSentRecordPresentation? {
         guard !model.isShowingLastKnownState, !model.isReportOnly else { return nil }
-        return model.outgoingPresentation.sentRecords.first { $0.id == recordID }
+        return model.outgoingPresentation.sentRecords.first {
+            $0.id == recordID && ($0.momentID.map {
+                MomentSharingStateStore.isModerationVisible(momentID: $0)
+            } ?? true)
+        }
     }
 
     private var loadRequest: LoadRequest {
@@ -3397,6 +3414,7 @@ struct MomentLocalImageView: View {
     @State private var image: UIImage?
     @State private var loadFailed = false
     @State private var retryCount = 0
+    @State private var visibilityRevision = 0
 
     init(url: URL, contentMode: ContentMode = .fill, hidesImageAccessibility: Bool = false,
          maximumPixelSize: Int? = nil, allowsZoom: Bool = false,
@@ -3414,7 +3432,7 @@ struct MomentLocalImageView: View {
     @ViewBuilder
     var body: some View {
         Group {
-            if let image {
+            if let image, MomentSharingStateStore.isLocalSharedImageVisible(at: url) {
                 if allowsZoom {
                     MomentZoomablePhoto(image: image)
                 } else {
@@ -3451,14 +3469,18 @@ struct MomentLocalImageView: View {
                 .aspectRatio(4 / 3, contentMode: .fit)
             }
         }
-        .task(id: "\(url.absoluteString)#\(maximumPixelSize)#\(retryCount)") {
+        .task(id: "\(url.absoluteString)#\(maximumPixelSize)#\(retryCount)#\(visibilityRevision)") {
             // A safety-state change can replace the latest URL with an older
             // safe photo. Never retain the previous pixels while the new file
             // is loading or if its decode fails.
             image = nil
             loadFailed = false
+            guard MomentSharingStateStore.isLocalSharedImageVisible(at: url) else {
+                loadFailed = true
+                return
+            }
             if let cached = MomentLocalImageCache.shared.image(for: url, maximumPixelSize: maximumPixelSize) {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, MomentSharingStateStore.isLocalSharedImageVisible(at: url) else { return }
                 image = cached
                 return
             }
@@ -3469,7 +3491,7 @@ struct MomentLocalImageView: View {
                     maximumPixelSize: requestedPixelSize
                 )
             }.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, MomentSharingStateStore.isLocalSharedImageVisible(at: url) else { return }
             guard let rendered else {
                 loadFailed = true
                 return
@@ -3484,6 +3506,11 @@ struct MomentLocalImageView: View {
             )
             image = value
         }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in
+                image = nil
+                visibilityRevision += 1
+            }
         .onDisappear {
             image = nil
             loadFailed = false
@@ -3678,3 +3705,294 @@ struct MomentZoomablePhoto: UIViewRepresentable {
         }
     }
 }
+
+
+/// Read-only fixed replies. Opening this sheet never sends a read/delivery ACK.
+private struct MomentReportResponsesView: View {
+    @ObservedObject var model: MomentSharingViewModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var responses: [MomentReportResponse] = []
+    @State private var loadedIdentity: String?
+    @State private var cursor: String?
+    @State private var hasMore = false
+    @State private var loading = false
+    @State private var failed = false
+    @State private var generation = UUID()
+
+    private var identity: String? {
+        guard model.isPaired, !model.isShowingLastKnownState,
+              let space = model.pairingState?.spaceID, let member = model.pairingState?.memberID
+        else { return nil }
+        return space + ":" + member
+    }
+
+    var body: some View {
+        NavigationStack {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                let readWindowOpen = MomentReportResponse.isReadWindowOpen(
+                    reportOnlyUntil: model.reportOnlyUntil, now: timeline.date)
+                List {
+                    if scenePhase == .active, identity != nil, loadedIdentity == identity, readWindowOpen {
+                        let visible = responses.filter {
+                            $0.isVisible(reportOnlyUntil: model.reportOnlyUntil, now: timeline.date)
+                        }
+                        ForEach(visible) { response in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(response.templateCode.message)
+                                Text(Date(timeIntervalSince1970: Double(response.createdAt)), style: .date)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.accessibilityIdentifier("report-response-" + response.templateCode.rawValue)
+                        }
+                        if visible.isEmpty && !loading && !failed {
+                            Text("現在、表示できる返答はありません。")
+                                .accessibilityIdentifier("report-responses-empty")
+                        }
+                    }
+                    if loading { ProgressView("返答を確認中") }
+                    if failed {
+                        Text("返答を確認できませんでした。時間をおいて読み込み直してください。")
+                            .accessibilityIdentifier("report-responses-failed")
+                    }
+                    if hasMore && !loading && !failed && readWindowOpen && identity != nil {
+                        Button("続きを読み込む") { Task { await load(reset: false) } }
+                            .accessibilityIdentifier("report-responses-more")
+                    }
+                    Button("再読み込み") { Task { await load(reset: true) } }
+                        .disabled(loading || scenePhase != .active || identity == nil || !readWindowOpen)
+                        .accessibilityIdentifier("report-responses-reload")
+                }
+            }
+            .navigationTitle("通報への返答")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+        }
+        .task { await load(reset: true) }
+        .onChange(of: identity) { _, _ in clear() }
+        .onChange(of: scenePhase) { _, phase in
+            clear()
+            if phase == .active { Task { await load(reset: true) } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
+            .receive(on: DispatchQueue.main)) { _ in clear() }
+        .onDisappear { clear() }
+    }
+
+    private func clear() {
+        generation = UUID(); responses = []; loadedIdentity = nil
+        cursor = nil; hasMore = false; loading = false; failed = false
+    }
+
+    @MainActor private func load(reset: Bool) async {
+        if reset { clear() }
+        guard !loading, scenePhase == .active, let identity,
+              MomentReportResponse.isReadWindowOpen(reportOnlyUntil: model.reportOnlyUntil, now: .now),
+              let space = model.pairingState?.spaceID, let member = model.pairingState?.memberID else { return }
+        let request = UUID(); generation = request; loading = true; failed = false
+        defer { if generation == request { loading = false } }
+        do {
+            let result = try await model.reportResponses(after: reset ? nil : cursor, spaceID: space, memberID: member)
+            guard !Task.isCancelled, generation == request, self.identity == identity,
+                  scenePhase == .active,
+                  MomentReportResponse.isReadWindowOpen(reportOnlyUntil: model.reportOnlyUntil, now: .now)
+            else { return }
+            let previous = reset ? [] : responses
+            guard previous.count + result.responses.count <= 1_000,
+                  Set(previous.map(\.id)).isDisjoint(with: Set(result.responses.map(\.id))) else {
+                throw MomentSharingError.invalidPayload
+            }
+            responses = previous + result.responses
+            loadedIdentity = identity
+            cursor = result.nextCursor.isEmpty ? nil : result.nextCursor
+            hasMore = result.hasMore
+        } catch {
+            guard generation == request else { return }
+            responses = []; loadedIdentity = nil; cursor = nil; hasMore = false; failed = true
+        }
+    }
+}
+
+#if DEBUG && targetEnvironment(simulator)
+/// Generated images, a private tmp container and an injected offline response
+/// provider exercise the shipping views. No Keychain, Photos or network entry.
+@MainActor
+struct ModerationResolutionUIFixture: View {
+    @StateObject private var fixture = ModerationResolutionUIFixtureState()
+    private var replies: Bool { CommandLine.arguments.contains("--moderation-responses") }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if fixture.ready {
+                if replies {
+                    MomentReportResponsesView(model: fixture.replyModel)
+                } else {
+                    FamilyRecordView(fixtureClient: fixture.client, fixturePhoto: nil)
+                }
+                VStack(spacing: 4) {
+                    if replies {
+                        HStack {
+                            Button("空") { fixture.mode = .empty }.accessibilityIdentifier("moderation-fixture-empty")
+                            Button("失敗") { fixture.mode = .failure }.accessibilityIdentifier("moderation-fixture-failure")
+                            Button("返答") { fixture.mode = .replies }.accessibilityIdentifier("moderation-fixture-replies")
+                            Button("期限") { fixture.expireReplies() }.accessibilityIdentifier("moderation-fixture-expire")
+                            Button("別の本人") { fixture.changeIdentity() }.accessibilityIdentifier("moderation-fixture-identity")
+                        }
+                    } else {
+                        HStack {
+                            Button("非表示") { Task { await fixture.overlay(hidden: true) } }
+                                .accessibilityIdentifier("moderation-fixture-hide")
+                            Button("解除") { Task { await fixture.overlay(hidden: false) } }
+                                .accessibilityIdentifier("moderation-fixture-release")
+                            Button("配信期限終了") { Task { await fixture.expireDelivery() } }
+                                .accessibilityIdentifier("moderation-fixture-delivery-expire")
+                        }
+                        Text(fixture.preservationStatus).font(.caption)
+                            .accessibilityIdentifier("moderation-fixture-preservation")
+                        Text(fixture.deliveryStatus).font(.caption)
+                            .accessibilityIdentifier("moderation-fixture-delivery")
+                    }
+                }.buttonStyle(.bordered).font(.caption).padding(4)
+                if fixture.failed { Text("fixture failed").accessibilityIdentifier("moderation-fixture-failed") }
+            } else {
+                ProgressView().accessibilityIdentifier("moderation-fixture-preparing")
+                if fixture.failed { Text("fixture failed").accessibilityIdentifier("moderation-fixture-failed") }
+            }
+        }
+        .task { await fixture.prepare(repliesOnly: replies) }
+    }
+}
+
+@MainActor
+private final class ModerationResolutionUIFixtureState: ObservableObject {
+    enum ReplyMode { case replies, empty, failure }
+    @Published var ready = false
+    @Published var failed = false
+    @Published var mode = ReplyMode.replies
+    @Published var preservationStatus = "準備中"
+    @Published var deliveryStatus = "配信あり"
+    let replyModel = MomentSharingViewModel()
+    let client: FamilyRecordFixtureClient
+    private let jpeg: Data
+    private let momentID = "moderation_fixture_photo_a"
+    private var token: SharingLifecycleGate.Token?
+    private var originalURL: URL?
+    private var notes: PhotoMemoryNoteStore?
+    private var noteBefore: PhotoMemoryNote?
+    private var revision = 0
+    private var identity = "fixture_family_author"
+    private var until: Date?
+
+    init() {
+        jpeg = MomentExperiencePhotoFixture.image(index: 0).jpegData(compressionQuality: 0.9) ?? Data()
+        client = FamilyRecordFixtureClient(jpeg: jpeg,
+            visibilityClient: FamilyRecordClient(expectedSpaceID: "fixture_family_space"))
+    }
+
+    func prepare(repliesOnly: Bool) async {
+        guard !ready, !failed else { return }
+        do {
+            guard CommandLine.arguments.contains("--moderation-resolution-ui-fixture"),
+                  let container = SharedContainer.containerURL else { throw MomentSharingError.stateUnavailable }
+            configureReplies()
+            if repliesOnly { ready = true; return }
+            try SharingLifecycleGate.withExclusive {
+                _ = try PrivateWindowCatalogStore.bootstrapLegacyMigrationWhileLifecycleLocked()
+                try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                    spaceID: "fixture_family_space", credentialAccount: nil)
+            }
+            let token = try SharingLifecycleGate.issueToken(); self.token = token
+            let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+            let inbox = MomentInboxItem(id: momentID, senderParticipantID: "fixture_family_peer",
+                kind: .live, keyEpoch: 1, localJPEGFileName: momentID + ".jpg", capturedAt: nil,
+                captureDateIsMissing: true, committedAt: now.addingTimeInterval(-60),
+                receivedAt: now, state: .available, accessExpiresAt: now.addingTimeInterval(3_600))
+            _ = try MomentSharingStateStore.publishReceivedJPEG(inbox, jpeg: jpeg, validating: token)
+            let original = container.appendingPathComponent("private-original.jpg")
+            try SharingSecureFile.write(jpeg, to: original); originalURL = original
+            let notes = PhotoMemoryNoteStore(fileURL: container.appendingPathComponent("private-note.json"))
+            self.notes = notes
+            noteBefore = try await notes.save(text: "個人メモはそのまま", for: "moderation-private-photo",
+                expectedRevision: nil)
+            // Add B first so A is the most recent album entry and first tile.
+            for (id, index, text) in [("moderation_fixture_photo_b", 1, "別の写真のメモ"),
+                                       (momentID, 0, "共有写真Aのメモ")] {
+                let preview = try MomentCanonicalPreviewBuilder.build(image: MomentExperiencePhotoFixture.image(index: index))
+                let photo = MomentShareIngressPhoto(canonicalJPEG: preview.jpeg, capturedAt: nil,
+                    pixelWidth: preview.pixelWidth, pixelHeight: preview.pixelHeight)
+                let prepared = try await client.preparePhoto(photo, sourceMomentID: id)
+                let row = try await client.save(prepared)
+                await client.setPhotoJPEG(preview.jpeg, entryID: row.id)
+                let words = try await client.prepareWords(text, entryID: row.id, replacing: nil)
+                _ = try await client.save(words)
+            }
+            try await verifyPreservation()
+            ready = true
+        } catch { failed = true }
+    }
+
+    func overlay(hidden: Bool) async {
+        do {
+            guard let token, let item = try MomentSharingStateStore.load().inbox.first else {
+                throw MomentSharingError.stateUnavailable
+            }
+            revision += 1
+            _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
+                status: .init(revision: revision, hidden: hidden), committedAt: item.committedAt,
+                validating: token)
+            try await verifyPreservation()
+            NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
+        } catch { failed = true }
+    }
+
+    func expireDelivery() async {
+        do {
+            guard let token, var item = try MomentSharingStateStore.load().inbox.first else {
+                throw MomentSharingError.stateUnavailable
+            }
+            item.state = .revoked; item.localJPEGFileName = nil; item.caption = nil
+            try MomentSharingStateStore.revokeInbox(tombstone: item, validating: token)
+            deliveryStatus = "配信終了・原本と共有記録は別"
+            try await verifyPreservation()
+            NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
+        } catch { failed = true }
+    }
+
+    private func verifyPreservation() async throws {
+        guard let originalURL, let notes,
+              try Data(contentsOf: originalURL) == jpeg,
+              try await notes.note(for: "moderation-private-photo") == noteBefore else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let all = try await client.load()
+        guard all.catalog.records.filter({ $0.kind == .photo }).count == 2,
+              Set(all.words.values) == Set(["別の写真のメモ", "共有写真Aのメモ"]) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        preservationStatus = "原JPEG・個人メモ・共有メモを保持"
+        if try MomentSharingStateStore.load().inbox.first?.state == .revoked {
+            deliveryStatus = "配信終了・原本と共有記録は別"
+        }
+    }
+
+    func expireReplies() { until = .now.addingTimeInterval(3); configureReplies() }
+    func changeIdentity() { identity = "fixture_other_author"; configureReplies() }
+
+    private func configureReplies() {
+        replyModel.configureModerationUIResponses(memberID: identity, until: until) { [weak self] in
+            guard let self else { throw MomentSharingError.stateUnavailable }
+            if self.mode == .failure { throw URLError(.notConnectedToInternet) }
+            let now = Int(Date().timeIntervalSince1970)
+            let rows: [MomentReportResponse] = self.mode == .empty ? [] : [
+                .init(id: "11111111-1111-4111-8111-111111111111", reportID: "report_a",
+                    templateCode: .hide, createdAt: now - 60, expiresAt: now + 600),
+                .init(id: "22222222-2222-4222-8222-222222222222", reportID: "report_b",
+                    templateCode: .release, createdAt: now - 50, expiresAt: now + 600),
+                .init(id: "33333333-3333-4333-8333-333333333333", reportID: "report_c",
+                    templateCode: .noAction, createdAt: now - 40, expiresAt: now + 600)
+            ]
+            return MomentReportResponsesPage(protocolVersion: 2, responses: rows,
+                hasMore: false, nextCursor: rows.last?.id ?? "")
+        }
+    }
+}
+#endif

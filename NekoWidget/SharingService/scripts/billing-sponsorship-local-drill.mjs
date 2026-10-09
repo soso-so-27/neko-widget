@@ -51,6 +51,7 @@ const expectedMigrationNames = [
   "0029_family_record_moments.sql",
   "0030_moderation_advisory_jobs.sql",
   "0031_moderation_owner_flow.sql",
+  "0032_moderation_resolution.sql",
 ];
 
 const databaseGateColumns = [

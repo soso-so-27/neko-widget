@@ -100,10 +100,14 @@ const visibleEntry = (space: string, entry: string) => `(
     WHERE reader.space_id=${space} AND reader.photo_id=${entry}
       AND reader.participant_id=?)
 )`;
+const moderationVisibleEntry = `NOT EXISTS(SELECT 1 FROM family_record_moments link
+ JOIN moderation_moment_states moderation ON moderation.moment_id=link.moment_id
+ WHERE link.space_id=record.space_id AND link.photo_id=record.entry_id AND moderation.hidden=1)`;
 
-async function current(env: Env, m: AuthenticatedMember, id: string): Promise<RecordRow | null> {
+async function current(env: Env, m: AuthenticatedMember, id: string, withdrawing = false): Promise<RecordRow | null> {
   return env.DB.prepare(`SELECT record.* FROM family_records record
     WHERE record.space_id=? AND record.id=?
+      AND ${withdrawing ? '1' : moderationVisibleEntry}
       AND ${visibleEntry("record.space_id", "record.entry_id")}`)
     .bind(m.spaceId, id, m.momentParticipantId).first<RecordRow>();
 }
@@ -183,7 +187,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     requireEmptyBody(body);
     if (id === undefined) {
       const rows = await env.DB.prepare(`SELECT record.* FROM family_records record
-        WHERE record.space_id=? AND ${visibleEntry("record.space_id", "record.entry_id")}
+        WHERE record.space_id=? AND ${visibleEntry("record.space_id", "record.entry_id")} AND ${moderationVisibleEntry}
         ORDER BY record.created_at DESC,record.id`)
         .bind(m.spaceId, m.momentParticipantId).all<RecordRow>();
       await assertAuthorized(env, m);
@@ -221,7 +225,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     throw new ApiError(413, "family_record_too_large", "Record exceeds the size limit.");
   }
   const payloadHash = await sha256Base64url(body);
-  const prior = await current(env, m, id);
+  const prior = await current(env, m, id, withdrawing);
   if (prior?.last_operation_id === operationID) {
     if (prior.payload_hash !== payloadHash || prior.author_member_id !== m.id) throw new ApiError(409, "family_record_conflict", "Operation differs.");
     await consumeNonceAndTouch(env, m);
@@ -233,7 +237,7 @@ export async function familyRecords(request: Request, env: Env, id?: string, pho
     throw new ApiError(409, "family_record_conflict", "Record changed or is not yours.");
   }
   if (kind === "words") {
-    const entry = await current(env, m, entryID);
+    const entry = await current(env, m, entryID, withdrawing);
     if (entry?.kind !== "photo") throw new ApiError(404, "not_found", "Record not found.");
   }
   if (prior === null) {

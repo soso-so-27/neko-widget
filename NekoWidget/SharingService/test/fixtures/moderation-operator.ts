@@ -47,7 +47,7 @@ export interface Fixture {
   request(path: string, method?: string, body?: string, headers?: Record<string, string>): Request;
 }
 
-export async function fixture(): Promise<Fixture> {
+export async function fixture(existingReportId?: string): Promise<Fixture> {
   const accessKey = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
     publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
   const jwk = await crypto.subtle.exportKey("jwk", accessKey.publicKey);
@@ -107,7 +107,7 @@ export async function fixture(): Promise<Fixture> {
   // These fixture admissions model previously reviewed enrollment. The route
   // does not enroll operators or assert that the synthetic admission signatures
   // prove a real attestation/bootstrap ceremony.
-  const reportId = base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+  const reportId = existingReportId ?? base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
   const caseReference = (await deriveModerationOperatorCaseReference(
     { reportId, caseReferenceHmacKeyVersion: 1 }, crypto.getRandomValues(new Uint8Array(32)),
   )).caseReferenceHmac;
@@ -116,6 +116,7 @@ export async function fixture(): Promise<Fixture> {
   const sha = () => base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
   const owner=id(),receiver=id(),ownerDevice=id(),receiverDevice=id(),moment=id();
   await db.batch([
+    ...(existingReportId === undefined ? [
     db.prepare("INSERT INTO moment_space_lineages(id, created_at) VALUES (?, unixepoch())").bind(lineage),
     db.prepare("INSERT INTO moment_spaces(space_id,lineage_id,state,created_at,updated_at) VALUES (?,?,'active',?,?)").bind(lineage,lineage,now,now),
     ...[owner,receiver].map((p,i)=>db.prepare("INSERT INTO moment_participants(id,space_id,role,state,created_at,activated_at) VALUES (?, ?, ?, 'active',?,?)").bind(p,lineage,i===0?'owner':'member',now,now)),
@@ -134,6 +135,7 @@ export async function fixture(): Promise<Fixture> {
     db.prepare("UPDATE moment_reports SET state='uploaded',uploaded_at=? WHERE id=?").bind(now,reportId),
     db.prepare("INSERT INTO moment_report_commit_events(id,report_id,reporter_participant_id,committed_at,content_expires_at) VALUES (?,?,?,?,?)")
       .bind(crypto.randomUUID(),reportId,receiver,now,now+604800),
+    ] : []),
     db.prepare(`INSERT INTO moderation_operator_versioned_case_references(report_id, case_reference_hmac,
       case_reference_hmac_key_version, derivation_protocol_version, derivation_domain)
       VALUES (?, ?, 1, 1, 'NW.MODERATION-OPERATOR.CASE-REFERENCE')`).bind(reportId, caseReference),

@@ -534,12 +534,20 @@ private actor RuntimeMomentModerator: MomentModerating {
 private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
     private let change: MomentChange
     private let ciphertext: Data
+    private let afterCursor: String?
+    private let downloadError: MomentSharingError?
+    private let acknowledgementError: MomentSharingError?
     private var downloadCount = 0
+    private var acknowledgementAttemptCount = 0
     private var acknowledgementCount = 0
 
-    init(change: MomentChange, ciphertext: Data) {
+    init(change: MomentChange, ciphertext: Data, afterCursor: String? = nil,
+         downloadError: MomentSharingError? = nil, acknowledgementError: MomentSharingError? = nil) {
         self.change = change
         self.ciphertext = ciphertext
+        self.afterCursor = afterCursor
+        self.downloadError = downloadError
+        self.acknowledgementError = acknowledgementError
     }
 
     private func unsupported<T>() throws -> T {
@@ -575,7 +583,7 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
         if cursor == change.cursor {
             return MomentChangesResult(changes: [], nextCursor: change.cursor)
         }
-        guard cursor == nil else { throw MomentSharingError.invalidPayload }
+        guard cursor == afterCursor else { throw MomentSharingError.invalidPayload }
         return MomentChangesResult(changes: [change], nextCursor: change.cursor)
     }
 
@@ -588,6 +596,7 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
             throw MomentSharingError.invalidPayload
         }
         downloadCount += 1
+        if let downloadError { throw downloadError }
         return ciphertext
     }
 
@@ -601,6 +610,8 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
         guard momentID == change.momentID,
               ciphertextSHA256 == change.ciphertextSHA256
         else { throw MomentSharingError.invalidPayload }
+        acknowledgementAttemptCount += 1
+        if let acknowledgementError { throw acknowledgementError }
         acknowledgementCount += 1
         return MomentAcknowledgementResult(
             momentID: momentID,
@@ -645,8 +656,8 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
         credential: PairingCredential
     ) async throws -> MomentReportCommitResult { try unsupported() }
 
-    func runtimeCounts() -> (downloads: Int, acknowledgements: Int) {
-        (downloadCount, acknowledgementCount)
+    func runtimeCounts() -> (downloads: Int, acknowledgements: Int, acknowledgementAttempts: Int) {
+        (downloadCount, acknowledgementCount, acknowledgementAttemptCount)
     }
 }
 
@@ -5409,6 +5420,11 @@ actor SharingRuntimeSelfTestRunner {
             try? FileManager.default.removeItem(at: moderationDirectory)
         }
 
+        // The relay and durable store use whole-second ISO-8601 timestamps.
+        // Keep a single wire-precision anchor: repeated overlay events must
+        // retain the same committedAt after a disk round trip, and ACK must
+        // preserve exactly the existing access deadline.
+        let fixtureNow = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         let preview = try MomentCanonicalPreviewBuilder.build(
             image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
@@ -5452,7 +5468,7 @@ actor SharingRuntimeSelfTestRunner {
                 caption: "受信した写真のひとこと"
             )
             let momentID = "moment_inbound_\(suffix)"
-            let committedAt = Date().addingTimeInterval(-60)
+            let committedAt = fixtureNow.addingTimeInterval(-60)
             let change = MomentChange(
                 cursor: "cursor_inbound_\(suffix)",
                 sequence: nil,
@@ -5603,6 +5619,68 @@ actor SharingRuntimeSelfTestRunner {
             state.inbox[0].caption = widgetPhoto.caption
         }
 
+        // The same real decrypted JPEG survives hide -> stale release -> release.
+        // No new ACK, retention deadline, private import or bookmark is created.
+        func overlayEvent(_ base: MomentChange, cursor: String, revision: Int, hidden: Bool,
+                          type: MomentChange.ChangeType = .momentCommitted,
+                          deliveryState: String = "acknowledged") -> MomentChange {
+            MomentChange(cursor: cursor, sequence: nil, type: type, createdAt: base.createdAt,
+                momentID: base.momentID, clientMomentID: base.clientMomentID,
+                senderParticipantID: base.senderParticipantID, kind: base.kind, keyEpoch: base.keyEpoch,
+                ciphertextSize: base.ciphertextSize, ciphertextSHA256: base.ciphertextSHA256,
+                committedAt: base.committedAt, accessExpiresAt: base.accessExpiresAt,
+                deliveryState: deliveryState, moderation: .init(revision: revision, hidden: hidden))
+        }
+        try MomentSharingStateStore.setSavedMemory(momentID: widgetPhoto.id, isSaved: true,
+            validating: lifecycleToken)
+        let beforeHide = try MomentSharingStateStore.load()
+        let widgetWindowID = PrivateWindowCatalogStore.activeEntry()?.localWindowID
+        let widgetSourceID = widgetWindowID.map { WidgetPhotoSource.familyWindowIDPrefix + $0 }
+            ?? WidgetPhotoSource.familyWindowID
+        for (cursor, revision, hidden, remainsHidden) in [
+            ("cursor_overlay_hide", 1, true, true),
+            ("cursor_overlay_old_release", 0, false, true),
+            ("cursor_overlay_release", 2, false, false)
+        ] {
+            let before = try MomentSharingStateStore.load()
+            let event = overlayEvent(disabledFixture.0, cursor: cursor, revision: revision, hidden: hidden)
+            let api = RuntimeMomentAPI(change: event, ciphertext: disabledFixture.1, afterCursor: before.changeCursor)
+            _ = try await disabledCoordinator.runtimeTestReceiveChanges(api: api, pairing: pairing,
+                credential: credential, lifecycleToken: lifecycleToken)
+            let state = try MomentSharingStateStore.load()
+            let counts = await api.runtimeCounts()
+            guard state.changeCursor == cursor, state.isModerationHidden(widgetPhoto.id) == remainsHidden,
+                  state.inbox == beforeHide.inbox, state.savedMemories == beforeHide.savedMemories,
+                  counts.downloads == 0, counts.acknowledgements == 0,
+                  try Data(contentsOf: disabledFixture.2) == preview.jpeg,
+                  MomentSharingStateStore.isLocalSharedImageVisible(at: disabledFixture.2) == !remainsHidden,
+                  MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
+                    localWindowID: nil) == !remainsHidden
+            else { throw MomentSharingError.stateUnavailable }
+            if remainsHidden {
+                // Read the real extension implementation before the builder
+                // has a chance to remove the old manifest/cache files.
+                guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
+                      WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                        photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
+                else { throw MomentSharingError.stateUnavailable }
+            }
+            let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
+                freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
+            guard (publication.item == nil) == remainsHidden else { throw MomentSharingError.stateUnavailable }
+            guard (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
+                  (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                    photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
+            else { throw MomentSharingError.stateUnavailable }
+            if remainsHidden {
+                do {
+                    _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: widgetPhoto.id,
+                        validating: lifecycleToken)
+                    throw DailySharingError.stateUnavailable
+                } catch MomentSharingError.stateUnavailable {}
+            }
+        }
+
         // A normal visible receipt can be removed without blocking the peer.
         // Its fileless tombstone prevents an older relay page from restoring
         // the photo, and local memory/reaction state is removed atomically.
@@ -5627,13 +5705,17 @@ actor SharingRuntimeSelfTestRunner {
               deletedVisibleState.inbox[0].caption == nil,
               deletedVisibleState.savedMemories.isEmpty,
               deletedVisibleState.pawOutbox.isEmpty,
-              !FileManager.default.fileExists(atPath: disabledFixture.2.path),
-              try await disabledCoordinator.runtimeTestReceiveChanges(
-                  api: disabledAPI,
-                  pairing: pairing,
-                  credential: credential,
-                  lifecycleToken: lifecycleToken
-              ) == 0
+              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
+        else { throw MomentSharingError.stateUnavailable }
+        let lateRelease = RuntimeMomentAPI(change: overlayEvent(disabledFixture.0,
+            cursor: "cursor_deleted_release", revision: 3, hidden: false),
+            ciphertext: disabledFixture.1, afterCursor: deletedVisibleState.changeCursor)
+        _ = try await disabledCoordinator.runtimeTestReceiveChanges(api: lateRelease, pairing: pairing,
+            credential: credential, lifecycleToken: lifecycleToken)
+        let lateCounts = await lateRelease.runtimeCounts()
+        guard lateCounts.downloads == 0, lateCounts.acknowledgements == 0,
+              try MomentSharingStateStore.load().inbox[0].state == .revoked,
+              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
         else { throw MomentSharingError.stateUnavailable }
 
         let deletedWidget = try await widgetBuilder.buildFamilyWindow(
@@ -5643,6 +5725,153 @@ actor SharingRuntimeSelfTestRunner {
         let deletedWidgetOnDisk = try AtomicJSON.read(FamilyWidgetManifest.self, from: widgetManifestURL)
         guard deletedWidget.item == nil, deletedWidgetOnDisk.item == nil,
               !FileManager.default.fileExists(atPath: widgetJPEGURL.path)
+        else { throw MomentSharingError.stateUnavailable }
+
+        // A moderation-specific 404 must not wedge the cursor before release.
+        try clearMomentSharingFixture()
+        let racedFixture = try fixture("overlay_race")
+        let raced = RuntimeMomentAPI(change: racedFixture.0, ciphertext: racedFixture.1,
+            downloadError: .requestRejected(status: 404, code: "moment_moderation_hidden", message: "fixture"))
+        let racedCoordinator = MomentSharingCoordinator(moderation: RuntimeMomentModerator(steps: [.safe]))
+        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: raced, pairing: pairing,
+            credential: credential, lifecycleToken: lifecycleToken)
+        let racedState = try MomentSharingStateStore.load()
+        let racedCounts = await raced.runtimeCounts()
+        guard racedState.changeCursor == racedFixture.0.cursor, racedState.inbox.isEmpty,
+              racedState.isModerationHidden(racedFixture.0.momentID),
+              racedCounts.downloads == 1, racedCounts.acknowledgements == 0
+        else { throw MomentSharingError.stateUnavailable }
+        let replay = RuntimeMomentAPI(change: overlayEvent(racedFixture.0,
+            cursor: "cursor_race_old_snapshot", revision: 0, hidden: false, deliveryState: "pending"),
+            ciphertext: racedFixture.1, afterCursor: racedState.changeCursor)
+        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: replay, pairing: pairing,
+            credential: credential, lifecycleToken: lifecycleToken)
+        guard await replay.runtimeCounts().downloads == 0,
+              try MomentSharingStateStore.load().isModerationHidden(racedFixture.0.momentID)
+        else { throw MomentSharingError.stateUnavailable }
+        let release = RuntimeMomentAPI(change: overlayEvent(racedFixture.0,
+            cursor: "cursor_race_release", revision: 2, hidden: false, deliveryState: "pending"),
+            ciphertext: racedFixture.1, afterCursor: "cursor_race_old_snapshot")
+        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: release, pairing: pairing,
+            credential: credential, lifecycleToken: lifecycleToken)
+        let released = try MomentSharingStateStore.load()
+        let releaseCounts = await release.runtimeCounts()
+        guard released.changeCursor == "cursor_race_release", released.inbox[0].state == .acknowledged,
+              !released.isModerationHidden(racedFixture.0.momentID),
+              releaseCounts.downloads == 1, releaseCounts.acknowledgements == 1,
+              try Data(contentsOf: racedFixture.2) == preview.jpeg
+        else { throw MomentSharingError.stateUnavailable }
+
+        for (cursor, revision, hidden, delivery) in [
+            ("cursor_overlay_expired", 3, true, "expired"),
+            ("cursor_overlay_after_expiry", 4, false, "expired")
+        ] {
+            let before = try MomentSharingStateStore.load()
+            let api = RuntimeMomentAPI(change: overlayEvent(racedFixture.0, cursor: cursor,
+                revision: revision, hidden: hidden, deliveryState: delivery),
+                ciphertext: racedFixture.1, afterCursor: before.changeCursor)
+            _ = try await racedCoordinator.runtimeTestReceiveChanges(api: api, pairing: pairing,
+                credential: credential, lifecycleToken: lifecycleToken)
+            let state = try MomentSharingStateStore.load()
+            let counts = await api.runtimeCounts()
+            guard state.changeCursor == cursor, state.inbox[0].state == .revoked,
+                  state.isModerationHidden(racedFixture.0.momentID) == hidden,
+                  !MomentSharingStateStore.isLocalSharedImageVisible(at: racedFixture.2),
+                  counts.downloads == 0, counts.acknowledgements == 0 else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+
+        try clearMomentSharingFixture()
+        let unrelated404 = RuntimeMomentAPI(change: racedFixture.0, ciphertext: racedFixture.1,
+            downloadError: .requestRejected(status: 404, code: "moment_not_found", message: "fixture"))
+        do {
+            _ = try await racedCoordinator.runtimeTestReceiveChanges(api: unrelated404, pairing: pairing,
+                credential: credential, lifecycleToken: lifecycleToken)
+            throw DailySharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case .requestRejected(404, "moment_not_found", _) = error else { throw error }
+        }
+        let failed404State = try MomentSharingStateStore.load()
+        guard failed404State.changeCursor == nil, failed404State.inbox.isEmpty,
+              failed404State.moderationOverlays.isEmpty else { throw MomentSharingError.stateUnavailable }
+
+        // Hide can also race the ACK after the real JPEG has been saved.
+        // A rejected ACK is neither receipt success nor a reason to erase the
+        // copy; its uncertain overlay must hide it before this call returns.
+        try clearMomentSharingFixture()
+        let ackRaceFixture = try fixture("ack_overlay_race")
+        let ackRace = RuntimeMomentAPI(change: ackRaceFixture.0, ciphertext: ackRaceFixture.1,
+            acknowledgementError: .requestRejected(status: 404,
+                code: "moment_moderation_hidden", message: "fixture"))
+        let ackRaceCoordinator = MomentSharingCoordinator(
+            moderation: RuntimeMomentModerator(steps: [.safe, .safe, .safe]))
+        let ackRaceReceived = try await ackRaceCoordinator.runtimeTestReceiveChanges(api: ackRace,
+            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken)
+        let ackRaceState = try MomentSharingStateStore.load()
+        let ackRaceCounts = await ackRace.runtimeCounts()
+        guard let ackRacePhoto = ackRaceState.inbox.first,
+              ackRaceReceived == 0, ackRaceState.changeCursor == ackRaceFixture.0.cursor,
+              ackRacePhoto.state == .available, ackRacePhoto.acknowledgedAt == nil,
+              ackRacePhoto.accessExpiresAt == ackRaceFixture.0.accessExpiresAt,
+              ackRaceState.isModerationHidden(ackRacePhoto.id),
+              ackRaceCounts.downloads == 1, ackRaceCounts.acknowledgementAttempts == 1,
+              ackRaceCounts.acknowledgements == 0,
+              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg,
+              !MomentSharingStateStore.isLocalSharedImageVisible(at: ackRaceFixture.2),
+              !MomentSharingStateStore.isFamilyWidgetCacheVisible(
+                filename: "family-small-\(ackRacePhoto.familyWidgetSourceDigest).jpg", localWindowID: nil)
+        else { throw MomentSharingError.stateUnavailable }
+        let ackRacePublication = try await widgetBuilder.buildFamilyWindow(from: ackRacePhoto,
+            freshUntil: ackRacePhoto.receivedAt.addingTimeInterval(3_600),
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken)
+        guard ackRacePublication.item == nil else { throw MomentSharingError.stateUnavailable }
+
+        let followingSafeFixture = try fixture("after_ack_overlay_race")
+        let followingSafe = RuntimeMomentAPI(change: followingSafeFixture.0,
+            ciphertext: followingSafeFixture.1, afterCursor: ackRaceState.changeCursor)
+        guard try await ackRaceCoordinator.runtimeTestReceiveChanges(api: followingSafe,
+            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken) == 1
+        else { throw MomentSharingError.stateUnavailable }
+        let followingState = try MomentSharingStateStore.load()
+        guard followingState.changeCursor == followingSafeFixture.0.cursor,
+              followingState.isModerationHidden(ackRacePhoto.id),
+              followingState.inbox.first(where: { $0.id == followingSafeFixture.0.momentID })?.state == .acknowledged,
+              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
+        else { throw MomentSharingError.stateUnavailable }
+        let ackRelease = RuntimeMomentAPI(change: overlayEvent(ackRaceFixture.0,
+            cursor: "cursor_ack_race_release", revision: 2, hidden: false, deliveryState: "pending"),
+            ciphertext: ackRaceFixture.1, afterCursor: followingState.changeCursor)
+        guard try await ackRaceCoordinator.runtimeTestReceiveChanges(api: ackRelease,
+            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken) == 1
+        else { throw MomentSharingError.stateUnavailable }
+        let ackReleasedState = try MomentSharingStateStore.load()
+        let ackReleasedCounts = await ackRelease.runtimeCounts()
+        guard ackReleasedState.changeCursor == "cursor_ack_race_release",
+              !ackReleasedState.isModerationHidden(ackRacePhoto.id),
+              ackReleasedState.inbox.first(where: { $0.id == ackRacePhoto.id })?.state == .acknowledged,
+              ackReleasedCounts.acknowledgements == 1,
+              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
+        else { throw MomentSharingError.stateUnavailable }
+
+        try clearMomentSharingFixture()
+        let unrelatedAck404 = RuntimeMomentAPI(change: ackRaceFixture.0, ciphertext: ackRaceFixture.1,
+            acknowledgementError: .requestRejected(status: 404, code: "moment_not_found", message: "fixture"))
+        let unrelatedAckCoordinator = MomentSharingCoordinator(moderation: RuntimeMomentModerator(steps: [.safe]))
+        do {
+            _ = try await unrelatedAckCoordinator.runtimeTestReceiveChanges(api: unrelatedAck404,
+                pairing: pairing, credential: credential, lifecycleToken: lifecycleToken)
+            throw DailySharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case .requestRejected(404, "moment_not_found", _) = error else { throw error }
+        }
+        let failedAckState = try MomentSharingStateStore.load()
+        let failedAckCounts = await unrelatedAck404.runtimeCounts()
+        guard failedAckState.changeCursor == nil, failedAckState.moderationOverlays.isEmpty,
+              failedAckState.inbox.first?.state == .available,
+              failedAckState.inbox.first?.acknowledgedAt == nil,
+              failedAckCounts.acknowledgements == 0, failedAckCounts.acknowledgementAttempts == 1,
+              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
         else { throw MomentSharingError.stateUnavailable }
 
         try clearMomentSharingFixture()

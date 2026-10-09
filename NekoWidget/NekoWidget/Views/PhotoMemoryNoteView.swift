@@ -97,7 +97,6 @@ struct RecordExportActivity: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [payload.fileURL], applicationActivities: nil)
-        controller.view.accessibilityIdentifier = "record-export-share-sheet"
         controller.completionWithItemsHandler = { _, _, _, error in
             let failed = error != nil
             Task { @MainActor in finished(failed) }

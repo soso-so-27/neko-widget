@@ -184,7 +184,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     private var snapshot: FamilyRecordSnapshot? {
         guard canShowRecords, scenePhase == .active,
-              let value = model.snapshot, value.catalog.spaceID == spaceID else { return nil }
+              let value = model.visibleSnapshot, value.catalog.spaceID == spaceID else { return nil }
         return value
     }
 
@@ -227,6 +227,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             // zoom, Save and heart actions. A retained record takes its place
             // only after that delivery photo leaves local history.
             return row?.state != .withdrawn
+                && (recordID.map { model.client.isVisible(entryID: $0) } ?? true)
                 && !(recordID.map { withdrawnIDs.contains($0) } ?? false)
         }
         let records = snapshot?.catalog.records ?? []
@@ -529,7 +530,9 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
         // Footer layout changes (including keyboard insets) must not recreate
         // an editor or its draft inside a ViewThatFits candidate.
         Group {
-            if let source, let snapshot = model.snapshot,
+            if let source, !MomentSharingStateStore.isModerationVisible(momentID: source.momentID) {
+                ContentUnavailableView("この写真は一時的に表示できません", systemImage: "photo")
+            } else if let source, let snapshot = model.visibleSnapshot,
                let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID),
                photo.state == .withdrawn {
                 VStack {
@@ -575,7 +578,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
                 if let caption, !caption.isEmpty, shouldShowLegacyCaption {
                     memoText(caption, isOwn: captionIsOwn, identifier: "photo-detail-read-caption")
                 } else { Spacer(minLength: 0) }
-                if model.snapshot != nil {
+                if model.visibleSnapshot != nil {
                         Button { if let source { destination = .source(source) } } label: {
                             Image(systemName: "square.and.pencil").font(.title3)
                                 .frame(width: 44, height: 44)
@@ -592,7 +595,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
                     .accessibilityLabel("メモを読み込み直す")
                 }
             }
-            if let source, let snapshot = model.snapshot,
+            if let source, let snapshot = model.visibleSnapshot,
                let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog, momentID: source.momentID) {
                 ForEach(snapshot.catalog.records.filter {
                     $0.kind == .words && $0.entryID == photo.id && $0.state == .active
@@ -623,7 +626,7 @@ struct FamilyPhotoMemoView<PhotoContent: View>: View {
         guard let source else { return true }
         // An unresolved catalog cannot establish whether the delivery text
         // was withdrawn. Never use the older delivery copy as a fallback.
-        guard let snapshot = model.snapshot else { return true }
+        guard let snapshot = model.visibleSnapshot else { return true }
         guard let photo = try? FamilyRecordSourceIdentity.existingPhoto(in: snapshot.catalog,
             momentID: source.momentID),
               let wordsID = try? FamilyRecordCommitPayload.captionID(
@@ -667,6 +670,10 @@ private final class FamilyRecordViewModel: ObservableObject {
     let client: any FamilyRecordServing
     private var generation = UUID()
     init(client: any FamilyRecordServing) { self.client = client }
+    var visibleSnapshot: FamilyRecordSnapshot? {
+        guard let snapshot else { return nil }
+        return client.visibleSnapshot(snapshot)
+    }
     func clear() { generation = UUID(); snapshot = nil; loading = false }
     func reload() async {
         let request = UUID(); generation = request
@@ -761,7 +768,7 @@ struct FamilyRecordView: View {
                 ToolbarItem(placement: .primaryAction) {
                     if currentEntryID == nil {
                         Button("写真を追加", systemImage: "plus") { adding = true }
-                            .disabled(model.snapshot == nil || saving)
+                            .disabled(model.visibleSnapshot == nil || saving)
                             .accessibilityIdentifier("family-record-add")
                     }
                 }
@@ -771,7 +778,7 @@ struct FamilyRecordView: View {
                             if hasExportableRecords {
                                 Button("写真とメモを書き出す", systemImage: "square.and.arrow.up") {
                                     let client = model.client
-                                    guard let snapshot = model.snapshot else { return }
+                                    guard let snapshot = model.visibleSnapshot else { return }
                                     exporter.prepare(build: {
                                         try await FamilyRecordExporter.create(client: client, snapshot: snapshot)
                                     }, verify: { try await FamilyRecordExporter.verify(snapshot, client: client) })
@@ -833,7 +840,7 @@ struct FamilyRecordView: View {
     private var currentEntryID: String? { focusedEntryID ?? selectedEntryID }
 
     private var hasExportableRecords: Bool {
-        guard let rows = model.snapshot?.catalog.records else { return false }
+        guard let rows = model.visibleSnapshot?.catalog.records else { return false }
         return rows.contains { photo in
             photo.kind == .photo && (photo.state == .active || rows.contains {
                 $0.kind == .words && $0.entryID == photo.id && $0.state == .active
@@ -842,7 +849,7 @@ struct FamilyRecordView: View {
     }
 
     @ViewBuilder private var recordSection: some View {
-        if let snapshot = model.snapshot {
+        if let snapshot = model.visibleSnapshot {
             let photos = snapshot.catalog.records.filter {
                 $0.kind == .photo && (currentEntryID == nil || $0.id == currentEntryID)
             }.sorted {
@@ -1067,7 +1074,7 @@ private struct FamilyRecordPhoto: View {
                     .aspectRatio(1, contentMode: .fit)
                     .overlay {
                         GeometryReader { geometry in
-                            if let image {
+                            if let image, client.isVisible(entryID: row.entryID) {
                                 Image(uiImage: image).resizable().scaledToFill()
                                     .frame(width: geometry.size.width, height: geometry.size.height)
                             } else {
@@ -1076,15 +1083,21 @@ private struct FamilyRecordPhoto: View {
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 14))
-            } else if let image { Image(uiImage: image).resizable().scaledToFit() }
+            } else if let image, client.isVisible(entryID: row.entryID) {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .accessibilityLabel("共有写真")
+                    .accessibilityIdentifier("family-record-loaded-photo")
+            }
             else { photoPlaceholder }
         }
         .task(id: row) {
             image = nil; failed = false
             do {
                 let data = try await client.photo(row)
-                guard !Task.isCancelled else { return }
-                image = UIImage(data: data); failed = image == nil
+                guard !Task.isCancelled, client.isVisible(entryID: row.entryID) else { return }
+                let decoded = UIImage(data: data)
+                guard client.isVisible(entryID: row.entryID) else { return }
+                image = decoded; failed = image == nil
             } catch { if !Task.isCancelled { failed = true } }
         }
     }
@@ -1415,17 +1428,27 @@ struct FamilyRecordUIFixture: View {
 }
 
 actor FamilyRecordFixtureClient: FamilyRecordServing {
+    private nonisolated let visibilityClient: FamilyRecordClient?
+    nonisolated func isVisible(entryID: String) -> Bool { visibilityClient?.isVisible(entryID: entryID) ?? true }
+    nonisolated func visibleSnapshot(_ snapshot: FamilyRecordSnapshot) -> FamilyRecordSnapshot? {
+        if let visibilityClient { return visibilityClient.visibleSnapshot(snapshot) }
+        return snapshot
+    }
     private let space = "fixture_family_space"
     private let author = "fixture_family_author"
     private let peer = "fixture_family_peer"
     private let jpeg: Data
+    private var photoJPEGs: [String: Data] = [:]
+    func setPhotoJPEG(_ data: Data, entryID: String) { photoJPEGs[entryID] = data }
     private var active = true
     private var failsLoad = false
     func setLoadFailure(_ value: Bool) { failsLoad = value }
     private var rows: [FamilyRecordRow] = []
     private var words: [String: String] = [:]
     private var receipts: [String: FamilyRecordRow] = [:]
-    init(jpeg: Data) { self.jpeg = jpeg }
+    init(jpeg: Data, visibilityClient: FamilyRecordClient? = nil) {
+        self.jpeg = jpeg; self.visibilityClient = visibilityClient
+    }
     private func requireActive() throws { guard active else { throw FamilyRecordError.unavailable } }
     func load() throws -> FamilyRecordSnapshot {
         try requireActive()
@@ -1436,7 +1459,7 @@ actor FamilyRecordFixtureClient: FamilyRecordServing {
     func photo(_ row: FamilyRecordRow) throws -> Data {
         try requireActive()
         guard rows.contains(where: { $0.id == row.id && $0.state == .active }) else { throw FamilyRecordError.changed }
-        return jpeg
+        return photoJPEGs[row.entryID] ?? jpeg
     }
     func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) throws -> FamilyRecordMutation {
         try requireActive()

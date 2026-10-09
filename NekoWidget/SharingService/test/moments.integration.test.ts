@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { SELF } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { SELF, reset, applyD1Migrations, type D1Migration } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { base64urlEncode, sha256, sha256Base64url } from "../src/encoding";
 import { momentSharedPhotoID, runFamilyRecordCleanup } from "../src/family-records";
@@ -15,6 +15,115 @@ import {
 import { encodeCanonicalFields, signedRequestTranscript } from "../src/protocol";
 import { REACTION_USAGE_RETENTION_DAYS } from "../src/reactions";
 import { runScheduledCleanup } from "../src/scheduled";
+import { resolutionFixture } from './fixtures/moderation-resolution';
+
+async function reportedMoment(space:TestSpace) {
+ const published=await publish(space.owner),evidence=crypto.getRandomValues(new Uint8Array(192));
+ const reserveResponse=await signedFetch('/v2/reports/reservations','POST',space.invitee,{
+  protocolVersion:2,clientRequestId:crypto.randomUUID(),momentId:published.reservation.moment.id,reasonCode:'privacy',
+  moderationKeyId:'moderation-v1',ciphertextSize:evidence.length,ciphertextSHA256:await sha256Base64url(evidence),
+  reporterConsent:{version:1,acceptedAt:new Date().toISOString()},
+ });
+ expect(reserveResponse.status).toBe(201);
+ const {report}=await reserveResponse.json<{report:{id:string}}>();
+ expect((await signedFetch(`/v2/reports/${report.id}/ciphertext`,'PUT',space.invitee,evidence)).status).toBe(200);
+ expect((await signedFetch(`/v2/reports/${report.id}/commit`,'POST',space.invitee,{protocolVersion:2,clientRequestId:crypto.randomUUID()})).status).toBe(201);
+ return {...published,report};
+}
+
+describe('moderation visibility over authenticated moment transport',()=>{
+ beforeEach(async()=>{
+  await reset();await applyD1Migrations(testEnv.DB,(env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS);
+  await testEnv.DB.prepare(`UPDATE personal_staging_runtime_gate SET generation=generation+1,media_enabled=1,apns_enabled=1,report_ingestion_enabled=1,updated_at=unixepoch() WHERE singleton=1 AND generation=0`).run();
+ });
+ it('advances real cursors, denies hidden bytes and ACK, and preserves the first ACK notification after release',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id);
+  const h=await f.act('hide',await f.read(),0);
+  const url=`/v2/moments/${p.reservation.moment.id}`;
+  for(const member of [space.owner,space.invitee]){
+   const denied=await signedFetch(url+'/ciphertext','GET',member);
+   expect(denied.status).toBe(404);expect(await denied.json()).toMatchObject({error:{code:'moment_moderation_hidden'}});
+  }
+  const ack={protocolVersion:2,clientRequestId:crypto.randomUUID(),ciphertextSHA256:p.reservation.moment.ciphertextSHA256};
+  expect((await signedFetch(url+'/ack','POST',space.invitee,ack)).status).toBe(404);
+  const hidden=await(await signedFetch('/v2/moments/changes','GET',space.invitee)).json<{nextCursor:string;changes:{moment:{moderationRevision:number;moderationHidden:boolean}}[]}>();
+  expect(hidden.changes.every(c=>c.moment.moderationHidden&&c.moment.moderationRevision===1)).toBe(true);
+  expect((await signedFetch('/v2/moments/changes/'+hidden.nextCursor,'GET',space.invitee)).status).toBe(200);
+  await f.act('release',h.eventId,1);
+  const sender=await(await signedFetch('/v2/moments/changes','GET',space.owner)).json<{nextCursor:string}>();
+  expect((await signedFetch(url+'/ciphertext','GET',space.invitee)).status).toBe(200);
+  expect((await signedFetch(url+'/ack','POST',space.invitee,{...ack,clientRequestId:crypto.randomUUID()})).status).toBe(200);
+  const arrived=await(await signedFetch('/v2/moments/changes/'+sender.nextCursor,'GET',space.owner)).json<{changes:{moment:{deliveryState:string;moderationRevision:number;moderationHidden:boolean}}[]}>();
+  expect(arrived.changes).toHaveLength(1);
+  expect(arrived.changes[0]!.moment).toMatchObject({deliveryState:'acknowledged',moderationRevision:2,moderationHidden:false});
+ });
+ it('rechecks a hide during R2 fetch before publishing a response body',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id);
+  const receipt=await f.read();let calls=0;
+  const media={get:async(key:string)=>{const value=await testEnv.MEDIA!.get(key);calls++;await f.act('hide',receipt,0);return value}} as unknown as R2Bucket;
+  await expect(route(await signedRequest(`/v2/moments/${p.reservation.moment.id}/ciphertext`,'GET',space.invitee),{...testEnv,MEDIA:media}))
+   .rejects.toMatchObject({status:404,code:'moment_moderation_hidden'});
+  expect(calls).toBe(1);
+ });
+ it('returns bounded replies only to the reporter, including report-only access after unlink',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id);
+  const result=await f.act('no_action',await f.read(),0);
+  const own=await(await signedFetch('/v2/reports/responses','GET',space.invitee)).json<{responses:unknown[];nextCursor:string}>();
+  expect(own.responses).toHaveLength(1);expect(own.responses[0]).toMatchObject({id:result.eventId,reportId:p.report.id,templateCode:'no_action'});
+  expect(await(await signedFetch('/v2/reports/responses','GET',space.owner)).json()).toMatchObject({responses:[]});
+  expect((await signedFetch('/v2/reports/responses/'+own.nextCursor,'GET',space.owner)).status).toBe(404);
+  expect(await(await signedFetch('/v2/reports/responses/'+own.nextCursor,'GET',space.invitee)).json()).toMatchObject({responses:[],hasMore:false});
+  expect((await signedFetch('/v1/pairing/revoke','POST',space.owner,{protocolVersion:1,clientRequestId:crypto.randomUUID()})).status).toBe(202);
+  expect(await(await signedFetch('/v2/reports/responses','GET',space.invitee)).json()).toMatchObject({responses:[{id:result.eventId}]});
+  expect(await testEnv.DB.prepare('SELECT COUNT(*) n FROM moderation_resolution_reply_receipts').first()).toEqual({n:0});
+ });
+ it('rejects delivery expiry during R2 await even while the moment lifetime remains valid',async()=>{
+  const space=await seedActiveSpace(),p=await publish(space.owner),moment=p.reservation.moment.id;
+  await testEnv.DB.prepare(`UPDATE moment_deliveries SET access_expires_at=unixepoch()+1 WHERE moment_id=?`).bind(moment).run();
+  const media={get:async(key:string)=>{const value=await testEnv.MEDIA!.get(key);await new Promise(resolve=>setTimeout(resolve,1250));return value}} as unknown as R2Bucket;
+  await expect(route(await signedRequest(`/v2/moments/${moment}/ciphertext`,'GET',space.invitee),{...testEnv,MEDIA:media}))
+   .rejects.toMatchObject({status:404,code:'moment_not_found'});
+  expect(await testEnv.DB.prepare(`SELECT state,unreceived_expires_at>unixepoch() AS future FROM moments WHERE id=?`).bind(moment).first()).toEqual({state:'committed',future:1});
+ });
+ it('preserves the moderation-specific signal when hide wins after ACK preflight',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id),receipt=await f.read();
+  let raced=false;
+  const db=new Proxy(testEnv.DB,{get(target,key){
+   if(key==='batch')return async(statements:D1PreparedStatement[])=>{if(!raced){raced=true;await f.act('hide',receipt,0)}return target.batch(statements)};
+   const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+  }});
+  await expect(route(await signedRequest(`/v2/moments/${p.reservation.moment.id}/ack`,'POST',space.invitee,{
+   protocolVersion:2,clientRequestId:crypto.randomUUID(),ciphertextSHA256:p.reservation.moment.ciphertextSHA256,
+  }),{...testEnv,DB:db})).rejects.toMatchObject({status:404,code:'moment_moderation_hidden'});
+  expect(raced).toBe(true);
+  expect(await testEnv.DB.prepare('SELECT state,acknowledged_at FROM moment_deliveries WHERE moment_id=?').bind(p.reservation.moment.id).first()).toEqual({state:'pending',acknowledged_at:null});
+ });
+ it('releases an active linked album after delivery expiry without reviving the delivery',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),moment=p.reservation.moment.id,f=await resolutionFixture(p.report.id);
+  const photo=await momentSharedPhotoID(space.id,moment),objectKey=`family-records/test/${photo}`,data=new Uint8Array(32);
+  await testEnv.MEDIA!.put(objectKey,data);
+  await testEnv.DB.batch([
+   testEnv.DB.prepare(`INSERT INTO family_records VALUES(?,?,?,'photo',?,1,'active',1,NULL,?,32,?,?,unixepoch(),unixepoch())`).bind(space.id,photo,photo,space.owner.id,objectKey,randomValue(32),crypto.randomUUID()),
+   testEnv.DB.prepare('INSERT INTO family_record_moments VALUES(?,?,?)').bind(space.id,photo,moment),
+   testEnv.DB.prepare('INSERT INTO family_record_moment_readers VALUES(?,?,?)').bind(space.id,photo,space.invitee.id),
+  ]);
+  const enabled={...testEnv,FAMILY_RECORD_RUNTIME_ENABLED:'YES'} as Env;
+  const h=await f.act('hide',await f.read(),0);
+  expect(await(await route(await signedRequest('/v2/family-records','GET',space.invitee),enabled)).json()).toMatchObject({records:[]});
+  await testEnv.DB.batch([
+   testEnv.DB.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch() WHERE id=?`).bind(moment),
+   testEnv.DB.prepare(`UPDATE moment_deliveries SET state='expired' WHERE moment_id=?`).bind(moment),
+  ]);
+  await expect(testEnv.DB.prepare('DELETE FROM moderation_resolution_targets WHERE moment_id=?').bind(moment).run()).rejects.toThrow('live resolution target cannot reset');
+  await expect(testEnv.DB.prepare('DELETE FROM moderation_resolution_scopes WHERE moment_id=?').bind(moment).run()).rejects.toThrow('live resolution scope cannot reset');
+  expect(await testEnv.DB.prepare('SELECT hidden FROM moderation_moment_states WHERE moment_id=?').bind(moment).first()).toEqual({hidden:1});
+  await f.act('release',h.eventId,1);
+  expect(await(await route(await signedRequest('/v2/family-records','GET',space.invitee),enabled)).json()).toMatchObject({records:[{id:photo,state:'active'}]});
+  expect((await route(await signedRequest(`/v2/family-records/${photo}/photo`,'GET',space.invitee),enabled)).status).toBe(200);
+  expect((await signedFetch(`/v2/moments/${moment}/ciphertext`,'GET',space.invitee)).status).toBe(404);
+  expect(await testEnv.DB.prepare('SELECT state FROM moment_deliveries WHERE moment_id=?').bind(moment).first()).toEqual({state:'expired'});
+ });
+});
 
 interface KeyPair {
   privateKey: CryptoKey;

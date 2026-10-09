@@ -191,6 +191,8 @@
 		200000000000000000000013 /* NekoWidgetTimelineProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */; };
 		200000000000000000000014 /* NekoWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000314 /* NekoWidgetView.swift */; };
 		200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000315 /* WidgetCacheImageLoader.swift */; };
+		A02610090000000000000001 /* WidgetCacheImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000315 /* WidgetCacheImageLoader.swift */; };
+		A02610090000000000000002 /* WidgetManifestReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000316 /* WidgetManifestReader.swift */; };
 		200000000000000000000016 /* WidgetManifestReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000316 /* WidgetManifestReader.swift */; };
 		200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
 		200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
@@ -1149,6 +1151,8 @@
 				10000000000000000000014A /* DailySharingAPIClient.swift in Sources */,
 				10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */,
 				10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */,
+				A02610090000000000000001 /* WidgetCacheImageLoader.swift in Sources */,
+				A02610090000000000000002 /* WidgetManifestReader.swift in Sources */,
 				100000000000000000000152 /* CatCandidateCurationStore.swift in Sources */,
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,

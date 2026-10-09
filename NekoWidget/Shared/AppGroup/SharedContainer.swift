@@ -1185,10 +1185,21 @@ enum SharedContainer {
     }
 
     static var containerURL: URL? {
-        FileManager.default.containerURL(
+#if DEBUG && targetEnvironment(simulator)
+        if CommandLine.arguments.contains("--moderation-resolution-ui-fixture") {
+            return moderationUIFixtureContainer
+        }
+#endif
+        return FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         )
     }
+
+#if DEBUG && targetEnvironment(simulator)
+    // Synthetic UI writes can never address the person's real App Group.
+    private static let moderationUIFixtureContainer = FileManager.default.temporaryDirectory
+        .appendingPathComponent("moderation-ui-" + UUID().uuidString, isDirectory: true)
+#endif
 
     static var snapshotURL: URL? {
         containerURL?.appendingPathComponent("library-snapshot.json", isDirectory: false)

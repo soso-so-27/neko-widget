@@ -526,6 +526,14 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
     /// Missing on receipts written before policy 2; those are policy 1.
     var senderPolicyVersion: Int? = nil
 
+    var familyWidgetSourceDigest: String {
+        let identity = ["family-widget-v3-cat-focused-full-bleed", id,
+            String(committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
+            String(receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16)]
+            .joined(separator: "|")
+        return PairingCrypto.sha256(Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     func validated() throws -> Self {
         guard try MomentCaption.normalized(caption) == caption,
               senderPolicyVersion.map({ $0 == 1 || $0 == 2 }) ?? true,
@@ -757,7 +765,7 @@ struct MomentPawReceipt: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct MomentSharingState: Codable, Equatable, Sendable {
-    static let schemaVersion = 9
+    static let schemaVersion = 10
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int
     var changeCursor: String?
@@ -765,6 +773,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
     var reportOnlyUntil: Date?
     var outbox: [MomentOutboxItem]
     var inbox: [MomentInboxItem]
+    var moderationOverlays: [MomentModerationOverlay]
     var savedMemories: [MomentSavedMemoryRecord]
     var importedMemories: [MomentImportedMemoryRecord]
     var pendingMemoryImports: [MomentPendingMemoryImportRecord]
@@ -781,6 +790,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         case reportOnlyUntil
         case outbox
         case inbox
+        case moderationOverlays
         case savedMemories
         case importedMemories
         case pendingMemoryImports
@@ -797,6 +807,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         reportOnlyUntil: Date? = nil,
         outbox: [MomentOutboxItem],
         inbox: [MomentInboxItem],
+        moderationOverlays: [MomentModerationOverlay] = [],
         savedMemories: [MomentSavedMemoryRecord] = [],
         importedMemories: [MomentImportedMemoryRecord] = [],
         pendingMemoryImports: [MomentPendingMemoryImportRecord] = [],
@@ -811,6 +822,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         self.reportOnlyUntil = reportOnlyUntil
         self.outbox = outbox
         self.inbox = inbox
+        self.moderationOverlays = moderationOverlays
         self.savedMemories = savedMemories
         self.importedMemories = importedMemories
         self.pendingMemoryImports = pendingMemoryImports
@@ -873,6 +885,13 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         }
         outbox = decodedOutbox
         inbox = try container.decode([MomentInboxItem].self, forKey: .inbox)
+        if decodedSchema >= 10 {
+            moderationOverlays = try container.decode([MomentModerationOverlay].self, forKey: .moderationOverlays)
+        } else {
+            moderationOverlays = try container.decodeIfPresent(
+                [MomentModerationOverlay].self, forKey: .moderationOverlays
+            ) ?? []
+        }
         savedMemories = try container.decodeIfPresent(
             [MomentSavedMemoryRecord].self,
             forKey: .savedMemories
@@ -922,6 +941,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
               reportOnlyUntil.map { $0 > Date(timeIntervalSince1970: 0) } ?? true,
               Set(outbox.map(\.id)).count == outbox.count,
               Set(inbox.map(\.id)).count == inbox.count,
+              Set(moderationOverlays.map(\.momentID)).count == moderationOverlays.count,
               Set(savedMemories.map(\.momentID)).count == savedMemories.count,
               Set(importedMemories.map(\.momentID)).count == importedMemories.count,
               Set(importedMemories.map(\.photoLocalIdentifier)).count
@@ -947,6 +967,13 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         else { throw MomentSharingError.stateUnavailable }
         _ = try outbox.map { try $0.validated() }
         _ = try inbox.map { try $0.validated() }
+        for overlay in moderationOverlays {
+            guard PairingValidation.isOpaqueIdentifier(overlay.momentID),
+                  overlay.status.revision > 0 || overlay.downloadHidden,
+                  overlay.committedAt > Date(timeIntervalSince1970: 0)
+            else { throw MomentSharingError.stateUnavailable }
+            _ = try overlay.status.validated()
+        }
         _ = try savedMemories.map { try $0.validated() }
         _ = try importedMemories.map { try $0.validated() }
         _ = try pendingMemoryImports.map { try $0.validated() }
@@ -975,6 +1002,27 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         _ = try reportOutbox.map { try $0.validated() }
         _ = try outgoingOutcomes.map { try $0.validated() }
         return self
+    }
+
+    func isModerationHidden(_ momentID: String) -> Bool {
+        moderationOverlays.first { $0.momentID == momentID }?.isHidden ?? false
+    }
+
+    mutating func applyModeration(momentID: String, status: MomentModerationStatus,
+                                  committedAt: Date, downloadHidden: Bool = false) throws {
+        _ = try status.validated()
+        guard PairingValidation.isOpaqueIdentifier(momentID) else {
+            throw MomentSharingError.invalidPayload
+        }
+        if let index = moderationOverlays.firstIndex(where: { $0.momentID == momentID }) {
+            guard moderationOverlays[index].committedAt == committedAt else {
+                throw MomentSharingError.invalidPayload
+            }
+            try moderationOverlays[index].apply(status, downloadHidden: downloadHidden)
+        } else if status.revision > 0 || downloadHidden {
+            moderationOverlays.append(MomentModerationOverlay(momentID: momentID,
+                status: status, downloadHidden: downloadHidden, committedAt: committedAt))
+        }
     }
 
     @discardableResult
@@ -1102,6 +1150,77 @@ enum MomentSharingStateStore {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
             try operation(try loadWhileLocked())
         }
+    }
+
+    /// Current local overlay at a disclosure boundary. A failed state read
+    /// never grants visibility. Private Photos and private notes do not use it.
+    static func isModerationVisible(momentID: String, localWindowID: String? = nil) -> Bool {
+        guard !SharingLifecycleGate.isCleanupRequired else { return false }
+        do {
+            let state = try localWindowID.map { try load(localWindowID: $0) } ?? load()
+            return !state.isModerationHidden(momentID)
+        } catch { return false }
+    }
+
+    static func isFamilyWidgetCacheVisible(filename: String, localWindowID: String?,
+                                          now: Date = .now) -> Bool {
+        guard !SharingLifecycleGate.isCleanupRequired else { return false }
+        do {
+            let state = try localWindowID.map { try load(localWindowID: $0) } ?? load()
+            let matches = state.inbox.filter { item in
+                ["small", "medium", "large"].contains {
+                    filename == "family-\($0)-\(item.familyWidgetSourceDigest).jpg"
+                }
+            }
+            guard matches.count == 1, let item = matches.first,
+                  item.state == .available || item.state == .acknowledged,
+                  item.localJPEGFileName != nil,
+                  now < item.receivedAt.addingTimeInterval(localHistorySeconds),
+                  !state.isModerationHidden(item.id) else { return false }
+            return true
+        } catch { return false }
+    }
+
+    /// Revalidates bytes held by a view/cache after an asynchronous decode.
+    /// Only the sharing store directories are covered; personal originals are untouched.
+    static func isLocalSharedImageVisible(at url: URL) -> Bool {
+        guard !SharingLifecycleGate.isCleanupRequired else { return false }
+        do {
+            let state = try load()
+            let directory = url.deletingLastPathComponent().standardizedFileURL
+            if directory.lastPathComponent == "received-moments" {
+                guard directory == SharedContainer.momentSharingReceivedDirectoryURL?.standardizedFileURL else {
+                    return false
+                }
+                guard let item = state.inbox.first(where: { $0.localJPEGFileName == url.lastPathComponent }),
+                      item.state == .available || item.state == .acknowledged,
+                      Date() < item.receivedAt.addingTimeInterval(localHistorySeconds)
+                else { return false }
+                return !state.isModerationHidden(item.id)
+            }
+            if directory.lastPathComponent == "sent-moment-thumbnails" {
+                guard directory == SharedContainer.momentSharingSentThumbnailDirectoryURL?.standardizedFileURL,
+                      let item = state.outbox.first(where: {
+                          $0.localDetail?.fileName == url.lastPathComponent
+                              || $0.localThumbnailFileName == url.lastPathComponent
+                      }), item.phase == .committed,
+                      Date() < item.createdAt.addingTimeInterval(completedOutboxMetadataSeconds),
+                      let momentID = item.serverMomentID else { return false }
+                return !state.isModerationHidden(momentID)
+            }
+            return true
+        } catch { return false }
+    }
+
+    @discardableResult
+    static func applyModeration(momentID: String, status: MomentModerationStatus,
+                                committedAt: Date, downloadHidden: Bool = false,
+                                validating token: SharingLifecycleGate.Token) throws -> Bool {
+        let state = try mutate(validating: token) { state in
+            try state.applyModeration(momentID: momentID, status: status,
+                committedAt: committedAt, downloadHidden: downloadHidden)
+        }
+        return state.isModerationHidden(momentID)
     }
 
     /// Distinguishes durable schema/JSON corruption from a transient file I/O
@@ -1571,6 +1690,7 @@ enum MomentSharingStateStore {
             throw MomentSharingError.reportOnly(until: state.reportOnlyUntil!)
         }
         guard let item = state.inbox.first(where: { $0.id == momentID }),
+              !state.isModerationHidden(momentID),
               item.state == .available || item.state == .acknowledged,
               let fileName = item.localJPEGFileName,
               fileName == "\(item.id).jpg",
@@ -2285,6 +2405,7 @@ enum MomentSharingStateStore {
                   let item = state.outbox.first(where: { $0.id == itemID }),
                   item.phase == .committed,
                   item.context.spaceID == expectedSpaceID,
+                  item.serverMomentID.map({ !state.isModerationHidden($0) }) ?? true,
                   item.createdAt >= now.addingTimeInterval(-completedOutboxMetadataSeconds),
                   let reference = item.localDetail,
                   let url = try? localThumbnailURL(fileName: reference.fileName),

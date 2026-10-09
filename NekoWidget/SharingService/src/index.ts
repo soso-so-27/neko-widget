@@ -71,6 +71,7 @@ import {
   commitMomentReport,
   downloadMomentCiphertext,
   getMomentChanges,
+  getMomentReportResponses,
   runMomentCleanup,
   reserveMoment,
   reserveMomentReport,
@@ -500,6 +501,13 @@ export async function route(
   }
   if (request.method === "POST" && pathname === "/v2/reports/reservations") {
     return reserveMomentReport(request, env);
+  }
+  if (request.method === 'GET' && pathname === '/v2/reports/responses') {
+    return getMomentReportResponses(request, env);
+  }
+  const reportResponsesMatch=pathname.match(/^\/v2\/reports\/responses\/([^/]+)$/u);
+  if (request.method === 'GET' && reportResponsesMatch?.[1] !== undefined) {
+    return getMomentReportResponses(request, env, reportResponsesMatch[1]);
   }
   const reportCiphertextMatch = pathname.match(
     /^\/v2\/reports\/([^/]+)\/ciphertext$/u,

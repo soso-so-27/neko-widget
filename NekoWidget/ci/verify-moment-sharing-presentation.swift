@@ -18,6 +18,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesSentRecordsAreBoundedAndPrivacySafe()
         try verifiesHeartNotificationTargetOutsideBoundIsAdmittedOnce()
         try verifiesFamilyWindowSafetyAndOrdering()
+        try verifiesModerationOverlaySelection()
         try verifiesFamilyWindowFreshnessBoundary()
         try verifiesPhotoDeepLinkCompatibility()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
@@ -738,6 +739,20 @@ enum MomentSharingPresentationVerifier {
             "terminal outcome did not state that no send occurred and bytes were removed"
         )
         try require(presentation.hasActivity, "terminal outcomes were hidden")
+    }
+
+    private static func verifiesModerationOverlaySelection() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let url = URL(fileURLWithPath: "/fixture/retained.jpg")
+        let hidden = MomentFamilyWindowPresentationInput(stableID: "hidden", state: .acknowledged,
+            imageURL: url, committedAt: now, receivedAt: now, moderationHidden: true)
+        let safe = MomentFamilyWindowPresentationInput(stableID: "safe", state: .acknowledged,
+            imageURL: url, committedAt: now.addingTimeInterval(-1), receivedAt: now)
+        let revoked = MomentFamilyWindowPresentationInput(stableID: "revoked", state: .revoked,
+            imageURL: url, committedAt: now, receivedAt: now, moderationHidden: false)
+        let result = MomentFamilyWindowPresentationPolicy.make(inputs: [hidden, safe, revoked], now: now)
+        try require(result.latestStableID == "safe" && result.safeCount == 1,
+            "overlay or terminal state disclosed a shared photo")
     }
 
     private static func verifiesFamilyWindowSafetyAndOrdering() throws {

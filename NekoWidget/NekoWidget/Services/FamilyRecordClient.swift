@@ -35,6 +35,8 @@ struct FamilyRecordMutation: Sendable {
 /// currently paired private window. Reopening re-fetches the server catalog;
 /// a local snapshot never grants access or reintroduces withdrawn content.
 protocol FamilyRecordServing: Sendable {
+    func isVisible(entryID: String) -> Bool
+    func visibleSnapshot(_ snapshot: FamilyRecordSnapshot) -> FamilyRecordSnapshot?
     func load() async throws -> FamilyRecordSnapshot
     func photo(_ row: FamilyRecordRow) async throws -> Data
     func photoContent(_ row: FamilyRecordRow) async throws -> FamilyRecordPhotoContent
@@ -64,6 +66,33 @@ actor FamilyRecordClient: FamilyRecordServing {
     init(expectedSpaceID: String, configuration: SharingAPIConfiguration = .current) {
         self.expectedSpaceID = expectedSpaceID
         self.configuration = configuration
+    }
+
+    nonisolated func isVisible(entryID: String) -> Bool {
+        guard let hidden = hiddenEntryIDs() else { return false }
+        return !hidden.contains(entryID)
+    }
+
+    nonisolated func visibleSnapshot(_ snapshot: FamilyRecordSnapshot) -> FamilyRecordSnapshot? {
+        guard snapshot.catalog.spaceID == expectedSpaceID, let hidden = hiddenEntryIDs() else { return nil }
+        let catalog = snapshot.catalog
+        let rows = catalog.records.filter { !hidden.contains($0.entryID) }
+        let ids = Set(rows.map(\.id))
+        return FamilyRecordSnapshot(catalog: FamilyRecordCatalog(schemaVersion: catalog.schemaVersion,
+            spaceID: catalog.spaceID, participantID: catalog.participantID,
+            maximumPhotos: catalog.maximumPhotos, records: rows),
+            words: snapshot.words.filter { ids.contains($0.key) })
+    }
+
+    private nonisolated func hiddenEntryIDs() -> Set<String>? {
+        guard !SharingLifecycleGate.isCleanupRequired,
+              let window = PrivateWindowCatalogStore.activeEntry(),
+              window.spaceID == expectedSpaceID,
+              let state = try? MomentSharingStateStore.load(localWindowID: window.localWindowID)
+        else { return nil }
+        return Set(state.moderationOverlays.filter(\.isHidden).compactMap {
+            try? FamilyRecordSourceIdentity.recordID(spaceID: expectedSpaceID, momentID: $0.momentID)
+        })
     }
 
     private func authorization() throws -> Authorization {
@@ -100,15 +129,18 @@ actor FamilyRecordClient: FamilyRecordServing {
         guard let author = auth.pairing.memberID, let roomKey = auth.credential.roomKey else { throw FamilyRecordError.unavailable }
         let catalog = try JSONDecoder().decode(FamilyRecordCatalog.self, from: data)
             .validated(spaceID: expectedSpaceID, participantID: author)
+        guard let hidden = hiddenEntryIDs() else { throw FamilyRecordError.changed }
         var words: [String: String] = [:]
-        for row in catalog.records where row.kind == .words && row.state == .active {
+        for row in catalog.records where row.kind == .words && row.state == .active && !hidden.contains(row.entryID) {
             guard let encoded = row.ciphertext, let cipher = Data(base64URLString: encoded),
                   let text = try FamilyRecordCrypto.open(cipher, row: row, roomKey: roomKey,
                     spaceID: expectedSpaceID).text else { throw FamilyRecordError.invalid }
             words[row.id] = text
         }
         try validate(auth)
-        return FamilyRecordSnapshot(catalog: catalog, words: words)
+        guard let visible = visibleSnapshot(FamilyRecordSnapshot(catalog: catalog, words: words))
+        else { throw FamilyRecordError.changed }
+        return visible
     }
     func isAvailable() async -> Bool {
         do {
@@ -123,12 +155,14 @@ actor FamilyRecordClient: FamilyRecordServing {
     }
     func photoContent(_ row: FamilyRecordRow) async throws -> FamilyRecordPhotoContent {
         let auth = try authorization()
+        guard isVisible(entryID: row.entryID) else { throw FamilyRecordError.changed }
         let data = try await request("/v2/family-records/\(row.id)/photo", auth: auth)
         guard let roomKey = auth.credential.roomKey,
               let content = try? FamilyRecordCrypto.open(data, row: row, roomKey: roomKey,
                   spaceID: expectedSpaceID), let jpeg = content.jpeg else { throw FamilyRecordError.invalid }
         try await requireSafe(jpeg)
         try validate(auth)
+        guard isVisible(entryID: row.entryID) else { throw FamilyRecordError.changed }
         return FamilyRecordPhotoContent(jpeg: jpeg, capturedAt: content.capturedAt)
     }
     func preparePhoto(_ photo: MomentShareIngressPhoto, sourceMomentID: String?) async throws -> FamilyRecordMutation {
@@ -137,6 +171,9 @@ actor FamilyRecordClient: FamilyRecordServing {
         try validate(auth)
         let id: String
         if let sourceMomentID {
+            guard MomentSharingStateStore.isModerationVisible(momentID: sourceMomentID) else {
+                throw FamilyRecordError.changed
+            }
             id = try FamilyRecordSourceIdentity.recordID(spaceID: expectedSpaceID, momentID: sourceMomentID)
         } else { id = UUID().uuidString.lowercased() }
         let payload = FamilyRecordPayload(schemaVersion: 1, text: nil, jpeg: photo.canonicalJPEG, capturedAt: photo.capturedAt)
@@ -144,6 +181,7 @@ actor FamilyRecordClient: FamilyRecordServing {
     }
     func prepareWords(_ text: String, entryID: String, replacing row: FamilyRecordRow? = nil) throws -> FamilyRecordMutation {
         let auth = try authorization()
+        guard isVisible(entryID: entryID) else { throw FamilyRecordError.changed }
         if let row {
             guard row.authorID == auth.pairing.memberID, row.kind == .words, row.entryID == entryID,
                   row.state == .active else { throw FamilyRecordError.changed }
@@ -171,6 +209,9 @@ actor FamilyRecordClient: FamilyRecordServing {
         let auth = try authorization()
         guard mutation.spaceID == expectedSpaceID, mutation.authorID == auth.pairing.memberID,
               mutation.lifecycleToken == auth.token else { throw FamilyRecordError.changed }
+        guard mutation.body.ciphertext == nil || isVisible(entryID: mutation.body.entryID) else {
+            throw FamilyRecordError.changed
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let data = try await request("/v2/family-records/\(mutation.id)", method: "PUT",
@@ -199,7 +240,9 @@ enum FamilyRecordExporter {
         guard current.catalog.spaceID == original.catalog.spaceID,
               current.catalog.participantID == original.catalog.participantID,
               current.catalog.records == original.catalog.records,
-              current.words == original.words else { throw FamilyRecordError.changed }
+              current.words == original.words,
+              client.visibleSnapshot(original)?.catalog.records == original.catalog.records
+        else { throw FamilyRecordError.changed }
     }
 
     static func create(client: any FamilyRecordServing, snapshot: FamilyRecordSnapshot,

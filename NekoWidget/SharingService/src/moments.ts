@@ -1442,6 +1442,8 @@ export async function commitMoment(
 }
 
 interface ChangeRow {
+  moderation_revision: number;
+  moderation_hidden: number;
   sequence: number;
   cursor: string;
   change_type: "moment_committed" | "delivery_revoked";
@@ -1456,6 +1458,45 @@ interface ChangeRow {
   committed_at: number | null;
   access_expires_at: number | null;
   delivery_state: DeliveryRow["state"] | null;
+}
+
+/** Safety inbox remains accessible through the existing bounded report-only
+ * identity after unlink. Fetch is not evidence that a person read the reply. */
+export async function getMomentReportResponses(request: Request, env: Env, cursor?: string): Promise<Response> {
+  const { body, member, context } = await signedReportRequest(request, env);
+  if (body.length !== 0 || (cursor !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(cursor))) {
+    return consumeReportAndThrow(env, member, context, new ApiError(400, 'invalid_request', 'Invalid response request.'));
+  }
+  // A vanished cursor (expiry/deletion) is an explicit reset, not a reason to
+  // read another participant's row or skip unseen results.
+  const cursorRow = cursor === undefined ? null : await env.DB.prepare(`SELECT created_at FROM moderation_resolution_replies
+    WHERE event_id=? AND recipient_participant_id=? AND expires_at>unixepoch()`)
+    .bind(cursor, context.participant_id).first<{created_at:number}>();
+  if (cursor !== undefined && cursorRow === null) {
+    return consumeReportAndThrow(env, member, context, new ApiError(404, 'cursor_not_found', 'The response cursor expired.'));
+  }
+  const rows = await env.DB.prepare(`SELECT reply.event_id AS id,reply.report_id AS reportId,reply.template_code AS templateCode,
+      reply.created_at AS createdAt,reply.expires_at AS expiresAt
+    FROM moderation_resolution_replies reply JOIN moment_reports report ON report.id=reply.report_id
+    JOIN moment_report_tombstones tombstone ON tombstone.report_id=report.id
+    JOIN moment_participants participant ON participant.id=reply.recipient_participant_id
+    JOIN moment_devices device ON device.participant_id=participant.id AND device.id=?
+    WHERE reply.recipient_participant_id=? AND report.reporter_participant_id=reply.recipient_participant_id
+      AND report.space_id=? AND participant.space_id=report.space_id
+      AND ((participant.state='active' AND device.state='active' AND EXISTS(SELECT 1 FROM moment_spaces WHERE space_id=participant.space_id AND state='active')) OR
+        (participant.report_only_until>unixepoch() AND device.report_only_until>unixepoch()))
+      AND reply.expires_at>unixepoch() AND report.state='committed' AND report.closed_at IS NULL
+      AND report.content_expires_at>unixepoch() AND tombstone.content_deleted_at IS NULL
+      AND tombstone.committed_at=report.committed_at AND tombstone.content_expires_at=report.content_expires_at
+      AND NOT EXISTS(SELECT 1 FROM moment_object_deletions d WHERE d.object_key=report.object_key OR (d.object_type='report' AND d.owner_id=report.id))
+      AND (reply.created_at>? OR (reply.created_at=? AND reply.event_id>?))
+    ORDER BY reply.created_at,reply.event_id LIMIT 51`)
+    .bind(context.device_id,context.participant_id,member.spaceId,cursorRow?.created_at??-1,cursorRow?.created_at??-1,cursor??'').all<{
+      id:string;reportId:string;templateCode:string;createdAt:number;expiresAt:number;
+    }>();
+  await consumeReportNonceAndTouch(env, member, context);
+  const responses=rows.results.slice(0,50);
+  return jsonResponse({protocolVersion:MOMENT_PROTOCOL_VERSION,responses,hasMore:rows.results.length>50,nextCursor:responses.at(-1)?.id??''});
 }
 
 export async function getMomentChanges(
@@ -1493,6 +1534,8 @@ export async function getMomentChanges(
             moment.id, moment.client_moment_id, moment.sender_participant_id,
             moment.kind, moment.key_epoch, moment.ciphertext_size,
             moment.ciphertext_sha256, moment.committed_at,
+            COALESCE(moderation.revision,0) AS moderation_revision,
+            COALESCE(moderation.hidden,0) AS moderation_hidden,
             CASE
               WHEN moment.sender_participant_id = change.participant_id
                 THEN moment.unreceived_expires_at
@@ -1510,6 +1553,7 @@ export async function getMomentChanges(
             END AS delivery_state
        FROM moment_changes AS change
        JOIN moments AS moment ON moment.id = change.moment_id
+       LEFT JOIN moderation_moment_states AS moderation ON moderation.moment_id=moment.id
        LEFT JOIN moment_deliveries AS delivery
          ON delivery.moment_id = moment.id
         AND delivery.recipient_participant_id = change.participant_id
@@ -1541,6 +1585,8 @@ export async function getMomentChanges(
         committedAt: row.committed_at,
         accessExpiresAt: row.access_expires_at,
         deliveryState: row.delivery_state,
+        moderationRevision: row.moderation_revision,
+        moderationHidden: row.moderation_hidden === 1,
       },
     };
   });
@@ -1554,6 +1600,8 @@ export async function getMomentChanges(
 
 interface DownloadAuthorizationRow extends MomentRow {
   recipient_authorized: number;
+  moderation_revision: number;
+  moderation_hidden: number;
 }
 
 export async function downloadMomentCiphertext(
@@ -1570,20 +1618,22 @@ export async function downloadMomentCiphertext(
     return consumeAndThrow(env, member, error);
   }
   const context = await momentContext(env, member);
-  const row = await env.DB.prepare(
+  const authorization = env.DB.prepare(
     `SELECT moment.id, moment.client_moment_id, moment.space_id,
             moment.sender_participant_id, moment.sender_device_id,
             moment.kind, moment.key_epoch, moment.state, moment.object_key,
             moment.ciphertext_size, moment.ciphertext_sha256,
             moment.created_at, moment.upload_expires_at, moment.uploaded_at,
             moment.committed_at, moment.unreceived_expires_at, moment.closed_at,
+            COALESCE(moderation.revision,0) AS moderation_revision,
+            COALESCE(moderation.hidden,0) AS moderation_hidden,
             CASE WHEN EXISTS (
               SELECT 1
                 FROM moment_deliveries AS delivery
                WHERE delivery.moment_id = moment.id
                  AND delivery.recipient_participant_id = ?
                  AND delivery.state IN ('pending', 'acknowledged')
-                 AND delivery.access_expires_at > ?
+                 AND delivery.access_expires_at > unixepoch()
                  AND NOT EXISTS (
                    SELECT 1 FROM moment_blocks AS block
                     WHERE block.space_id = moment.space_id AND block.state = 'active'
@@ -1597,15 +1647,19 @@ export async function downloadMomentCiphertext(
                  )
             ) THEN 1 ELSE 0 END AS recipient_authorized
        FROM moments AS moment
-      WHERE moment.id = ? AND moment.space_id = ?`,
+       LEFT JOIN moderation_moment_states AS moderation ON moderation.moment_id=moment.id
+      WHERE moment.id = ? AND moment.space_id = ?
+        AND moment.closed_at IS NULL AND moment.unreceived_expires_at>unixepoch()
+        AND NOT EXISTS(SELECT 1 FROM moment_object_deletions d
+          WHERE d.object_key=moment.object_key OR (d.object_type='moment' AND d.owner_id=moment.id))`,
   ).bind(
     context.participant_id,
-    member.now,
     context.participant_id,
     context.participant_id,
     momentID,
     member.spaceId,
-  ).first<DownloadAuthorizationRow>();
+  );
+  const row = await authorization.first<DownloadAuthorizationRow>();
   if (
     row === null || row.state !== "committed"
     || (row.sender_participant_id !== context.participant_id && row.recipient_authorized !== 1)
@@ -1616,9 +1670,29 @@ export async function downloadMomentCiphertext(
       new ApiError(404, "moment_not_found", "The moment was not found."),
     );
   }
+  if (row.moderation_hidden === 1) {
+    return consumeAndThrow(env, member,
+      new ApiError(404, "moment_moderation_hidden", "This shared photo is temporarily unavailable."));
+  }
 
   await consumeNonceAndTouch(env, member);
   const object = await bucket.get(row.object_key);
+  // R2 awaits are outside D1 transactions. Recheck both audience and the exact
+  // effective revision before publishing bytes; a release cannot revive a
+  // withdrawn delivery or authorize a response fetched under an older state.
+  await momentContext(env, member);
+  const current = await authorization.first<DownloadAuthorizationRow>();
+  if (current === null || current.state !== 'committed'
+    || (current.sender_participant_id !== context.participant_id && current.recipient_authorized !== 1)) {
+    throw new ApiError(404, "moment_not_found", "The moment was not found.");
+  }
+  if (current.moderation_hidden === 1) {
+    throw new ApiError(404, "moment_moderation_hidden", "This shared photo is temporarily unavailable.");
+  }
+  if (current.moderation_revision !== row.moderation_revision || current.object_key !== row.object_key
+    || current.ciphertext_sha256 !== row.ciphertext_sha256 || current.key_epoch !== row.key_epoch) {
+    throw new ApiError(409, "moment_state_changed", "The shared photo changed; refresh its state.");
+  }
   if (
     object === null || object.size !== row.ciphertext_size
     || r2Checksum(object) !== row.ciphertext_sha256
@@ -1706,6 +1780,11 @@ export async function acknowledgeMoment(
     );
   }
   const acknowledgedAt = delivery.acknowledged_at ?? member.now;
+  if (await env.DB.prepare(`SELECT 1 FROM moderation_moment_states WHERE moment_id=? AND hidden=1`)
+    .bind(momentID).first() !== null) {
+    return consumeAndThrow(env, member,
+      new ApiError(404, 'moment_moderation_hidden', 'This shared photo is temporarily unavailable.'));
+  }
   const shouldNotifySender = delivery.state === "pending";
   const accessExpiresAt = Math.min(
     delivery.access_expires_at,
@@ -1795,6 +1874,7 @@ export async function acknowledgeMoment(
                WHERE existing.participant_id = moment.sender_participant_id
                  AND existing.change_type = 'moment_committed'
                  AND existing.moment_id = moment.id
+                 AND existing.moderation_event_id IS NULL
             )`,
       ).bind(
         momentID,
@@ -1824,6 +1904,15 @@ export async function acknowledgeMoment(
     );
     if (raced !== null) return raced;
     await consumeNonce(env, member);
+    // The SQL guard can observe a hide after the HTTP preflight. Preserve the
+    // dedicated signal so clients hide the already-downloaded copy and advance
+    // their change cursor without treating this as a successful ACK.
+    if (await env.DB.prepare(`SELECT 1 FROM moderation_moment_states moderation
+      JOIN moments m ON m.id=moderation.moment_id JOIN moment_deliveries d ON d.moment_id=m.id
+      WHERE m.id=? AND m.space_id=? AND d.recipient_participant_id=? AND moderation.hidden=1`)
+      .bind(momentID,member.spaceId,context.participant_id).first() !== null) {
+      throw new ApiError(404, 'moment_moderation_hidden', 'This shared photo is temporarily unavailable.');
+    }
     throw new ApiError(409, "acknowledgement_conflict", "The delivery could not be acknowledged.");
   }
   return jsonResponse(responseBody);
