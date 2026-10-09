@@ -40,3 +40,11 @@ cover検査は厳密な期限と非表示の両条件を要求し、境界のSwi
 焦点診断、最終CI、main統合、配布の実結果は同じ外部証拠フォルダーへ保存する。アップロード成功はApple処理完了・端末更新と区別する。
 
 詳細のローカル証拠: `C:/dev/neko-evidence/launch-readiness-20261009/moderation-resolution/`。
+
+## 追加の失敗と必要範囲の再検証
+
+訂正候補 `2c5474d97172742fd8d188f5b1715180ee16eba1` のrun37954929706は36分15秒で失敗。両OS runtimeとUI11件は実成功した。Buildは隔離Swift fixtureのコンパイル120秒timeoutで停止し、fixtureに不足していたmoderation state依存を `269c8fe` で訂正した。Windowsのfixture生成は成功したが、Macのコンパイル成功はまだ必要。Photosは権限許可後にscan画面が続き、XCTestのsnapshot取得がtimeoutした。録画、6件fetchと2世代の診断、独立したstartup/lock読取を残し、原因は未確定とする。
+
+PR223で完全Build＋完全Photosだけを実行する固定証拠経路をmainへ先行反映した。今回のfixtureだけの訂正と承認control以外の入力が不変なので、直前候補のruntime/UI実成功を保持する。原5backendの入力閉包・実成功・新鮮さも再照合し、Build/Photos失敗やskipを成功扱いしない。Photosの新成功には権限の実XCTestと最終scanの成功markerの両方が必要。
+
+当初180分は超過している。最初の21:50:53 JSTから累計を保持し、次の並行Build30分/Photos40分上限＋既存upload約12〜13分を計画参照とする。timeoutは成功実測や完了保証ではない。Galleryは未実行、248はまだ未配布。
