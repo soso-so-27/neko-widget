@@ -542,6 +542,17 @@ MODERATION_AI_DURABLE_BLOBS = {
         "0" * 40, "f08fd4cafbf3f34aab9dba50ec12e5f5559d0e2a"),
 }
 MODERATION_AI_DURABLE_PATHS = frozenset(MODERATION_AI_DURABLE_BLOBS)
+# Same durable product, with its three exact migration-inventory corrections.
+# Keep the original A/A/A shape independently valid; no general fixture allowance.
+MODERATION_AI_DURABLE_FIXTURE_BLOBS = {
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": (
+        "466de8793aab23a7a65d9afb77374b3a2a7c035a", "df97e0531fef9de6e0e8876909700fae1b081f6f"),
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": (
+        "72149f40b2e4fd4d54ad8ed67cd14342cd446853", "5db483e71e8b05b652edff3c609939c70a90245e"),
+    "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs": (
+        "a1e33b50597bc0aab5b6b46dece8fa0f70b5ef54", "5cabdaee5ba4fd7bbb36528026931c11321f2a5f"),
+}
+MODERATION_AI_DURABLE_CORRECTION_PATHS = MODERATION_AI_DURABLE_PATHS | frozenset(MODERATION_AI_DURABLE_FIXTURE_BLOBS)
 MODERATION_AI_DURABLE_WORKFLOW = ".github/workflows/sharing-service.yml"
 MODERATION_AI_DURABLE_WORKFLOW_BLOBS = {
     MODERATION_AI_DURABLE_WORKFLOW: "8038107503651173741b1502aa3e836a2cb2790a",
@@ -971,8 +982,8 @@ def moderation_enrollment_requirements(head):
 
 def moderation_ai_durable_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
-            and source_paths(paths) == MODERATION_AI_DURABLE_PATHS
-            and all(path in MODERATION_AI_DURABLE_PATHS or is_handoff(path) for path in paths))
+            and source_paths(paths) in (MODERATION_AI_DURABLE_PATHS, MODERATION_AI_DURABLE_CORRECTION_PATHS)
+            and all(path in MODERATION_AI_DURABLE_CORRECTION_PATHS or is_handoff(path) for path in paths))
 
 
 def moderation_ai_durable_backend_only(paths, base, head):
@@ -992,7 +1003,17 @@ def moderation_ai_durable_backend_only(paths, base, head):
                 or any(git("ls-tree", revision, "--", path)
                        != f"100644 blob {blob}\t{path}" for revision in (base, head))):
             return False
-    return reviewed_hub_only(paths, base, head, product_blobs=MODERATION_AI_DURABLE_BLOBS,
+    product_blobs = MODERATION_AI_DURABLE_BLOBS
+    if source_paths(paths) == MODERATION_AI_DURABLE_CORRECTION_PATHS:
+        if (set(MODERATION_AI_DURABLE_FIXTURE_BLOBS) != {
+                "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs",
+                "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs",
+                "NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs"}
+                or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                           and pair[0] != pair[1] for pair in MODERATION_AI_DURABLE_FIXTURE_BLOBS.values())):
+            return False
+        product_blobs = product_blobs | MODERATION_AI_DURABLE_FIXTURE_BLOBS
+    return reviewed_hub_only(paths, base, head, product_blobs=product_blobs,
                              companion_paths=frozenset(), companion_digests={},
                              companion_name="MODERATION_AI_DURABLE_COMPANION_DIGESTS")
 
