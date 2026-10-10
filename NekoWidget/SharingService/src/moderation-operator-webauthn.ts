@@ -242,8 +242,11 @@ class StrictClientDataParser {
       while (true) {
         const key = this.string();
         if (fields.has(key)) fail();
+        // Chromium deliberately adds this inert ClientData string on some
+        // responses. Ignore it for policy, but retain the original bytes for
+        // attestation/assertion signature verification and duplicate checking.
         if (key !== "type" && key !== "challenge" && key !== "origin"
-            && key !== "crossOrigin") fail();
+            && key !== "crossOrigin" && key !== "other_keys_can_be_added_here") fail();
         this.whitespace();
         this.character(":");
         this.whitespace();
@@ -252,7 +255,9 @@ class StrictClientDataParser {
           this.index += 5;
           fields.set(key, false);
         } else {
-          fields.set(key, this.string());
+          const value = this.string();
+          if (key === "other_keys_can_be_added_here" && value.length > 512) fail();
+          fields.set(key, value);
         }
         this.whitespace();
         if (this.peek() === "}") break;

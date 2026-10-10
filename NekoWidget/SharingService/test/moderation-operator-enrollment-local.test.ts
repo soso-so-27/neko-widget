@@ -77,6 +77,44 @@ describe("local authenticated initial enrollment route", () => {
     expect(await status.json()).toMatchObject({status:"admitted",receipt});
   });
 
+  it("verifies Chromium ClientData GREASE through signed registration, possession and admission", async () => {
+    const t = await authenticated();
+    const extra = ',"other_keys_can_be_added_here":"do not compare clientDataJSON against a template. See https://goo.gl/yabPex"';
+    const first = await t.route("/start");
+    const challenge = await first.json() as {ceremonyID:string;challenge:string};
+    const registration = await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(await t.f.key.response(challenge.challenge,true,7,false,"packed",extra)));
+    expect(registration.status).toBe(202);
+    const next = await registration.json() as {challenge:string};
+    const possession = await t.route(`/ceremonies/${challenge.ceremonyID}/possession`,JSON.stringify(await t.f.key.response(next.challenge,false,8,false,"packed",extra)));
+    expect(possession.status).toBe(202);
+    const request = await possession.json() as LocalInitialEnrollmentRequest;
+    const admitted = await t.route(`/requests/${request.requestID}/admit`,JSON.stringify(await t.approvalPackage(request)));
+    expect(admitted.status).toBe(200);
+    expect(await count("moderation_operator_enrollment_admissions")).toBe(1);
+  });
+
+  it("rejects malformed GREASE, duplicate security fields and tampering of signed ClientData", async () => {
+    const t = await authenticated();
+    const prefix = ',"other_keys_can_be_added_here":';
+    const cases = [prefix+'true',prefix+'{}',prefix+'[]',prefix+JSON.stringify('x'.repeat(513)),
+      prefix+'"ok","other_keys_can_be_added_\\u0068ere":"ok"',
+      prefix+'"ok","or\\u0069gin":'+JSON.stringify(origin)];
+    for (const extra of cases) {
+      const first = await t.route("/start");
+      const challenge = await first.json() as {ceremonyID:string;challenge:string};
+      const result = await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(await t.f.key.response(challenge.challenge,true,7,false,"packed",extra)));
+      expect(result.status).toBe(409);
+    }
+    const first = await t.route("/start");
+    const challenge = await first.json() as {ceremonyID:string;challenge:string};
+    const response = await t.f.key.response(challenge.challenge,true,7,false,"packed",prefix+'"before"');
+    const client = new TextDecoder().decode(base64urlDecode(response.response.clientDataJSON));
+    response.response.clientDataJSON = b64(encoder.encode(client.replace('"before"','"after"')));
+    expect((await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(response))).status).toBe(409);
+    expect(await count("moderation_operator_enrollment_ceremony_registrations")).toBe(0);
+    expect(await count("moderation_operator_enrollment_admissions")).toBe(0);
+  });
+
   it("recovers the same committed request and admission without repeating either write", async () => {
     const t = await authenticated(); const ignoredResponse = await t.prepare();
     const status = await t.route(`/ceremonies/${ignoredResponse.ceremonyID}/status`);
