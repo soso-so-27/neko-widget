@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "mode": "local",
+  "origin": "REQUIRED_HTTPS_ACCESS_ORIGIN",
+  "rpId": "REQUIRED_EXACT_ORIGIN_HOSTNAME",
+  "port": 4317,
+  "runtimeDirectory": "C:/dev/neko-operator-local/runtime",
+  "access": {
+    "issuer": "REQUIRED_ACCESS_ISSUER",
+    "audience": "REQUIRED_ACCESS_APPLICATION_AUDIENCE",
+    "subjectHmacKeyFile": "C:/dev/neko-operator-local/private/subject-hmac.bin",
+    "subjectHmacKeyVersion": 1
+  },
+  "enrollment": {
+    "operatorID": "REQUIRED_REVIEWED_OPERATOR_UUID",
+    "scope": {
+      "accountID": "REQUIRED_REVIEWED_ACCOUNT_ID",
+      "databaseID": "REQUIRED_ISOLATED_LOCAL_DATABASE_UUID",
+      "serviceIdentity": "neko-operator-local",
+      "accessIssuer": "REQUIRED_ACCESS_ISSUER",
+      "accessAudience": "REQUIRED_ACCESS_APPLICATION_AUDIENCE",
+      "expectedOrigin": "REQUIRED_HTTPS_ACCESS_ORIGIN",
+      "expectedRPID": "REQUIRED_EXACT_ORIGIN_HOSTNAME"
+    },
+    "activeRoles": ["triage"],
+    "authorities": []
+  }
+}
