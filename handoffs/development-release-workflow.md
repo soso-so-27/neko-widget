@@ -24,6 +24,8 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 ## CIの対象選択・監視・失敗対応
 
+- `moderation-initial-admission-v1` はlocal専用の初回登録writer・認証済みhost・console、0034 migration、専用fixture/test、既存migration inventoryの固定10製品ファイルだけ。完全before/after blob・7A/3M・100644、Sharing/Preservation workflowと既存canonical/ceremony/0033・認証/暗号・公開/disabled入口・依存設定・iOS workflowを両端blob/modeで固定し、通常handoff A/Mだけを許す。未知・欠落・重複・部分差分・mode/type変更・削除・制御混在はfullへ戻す。独立した制御を先にmainへ反映し、製品へ承認済みmainを取り込んでorigin/main祖先・実HEAD・凍結製品blobを照合してからpushする。iOS planに加え、候補同SHA owning pushの既存Sharing4jobとPreservationの `Validate preservation identity and storage` の実行成功が必要。既存workflow本文・migration/privacy/署名/typecheck/D1/bundle検査は変更しない。全native flagはfalse、laneは空、`--include-upload` とiOS release証拠は拒否する。旧SHA・plan・skipをbackend成功の代用にする例外は追加しない。新scopeは未計測で初回5jobの `--measure-baseline` のみ、timeoutや旧scope所要時間は今回の実測と呼ばない。失敗/稼働中と初回候補からの累計時間を保持する。合成crypto/D1/画面確認と実Access・実認証器・live grantを区別し、本番migration・権限開放・配布の証拠にはしない。
+
 - 同一SHAのrecovery refを作成できてもpush CIが起動しなかった場合、そのref・未起動記録を残す。`--recover-run <ID> --refresh-recovery` は、第一親が元候補、第二親がmain承認済みの実mergeだけを許可する。全raw差分はpreflight・対応テスト・本手順・固定recovery handoffの4パスに限定し、正常modeと第二親の完全一致を確認する。既存refが元SHAのまま・replacement履歴0件・元run全attempt job0を再確認し、元SHAをexpected値とするleaseで同じrefを一度だけFF更新する。空commit、別branch、未知結果の再送は行わない。元の履歴・累計を保持し、新SHAのowning pushと必須job成功を確認してから通常配布へ進む。制御変更以外の製品/選択器/workflow/署名・配布入力の差分は拒否する。
 
 - GitHub内部障害で候補pushが60分以上queuedのまま、全attemptのjobが0、attempt 1、作成後の更新もない場合は、main承認済みのcleanなpreflightから `--checkout <候補checkout> --recover-run <元run ID>` で再開を計画できる。候補・元run・repo・workflow・branchの同一性と、候補が使用する選択器/manifest/workflowとツール側の完全一致を確認する。元runの成功は再利用しない。元のcandidate/diagnostic履歴・失敗・累積時間を保持し、そのrunのactive判定だけを除外する。他の稼働中/未解決失敗は止める。
