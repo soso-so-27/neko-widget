@@ -10,10 +10,15 @@
 
 # 現在のタスクと優先順位
 
+## 2026-10-10 運営者初回登録の画面と最終確定
+
+- local専用の認証付きhandlerと登録画面を追加し、永続登録/所有確認から2つの承認署名、最終transactionのadmission/session確定、通信切断後の同じ申込の読取回収へ接続。失敗した仮登録鍵による再開停止、body timeoutのEOF競合、期限後の登録記録回収を独立レビューで修正した。
+- [実装・検査・本線反映と残件](2026-10-10-local-operator-admission.md)。合成D1の実暗号検査と合成ブラウザ表示を区別。実Access/本人認証器/実offline鍵とhost接続は未観測、role/identity/authorityの自動作成はしない。既存backend CIへ進め、アプリ248の入力・本人の写真/メモ/書出し成功を保持する。live公開・新料金・gate/期限/保管pilotは変更しない。
+
 ## 2026-10-10 運営者初回登録の永続検証
 
 - 初回challenge・登録attempt・同じ鍵の所有確認を別の永続phaseへ接続。元registration counterを保ち、成功した所有確認だけを共通counter viewへ反映する。固定scope/authority集合に結ぶcanonical requestと2つの実Ed25519署名を検証しても、未承認として返す。
-- [実装契約・検証・残る接続](2026-10-10-operator-enrollment-local.md)。実Access/認証器、登録画面、actual approval時刻を使う最終admission writerは未完。権限・公開・クラウド・アプリ配布の変更は行っていない。ローカル検査と厳密なbackend CI選択を進める。
+- [実装契約・検証・残る接続](2026-10-10-operator-enrollment-local.md)。PR226で本線反映済み。登録画面とactual approval時刻を使う最終writerは上記の後続候補へ接続。実Access/認証器の互換性とlive接続は未確認。権限・公開・クラウド・アプリ配布の変更は行っていない。
 
 ## 2026-10-09 通報確認のローカル画面
 
