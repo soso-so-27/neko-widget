@@ -776,6 +776,99 @@ MODERATION_OPERATOR_HOST_JOB_TIMEOUTS = {'Select backend checks': 5, 'Typecheck,
 MODERATION_OPERATOR_HOST_JOBS = tuple(MODERATION_OPERATOR_HOST_JOB_TIMEOUTS)
 
 
+# Exact trusted local composition. Loopback listener only; no live grants or native input changes.
+MODERATION_OPERATOR_STARTUP_SCOPE = "moderation-operator-startup-v1"
+MODERATION_OPERATOR_STARTUP_BLOBS = {'NekoWidget/SharingService/scripts/moderation-operator-local-server.mjs': ('0000000000000000000000000000000000000000',
+                                                                            'b553242b87a8d840b3e9b0fe275b1537dd7b1db8'),
+ 'NekoWidget/SharingService/scripts/moderation-operator-local-start.mjs': ('0000000000000000000000000000000000000000',
+                                                                           'b449060cd19dc7be16ef9203dc8a2c88d0674bea'),
+ 'NekoWidget/SharingService/test/moderation-operator-local-start.node-tests.mjs': ('0000000000000000000000000000000000000000',
+                                                                                   'c7e997772edc944ae13f34c3337e745179260b5d'),
+ 'NekoWidget/SharingService/operator.connection.example.json': ('0000000000000000000000000000000000000000',
+                                                                '098d2497875fe5838d7b9636460f90365284445f'),
+ 'NekoWidget/SharingService/package.json': ('acba8c0d598a0ae9ba32e9169fc9ec49dac74ee6',
+                                            '70ca9cd70dd73c3c62446a939158553ec2f52cbb')}
+MODERATION_OPERATOR_STARTUP_MODIFIED_PATHS = frozenset(("NekoWidget/SharingService/package.json",))
+MODERATION_OPERATOR_STARTUP_PATHS = frozenset(MODERATION_OPERATOR_STARTUP_BLOBS)
+MODERATION_OPERATOR_STARTUP_WORKFLOW = '.github/workflows/sharing-service.yml'
+MODERATION_OPERATOR_STARTUP_WORKFLOW_BLOBS = {'.github/workflows/sharing-service.yml': '8038107503651173741b1502aa3e836a2cb2790a',
+ '.github/workflows/preservation-service.yml': '8bef1a5e40cd3cb1da4c6780e369530bfb77ce99'}
+MODERATION_OPERATOR_STARTUP_INPUT_BLOBS = {'NekoWidget/SharingService/src/index.ts': '6ef6f77789f9cf4e93ba341c1a405b51e33a8c48',
+ 'NekoWidget/SharingService/src/moderation-operator-worker.ts': '6e72b99b16a093f7f83b0d13fe50e6e7ad57b7ec',
+ 'NekoWidget/SharingService/wrangler.jsonc': '66333343d7aeb71bb64c1de76ba5205d82989f25',
+ 'NekoWidget/SharingService/wrangler.moderation-operator.disabled.jsonc': 'da7c48551cd1db4f90033ac01d6285cd135a5b2e',
+ 'NekoWidget/SharingService/package-lock.json': '33b3fad11913776e790374c165bea00ce938232f',
+ 'NekoWidget/SharingService/vitest.config.ts': '4f676f517cb2481e5ad6cc076457e18dd9180a9a',
+ 'NekoWidget/SharingService/test/setup.ts': '9d7bef258a554d026d8253159997bd3e154415b2',
+ 'NekoWidget/SharingService/src/moderation-operator-auth.ts': '64946255c70caeef181699b51e12c8bb4c0c2970',
+ 'NekoWidget/SharingService/src/moderation-operator-webauthn.ts': '33b4201b20fb7077815e3dbe6b2aac23f5ee1aee',
+ 'NekoWidget/SharingService/src/moderation-operator-identity.ts': '8f18c5a99be3218182d743ceee14b627456105cc',
+ 'NekoWidget/SharingService/src/protocol.ts': '8cf4b0e1dec321700e2d04a967382c487698ed63',
+ 'NekoWidget/SharingService/src/encoding.ts': '80953281b1d4823bcca2728b2490d4083f69f700',
+ 'NekoWidget/SharingService/src/moderation-operator-triage-local.ts': '4417406391bed3a7be308ebf275a2191b53c7fee',
+ 'NekoWidget/SharingService/src/moderation-owner-local.ts': '4fa477e34b456d5a26e4713df0f4e13a55495080',
+ 'NekoWidget/SharingService/src/moderation-resolution-local.ts': 'dc8f9086b588f6ed5b4a1d68126028056ed63b47',
+ 'NekoWidget/SharingService/migrations/0013_moderation_operator_control_plane.sql': '18001937269dc39abcb6e123dc227e686927c10d',
+ 'NekoWidget/SharingService/migrations/0014_moderation_evidence_ledger.sql': 'e68eec69b1e91a40352f0c849d40b02ab8ff9add',
+ 'NekoWidget/SharingService/migrations/0015_moderation_operator_routes.sql': 'e25d6e6078e5fba09fa629badb13ee2e5b52fccd',
+ 'NekoWidget/SharingService/migrations/0016_moderation_operator_access_audit.sql': 'a99ff8f96b252a10b2926495c710fef3f2231af5',
+ 'NekoWidget/SharingService/migrations/0017_moderation_operator_enrollment_trust.sql': 'a508ca77ec3e23ee0981d7f8f56780444d2ec187',
+ 'NekoWidget/SharingService/migrations/0018_moderation_operator_case_reference_binding.sql': '662edd000130325944440352a44e48702f6596ec',
+ 'NekoWidget/SharingService/migrations/0031_moderation_owner_flow.sql': 'dca28e3506c7cbfb0347961370b73804da2fcbf9',
+ 'NekoWidget/SharingService/migrations/0032_moderation_resolution.sql': '37221fcee436a87b38d9858afb1c4442b98f9778',
+ 'NekoWidget/SharingService/src/moderation-operator-enrollment-canonical.ts': '6b15b83bc9f3997780b39dbb3e4204ca133ebd01',
+ 'NekoWidget/SharingService/src/moderation-operator-enrollment-ceremony.ts': '4f80fe4163a01765bc304ecb85635f9c831cceed',
+ 'NekoWidget/SharingService/migrations/0033_moderation_operator_enrollment_ceremony.sql': '2875f9be59bf09fd24a53f1b7572f526cae4ff95',
+ 'NekoWidget/SharingService/src/errors.ts': 'c025117cbf485e0d1e95527424c3da410b24e401',
+ 'NekoWidget/SharingService/tsconfig.json': 'ab510c638c6958e701dc96485d11241f3026fa11',
+ '.github/workflows/ios-build.yml': '5e8de065dc2c11a0085d9c04cf5e2462f3a98f90',
+ 'NekoWidget/SharingService/migrations/0001_pairing.sql': 'fbe7d136f73f80c66af54662348046902bd939d7',
+ 'NekoWidget/SharingService/migrations/0002_daily_sharing.sql': 'f84795b33b11fa3c4286354071bbfc0ce9114b5e',
+ 'NekoWidget/SharingService/migrations/0003_append_only_moments.sql': '751f131b511cdd5dab52bada39cebee4c4e714e9',
+ 'NekoWidget/SharingService/migrations/0004_encrypted_window_name.sql': 'a5435ac2a7ef22ca19f1185b47b900e1aaed8edc',
+ 'NekoWidget/SharingService/migrations/0005_device_recovery.sql': 'fc376fb5e9ca5bcb567460ea1880c92ec3d41ba1',
+ 'NekoWidget/SharingService/migrations/0006_paw_reactions.sql': '839c44d0d64248f0378078f3742cc780d2572cf7',
+ 'NekoWidget/SharingService/migrations/0007_apns_notifications.sql': 'f88a7ad3d13cbd2e7a0543917500d184cee1db27',
+ 'NekoWidget/SharingService/migrations/0008_additional_participant_devices.sql': '32085ba3dc97a7fa27593caf71896bba77aafeb7',
+ 'NekoWidget/SharingService/migrations/0009_multi_window_apns_tokens.sql': '264a2287ba8f5d2954f7ee52120da6cb3c0fbc06',
+ 'NekoWidget/SharingService/migrations/0010_multi_device_shared_data.sql': '7db722febe3b52b85412e53d383d0eb36891c1bf',
+ 'NekoWidget/SharingService/migrations/0011_apns_route_schema.sql': '09e332235d3be0b4840dcee010088c797fc2e215',
+ 'NekoWidget/SharingService/migrations/0012_moderation_case_lifecycle.sql': '8ead7ad4aa37849ce85c7bd0eaf73bc777fa0f1f',
+ 'NekoWidget/SharingService/migrations/0019_billing_foundation.sql': '48ce17c2b4effaf7620a4dbda44ab6f91d98588c',
+ 'NekoWidget/SharingService/migrations/0020_billing_apple_authority.sql': '692fd7c6e58f0eb1b3d45834329673525e5c5a12',
+ 'NekoWidget/SharingService/migrations/0021_billing_effective_entitlement.sql': 'bc6e6d6c22857f356163a3f481e3b7f94dce9ef8',
+ 'NekoWidget/SharingService/migrations/0022_billing_account_recovery.sql': 'be6911a2dce75a81d1800bf2c4d4474ca4f7aa15',
+ 'NekoWidget/SharingService/migrations/0023_billing_window_sponsorship.sql': 'bfadfc19dc2368566829d9cd9bab312b90bd7b97',
+ 'NekoWidget/SharingService/migrations/0024_billing_window_owner_detach.sql': '393678c2860b3290b75968ce3c6912c522777f52',
+ 'NekoWidget/SharingService/migrations/0025_billing_apple_notification_history_recovery.sql': '98335a66c152f37759a7a216f030408a15e04c1b',
+ 'NekoWidget/SharingService/migrations/0026_moment_block_withdrawals.sql': 'a23efa2246b4fab8745f774aae376a24dc410406',
+ 'NekoWidget/SharingService/migrations/0027_family_records.sql': '4af3b9182ae24586f84a2f49b494e9cf27e812fe',
+ 'NekoWidget/SharingService/migrations/0028_window_support_requests.sql': '1bf3c2a020fc19e354086d343bd8aba5742ef2da',
+ 'NekoWidget/SharingService/migrations/0029_family_record_moments.sql': '31b1faa8b53f4a2cfd2a01f9814fde5236f911ea',
+ 'NekoWidget/SharingService/migrations/0030_moderation_advisory_jobs.sql': '9eccf8ef17e074b90505126ff25c49c2afeeff31',
+ 'NekoWidget/SharingService/migrations/0034_moderation_operator_initial_admission.sql': '51e880ae41cee87576717fc5de83de798f9d5857',
+ 'NekoWidget/SharingService/src/moderation-ai-advisory.ts': '24fa1a5a75c98db6c118858b0cb1d17de6e1a423',
+ 'NekoWidget/SharingService/src/moderation-ai-durable.ts': '971be7198af22e4aa9bfc6f1fbe3f0d820a4234e',
+ 'NekoWidget/SharingService/src/moderation-ai-transport.ts': '918e792f003f4059d9b9eca203ae3f5d7d44f8f4',
+ 'NekoWidget/SharingService/src/moderation-early-deletion-plan.ts': 'a1d94376f11c02f3085bf1b4e0af3f76433def21',
+ 'NekoWidget/SharingService/src/moderation-evidence-export.ts': 'baea9219c50f1d857f09a8771110e09a5086b8c1',
+ 'NekoWidget/SharingService/src/moderation-operator-case-reference.ts': '24201118902d513b7ecf4706a9367d00716f4d29',
+ 'NekoWidget/SharingService/src/moderation-operator-console.ts': '0943d4d7cbe8613429570c49d4646df4282aa4c2',
+ 'NekoWidget/SharingService/src/moderation-operator-enrollment-admission.ts': '3e6a493171cbace3644a07193899a4c43f4a6106',
+ 'NekoWidget/SharingService/src/moderation-operator-enrollment-console.ts': '6863550c050009531a770cea47e930655c53d301',
+ 'NekoWidget/SharingService/src/moderation-operator-enrollment-local.ts': '4e84b94dcd619fe41101790cfda295151e3793de',
+ 'NekoWidget/SharingService/src/moderation-operator-host-local.ts': 'dcdaefbf73b81a7240c4c5e93f11c17dc4d8508f',
+ 'NekoWidget/SharingService/src/moderation-operator-protocol.ts': '23810be64f9906cbc20c4f058c78820e14a65928',
+ 'NekoWidget/SharingService/src/moderation-operator-request.ts': 'ef9f4df26f590a46477207e38f6854169f2d5ac8',
+ 'NekoWidget/SharingService/src/moderation-owner-browser.ts': '596c2f10c47a9f6b797feeedab1e2e051f302977',
+ 'NekoWidget/SharingService/src/moderation-owner-console.ts': 'ed14463d049c71a71eaf7d24d9022011e25cb89d',
+ 'NekoWidget/SharingService/src/moderation-review-binding.ts': 'acd1267768536f395894c3c40bad71f571bebe66',
+ 'NekoWidget/SharingService/src/moderation-review-source.ts': '96fff2fdbc641f79089f7b6e35a007ad9c5b3192'}
+MODERATION_OPERATOR_STARTUP_INPUT_PATHS = frozenset(MODERATION_OPERATOR_STARTUP_INPUT_BLOBS)
+MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS = {'Select backend checks': 5, 'Typecheck, test, and build Apple transaction verifier': 10, 'Windows moderation key, drill, and report policy fixtures': 10, 'Typecheck, test, and bundle Worker': 20}
+MODERATION_OPERATOR_STARTUP_JOBS = tuple(MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS)
+
+
 # Exact local owner read/no_action decision/reply, migration and owning checks.
 # Complete18-path product pin; public/disabled entrypoints and crypto stay fixed.
 MODERATION_OWNER_FLOW_SCOPE = "moderation-owner-flow-v1"
@@ -1553,6 +1646,38 @@ def moderation_initial_admission_requirements(head):
             for job in MODERATION_INITIAL_ADMISSION_JOBS]
 
 
+def moderation_operator_startup_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_OPERATOR_STARTUP_PATHS
+            and all(path in MODERATION_OPERATOR_STARTUP_PATHS or is_handoff(path) for path in paths))
+
+def moderation_operator_startup_backend_only(paths, base, head):
+    if (not moderation_operator_startup_paths_only(paths)
+            or set(MODERATION_OPERATOR_STARTUP_BLOBS) != MODERATION_OPERATOR_STARTUP_PATHS
+            or not all(len(pair) == 2 and SHA.fullmatch(pair[0]) and pair[0] != pair[1]
+                       and (pair[0] != "0" * 40) == (path in MODERATION_OPERATOR_STARTUP_MODIFIED_PATHS)
+                       and SHA.fullmatch(pair[1]) and pair[1] != "0" * 40
+                       for path, pair in MODERATION_OPERATOR_STARTUP_BLOBS.items())
+            or set(MODERATION_OPERATOR_STARTUP_WORKFLOW_BLOBS) != {MODERATION_OPERATOR_STARTUP_WORKFLOW, PRESERVATION_WORKFLOW}
+            or set(MODERATION_OPERATOR_STARTUP_INPUT_BLOBS) != MODERATION_OPERATOR_STARTUP_INPUT_PATHS):
+        return False
+    for workflow, blob in (MODERATION_OPERATOR_STARTUP_WORKFLOW_BLOBS | MODERATION_OPERATOR_STARTUP_INPUT_BLOBS).items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", workflow)
+                       != f"100644 blob {blob}\t{workflow}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=MODERATION_OPERATOR_STARTUP_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="MODERATION_OPERATOR_STARTUP_COMPANION_DIGESTS")
+
+def moderation_operator_startup_requirements(head):
+    # Four owning Sharing jobs; unchanged Preservation inputs retain prior evidence.
+    # Every owning push must succeed at this SHA; a plan is not proof.
+    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_OPERATOR_STARTUP_WORKFLOW,
+             "job": job, "head_sha": head, "event": "push", "success_required": True}
+            for job in MODERATION_OPERATOR_STARTUP_JOBS]
+
+
 def moderation_operator_host_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == MODERATION_OPERATOR_HOST_PATHS
@@ -1978,6 +2103,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return MODERATION_ENROLLMENT_CEREMONY_JOBS
     if runtime_scope == MODERATION_INITIAL_ADMISSION_SCOPE and moderation_initial_admission_paths_only(paths):
         return MODERATION_INITIAL_ADMISSION_JOBS
+    if runtime_scope == MODERATION_OPERATOR_STARTUP_SCOPE and moderation_operator_startup_paths_only(paths):
+        return MODERATION_OPERATOR_STARTUP_JOBS
     if runtime_scope == MODERATION_OPERATOR_HOST_SCOPE and moderation_operator_host_paths_only(paths):
         return MODERATION_OPERATOR_HOST_JOBS
     if runtime_scope == MODERATION_OWNER_FLOW_SCOPE and moderation_owner_flow_paths_only(paths):
@@ -2480,6 +2607,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         return FULL_SCOPE
     for selected, matches, verify in ((MODERATION_ENROLLMENT_CEREMONY_SCOPE, moderation_enrollment_ceremony_paths_only, moderation_enrollment_ceremony_backend_only),
                                        (MODERATION_INITIAL_ADMISSION_SCOPE, moderation_initial_admission_paths_only, moderation_initial_admission_backend_only),
+                                       (MODERATION_OPERATOR_STARTUP_SCOPE, moderation_operator_startup_paths_only, moderation_operator_startup_backend_only),
                                        (MODERATION_OPERATOR_HOST_SCOPE, moderation_operator_host_paths_only, moderation_operator_host_backend_only),
                                        (MODERATION_OWNER_FLOW_SCOPE, moderation_owner_flow_paths_only, moderation_owner_flow_backend_only),
                                        (MODERATION_REVIEW_EVIDENCE_SCOPE, moderation_review_evidence_paths_only, moderation_review_evidence_backend_only),
@@ -4445,7 +4573,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -4474,6 +4602,8 @@ def main() -> None:
                  if selected_scope == MODERATION_ENROLLMENT_CEREMONY_SCOPE else {}),
               **({"required_backend_runs": moderation_initial_admission_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_INITIAL_ADMISSION_SCOPE else {}),
+              **({"required_backend_runs": moderation_operator_startup_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_OPERATOR_STARTUP_SCOPE else {}),
               **({"required_backend_runs": moderation_operator_host_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_OPERATOR_HOST_SCOPE else {}),
               **({"required_backend_runs": moderation_owner_flow_requirements(env["GITHUB_SHA"])}
@@ -4518,6 +4648,13 @@ def main() -> None:
                                        for row in moderation_initial_admission_requirements(env["GITHUB_SHA"]))
                            + ". This plan does not certify their success. "
                            "The Sharing Worker applies all local D1 migrations and checks exact local admission, bootstrap, signature, possession, counter, recovery and replay boundaries; existing privacy and Node checks remain required. Mac jobs are not requested. Not a live operator grant, real-key, live-cloud or iOS release evidence.\n")
+            elif selected_scope == MODERATION_OPERATOR_STARTUP_SCOPE:
+                summary = ("## Backend-only verification\n\nAll four Sharing jobs must execute successfully on the owning "
+                           "push at the same candidate SHA: "
+                           + "; ".join(row["job"] + " in `" + row["workflow"] + "`"
+                                       for row in moderation_operator_startup_requirements(env["GITHUB_SHA"]))
+                           + ". This plan does not certify their success. "
+                           "The Sharing Worker applies all local D1 migrations and checks loopback transport, isolated local D1, actual Access signatures, deadline and shutdown boundaries; existing privacy and Node checks remain required. Mac jobs are not requested. Not a live operator grant, real-key, live-cloud or iOS release evidence.\n")
             elif selected_scope == MODERATION_OPERATOR_HOST_SCOPE:
                 summary = ("## Backend-only verification\n\nAll five jobs must execute successfully on the owning "
                            "push at the same candidate SHA: "

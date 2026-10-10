@@ -1567,6 +1567,77 @@ class ModerationOperatorHostScopeTests(unittest.TestCase):
             self.assertEqual(self.select(changed),planner.MODERATION_OPERATOR_HOST_SCOPE)
 
 
+class ModerationOperatorStartupScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644",
+                       before, after, "A" if before == "0" * 40 else "M"]
+                for path, (before, after) in planner.MODERATION_OPERATOR_STARTUP_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, ancestor=True, workflows=None, event="push"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor:
+                    raise subprocess.CalledProcessError(1, args)
+                return self.base
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(fields) + "\0" + path + "\0"
+                                                         for path, fields in rows.items())
+            if args[0] == "ls-tree":
+                revision, path = args[1], args[3]
+                return (workflows or {}).get((revision, path),
+                    f"100644 blob {(planner.MODERATION_OPERATOR_STARTUP_WORKFLOW_BLOBS | planner.MODERATION_OPERATOR_STARTUP_INPUT_BLOBS).get(path, 'unregistered')}\t{path}")
+            if args[0] == "rev-parse":
+                return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return "unreviewed other profile"
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git):
+            return planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head, "GITHUB_EVENT_NAME": event,
+                                                      "GITHUB_REF": "refs/heads/codex/initial-admission"})
+
+
+    def test_exact_host_shape_and_required_owning_jobs(self):
+        self.assertEqual(len(self.rows()),5)
+        self.assertEqual(sum(row[4]=='M' for row in self.rows().values()),1)
+        self.assertEqual(self.select(),planner.MODERATION_OPERATOR_STARTUP_SCOPE)
+        self.assertEqual(planner.required_jobs(list(self.rows()),planner.MODERATION_OPERATOR_STARTUP_SCOPE),planner.MODERATION_OPERATOR_STARTUP_JOBS)
+        self.assertNotIn(planner.MODERATION_OPERATOR_STARTUP_SCOPE,scope.SCOPES)
+        expected=[{'workflow':planner.PRESERVATION_WORKFLOW if job==planner.PRESERVATION_JOB else planner.MODERATION_OPERATOR_STARTUP_WORKFLOW,'job':job,'head_sha':self.head,'event':'push','success_required':True} for job in planner.MODERATION_OPERATOR_STARTUP_JOBS]
+        self.assertEqual(planner.moderation_operator_startup_requirements(self.head),expected)
+
+    def test_partial_unknown_duplicate_and_product_control_mix_are_full(self):
+        rows=self.rows()
+        for path in rows:
+            self.assertEqual(self.select({p:r for p,r in rows.items() if p!=path}), 'full-v1')
+        for path in ('NekoWidget/NekoWidget/ContentView.swift','NekoWidget/ci/preflight-ci.py','NekoWidget/SharingService/src/index.ts'):
+            self.assertEqual(self.select(rows|{path:[':100644','100644','c'*40,'d'*40,'M']}),'full-v1')
+        self.assertEqual(self.select(paths=list(rows)+[next(iter(rows))]),'full-v1')
+
+    def test_modes_types_before_after_blobs_and_ancestry_fail_closed(self):
+        for path,row in self.rows().items():
+            for index,value in ((0,':100755'),(1,'100755'),(1,'120000'),(2,'e'*40),(3,'f'*40),(4,'D')):
+                changed=self.rows();changed[path]=row.copy();changed[path][index]=value
+                self.assertEqual(self.select(changed),'full-v1')
+        self.assertEqual(self.select(ancestor=False),'full-v1')
+
+    def test_all_auth_public_migration_config_and_workflow_inputs_are_pinned(self):
+        for path in planner.MODERATION_OPERATOR_STARTUP_INPUT_BLOBS|planner.MODERATION_OPERATOR_STARTUP_WORKFLOW_BLOBS:
+            for revision in (self.base,self.head):
+                drift={(revision,path):f'100644 blob {"f"*40}\t{path}'}
+                self.assertEqual(self.select(workflows=drift),'full-v1')
+
+    def test_raw_duplicate_malformed_and_handoff_boundaries(self):
+        rows=self.rows();raw=''.join(' '.join(r)+'\0'+p+'\0' for p,r in rows.items())
+        self.assertEqual(self.select(raw=raw+raw),'full-v1')
+        self.assertEqual(self.select(raw=raw+'not a raw record\0'),'full-v1')
+        for status in ('A','M'):
+            changed=rows|{'handoffs/2026-10-10-operator-local-startup.md':[':000000' if status=='A' else ':100644','100644','0'*40 if status=='A' else 'c'*40,'d'*40,status]}
+            self.assertEqual(self.select(changed),planner.MODERATION_OPERATOR_STARTUP_SCOPE)
+
+
 class ModerationInitialAdmissionScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
