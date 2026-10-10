@@ -615,17 +615,19 @@ function validateOptions(options: CloudflareAccessAuthenticationOptions): Valida
 interface JwtHeader {
   alg: "RS256";
   kid: string;
-  typ: "JWT";
 }
 
 function parseJwtHeader(segment: string): JwtHeader {
   const bytes = decodeCanonicalBase64url(segment, 1_024);
   const header = parseJsonObject(bytes);
-  exactKeys(header, ["alg", "kid", "typ"]);
-  if (header.alg !== "RS256" || header.typ !== "JWT") fail("invalid_jwt_header");
+  exactKeys(header, ["alg", "kid"], ["typ"]);
+  if (header.alg !== "RS256"
+      || (Object.hasOwn(header, "typ") && header.typ !== "JWT")) {
+    fail("invalid_jwt_header");
+  }
   const kid = strictString(header.kid, 64);
   if (!keyIdPattern.test(kid)) fail("invalid_jwt_header");
-  return { alg: "RS256", kid, typ: "JWT" };
+  return { alg: "RS256", kid };
 }
 
 interface JwtClaims {
@@ -644,12 +646,11 @@ function parseJwtClaims(segment: string, options: ValidatedOptions): JwtClaims {
   exactKeys(
     claims,
     ["aud", "exp", "iat", "nbf", "iss", "sub", "type"],
-    ["email", "identity_nonce", "country", "device_id"],
+    ["email", "identity_nonce", "country", "device_id", "policy_id", "h_INTERNAL_DO_NOT_USE"],
   );
-  // This deliberately rejects Access custom claims. The future isolated
-  // operator deployment must prove that its Access application has custom
-  // claims disabled and a policy session no longer than 900 seconds; the
-  // account-wide 24-hour default is not suitable for this control plane.
+  // Accept only the observed vendor metadata, never as identity or authority.
+  // Custom claims remain rejected and the isolated application must issue
+  // tokens with a policy session no longer than 900 seconds.
   if (!Array.isArray(claims.aud) || claims.aud.length !== 1
       || claims.aud[0] !== options.audience) {
     fail("invalid_audience");
@@ -669,6 +670,13 @@ function parseJwtClaims(segment: string, options: ValidatedOptions): JwtClaims {
   if (claims.device_id !== undefined
       && !cloudflareSubjectPattern.test(strictString(claims.device_id, 128))) {
     fail("invalid_claim");
+  }
+  if (Object.hasOwn(claims, "policy_id")
+      && !cloudflareSubjectPattern.test(strictString(claims.policy_id, 36))) {
+    fail("invalid_claim");
+  }
+  if (Object.hasOwn(claims, "h_INTERNAL_DO_NOT_USE")) {
+    strictString(claims.h_INTERNAL_DO_NOT_USE, 512);
   }
   const exp = safeInteger(claims.exp);
   const iat = safeInteger(claims.iat);

@@ -189,6 +189,51 @@ describe("isolated Cloudflare Access operator authentication", () => {
     )).rejects.toMatchObject({ code: "missing_access_jwt" });
   });
 
+  it("accepts the observed vendor format without using metadata as identity or authority", async () => {
+    const payload = {
+      aud: [audience], exp: now + 900, iat: now, nbf: now,
+      iss: issuer, type: "app", sub: subject,
+      policy_id: "f71fb00f-5ebe-48de-a266-a5f77e5b3a19",
+      h_INTERNAL_DO_NOT_USE: "opaque-vendor-metadata",
+    };
+    const authenticated = await verifyCloudflareAccessJWT(await signedToken({
+      header: { alg: "RS256", kid }, payload,
+    }), await options());
+    const changedMetadata = await verifyCloudflareAccessJWT(await signedToken({
+      header: { alg: "RS256", kid },
+      payload: { ...payload, policy_id: subject, h_INTERNAL_DO_NOT_USE: "other" },
+    }), await options());
+    expect(authenticated.operatorSubjectHmac).toBe(changedMetadata.operatorSubjectHmac);
+    expect(Object.keys(authenticated).sort()).toEqual([
+      "accessSessionSHA256", "expiresAt", "issuedAt", "keyId",
+      "operatorSubjectHmac", "subjectHmacKeyVersion",
+    ]);
+    await expect(verifyCloudflareAccessJWT(await signedToken({
+      header: { alg: "RS256", kid }, payload: { ...payload, exp: now + 3_600 },
+    }), await options())).rejects.toMatchObject({ code: "invalid_token_time" });
+  });
+
+  it("rejects malformed optional type and vendor metadata", async () => {
+    for (const typ of [null, "", "app", 1]) {
+      await expect(verifyCloudflareAccessJWT(await signedToken({
+        header: { alg: "RS256", kid, typ },
+      }), await options())).rejects.toMatchObject({ code: "invalid_jwt_header" });
+    }
+    const base = {
+      aud: [audience], exp: now + 600, iat: now, nbf: now,
+      iss: issuer, type: "app", sub: subject,
+    };
+    for (const metadata of [
+      { policy_id: null }, { policy_id: "admin" },
+      { h_INTERNAL_DO_NOT_USE: null }, { h_INTERNAL_DO_NOT_USE: { role: "admin" } },
+      { h_INTERNAL_DO_NOT_USE: "x".repeat(513) },
+    ]) {
+      await expect(verifyCloudflareAccessJWT(await signedToken({
+        payload: { ...base, ...metadata },
+      }), await options())).rejects.toMatchObject({ code: "invalid_claim" });
+    }
+  });
+
   it("verifies signed JSON bytes without requiring a serializer-specific layout", async () => {
     const whitespace = await signedToken({
       headerText: `{ \"alg\":\"RS256\", \"kid\":\"${kid}\", \"typ\":\"JWT\" }`,
