@@ -21,6 +21,7 @@ export interface LocalModerationTriageEnvironment {
   rpId: string;
   access: CloudflareAccessAuthenticationOptions;
   reviewEvidence?: LocalOwnerReviewHost;
+  syntheticCaseReferences?: readonly string[];
 }
 
 interface Challenge {
@@ -139,7 +140,7 @@ async function queue(env: LocalModerationTriageEnvironment, access: Authenticate
         AND NOT EXISTS (SELECT 1 FROM moderation_case_events WHERE report_id = cases.report_id AND event_type = 'review_decided')`),
     finishAudit(env.db, access, actor, audit),
   ]);
-  const cases = result[3]!.results;
+  const cases = result[3]!.results.map(item => {const row=item as Record<string,unknown>;return env.syntheticCaseReferences?.includes(String(row.caseReferenceHmac))?{...row,synthetic:true}:row;});
   return response({ cases: cases.slice(0, 20), hasMore: cases.length > 20,
     unboundCases: (result[4]!.results[0] as { unboundCases: number }).unboundCases });
 }

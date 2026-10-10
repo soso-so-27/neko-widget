@@ -200,7 +200,7 @@ export async function routeLocalModerationOwner(request: Request, env: LocalMode
   try {
     const url = new URL(request.url), match = pattern.exec(url.pathname);
     if (request.method === "GET" && url.origin === env.origin && url.search === ""
-        && /^\/operator\/owner\/console\/[0-9a-f]{64}\/[1-9][0-9]{0,9}$/u.test(url.pathname)) return localModerationOwnerConsole();
+        && /^\/operator\/owner\/console\/[0-9a-f]{64}\/[1-9][0-9]{0,9}$/u.test(url.pathname)) return localModerationOwnerConsole(env.syntheticCaseReferences?.includes(url.pathname.split('/')[4]!)??false);
     if (request.method !== "POST" || !match || Number(match[2]) > 2_147_483_647) return json({ error: "not_found" }, 404);
     const host = env.reviewEvidence;
     if (typeof host !== "function") return fail(503);
