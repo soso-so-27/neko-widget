@@ -37,10 +37,17 @@ test('idle possession survives switching screens in the same document and still 
   assert.equal(p.elements.get('possession').hidden,false);assert.equal(p.elements.get('possession').disabled,false);assert.equal(p.getCalls,0);assert.equal(p.calls.length,2);
   await p.click('possession');assert.equal(p.getCalls,1);assert.equal(p.calls.length,3);assert.equal(p.elements.get('approval').hidden,false);assert.equal(p.location.hash,'#request='+requestID);
 });
-test('approval text is wiped on hide, and the matching form returns only through read-only status',async()=>{
+test('copying approval from another screen clears text but preserves the same pending form without any request',async()=>{
   const p=page();await p.click('start');await p.click('possession');p.elements.get('signatures').value='test-approval';p.leave();p.return();
-  assert.equal(p.elements.get('signatures').value,'');assert.equal(p.elements.get('approval').hidden,true);assert.equal(p.calls.length,3);
+  assert.equal(p.elements.get('signatures').value,'');assert.equal(p.elements.get('approval').hidden,false);assert.equal(p.calls.length,3);
+  assert.equal(p.location.hash,'#request='+requestID);assert.equal(p.elements.get('requestHash').textContent,request.canonicalRequestSHA256);
   await p.click('check');assert.equal(p.calls.length,4);assert.ok(p.calls[3].path.endsWith('/status'));assert.equal(p.elements.get('approval').hidden,false);assert.equal(p.elements.get('signatures').value,'');
+});
+
+test('reloading the exact pending request restores its form by status without repeating either authenticator',async()=>{
+  const p=page({fragment:'#request='+requestID});await p.click('check');p.leave();p.return();
+  assert.equal(p.elements.get('approval').hidden,false);assert.equal(p.location.hash,'#request='+requestID);
+  assert.equal(p.createCalls,0);assert.equal(p.getCalls,0);assert.equal(p.calls.length,1);assert.ok(p.calls[0].path.endsWith('/status'));
 });
 test('an interrupted start ignores late responses, never opens an authenticator or retries a write',async()=>{
   const wait=deferred();const p=page({fetchImpl:()=>wait.promise});const pending=p.click('start');p.leave();p.return();wait.resolve(Response.json(challenge('registration'),{status:202}));await pending;
@@ -67,6 +74,12 @@ test('expiry discards an idle possession challenge and prevents reuse',async()=>
   const p=page();await p.click('start');const expire=[...p.timers.values()][0];expire();
   assert.equal(p.elements.get('possession').hidden,true);assert.equal(p.getCalls,0);assert.equal(p.calls.length,2);assert.equal(p.elements.get('check').hidden,false);
 });
+
+test('expiry still hides pending approval fields and wipes text even when tab switching preserves progress',async()=>{
+  const p=page();await p.click('start');await p.click('possession');p.leave();p.return();p.elements.get('signatures').value='test-approval';
+  const expire=[...p.timers.values()][0];expire();
+  assert.equal(p.elements.get('approval').hidden,true);assert.equal(p.elements.get('signatures').value,'');assert.equal(p.calls.length,3);
+});
 test('a lost admission response is recovered as a receipt without resending its signature',async()=>{
   const wait=deferred();let posted=false;
   const receipt={kind:'locally-admitted-initial-operator',ceremonyID,requestID,canonicalRequestSHA256:'a'.repeat(64),admissionID:'55555555-5555-4555-8555-555555555555',admissionProvenanceSHA256:'b'.repeat(64),admittedAt:Math.floor(Date.now()/1000),realHumanVerified:false,hardwareProvenanceVerified:false};
@@ -77,4 +90,5 @@ test('a lost admission response is recovered as a receipt without resending its 
   await p.click('check');p.elements.get('signatures').value='{"approvals":[]}';const pending=p.click('admit');p.leave();p.return();wait.resolve(Response.json(receipt));await pending;
   assert.equal(p.elements.get('complete').hidden,true);assert.equal(p.elements.get('signatures').value,'');await p.click('check');
   assert.equal(p.elements.get('complete').hidden,false);assert.equal(p.calls.filter(c=>c.path.endsWith('/admit')).length,1);assert.equal(p.elements.get('reopen').hidden,true);
+  p.leave();p.return();assert.equal(p.elements.get('complete').hidden,false);assert.equal(p.calls.length,3);
 });

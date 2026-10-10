@@ -44,10 +44,10 @@ function hideDetails(){signatures.value='';approval.hidden=true;complete.hidden=
 function stop(message){generation++;controller?.abort();clearTimeout(expiryTimer);hideDetails();lock(false);start.disabled=true;check.hidden=!ceremonyID&&!recoveryRequestID;byId('reopen').hidden=false;status.textContent=message}
 function leavePage(){
   signatures.value='';
-  // Before any attempt there is no result to recover. Idle public challenge
-  // bytes stay only in this document; a fresh assertion still needs a click.
+  // Idle public progress stays in this document when switching tabs. Only
+  // signature input is wiped; mutations still require an explicit user action.
   if((!attemptStarted&&!ceremonyID&&!recoveryRequestID)||(waitingForSession&&!ceremonyID&&!recoveryRequestID))return;
-  if(!busy&&next&&credentialID)return;
+  if(!busy&&((next&&credentialID)||(request&&!approval.hidden)||!complete.hidden))return;
   stop(ceremonyID||recoveryRequestID?'画面を離れたため署名の表示を消しました。この申込の結果を確認してください。登録を取り消したという意味ではありません。':'処理の完了を確認できません。画面を開き直して接続を確認してください。認証の結果や署名は再送しません。');
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden)leavePage()});
