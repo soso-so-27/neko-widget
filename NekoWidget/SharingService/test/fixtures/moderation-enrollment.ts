@@ -25,14 +25,14 @@ function der(raw: Uint8Array) {
   const r = integer(raw.slice(0, 32)); const s = integer(raw.slice(32));
   return concat(new Uint8Array([0x30, r.length + s.length]), r, s);
 }
-export async function binding(): Promise<LocalModerationEnrollmentBinding> {
+export async function binding(expectedRPID = rpID): Promise<LocalModerationEnrollmentBinding> {
   const now = (await db.prepare("SELECT unixepoch() AS now").first<{now: number}>())!.now;
-  return { operatorID: crypto.randomUUID(), expectedOrigin: origin, expectedRPID: rpID,
+  return { operatorID: crypto.randomUUID(), expectedOrigin: origin, expectedRPID,
     installationScopeSHA256: "1".repeat(64), authoritySetSHA256: "2".repeat(64),
     access: {operatorSubjectHmac: "3".repeat(64), subjectHmacKeyVersion: 1,
       accessSessionSHA256: "4".repeat(64), keyId: "synthetic-access-key", issuedAt: now - 10, expiresAt: now + 850} };
 }
-export async function authenticator() {
+export async function authenticator(expectedRPID = rpID) {
   const pair = await crypto.subtle.generateKey({name: "ECDSA", namedCurve: "P-256"}, true, ["sign", "verify"]) as CryptoKeyPair;
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   const publicKeyCose = isoCBOR.encode(new Map<number, Parameters<typeof isoCBOR.encode>[0]>([
@@ -43,7 +43,7 @@ export async function authenticator() {
     {name: "ECDSA", hash: "SHA-256"}, pair.privateKey, new Uint8Array(value).buffer)));
   async function response(challenge: string, registration: boolean, counter: number, bad = false, format = "packed") {
     const client = encoder.encode(JSON.stringify({type: registration ? "webauthn.create" : "webauthn.get", challenge, origin}));
-    const auth = concat(await hash(encoder.encode(rpID)), new Uint8Array([registration ? 0x45 : 0x05]), u32(counter),
+    const auth = concat(await hash(encoder.encode(expectedRPID)), new Uint8Array([registration ? 0x45 : 0x05]), u32(counter),
       ...(registration ? [new Uint8Array(16), new Uint8Array([0, id.length]), id, publicKeyCose] : []));
     const sig = await sign(concat(auth, await hash(client))); if (bad) sig[sig.length - 1]! ^= 1;
     const common = {id: b64(id), rawId: b64(id), type: "public-key", clientExtensionResults: {}};
@@ -58,11 +58,11 @@ export async function authenticator() {
 
 /** Synthetic offline-admin preparation is deliberately outside the writer.
  * No live authority, identity or permission is provisioned by this fixture. */
-export async function fixture(access?: AuthenticatedModerationOperatorAccess) {
-  const initial = await binding();
+export async function fixture(access?: AuthenticatedModerationOperatorAccess, expectedRPID = rpID) {
+  const initial = await binding(expectedRPID);
   const b = {...initial, access: access ?? initial.access};
   const scope = {accountID: "1".repeat(32), databaseID: crypto.randomUUID(), serviceIdentity: "local-admission-test",
-    accessIssuer: "https://synthetic-operator.cloudflareaccess.com", accessAudience: "2".repeat(64), expectedOrigin: origin, expectedRPID: rpID};
+    accessIssuer: "https://synthetic-operator.cloudflareaccess.com", accessAudience: "2".repeat(64), expectedOrigin: origin, expectedRPID};
   const pairs = await Promise.all([0, 1].map(async () => await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]) as CryptoKeyPair));
   const keys = await Promise.all(pairs.map(async (pair, index) => {
     const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
@@ -85,7 +85,7 @@ export async function fixture(access?: AuthenticatedModerationOperatorAccess) {
     ...activeRoles.map((role) => db.prepare("INSERT INTO moderation_operator_role_events(operator_id,role_code,event_type) VALUES(?,?,'granted')").bind(b.operatorID,role)),
   ]);
   const policy = {binding: b, scope, activeRoles, authorities};
-  const key = await authenticator();
+  const key = await authenticator(expectedRPID);
   async function completeCeremony(ttlSeconds = 900) {
     const first = await create(db, policy.binding, {ttlSeconds});
     const next = await register(db, {ceremonyID: first.ceremonyID, binding: policy.binding, response: await key.response(first.challenge, true, 7)});
