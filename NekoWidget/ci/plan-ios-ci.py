@@ -787,7 +787,7 @@ MODERATION_OPERATOR_STARTUP_BLOBS = {'NekoWidget/SharingService/scripts/moderati
  'NekoWidget/SharingService/operator.connection.example.json': ('0000000000000000000000000000000000000000',
                                                                 '098d2497875fe5838d7b9636460f90365284445f'),
  'NekoWidget/SharingService/package.json': ('acba8c0d598a0ae9ba32e9169fc9ec49dac74ee6',
-                                            '70ca9cd70dd73c3c62446a939158553ec2f52cbb')}
+                                            '041348065c85deec3879e55b4b97ef879118061c')}
 MODERATION_OPERATOR_STARTUP_MODIFIED_PATHS = frozenset(("NekoWidget/SharingService/package.json",))
 MODERATION_OPERATOR_STARTUP_PATHS = frozenset(MODERATION_OPERATOR_STARTUP_BLOBS)
 MODERATION_OPERATOR_STARTUP_WORKFLOW = '.github/workflows/sharing-service.yml'
