@@ -53,6 +53,7 @@ const expectedMigrationNames = [
   "0031_moderation_owner_flow.sql",
   "0032_moderation_resolution.sql",
   "0033_moderation_operator_enrollment_ceremony.sql",
+  "0034_moderation_operator_initial_admission.sql",
 ];
 
 const databaseGateColumns = [
