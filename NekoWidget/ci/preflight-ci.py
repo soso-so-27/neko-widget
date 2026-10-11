@@ -355,15 +355,16 @@ def internal_report_diagnostic_source_matches(source, head):
         if not records or len(records) % 2:
             return False
         seen = set()
-        allowed = planner.INTERNAL_REPORT_CONTROLS | {INTERNAL_REPORT_RELEASE_FIXTURE}
+        allowed = planner.INTERNAL_REPORT_CONTROLS | planner.INTERNAL_REPORT_CORRECTION_RELEASE_PATHS
         for index in range(0, len(records), 2):
             fields, path = records[index].split(), records[index + 1]
             if (path not in allowed or path in seen or len(fields) != 5
                     or fields[:2] != [":100644", "100644"] or fields[4] != "M"
                     or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
                 return False
-            if path == INTERNAL_REPORT_RELEASE_FIXTURE and tuple(fields[2:4]) != INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS:
-                return False
+            if path in planner.INTERNAL_REPORT_CORRECTION_RELEASE_PATHS:
+                if (planner.git("ls-tree", source, "--", path) != f"100644 blob {fields[2]}\t{path}"
+                        or fields[3] != planner.INTERNAL_REPORT_BLOBS[path][1]): return False
             seen.add(path)
         return INTERNAL_REPORT_RELEASE_FIXTURE in seen
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
@@ -715,8 +716,32 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                         and correction_evidence.get("run_id") == planner.OWNER_CLOUD_CORRECTION_RUN
                         and correction_evidence.get("sha") == planner.OWNER_CLOUD_CORRECTION_SOURCE
                         and correction_evidence.get("failed_backend_run_id") == planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN)
+    internal_correction = (result.get("scope") == planner.INTERNAL_REPORT_SCOPE and isinstance(correction_evidence, dict)
+        and correction_evidence.get("kind") == "internal-report-release-plist-correction-v1"
+        and correction_evidence.get("candidate_sha") == result.get("head")
+        and correction_evidence.get("run_id") == planner.INTERNAL_REPORT_CORRECTION_RUN
+        and correction_evidence.get("sha") == planner.INTERNAL_REPORT_CORRECTION_SOURCE
+        and correction_evidence.get("failed_build_job_id") == planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB
+        and correction_evidence.get("failed_build_log_sha256") == planner.INTERNAL_REPORT_CORRECTION_LOG_SHA256
+        and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD]
+        and correction_evidence.get("jobs") == [{"name": name, "job_id": identifier}
+            for name,identifier in planner.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if name != planner.PLAN_JOB])
+    if result.get('scope') == planner.INTERNAL_REPORT_SCOPE and correction_evidence is not None and not internal_correction:
+        raise ValueError('Unregistered internal Release correction proof')
+    if internal_correction:
+        sources = [run for run in runs if run['id'] == planner.INTERNAL_REPORT_CORRECTION_RUN]
+        if (len(sources) != 1 or sources[0].get('head_sha') != planner.INTERNAL_REPORT_CORRECTION_SOURCE
+                or sources[0].get('head_branch') != planner.INTERNAL_REPORT_CORRECTION_BRANCH
+                or sources[0].get('event') != 'push' or sources[0].get('run_attempt') != 1
+                or sources[0].get('path') != '.github/workflows/ios-build.yml'
+                or (sources[0].get('status'),sources[0].get('conclusion')) != ('completed','failure')):
+            raise ValueError('Fixed internal Release failure differs from retained task history')
+        if any(run['id'] != planner.INTERNAL_REPORT_CORRECTION_RUN and run['path'] != DIAGNOSTIC_WORKFLOW for run in failed):
+            blockers.append('internal_report_has_unresolved_candidate_failure')
     fixed_owner_failures = ({planner.OWNER_CLOUD_CORRECTION_RUN, planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN}
                             if owner_correction else set())
+    if internal_correction:
+        fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
     correction_cases = (planner.PRESERVATION_EXPORT_CORRECTION_CASES if export_correction else
                         planner.PHOTO_SMOKE_CORRECTION_CASES if photo_smoke_correction else
                         {planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
@@ -886,6 +911,26 @@ def owner_cloud_correction_cost(result, correction, include_upload, history):
                       "reference_runs": [planner.OWNER_CLOUD_CORRECTION_RUN], "owning_jobs": [planner.BUILD],
                       "build_timeout_minutes": 30, "includes_future_rework": False,
                       "note": "Fresh complete Build and all five owning backend checks remain mandatory. Only the fixed original completed runtime is reused at its original SHA. Original failures, active work and cumulative elapsed time remain in task history; 30 minutes is the pinned Build timeout, not an observed success."}
+    result["cost_review_required"] = upper > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
+
+
+def internal_report_correction_cost(result, correction, include_upload, history):
+    if (result.get("scope") != planner.INTERNAL_REPORT_SCOPE or not isinstance(correction, dict)
+            or correction.get("kind") != "internal-report-release-plist-correction-v1"
+            or correction.get("candidate_sha") != result.get("head")
+            or correction.get("run_id") != planner.INTERNAL_REPORT_CORRECTION_RUN
+            or correction.get("sha") != planner.INTERNAL_REPORT_CORRECTION_SOURCE): return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    result = dict(result)
+    result["full_cost_before_correction"] = result["cost"]
+    upper = round(30 + upload, 2)
+    result["cost"] = {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [upper, upper],
+        "reference_runs": [planner.INTERNAL_REPORT_CORRECTION_RUN], "owning_jobs": [planner.BUILD],
+        "build_timeout_minutes": 30, "includes_future_rework": False,
+        "note": "Fresh full Release Build and five same-candidate backends are required. Three completed original Debug jobs retain their actual original SHA. The Release plist defect/failure and cumulative/active history remain recorded. 30 minutes is the immutable Build timeout, not an observed duration."}
     result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
     return result
@@ -1172,7 +1217,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     return {"head": head, "base": comparison, "changed_files": paths, "scope": selected,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
             "required_jobs": list(required), "cost": cost, "target_minutes": target_minutes,
-            **({"required_backend_runs": planner.moderation_resolution_requirements(head)}
+            **({"required_backend_runs": (planner.internal_report_requirements if selected == planner.INTERNAL_REPORT_SCOPE else planner.moderation_resolution_requirements)(head)}
                if selected in (planner.MODERATION_RESOLUTION_SCOPE, planner.INTERNAL_REPORT_SCOPE) else {}),
             **({"required_backend_runs": planner.preservation_provider_requirements(head)}
                if selected == planner.PRESERVATION_PROVIDER_SCOPE else {}),
@@ -1289,6 +1334,7 @@ def main(argv=None):
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
             result = owner_cloud_correction_cost(result, correction, args.include_upload, history)
+            result = internal_report_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
             result = moderation_chained_cost(result, chained, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
