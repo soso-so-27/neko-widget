@@ -339,36 +339,8 @@ INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS = (
 
 
 def internal_report_diagnostic_source_matches(source, head):
-    """Forward one observed diagnostic only, across fixed non-native changes."""
-    if source != INTERNAL_REPORT_DIAGNOSTIC_SOURCE:
-        return False
-    try:
-        planner.git("merge-base", "--is-ancestor", source, head)
-        base = planner.git("merge-base", "refs/remotes/origin/main", head)
-        paths = planner.git("diff", "--name-only", base, head).splitlines()
-        if not planner.internal_report_only(paths, base, head):
-            return False
-        raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head)
-        records = raw.split("\0")
-        if records[-1:] == [""]:
-            records.pop()
-        if not records or len(records) % 2:
-            return False
-        seen = set()
-        allowed = planner.INTERNAL_REPORT_CONTROLS | planner.INTERNAL_REPORT_CORRECTION_RELEASE_PATHS
-        for index in range(0, len(records), 2):
-            fields, path = records[index].split(), records[index + 1]
-            if (path not in allowed or path in seen or len(fields) != 5
-                    or fields[:2] != [":100644", "100644"] or fields[4] != "M"
-                    or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
-                return False
-            if path in planner.INTERNAL_REPORT_CORRECTION_RELEASE_PATHS:
-                if (planner.git("ls-tree", source, "--", path) != f"100644 blob {fields[2]}\t{path}"
-                        or fields[3] != planner.INTERNAL_REPORT_BLOBS[path][1]): return False
-            seen.add(path)
-        return INTERNAL_REPORT_RELEASE_FIXTURE in seen
-    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
-        return False
+    """Forward only the fixed new diagnostic across reviewed Release/control pairs."""
+    return planner.internal_report_recovery_diagnostic_inputs(source, head)
 
 
 def diagnostic_source_matches(source, head):
@@ -377,7 +349,7 @@ def diagnostic_source_matches(source, head):
         return False
     if source == head:
         return True
-    if source == INTERNAL_REPORT_DIAGNOSTIC_SOURCE:
+    if source in {INTERNAL_REPORT_DIAGNOSTIC_SOURCE, planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE}:
         return internal_report_diagnostic_source_matches(source, head)
     if source == planner.MODERATION_UI_RECOVERY_PRODUCT and (planner.moderation_ui_recovery_inputs(head)
             or planner.moderation_chained_inputs(head)):
@@ -717,15 +689,17 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                         and correction_evidence.get("sha") == planner.OWNER_CLOUD_CORRECTION_SOURCE
                         and correction_evidence.get("failed_backend_run_id") == planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN)
     internal_correction = (result.get("scope") == planner.INTERNAL_REPORT_SCOPE and isinstance(correction_evidence, dict)
-        and correction_evidence.get("kind") == "internal-report-release-plist-correction-v1"
+        and correction_evidence.get("kind") == "internal-report-release-plist-ui-correction-v1"
         and correction_evidence.get("candidate_sha") == result.get("head")
         and correction_evidence.get("run_id") == planner.INTERNAL_REPORT_CORRECTION_RUN
         and correction_evidence.get("sha") == planner.INTERNAL_REPORT_CORRECTION_SOURCE
         and correction_evidence.get("failed_build_job_id") == planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB
         and correction_evidence.get("failed_build_log_sha256") == planner.INTERNAL_REPORT_CORRECTION_LOG_SHA256
-        and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD]
+        and correction_evidence.get("failed_ui_job_id") == planner.INTERNAL_REPORT_CORRECTION_UI_JOB
+        and correction_evidence.get("failed_ui_log_sha256") == planner.INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256
+        and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD, planner.lane_job(planner.INTERNAL_REPORT_SCOPE, "app-ui")]
         and correction_evidence.get("jobs") == [{"name": name, "job_id": identifier}
-            for name,identifier in planner.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if name != planner.PLAN_JOB])
+            for name,identifier in planner.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if name not in {planner.PLAN_JOB, planner.lane_job(planner.INTERNAL_REPORT_SCOPE, "app-ui")}])
     if result.get('scope') == planner.INTERNAL_REPORT_SCOPE and correction_evidence is not None and not internal_correction:
         raise ValueError('Unregistered internal Release correction proof')
     if internal_correction:
@@ -918,7 +892,7 @@ def owner_cloud_correction_cost(result, correction, include_upload, history):
 
 def internal_report_correction_cost(result, correction, include_upload, history):
     if (result.get("scope") != planner.INTERNAL_REPORT_SCOPE or not isinstance(correction, dict)
-            or correction.get("kind") != "internal-report-release-plist-correction-v1"
+            or correction.get("kind") != "internal-report-release-plist-ui-correction-v1"
             or correction.get("candidate_sha") != result.get("head")
             or correction.get("run_id") != planner.INTERNAL_REPORT_CORRECTION_RUN
             or correction.get("sha") != planner.INTERNAL_REPORT_CORRECTION_SOURCE): return result
@@ -926,11 +900,11 @@ def internal_report_correction_cost(result, correction, include_upload, history)
     if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
     result = dict(result)
     result["full_cost_before_correction"] = result["cost"]
-    upper = round(30 + upload, 2)
-    result["cost"] = {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [upper, upper],
-        "reference_runs": [planner.INTERNAL_REPORT_CORRECTION_RUN], "owning_jobs": [planner.BUILD],
+    upper = round(60 + upload, 2)
+    result["cost"] = {"status": "reference", "ci_minutes": [60, 60], "with_upload_minutes": [upper, upper],
+        "reference_runs": [planner.INTERNAL_REPORT_CORRECTION_RUN], "owning_jobs": [planner.BUILD, planner.lane_job(planner.INTERNAL_REPORT_SCOPE, "app-ui")],
         "build_timeout_minutes": 30, "includes_future_rework": False,
-        "note": "Fresh full Release Build and five same-candidate backends are required. Three completed original Debug jobs retain their actual original SHA. The Release plist defect/failure and cumulative/active history remain recorded. 30 minutes is the immutable Build timeout, not an observed duration."}
+        "note": "Fresh full Build, owning UI and five same-candidate backends are required. Only two completed original Photos/runtime jobs retain their actual original SHA. The Release plist defect/failure and cumulative/active history remain recorded. 60 minutes is the immutable parallel owning UI timeout, not an observed duration."}
     result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
     return result

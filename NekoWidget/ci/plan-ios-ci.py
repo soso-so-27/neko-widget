@@ -37,7 +37,7 @@ from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL
                           PURCHASE_CATALOG_COMPANIONS, PURCHASE_CATALOG_TESTS,
                           REVIEWED_MEMBERSHIP_STATE_SCOPE, MEMBERSHIP_STATE_PATHS, MEMBERSHIP_STATE_BLOBS,
                           MEMBERSHIP_STATE_COMPANIONS, MEMBERSHIP_STATE_TESTS, CI_WORKFLOW,
-                          memory_tests_available,
+                          memory_tests_available, native_tests,
                           CI_SELECTION_SCOPE, CI_SELECTION_PATHS, CI_NEW_TEST_PATHS,
                           CI_EVIDENCE_SCOPE, CI_EVIDENCE_PATHS,
                           accepts_paths, is_handoff, source_paths, source_digest, select_scope, sharing_job,
@@ -2710,6 +2710,12 @@ INTERNAL_REPORT_CORRECTION_BUILD_JOB = 114464704534
 INTERNAL_REPORT_CORRECTION_BRANCH = "codex/internal-report-ui-20261011"
 INTERNAL_REPORT_CORRECTION_LOG_SHA256 = "37f1bb281116871c375e2de598a808d83bc72edafc7a4cff70b55a9e0700b554"
 # Fixed actual job identities; pending/failed jobs cannot authorize reuse.
+INTERNAL_REPORT_CORRECTION_UI_JOB = 114464704698
+INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256 = "71453efbd443f1cb6036bb17b5b7a0223ae93369c957225a2b495961187b5f82"
+INTERNAL_REPORT_CORRECTION_UI_PATH = "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift"
+INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE = "51043aa2fb0f03511533bb328181d7890fc8957d"
+INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN = 38140067834
+INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_JOB = 114471934971
 INTERNAL_REPORT_CORRECTION_JOB_IDS = {
     PLAN_JOB: 114464561890, BOOTSTRAP_SMOKE: 114464704598,
     lane_job(INTERNAL_REPORT_SCOPE, "runtime"): 114464704599,
@@ -2737,13 +2743,13 @@ def internal_report_correction_inputs(head):
             if (path in seen or len(fields) != 5 or fields[:2] != [":100644", "100644"]
                     or fields[4] != "M" or not all(SHA.fullmatch(v) and v != "0" * 40 for v in fields[2:4])):
                 return False
-            if path in INTERNAL_REPORT_CORRECTION_RELEASE_PATHS:
+            if path in INTERNAL_REPORT_CORRECTION_RELEASE_PATHS | {INTERNAL_REPORT_CORRECTION_UI_PATH}:
                 original = git("ls-tree", source, "--", path)
                 if original != f"100644 blob {fields[2]}\t{path}" or fields[3] != INTERNAL_REPORT_BLOBS[path][1]: return False
             elif path not in INTERNAL_REPORT_CONTROLS:
                 return False
             seen.add(path)
-        return "NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist" in seen
+        return {"NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist", INTERNAL_REPORT_CORRECTION_UI_PATH} <= seen
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         return False
 
@@ -2763,12 +2769,64 @@ def internal_report_plan_record(log, sha, requirements):
     except (AttributeError, TypeError, ValueError): return None
 
 
+def internal_report_recovery_diagnostic_inputs(source, head):
+    """One fixed UI observation; all native/test/workflow inputs remain identical."""
+    if source != INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE or not internal_report_candidate_inputs(head): return False
+    try:
+        git("merge-base", "--is-ancestor", source, head)
+        rows = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if rows[-1:] == [""]: rows.pop()
+        if len(rows) % 2: return False
+        seen = set()
+        for index in range(0, len(rows), 2):
+            fields, path = rows[index].split(), rows[index + 1]
+            if (path in seen or path not in INTERNAL_REPORT_CONTROLS | INTERNAL_REPORT_CORRECTION_RELEASE_PATHS
+                    or len(fields) != 5 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or not all(SHA.fullmatch(v) and v != "0" * 40 for v in fields[2:4])): return False
+            if path in INTERNAL_REPORT_CORRECTION_RELEASE_PATHS:
+                if git("ls-tree", source, "--", path) != f"100644 blob {fields[2]}\t{path}" or fields[3] != INTERNAL_REPORT_BLOBS[path][1]: return False
+            seen.add(path)
+        return True
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError): return False
+
+
+def internal_report_recovery_diagnostic_ready(head, repository, api, now):
+    """Known pending run becomes evidence only after actual exact-case success."""
+    source = INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE
+    if repository != "soso-so-27/neko-widget" or not internal_report_recovery_diagnostic_inputs(source, head): return False
+    prefix = f"/repos/{repository}/actions"
+    run = api(f"{prefix}/runs/{INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN}")
+    case = "NekoWidgetUITests.MomentDeliveryComposerUITests testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess"
+    if (run.get("id") != INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN or run.get("head_sha") != source
+            or run.get("head_branch") != "diagnostic/internal-report-ui-20261011"
+            or run.get("path") != ".github/workflows/ios-ui-diagnostic.yml" or run.get("event") != "workflow_dispatch"
+            or run.get("display_title") != "UI diagnosis: MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess"
+            or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return False
+    result = api(f"{prefix}/runs/{run['id']}/attempts/1/jobs?per_page=100")
+    if type(result.get("total_count")) is not int or result["total_count"] != 1 or len(result.get("jobs", [])) != 1: return False
+    job = result["jobs"][0]
+    if (job.get("id") != INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_JOB
+            or job.get("name") != "Diagnostic only - up to three native UI tests (not release evidence)"
+            or job.get("run_id") != run["id"] or job.get("head_sha") != source or job.get("run_attempt") != 1
+            or not covers_jobs([job], (job["name"],), source, now)
+            or not moderation_steps_succeeded(job, ("Validate diagnostic inputs before checkout", "Check out the exact diagnostic commit", "Run requested diagnostic tests with the existing fixture preparation", "Upload diagnostic evidence only"))): return False
+    log = api(f"{prefix}/jobs/{job['id']}/logs")
+    if not isinstance(log, str): return False
+    events = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", log)
+    return (events == [(case, "started"), (case, "passed")]
+            and re.search(r"Executed 1 test, with 0 failures \(0 unexpected\)", log) is not None)
+
+
 def internal_report_correction_source(head, repository, api, now):
-    """Only the fixed Release plist failure and three actually successful Debug jobs."""
-    if repository != "soso-so-27/neko-widget" or not internal_report_correction_inputs(head): return None
+    """Exactly the fixed Build/UI failures; only successful Photos/runtime reuse."""
+    if (repository != "soso-so-27/neko-widget" or not internal_report_correction_inputs(head)
+            or not internal_report_recovery_diagnostic_ready(head, repository, api, now)): return None
     source = INTERNAL_REPORT_CORRECTION_SOURCE
-    required = (PLAN_JOB, BOOTSTRAP_SMOKE, lane_job(INTERNAL_REPORT_SCOPE, "runtime"), lane_job(INTERNAL_REPORT_SCOPE, "app-ui"))
-    if set(INTERNAL_REPORT_CORRECTION_JOB_IDS) != set(required): return None
+    required = (PLAN_JOB, BOOTSTRAP_SMOKE, lane_job(INTERNAL_REPORT_SCOPE, "runtime"))
+    if set(INTERNAL_REPORT_CORRECTION_JOB_IDS) != set(required) | {lane_job(INTERNAL_REPORT_SCOPE, "app-ui")}: return None
     prefix = f"/repos/{repository}/actions"
     run = api(f"{prefix}/runs/{INTERNAL_REPORT_CORRECTION_RUN}")
     if (run.get("id") != INTERNAL_REPORT_CORRECTION_RUN or run.get("head_sha") != source
@@ -2790,32 +2848,45 @@ def internal_report_correction_source(head, repository, api, now):
     if (len([j for j in jobs if j.get("name") == BUILD]) != 1 or not build
             or build.get("id") != INTERNAL_REPORT_CORRECTION_BUILD_JOB or build.get("conclusion") != "failure"
             or [s.get("name") for s in build.get("steps", []) if s.get("conclusion") in {"failure", "cancelled", "timed_out"}] != ["Verify sharing release privacy gates"]
-            or any(j.get("name") not in set(required) | {BUILD} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
+            or any(j.get("name") not in set(required) | {BUILD, lane_job(INTERNAL_REPORT_SCOPE, "app-ui")} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
     log = api(f"{prefix}/jobs/{build['id']}/logs")
     if not isinstance(log, str): return None
     normalized = "\n".join(re.sub(r"^.*?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.splitlines())
     if hashlib.sha256(normalized.encode()).hexdigest() != INTERNAL_REPORT_CORRECTION_LOG_SHA256: return None
+    ui_name = lane_job(INTERNAL_REPORT_SCOPE, "app-ui")
+    ui = by_name.get(ui_name)
+    if (len([j for j in jobs if j.get("name") == ui_name]) != 1 or not ui
+            or ui.get("id") != INTERNAL_REPORT_CORRECTION_UI_JOB or ui.get("conclusion") != "failure"
+            or [st.get("name") for st in ui.get("steps", []) if st.get("conclusion") in {"failure", "cancelled", "timed_out"}] != ["Run sharing runtime matrix"]): return None
+    ui_log = api(f"{prefix}/jobs/{ui['id']}/logs")
+    if not isinstance(ui_log, str): return None
+    ui_normalized = "\n".join(re.sub(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in ui_log.splitlines())
+    if (hashlib.sha256(ui_normalized.encode()).hexdigest() != INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256
+            or not re.search(r"Executed 12 tests, with 1 failure \(0 unexpected\)", ui_normalized)
+            or "PhotoPermissionUITests.swift:5864: error:" not in ui_normalized
+            or "testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess" not in ui_normalized): return None
     record = internal_report_plan_record(api(f"{prefix}/jobs/{by_name[PLAN_JOB]['id']}/logs"), source, moderation_resolution_requirements(source))
     if record is None or record.get("test_correction_evidence") is not None: return None
-    return {"kind": "internal-report-release-plist-correction-v1", "run_id": run["id"], "sha": source,
+    return {"kind": "internal-report-release-plist-ui-correction-v1", "run_id": run["id"], "sha": source,
             "candidate_sha": head, "failed_build_job_id": build["id"], "failed_build_log_sha256": INTERNAL_REPORT_CORRECTION_LOG_SHA256,
             "jobs": [{"name": name, "job_id": by_name[name]["id"]} for name in required if name != PLAN_JOB],
-            "owning_jobs_to_execute": [BUILD], "changed_inputs": {p: [git("rev-parse", f"{source}:{p}"), INTERNAL_REPORT_BLOBS[p][1]] for p in sorted(INTERNAL_REPORT_CORRECTION_RELEASE_PATHS)},
-            "unchanged_inputs": "all Debug/native/UI/runtime/Photos/workflow inputs; source failure remains failure"}
+            "failed_ui_job_id": ui["id"], "failed_ui_log_sha256": INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256,
+            "owning_jobs_to_execute": [BUILD, ui_name], "changed_inputs": {p: [git("rev-parse", f"{source}:{p}"), INTERNAL_REPORT_BLOBS[p][1]] for p in sorted(INTERNAL_REPORT_CORRECTION_RELEASE_PATHS | {INTERNAL_REPORT_CORRECTION_UI_PATH})},
+            "unchanged_inputs": "all product/runtime/Photos/workflow inputs; both failures retained, fresh UI required"}
 
 
 def internal_report_correction_graph(run, validation_head, required, api, now, jobs):
-    """Fresh full Release Build/backends; separately attributed original Debug proof."""
+    """Fresh full Build/UI/backends; separately attributed original Photos/runtime proof."""
     repository = "soso-so-27/neko-widget"
     if (required != required_jobs_from_scope(INTERNAL_REPORT_SCOPE) or run.get("head_branch") != INTERNAL_REPORT_CORRECTION_BRANCH
             or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
             or run.get("event") != "push" or run.get("run_attempt") != 1 or (run.get("status"), run.get("conclusion")) != ("completed", "success")
             or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
             or not internal_report_correction_inputs(run.get("head_sha")) or not internal_report_correction_inputs(validation_head)
-            or not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now)
+            or not covers_jobs(jobs, (PLAN_JOB, BUILD, lane_job(INTERNAL_REPORT_SCOPE, "app-ui")), run["head_sha"], now)
             or len({j.get("id") for j in jobs}) != len(jobs)
             or any(j.get("run_id") != run["id"] or j.get("head_sha") != run["head_sha"] or j.get("run_attempt") != 1 or j.get("status") != "completed"
-                   or j.get("name") not in {PLAN_JOB, BUILD} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
+                   or j.get("name") not in {PLAN_JOB, BUILD, lane_job(INTERNAL_REPORT_SCOPE, "app-ui")} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
     plan = next(j for j in jobs if j["name"] == PLAN_JOB)
     build = next(j for j in jobs if j["name"] == BUILD)
     workflow = git("show", f"{INTERNAL_REPORT_CORRECTION_SOURCE}:.github/workflows/ios-build.yml")
@@ -2823,6 +2894,15 @@ def internal_report_correction_graph(run, validation_head, required, api, now, j
     excluded = {"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"}
     steps = tuple(name for name in re.findall(r"^      - name: (.+)$", block, re.M) if name not in excluded)
     if len(steps) != 39 or len(set(steps)) != 39 or not moderation_steps_succeeded(build, steps) or not moderation_steps_succeeded(plan, ("Select checks",)): return None
+    ui = next(j for j in jobs if j["name"] == lane_job(INTERNAL_REPORT_SCOPE, "app-ui"))
+    if not moderation_steps_succeeded(ui, ("Check out repository", "Run sharing runtime matrix", "Upload sharing runtime matrix artifacts")): return None
+    ui_log = api(f"/repos/{repository}/actions/jobs/{ui['id']}/logs")
+    if not isinstance(ui_log, str): return None
+    expected = {test.replace("NekoWidgetUITests/", "NekoWidgetUITests.", 1).replace("/", " ") for test in native_tests(INTERNAL_REPORT_SCOPE)}
+    events = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", ui_log)
+    if (len(expected) != 12 or {case for case, _ in events} != expected
+            or any([status for case, status in events if case == wanted] != ["started", "passed"] for wanted in expected)
+            or not re.search(r"Executed 12 tests, with 0 failures \(0 unexpected\)", ui_log)): return None
     record = internal_report_plan_record(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), run["head_sha"], internal_report_requirements(run["head_sha"]))
     proof = internal_report_correction_source(run["head_sha"], repository, api, now)
     if proof is None or record is None or record.get("test_correction_evidence") != proof: return None
@@ -3194,7 +3274,7 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
     if selected_scope == INTERNAL_REPORT_SCOPE and source == INTERNAL_REPORT_CORRECTION_SOURCE:
-        return (BUILD,)
+        return (BUILD, lane_job(INTERNAL_REPORT_SCOPE, "app-ui"))
     if selected_scope == OWNER_CLOUD_SCOPE and source == OWNER_CLOUD_CORRECTION_SOURCE:
         return (BUILD,)
     if selected_scope == MODERATION_RESOLUTION_SCOPE and source == MODERATION_BUILD_CORRECTION_SOURCE:
@@ -5229,7 +5309,7 @@ def main() -> None:
         "smoke": str(evidence is None and (chained_build_recovery is not None or correction is None or smoke_correction) and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
         "sharing": str(evidence is None and chained_build_recovery is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
-        "app_ui": str(evidence is None and BUILD not in correction_jobs and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
+        "app_ui": str(evidence is None and (BUILD not in correction_jobs or lane_job(selected_scope, "app-ui") in correction_jobs) and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
         "app_ui_lanes": json.dumps(["app-ui-other", "app-ui-solo"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
                                     else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
