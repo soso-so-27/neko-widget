@@ -237,7 +237,7 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Fixed internal report correction evidence is unavailable or invalid.") from None
         require(proof is not None and proof["native_evidence"] == correction,
-                "Fresh full Build/backend and original exact three Debug native jobs are required.")
+                "Fresh full Build/UI/backend and the fixed successful Photos/runtime proof are required.")
         return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
                 "scope": plan["scope"], "required_jobs": list(required),
                 "native_evidence": proof["native_evidence"], "backend_evidence": proof["backend_evidence"]}

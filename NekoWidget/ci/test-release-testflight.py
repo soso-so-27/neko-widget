@@ -287,9 +287,9 @@ class ReleaseTests(unittest.TestCase):
                 self.assertRaises(release.Blocked):
             self.prepare()
 
-    def test_internal_report_release_requires_exact_release_only_correction_graph(self):
+    def test_internal_report_release_requires_exact_native_correction_graph(self):
         p = release.planner
-        correction = {"run_id": 38137593169, "sha": "b" * 40, "jobs": []}
+        correction = {"kind": "internal-report-release-plist-ui-correction-v1", "run_id": 38137593169, "sha": "b" * 40, "jobs": []}
         self.plan.update(scope="reviewed-internal-report-v1",
                          required_jobs=list(p.required_jobs_from_scope("reviewed-internal-report-v1")),
                          required_backend_runs=p.internal_report_requirements(self.sha),
