@@ -577,7 +577,7 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
         "20ddec85b8a34ec1369bf503adf0a6582e7dcd8a",
-        "2ea1c9b7565738f769251e3506003aa5ae9bc723"
+        "2840a806e909b6ccba37ac03470559ce651e03b8"
     ],
     "NekoWidget/NekoWidgetWidget/Info.plist": [
         "c99fa5698ec34744f7bcff4b5352e1f5f347b8ee",
@@ -605,11 +605,11 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/ci/moderation-v2-readiness.json": [
         "e0714e26c3c16a8258f1514346e5e0d554698b13",
-        "520c843216eedb27d28c16c4bd364ec0f90210b7"
+        "c51f1c1148614c08c3a4a37aeaafd271729c506d"
     ],
     "NekoWidget/ci/release-testflight.py": [
         "2a86f9830adbb0163ae7d732f6282cfbd0f2df51",
-        "7fdc405304fa33910c0497e71a9208a195a445d2"
+        "ca9fab4d9da8bb6cd83338eb0734a50830131c7e"
     ],
     "NekoWidget/ci/test-internal-report-release.py": [
         "0000000000000000000000000000000000000000",
@@ -625,7 +625,7 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/ci/test-release-testflight.py": [
         "37a2a730a189c42f53ac9700df06505f9968bc4a",
-        "164f22c77e9b14996cde87cf2ea107668d9991be"
+        "c10fc4a6eec29a9d98d71c44f048512cc2b32ebd"
     ],
     "NekoWidget/ci/test-verify-moderation-upload-payload.py": [
         "c9296d685f2b5abaed77938b7d7dcaf2fe0944dc",
