@@ -2641,6 +2641,15 @@ def owner_cloud_correction_source(run, head, branch, repository, workflow_id, re
                 or (backend.get("status"), backend.get("conclusion")) != ("completed", "failure")
                 or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(backend["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return None
         backend_jobs = executed_jobs(backend, repository, api)
+        # This fixed source run contains one conditional placeholder, not an
+        # executed check. Reject any other skip or inventory before excluding it.
+        if (len(backend_jobs) != 5 or len({j.get("id") for j in backend_jobs}) != 5
+                or any(j.get("run_id") != backend["id"] or j.get("head_sha") != source or j.get("run_attempt") != 1 for j in backend_jobs)): return None
+        placeholder = [j for j in backend_jobs if j.get("id") == 114415116222]
+        if (len(placeholder) != 1 or placeholder[0].get("name") != "Validate private billing caller"
+                or (placeholder[0].get("status"), placeholder[0].get("conclusion")) != ("completed", "skipped")
+                or placeholder[0].get("steps") != []): return None
+        backend_jobs = [j for j in backend_jobs if j.get("id") != 114415116222]
         worker_name = "Typecheck, test, and bundle Worker"
         others = tuple(n for n in PRESERVATION_EXPORT_BACKEND_JOBS["sharing-service.yml"] if n != worker_name)
         if (len(backend_jobs) != 4 or len({j.get("id") for j in backend_jobs}) != len(backend_jobs)
