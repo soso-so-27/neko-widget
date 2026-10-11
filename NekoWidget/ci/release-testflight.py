@@ -219,6 +219,28 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 "scope": plan["scope"], "required_jobs": list(required),
                 "chained_build_recovery": chained, "backend_evidence": chained["backend_evidence"]}
     correction = plan.get("test_correction_evidence")
+    if correction is not None and plan.get("scope") == "reviewed-internal-report-v1":
+        require(plan.get("required_backend_runs") == planner.internal_report_requirements(sha),
+                "Internal report correction must declare five fresh candidate backend jobs.")
+        def internal_correction_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected internal report correction API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Internal correction log owning run unavailable.")
+                return gh.raw_job_log(job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            proof = planner.internal_report_correction_graph(
+                current, sha, required, internal_correction_api, now, executed_jobs_for(gh, current))
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Fixed internal report correction evidence is unavailable or invalid.") from None
+        require(proof is not None and proof["native_evidence"] == correction,
+                "Fresh full Build/UI/backend and the fixed successful Photos/runtime proof are required.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "native_evidence": proof["native_evidence"], "backend_evidence": proof["backend_evidence"]}
     if correction is not None and plan.get("scope") == planner.OWNER_CLOUD_SCOPE:
         require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(sha),
                 "Counter repair plan must declare all five fresh candidate backend jobs.")
@@ -367,6 +389,19 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             result["backend_evidence"] = planner.preservation_export_backend_evidence(backend_sha, REPOSITORY, backend_api, now)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
+    if plan["scope"] == "reviewed-internal-report-v1":
+        require(not corrected, "Internal reports require the complete fresh native candidate graph.")
+        require(plan.get("required_backend_runs") == planner.internal_report_requirements(source_sha),
+                "Internal report plan must declare five same-candidate backend jobs.")
+        def internal_report_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected internal report backend API path.")
+            return gh.get(path[len(prefix):])
+        try:
+            result["backend_evidence"] = planner.internal_report_backend_evidence(
+                source_sha, REPOSITORY, internal_report_api, now)
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Five fresh same-candidate backend successes are required for internal reporting.") from None
     if plan["scope"] == planner.OWNER_CLOUD_SCOPE:
         require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(source_sha),
                 "Owner cloud plan must declare five same-candidate backend jobs.")
@@ -542,7 +577,9 @@ def check_duplicates(gh: GitHub, build: str, cache: dict[int, int]) -> int:
 
 
 def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
-            cache: dict[int, int], *, preservation_pilot: bool = False, billing_sandbox: bool = False) -> dict:
+            cache: dict[int, int], *, preservation_pilot: bool = False, billing_sandbox: bool = False, internal_reports: bool = False) -> dict:
+    require(type(internal_reports) is bool, "Internal reports must be an explicit boolean.")
+    require(not internal_reports or not billing_sandbox, "Internal reports cannot request billing Sandbox.")
     require(type(preservation_pilot) is bool, "Internal preservation pilot must be an explicit boolean.")
     require(type(billing_sandbox) is bool, "Internal billing Sandbox must be an explicit boolean.")
     require(not billing_sandbox or preservation_pilot, "Billing Sandbox requires the internal preservation pilot.")
@@ -560,6 +597,8 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
             "upload_to_testflight": "true", "retain_signed_artifacts": "true",
         },
     }
+    if internal_reports:
+        plan["inputs"]["internal_reports"] = "true"
     if preservation_pilot:
         plan["inputs"]["preservation_pilot"] = "true"
     if billing_sandbox:
@@ -576,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dispatch", action="store_true", help="Dispatch once after all checks; default is dry-run.")
     parser.add_argument("--checkout", type=Path, help="Qualify a fixed source checkout with this already-main clean tool; source SHA/CI/release checks remain mandatory.")
     parser.add_argument("--preservation-pilot", action="store_true", help="Enable only the approved internal preservation pilot; billing stays disabled unless --billing-sandbox is explicitly requested.")
+    parser.add_argument("--internal-reports", action="store_true", help="Request the separately approved owner-only internal report build; billing stays OFF.")
     parser.add_argument("--billing-sandbox", action="store_true", help="Request a separately approved, internal-only StoreKit Sandbox build; requires --preservation-pilot.")
     args = parser.parse_args(argv)
     tool_root = ROOT
@@ -586,7 +626,7 @@ def main(argv: list[str] | None = None) -> int:
             ROOT = verified_candidate_root(gh, args.checkout)
             os.chdir(ROOT)
         plan = prepare(gh, args.sha, args.build_number, args.main_ci_run, dt.datetime.now(dt.timezone.utc), cache,
-                       preservation_pilot=args.preservation_pilot, billing_sandbox=args.billing_sandbox)
+                       preservation_pilot=args.preservation_pilot, billing_sandbox=args.billing_sandbox, internal_reports=args.internal_reports)
         if args.dispatch:
             # Recheck main and the live release index immediately before POST.
             # expected_main_sha also closes a subsequent ref race in workflow.

@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-first-connection",
-    "issuedAtMs": 1791704332860,
+    "issuedAtMs": 1791722430444,
     "expiresAtMs": 1791781542930,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -51,10 +51,21 @@
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
     "codeSHA256": {
-      ".github/workflows/testflight.yml": "818052453ba9e2ffdfe079838ee59b93b4096aac237806dae798198ecf1cf856",
+      ".github/workflows/testflight.yml": "a58bb277865f4967c0696afb9fedf587b175a94e83c58fc9a5383fb5529f4581",
       "NekoWidget/ci/moderation_readiness.py": "c8c252cbd0375858ae2510dfa56c6804149d1ae15f58167042faba89c4eba27f",
-      "NekoWidget/ci/verify-moderation-readiness.mjs": "672af2f6cdddd86a6060dabcf0ce9d9ed0029721405355fb81373c790a0ededf",
-      "NekoWidget/ci/write-moderation-release-metadata.py": "26fd26b824f3d523f01c4d3492e3335573edbab1ddf6a78510b9382b4142a410",
+      "NekoWidget/ci/verify-moderation-readiness.mjs": "c358c5eb41149faa9d1fc35187413f10cc4e9a4efb9f2364fca4536d8b23a88b",
+      "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
+      "NekoWidget/ci/internal_report_release.py": "09addcb49bce3f48f33355495268e1718b7eb9e3dc12fa11f7203678a0ba0305",
+      "NekoWidget/ci/release-testflight.py": "cf15f99cc311d630730aa3d2d7d4a6f010d97dd7bab3a9e786e4c3703514110b",
+      "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
+      "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
+      "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
+      "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": "b4cdfdf78e94c309ed40f57afb7e6af37f39450baa5a20606caf8aa9a52eb97a",
+      "NekoWidget/NekoWidget/Info.plist": "ba81dbb5166521c704a9e7982a2a9c6ac2d17ae8989d040ad2b57639bd036547",
+      "NekoWidget/NekoWidgetShareExtension/Info.plist": "6aaf8d0b7e21456642a54b8a92864cd77838cfcf9ae85ac169c98c88033d01aa",
+      "NekoWidget/NekoWidgetWidget/Info.plist": "094f5a0f7331fb92ea686286a7c32ef40b4e4ff6b594b8953792740758c67790",
+      "NekoWidget/SharingService/scripts/check-staging-runtime.mjs": "01a57db3c97a8c85a3524611adb9ae96ba78c20cd6460dd06a8acab20e76b383",
+      "NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs": "3e9103d28d7c8e103369705a5a9b9eaeb709248ca0b5ae6b21873b9ce2632d26",
       "NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql": "a3554a9c89dd1e57e6c0a46ab953687a94c86c26c619f4712032980e2df3f1d6",
       "NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql": "268fa0c0c554ac6bc88dd6b7a5739bb6fe60051d70676beebfffa386639215d3",
       "NekoWidget/SharingService/migrations/0037_moderation_enrollment_counter_floor.sql": "16dc0cd5f07b498835fc6e6fb362e944d072e30d19ae868368fe5d13b1dc3700",
@@ -75,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "b5UYpk4GfvnjW8kA2_yibHAk1iIaqtLYdHy5Mh6AUStM3WICsOcVlUk2_qoisHVExmA1yzkFpW4EzIw8fXZaCw"
+      "signatureBase64url": "p447U9kA6i8i4zC4ivXBSobHAUocK89JMRW5pktLUB1XVSjG7gNkDsuDzi61rCBqHYq2BFgDV2HDKy6WaWTZCQ"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "m0yVde7xCzR1t73NnDzj-w_pdnak1IbNHOP9eCsRKUjNsssvXco5grDjWkmWhTjzuMNRwjHczxLsXJ-9SLbDDQ"
+      "signatureBase64url": "AEB-lKQlwP1WFqqwb80ykZwncNqvmgd9F2nPN6p4ToF3L2r9MiGZCKpSOt9BNRwiJGTha1hUS0IQD-h28F3nAA"
     }
   ]
 }

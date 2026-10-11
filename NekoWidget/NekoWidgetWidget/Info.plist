@@ -30,6 +30,10 @@
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>SharingReleaseMode</key>
 	<string>$(SHARING_RELEASE_MODE)</string>
+	<key>SharingInternalEncryptedReportEnabled</key>
+	<false/>
+	<key>SharingInternalEncryptedReportScope</key>
+	<string></string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
 	<key>NSExtension</key>

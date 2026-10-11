@@ -5691,6 +5691,45 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testInternalReportActionUsesExplicitAvailabilityAndConsent() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let arguments = ["--moderation-resolution-ui-fixture", "--internal-report-actions-ui-fixture",
+                         "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = arguments
+        app.launch()
+        let menu = app.buttons["写真の情報と操作"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let report = app.buttons["received-photo-report"]
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        XCTAssertTrue(report.isEnabled)
+        report.tap()
+        XCTAssertTrue(app.staticTexts["この写真を通報しますか？"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。"].exists)
+        for reason in ["不適切な内容", "嫌がらせ", "プライバシー", "その他"] {
+            XCTAssertTrue(app.buttons[reason].exists)
+            XCTAssertTrue(app.buttons[reason].isEnabled)
+        }
+        attach(app, name: "internal-report-shipping-action-and-explicit-photo-consent")
+        // iOS 26 presents this as a popover without a Cancel button.
+        // Dismiss outside the popover; do not submit a report in this fixture.
+        app.staticTexts["届いた写真"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.staticTexts["この写真を通報しますか？"])], timeout: 5), .completed)
+        app.terminate()
+
+        app.launchArguments = arguments + ["--internal-report-off"]
+        app.launch()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        XCTAssertFalse(app.buttons["received-photo-report"].exists)
+        attach(app, name: "ordinary-build-keeps-report-action-off")
+        app.terminate()
+    }
+
+    @MainActor
     func testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -5821,12 +5860,30 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         for _ in 0..<4 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["相手のメモ"].exists)
+        // XCTest can reject the activation point of the outer SwiftUI Menu
+        // button even when its 44pt frame is visibly inside the collection.
+        // Tap that verified frame; the actual menu and every edit/withdrawal
+        // result below remain required.
+        func openVisibleRecordMenu(_ menu: XCUIElement) {
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+            XCTAssertEqual(app.buttons.matching(identifier: menu.identifier).count, 1)
+            let viewport = app.frame.insetBy(dx: 0, dy: 120)
+            for _ in 0..<4 {
+                let frame = menu.frame
+                if !frame.isEmpty && !frame.isNull && !frame.isInfinite && viewport.contains(frame) { break }
+                if frame.minY < viewport.minY { app.swipeDown() }
+                else { app.swipeUp() }
+            }
+            let frame = menu.frame
+            let visible = !frame.isEmpty && !frame.isNull && !frame.isInfinite && viewport.contains(frame)
+            XCTAssertTrue(visible, "The actual record menu must be inside the visible content before tapping.")
+            guard visible else { return }
+            menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         let ownWordsMenu = app.buttons["family-record-words-menu"]
-        for _ in 0..<3 where !ownWordsMenu.isHittable { app.swipeDown() }
-        XCTAssertTrue(ownWordsMenu.isHittable)
         XCTAssertEqual(app.buttons.matching(identifier: "family-record-words-menu").count, 1,
                        "Only the author's own words offer editing or withdrawal.")
-        ownWordsMenu.tap()
+        openVisibleRecordMenu(ownWordsMenu)
         app.buttons["family-record-edit-words"].tap()
         XCTAssertTrue(app.navigationBars["自分のメモを編集"].waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "初めて一緒に過ごした日")
@@ -5847,9 +5904,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Editing my words must leave the other author's words unchanged.")
         attach(app, name: "family-record-authors-and-edited-words")
         let photoMenu = app.buttons["family-record-photo-menu"]
-        for _ in 0..<3 where !photoMenu.isHittable { app.swipeDown() }
-        XCTAssertTrue(photoMenu.isHittable)
-        photoMenu.tap()
+        openVisibleRecordMenu(photoMenu)
         let withdraw = app.buttons.matching(identifier: "family-record-withdraw-photo").firstMatch
         XCTAssertTrue(withdraw.waitForExistence(timeout: 5))
         withdraw.tap(); app.buttons["取り下げる"].tap()

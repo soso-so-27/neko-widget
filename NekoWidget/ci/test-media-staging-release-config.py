@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import plistlib
 import re
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -115,6 +117,8 @@ def write_archive_info_plists(
         "CFBundleShortVersionString": "1.0",
         "CFBundleVersion": "35",
         "SharingReleaseMode": mode,
+        "SharingInternalEncryptedReportEnabled": False,
+        "SharingInternalEncryptedReportScope": "",
         **dict(zip(flag_names, (feature, media, handoff, direct, preview), strict=True)),
     }
     if moderation_key_id:
@@ -123,10 +127,14 @@ def write_archive_info_plists(
         app_info["SharingModerationPublicKey"] = moderation_public_key
     share_info = {
         "SharingReleaseMode": mode,
+        "SharingInternalEncryptedReportEnabled": False,
+        "SharingInternalEncryptedReportScope": "",
         **dict(zip(flag_names, (feature, media, handoff, direct, False), strict=True)),
     }
     widget_info = {
         "SharingReleaseMode": mode,
+        "SharingInternalEncryptedReportEnabled": False,
+        "SharingInternalEncryptedReportScope": "",
         "SharingFeatureEnabled": feature,
         "SharingMediaEnabled": media,
     }
@@ -138,6 +146,9 @@ def write_archive_info_plists(
     ):
         with path.open("wb") as stream:
             plistlib.dump(value, stream)
+    with zipfile.ZipFile(archive_path.parent / "NekoWidget.ipa", "w") as ipa:
+        for path in (info_path, share_path / "Info.plist", widget_path / "Info.plist"):
+            ipa.writestr("Payload/NekoWidget.app/" + str(path.relative_to(app_path)).replace("\\", "/"), path.read_bytes())
     return info_path
 
 
@@ -621,7 +632,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             root = Path(directory)
             archive_path = root / "NekoWidget.xcarchive"
             ipa_path = root / "NekoWidget.ipa"
-            ipa_path.write_bytes(b"synthetic IPA bytes")
             output_path = root / "moderation-release-metadata.json"
             info_path = write_archive_info_plists(
                 archive_path,
@@ -677,7 +687,10 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             metadata = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(metadata, {
-                "schema": "jp.nekowidget.moderation-release-metadata.v2",
+                "schema": "jp.nekowidget.moderation-release-metadata.v3",
+                "internalEncryptedReportEnabled": False,
+                "internalEncryptedReportScope": "",
+                "testFlightInternalTestingOnly": False,
                 "releaseEnvironment": "testflight",
                 "sourceCommit": "a" * 40,
                 "releaseMode": "media-staging",
@@ -735,7 +748,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                 moderation_public_key=MODERATION_PUBLIC_KEY,
             )
             ipa_path = root / "NekoWidget.ipa"
-            ipa_path.write_bytes(b"synthetic IPA bytes")
             trust_manifest = {
                 "schema": "jp.nekowidget.moderation-key-trust.v1",
                 "environment": "testflight",
@@ -780,7 +792,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                 moderation_public_key=MODERATION_PUBLIC_KEY,
             )
             ipa_path = root / "NekoWidget.ipa"
-            ipa_path.write_bytes(b"synthetic IPA bytes")
             trust_manifest = {
                 "schema": "jp.nekowidget.moderation-key-trust.v1",
                 "environment": "testflight",
@@ -831,7 +842,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                     moderation_public_key=public_key,
                 )
                 ipa_path = root / "NekoWidget.ipa"
-                ipa_path.write_bytes(b"synthetic IPA bytes")
                 trust_manifest = {
                     "schema": "jp.nekowidget.moderation-key-trust.v1",
                     "environment": "testflight",
@@ -882,7 +892,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                 mode="pairing-only",
             )
             ipa_path = root / "NekoWidget.ipa"
-            ipa_path.write_bytes(b"synthetic IPA bytes")
             v1_manifest = {
                 "schema": "jp.nekowidget.moderation-key-trust.v1",
                 "environment": "testflight",
@@ -954,7 +963,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             mode_sensitive_file = archive_path / "mode-sensitive.bin"
             mode_sensitive_file.write_bytes(b"unchanged bytes")
             ipa_path = root / "NekoWidget.ipa"
-            ipa_path.write_bytes(b"synthetic IPA bytes")
             trust_manifest = {
                 "schema": "jp.nekowidget.moderation-key-trust.v1",
                 "environment": "testflight",
@@ -1038,6 +1046,18 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         self.assertEqual(pairing.count('Link("プライバシーポリシーを確認"'), 2)
         self.assertEqual(pairing.count('Link("コミュニティ基準を確認"'), 2)
         self.assertIn('Link("プライバシーポリシー"', family)
+
+
+def load_tests(loader, standard_tests, pattern):
+    # The existing full Build owns preparation and both final artifact checks;
+    # standalone files remain usable for inexpensive focused diagnosis.
+    for filename in ("test-internal-report-release.py", "test-verify-moderation-upload-payload.py",
+                     "test-verify-signed-artifact-contents.py"):
+        spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), Path(__file__).with_name(filename))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        standard_tests.addTests(loader.loadTestsFromModule(module))
+    return standard_tests
 
 
 if __name__ == "__main__":

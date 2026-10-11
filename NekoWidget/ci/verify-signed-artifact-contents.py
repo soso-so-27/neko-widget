@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import plistlib
+from internal_report_release import metadata_settings, verify_info, verify_ipa
 import hashlib
 import json
 import os
@@ -177,6 +179,17 @@ def main() -> None:
             fail(f"Embedded release metadata is invalid: {error}")
         if not isinstance(release_metadata, dict):
             fail("Embedded release metadata root must be an object.")
+        if release_metadata.get("schema") == "jp.nekowidget.moderation-release-metadata.v3":
+            try:
+                report_settings = metadata_settings(release_metadata)
+                for relative, extension in (("Info.plist", False), ("PlugIns/NekoWidgetShareExtension.appex/Info.plist", True), ("PlugIns/NekoWidgetWidgetExtension.appex/Info.plist", True)):
+                    member = archive.getmember("NekoWidget.xcarchive/Products/Applications/NekoWidget.app/" + relative)
+                    if not member.isfile() or member.size > MAXIMUM_JSON_BYTES:
+                        fail("Report archive Info.plist invalid.")
+                    verify_info(plistlib.loads(archive.extractfile(member).read()), report_settings, extension=extension)
+                verify_ipa(args.external_ipa, report_settings)
+            except (ValueError, KeyError, plistlib.InvalidFileException) as error:
+                fail("Internal report artifact boundary invalid: " + str(error))
         if release_metadata.get("archiveDigestAlgorithm") != ARCHIVE_DIGEST_ALGORITHM:
             fail("Embedded release metadata archive digest algorithm is unsupported.")
         if release_metadata.get("archiveSha256") != embedded_archive_sha256(

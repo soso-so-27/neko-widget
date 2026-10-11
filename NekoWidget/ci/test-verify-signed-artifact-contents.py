@@ -12,6 +12,9 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import plistlib
+import zipfile
+import internal_report_release as reports
 from pathlib import Path
 
 
@@ -52,6 +55,43 @@ def add_bytes(archive: tarfile.TarFile, name: str, value: bytes) -> None:
 
 
 class SignedArtifactContentTests(unittest.TestCase):
+    def test_v3_checks_report_boundary_in_archive_and_ipa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); metadata = root / "moderation-release-metadata.json"
+            ipa = root / "NekoWidget.ipa"; trust = root / "moderation-key-trust-manifest.json"
+            trust.write_bytes(b'{"environment":"testflight","keys":{"moderation-v2":"a"},"revision":2,"schema":"jp.nekowidget.moderation-key-trust.v1"}\n')
+            info = {reports.ENABLED: True, reports.SCOPE_KEY: reports.SCOPE, "SharingReleaseMode": "media-staging",
+                "SharingAPIBaseURL": reports.ORIGIN, "SharingModerationKeyID": "moderation-v2", "SharingModerationPublicKey": reports.PUBLIC_KEY,
+                "SharingFeatureEnabled": True, "SharingMediaEnabled": True,
+                "SharingReviewPreviewEnabled": False, "SharingShareExtensionSendEnabled": False}
+            entries = {"Info.plist": plistlib.dumps(info),
+                "PlugIns/NekoWidgetShareExtension.appex/Info.plist": plistlib.dumps({reports.ENABLED: False, reports.SCOPE_KEY: ""}),
+                "PlugIns/NekoWidgetWidgetExtension.appex/Info.plist": plistlib.dumps({reports.ENABLED: False, reports.SCOPE_KEY: ""})}
+            with zipfile.ZipFile(ipa, "w") as archive:
+                for name, data in entries.items(): archive.writestr("Payload/NekoWidget.app/"+name, data)
+            def bundle(tamper):
+                actual = dict(entries)
+                if tamper: actual["PlugIns/NekoWidgetShareExtension.appex/Info.plist"] = plistlib.dumps(info)
+                digest = hashlib.sha256(b"jp.nekowidget.xcarchive-content.v2\0")
+                for name, data in sorted(actual.items()):
+                    relative = ("Products/Applications/NekoWidget.app/"+name).encode()
+                    digest.update(struct.pack(">Q", len(relative)));digest.update(relative);digest.update(struct.pack(">I",0o600))
+                    digest.update(b"F");digest.update(struct.pack(">Q",len(data)));digest.update(data)
+                metadata.write_text(json.dumps({"schema":"jp.nekowidget.moderation-release-metadata.v3", "releaseMode":"media-staging",
+                    "moderationKeyId":"moderation-v2", "moderationPublicKey":reports.PUBLIC_KEY, "internalEncryptedReportEnabled":True,
+                    "internalEncryptedReportScope":reports.SCOPE, "testFlightInternalTestingOnly":True,
+                    "archiveDigestAlgorithm":"sha256-tree-v2", "archiveSha256":digest.hexdigest()}))
+                path = root / "bundle.tar.gz"
+                with tarfile.open(path,"w:gz") as archive:
+                    for name, data in actual.items(): add_bytes(archive,"NekoWidget.xcarchive/Products/Applications/NekoWidget.app/"+name,data)
+                    for item in (metadata,ipa,trust): add_bytes(archive,item.name,item.read_bytes())
+                return path
+            accepted = self.run_verifier(bundle(False),metadata,ipa,trust)
+            self.assertEqual(accepted.returncode,0,accepted.stderr)
+            rejected = self.run_verifier(bundle(True),metadata,ipa,trust)
+            self.assertNotEqual(rejected.returncode,0)
+            self.assertIn("Compiled internal report",rejected.stderr)
+
     def run_verifier(
         self,
         bundle: Path,

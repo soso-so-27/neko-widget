@@ -17,20 +17,17 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
         configuration = self.source(
             "Shared/Sharing/SharingAPIConfiguration.swift"
         )
-        self.assertIn(
-            "var isEncryptedReportAvailable: Bool { false }",
-            configuration,
-        )
-        self.assertNotIn(
-            "var isEncryptedReportAvailable: Bool { true }",
-            configuration,
-        )
+        self.assertIn("isInternalEncryptedReportEnabled: Bool = false", configuration)
+        self.assertIn("internal-owner-first-connection", configuration)
+        self.assertIn('releaseMode == "media-staging"', configuration)
+        self.assertNotIn("var isEncryptedReportAvailable: Bool { true }", configuration)
 
         workflow = (REPOSITORY / ".github/workflows/testflight.yml").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn("ENCRYPTED_REPORT_ENABLED", workflow)
-        self.assertNotIn("REPORTING_ENABLED", workflow)
+        self.assertIn("internal_reports:", workflow)
+        self.assertIn("INTERNAL_REPORTS_ENABLED", workflow)
+        self.assertIn("internal_report_release.py", workflow)
         self.assertIn(
             'python3 "$PROJECT_DIRECTORY/ci/test-limited-external-beta-reporting.py"',
             workflow,

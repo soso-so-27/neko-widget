@@ -3796,6 +3796,54 @@ actor SharingRuntimeSelfTestRunner {
                   !configuration(rejected).isMediaAvailable
             else { throw MomentSharingError.stateUnavailable }
         }
+
+        let internalInfo: [String: Any] = [
+            "SharingFeatureEnabled": true,
+            "SharingMediaEnabled": true,
+            "SharingShareExtensionHandoffEnabled": true,
+            "SharingShareExtensionSendEnabled": false,
+            "SharingReviewPreviewEnabled": false,
+            "SharingReleaseMode": "media-staging",
+            "SharingAPIBaseURL": "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+            "SharingModerationKeyID": "moderation-v2",
+            "SharingModerationPublicKey": "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg",
+            "SharingPrivacyURL": "https://nekonomado.jp/privacy",
+            "SharingSupportURL": "https://nekonomado.jp/support",
+            "SharingCommunityStandardsURL": "https://nekonomado.jp/community",
+            "SharingInternalEncryptedReportEnabled": true,
+            "SharingInternalEncryptedReportScope": "internal-owner-first-connection",
+        ]
+        guard SharingAPIConfiguration.from(info: internalInfo).isEncryptedReportAvailable
+        else { throw MomentSharingError.stateUnavailable }
+        let rejectedValues: [(String, Any?)] = [
+            ("SharingInternalEncryptedReportEnabled", nil),
+            ("SharingInternalEncryptedReportEnabled", false),
+            ("SharingInternalEncryptedReportEnabled", "true"),
+            ("SharingInternalEncryptedReportEnabled", NSNumber(value: 1)),
+            ("SharingInternalEncryptedReportEnabled", NSNumber(value: 2)),
+            ("SharingInternalEncryptedReportScope", nil),
+            ("SharingInternalEncryptedReportScope", ""),
+            ("SharingInternalEncryptedReportScope", "internal-owner-first-connection "),
+            ("SharingInternalEncryptedReportScope", "limited-external-beta"),
+            ("SharingReleaseMode", "disabled"),
+            ("SharingReleaseMode", "review-preview"),
+            ("SharingReleaseMode", "pairing-only"),
+            ("SharingAPIBaseURL", "https://sharing.nekonomado.jp"),
+            ("SharingFeatureEnabled", false),
+            ("SharingMediaEnabled", false),
+            ("SharingReviewPreviewEnabled", true),
+            ("SharingShareExtensionSendEnabled", true),
+            ("SharingModerationKeyID", "moderation-v1"),
+            ("SharingModerationPublicKey", nil),
+            ("SharingModerationPublicKey", "mN9Gkz6jgfcajurTLGYCgfIqQEsevKeWmMvX4zrqhDo"),
+            ("SharingPrivacyURL", nil),
+        ]
+        for (key, value) in rejectedValues {
+            var changed = internalInfo
+            changed[key] = value
+            guard !SharingAPIConfiguration.from(info: changed).isEncryptedReportAvailable
+            else { throw MomentSharingError.stateUnavailable }
+        }
     }
 
     /// Installing a fully-disabled build over a previously paired media build

@@ -165,6 +165,24 @@ const EXPECTATIONS = Object.freeze({
   ]),
   // A read-only admission check for the explicitly approved internal build.
   // This proves gate readiness, not an Apple purchase or verifier connection.
+  "internal-report-first-connection": Object.freeze([
+    BASE_EXPECTATIONS.on[0],
+    Object.freeze({ name: "billing-health", path: "/v1/billing/health", status: 200,
+      body: Object.freeze({ status: "ok", protocolVersion: 1 }), billing: Object.freeze({
+      "neko-runtime-billing-owner-admission": "CLOSED",
+      "neko-runtime-billing-account-bootstrap": "OFF",
+      "neko-runtime-billing-transaction-ingestion": "OFF",
+      "neko-runtime-billing-apple-notification-ingestion": "OFF",
+      "neko-runtime-billing-apple-notification-history-recovery": "OFF",
+      "neko-runtime-billing-subscription-reconciliation": "OFF",
+      "neko-runtime-billing-effective-entitlement": "OFF",
+      "neko-runtime-billing-account-recovery": "OFF",
+      "neko-runtime-billing-window-sponsorship": "OFF",
+    }) }),
+    ...BASE_EXPECTATIONS.on.slice(1, -1),
+    ...REPORT_AUTH_BOUNDARY_EXPECTATIONS,
+    BASE_EXPECTATIONS.on.at(-1),
+  ]),
   "internal-purchase-sandbox": Object.freeze([
     BASE_EXPECTATIONS.on[0],
     Object.freeze({ name: "billing-health", path: "/v1/billing/health", status: 200,
@@ -339,7 +357,7 @@ export async function checkStagingRuntime({
   const expectations = EXPECTATIONS[expected];
   if (expectations === undefined) {
     throw new Error(
-      "expected runtime state must be 'on', 'limited-external-beta', 'internal-purchase-sandbox', 'moment-on-window-name-off', or 'off'",
+      "expected runtime state must be 'on', 'limited-external-beta', 'internal-purchase-sandbox', 'internal-report-first-connection', 'moment-on-window-name-off', or 'off'",
     );
   }
   if (typeof fetchImpl !== "function") {

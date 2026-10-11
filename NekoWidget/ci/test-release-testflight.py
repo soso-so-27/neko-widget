@@ -256,11 +256,58 @@ class ReleaseTests(unittest.TestCase):
         for scope in (*release.planner.SCOPES, "movie-screen-only"):
             with self.subTest(scope=scope):
                 self.plan.update(scope=scope, required_jobs=list(release.planner.required_jobs_from_scope(scope)))
-                if scope in (release.planner.MODERATION_RESOLUTION_SCOPE, release.planner.OWNER_CLOUD_SCOPE):
+                if scope in (release.planner.MODERATION_RESOLUTION_SCOPE, release.planner.OWNER_CLOUD_SCOPE,
+                              "reviewed-internal-report-v1"):
                     self.plan["required_backend_runs"] = release.planner.moderation_resolution_requirements(self.sha)
+                if scope == "reviewed-internal-report-v1":
+                    self.plan["required_backend_runs"] = release.planner.internal_report_requirements(self.sha)
                 self.set_plan()
-                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True):
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True):
                     self.assertEqual(self.prepare()["ci"]["scope"], scope)
+
+    def test_internal_report_release_requires_five_same_candidate_backend_declarations(self):
+        p = release.planner
+        self.plan.update(scope="reviewed-internal-report-v1",
+                         required_jobs=list(p.required_jobs_from_scope("reviewed-internal-report-v1")),
+                         required_backend_runs=p.internal_report_requirements(self.sha))
+        self.set_plan()
+        with patch.object(p, "internal_report_backend_evidence", return_value={"verified": True}) as backend:
+            self.assertEqual(self.prepare()["ci"]["backend_evidence"], {"verified": True})
+            self.assertEqual(backend.call_args.args[0], self.sha)
+        for declarations in (None, [], p.internal_report_requirements("b" * 40),
+                             p.internal_report_requirements(self.sha)[:-1]):
+            self.plan["required_backend_runs"] = declarations
+            self.set_plan()
+            with patch.object(p, "internal_report_backend_evidence") as backend, self.assertRaises(release.Blocked):
+                self.prepare()
+            backend.assert_not_called()
+        self.plan["required_backend_runs"] = p.internal_report_requirements(self.sha)
+        self.set_plan()
+        with patch.object(p, "internal_report_backend_evidence", side_effect=ValueError("missing execution")), \
+                self.assertRaises(release.Blocked):
+            self.prepare()
+
+    def test_internal_report_release_requires_exact_native_correction_graph(self):
+        p = release.planner
+        correction = {"kind": "internal-report-release-plist-ui-correction-v1", "run_id": 38137593169, "sha": "b" * 40, "jobs": []}
+        self.plan.update(scope="reviewed-internal-report-v1",
+                         required_jobs=list(p.required_jobs_from_scope("reviewed-internal-report-v1")),
+                         required_backend_runs=p.internal_report_requirements(self.sha),
+                         test_correction_evidence=correction)
+        self.set_plan()
+        proof = {"native_evidence": correction, "backend_evidence": {"fresh_sha": self.sha}}
+        with patch.object(p, "internal_report_correction_graph", return_value=proof) as graph:
+            got = self.prepare()["ci"]
+            self.assertEqual(got["tested_sha"], self.sha)
+            self.assertEqual(got["native_evidence"], correction)
+            self.assertEqual(got["backend_evidence"], proof["backend_evidence"])
+            self.assertEqual(graph.call_args.args[1], self.sha)
+        for result in (None, dict(proof, native_evidence=dict(correction, sha="c" * 40))):
+            with patch.object(p, "internal_report_correction_graph", return_value=result), self.assertRaises(release.Blocked):
+                self.prepare()
+        with patch.object(p, "internal_report_correction_graph", side_effect=ValueError("unknown failure")), self.assertRaises(release.Blocked):
+            self.prepare()
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_owner_cloud_release_requires_native_and_same_candidate_backend_execution(self):
         p=release.planner; selected=p.OWNER_CLOUD_SCOPE
@@ -319,6 +366,17 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release.planner, "moderation_resolution_backend_evidence") as verify, self.assertRaises(release.Blocked):
                 self.prepare()
             verify.assert_not_called()
+
+    def test_internal_reports_are_explicit_and_reject_billing(self):
+        self.assertNotIn("internal_reports", self.prepare()["inputs"])
+        result = release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=True)
+        self.assertEqual(result["inputs"]["internal_reports"], "true")
+        self.assertEqual(self.gh.dispatches, [])
+        for value in ("true", 1, None):
+            with self.assertRaises(release.Blocked):
+                release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=value)
+        with self.assertRaises(release.Blocked):
+            release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=True, preservation_pilot=True, billing_sandbox=True)
 
     def test_internal_preservation_flag_is_explicit_and_normal_release_is_unchanged(self):
         self.assertNotIn("preservation_pilot", self.prepare()["inputs"])

@@ -20,9 +20,10 @@ import stat
 import struct
 from pathlib import Path
 from moderation_readiness import verify_v2_rollout
+from internal_report_release import ENABLED, SCOPE_KEY, verify_info, verify_ipa
 
 
-METADATA_SCHEMA = "jp.nekowidget.moderation-release-metadata.v2"
+METADATA_SCHEMA = "jp.nekowidget.moderation-release-metadata.v3"
 ROLLOUT_POLICY_SCHEMA = "jp.nekowidget.moderation-client-rollout-policy.v1"
 SUPPORTED_MODERATION_KEY_IDS = {"moderation-v1", "moderation-v2"}
 ARCHIVE_DIGEST_ALGORITHM = "sha256-tree-v2"
@@ -345,6 +346,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--release-environment", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--release-mode", required=True)
+    parser.add_argument("--export-options-plist", type=Path)
+    parser.add_argument("--internal-reports", choices=("true", "false"), default="false")
+    parser.add_argument("--internal-report-scope", default="")
     parser.add_argument("--moderation-key-id", default="")
     parser.add_argument("--moderation-public-key", default="")
     parser.add_argument("--moderation-public-key-sha256", default="")
@@ -388,6 +392,23 @@ def main() -> None:
         args.moderation_key_id,
         args.moderation_public_key,
     )
+    report_settings = {ENABLED: args.internal_reports == "true", SCOPE_KEY: args.internal_report_scope}
+    from internal_report_release import SCOPE
+    if report_settings[SCOPE_KEY] != (SCOPE if report_settings[ENABLED] else ""):
+        fail("Internal report metadata scope mismatch.")
+    try:
+        for path, extension in ((args.archive / APP_INFO_RELATIVE_PATH, False), (args.archive / SHARE_INFO_RELATIVE_PATH, True), (args.archive / WIDGET_INFO_RELATIVE_PATH, True)):
+            verify_info(load_dictionary_plist(path, "Report archive Info.plist"), report_settings, extension=extension)
+        verify_ipa(args.ipa, report_settings)
+    except ValueError as error:
+        fail(str(error))
+    internal_export = False
+    if args.export_options_plist:
+        internal_export = load_dictionary_plist(args.export_options_plist, "Export options").get("testFlightInternalTestingOnly", False)
+        if type(internal_export) is not bool:
+            fail("Internal export restriction must be an explicit boolean.")
+    if report_settings[ENABLED] and internal_export is not True:
+        fail("Internal reports require internal-only IPA export.")
     version = info.get("CFBundleShortVersionString")
     build_number = info.get("CFBundleVersion")
     if not isinstance(version, str) or not version or version != version.strip():
@@ -447,6 +468,9 @@ def main() -> None:
         "releaseEnvironment": args.release_environment,
         "sourceCommit": args.source_commit,
         "releaseMode": args.release_mode,
+        "internalEncryptedReportEnabled": report_settings[ENABLED],
+        "internalEncryptedReportScope": report_settings[SCOPE_KEY],
+        "testFlightInternalTestingOnly": internal_export,
         "version": version,
         "buildNumber": build_number,
         "githubRunId": args.github_run_id,
