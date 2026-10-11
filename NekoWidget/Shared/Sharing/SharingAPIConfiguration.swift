@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 /// Public policy links for the app itself. These values never participate in
 /// sharing availability or authorization; the local-only release keeps them
@@ -77,6 +78,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     let supportURL: URL?
     let communityStandardsURL: URL?
     let releaseMode: String
+    let isInternalEncryptedReportEnabled: Bool
+    let internalEncryptedReportScope: String
 
     init(
         isEnabled: Bool,
@@ -90,7 +93,9 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         supportURL: URL?,
         communityStandardsURL: URL?,
         privacyURL: URL? = nil,
-        releaseMode: String = ""
+        releaseMode: String = "",
+        isInternalEncryptedReportEnabled: Bool = false,
+        internalEncryptedReportScope: String = ""
     ) {
         self.isEnabled = isEnabled
         self.isMediaEnabled = isMediaEnabled
@@ -104,6 +109,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         self.supportURL = supportURL
         self.communityStandardsURL = communityStandardsURL
         self.releaseMode = releaseMode
+        self.isInternalEncryptedReportEnabled = isInternalEncryptedReportEnabled
+        self.internalEncryptedReportScope = internalEncryptedReportScope
     }
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
@@ -122,11 +129,22 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         isAvailable && isMediaEnabled && hasOperationalSafetyConfiguration
     }
 
-    /// Encrypted report ingestion stays fail closed until the remote operator
-    /// export/review/early-delete path has passed its real-environment drill.
-    /// Do not derive this from the presence of the moderation public key: that
-    /// key is retained for forward-compatible media builds, not as an ON flag.
-    var isEncryptedReportAvailable: Bool { false }
+    /// The first connection is restricted to the reviewed internal staging
+    /// release. Key presence alone never enables reporting. The server still
+    /// checks admission, consent, source-photo access and the current key.
+    var isEncryptedReportAvailable: Bool {
+        isInternalEncryptedReportEnabled
+            && internalEncryptedReportScope == "internal-owner-first-connection"
+            && releaseMode == "media-staging"
+            && baseURL?.absoluteString == "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+            && isMediaAvailable
+            && !isReviewPreviewEnabled
+            && !isShareExtensionSendEnabled
+            && moderationKeyID == "moderation-v2"
+            && moderationPublicKey == Self.decodeCanonicalBase64URL(
+                "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"
+            )
+    }
 
     /// The extension may only place one canonical, short-lived input in the
     /// App Group. The host validates its ordinary-container installation
@@ -155,7 +173,10 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     var isDisabledRelease: Bool { releaseMode == "disabled" }
 
     static var current: Self {
-        let info = Bundle.main.infoDictionary ?? [:]
+        from(info: Bundle.main.infoDictionary ?? [:])
+    }
+
+    static func from(info: [String: Any]) -> Self {
         let enabled = explicitFlag(info["SharingFeatureEnabled"])
         let mediaEnabled = explicitFlag(info["SharingMediaEnabled"])
         let handoffEnabled = explicitFlag(info["SharingShareExtensionHandoffEnabled"])
@@ -191,7 +212,13 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             supportURL: supportURL,
             communityStandardsURL: communityStandardsURL,
             privacyURL: privacyURL,
-            releaseMode: releaseMode
+            releaseMode: releaseMode,
+            isInternalEncryptedReportEnabled: explicitBoolean(
+                info["SharingInternalEncryptedReportEnabled"]
+            ),
+            internalEncryptedReportScope: exactNonemptyString(
+                info["SharingInternalEncryptedReportScope"] as? String
+            ) ?? ""
         )
     }
 
@@ -214,6 +241,13 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             return ["1", "true", "yes"].contains(string.lowercased())
         }
         return false
+    }
+
+    private static func explicitBoolean(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID()
+        else { return false }
+        return number.boolValue
     }
 
     private static func decodeCanonicalBase64URL(_ value: String) -> Data? {

@@ -320,6 +320,17 @@ class ReleaseTests(unittest.TestCase):
                 self.prepare()
             verify.assert_not_called()
 
+    def test_internal_reports_are_explicit_and_reject_billing(self):
+        self.assertNotIn("internal_reports", self.prepare()["inputs"])
+        result = release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=True)
+        self.assertEqual(result["inputs"]["internal_reports"], "true")
+        self.assertEqual(self.gh.dispatches, [])
+        for value in ("true", 1, None):
+            with self.assertRaises(release.Blocked):
+                release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=value)
+        with self.assertRaises(release.Blocked):
+            release.prepare(self.gh, self.sha, "165", 20, self.now, {}, internal_reports=True, preservation_pilot=True, billing_sandbox=True)
+
     def test_internal_preservation_flag_is_explicit_and_normal_release_is_unchanged(self):
         self.assertNotIn("preservation_pilot", self.prepare()["inputs"])
         result = release.prepare(self.gh, self.sha, "165", 20, self.now, {}, preservation_pilot=True)

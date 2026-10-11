@@ -33,6 +33,11 @@ on:
         required: true
         default: false
         type: boolean
+      internal_reports:
+        description: "本人のみの内部通報確認。独立protected承認と内部専用IPAが必要。既定OFF"
+        required: true
+        default: false
+        type: boolean
       billing_sandbox:
         description: "実商品の内部Sandbox通し確認。通常配布には使わず、別のprotected承認とpreservation_pilotが必要"
         required: true
@@ -702,6 +707,9 @@ jobs:
           BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
           BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
           BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
+          INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
+          INTERNAL_REPORTS_APPROVAL: ${{ vars.INTERNAL_REPORTS_ENABLED }}
+          INTERNAL_REPORTS_SCOPE: ${{ vars.INTERNAL_REPORTS_SCOPE }}
         run: |
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py" \
@@ -717,6 +725,25 @@ jobs:
             --app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
             --widget-source-info-plist "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist" \
             --privacy-manifest "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
+
+      - name: Prepare owner-only internal report settings
+        shell: bash
+        env:
+          INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
+          INTERNAL_REPORTS_APPROVAL: ${{ vars.INTERNAL_REPORTS_ENABLED }}
+          INTERNAL_REPORTS_SCOPE: ${{ vars.INTERNAL_REPORTS_SCOPE }}
+          BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --scope "${INTERNAL_REPORTS_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --settings-file "$RUNNER_TEMP/internal-report-settings.json" \
+            --app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
+            --env-file "$GITHUB_ENV"
 
       - name: Validate limited external beta reporting boundary
         shell: bash
@@ -764,7 +791,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          if [[ "$RELEASE_PLUS_BILLING_CLIENT_ENABLED" == "YES" ]]; then
+          if [[ "$RELEASE_INTERNAL_REPORTS_ENABLED" == "true" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-report-first-connection
+          elif [[ "$RELEASE_PLUS_BILLING_CLIENT_ENABLED" == "YES" ]]; then
             NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
               node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox
           else
@@ -1221,6 +1251,9 @@ jobs:
           BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
           BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
           BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
+          INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
+          INTERNAL_REPORTS_APPROVAL: ${{ vars.INTERNAL_REPORTS_ENABLED }}
+          INTERNAL_REPORTS_SCOPE: ${{ vars.INTERNAL_REPORTS_SCOPE }}
         run: |
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
@@ -1238,6 +1271,16 @@ jobs:
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
             --widget-info-plist "$widget_path/Info.plist" \
             --app-info-plist "$app_path/Info.plist"
+          python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --scope "${INTERNAL_REPORTS_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --settings-file "$RUNNER_TEMP/internal-report-settings.json" \
+            --app-info-plist "$app_path/Info.plist" \
+            --share-info-plist "$share_path/Info.plist" \
+            --widget-info-plist "$widget_path/Info.plist"
           python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" archive \
             --app-info-plist "$app_path/Info.plist" \
             --widget-info-plist "$widget_path/Info.plist"
@@ -1365,6 +1408,9 @@ jobs:
           BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
           BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
           BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
+          INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
+          INTERNAL_REPORTS_APPROVAL: ${{ vars.INTERNAL_REPORTS_ENABLED }}
+          INTERNAL_REPORTS_SCOPE: ${{ vars.INTERNAL_REPORTS_SCOPE }}
         run: |
           set -euo pipefail
           sed \
@@ -1386,6 +1432,14 @@ jobs:
             --billing-approval "${BILLING_APPROVAL:-}" \
             --billing-scope "${BILLING_SCOPE:-}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
+          python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --scope "${INTERNAL_REPORTS_SCOPE:-}" \
+            --billing-requested "${BILLING_REQUESTED:-false}" \
+            --settings-file "$RUNNER_TEMP/internal-report-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
@@ -1421,6 +1475,9 @@ jobs:
             --release-environment "$RELEASE_ENVIRONMENT" \
             --source-commit "$RELEASE_SOURCE_SHA" \
             --release-mode "$SHARING_EXPECTED_MODE" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist" \
+            --internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+            --internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE" \
             --moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
             --moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
             --moderation-public-key-sha256 "$RELEASE_SHARING_MODERATION_PUBLIC_KEY_SHA256" \
@@ -1556,7 +1613,9 @@ jobs:
             --expected-build-number "$RELEASE_BUILD_NUMBER" \
             --expected-github-run-id "$GITHUB_RUN_ID" \
             --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --expected-release-mode "$SHARING_EXPECTED_MODE"
+            --expected-release-mode "$SHARING_EXPECTED_MODE" \
+            --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+            --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
 
           run_altool_stage() {
             local stage="$1"

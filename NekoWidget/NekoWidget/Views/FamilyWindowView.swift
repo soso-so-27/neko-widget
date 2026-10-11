@@ -170,6 +170,51 @@ struct FamilyWindowView: View {
     private static var isSettingsFixture: Bool {
         CommandLine.arguments.contains("--family-window-settings-fixture")
     }
+    private static var isInternalReportFixture: Bool {
+#if targetEnvironment(simulator)
+        CommandLine.arguments.contains("--internal-report-actions-ui-fixture")
+#else
+        false
+#endif
+    }
+
+    private static var internalReportFixtureConfiguration: SharingAPIConfiguration {
+        SharingAPIConfiguration.from(info: [
+            "SharingFeatureEnabled": true, "SharingMediaEnabled": true,
+            "SharingReleaseMode": "media-staging",
+            "SharingAPIBaseURL": "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+            "SharingModerationKeyID": "moderation-v2",
+            "SharingModerationPublicKey": "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg",
+            "SharingPrivacyURL": "https://nekonomado.jp/privacy",
+            "SharingSupportURL": "https://nekonomado.jp/support",
+            "SharingCommunityStandardsURL": "https://nekonomado.jp/community",
+            "SharingInternalEncryptedReportEnabled": !CommandLine.arguments.contains("--internal-report-off"),
+            "SharingInternalEncryptedReportScope": "internal-owner-first-connection",
+        ])
+    }
+
+    /// Shipping controls without bootstrap, accounts, disk photos or relay
+    /// requests. Rendered consent is not an actual report submission proof.
+    private var internalReportFixtureContent: some View {
+        let now = Date()
+        let item = MomentInboxItem(id: "internal_report_ui_photo", senderParticipantID: "fixture_peer",
+            kind: .live, keyEpoch: 1, localJPEGFileName: nil, capturedAt: nil,
+            captureDateIsMissing: true, committedAt: now, receivedAt: now,
+            state: .available, accessExpiresAt: now.addingTimeInterval(3_600))
+        return photoActionDialogs(
+            NavigationStack {
+                VStack(spacing: 20) {
+                    Image(systemName: "photo").accessibilityLabel("表示確認用の写真")
+                    Menu {
+                        receivedReportAction(item)
+                        Text("写真の操作")
+                    } label: { Image(systemName: "ellipsis.circle") }
+                    .accessibilityLabel("写真の情報と操作")
+                }
+                .navigationTitle("届いた写真")
+            }, isDetail: false
+        )
+    }
 #endif
 
     private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
@@ -211,6 +256,10 @@ struct FamilyWindowView: View {
         _pendingMemorySourceDigest = pendingMemorySourceDigest
         _pendingNotificationRoute = pendingNotificationRoute
 #if DEBUG
+        if Self.isInternalReportFixture {
+            _model = StateObject(wrappedValue: MomentSharingViewModel(
+                configuration: Self.internalReportFixtureConfiguration))
+        }
         if Self.isSettingsFixture {
             _notificationAuthorizationState = State(initialValue: .denied)
         }
@@ -231,7 +280,9 @@ struct FamilyWindowView: View {
             widgetPhotoContent
         } else {
 #if DEBUG
-        if Self.isSettingsFixture {
+        if Self.isInternalReportFixture {
+            internalReportFixtureContent
+        } else if Self.isSettingsFixture {
             // The shipping settings view, without baseContent's bootstrap,
             // notification queries, or subscriptions. No account is loaded.
             windowSettingsContent
@@ -881,10 +932,7 @@ struct FamilyWindowView: View {
                         ToolbarItem(placement: .topBarLeading) {
                             Menu {
                                 Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
-                                if model.isEncryptedReportAvailable {
-                                    Button(model.reportActionTitle(item)) { reportTarget = item }
-                                        .disabled(!model.canSubmitReport(item))
-                                }
+                                receivedReportAction(item)
                                 Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
                                 if !model.isReportOnly {
                                     Button("この相手をブロック", role: .destructive) { blockTarget = item }
@@ -2224,17 +2272,7 @@ struct FamilyWindowView: View {
                 }
                 Spacer()
                 Menu {
-                    if model.isEncryptedReportAvailable {
-                        Button {
-                            reportTarget = item
-                        } label: {
-                            Label(
-                                model.reportActionTitle(item),
-                                systemImage: "exclamationmark.bubble"
-                            )
-                        }
-                        .disabled(!model.canSubmitReport(item))
-                    }
+                    receivedReportAction(item)
                     Button(role: .destructive) {
                         deleteReceivedTarget = item
                     } label: {
@@ -2716,6 +2754,19 @@ struct FamilyWindowView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func receivedReportAction(_ item: MomentInboxItem) -> some View {
+        if model.isEncryptedReportAvailable {
+            Button {
+                reportTarget = item
+            } label: {
+                Label(model.reportActionTitle(item), systemImage: "exclamationmark.bubble")
+            }
+            .disabled(!model.canSubmitReport(item))
+            .accessibilityIdentifier("received-photo-report")
+        }
     }
 
     @ViewBuilder
@@ -3822,7 +3873,9 @@ struct ModerationResolutionUIFixture: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if fixture.ready {
+            if CommandLine.arguments.contains("--internal-report-actions-ui-fixture") {
+                FamilyWindowView()
+            } else if fixture.ready {
                 if replies {
                     MomentReportResponsesView(model: fixture.replyModel)
                 } else {
@@ -3858,7 +3911,10 @@ struct ModerationResolutionUIFixture: View {
                 if fixture.failed { Text("fixture failed").accessibilityIdentifier("moderation-fixture-failed") }
             }
         }
-        .task { await fixture.prepare(repliesOnly: replies) }
+        .task {
+            guard !CommandLine.arguments.contains("--internal-report-actions-ui-fixture") else { return }
+            await fixture.prepare(repliesOnly: replies)
+        }
     }
 }
 

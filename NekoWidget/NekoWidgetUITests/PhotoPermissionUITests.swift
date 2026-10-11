@@ -5691,6 +5691,40 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testInternalReportActionUsesExplicitAvailabilityAndConsent() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let arguments = ["--moderation-resolution-ui-fixture", "--internal-report-actions-ui-fixture",
+                         "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = arguments
+        app.launch()
+        let menu = app.buttons["写真の情報と操作"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let report = app.buttons["received-photo-report"]
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        XCTAssertTrue(report.isEnabled)
+        report.tap()
+        XCTAssertTrue(app.staticTexts["この写真を通報しますか？"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。"].exists)
+        for reason in ["不適切な内容", "嫌がらせ", "プライバシー", "その他"] {
+            XCTAssertTrue(app.buttons[reason].exists)
+            XCTAssertTrue(app.buttons[reason].isEnabled)
+        }
+        attach(app, name: "internal-report-shipping-action-and-explicit-photo-consent")
+        app.buttons["キャンセル"].tap()
+        app.terminate()
+
+        app.launchArguments = arguments + ["--internal-report-off"]
+        app.launch()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        XCTAssertFalse(app.buttons["received-photo-report"].exists)
+        attach(app, name: "ordinary-build-keeps-report-action-off")
+        app.terminate()
+    }
+
+    @MainActor
     func testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure() {
         continueAfterFailure = false
         let app = XCUIApplication()

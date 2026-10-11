@@ -148,6 +148,28 @@ test("accepts limited external beta when health is OFF and report routes stay au
   ]);
 });
 
+test("internal report preparation requires report OFF and every effective billing bit OFF", async () => {
+  const headers = {
+    "neko-runtime-billing-gate-generation": "7",
+    "neko-runtime-billing-apple-notification-rate-limiter": "READY",
+    "neko-runtime-billing-owner-admission": "CLOSED",
+    ...Object.fromEntries(["account-bootstrap", "transaction-ingestion", "apple-notification-ingestion",
+      "apple-notification-history-recovery", "subscription-reconciliation", "effective-entitlement",
+      "account-recovery", "window-sponsorship"].map(name => [`neko-runtime-billing-${name}`, "OFF"])),
+  };
+  const run = (billingHeaders = headers, healthReportRuntime = "OFF") => checkStagingRuntime({ origin,
+    expected: "internal-report-first-connection", fetchImpl: runtimeFetch({ momentStatus: 401,
+      momentCode: "invalid_authentication", billingHeaders, healthReportRuntime }),
+  });
+  assert.equal((await run()).checks.length, 13);
+  for (const name of Object.keys(headers)) {
+    const missing = { ...headers }; delete missing[name];
+    await assert.rejects(run(missing), /internal billing runtime state/u);
+    await assert.rejects(run({ ...headers, [name]: "ON" }), /internal billing runtime state/u);
+  }
+  await assert.rejects(run(headers, "ON"), /runtime gate state/u);
+});
+
 test("internal purchase build requires exact billing readiness without altering ordinary beta", async () => {
   const billingHeaders = {
     "neko-runtime-billing-gate-generation": "8",

@@ -7,6 +7,11 @@ const root=path.resolve(import.meta.dirname,'../..');
 export const codePaths=Object.freeze([
  '.github/workflows/testflight.yml',
  'NekoWidget/ci/moderation_readiness.py','NekoWidget/ci/verify-moderation-readiness.mjs','NekoWidget/ci/write-moderation-release-metadata.py',
+ 'NekoWidget/ci/internal_report_release.py','NekoWidget/ci/release-testflight.py',
+ 'NekoWidget/ci/verify-moderation-upload-payload.py','NekoWidget/ci/verify-signed-artifact-contents.py',
+ 'NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift','NekoWidget/NekoWidget/Views/FamilyWindowView.swift',
+ 'NekoWidget/NekoWidget/Info.plist','NekoWidget/NekoWidgetShareExtension/Info.plist','NekoWidget/NekoWidgetWidget/Info.plist',
+ 'NekoWidget/SharingService/scripts/check-staging-runtime.mjs','NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs',
  'NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql','NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql',
  'NekoWidget/SharingService/migrations/0037_moderation_enrollment_counter_floor.sql',
  'NekoWidget/SharingService/src/moderation-owner-scope-adoption.ts','NekoWidget/SharingService/src/moderation-operator-identity.ts',
