@@ -816,6 +816,9 @@ class WidgetScopeTests(unittest.TestCase):
             if selected == scope.ICON_SCOPE:
                 self.assertEqual(required, (planner.ICON_BUILD,))
                 continue
+            if selected == scope.OWNER_CLOUD_SCOPE:
+                self.assertEqual(required, (planner.BUILD, scope.lane_job(selected, "runtime")))
+                continue
             self.assertIn(planner.smoke_job(selected), required)
             if selected not in (scope.FULL_SCOPE, scope.APP_VIEW_SCOPE, scope.APP_DATA_SCOPE):
                 self.assertEqual(scope.smoke_tests(selected), bootstrap)
