@@ -667,6 +667,14 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     export_correction = (result.get("scope") == planner.PRESERVATION_EXPORT_SCOPE and correction_evidence is not None
                          and correction_evidence.get("run_id") == planner.PRESERVATION_EXPORT_CORRECTION_RUN
                          and correction_evidence.get("sha") == planner.PRESERVATION_EXPORT_CORRECTION_SOURCE)
+    owner_correction = (result.get("scope") == planner.OWNER_CLOUD_SCOPE and isinstance(correction_evidence, dict)
+                        and correction_evidence.get("kind") == "owner-cloud-fixed-counter-repair-v1"
+                        and correction_evidence.get("candidate_sha") == result.get("head")
+                        and correction_evidence.get("run_id") == planner.OWNER_CLOUD_CORRECTION_RUN
+                        and correction_evidence.get("sha") == planner.OWNER_CLOUD_CORRECTION_SOURCE
+                        and correction_evidence.get("failed_backend_run_id") == planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN)
+    fixed_owner_failures = ({planner.OWNER_CLOUD_CORRECTION_RUN, planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN}
+                            if owner_correction else set())
     correction_cases = (planner.PRESERVATION_EXPORT_CORRECTION_CASES if export_correction else
                         planner.PHOTO_SMOKE_CORRECTION_CASES if photo_smoke_correction else
                         {planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
@@ -683,6 +691,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     # A subsequent run or diagnostic failure must remain a blocking failure.
     failed_tests = sorted({test if "/" in test else "MomentDeliveryComposerUITests/" + test
                            for run in failed for test in run.get("failed_tests", [])
+                           if run.get("id") not in fixed_owner_failures
                            if not (run.get("id") == correction_run and test in correction_cases)
                            and not (diagnosed_failure is not None and run.get("id") == diagnosed_failure["run_id"]
                                     and test == diagnosed_failure["test"])})
@@ -699,6 +708,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
+                          if run.get("id") not in fixed_owner_failures
                           if not repeated_photos(run, test)
                           and not (photo_smoke_correction and run["id"] == planner.PHOTO_SMOKE_CORRECTION_RUN
                                   and test.removeprefix("NekoWidgetUITests.") in correction_cases)})
@@ -814,6 +824,26 @@ def moderation_chained_cost(result, proof, include_upload, history):
         "source_run_conclusions": ["failure", "failure"], "new_build_full_success_observed": False,
         "owning_jobs": list(planner.MODERATION_CHAIN_OWNING), "build_timeout_minutes": 30, "photos_timeout_minutes": 40, "includes_future_rework": False,
         "note": "Execute complete Build and Photos after exact runtime/UI and five-backend proof. The parallel 40 minute workflow timeout is a planning upper bound, not an observed successful runtime or a guarantee against further failure. Photos cause is unresolved. Keep every failed/active/diagnostic run and cumulative time."}
+    result["cost_review_required"] = upper > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
+
+
+def owner_cloud_correction_cost(result, correction, include_upload, history):
+    if (result.get("scope") != planner.OWNER_CLOUD_SCOPE or not isinstance(correction, dict)
+            or correction.get("kind") != "owner-cloud-fixed-counter-repair-v1"
+            or correction.get("candidate_sha") != result.get("head")
+            or correction.get("run_id") != planner.OWNER_CLOUD_CORRECTION_RUN
+            or correction.get("sha") != planner.OWNER_CLOUD_CORRECTION_SOURCE): return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    result = dict(result)
+    result["full_cost_before_correction"] = result["cost"]
+    upper = round(30 + upload, 2)
+    result["cost"] = {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [upper, upper],
+                      "reference_runs": [planner.OWNER_CLOUD_CORRECTION_RUN], "owning_jobs": [planner.BUILD],
+                      "build_timeout_minutes": 30, "includes_future_rework": False,
+                      "note": "Fresh complete Build and all five owning backend checks remain mandatory. Only the fixed original completed runtime is reused at its original SHA. Original failures, active work and cumulative elapsed time remain in task history; 30 minutes is the pinned Build timeout, not an observed success."}
     result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
     return result
@@ -1209,13 +1239,14 @@ def main(argv=None):
             production = (planner.moderation_ui_recovery_evidence(result["head"], REPOSITORY,
                 lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
                 if chained is None and result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_ui_recovery_inputs(result["head"]) else None)
-            if chained is None and production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE):
+            if chained is None and production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE, planner.OWNER_CLOUD_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
+            result = owner_cloud_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
             result = moderation_chained_cost(result, chained, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,

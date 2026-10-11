@@ -24,6 +24,128 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class OwnerCloudCorrectionTests(unittest.TestCase):
+    def setUp(self):
+        self.now=dt.datetime(2026,10,11,8,tzinfo=dt.timezone.utc)
+        self.head="a"*40; self.sha=planner.OWNER_CLOUD_CORRECTION_SOURCE
+        self.branch=planner.OWNER_CLOUD_CORRECTION_BRANCH; self.repo="soso-so-27/neko-widget"
+        self.required=planner.required_jobs_from_scope(scope.OWNER_CLOUD_SCOPE)
+        self.run={"id":planner.OWNER_CLOUD_CORRECTION_RUN,"head_sha":self.sha,"head_branch":self.branch,
+            "workflow_id":335014238,"path":".github/workflows/ios-build.yml","event":"push","run_attempt":1,
+            "status":"completed","conclusion":"failure","updated_at":self.now.isoformat(),
+            "repository":{"full_name":self.repo},"head_repository":{"full_name":self.repo}}
+        def job(name,identifier,conclusion="success",steps=()):
+            return {"name":name,"id":identifier,"run_id":self.run["id"],"head_sha":self.sha,"run_attempt":1,
+                "status":"completed","conclusion":conclusion,"completed_at":self.now.isoformat(),
+                "steps":[{"name":n,"status":"completed","conclusion":"success"} for n in steps]}
+        self.native=[job(planner.PLAN_JOB,1,steps=("Select checks",)),
+            job(planner.BUILD,planner.OWNER_CLOUD_CORRECTION_BUILD_JOB,"failure",("Verify sharing release privacy gates",)),
+            job(self.required[1],planner.OWNER_CLOUD_CORRECTION_RUNTIME_JOB,steps=planner.OWNER_CLOUD_RUNTIME_STEPS)]
+        self.native[1]["steps"][0]["conclusion"]="failure"
+        self.backend=dict(self.run,id=planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN,path=".github/workflows/sharing-service.yml")
+        self.backend_jobs=[job(n,10+i) for i,n in enumerate(planner.PRESERVATION_EXPORT_BACKEND_JOBS["sharing-service.yml"])]
+        for j in self.backend_jobs:j["run_id"]=self.backend["id"]
+        worker=next(j for j in self.backend_jobs if j["name"]=="Typecheck, test, and bundle Worker")
+        worker.update(id=planner.OWNER_CLOUD_CORRECTION_WORKER_JOB,conclusion="failure",
+                      steps=[{"name":"Run Worker, D1, staging, moderation, and key ceremony tests","status":"completed","conclusion":"failure"}])
+        self.plan={"schema_version":1,"repository":self.repo,"head_sha":self.sha,"scope":scope.OWNER_CLOUD_SCOPE,
+            "required_jobs":list(self.required),"required_backend_runs":planner.moderation_resolution_requirements(self.sha),
+            "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
+
+    def proof(self):
+        def api(path):
+            if path.endswith('/runs/'+str(self.backend['id'])):return self.backend
+            if path.endswith('/jobs/1/logs'):return 'IOS_CI_PLAN_JSON='+json.dumps(self.plan)
+            return 'fixture owning log'
+        with patch.object(planner,"owner_cloud_correction_inputs",return_value=True), \
+             patch.object(planner,"executed_jobs",side_effect=lambda r,*a:self.native if r['id']==self.run['id'] else self.backend_jobs), \
+             patch.object(planner,"owner_cloud_failure_log",return_value=True):
+            return planner.owner_cloud_correction_source(self.run,self.head,self.branch,self.repo,335014238,self.required,api,self.now)
+
+    def test_original_runtime_stays_on_original_sha_and_pending_wrong_attempt_stale_or_extra_failure_rejected(self):
+        p=self.proof(); self.assertEqual(p['sha'],self.sha)
+        self.assertEqual(p['jobs'],[{'name':self.required[1],'job_id':planner.OWNER_CLOUD_CORRECTION_RUNTIME_JOB}])
+        self.assertEqual(p['owning_jobs_to_execute'],[planner.BUILD])
+        for key,value in [('status','in_progress'),('run_attempt',2),('head_sha',self.head),('head_branch','codex/other'),('updated_at',(self.now-dt.timedelta(hours=25)).isoformat())]:
+            old=self.run[key];self.run[key]=value
+            with self.subTest(key=key):self.assertIsNone(self.proof())
+            self.run[key]=old
+        for key,value in [('conclusion','skipped'),('head_sha',self.head),('id',123),('run_attempt',2)]:
+            old=self.native[2][key];self.native[2][key]=value
+            with self.subTest(runtime=key):self.assertIsNone(self.proof())
+            self.native[2][key]=old
+        self.native[2]['steps'][1]['conclusion']='skipped';self.assertIsNone(self.proof())
+        self.native[2]['steps'][1]['conclusion']='success'
+        self.native[1]['steps'].append({'name':'unrelated failure','status':'completed','conclusion':'failure'})
+        self.assertIsNone(self.proof())
+
+    def test_fixed_input_closure_requires_exact_repair_and_main_approval(self):
+        rows={p:[':000000' if b=='0'*40 else ':100644','100644',b,a,'A' if b=='0'*40 else 'M'] for p,(b,a) in scope.OWNER_CLOUD_CORRECTION_BLOBS.items()}
+        def accepts(changed,approved=True):
+            def git(*args):
+                if args[0]=='merge-base':return 'approved'
+                if args[0]=='show':return 'OWNER_CLOUD_CORRECTION_SOURCE = "'+self.sha+'"' if approved else ''
+                if args[0]=='diff':return ''.join(' '.join(v)+'\0'+p+'\0' for p,v in changed.items())
+                if args[0]=='ls-tree':return '100644 blob '+'c'*40+'\t'+args[-1]
+                raise AssertionError(args)
+            with patch.object(planner,'git',side_effect=git):return planner.owner_cloud_correction_inputs(self.head)
+        self.assertTrue(accepts(rows));self.assertFalse(accepts(rows,False))
+        partial=copy.deepcopy(rows);partial.pop(next(iter(rows)));self.assertFalse(accepts(partial))
+        unknown=copy.deepcopy(rows);unknown['NekoWidget/SharingService/src/other.ts']=[':100644','100644','c'*40,'d'*40,'M'];self.assertFalse(accepts(unknown))
+        for i,v in [(0,':100755'),(1,'120000'),(3,'f'*40),(4,'D')]:
+            changed=copy.deepcopy(rows);changed[next(iter(rows))][i]=v;self.assertFalse(accepts(changed))
+
+    def test_failure_diagnosis_requires_reviewed_normalized_bytes(self):
+        text='FAIL: test_testflight_checks_the_exact_policy_profile_before_signing (__main__.PublicPolicySiteTests.test_testflight_checks_the_exact_policy_profile_before_signing)\nAssertionError: 4014 not less than 3835\nFAILED (failures=1)\n##[error]Process completed with exit code 1.'
+        digest=planner.hashlib.sha256(text.encode()).hexdigest()
+        with patch.object(planner,'OWNER_CLOUD_CORRECTION_BUILD_LOG_SHA256',digest):
+            self.assertTrue(planner.owner_cloud_failure_log(text))
+            stamped='\n'.join('2026-10-11T07:18:37.123Z '+line for line in text.splitlines())
+            self.assertTrue(planner.owner_cloud_failure_log(stamped))
+            self.assertFalse(planner.owner_cloud_failure_log(text+'\nother failure'))
+        self.assertFalse(planner.owner_cloud_failure_log(text))
+
+    def test_fresh_graph_requires_full_build_and_new_sha_backends(self):
+        proof=self.proof();run=dict(self.run,id=99,head_sha=self.head,conclusion='success')
+        jobs=copy.deepcopy(self.native[:2])
+        for j in jobs:j.update(head_sha=self.head,run_id=99,conclusion='success')
+        jobs[1]['steps']=[{'name':n,'status':'completed','conclusion':'success'} for n in planner.moderation_build_steps()]
+        plan=dict(self.plan,head_sha=self.head,required_backend_runs=planner.moderation_resolution_requirements(self.head),test_correction_evidence=proof)
+        api=lambda path:'IOS_CI_PLAN_JSON='+json.dumps(plan) if path.endswith('/logs') else self.run
+        with patch.object(planner,'owner_cloud_correction_inputs',return_value=True),patch.object(planner,'owner_cloud_correction_source',return_value=proof),patch.object(planner,'moderation_resolution_backend_evidence',return_value={'fresh':True}) as backend:
+            got=planner.owner_cloud_correction_graph(run,self.head,self.required,api,self.now,jobs)
+            self.assertEqual(got['runtime_evidence']['sha'],self.sha);self.assertEqual(backend.call_args.args[0],self.head)
+            jobs[1]['steps'][2]['conclusion']='skipped'
+            self.assertIsNone(planner.owner_cloud_correction_graph(run,self.head,self.required,api,self.now,jobs))
+            jobs[1]['steps'][2]['conclusion']='success'
+            with patch.object(planner,'moderation_resolution_backend_evidence',side_effect=ValueError('wrong SHA')):
+                with self.assertRaises(ValueError):planner.owner_cloud_correction_graph(run,self.head,self.required,api,self.now,jobs)
+
+    def test_correction_immutable_tree_pins_actual_base_and_original_source(self):
+        for ref in ('3b8dfc68cf1fc66b20f55172f0c9879c4ebd02e4',self.sha):
+            records=[r for r in planner.git('ls-tree','-r','-z',ref).split('\0') if r]
+            immutable=[r for r in records if not planner.is_handoff(r.split('\t')[1]) and r.split('\t')[1] not in scope.OWNER_CLOUD_CORRECTED_PATHS | scope.OWNER_CLOUD_CONTROLS]
+            self.assertEqual(len(immutable),1103)
+            self.assertEqual(planner.hashlib.sha256(('\0'.join(immutable)+'\0').encode()).hexdigest(),scope.OWNER_CLOUD_CORRECTION_TREE_SHA256)
+
+    def test_corrected_full_batch_uses_original_base_and_final_after_for_shared_paths(self):
+        products=dict(scope.OWNER_CLOUD_BLOBS)
+        for path,(before,after) in scope.OWNER_CLOUD_CORRECTION_BLOBS.items():
+            products[path]=(scope.OWNER_CLOUD_BLOBS[path][0] if path in scope.OWNER_CLOUD_BLOBS else before,after)
+        rows={p:[':000000' if b=='0'*40 else ':100644','100644',b,a,'A' if b=='0'*40 else 'M'] for p,(b,a) in products.items()}
+        tree='100644 blob '+'c'*40+'\tNekoWidget/Shared/Unchanged.swift\0'
+        def git(*args):
+            if args[0]=='diff':return ''.join(' '.join(v)+'\0'+p+'\0' for p,v in rows.items())
+            if args[:3]==('ls-tree','-r','-z'):return tree
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'owner_cloud_control_approved',return_value=True),patch.object(planner,'owner_cloud_correction_inputs',return_value=True),patch.object(planner,'OWNER_CLOUD_CORRECTION_TREE_SHA256',planner.hashlib.sha256(tree.encode()).hexdigest()):
+            self.assertTrue(planner.owner_cloud_only(list(rows),'base',self.head))
+            self.assertTrue(scope.accepts_paths(scope.OWNER_CLOUD_SCOPE,list(rows)))
+            path='NekoWidget/ci/moderation-v2-readiness.json'
+            rows[path][2]=scope.OWNER_CLOUD_CORRECTION_BLOBS[path][0]
+            self.assertFalse(planner.owner_cloud_only(list(rows),'base',self.head))
+
+
 class OwnerCloudScopeTests(unittest.TestCase):
     def test_frozen_actual_base_tree_digest_matches_declared_pin(self):
         records = [r for r in planner.git("ls-tree", "-r", "-z", "3b8dfc68cf1fc66b20f55172f0c9879c4ebd02e4").split("\0") if r]
