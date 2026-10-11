@@ -330,12 +330,54 @@ def diagnostic_title_tests(title):
         return set()
 
 
+INTERNAL_REPORT_DIAGNOSTIC_SOURCE = "ac792da2436d6dd22c82160d064acdc52bf385b7"
+INTERNAL_REPORT_RELEASE_FIXTURE = "NekoWidget/ci/test-release-testflight.py"
+INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS = (
+    "88b8c53326113cdaf902021986a7d979db78ae6f",
+    "f739adf1cf7c0551dbc3ca805baea26d00416198",
+)
+
+
+def internal_report_diagnostic_source_matches(source, head):
+    """Forward one observed diagnostic only, across fixed non-native changes."""
+    if source != INTERNAL_REPORT_DIAGNOSTIC_SOURCE:
+        return False
+    try:
+        planner.git("merge-base", "--is-ancestor", source, head)
+        base = planner.git("merge-base", "refs/remotes/origin/main", head)
+        paths = planner.git("diff", "--name-only", base, head).splitlines()
+        if not planner.internal_report_only(paths, base, head):
+            return False
+        raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head)
+        records = raw.split("\0")
+        if records[-1:] == [""]:
+            records.pop()
+        if not records or len(records) % 2:
+            return False
+        seen = set()
+        allowed = planner.INTERNAL_REPORT_CONTROLS | {INTERNAL_REPORT_RELEASE_FIXTURE}
+        for index in range(0, len(records), 2):
+            fields, path = records[index].split(), records[index + 1]
+            if (path not in allowed or path in seen or len(fields) != 5
+                    or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
+                return False
+            if path == INTERNAL_REPORT_RELEASE_FIXTURE and tuple(fields[2:4]) != INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS:
+                return False
+            seen.add(path)
+        return INTERNAL_REPORT_RELEASE_FIXTURE in seen
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
 def diagnostic_source_matches(source, head):
     """A diagnosis only; never release evidence reuse or a selector exception."""
     if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) for value in (source, head)):
         return False
     if source == head:
         return True
+    if source == INTERNAL_REPORT_DIAGNOSTIC_SOURCE:
+        return internal_report_diagnostic_source_matches(source, head)
     if source == planner.MODERATION_UI_RECOVERY_PRODUCT and (planner.moderation_ui_recovery_inputs(head)
             or planner.moderation_chained_inputs(head)):
         # Exact shipping UI/test pair unchanged since this diagnostic. Only the
