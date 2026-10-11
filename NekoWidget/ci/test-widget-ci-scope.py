@@ -1003,5 +1003,73 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
                 self.assertFalse(planner.covers_jobs(changed, required, self.head))
 
 
+class InternalReportNativeBoundaryTests(unittest.TestCase):
+    def selector_fixture(self, *, raw_change=None, changed_control=False, changed_tree=False):
+        paths = sorted(scope.INTERNAL_REPORT_PATHS)
+        records = []
+        for path in paths:
+            before, after = scope.INTERNAL_REPORT_BLOBS[path]
+            mode, status = ("000000", "A") if before == "0" * 40 else ("100644", "M")
+            fields = [":" + mode, "100644", before, after, status]
+            if raw_change is not None and path == paths[0]:
+                raw_change(fields)
+            records += [" ".join(fields), path]
+        raw = "\0".join(records) + "\0"
+        tree = "100644 blob " + "d" * 40 + "\tNekoWidget/Shared/Unchanged.swift\0"
+        control = "100644 blob " + "e" * 40 + "\t"
+
+        def git(*arguments):
+            if arguments[:1] == ("diff",):
+                return raw
+            if arguments[:1] == ("merge-base",):
+                return "approved"
+            if arguments[:3] == ("ls-tree", "-r", "-z"):
+                return tree + ("100644 blob " + "f" * 40 + "\textra.swift\0"
+                               if changed_tree and arguments[3] == "head" else "")
+            if arguments[:1] == ("ls-tree",) and arguments[2] == "--":
+                return control + arguments[3] + ("changed" if changed_control and arguments[1] == "head" else "")
+            raise AssertionError("Unexpected fixture git lookup: " + repr(arguments))
+
+        import hashlib
+        with patch.object(planner, "git", side_effect=git), patch.object(
+            planner, "INTERNAL_REPORT_IMMUTABLE_TREE_SHA256", hashlib.sha256(tree.encode()).hexdigest()
+        ):
+            return planner.internal_report_only(paths, "base", "head")
+
+    def test_exact_raw_blobs_and_approved_controls_accept(self):
+        self.assertTrue(self.selector_fixture())
+
+    def test_changed_blob_mode_type_or_status_refuse(self):
+        for index, value in ((0, ":100755"), (1, "120000"), (2, "1" * 40),
+                             (3, "2" * 40), (4, "D")):
+            self.assertFalse(self.selector_fixture(raw_change=lambda fields, i=index, v=value: fields.__setitem__(i, v)), (index, value))
+
+    def test_unapproved_controls_and_changed_remaining_tree_refuse(self):
+        self.assertFalse(self.selector_fixture(changed_control=True))
+        self.assertFalse(self.selector_fixture(changed_tree=True))
+
+    def test_complete_graph_keeps_build_photos_runtime_and_owning_ui(self):
+        selected = scope.INTERNAL_REPORT_SCOPE
+        self.assertIn(selected, scope.SCOPES)
+        expected = scope.MODERATION_RESOLUTION_TESTS + ("NekoWidgetUITests/MomentDeliveryComposerUITests/testInternalReportActionUsesExplicitAvailabilityAndConsent",)
+        self.assertEqual(scope.native_tests(selected), expected)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(planner.required_jobs_from_scope(selected), (planner.BUILD, planner.BOOTSTRAP_SMOKE, scope.lane_job(selected, "runtime"), scope.lane_job(selected, "app-ui")))
+        self.assertEqual(planner.required_jobs(sorted(scope.INTERNAL_REPORT_PATHS), selected), planner.required_jobs_from_scope(selected))
+
+    def test_partial_extra_duplicate_or_wrong_inputs_use_full(self):
+        selected = scope.INTERNAL_REPORT_SCOPE
+        paths = sorted(scope.INTERNAL_REPORT_PATHS)
+        self.assertTrue(scope.accepts_paths(selected, paths))
+        for path in paths:
+            self.assertFalse(scope.accepts_paths(selected, set(paths) - {path}))
+            self.assertEqual(planner.required_jobs(sorted(set(paths) - {path}), selected), planner.FULL)
+        for extra in ("NekoWidget/NekoWidget/App/NekoWidgetApp.swift", "NekoWidget/SharingService/src/index.ts"):
+            self.assertFalse(scope.accepts_paths(selected, paths + [extra]))
+        self.assertFalse(scope.accepts_paths(selected, paths + [paths[0]]))
+        with patch.object(planner, "reviewed_hub_only", return_value=False):
+            self.assertFalse(planner.internal_report_only(paths, "a" * 40, "b" * 40))
+
+
 if __name__ == "__main__":
     unittest.main()
