@@ -1004,6 +1004,60 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
 
 
 class InternalReportNativeBoundaryTests(unittest.TestCase):
+    def diagnostic_fixture(self, *, source=None, raw_change=None, extra=None, approved=True, ancestor=True):
+        spec = importlib.util.spec_from_file_location("internal_report_preflight", Path(__file__).with_name("preflight-ci.py"))
+        preflight = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(preflight)
+        source = source or preflight.INTERNAL_REPORT_DIAGNOSTIC_SOURCE
+        head = "c" * 40
+        fixture = preflight.INTERNAL_REPORT_RELEASE_FIXTURE
+        before, after = preflight.INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS
+        fields = [":100644", "100644", before, after, "M"]
+        if raw_change:
+            raw_change(fields)
+        records = [" ".join(fields), fixture]
+        for path in sorted(scope.INTERNAL_REPORT_CONTROLS):
+            records.extend([f":100644 100644 {'d' * 40} {'e' * 40} M", path])
+        if extra is not None:
+            records.extend(extra)
+        raw = "\0".join(records) + "\0"
+
+        def git(*arguments):
+            if arguments == ("merge-base", "--is-ancestor", source, head):
+                if not ancestor:
+                    raise subprocess.CalledProcessError(1, ["git", *arguments])
+                return ""
+            if arguments == ("merge-base", "refs/remotes/origin/main", head):
+                return "base"
+            if arguments == ("diff", "--name-only", "base", head):
+                return "\n".join(sorted(scope.INTERNAL_REPORT_PATHS))
+            if arguments == ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head):
+                return raw
+            raise AssertionError("Unexpected diagnostic fixture lookup: " + repr(arguments))
+
+        with patch.object(preflight.planner, "git", side_effect=git), patch.object(
+                preflight.planner, "internal_report_only", return_value=approved) as selector:
+            result = preflight.diagnostic_source_matches(source, head)
+            if source == preflight.INTERNAL_REPORT_DIAGNOSTIC_SOURCE and ancestor:
+                selector.assert_called_once_with(sorted(scope.INTERNAL_REPORT_PATHS), "base", head)
+            return result
+
+    def test_fixed_diagnostic_forwards_only_complete_approved_candidate(self):
+        self.assertTrue(self.diagnostic_fixture())
+        self.assertFalse(self.diagnostic_fixture(approved=False))
+        self.assertFalse(self.diagnostic_fixture(ancestor=False))
+        self.assertFalse(self.diagnostic_fixture(source="b" * 40))
+
+    def test_diagnostic_rejects_wrong_fixture_modes_duplicates_and_native_changes(self):
+        for index, value in ((0, ":100755"), (1, "120000"), (2, "1" * 40),
+                             (3, "2" * 40), (4, "A")):
+            self.assertFalse(self.diagnostic_fixture(raw_change=lambda fields, i=index, v=value: fields.__setitem__(i, v)))
+        for path in ("NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+                     ".github/workflows/ios-ui-diagnostic.yml", "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift"):
+            self.assertFalse(self.diagnostic_fixture(extra=[f":100644 100644 {'d' * 40} {'e' * 40} M", path]))
+        self.assertFalse(self.diagnostic_fixture(extra=[
+            f":100644 100644 {'d' * 40} {'e' * 40} M", sorted(scope.INTERNAL_REPORT_CONTROLS)[0]]))
+
     def selector_fixture(self, *, raw_change=None, changed_control=False, changed_tree=False):
         paths = sorted(scope.INTERNAL_REPORT_PATHS)
         records = []
