@@ -201,23 +201,27 @@ def load_plist(path: Path) -> dict:
 
 
 class MediaStagingReleaseConfigTests(unittest.TestCase):
-    def test_tracked_rollout_policy_locks_the_current_client_to_reviewed_v1(self) -> None:
+    def test_signed_readiness_boundaries(self) -> None:
+        result = subprocess.run(['node', '--test', str(ROOT / 'ci/test-moderation-readiness.mjs')], text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_tracked_rollout_policy_locks_the_current_client_to_reviewed_v2(self) -> None:
         policy = json.loads(ROLLOUT_POLICY.read_text(encoding="utf-8"))
         trust_manifest = {
             "schema": "jp.nekowidget.moderation-key-trust.v1",
             "environment": "testflight",
-            "revision": 1,
-            "keys": {"moderation-v1": REVIEWED_V1_PUBLIC_KEY_SHA256},
+            "revision": 2,
+            "keys": {"moderation-v1": REVIEWED_V1_PUBLIC_KEY_SHA256,
+                     "moderation-v2": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d"},
         }
-        self.assertEqual(
-            policy,
-            rollout_policy(
+        expected = rollout_policy(
                 trust_manifest,
-                client_key_id="moderation-v1",
-                client_public_key_sha256=REVIEWED_V1_PUBLIC_KEY_SHA256,
-                v2_allowed=False,
-            ),
-        )
+                client_key_id="moderation-v2",
+                client_public_key_sha256="8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
+                v2_allowed=True,
+            )
+        expected['revision'] = 2
+        self.assertEqual(policy, expected)
 
     def test_existing_shipping_and_pairing_defaults_are_unchanged(self) -> None:
         base = assignments(BASE_CONFIG)
@@ -414,6 +418,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         compile(embedded, "testflight-release-selector", "exec")
 
         public_dns_stub = (
+            f"import os\nos.environ['PROJECT_DIRECTORY'] = {str(ROOT)!r}\n"
             "import socket\n"
             "socket.getaddrinfo = lambda *args, **kwargs: "
             "[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))]\n"
@@ -540,13 +545,14 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                     self.assertNotEqual(invalid.returncode, 0)
                     self.assertIn(message, invalid.stderr)
 
-    def test_synthetic_v2_is_rejected_until_machine_verifiable_readiness_exists(self) -> None:
+    def test_unreviewed_synthetic_v2_is_rejected_by_signed_readiness(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         marker = '"$PROJECT_DIRECTORY/ci/moderation-client-rollout-policy.json" <<\'PY\'\n'
         embedded = textwrap.dedent(
             workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
         )
         public_dns_stub = (
+            f"import os\nos.environ['PROJECT_DIRECTORY'] = {str(ROOT)!r}\n"
             "import socket\n"
             "socket.getaddrinfo = lambda *args, **kwargs: "
             "[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))]\n"
@@ -594,7 +600,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "machine-verifiable server and drill readiness evidence is not implemented",
+                "Moderation v2 readiness",
                 result.stderr,
             )
 
@@ -606,7 +612,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         )
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn(
-            "machine-verifiable server and drill readiness evidence is not implemented",
+            "Selected moderation public key does not match the tracked rollout policy",
             blocked.stderr,
         )
 
@@ -933,11 +939,6 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                     )
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(expected_message, result.stderr)
-                    self.assertIn(
-                        "machine-verifiable server and drill readiness evidence "
-                        "is not implemented",
-                        result.stderr,
-                    )
                     self.assertFalse(output_path.exists())
 
     def test_archive_digest_detects_permission_only_tampering(self) -> None:

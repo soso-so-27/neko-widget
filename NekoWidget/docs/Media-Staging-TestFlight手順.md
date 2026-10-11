@@ -25,7 +25,7 @@ Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネ�
 | Variable | 要件 |
 |---|---|
 | `SHARING_STAGING_API_ORIGIN` | `https://neko-window-sharing-staging.nakanishisoya.workers.dev`と完全一致。日次監視とBuildが同じWorkerを指すことをworkflowでも再検証する |
-| `SHARING_STAGING_MODERATION_KEY_ID` | 現在は`moderation-v1`とexact一致。v2 client releaseはrotation runbook完了後だけ |
+| `SHARING_STAGING_MODERATION_KEY_ID` | 内部初回接続候補は`moderation-v2`。有限の署名付きreadinessとrollout policyにexact一致すること |
 | `SHARING_STAGING_MODERATION_PUBLIC_KEY` | 32 byteのcanonical base64url public key |
 | `SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST` | review済み非secret JSON。`schema`、`environment=testflight`、正の整数`revision`、`keys` mapだけを持ち、`moderation-v1` entryを必須とする |
 | `SHARING_STAGING_PRIVACY_URL` | `https://soso-so-27.github.io/neko-widget/privacy/`と完全一致 |
@@ -35,10 +35,11 @@ Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネ�
 Fingerprintはcanonical base64urlをdecodeした32-byte raw X25519 public keyのSHA-256をlowercase 64文字hexで
 記録します。Manifestはbuild番号を含めず長期固定し、例えば値の形だけを示すと
 `{"schema":"jp.nekowidget.moderation-key-trust.v1","environment":"testflight","revision":1,"keys":{"moderation-v1":"<review済みlowercase 64文字hex>"}}`
-です。実在しないv2 public key／fingerprintを推測で追加しません。現在のTestFlight／App Store candidateは
-`moderation-v1`のままです。repositoryでreviewする`ci/moderation-client-rollout-policy.json`がkey ID、raw public
-key SHA-256、trust manifest revision／canonical hashを固定し、現policyはv2 client releaseを明示的に拒否します。
-EnvironmentのID／public key／manifestだけをv2へ揃えても署名前にfail closedします。
+です。実在しないv2 public key／fingerprintを推測で追加しません。repositoryでreviewする
+`ci/moderation-client-rollout-policy.json`がkey ID、raw public key SHA-256、trust manifest revision／canonical hashを固定します。
+内部初回接続では`ci/moderation-v2-readiness.json`の2署名、有限期限、正確なstaging・owner adoption・key・code hash・cloud drillを検証します。
+Environmentだけの変更、古い署名や別の鍵では署名前にfail closedします。これはproduction readinessやv1 rotation/retirementの完了ではありません。
+詳細と未検証事項は[初回接続記録](../../handoffs/2026-10-11-operator-cloud-first-connection.md)を参照してください。
 
 空欄、前後空白、unsupported key ID、fingerprintの欠落／大文字／不一致、placeholder、localhost、IP直書き、
 HTTP、非canonical keyは署名処理前に失敗します。Archive後はprocessed App/Share Extension `Info.plist`のmode、

@@ -95,8 +95,11 @@ async function issue(env: LocalModerationOwnerEnvironment, access: Authenticated
     rpId: env.rpId, userVerification: "required", purpose }, 202);
 }
 async function disclose(env: LocalModerationOwnerEnvironment, access: AuthenticatedModerationOperatorAccess,
-  actor: Actor, challenge: Challenge, receiptId: string, host: LocalOwnerReviewHost): Promise<Response> {
+  actor: Actor, challenge: Challenge, receiptId: string, host: LocalOwnerReviewHost, parentSignal:AbortSignal): Promise<Response> {
   const controller = new AbortController();
+  const cancelled=()=>controller.abort();
+  parentSignal.addEventListener('abort',cancelled,{once:true});
+  if(parentSignal.aborted)controller.abort();
   const deadline = Date.now() + 60_000;
   const alive = () => { if (controller.signal.aborted || Date.now() >= deadline) fail(); };
   async function step<T>(operation: () => Promise<T>): Promise<T> {
@@ -158,7 +161,7 @@ async function disclose(env: LocalModerationOwnerEnvironment, access: Authentica
     try { await step(() => env.db.prepare(`INSERT INTO moderation_owner_read_events(read_receipt_id,phase) VALUES (?,'delivery_unknown')`).bind(receiptId).run()); }
     catch { /* Claim remains consumed; absence of a final receipt is unresolved. */ }
     throw error;
-  } finally { controller.abort(); clearTimeout(timer); jpeg?.fill(0); }
+  } finally { parentSignal.removeEventListener('abort',cancelled);controller.abort(); clearTimeout(timer); jpeg?.fill(0); }
 }
 async function prove(request: Request, env: LocalModerationOwnerEnvironment, access: AuthenticatedModerationOperatorAccess,
   actor: Actor, reference: string, version: number, receipt: string | undefined, id: string, host: LocalOwnerReviewHost): Promise<Response> {
@@ -184,7 +187,7 @@ async function prove(request: Request, env: LocalModerationOwnerEnvironment, acc
     await env.db.batch([guard(env.db, access, actor), currentGuard(env.db, actor, access, challenge), consume,
       env.db.prepare(`INSERT INTO moderation_owner_read_claims(challenge_id,read_receipt_id,expires_at)
         VALUES (?,?,MIN(unixepoch()+60,?))`).bind(id, readReceiptId, challenge.expires_at)]);
-    return disclose(env, access, actor, challenge, readReceiptId, host);
+    return disclose(env, access, actor, challenge, readReceiptId, host,request.signal);
   }
   const decisionId = crypto.randomUUID();
   await env.db.batch([guard(env.db, access, actor), currentGuard(env.db, actor, access, challenge), consume,

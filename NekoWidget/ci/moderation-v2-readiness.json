@@ -1,0 +1,85 @@
+{
+  "payload": {
+    "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
+    "purpose": "testflight-owner-first-connection",
+    "issuedAtMs": 1791701153722,
+    "expiresAtMs": 1791781542930,
+    "policyRevision": 2,
+    "keyID": "moderation-v2",
+    "publicKeySHA256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
+    "trustManifestRevision": 2,
+    "trustManifestSHA256": "cfdb01aa835798cd0ffc7e885f336df5e46449d642ce1ba89a60b49bb25d9736",
+    "target": {
+      "accountID": "829a34ef925a39d81b0e9e08800d7c7f",
+      "databaseID": "cb3b2386-3a6f-4253-b918-8aafed9ff735",
+      "serviceIdentity": "neko-window-sharing-staging",
+      "reportBucket": "neko-window-sharing-staging-moderation-private",
+      "origin": "https://neko-operator.trade-solo.com",
+      "rpId": "neko-operator.trade-solo.com",
+      "apiOrigin": "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+    },
+    "scopeSHA256": "1fa03eb65a5fc3002e6fb48824d1814eb60390e57c8e40852c5586c3071fdf9a",
+    "v1ReportCount": 0,
+    "unresolvedReportObjects": 0,
+    "reportIntakeEnabled": false,
+    "reportKeyPolicyTriggers": 2,
+    "nativeCustodyVerified": true,
+    "backupRestoreVerified": false,
+    "v1HistoricalIntakeVerified": false,
+    "productionApproved": false,
+    "cloudImage": {
+      "complete": true,
+      "width": 1,
+      "height": 1,
+      "visible": true
+    },
+    "readReceiptSHA256": "ea6bc528d56f548f44898cea8edc83628525236c9835698716e30d4a56a62d8a",
+    "sourceSnapshotSHA256": "311bd791dd2ba841f3ac1da671de66c16091d2ba9b055ba0cf2cb99538e6a2f5",
+    "readPhases": [
+      "started",
+      "disclosure_ready"
+    ],
+    "resolution": "no_action",
+    "recipientReadVerified": false,
+    "realUserPhotoVerified": false,
+    "evidenceSHA256": {
+      "cloudObservation": "3cd153bfd345110b26ffb8f47c08b15db94981c713702ec8864518d890d72368",
+      "photoScreenshot": "e267d52845f400aa128583eced7a8e94032db4904f7cb857a1a8fef0d0f36046",
+      "decisionScreenshot": "ee0b243f8f3ce594ea424d36c923afbdfa87e276325b0d0e538f911892e216f3",
+      "custodyProbe": "b1a31fb647ee240549c25fc11f25d5cb7f2d7e19b5165f48e11b44d9b45a0245",
+      "scopeApply": "f2b88cecb32530411da8cc86e2a457cd7209e407d193ddf89fa730175035b024",
+      "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
+    },
+    "codeSHA256": {
+      ".github/workflows/testflight.yml": "818052453ba9e2ffdfe079838ee59b93b4096aac237806dae798198ecf1cf856",
+      "NekoWidget/ci/moderation_readiness.py": "c8c252cbd0375858ae2510dfa56c6804149d1ae15f58167042faba89c4eba27f",
+      "NekoWidget/ci/verify-moderation-readiness.mjs": "32c4ff8a0b9c007481c836166b9073ae891045004836e80b4f8ddd46e84437fd",
+      "NekoWidget/ci/write-moderation-release-metadata.py": "26fd26b824f3d523f01c4d3492e3335573edbab1ddf6a78510b9382b4142a410",
+      "NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql": "a3554a9c89dd1e57e6c0a46ab953687a94c86c26c619f4712032980e2df3f1d6",
+      "NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql": "268fa0c0c554ac6bc88dd6b7a5739bb6fe60051d70676beebfffa386639215d3",
+      "NekoWidget/SharingService/src/moderation-owner-scope-adoption.ts": "ab988e6b954b2cd1e15677b6c96bae4c2206e5b2c63e53f80145d3218672605c",
+      "NekoWidget/SharingService/src/moderation-operator-identity.ts": "f5de6674aa45132b0612dafee1bc60b099bf3135b0096af0deb342fea5d794dd",
+      "NekoWidget/SharingService/src/moderation-owner-local.ts": "398e04de7aa52907e29daefd80f8667bd3b79f5348cf0a9e0ab2bfc97195fd35",
+      "NekoWidget/SharingService/src/moderation-report-key-policy.ts": "baaf46311d866cc398a649a70435c21a83d88eaa3c55467f50844debbec30857",
+      "NekoWidget/SharingService/src/moments.ts": "43f4aeef0f59a0b014e38a8e299a154011b375dd9059ecf649d849d36d530238",
+      "NekoWidget/SharingService/scripts/moderation-operator-staging-start.mjs": "a33ecc424319fdadb04ec9efd9a2cac8caefb26c25daaa6ff667cdd2489790b0",
+      "NekoWidget/SharingService/scripts/moderation-operator-local-server.mjs": "88ea3fae325d37d7c65b3785a97acf12c879773a6e6055d9d36daccecb47557f",
+      "NekoWidget/SharingService/scripts/moderation-owner-r2-transport.mjs": "7d661ab04c750f6965e72f713caa8368589e4eb1291f571919c2480f90ea1fee",
+      "NekoWidget/SharingService/scripts/moderation-owner-key-check-broker-windows.ps1": "d26d468e0a5f33077b6af4ce598760a5373af822d9a766d26200de28edb4f6df",
+      "NekoWidget/SharingService/scripts/moderation-owner-key-check-client-windows.ps1": "63335b535609e0a00d4f45b8778a1b84fa6c09f5365c5d080c4d0001cf25ae7d",
+      "NekoWidget/SharingService/scripts/moderation-staging-keygen-windows-security.ps1": "da17ede65d599e0e4c05ec945f51218ad7711d3b033897d3924ae03e61a8c804"
+    }
+  },
+  "signatures": [
+    {
+      "keyID": "neko-local-bootstrap-authority-01",
+      "revision": 1,
+      "signatureBase64url": "9St66u5Z0An0tJzCRVJKAe8qFHwRCxgrurYsTmkEeoCEB7feTdPyzUvfbgpqjrzU__vUstV8d0wI6cYyX47IDQ"
+    },
+    {
+      "keyID": "neko-local-bootstrap-authority-02",
+      "revision": 1,
+      "signatureBase64url": "H72orU1INH54SbAe9__JS9zEXfk43ZmYTta77U1FA40aNEa2OXvQ2ojiT5pE7Nf486CcDk7nLAIgjSm0ixE7Dw"
+    }
+  ]
+}

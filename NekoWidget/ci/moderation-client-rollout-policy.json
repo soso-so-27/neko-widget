@@ -1,10 +1,10 @@
 {
   "schema": "jp.nekowidget.moderation-client-rollout-policy.v1",
   "environment": "testflight",
-  "revision": 1,
-  "clientKeyId": "moderation-v1",
-  "clientPublicKeySha256": "1032525271ff2ef318721e8bab46a3ab4ad503223403273f3baa84d7029e7a1a",
-  "trustManifestRevision": 1,
-  "trustManifestSha256": "b3d7e1172dcd2eba45cdab0d73407407ff08ddb1f9c0843e5e3a2fed5cc61341",
-  "v2ClientReleaseAllowed": false
+  "revision": 2,
+  "clientKeyId": "moderation-v2",
+  "clientPublicKeySha256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
+  "trustManifestRevision": 2,
+  "trustManifestSha256": "cfdb01aa835798cd0ffc7e885f336df5e46449d642ce1ba89a60b49bb25d9736",
+  "v2ClientReleaseAllowed": true
 }

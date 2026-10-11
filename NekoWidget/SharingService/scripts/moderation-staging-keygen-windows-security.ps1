@@ -67,7 +67,9 @@ function Initialize-FixedWindowsSecurityModules {
             -not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {
             Stop-SecurityCheck "a fixed Windows security module is unavailable"
         }
-        Import-Module -Name $manifestFull -Force -ErrorAction Stop
+        # Verb-naming warnings from the fixed BitLocker module must not pollute
+        # the exact machine-readable proof. Import failures still stop execution.
+        Import-Module -Name $manifestFull -Force -DisableNameChecking -ErrorAction Stop
     }
 }
 
