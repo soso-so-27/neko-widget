@@ -1,5 +1,7 @@
 import {
   prepareModerationOperatorWebAuthnAssertion,
+  ModerationOperatorWebAuthnError,
+  type ModerationOperatorAssertionFailureStage,
   type PrepareModerationOperatorWebAuthnAssertionOptions,
   type PreparedModerationOperatorWebAuthnAssertion,
 } from "./moderation-operator-webauthn";
@@ -14,7 +16,7 @@ export const MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE =
 export class ModerationOperatorAssertionRequestError extends Error {
   readonly code = MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE;
 
-  constructor() {
+  constructor(readonly diagnosticStage: ModerationOperatorAssertionFailureStage | "request_body" = "request_body") {
     super(MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE);
     this.name = "ModerationOperatorAssertionRequestError";
   }
@@ -157,7 +159,8 @@ export async function prepareModerationOperatorWebAuthnRequest(
     inspectJsonMembers(text);
     const response: unknown = JSON.parse(text);
     return await prepareModerationOperatorWebAuthnAssertion({ ...options, response });
-  } catch {
-    fail();
+  } catch (error) {
+    throw new ModerationOperatorAssertionRequestError(error instanceof ModerationOperatorWebAuthnError
+      ? error.diagnosticStage ?? "request_body" : "request_body");
   }
 }

@@ -1,7 +1,7 @@
 import { base64urlEncode } from "./encoding";
 import { authenticateCloudflareAccessRequest, type AuthenticatedModerationOperatorAccess } from "./moderation-operator-auth";
 import { actorSQL, guard, admitSession, type Actor } from "./moderation-operator-identity";
-import { prepareModerationOperatorWebAuthnRequest } from "./moderation-operator-request";
+import { prepareModerationOperatorWebAuthnRequest, ModerationOperatorAssertionRequestError } from "./moderation-operator-request";
 import { verifyPreparedModerationOperatorWebAuthnAssertion } from "./moderation-operator-webauthn";
 import type { LocalModerationTriageEnvironment } from "./moderation-operator-triage-local";
 import { readLocalModerationReviewSource, type LocalModerationReviewSource } from "./moderation-review-source";
@@ -218,6 +218,11 @@ export async function routeLocalModerationOwner(request: Request, env: LocalMode
     if (!match[5]) return await issue(env, access, actor, match[1]!, Number(match[2]), match[4], url.pathname);
     return await prove(request, env, access, actor, match[1]!, Number(match[2]), match[4], match[5], host);
   } catch (error) {
+    // Local process only. No request/credential/key bytes, IDs, SQL or exception
+    // text leave this boundary; the HTTP failure remains the fixed response.
+    if (error instanceof ModerationOperatorAssertionRequestError) {
+      console.info(JSON.stringify({ component: "local_owner_assertion", stage: error.diagnosticStage }));
+    }
     const message = error instanceof Error ? error.message : "";
     const status = error instanceof OwnerError ? error.status : /quota|rate exceeded|too many/u.test(message) ? 429
       : /constraint|denied|malformed JSON|not current|replay|expired|requires|counter/u.test(message) ? 409 : 503;

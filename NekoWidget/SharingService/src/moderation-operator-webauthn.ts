@@ -10,6 +10,11 @@ import { isoCBOR } from "@simplewebauthn/server/helpers";
 export const MODERATION_OPERATOR_WEBAUTHN_FAILURE_CODE =
   "operator_webauthn_verification_failed" as const;
 
+/** Fixed local diagnostic categories only; never assertion bytes or identifiers. */
+export type ModerationOperatorAssertionFailureStage = "options" | "scope" | "stored_credential"
+  | "response_shape" | "credential_binding" | "client_data" | "challenge_binding"
+  | "rp_binding" | "authenticator_flags" | "canonical_assertion";
+
 const MAX_ASSERTION_CANONICAL_BYTES = 16_384;
 const MAX_CREDENTIAL_ID_BYTES = 1_024;
 const MAX_CLIENT_DATA_BYTES = 4_096;
@@ -31,7 +36,7 @@ const fatalDecoder = new TextDecoder("utf-8", { fatal: true });
 export class ModerationOperatorWebAuthnError extends Error {
   readonly code = MODERATION_OPERATOR_WEBAUTHN_FAILURE_CODE;
 
-  constructor() {
+  constructor(readonly diagnosticStage?: ModerationOperatorAssertionFailureStage) {
     super(MODERATION_OPERATOR_WEBAUTHN_FAILURE_CODE);
     this.name = "ModerationOperatorWebAuthnError";
   }
@@ -480,6 +485,7 @@ function validatedResponse(value: unknown): {
 export async function prepareModerationOperatorWebAuthnAssertion(
   options: PrepareModerationOperatorWebAuthnAssertionOptions,
 ): Promise<PreparedModerationOperatorWebAuthnAssertion> {
+  let stage: ModerationOperatorAssertionFailureStage = "options";
   try {
     if (!isPlainRecord(options) || !isPlainRecord(options.credential)) fail();
     exactOwnKeys(options as unknown as Record<string, unknown>, [
@@ -488,10 +494,12 @@ export async function prepareModerationOperatorWebAuthnAssertion(
     exactOwnKeys(options.credential as unknown as Record<string, unknown>, [
       "credentialIdSHA256", "publicKeyCose", "counter",
     ]);
+    stage = "scope";
     const scope = validateExpectedScope(options.expectedOrigin, options.expectedRPID);
     const expectedChallengeDigest = hexToBytes(
       sha256HexValue(options.expectedChallengeSHA256),
     );
+    stage = "stored_credential";
     const expectedCredentialDigest = hexToBytes(
       sha256HexValue(options.credential.credentialIdSHA256),
     );
@@ -502,10 +510,13 @@ export async function prepareModerationOperatorWebAuthnAssertion(
     );
     new StrictCBORCursor(publicKeyCose).parseES256PublicKey();
     const counter = uint32(options.credential.counter);
+    stage = "response_shape";
     const validated = validatedResponse(options.response);
+    stage = "credential_binding";
     if (!constantTimeEqual(await sha256(validated.credentialIdBytes), expectedCredentialDigest)) {
       fail();
     }
+    stage = "client_data";
     let clientDataText: string;
     try {
       clientDataText = fatalDecoder.decode(validated.clientDataBytes);
@@ -514,13 +525,16 @@ export async function prepareModerationOperatorWebAuthnAssertion(
     }
     const clientData = new StrictClientDataParser(clientDataText!).parse();
     if (clientData.type !== "webauthn.get" || clientData.origin !== scope.origin) fail();
+    stage = "challenge_binding";
     const challenge = canonicalBase64url(clientData.challenge, 32, 32);
     if (!constantTimeEqual(await sha256(challenge.bytes), expectedChallengeDigest)) fail();
+    stage = "rp_binding";
     const expectedRPIDHash = await sha256(encoder.encode(scope.rpID));
     if (!constantTimeEqual(
       validated.authenticatorDataBytes.subarray(0, 32),
       expectedRPIDHash,
     )) fail();
+    stage = "authenticator_flags";
     const flags = validated.authenticatorDataBytes[FLAGS_OFFSET];
     if (flags !== ALLOWED_AUTHENTICATOR_FLAGS) fail();
     if (validated.authenticatorDataBytes.byteLength !== MIN_AUTHENTICATOR_DATA_BYTES) fail();
@@ -530,6 +544,7 @@ export async function prepareModerationOperatorWebAuthnAssertion(
       4,
     ).getUint32(0, false);
     uint32(observedCounter);
+    stage = "canonical_assertion";
     const assertionSHA256 = bytesToHex(await sha256(canonicalAssertionBytes(
       validated.response,
       validated.userHandleWasNull,
@@ -547,7 +562,7 @@ export async function prepareModerationOperatorWebAuthnAssertion(
     });
     return exposed;
   } catch {
-    fail();
+    throw new ModerationOperatorWebAuthnError(stage);
   }
 }
 
