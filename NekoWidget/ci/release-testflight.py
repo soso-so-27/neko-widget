@@ -219,6 +219,27 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 "scope": plan["scope"], "required_jobs": list(required),
                 "chained_build_recovery": chained, "backend_evidence": chained["backend_evidence"]}
     correction = plan.get("test_correction_evidence")
+    if correction is not None and plan.get("scope") == planner.OWNER_CLOUD_SCOPE:
+        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(sha),
+                "Counter repair plan must declare all five fresh candidate backend jobs.")
+        def owner_correction_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected owner cloud correction API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Correction log owning run unavailable.")
+                return gh.raw_job_log(job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            proof = planner.owner_cloud_correction_graph(current, sha, required, owner_correction_api, now, executed_jobs_for(gh, current))
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Fixed owner cloud correction evidence is unavailable or invalid.") from None
+        require(proof is not None and proof["runtime_evidence"] == correction,
+                "Fresh full Build/backend and original exact runtime proof are required.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "runtime_evidence": proof["runtime_evidence"], "backend_evidence": proof["backend_evidence"]}
     if correction is not None and plan.get("scope") == planner.MODERATION_RESOLUTION_SCOPE:
         def moderation_api(path):
             prefix = f"/repos/{REPOSITORY}/"
@@ -324,7 +345,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 job_id = int(path.split("/")[-2])
                 job = gh.get(f"actions/jobs/{job_id}")
                 require(type(job.get("run_id")) is int, "Corrected candidate job identity unavailable.")
-                return gh.raw_job_log(job_id) if planner.moderation_chained_inputs(source_sha) else gh.log(job["run_id"], job_id)
+                return gh.raw_job_log(job_id) if (planner.moderation_chained_inputs(source_sha)
+                    or required == planner.required_jobs_from_scope(planner.OWNER_CLOUD_SCOPE)) else gh.log(job["run_id"], job_id)
             return gh.get(path[len(prefix):])
         try:
             covered = planner.covers_corrected_full_graph(source, sha, required, candidate_api, now, jobs)
@@ -353,10 +375,24 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             require(path.startswith(prefix + "actions/"), "Unexpected backend API path.")
             return gh.get(path[len(prefix):])
         try:
-            planner.owner_cloud_native_evidence(jobs, source_sha, now)
             owner = current if source_id == run_id else source
-            branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
-            result["backend_evidence"] = planner.moderation_resolution_backend_evidence(source_sha, REPOSITORY, owner_cloud_api, now, branch=branch)
+            if corrected:
+                def corrected_api(path):
+                    prefix = f"/repos/{REPOSITORY}/"
+                    require(path.startswith(prefix + "actions/"), "Unexpected correction API path.")
+                    if path.endswith("/logs"):
+                        job_id = int(path.split("/")[-2])
+                        job = gh.get(f"actions/jobs/{job_id}")
+                        require(type(job.get("run_id")) is int, "Correction log owning run unavailable.")
+                        return gh.raw_job_log(job_id)
+                    return gh.get(path[len(prefix):])
+                proof = planner.owner_cloud_correction_graph(owner, sha, required, corrected_api, now, jobs)
+                require(proof is not None, "Owner cloud correction graph is incomplete.")
+                result.update(proof)
+            else:
+                planner.owner_cloud_native_evidence(jobs, source_sha, now)
+                branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
+                result["backend_evidence"] = planner.moderation_resolution_backend_evidence(source_sha, REPOSITORY, owner_cloud_api, now, branch=branch)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Owner cloud requires complete Build, full runtime and five owning backend successes.") from None
     if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:

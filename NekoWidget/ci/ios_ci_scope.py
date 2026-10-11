@@ -534,6 +534,19 @@ OWNER_CLOUD_BLOBS = {
     ]
 }
 OWNER_CLOUD_PATHS = frozenset(OWNER_CLOUD_BLOBS)
+OWNER_CLOUD_CORRECTION_BLOBS = {
+    'NekoWidget/SharingService/migrations/0037_moderation_enrollment_counter_floor.sql': ('0000000000000000000000000000000000000000', 'd74e709a49237eac95873a1d21dbec579ee57391'),
+    'NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs': ('42819095df17e1a1c4495375d80b21ad444cd8f2', '4c4ca0e81bb400cabf550731b31c188d34dcf2f2'),
+    'NekoWidget/SharingService/scripts/staging-config.node-tests.mjs': ('dd9955e2674f1a90895fe4454312a86c2f589270', 'b793284c305b46630666b05d649430e0caa8ef72'),
+    'NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs': ('40d19dd20e58c182167c8ba9783ea05505bcebca', '391f65b03672192c06e56019ad0204ed9ce83ee9'),
+    'NekoWidget/SharingService/test/moderation-resolution.integration.test.ts': ('6ef6bdb6b88612816b02fbcb423ec7b718de56c5', 'e39c1a0ff0a9f02c7387fec9605c45c8c8b21948'),
+    'NekoWidget/ci/moderation-v2-readiness.json': ('6fa75329d05f69e83f88e1ae360d8da61f999bb3', 'e0714e26c3c16a8258f1514346e5e0d554698b13'),
+    'NekoWidget/ci/test-public-policy-site.py': ('a1e65de9ed9492447c5f9d34c5733f0c752d533c', '4ff0b706c54f3ee68bb9b2fc0cd78299b2d06509'),
+    'NekoWidget/ci/verify-moderation-readiness.mjs': ('4c805a4c6a46527b5ed3fa64231fcbd7394cefb9', '8cb3bdaad7d6b096c9c801a84fe7f7ed59b03b1e'),
+    'NekoWidget/SharingService/test/fixtures/moderation-operator.ts': ('0d38eb7e8297f2a580fd9141117e90ed8f84422a', '9ec00b96f89706cf339cd935ded98ff6cc648e22'),
+}
+OWNER_CLOUD_CORRECTED_PATHS = OWNER_CLOUD_PATHS | frozenset(OWNER_CLOUD_CORRECTION_BLOBS)
+OWNER_CLOUD_CORRECTION_TREE_SHA256 = "89ee4dfd25338a918303d4e36656f1a114e4d5d9a61d11ef0481d71c915d221f"
 OWNER_CLOUD_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/release-testflight.py', 'NekoWidget/ci/test-ci-lanes.py', 'NekoWidget/ci/test-plan-ios-ci.py', 'NekoWidget/ci/test-preflight-ci.py', 'NekoWidget/ci/test-release-testflight.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
 OWNER_CLOUD_IMMUTABLE_TREE_SHA256 = '13544fd9144dcb91b986a5a4967cdfbc4e5eb199d6497a9af617b3f9e8321dc9'
 SCOPES = (OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
@@ -3171,7 +3184,7 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == OWNER_CLOUD_SCOPE:
-        return sources == OWNER_CLOUD_PATHS
+        return sources in (OWNER_CLOUD_PATHS, OWNER_CLOUD_CORRECTED_PATHS)
     if scope == MODERATION_RESOLUTION_SCOPE:
         return (bool(paths) and len(paths) == len(set(paths))
                 and sources in (MODERATION_RESOLUTION_PATHS,

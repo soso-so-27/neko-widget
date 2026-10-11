@@ -279,6 +279,23 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(p,"owner_cloud_native_evidence") as native,self.assertRaises(release.Blocked): self.prepare()
             native.assert_not_called()
 
+    def test_owner_cloud_fixed_correction_release_keeps_two_sha_proofs_and_rejects_missing_graph(self):
+        p=release.planner; selected=p.OWNER_CLOUD_SCOPE
+        correction={'kind':'owner-cloud-fixed-counter-repair-v1','sha':p.OWNER_CLOUD_CORRECTION_SOURCE,
+                    'run_id':p.OWNER_CLOUD_CORRECTION_RUN,'candidate_sha':self.sha}
+        self.plan.update(scope=selected,required_jobs=list(p.required_jobs_from_scope(selected)),
+            required_backend_runs=p.moderation_resolution_requirements(self.sha),test_correction_evidence=correction)
+        self.set_plan()
+        proof={'runtime_evidence':correction,'backend_evidence':{'fresh_sha':self.sha}}
+        with patch.object(p,'owner_cloud_correction_graph',return_value=proof) as graph:
+            got=self.prepare()['ci']
+            self.assertEqual(got['tested_sha'],self.sha)
+            self.assertEqual(got['runtime_evidence']['sha'],p.OWNER_CLOUD_CORRECTION_SOURCE)
+            self.assertEqual(got['backend_evidence']['fresh_sha'],self.sha)
+            self.assertEqual(graph.call_args.args[1],self.sha)
+        for value in (None,dict(proof,runtime_evidence=dict(correction,sha='b'*40))):
+            with patch.object(p,'owner_cloud_correction_graph',return_value=value),self.assertRaises(release.Blocked):self.prepare()
+
     def test_resolution_release_calls_owning_backend_verifier_and_propagates_rejection(self):
         selected = release.planner.MODERATION_RESOLUTION_SCOPE
         self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)),

@@ -21,6 +21,37 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class OwnerCloudCorrectionBudgetTests(unittest.TestCase):
+    def test_keeps_original_failures_active_other_failure_and_cumulative_cost(self):
+        now=dt.datetime(2026,10,11,8,tzinfo=dt.timezone.utc);head='a'*40
+        result={'head':head,'scope':planner.OWNER_CLOUD_SCOPE,'target_minutes':300,'ready':False,
+                'required_jobs':list(planner.required_jobs_from_scope(planner.OWNER_CLOUD_SCOPE)),
+                'cost':{'status':'unmeasured','with_upload_minutes':[None,None]}}
+        proof={'kind':'owner-cloud-fixed-counter-repair-v1','candidate_sha':head,
+            'run_id':planner.OWNER_CLOUD_CORRECTION_RUN,'sha':planner.OWNER_CLOUD_CORRECTION_SOURCE,
+            'failed_backend_run_id':planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN}
+        def run(identifier,path):return {'id':identifier,'head_sha':planner.OWNER_CLOUD_CORRECTION_SOURCE,
+            'head_branch':planner.OWNER_CLOUD_CORRECTION_BRANCH,'event':'push','path':path,
+            'status':'completed','conclusion':'failure','created_at':(now-dt.timedelta(minutes=60)).isoformat(),
+            'failed_tests':[],'unsupported_failed_tests':['fixed identified test']}
+        runs=[run(proof['run_id'],'.github/workflows/ios-build.yml'),run(proof['failed_backend_run_id'],planner.BILLING_WORKFLOW)]
+        measured=preflight.owner_cloud_correction_cost(result,proof,False,{'upload_minutes':20})
+        got=preflight.apply_task_gate(copy.deepcopy(measured),runs,now,correction_evidence=proof)
+        self.assertTrue(got['ready']);self.assertEqual(got['task']['failed_runs'],[r['id'] for r in runs])
+        self.assertEqual(got['task']['minutes_since_first_ci'],60);self.assertEqual(got['task']['projected_total_minutes'],90)
+        active=dict(runs[0],id=999,status='in_progress',conclusion=None)
+        got=preflight.apply_task_gate(copy.deepcopy(measured),runs+[active],now,correction_evidence=proof)
+        self.assertFalse(got['ready']);self.assertIn('ci_already_running',got['task']['blockers'])
+        other=run(998,'.github/workflows/ios-build.yml')
+        got=preflight.apply_task_gate(copy.deepcopy(measured),runs+[other],now,correction_evidence=proof)
+        self.assertFalse(got['ready']);self.assertIn('failed_test_needs_a_supported_focused_diagnostic_route',got['task']['blockers'])
+        small=copy.deepcopy(measured);small['target_minutes']=80
+        got=preflight.apply_task_gate(small,runs,now,correction_evidence=proof)
+        self.assertFalse(got['ready']);self.assertIn('cumulative_cost_requires_replanning',got['task']['blockers'])
+        wrong=dict(proof,candidate_sha='b'*40)
+        self.assertEqual(preflight.owner_cloud_correction_cost(result,wrong,False,{'upload_minutes':20}),result)
+
+
 class ModerationChainedRecoveryBudgetTests(unittest.TestCase):
     def setUp(self):
         self.head=planner.MODERATION_CHAIN_PRODUCT

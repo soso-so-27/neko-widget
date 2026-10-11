@@ -17,7 +17,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+from ios_ci_scope import (OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
@@ -2520,6 +2520,175 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
     return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), MEMBERSHIP_MANAGEMENT_TESTS)
 
 
+OWNER_CLOUD_CORRECTION_SOURCE = "5a2a7dea45265e9e6b5d382e1aa761bc43ad087b"
+OWNER_CLOUD_CORRECTION_RUN = 38120852422
+OWNER_CLOUD_CORRECTION_BRANCH = "codex/operator-review-connect-20261011"
+OWNER_CLOUD_CORRECTION_RUNTIME_JOB = 114415220876
+OWNER_CLOUD_CORRECTION_BUILD_JOB = 114415220957
+OWNER_CLOUD_CORRECTION_BACKEND_RUN = 38120852416
+OWNER_CLOUD_CORRECTION_WORKER_JOB = 114415115617
+OWNER_CLOUD_CORRECTION_BUILD_LOG_SHA256 = "bf81e2dc6642e872e8a3ad3ac5d772a2ea65f3acd66b2c76809678d43957b316"
+OWNER_CLOUD_CORRECTION_WORKER_LOG_SHA256 = "593d188513db44328473bae18dfd9c1022a07058e3cc2e76769003f1ec3a1a3a"
+OWNER_CLOUD_RUNTIME_STEPS = ("Check out repository", "Run sharing runtime matrix", "Upload sharing runtime matrix artifacts")
+
+
+def owner_cloud_correction_inputs(head):
+    """Only the fixed counter repair, fixtures/readiness, approved controls and handoffs."""
+    try:
+        if not isinstance(head, str) or not SHA.fullmatch(head): return False
+        git("merge-base", "--is-ancestor", OWNER_CLOUD_CORRECTION_SOURCE, head)
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        registration = f'OWNER_CLOUD_CORRECTION_SOURCE = "{OWNER_CLOUD_CORRECTION_SOURCE}"'
+        if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", OWNER_CLOUD_CORRECTION_SOURCE, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if not raw or len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (len(fields) != 5 or path in seen or fields[1] != "100644" or fields[4] not in {"A", "M"}
+                    or fields[0] != (":000000" if fields[4] == "A" else ":100644")
+                    or not all(SHA.fullmatch(blob) for blob in fields[2:4])): return False
+            seen.add(path)
+            if path in OWNER_CLOUD_CORRECTION_BLOBS:
+                before, after = OWNER_CLOUD_CORRECTION_BLOBS[path]
+                if fields[4] != ("A" if before == "0" * 40 else "M") or tuple(fields[2:4]) != (before, after): return False
+            elif path in OWNER_CLOUD_CONTROLS:
+                if fields[4] != "M": return False
+            elif not is_handoff(path): return False
+        if not set(OWNER_CLOUD_CORRECTION_BLOBS) <= seen: return False
+        for path in OWNER_CLOUD_CONTROLS:
+            entry = git("ls-tree", head, "--", path)
+            if not entry.startswith("100644 blob ") or entry != git("ls-tree", approved, "--", path): return False
+        return True
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def owner_cloud_plan(log, sha, required):
+    if not isinstance(log, str): return None
+    try:
+        records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+        records = [r for r in records if isinstance(r, dict) and r.get("repository") == "soso-so-27/neko-widget" and r.get("head_sha") == sha]
+        if len(records) != 1: return None
+        r = records[0]
+        return r if (type(r.get("schema_version")) is int and r["schema_version"] == 1
+                     and r.get("scope") == OWNER_CLOUD_SCOPE and r.get("required_jobs") == list(required)
+                     and r.get("required_backend_runs") == moderation_resolution_requirements(sha)
+                     and r.get("evidence_run_id") is None and r.get("evidence_sha") is None) else None
+    except (TypeError, ValueError): return None
+
+
+def owner_cloud_failure_log(log, *, worker=False):
+    """The original known test errors only; timestamps/CLI labels are not evidence."""
+    if not isinstance(log, str): return False
+    lines = [re.sub(r"^.*?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.splitlines()]
+    text = "\n".join(lines)
+    expected = OWNER_CLOUD_CORRECTION_WORKER_LOG_SHA256 if worker else OWNER_CLOUD_CORRECTION_BUILD_LOG_SHA256
+    if hashlib.sha256(text.encode()).hexdigest() != expected: return False
+    if worker:
+        return (re.findall(r"^not ok \d+ - (.+)$", text, re.M) == [
+                    "applies every migration and completes the isolated gate drill",
+                    "CLI emits aggregate PASS evidence without synthetic identifiers"]
+                and "migrationsApplied: 34" in text and "migrationsApplied: 36" in text
+                and "migrations=34, checks=12, identifiers=0" in text
+                and "migrations=36, checks=12, identifiers=0" in text
+                and len(re.findall(r"^# fail 2$", text, re.M)) == 1
+                and re.findall(r"^##\[error\].*$", text, re.M) == ["##[error]Process completed with exit code 1."])
+    return (re.findall(r"(?:FAIL|ERROR): ([^\r\n]+)", text) == [
+                "test_testflight_checks_the_exact_policy_profile_before_signing (__main__.PublicPolicySiteTests.test_testflight_checks_the_exact_policy_profile_before_signing)"]
+            and "AssertionError: 4014 not less than 3835" in text and text.count("FAILED (failures=1)") == 1
+            and re.findall(r"^##\[error\].*$", text, re.M) == ["##[error]Process completed with exit code 1."])
+
+
+def owner_cloud_correction_source(run, head, branch, repository, workflow_id, required, api, now):
+    source = OWNER_CLOUD_CORRECTION_SOURCE
+    try:
+        if (repository != "soso-so-27/neko-widget" or branch != OWNER_CLOUD_CORRECTION_BRANCH
+                or workflow_id != 335014238 or run.get("workflow_id") != workflow_id
+                or run.get("id") != OWNER_CLOUD_CORRECTION_RUN or run.get("head_sha") != source
+                or run.get("head_branch") != branch or run.get("path") != ".github/workflows/ios-build.yml"
+                or run.get("event") != "push" or run.get("run_attempt") != 1
+                or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+                or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+                or required != required_jobs_from_scope(OWNER_CLOUD_SCOPE) or not owner_cloud_correction_inputs(head)
+                or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return None
+        jobs = executed_jobs(run, repository, api)
+        runtime_name = lane_job(OWNER_CLOUD_SCOPE, "runtime")
+        if (len({j.get("id") for j in jobs}) != len(jobs)
+                or any(j.get("head_sha") != source or j.get("run_id") != run["id"] or j.get("run_attempt") != 1
+                       or j.get("status") != "completed" for j in jobs)
+                or not covers_jobs(jobs, (PLAN_JOB, runtime_name), source, now)): return None
+        runtime = next(j for j in jobs if j["name"] == runtime_name)
+        build = [j for j in jobs if j.get("name") == BUILD]
+        plan = next(j for j in jobs if j["name"] == PLAN_JOB)
+        if (runtime.get("id") != OWNER_CLOUD_CORRECTION_RUNTIME_JOB or len(build) != 1
+                or build[0].get("id") != OWNER_CLOUD_CORRECTION_BUILD_JOB or build[0].get("conclusion") != "failure"
+                or any(j.get("name") not in {PLAN_JOB, BUILD, runtime_name} and
+                       (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)
+                or not moderation_steps_succeeded(runtime, OWNER_CLOUD_RUNTIME_STEPS)
+                or not moderation_steps_succeeded(plan, ("Select checks",))): return None
+        failed = [s.get("name") for s in build[0].get("steps", []) if s.get("conclusion") in {"failure", "cancelled", "timed_out"}]
+        if failed != ["Verify sharing release privacy gates"]: return None
+        if not owner_cloud_failure_log(api(f"/repos/{repository}/actions/jobs/{build[0]['id']}/logs")): return None
+        record = owner_cloud_plan(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), source, required)
+        if record is None or record.get("test_correction_evidence") is not None: return None
+        backend = api(f"/repos/{repository}/actions/runs/{OWNER_CLOUD_CORRECTION_BACKEND_RUN}")
+        if (backend.get("head_sha") != source or backend.get("head_branch") != branch or backend.get("event") != "push"
+                or backend.get("id") != OWNER_CLOUD_CORRECTION_BACKEND_RUN or backend.get("run_attempt") != 1
+                or backend.get("path") != ".github/workflows/sharing-service.yml"
+                or backend.get("repository", {}).get("full_name") != repository or backend.get("head_repository", {}).get("full_name") != repository
+                or (backend.get("status"), backend.get("conclusion")) != ("completed", "failure")
+                or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(backend["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return None
+        backend_jobs = executed_jobs(backend, repository, api)
+        worker_name = "Typecheck, test, and bundle Worker"
+        others = tuple(n for n in PRESERVATION_EXPORT_BACKEND_JOBS["sharing-service.yml"] if n != worker_name)
+        if (len(backend_jobs) != 4 or len({j.get("id") for j in backend_jobs}) != len(backend_jobs)
+                or not covers_jobs(backend_jobs, others, source, now)
+                or any(j.get("run_id") != backend["id"] or j.get("head_sha") != source or j.get("run_attempt") != 1 for j in backend_jobs)): return None
+        worker = [j for j in backend_jobs if j.get("name") == worker_name]
+        if (len(worker) != 1 or worker[0].get("id") != OWNER_CLOUD_CORRECTION_WORKER_JOB
+                or (worker[0].get("status"), worker[0].get("conclusion")) != ("completed", "failure")
+                or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(worker[0]["completed_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)
+                or [s.get("name") for s in worker[0].get("steps", []) if s.get("conclusion") in {"failure", "cancelled", "timed_out"}]
+                    != ["Run Worker, D1, staging, moderation, and key ceremony tests"]
+                or not owner_cloud_failure_log(api(f"/repos/{repository}/actions/jobs/{worker[0]['id']}/logs"), worker=True)): return None
+        return {"kind": "owner-cloud-fixed-counter-repair-v1", "run_id": run["id"], "sha": source,
+                "candidate_sha": head,
+                "jobs": [{"name": runtime_name, "job_id": runtime["id"]}], "owning_jobs_to_execute": [BUILD],
+                "failed_backend_run_id": backend["id"], "failed_backend_job_id": worker[0]["id"],
+                "changed_inputs": {p: list(v) for p, v in OWNER_CLOUD_CORRECTION_BLOBS.items()},
+                "unchanged_inputs": "all tracked files except fixed counter repair/fixtures/readiness, approved main controls and regular handoffs"}
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, StopIteration, TypeError, ValueError) as error:
+        raise CorrectionEvidenceUnavailable("Fixed owner-cloud source evidence is unavailable") from error
+
+
+def owner_cloud_correction_graph(run, validation_head, required, api, now, jobs):
+    """Fresh complete Build/backend, separately attributed original runtime proof."""
+    repository = "soso-so-27/neko-widget"
+    if (required != required_jobs_from_scope(OWNER_CLOUD_SCOPE) or run.get("head_branch") != OWNER_CLOUD_CORRECTION_BRANCH
+            or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("event") != "push" or run.get("run_attempt") != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not owner_cloud_correction_inputs(run.get("head_sha")) or not owner_cloud_correction_inputs(validation_head)
+            or not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now)
+            or len({j.get("id") for j in jobs}) != len(jobs)
+            or any(j.get("run_id") != run["id"] or j.get("head_sha") != run["head_sha"] or j.get("run_attempt") != 1
+                   or j.get("status") != "completed" or j.get("name") not in {PLAN_JOB, BUILD}
+                      and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
+    plan = next(j for j in jobs if j["name"] == PLAN_JOB)
+    build = next(j for j in jobs if j["name"] == BUILD)
+    if not moderation_steps_succeeded(plan, ("Select checks",)) or not moderation_steps_succeeded(build, moderation_build_steps()): return None
+    record = owner_cloud_plan(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), run["head_sha"], required)
+    if record is None: return None
+    original = api(f"/repos/{repository}/actions/runs/{OWNER_CLOUD_CORRECTION_RUN}")
+    verified = owner_cloud_correction_source(original, run["head_sha"], run["head_branch"], repository, run["workflow_id"], required, api, now)
+    if verified is None or record.get("test_correction_evidence") != verified: return None
+    backends = moderation_resolution_backend_evidence(run["head_sha"], repository, api, now, branch=run["head_branch"])
+    return {"runtime_evidence": verified, "backend_evidence": backends}
+
+
 def owner_cloud_control_approved(base, head):
     approved = git("merge-base", "refs/remotes/origin/main", head)
     for path in OWNER_CLOUD_CONTROLS:
@@ -2531,7 +2700,12 @@ def owner_cloud_control_approved(base, head):
 
 def owner_cloud_only(paths, base, head):
     """Frozen reviewed product batch; all other non-control/handoff inputs fixed."""
-    if not reviewed_hub_only(paths, base, head, product_blobs=OWNER_CLOUD_BLOBS,
+    corrected = source_paths(paths) == OWNER_CLOUD_CORRECTED_PATHS
+    products = dict(OWNER_CLOUD_BLOBS)
+    if corrected:
+        for path, (before, after) in OWNER_CLOUD_CORRECTION_BLOBS.items():
+            products[path] = (OWNER_CLOUD_BLOBS[path][0] if path in OWNER_CLOUD_BLOBS else before, after)
+    if not reviewed_hub_only(paths, base, head, product_blobs=products,
                              companion_paths=frozenset(), companion_digests={}, companion_name="unused"):
         return False
     if not owner_cloud_control_approved(base, head):
@@ -2539,10 +2713,11 @@ def owner_cloud_only(paths, base, head):
     for ref in (base, head):
         records = [record for record in git("ls-tree", "-r", "-z", ref).split("\0") if record]
         immutable = [record for record in records if not is_handoff(record.split("\t", 1)[1])
-                     and record.split("\t", 1)[1] not in OWNER_CLOUD_PATHS | OWNER_CLOUD_CONTROLS]
-        if hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() != OWNER_CLOUD_IMMUTABLE_TREE_SHA256:
+                     and record.split("\t", 1)[1] not in set(products) | OWNER_CLOUD_CONTROLS]
+        expected = OWNER_CLOUD_CORRECTION_TREE_SHA256 if corrected else OWNER_CLOUD_IMMUTABLE_TREE_SHA256
+        if hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() != expected:
             return False
-    return True
+    return not corrected or owner_cloud_correction_inputs(head)
 
 
 def owner_cloud_native_evidence(jobs, sha, now):
@@ -2564,7 +2739,7 @@ def owner_cloud_native_evidence(jobs, sha, now):
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
-    if sources == OWNER_CLOUD_PATHS:
+    if sources in (OWNER_CLOUD_PATHS, OWNER_CLOUD_CORRECTED_PATHS):
         try:
             base = comparison_base(event, env)
             if base and owner_cloud_only(paths, base, env["GITHUB_SHA"]):
@@ -2832,6 +3007,7 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
+    if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE): return OWNER_CLOUD_SCOPE
     # The registered failed sources executed the historical monolithic Solo
     # graph. Never reinterpret that evidence as either of the new shards.
     if required == required_jobs_from_scope(FULL_SCOPE) and required != ALBUM_CORRECTION_REQUIRED:
@@ -2850,6 +3026,8 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == OWNER_CLOUD_SCOPE and source == OWNER_CLOUD_CORRECTION_SOURCE:
+        return (BUILD,)
     if selected_scope == MODERATION_RESOLUTION_SCOPE and source == MODERATION_BUILD_CORRECTION_SOURCE:
         return (BUILD,)
     if selected_scope == FULL_SCOPE and source == PHOTO_SMOKE_CORRECTION_SOURCE:
@@ -3781,6 +3959,8 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
                       required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     """Verify each reusable job in a failed same-task run; never reuse its UI."""
     selected_scope = test_correction_scope(required)
+    if selected_scope == OWNER_CLOUD_SCOPE:
+        return owner_cloud_correction_source(run, head, branch, repository, workflow_id, required, api, now)
     if selected_scope == MODERATION_RESOLUTION_SCOPE:
         return moderation_build_correction_source(run, head, branch, repository, workflow_id, required, api, now)
     if selected_scope == PRESERVATION_EXPORT_SCOPE:
@@ -3883,6 +4063,18 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == OWNER_CLOUD_SCOPE:
+        if not owner_cloud_correction_inputs(head): return None
+        prefix = f"/repos/{repository}/actions"
+        workflow = api(f"{prefix}/workflows/ios-build.yml")
+        if (workflow.get("id") != 335014238 or workflow.get("path") != ".github/workflows/ios-build.yml"
+                or workflow.get("state") != "active"):
+            raise CorrectionEvidenceUnavailable("Owner cloud native workflow identity unavailable")
+        run = api(f"{prefix}/runs/{OWNER_CLOUD_CORRECTION_RUN}")
+        result = owner_cloud_correction_source(run, head, branch, repository, workflow["id"], required, api, now)
+        if result is None:
+            raise CorrectionEvidenceUnavailable("Original owner cloud run/runtime must be complete and exactly diagnosed; no Mac retry authorized")
+        return result
     if test_correction_scope(required) == MODERATION_RESOLUTION_SCOPE:
         # Only this registered product can enter recovery. Pending/invalid source
         # evidence stops planning rather than falling back to four Mac jobs.
@@ -3992,6 +4184,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE):
+        return owner_cloud_correction_graph(run, validation_head, required, api, now, jobs) is not None
     if required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
         if moderation_chained_inputs(run.get("head_sha")):
             return covers_moderation_chained_recovery(run, validation_head, required, api, now, jobs)
