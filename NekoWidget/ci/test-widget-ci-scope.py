@@ -1215,6 +1215,43 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         self.assertIsNone(prove(changed_jobs=jobs[:2]))
         with self.assertRaises(ValueError):prove(backend_failure=True)
 
+    def test_internal_preflight_main_dispatches_correction_and_preserves_failed_history(self):
+        import contextlib, datetime as dt, io, json
+        spec=importlib.util.spec_from_file_location('internal_preflight_entrypoint',Path(__file__).with_name('preflight-ci.py'))
+        preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        p=preflight.planner;head='c'*40;now=dt.datetime.now(dt.timezone.utc)
+        case='MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess'
+        source=dict(id=p.INTERNAL_REPORT_CORRECTION_RUN,head_sha=p.INTERNAL_REPORT_CORRECTION_SOURCE,
+            head_branch=p.INTERNAL_REPORT_CORRECTION_BRANCH,event='push',run_attempt=1,path='.github/workflows/ios-build.yml',
+            status='completed',conclusion='failure',created_at=(now-dt.timedelta(minutes=30)).isoformat(),updated_at=now.isoformat(),
+            failed_tests=[case],unsupported_failed_tests=['DisabledReleaseConfigTests/test_disabled_permission_copy_and_share_activation_are_truthful'])
+        diagnostic=dict(id=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN,head_sha=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE,
+            head_branch='diagnostic/internal-report-ui-20261011',event='workflow_dispatch',run_attempt=1,path=preflight.DIAGNOSTIC_WORKFLOW,
+            display_title='UI diagnosis: '+case,status='completed',conclusion='success',created_at=(now-dt.timedelta(minutes=18)).isoformat(),updated_at=now.isoformat(),
+            failed_tests=[],unsupported_failed_tests=[],diagnostic_evidence=dict(head=head,source_sha=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE,run_attempt=1,job_id=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_JOB,started_at=(now-dt.timedelta(minutes=18)).isoformat(),results={case:'passed'}))
+        proof=dict(kind='internal-report-release-plist-ui-correction-v1',candidate_sha=head,run_id=source['id'],sha=source['head_sha'],
+            failed_build_job_id=p.INTERNAL_REPORT_CORRECTION_BUILD_JOB,failed_build_log_sha256=p.INTERNAL_REPORT_CORRECTION_LOG_SHA256,
+            failed_ui_job_id=p.INTERNAL_REPORT_CORRECTION_UI_JOB,failed_ui_log_sha256=p.INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256,
+            owning_jobs_to_execute=[p.BUILD,p.lane_job(p.INTERNAL_REPORT_SCOPE,'app-ui')],
+            jobs=[dict(name=n,job_id=i) for n,i in p.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if n not in {p.PLAN_JOB,p.lane_job(p.INTERNAL_REPORT_SCOPE,'app-ui')}])
+        candidate=dict(scope=p.INTERNAL_REPORT_SCOPE,head=head,required_jobs=list(p.required_jobs_from_scope(p.INTERNAL_REPORT_SCOPE)),
+            target_minutes=200,cost={'status':'unmeasured'},ready=False)
+        with tempfile.TemporaryDirectory() as directory:
+            history=Path(directory)/'history.json';history.write_text(json.dumps({'upload_minutes':0}),encoding='utf-8')
+            output=io.StringIO()
+            with patch.object(preflight,'candidate_plan',return_value=candidate),patch.object(preflight,'read_task_runs',return_value=[source,diagnostic]), \
+                    patch.object(preflight,'read_other_active_ios_runs',return_value=[]),patch.object(preflight.planner,'git',return_value=p.INTERNAL_REPORT_CORRECTION_BRANCH), \
+                    patch.object(preflight.planner,'find_test_correction_evidence',return_value=proof) as correction,patch.object(preflight.os,'chdir'),contextlib.redirect_stdout(output):
+                code=preflight.main(['--history',str(history),'--target-minutes','200'])
+            self.assertEqual(code,0,output.getvalue());result=json.loads(output.getvalue())
+        correction.assert_called_once()
+        self.assertEqual(correction.call_args.args[:4],(head,p.INTERNAL_REPORT_CORRECTION_BRANCH,preflight.REPOSITORY,tuple(candidate['required_jobs'])))
+        self.assertTrue(result['ready']);self.assertEqual(result['cost']['status'],'reference')
+        self.assertEqual(result['cost']['owning_jobs'],proof['owning_jobs_to_execute'])
+        self.assertEqual(result['full_cost_before_correction'],{'status':'unmeasured'})
+        self.assertEqual(result['task']['failed_runs'],[source['id']]);self.assertEqual(result['task']['diagnostic_runs'],[diagnostic['id']])
+        self.assertGreaterEqual(result['task']['projected_total_minutes'],90)
+
     def test_internal_task_gate_preserves_failure_active_unknown_and_cumulative_cost(self):
         import datetime as dt
         spec=importlib.util.spec_from_file_location('internal_report_budget',Path(__file__).with_name('preflight-ci.py'))
