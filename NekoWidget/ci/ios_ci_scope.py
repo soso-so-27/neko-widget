@@ -621,7 +621,7 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/ci/test-release-testflight.py": [
         "37a2a730a189c42f53ac9700df06505f9968bc4a",
-        "88b8c53326113cdaf902021986a7d979db78ae6f"
+        "f739adf1cf7c0551dbc3ca805baea26d00416198"
     ],
     "NekoWidget/ci/test-verify-moderation-upload-payload.py": [
         "c9296d685f2b5abaed77938b7d7dcaf2fe0944dc",
