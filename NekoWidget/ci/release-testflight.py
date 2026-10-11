@@ -218,6 +218,34 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
         return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
                 "scope": plan["scope"], "required_jobs": list(required),
                 "chained_build_recovery": chained, "backend_evidence": chained["backend_evidence"]}
+    metadata_repair = plan.get("internal_report_metadata_repair")
+    if metadata_repair is not None:
+        source_id, source_sha = plan.get("evidence_run_id"), plan.get("evidence_sha")
+        require(plan.get("scope") == "reviewed-internal-report-v1"
+                and plan.get("test_correction_evidence") is None
+                and type(source_id) is int and source_id > 0 and type(source_sha) is str
+                and plan.get("required_backend_runs") == planner.internal_report_requirements(source_sha),
+                "Metadata repair must retain separately attributed native/backend source evidence.")
+        source = gh.get(f"actions/runs/{source_id}")
+        require(source.get("id") == source_id and source.get("head_sha") == source_sha,
+                "Metadata repair source identity differs from its plan.")
+        def metadata_repair_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected metadata repair API path.")
+            if path.endswith("/logs"):
+                return gh.raw_job_log(int(path.split("/")[-2]))
+            return gh.get(path[len(prefix):])
+        try:
+            proof = planner.internal_report_metadata_repair_graph(
+                source, sha, required, metadata_repair_api, now, executed_jobs_for(gh, source))
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Exact metadata repair source evidence is unavailable or invalid.") from None
+        require(proof is not None and proof == metadata_repair,
+                "Metadata repair must verify the exact successful source graph and failed upload boundary.")
+        return {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "native_evidence": proof["native_evidence"], "backend_evidence": proof["backend_evidence"],
+                "metadata_repair_evidence": proof}
     correction = plan.get("test_correction_evidence")
     if correction is not None and plan.get("scope") == "reviewed-internal-report-v1":
         require(plan.get("required_backend_runs") == planner.internal_report_requirements(sha),

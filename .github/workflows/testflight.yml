@@ -1465,6 +1465,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Preparation rewrites source plists; archived/exported plists stay intact.
+          # Recheck readiness against the exact reviewed source bytes.
+          git restore --source="$RELEASE_SOURCE_SHA" --worktree -- \
+            "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
+            "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist"
           app_info="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist"
           python3 "$PROJECT_DIRECTORY/ci/write-moderation-release-metadata.py" \
             --info-plist "$app_info" \

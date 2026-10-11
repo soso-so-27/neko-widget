@@ -287,6 +287,44 @@ class ReleaseTests(unittest.TestCase):
                 self.assertRaises(release.Blocked):
             self.prepare()
 
+    def test_metadata_repair_retains_actual_source_and_rejects_mixed_or_changed_proof(self):
+        p = release.planner
+        source_sha = "b" * 40
+        source = dict(self.run, id=38142073051, head_sha=source_sha,
+                      head_branch="codex/internal-report-ui-20261011")
+        proof = {"native_evidence": {"source_sha": source_sha},
+                 "backend_evidence": {"source_sha": source_sha},
+                 "release_failure_evidence": {"run_id": 38144234681, "upload": "skipped"}}
+        self.plan.update(scope="reviewed-internal-report-v1",
+                         required_jobs=list(p.required_jobs_from_scope("reviewed-internal-report-v1")),
+                         evidence_run_id=source["id"], evidence_sha=source_sha,
+                         required_backend_runs=p.internal_report_requirements(source_sha),
+                         internal_report_metadata_repair=proof)
+        self.gh.values[f"actions/runs/{source['id']}"] = source
+        self.set_plan()
+        with patch.object(p, "internal_report_metadata_repair_graph", create=True, return_value=proof) as graph, \
+                patch.object(release, "executed_jobs_for", return_value=[]):
+            got = self.prepare()["ci"]
+            self.assertEqual((got["tested_run"], got["tested_sha"]), (source["id"], source_sha))
+            self.assertNotEqual(got["tested_sha"], self.sha)
+            self.assertEqual(got["metadata_repair_evidence"], proof)
+            self.assertEqual(graph.call_args.args[:3], (source, self.sha, tuple(self.plan["required_jobs"])))
+        for changed in (None, dict(proof, release_failure_evidence={"upload": "success"})):
+            with patch.object(p, "internal_report_metadata_repair_graph", create=True, return_value=changed), \
+                    patch.object(release, "executed_jobs_for", return_value=[]), self.assertRaises(release.Blocked):
+                self.prepare()
+        for changes in ({"test_correction_evidence": {"kind": "mixed"}},
+                        {"required_backend_runs": p.internal_report_requirements(self.sha)},
+                        {"evidence_sha": self.sha}, {"scope": p.FULL_SCOPE}):
+            saved = copy.deepcopy(self.plan)
+            self.plan.update(changes); self.set_plan()
+            with patch.object(p, "internal_report_metadata_repair_graph", create=True) as graph, \
+                    self.assertRaises(release.Blocked):
+                self.prepare()
+            graph.assert_not_called()
+            self.plan = saved; self.set_plan()
+        self.assertEqual(self.gh.dispatches, [])
+
     def test_internal_report_release_requires_exact_native_correction_graph(self):
         p = release.planner
         correction = {"kind": "internal-report-release-plist-ui-correction-v1", "run_id": 38137593169, "sha": "b" * 40, "jobs": []}
