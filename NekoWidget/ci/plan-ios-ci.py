@@ -17,7 +17,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+from ios_ci_scope import (OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
@@ -2125,6 +2125,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
+    if runtime_scope == OWNER_CLOUD_SCOPE and accepts_paths(runtime_scope, paths):
+        return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
     sources = source_paths(paths)
@@ -2140,6 +2142,8 @@ def smoke_job(scope: str) -> str:
 
 
 def required_jobs_from_scope(scope: str) -> tuple[str, ...]:
+    if scope == OWNER_CLOUD_SCOPE:
+        return (BUILD,) + sharing_jobs(scope)
     if scope == ICON_SCOPE:
         return (ICON_BUILD,)
     if scope == "movie-screen-only":
@@ -2516,8 +2520,57 @@ def membership_management_only(paths: list[str], base: str, head: str) -> bool:
     return memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), MEMBERSHIP_MANAGEMENT_TESTS)
 
 
+def owner_cloud_control_approved(base, head):
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    for path in OWNER_CLOUD_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not trusted.startswith("100644 blob ") or any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)):
+            return False
+    return True
+
+
+def owner_cloud_only(paths, base, head):
+    """Frozen reviewed product batch; all other non-control/handoff inputs fixed."""
+    if not reviewed_hub_only(paths, base, head, product_blobs=OWNER_CLOUD_BLOBS,
+                             companion_paths=frozenset(), companion_digests={}, companion_name="unused"):
+        return False
+    if not owner_cloud_control_approved(base, head):
+        return False
+    for ref in (base, head):
+        records = [record for record in git("ls-tree", "-r", "-z", ref).split("\0") if record]
+        immutable = [record for record in records if not is_handoff(record.split("\t", 1)[1])
+                     and record.split("\t", 1)[1] not in OWNER_CLOUD_PATHS | OWNER_CLOUD_CONTROLS]
+        if hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() != OWNER_CLOUD_IMMUTABLE_TREE_SHA256:
+            return False
+    return True
+
+
+def owner_cloud_native_evidence(jobs, sha, now):
+    required = required_jobs_from_scope(OWNER_CLOUD_SCOPE)
+    if not covers_jobs(jobs, required, sha, now=now):
+        raise ValueError("Complete same-candidate Build and full runtime execution is required")
+    checks = {BUILD: moderation_build_steps(), lane_job(OWNER_CLOUD_SCOPE, "runtime"):
+              ("Check out repository", "Run sharing runtime matrix", "Upload sharing runtime matrix artifacts")}
+    for name, expected in checks.items():
+        job = next(job for job in jobs if job["name"] == name)
+        steps = job.get("steps")
+        if not isinstance(steps, list): raise ValueError("Execution steps unavailable")
+        for step_name in expected:
+            found = [step for step in steps if step.get("name") == step_name]
+            if len(found) != 1 or (found[0].get("status"), found[0].get("conclusion")) != ("completed", "success"):
+                raise ValueError("A required native validation step did not execute")
+    return True
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources == OWNER_CLOUD_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and owner_cloud_only(paths, base, env["GITHUB_SHA"]):
+                return OWNER_CLOUD_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
     if sources and sources & MODERATION_RESOLUTION_PATHS and sources <= MODERATION_RESOLUTION_PATHS | {MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST}:
         try:
             base = comparison_base(event, env)
@@ -4495,6 +4548,9 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 continue
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
+            if covered and not corrected and required == required_jobs_from_scope(OWNER_CLOUD_SCOPE):
+                owner_cloud_native_evidence(jobs, run["head_sha"], now)
+                moderation_resolution_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered and not corrected and required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
                 if moderation_ui_recovery_inputs(run["head_sha"]):
                     covered = covers_moderation_ui_recovery(run, env["GITHUB_SHA"], required, api, now, jobs)
@@ -4773,6 +4829,8 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"required_backend_runs": moderation_resolution_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+           if selected_scope == OWNER_CLOUD_SCOPE else {}),
         **({"required_backend_runs": moderation_resolution_requirements(
               MODERATION_BUILD_CORRECTION_SOURCE if chained_build_recovery is not None or moderation_chained_inputs(env["GITHUB_SHA"])
                   or production_ui_recovery is not None or moderation_ui_recovery_inputs(env["GITHUB_SHA"])

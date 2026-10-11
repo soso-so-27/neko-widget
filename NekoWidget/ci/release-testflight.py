@@ -345,6 +345,20 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             result["backend_evidence"] = planner.preservation_export_backend_evidence(backend_sha, REPOSITORY, backend_api, now)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
+    if plan["scope"] == planner.OWNER_CLOUD_SCOPE:
+        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(source_sha),
+                "Owner cloud plan must declare five same-candidate backend jobs.")
+        def owner_cloud_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected backend API path.")
+            return gh.get(path[len(prefix):])
+        try:
+            planner.owner_cloud_native_evidence(jobs, source_sha, now)
+            owner = current if source_id == run_id else source
+            branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
+            result["backend_evidence"] = planner.moderation_resolution_backend_evidence(source_sha, REPOSITORY, owner_cloud_api, now, branch=branch)
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Owner cloud requires complete Build, full runtime and five owning backend successes.") from None
     if plan["scope"] == planner.MODERATION_RESOLUTION_SCOPE:
         production = planner.moderation_ui_recovery_inputs(source_sha)
         chained = planner.moderation_chained_inputs(source_sha)
