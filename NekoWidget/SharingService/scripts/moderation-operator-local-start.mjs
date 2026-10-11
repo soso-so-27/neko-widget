@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {startLoopbackOperatorServer} from './moderation-operator-local-server.mjs';
+import {createOwnerFileTransport,validateOwnerFileTransport} from './moderation-owner-file-transport.mjs';
 
 // This dedicated local process emits only the safe JSON status below.
 process.env.WRANGLER_LOG='none';
@@ -25,7 +26,8 @@ const inside=(root,p)=>{const relative=path.relative(root,p);return relative==='
 /** Configuration is local trusted administration, never a browser input.
  * No token, role creation, authority private key, remote DB or deployment option. */
 export function validateLocalOperatorConfig(value) {
-  exact(value,['schemaVersion','mode','origin','rpId','port','runtimeDirectory','access','enrollment']);
+  exact(value,['schemaVersion','mode','origin','rpId','port','runtimeDirectory','access','enrollment',...(Object.hasOwn(value??{},'reviewTransport')?['reviewTransport']:[])]);
+  if(Object.hasOwn(value,'reviewTransport'))validateOwnerFileTransport(value.reviewTransport);
   if(value.schemaVersion!==1||value.mode!=='local') invalid();
   const origin=new URL(value.origin);
   if(origin.protocol!=='https:'||origin.origin!==value.origin||origin.hostname!==value.rpId||origin.username||origin.password) invalid();
@@ -121,8 +123,10 @@ export async function main(args) {
     const {createLocalModerationOperatorHost}=await import(pathToFileURL(path.join(config.runtimeDirectory,'moderation-operator-host-local.mjs')).href+version);
     const {authenticateCloudflareAccessRequest,ModerationAccessJwksCache}=await import(pathToFileURL(path.join(config.runtimeDirectory,'moderation-operator-auth.mjs')).href+version);
     const access={issuer:config.access.issuer,audience:config.access.audience,subjectHmacKey:key,subjectHmacKeyVersion:config.access.subjectHmacKeyVersion,cache:new ModerationAccessJwksCache()};
-    const handler=createLocalModerationOperatorHost({environment:'local',runtimeEnabled:'YES',db:proxy.env.DB,origin:config.origin,rpId:config.rpId,access,enrollment:config.enrollment});
-    const ready={schemaReady:true,operatorGrantsCreated:false,liveOperationVerified:false};
+    const review=config.reviewTransport;
+    const handler=createLocalModerationOperatorHost({environment:'local',runtimeEnabled:'YES',db:proxy.env.DB,origin:config.origin,rpId:config.rpId,access,enrollment:config.enrollment,
+      ...(review?{reviewEvidence:createOwnerFileTransport(review),syntheticCaseReferences:review.entries.map(e=>e.caseReferenceHmac)}:{})});
+    const ready={schemaReady:true,operatorGrantsCreated:false,liveOperationVerified:false,...(review?{ownerReviewConfigured:true,evidenceMode:review.kind}:{})};
     if(args[2]==='--check'){console.log(JSON.stringify({configurationValid:true,...ready,remoteBindings:false}));return;}
     server=await startLoopbackOperatorServer({origin:config.origin,port:config.port,handler,
       authenticate:request=>authenticateCloudflareAccessRequest(request,access),ready});

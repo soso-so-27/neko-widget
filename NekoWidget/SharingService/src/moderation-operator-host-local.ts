@@ -23,7 +23,8 @@ export function createLocalModerationOperatorHost(input: LocalModerationOperator
       activeRoles:Object.freeze([...input.enrollment.activeRoles]),
       authorities:Object.freeze(input.enrollment.authorities.map(key => Object.freeze({...key})))});
     const env: LocalModerationTriageEnvironment = Object.freeze({runtimeEnabled:"YES",environment:"local",db:input.db,
-      origin:input.origin,rpId:input.rpId,access,...(input.reviewEvidence === undefined ? {} : {reviewEvidence:input.reviewEvidence})});
+      origin:input.origin,rpId:input.rpId,access,...(input.reviewEvidence === undefined ? {} : {reviewEvidence:input.reviewEvidence}),
+      syntheticCaseReferences:Object.freeze([...(input.syntheticCaseReferences??[])])});
     const origin = new URL(env.origin);
     if (origin.protocol !== "https:" || origin.origin !== env.origin || origin.username || origin.password
         || origin.search || origin.hash || origin.hostname !== env.rpId

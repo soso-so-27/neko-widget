@@ -143,7 +143,9 @@ jobs:
             "scripts/moderation-staging-drill-review-windows.ps1",
             "scripts/moderation-windows-trusted-node.ps1",
             "scripts/moderation-report-tool-windows.ps1",
-            "scripts/personal-staging-emergency-off-windows.ps1"
+            "scripts/personal-staging-emergency-off-windows.ps1",
+            "scripts/moderation-owner-key-check-broker-windows.ps1",
+            "scripts/moderation-owner-key-check-client-windows.ps1"
           )
           foreach ($file in $files) {
             $tokens = $null

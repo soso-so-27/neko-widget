@@ -11,7 +11,7 @@ export async function startLoopbackOperatorServer({origin, port, handler, authen
   const canonical = new URL(origin);
   if (canonical.protocol !== 'https:' || canonical.origin !== origin || canonical.username || canonical.password
       || !Number.isInteger(port) || port < 0 || port > 65535
-      || !Number.isInteger(requestTimeoutMilliseconds) || requestTimeoutMilliseconds < 1 || requestTimeoutMilliseconds > 20000
+      || !Number.isInteger(requestTimeoutMilliseconds) || requestTimeoutMilliseconds < 1 || requestTimeoutMilliseconds > 60000
       || typeof handler !== 'function' || typeof authenticate !== 'function') throw Error('invalid_local_operator_transport');
   const active = new Set();
   const pending = new Set();
@@ -83,7 +83,7 @@ export async function startLoopbackOperatorServer({origin, port, handler, authen
     pending.add(task);
     void task.finally(() => pending.delete(task));
   });
-  server.requestTimeout = 20000;
+  server.requestTimeout = requestTimeoutMilliseconds;
   server.headersTimeout = 10000;
   server.keepAliveTimeout = 1000;
   await new Promise((resolve,reject) => {

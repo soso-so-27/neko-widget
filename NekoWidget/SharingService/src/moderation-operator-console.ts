@@ -67,7 +67,8 @@ async function begin(item){
 function render(item){
   if(!/^[0-9a-f]{64}$/.test(item.caseReferenceHmac)||!['unreviewed','in_review'].includes(item.reviewState)||!Number.isSafeInteger(item.reviewDueAt)||![0,1].includes(item.evidenceAvailable)||![0,1].includes(item.pendingFinalization)||![0,1].includes(item.slaExceeded)||!Object.hasOwn(reasons,item.advisoryReason)||!['preserve','raise'].includes(item.advisoryPriority))throw Error('response');
   const card=el('section',undefined,'case'),row=el('div',undefined,'row');
-  row.append(el('h2','通報 '+item.caseReferenceHmac.slice(0,8)),el('span',item.pendingFinalization?'記録の確定待ち':item.reviewState==='in_review'?'確認中':'未確認','label'));card.append(row);
+  row.append(el('h2',(item.synthetic?'テスト通報 ':'通報 ')+item.caseReferenceHmac.slice(0,8)),el('span',item.pendingFinalization?'記録の確定待ち':item.reviewState==='in_review'?'確認中':'未確認','label'));card.append(row);
+  if(item.synthetic)card.append(el('p','動作確認用の合成画像です。実際の通報や利用者の写真ではありません。','muted'));
   card.append(el('p','確認期限：'+new Date(item.reviewDueAt*1000).toLocaleString('ja-JP'),item.slaExceeded?'urgent':'muted'));
   card.append(el('p',reasons[item.advisoryReason],item.advisoryPriority==='raise'?'urgent':undefined));
   if(!item.evidenceAvailable)card.append(el('p','有効な証拠を確認できません。期限切れ・削除・未準備の可能性があります。','muted'));

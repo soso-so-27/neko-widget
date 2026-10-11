@@ -498,6 +498,24 @@ describe("strict moderation operator WebAuthn verification", () => {
 });
 
 describe("moderation operator assertion HTTP boundary", () => {
+  it("keeps a fixed private diagnostic stage without exposing assertion values in the error", async () => {
+    const test = await fixture();
+    const options = { ...test.options };
+    const wrongCredential = { ...options.credential, credentialIdSHA256: "0".repeat(64) };
+    const response = cloneResponse(test.response);
+    const flags = new Uint8Array(atob(response.response.authenticatorData.replaceAll("-", "+").replaceAll("_", "/")).split("").map(value => value.charCodeAt(0)));
+    flags[32] = 0x01;
+    response.response.authenticatorData = base64url(flags);
+    for (const [body, credential, stage] of [
+      ["{", options.credential, "request_body"],
+      [JSON.stringify(test.response), wrongCredential, "credential_binding"],
+      [JSON.stringify(response), options.credential, "authenticator_flags"],
+    ] as const) {
+      const request = new Request(origin, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      await expect(prepareModerationOperatorWebAuthnRequest(request, { ...options, credential }))
+        .rejects.toMatchObject({ message: MODERATION_OPERATOR_ASSERTION_REQUEST_FAILURE_CODE, diagnosticStage: stage });
+    }
+  });
   function request(body: string | ReadableStream<Uint8Array>, headers: Record<string, string> = {}): Request {
     return new Request(`${origin}/operator/v1/assertions`, {
       method: "POST",

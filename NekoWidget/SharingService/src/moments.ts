@@ -16,6 +16,7 @@ import {
   verifyEd25519,
 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
+import { currentModerationReportKey } from "./moderation-report-key-policy";
 import {
   positiveIntegerSetting,
   reportIngestionRuntimeEnabled,
@@ -2399,7 +2400,7 @@ export async function reserveMomentReport(request: Request, env: Env): Promise<R
       ["objectionable", "harassment", "privacy", "other"] as const,
     );
     moderationKeyID = stringField(object, "moderationKeyId");
-    if (!allowedModerationKeyIDs.has(moderationKeyID)) {
+    if (!allowedModerationKeyIDs.has(moderationKeyID) || !await currentModerationReportKey(env.DB,moderationKeyID)) {
       throw new ApiError(409, "moderation_key_required", "A reviewed moderation key is required.");
     }
     ciphertextSize = integerField(

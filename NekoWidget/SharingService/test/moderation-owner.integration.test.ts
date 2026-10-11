@@ -52,6 +52,18 @@ async function read(f: Owner) {
 async function count(table: string) { return (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{n:number}>())!.n; }
 
 describe('local signed owner review and reply draft', () => {
+  it('logs only the fixed private preflight category and discloses no image or receipt on rejection',async()=>{
+    const f=await owner(),issued=await issue(f,f.path+'/content-read');
+    const log=vi.spyOn(console,'info').mockImplementation(()=>{});
+    try {
+      const response=await routeLocalModerationOwner(f.request(issued.assertionPath,'POST','{"secret":"must-not-be-logged"}'),f.local);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({error:'owner_review_unavailable'});
+      expect(log.mock.calls).toEqual([[JSON.stringify({component:'local_owner_assertion',stage:'response_shape'})]]);
+      expect(await count('moderation_owner_assertion_attempts')).toBe(0);
+      expect(await count('moderation_owner_read_receipts')).toBe(0);
+    } finally {log.mockRestore();}
+  });
   it('does not infer owner content permission from an admitted triage role',async()=>{
     const f=await fixture();
     const path=`/operator/owner/v1/cases/${f.caseReference}/1/content-read`;

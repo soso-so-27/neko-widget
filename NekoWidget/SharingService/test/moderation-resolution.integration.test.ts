@@ -9,6 +9,10 @@ import {deriveModerationOperatorCaseReference} from '../src/moderation-operator-
 import {base64urlEncode} from '../src/encoding';
 beforeEach(async()=>{await reset();await applyD1Migrations(db,(env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS)});
 const count=async(table:string)=>(await db.prepare(`SELECT COUNT(*) n FROM ${table}`).first<{n:number}>())!.n;
+// These cases deliberately cross SQLite clock boundaries and exercise real
+// crypto/D1 fixtures (8.8s observed locally). Keep every expiry/counter assertion;
+// allow the test harness 15s without changing any product deadline.
+const clockBoundaryTimeoutMs=15_000;
 describe('case-bound signed reversible moderation',()=>{
  it('admits a scope across the challenge issue clock boundary without extending its expiry',async()=>{
   const f=await resolutionFixture(undefined,'scope'),receipt=await f.read();
@@ -18,7 +22,7 @@ describe('case-bound signed reversible moderation',()=>{
   expect(row?.elapsed).toBeGreaterThanOrEqual(1);
   expect(row?.lifetime).toBeLessThanOrEqual(300);
   expect(await count('moderation_resolution_events')).toBe(0);
- });
+ },clockBoundaryTimeoutMs);
  it('combines two independent cases and releasing one never releases the other',async()=>{
   const f=await resolutionFixture();
   const row=(await db.prepare('SELECT * FROM moment_reports WHERE id=?').bind(f.reportId).first())!;
@@ -79,7 +83,7 @@ describe('case-bound signed reversible moderation',()=>{
   const legacy=await start.json() as {challenge:string;assertionPath:string};
   expect((await routeLocalModerationOperatorTriage(f.request(legacy.assertionPath,'POST',await f.assertion(legacy.challenge,{counter:1})),f.local)).status).toBeGreaterThanOrEqual(400);
   expect(await count('moderation_resolution_events')).toBe(1);
- });
+ },clockBoundaryTimeoutMs);
  it('blocks legacy no-action while its case is hidden',async()=>{
   const f=await resolutionFixture(),receipt=await f.read();await f.act('hide',receipt,0);
   const r=await routeLocalModerationOwner(f.request(`/operator/owner/v1/cases/${f.caseReference}/1/decisions/no-action/${receipt}`,'POST'),f.local);

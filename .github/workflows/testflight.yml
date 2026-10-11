@@ -111,6 +111,11 @@ jobs:
           python3 "$PROJECT_DIRECTORY/ci/test-official-window-release.py"
           python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" input
 
+      - name: Set up Node.js for public policy gate
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
       - name: Select fail-closed release mode
         shell: bash
         env:
@@ -262,10 +267,14 @@ jobs:
           import hashlib
           import ipaddress
           import json
+          import os
           import re
           import socket
           import sys
           from urllib.parse import urlparse
+          from pathlib import Path
+          sys.path.insert(0, str(Path(os.environ["PROJECT_DIRECTORY"]).resolve() / "ci"))
+          from moderation_readiness import verify_v2_rollout
 
           (
               mode,
@@ -336,15 +345,13 @@ jobs:
               raise SystemExit(
                   "Tracked moderation client rollout policy v2ClientReleaseAllowed is invalid."
               )
-          if rollout_policy["v2ClientReleaseAllowed"]:
+          if rollout_policy["v2ClientReleaseAllowed"] and rollout_policy["clientKeyId"] != "moderation-v2":
               raise SystemExit(
-                  "machine-verifiable server and drill readiness evidence is not implemented; "
-                  "v2ClientReleaseAllowed must remain false."
+                  "Moderation rollout policy cannot allow v2 while selecting v1."
               )
-          if rollout_policy["clientKeyId"] == "moderation-v2":
+          if rollout_policy["clientKeyId"] == "moderation-v2" and not rollout_policy["v2ClientReleaseAllowed"]:
               raise SystemExit(
-                  "machine-verifiable server and drill readiness evidence is not implemented; "
-                  "moderation-v2 client selection remains blocked independently of policy."
+                  "Moderation rollout policy cannot select v2 without readiness permission."
               )
           rollout_policy_revision = str(rollout_policy["revision"])
           rollout_policy_sha256 = hashlib.sha256(canonical_json(rollout_policy)).hexdigest()
@@ -566,11 +573,6 @@ jobs:
               selected_manifest_sha256 = hashlib.sha256(
                   canonical_json(trust_manifest)
               ).hexdigest()
-              if moderation_key_id == "moderation-v2":
-                  raise SystemExit(
-                      "moderation-v2 client releases remain blocked because machine-verifiable "
-                      "server and drill readiness evidence is not implemented."
-                  )
               if moderation_key_id != rollout_policy["clientKeyId"]:
                   raise SystemExit(
                       "Selected moderation key ID does not match the tracked rollout policy."
@@ -587,6 +589,7 @@ jobs:
                   raise SystemExit(
                       "Canonical moderation trust manifest does not match the tracked rollout policy."
                   )
+              verify_v2_rollout(rollout_policy)
               for policy_url, label in (
                   (privacy_url, "SHARING_STAGING_PRIVACY_URL"),
                   (support_url, "SHARING_STAGING_SUPPORT_URL"),
@@ -720,11 +723,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/test-limited-external-beta-reporting.py"
-
-      - name: Set up Node.js for public policy gate
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: "22"
 
       - name: Validate public policy for selected release mode
         shell: bash

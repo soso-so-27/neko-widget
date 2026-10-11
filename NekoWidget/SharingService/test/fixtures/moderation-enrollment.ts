@@ -41,8 +41,9 @@ export async function authenticator(expectedRPID = rpID) {
   const id = crypto.getRandomValues(new Uint8Array(32));
   const sign = async (value: Uint8Array) => der(new Uint8Array(await crypto.subtle.sign(
     {name: "ECDSA", hash: "SHA-256"}, pair.privateKey, new Uint8Array(value).buffer)));
-  async function response(challenge: string, registration: boolean, counter: number, bad = false, format = "packed") {
-    const client = encoder.encode(JSON.stringify({type: registration ? "webauthn.create" : "webauthn.get", challenge, origin}));
+  async function response(challenge: string, registration: boolean, counter: number, bad = false, format = "packed", clientDataSuffix = "") {
+    const clientJSON = JSON.stringify({type: registration ? "webauthn.create" : "webauthn.get", challenge, origin});
+    const client = encoder.encode(clientJSON.slice(0,-1) + clientDataSuffix + "}");
     const auth = concat(await hash(encoder.encode(expectedRPID)), new Uint8Array([registration ? 0x45 : 0x05]), u32(counter),
       ...(registration ? [new Uint8Array(16), new Uint8Array([0, id.length]), id, publicKeyCose] : []));
     const sig = await sign(concat(auth, await hash(client))); if (bad) sig[sig.length - 1]! ^= 1;

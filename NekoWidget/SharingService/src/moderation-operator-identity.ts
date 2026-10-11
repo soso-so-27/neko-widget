@@ -47,6 +47,11 @@ export const actorSQL = `SELECT identity.operator_id, credential.credential_id_s
         ON newer_enrollment.enrollment_request_id = newer_admission.enrollment_request_id
       WHERE newer_enrollment.target_operator_id = identity.operator_id
         AND newer_admission.rowid > admission.rowid)
+    AND (NOT EXISTS (SELECT 1 FROM moderation_owner_scope_installation)
+      OR EXISTS (SELECT 1 FROM moderation_owner_current_scope_adoptions AS adopted
+        WHERE adopted.enrollment_request_id=enrollment.enrollment_request_id
+          AND adopted.target_operator_id=identity.operator_id
+          AND adopted.target_credential_id_sha256=credential.credential_id_sha256))
   ORDER BY admission.rowid DESC LIMIT 1`;
 
 export function guard(db: D1Database, access: AuthenticatedModerationOperatorAccess, actor: Actor): D1PreparedStatement {

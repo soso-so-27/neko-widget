@@ -19,6 +19,7 @@ import re
 import stat
 import struct
 from pathlib import Path
+from moderation_readiness import verify_v2_rollout
 
 
 METADATA_SCHEMA = "jp.nekowidget.moderation-release-metadata.v2"
@@ -205,7 +206,7 @@ def is_x25519_small_order_public_key(value: bytes) -> bool:
     return bytes(normalized) in X25519_SMALL_ORDER_PUBLIC_KEYS
 
 
-def load_rollout_policy(path: Path) -> tuple[dict[str, object], str]:
+def load_rollout_policy(path: Path, *, release_mode: str = "media-staging") -> tuple[dict[str, object], str]:
     try:
         raw = path.read_text(encoding="utf-8")
         value = json.loads(raw, object_pairs_hook=strict_object)
@@ -238,16 +239,12 @@ def load_rollout_policy(path: Path) -> tuple[dict[str, object], str]:
             fail(f"Moderation rollout policy {field} must be lowercase SHA-256.")
     if not isinstance(value["v2ClientReleaseAllowed"], bool):
         fail("Moderation rollout policy v2ClientReleaseAllowed must be boolean.")
-    if value["v2ClientReleaseAllowed"]:
-        fail(
-            "Moderation rollout policy cannot allow v2 because machine-verifiable "
-            "server and drill readiness evidence is not implemented."
-        )
-    if value["clientKeyId"] == "moderation-v2":
-        fail(
-            "Moderation rollout policy cannot select v2 because machine-verifiable "
-            "server and drill readiness evidence is not implemented."
-        )
+    if value["v2ClientReleaseAllowed"] and value["clientKeyId"] != "moderation-v2":
+        fail("Moderation rollout policy cannot allow v2 while selecting v1.")
+    if value["clientKeyId"] == "moderation-v2" and not value["v2ClientReleaseAllowed"]:
+        fail("Moderation rollout policy cannot select v2 without readiness permission.")
+    if release_mode == "media-staging":
+        verify_v2_rollout(value)
     return value, hashlib.sha256(canonical_json(value)).hexdigest()
 
 
@@ -363,7 +360,7 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_arguments()
-    policy, policy_sha256 = load_rollout_policy(args.rollout_policy)
+    policy, policy_sha256 = load_rollout_policy(args.rollout_policy, release_mode=args.release_mode)
     if str(policy["revision"]) != args.expected_rollout_policy_revision:
         fail("Release metadata rollout policy revision mismatch.")
     if (

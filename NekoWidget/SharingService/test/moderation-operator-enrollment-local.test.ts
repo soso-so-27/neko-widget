@@ -13,7 +13,7 @@ const root = "/operator/v1/enrollment";
 const count = async (table: string) => (await db.prepare(`SELECT count(*) AS n FROM ${table}`).first<{n:number}>())!.n;
 beforeEach(async () => { await reset(); await applyD1Migrations(db, (env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS); });
 
-async function authenticated() {
+async function authenticated(lifetime = 600) {
   const key = await crypto.subtle.generateKey({name:"RSASSA-PKCS1-v1_5",modulusLength:2048,
     publicExponent:new Uint8Array([1,0,1]),hash:"SHA-256"},true,["sign","verify"]) as CryptoKeyPair;
   const jwk = await crypto.subtle.exportKey("jwk",key.publicKey);
@@ -22,7 +22,7 @@ async function authenticated() {
     subjectHmacKey:crypto.getRandomValues(new Uint8Array(32)),subjectHmacKeyVersion:1,cache:new ModerationAccessJwksCache(),
     fetchImpl:async () => new Response(JSON.stringify({keys:[{n:jwk.n,e:jwk.e,kty:"RSA",kid:"a".repeat(64),alg:"RS256",use:"sig"}]}),{headers:{"Content-Type":"application/json"}})};
   const jwtInput = `${b64(encoder.encode(JSON.stringify({alg:"RS256",kid:"a".repeat(64),typ:"JWT"})))}.${b64(encoder.encode(JSON.stringify({
-    aud:[accessOptions.audience],iss:accessOptions.issuer,sub:crypto.randomUUID(),type:"app",iat:now,nbf:now,exp:now+600})))}`;
+    aud:[accessOptions.audience],iss:accessOptions.issuer,sub:crypto.randomUUID(),type:"app",iat:now,nbf:now,exp:now+lifetime})))}`;
   const token = `${jwtInput}.${b64(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key.privateKey,encoder.encode(jwtInput))))}`;
   const req = (path: string, body?: string, headers: Record<string,string> = {}) => new Request(origin + path, {method:"POST",
     headers:{Origin:origin,"Cf-Access-Jwt-Assertion":token,...(body===undefined?{}:{"Content-Type":"application/json"}),...headers},...(body===undefined?{}:{body})});
@@ -51,6 +51,22 @@ async function authenticated() {
 }
 
 describe("local authenticated initial enrollment route", () => {
+  it("requires enough session time before creating or consuming enrollment records", async () => {
+    const short = await authenticated(240);
+    const response = await short.route("/start");
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({error:"operator_session_refresh_required"});
+    for (const table of ["moderation_operator_enrollment_ceremonies", "moderation_operator_enrollment_ceremony_registrations",
+      "moderation_operator_initial_enrollment_attempts", "moderation_operator_enrollment_admissions"])
+      expect(await count(table)).toBe(0);
+  });
+
+  it("starts enrollment when the verified session has enough time", async () => {
+    const enough = await authenticated(400);
+    expect((await enough.route("/start")).status).toBe(202);
+    expect(await count("moderation_operator_enrollment_ceremonies")).toBe(1);
+  });
+
   it("renders a data-free CSP page only locally and leaves production routing closed", async () => {
     const t = await authenticated();
     const response = await routeLocalModerationEnrollment(new Request(origin+"/operator/enrollment"),t.local);
@@ -75,6 +91,44 @@ describe("local authenticated initial enrollment route", () => {
     expect(await count("moderation_operator_enrollment_admissions")).toBe(1);
     const status = await t.route(`/ceremonies/${request.ceremonyID}/status`);
     expect(await status.json()).toMatchObject({status:"admitted",receipt});
+  });
+
+  it("verifies Chromium ClientData GREASE through signed registration, possession and admission", async () => {
+    const t = await authenticated();
+    const extra = ',"other_keys_can_be_added_here":"do not compare clientDataJSON against a template. See https://goo.gl/yabPex"';
+    const first = await t.route("/start");
+    const challenge = await first.json() as {ceremonyID:string;challenge:string};
+    const registration = await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(await t.f.key.response(challenge.challenge,true,7,false,"packed",extra)));
+    expect(registration.status).toBe(202);
+    const next = await registration.json() as {challenge:string};
+    const possession = await t.route(`/ceremonies/${challenge.ceremonyID}/possession`,JSON.stringify(await t.f.key.response(next.challenge,false,8,false,"packed",extra)));
+    expect(possession.status).toBe(202);
+    const request = await possession.json() as LocalInitialEnrollmentRequest;
+    const admitted = await t.route(`/requests/${request.requestID}/admit`,JSON.stringify(await t.approvalPackage(request)));
+    expect(admitted.status).toBe(200);
+    expect(await count("moderation_operator_enrollment_admissions")).toBe(1);
+  });
+
+  it("rejects malformed GREASE, duplicate security fields and tampering of signed ClientData", async () => {
+    const t = await authenticated();
+    const prefix = ',"other_keys_can_be_added_here":';
+    const cases = [prefix+'true',prefix+'{}',prefix+'[]',prefix+JSON.stringify('x'.repeat(513)),
+      prefix+'"ok","other_keys_can_be_added_\\u0068ere":"ok"',
+      prefix+'"ok","or\\u0069gin":'+JSON.stringify(origin)];
+    for (const extra of cases) {
+      const first = await t.route("/start");
+      const challenge = await first.json() as {ceremonyID:string;challenge:string};
+      const result = await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(await t.f.key.response(challenge.challenge,true,7,false,"packed",extra)));
+      expect(result.status).toBe(409);
+    }
+    const first = await t.route("/start");
+    const challenge = await first.json() as {ceremonyID:string;challenge:string};
+    const response = await t.f.key.response(challenge.challenge,true,7,false,"packed",prefix+'"before"');
+    const client = new TextDecoder().decode(base64urlDecode(response.response.clientDataJSON));
+    response.response.clientDataJSON = b64(encoder.encode(client.replace('"before"','"after"')));
+    expect((await t.route(`/ceremonies/${challenge.ceremonyID}/registration`,JSON.stringify(response))).status).toBe(409);
+    expect(await count("moderation_operator_enrollment_ceremony_registrations")).toBe(0);
+    expect(await count("moderation_operator_enrollment_admissions")).toBe(0);
   });
 
   it("recovers the same committed request and admission without repeating either write", async () => {

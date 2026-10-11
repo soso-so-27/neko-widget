@@ -105,17 +105,20 @@ export async function routeLocalModerationEnrollment(request: Request, input: Lo
       authoritySetSHA256: await hashLocalEnrollmentAuthoritySet(env.authorities),
       expectedOrigin: env.scope.expectedOrigin, expectedRPID: env.scope.expectedRPID};
     const policy = {binding, scope: env.scope, activeRoles: env.activeRoles, authorities: env.authorities};
-    const identity = await env.db.prepare(`SELECT 1 AS admitted FROM moderation_operator_subject_identities i
+    const identity = await env.db.prepare(`SELECT 1 AS admitted,unixepoch() AS now FROM moderation_operator_subject_identities i
       WHERE i.operator_id=? AND i.access_subject_hmac_key_version=? AND i.access_subject_hmac=?
         AND NOT EXISTS(SELECT 1 FROM moderation_operator_subject_identities n WHERE n.operator_id=i.operator_id
           AND n.access_subject_hmac_key_version>i.access_subject_hmac_key_version)
         AND EXISTS(SELECT 1 FROM moderation_operator_state_events WHERE operator_id=i.operator_id AND event_type='activated')
         AND NOT EXISTS(SELECT 1 FROM moderation_operator_state_events WHERE operator_id=i.operator_id AND event_type='revoked')
         AND ?<=unixepoch() AND ?>unixepoch()`)
-      .bind(env.operatorID, access.subjectHmacKeyVersion, access.operatorSubjectHmac, access.issuedAt, access.expiresAt).first();
+      .bind(env.operatorID, access.subjectHmacKeyVersion, access.operatorSubjectHmac, access.issuedAt, access.expiresAt).first<{admitted:number;now:number}>();
     if (!identity) return json({error: "operator_target_unavailable"}, 403);
     if (url.pathname === `${root}/start`) {
       if (request.body !== null) fail();
+      // Leave enough of the existing session for human verification and offline
+      // approvals. Never extend a token or begin a nearly-expired ceremony.
+      if (access.expiresAt - identity.now < 300) return json({error:"operator_session_refresh_required"},409);
       const challenge = await createLocalModerationEnrollmentCeremony(env.db, binding);
       const userID = base64urlEncode(await sha256(new TextEncoder().encode(`NW.LOCAL.OPERATOR-USER.v1:${env.operatorID}`)));
       return json({...challenge, rpId: env.scope.expectedRPID, userID}, 202);

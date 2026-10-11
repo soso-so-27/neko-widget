@@ -1,7 +1,7 @@
 import { base64urlEncode } from "./encoding";
 import { authenticateCloudflareAccessRequest, type AuthenticatedModerationOperatorAccess } from "./moderation-operator-auth";
 import { actorSQL, guard, admitSession, type Actor } from "./moderation-operator-identity";
-import { prepareModerationOperatorWebAuthnRequest } from "./moderation-operator-request";
+import { prepareModerationOperatorWebAuthnRequest, ModerationOperatorAssertionRequestError } from "./moderation-operator-request";
 import { verifyPreparedModerationOperatorWebAuthnAssertion } from "./moderation-operator-webauthn";
 import type { LocalModerationTriageEnvironment } from "./moderation-operator-triage-local";
 import { readLocalModerationReviewSource, type LocalModerationReviewSource } from "./moderation-review-source";
@@ -95,8 +95,11 @@ async function issue(env: LocalModerationOwnerEnvironment, access: Authenticated
     rpId: env.rpId, userVerification: "required", purpose }, 202);
 }
 async function disclose(env: LocalModerationOwnerEnvironment, access: AuthenticatedModerationOperatorAccess,
-  actor: Actor, challenge: Challenge, receiptId: string, host: LocalOwnerReviewHost): Promise<Response> {
+  actor: Actor, challenge: Challenge, receiptId: string, host: LocalOwnerReviewHost, parentSignal:AbortSignal): Promise<Response> {
   const controller = new AbortController();
+  const cancelled=()=>controller.abort();
+  parentSignal.addEventListener('abort',cancelled,{once:true});
+  if(parentSignal.aborted)controller.abort();
   const deadline = Date.now() + 60_000;
   const alive = () => { if (controller.signal.aborted || Date.now() >= deadline) fail(); };
   async function step<T>(operation: () => Promise<T>): Promise<T> {
@@ -158,7 +161,7 @@ async function disclose(env: LocalModerationOwnerEnvironment, access: Authentica
     try { await step(() => env.db.prepare(`INSERT INTO moderation_owner_read_events(read_receipt_id,phase) VALUES (?,'delivery_unknown')`).bind(receiptId).run()); }
     catch { /* Claim remains consumed; absence of a final receipt is unresolved. */ }
     throw error;
-  } finally { controller.abort(); clearTimeout(timer); jpeg?.fill(0); }
+  } finally { parentSignal.removeEventListener('abort',cancelled);controller.abort(); clearTimeout(timer); jpeg?.fill(0); }
 }
 async function prove(request: Request, env: LocalModerationOwnerEnvironment, access: AuthenticatedModerationOperatorAccess,
   actor: Actor, reference: string, version: number, receipt: string | undefined, id: string, host: LocalOwnerReviewHost): Promise<Response> {
@@ -184,7 +187,7 @@ async function prove(request: Request, env: LocalModerationOwnerEnvironment, acc
     await env.db.batch([guard(env.db, access, actor), currentGuard(env.db, actor, access, challenge), consume,
       env.db.prepare(`INSERT INTO moderation_owner_read_claims(challenge_id,read_receipt_id,expires_at)
         VALUES (?,?,MIN(unixepoch()+60,?))`).bind(id, readReceiptId, challenge.expires_at)]);
-    return disclose(env, access, actor, challenge, readReceiptId, host);
+    return disclose(env, access, actor, challenge, readReceiptId, host,request.signal);
   }
   const decisionId = crypto.randomUUID();
   await env.db.batch([guard(env.db, access, actor), currentGuard(env.db, actor, access, challenge), consume,
@@ -200,7 +203,7 @@ export async function routeLocalModerationOwner(request: Request, env: LocalMode
   try {
     const url = new URL(request.url), match = pattern.exec(url.pathname);
     if (request.method === "GET" && url.origin === env.origin && url.search === ""
-        && /^\/operator\/owner\/console\/[0-9a-f]{64}\/[1-9][0-9]{0,9}$/u.test(url.pathname)) return localModerationOwnerConsole();
+        && /^\/operator\/owner\/console\/[0-9a-f]{64}\/[1-9][0-9]{0,9}$/u.test(url.pathname)) return localModerationOwnerConsole(env.syntheticCaseReferences?.includes(url.pathname.split('/')[4]!)??false);
     if (request.method !== "POST" || !match || Number(match[2]) > 2_147_483_647) return json({ error: "not_found" }, 404);
     const host = env.reviewEvidence;
     if (typeof host !== "function") return fail(503);
@@ -218,6 +221,11 @@ export async function routeLocalModerationOwner(request: Request, env: LocalMode
     if (!match[5]) return await issue(env, access, actor, match[1]!, Number(match[2]), match[4], url.pathname);
     return await prove(request, env, access, actor, match[1]!, Number(match[2]), match[4], match[5], host);
   } catch (error) {
+    // Local process only. No request/credential/key bytes, IDs, SQL or exception
+    // text leave this boundary; the HTTP failure remains the fixed response.
+    if (error instanceof ModerationOperatorAssertionRequestError) {
+      console.info(JSON.stringify({ component: "local_owner_assertion", stage: error.diagnosticStage }));
+    }
     const message = error instanceof Error ? error.message : "";
     const status = error instanceof OwnerError ? error.status : /quota|rate exceeded|too many/u.test(message) ? 429
       : /constraint|denied|malformed JSON|not current|replay|expired|requires|counter/u.test(message) ? 409 : 503;
