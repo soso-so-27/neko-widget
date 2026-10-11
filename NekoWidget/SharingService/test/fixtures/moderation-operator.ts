@@ -86,6 +86,12 @@ export async function fixture(existingReportId?: string): Promise<Fixture> {
     db.prepare(`INSERT INTO moderation_operator_credentials(credential_id_sha256, operator_id, public_key_cose, registration_sign_count)
       VALUES (?, ?, ?, 0)`).bind(credentialDigest, operatorId, publicCose),
     db.prepare("INSERT INTO moderation_operator_credential_events(credential_id_sha256, event_type) VALUES (?, 'registered')").bind(credentialDigest),
+    // Reviewed authority must exist before the request. Even one batch can cross
+    // a unixepoch second; creating it after the request races the approval guard.
+    ...["LOCAL_OFFLINE_A", "LOCAL_OFFLINE_B"].map((key, index) =>
+      db.prepare(`INSERT INTO moderation_operator_enrollment_offline_authorities(offline_authority_key_id,
+        authority_policy_revision, authority_public_key_fingerprint_sha256) VALUES (?, 1, ?)`)
+        .bind(key, String(index + 1).repeat(64))),
     db.prepare(`INSERT INTO moderation_operator_enrollment_requests(enrollment_request_id, enrollment_kind, request_schema_version,
       canonical_request_sha256, target_operator_id, target_access_subject_hmac_key_version, target_access_subject_hmac,
       target_credential_id_sha256, target_public_key_cose_sha256, target_public_key_cose_snapshot,
@@ -93,14 +99,10 @@ export async function fixture(existingReportId?: string): Promise<Fixture> {
       authenticator_aaguid_sha256, expires_at)
       VALUES (?, 'initial_bootstrap', 1, ?, ?, 1, ?, ?, ?, ?, 0, ?, 1, ?, unixepoch() + 900)`)
       .bind(enrollmentId, fixedDigest, operatorId, access.operatorSubjectHmac, credentialDigest, await hex(publicCose), publicCose, fixedDigest, fixedDigest),
-    ...["LOCAL_OFFLINE_A", "LOCAL_OFFLINE_B"].flatMap((key, index) => [
-      db.prepare(`INSERT INTO moderation_operator_enrollment_offline_authorities(offline_authority_key_id,
-        authority_policy_revision, authority_public_key_fingerprint_sha256) VALUES (?, 1, ?)`)
-        .bind(key, String(index + 1).repeat(64)),
+    ...["LOCAL_OFFLINE_A", "LOCAL_OFFLINE_B"].map((key, index) =>
       db.prepare(`INSERT INTO moderation_operator_enrollment_offline_approvals(enrollment_request_id, offline_authority_key_id,
         authority_policy_revision, authority_public_key_fingerprint_sha256, authority_signature_sha256) VALUES (?, ?, 1, ?, ?)`)
-        .bind(enrollmentId, key, String(index + 1).repeat(64), String(index + 3).repeat(64)),
-    ]),
+        .bind(enrollmentId, key, String(index + 1).repeat(64), String(index + 3).repeat(64))),
     db.prepare(`INSERT INTO moderation_operator_enrollment_admissions(enrollment_admission_id, enrollment_request_id, admission_provenance_sha256)
       VALUES (?, ?, ?)`).bind(admissionId, enrollmentId, fixedDigest),
   ]);

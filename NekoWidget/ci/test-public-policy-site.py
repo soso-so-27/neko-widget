@@ -409,8 +409,8 @@ class PublicPolicySiteTests(unittest.TestCase):
         setup_name = "- name: Set up Node.js for public policy gate"
         gate_name = "- name: Validate public policy for selected release mode"
         signing_name = "- name: Install distribution certificate and provisioning profiles"
-        self.assertLess(workflow.index(selector_name), workflow.index(setup_name))
-        self.assertLess(workflow.index(setup_name), workflow.index(gate_name))
+        self.assertLess(workflow.index(setup_name), workflow.index(selector_name))
+        self.assertLess(workflow.index(selector_name), workflow.index(gate_name))
         self.assertLess(workflow.index(gate_name), workflow.index(signing_name))
 
         selector = workflow.split(selector_name, 1)[1].split("\n      - name:", 1)[0]

@@ -8,6 +8,7 @@ export const codePaths=Object.freeze([
  '.github/workflows/testflight.yml',
  'NekoWidget/ci/moderation_readiness.py','NekoWidget/ci/verify-moderation-readiness.mjs','NekoWidget/ci/write-moderation-release-metadata.py',
  'NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql','NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql',
+ 'NekoWidget/SharingService/migrations/0037_moderation_enrollment_counter_floor.sql',
  'NekoWidget/SharingService/src/moderation-owner-scope-adoption.ts','NekoWidget/SharingService/src/moderation-operator-identity.ts',
  'NekoWidget/SharingService/src/moderation-owner-local.ts','NekoWidget/SharingService/src/moderation-report-key-policy.ts','NekoWidget/SharingService/src/moments.ts',
  'NekoWidget/SharingService/scripts/moderation-operator-staging-start.mjs','NekoWidget/SharingService/scripts/moderation-operator-local-server.mjs',
