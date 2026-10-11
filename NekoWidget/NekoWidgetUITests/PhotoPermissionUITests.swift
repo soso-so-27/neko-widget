@@ -5860,12 +5860,30 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         for _ in 0..<4 where !peerWords.exists { app.swipeUp() }
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["相手のメモ"].exists)
+        // XCTest can reject the activation point of the outer SwiftUI Menu
+        // button even when its 44pt frame is visibly inside the collection.
+        // Tap that verified frame; the actual menu and every edit/withdrawal
+        // result below remain required.
+        func openVisibleRecordMenu(_ menu: XCUIElement) {
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+            XCTAssertEqual(app.buttons.matching(identifier: menu.identifier).count, 1)
+            let viewport = app.frame.insetBy(dx: 0, dy: 120)
+            for _ in 0..<4 {
+                let frame = menu.frame
+                if !frame.isEmpty && !frame.isNull && !frame.isInfinite && viewport.contains(frame) { break }
+                if frame.minY < viewport.minY { app.swipeDown() }
+                else { app.swipeUp() }
+            }
+            let frame = menu.frame
+            let visible = !frame.isEmpty && !frame.isNull && !frame.isInfinite && viewport.contains(frame)
+            XCTAssertTrue(visible, "The actual record menu must be inside the visible content before tapping.")
+            guard visible else { return }
+            menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         let ownWordsMenu = app.buttons["family-record-words-menu"]
-        for _ in 0..<3 where !ownWordsMenu.isHittable { app.swipeDown() }
-        XCTAssertTrue(ownWordsMenu.isHittable)
         XCTAssertEqual(app.buttons.matching(identifier: "family-record-words-menu").count, 1,
                        "Only the author's own words offer editing or withdrawal.")
-        ownWordsMenu.tap()
+        openVisibleRecordMenu(ownWordsMenu)
         app.buttons["family-record-edit-words"].tap()
         XCTAssertTrue(app.navigationBars["自分のメモを編集"].waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "初めて一緒に過ごした日")
@@ -5886,9 +5904,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(peerWords.waitForExistence(timeout: 5), "Editing my words must leave the other author's words unchanged.")
         attach(app, name: "family-record-authors-and-edited-words")
         let photoMenu = app.buttons["family-record-photo-menu"]
-        for _ in 0..<3 where !photoMenu.isHittable { app.swipeDown() }
-        XCTAssertTrue(photoMenu.isHittable)
-        photoMenu.tap()
+        openVisibleRecordMenu(photoMenu)
         let withdraw = app.buttons.matching(identifier: "family-record-withdraw-photo").firstMatch
         XCTAssertTrue(withdraw.waitForExistence(timeout: 5))
         withdraw.tap(); app.buttons["取り下げる"].tap()
