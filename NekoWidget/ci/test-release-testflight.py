@@ -256,11 +256,34 @@ class ReleaseTests(unittest.TestCase):
         for scope in (*release.planner.SCOPES, "movie-screen-only"):
             with self.subTest(scope=scope):
                 self.plan.update(scope=scope, required_jobs=list(release.planner.required_jobs_from_scope(scope)))
-                if scope in (release.planner.MODERATION_RESOLUTION_SCOPE, release.planner.OWNER_CLOUD_SCOPE):
+                if scope in (release.planner.MODERATION_RESOLUTION_SCOPE, release.planner.OWNER_CLOUD_SCOPE,
+                              "reviewed-internal-report-v1"):
                     self.plan["required_backend_runs"] = release.planner.moderation_resolution_requirements(self.sha)
                 self.set_plan()
                 with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True):
                     self.assertEqual(self.prepare()["ci"]["scope"], scope)
+
+    def test_internal_report_release_requires_five_same_candidate_backend_declarations(self):
+        p = release.planner
+        self.plan.update(scope="reviewed-internal-report-v1",
+                         required_jobs=list(p.required_jobs_from_scope("reviewed-internal-report-v1")),
+                         required_backend_runs=p.moderation_resolution_requirements(self.sha))
+        self.set_plan()
+        with patch.object(p, "moderation_resolution_backend_evidence", return_value={"verified": True}) as backend:
+            self.assertEqual(self.prepare()["ci"]["backend_evidence"], {"verified": True})
+            self.assertEqual(backend.call_args.args[0], self.sha)
+        for declarations in (None, [], p.moderation_resolution_requirements("b" * 40),
+                             p.moderation_resolution_requirements(self.sha)[:-1]):
+            self.plan["required_backend_runs"] = declarations
+            self.set_plan()
+            with patch.object(p, "moderation_resolution_backend_evidence") as backend, self.assertRaises(release.Blocked):
+                self.prepare()
+            backend.assert_not_called()
+        self.plan["required_backend_runs"] = p.moderation_resolution_requirements(self.sha)
+        self.set_plan()
+        with patch.object(p, "moderation_resolution_backend_evidence", side_effect=ValueError("missing execution")), \
+                self.assertRaises(release.Blocked):
+            self.prepare()
 
     def test_owner_cloud_release_requires_native_and_same_candidate_backend_execution(self):
         p=release.planner; selected=p.OWNER_CLOUD_SCOPE
