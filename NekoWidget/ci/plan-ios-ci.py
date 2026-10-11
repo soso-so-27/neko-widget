@@ -17,7 +17,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
@@ -2125,6 +2125,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
+    if runtime_scope == INTERNAL_REPORT_SCOPE and accepts_paths(runtime_scope, paths):
+        return required_jobs_from_scope(runtime_scope)
     if runtime_scope == OWNER_CLOUD_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
@@ -2698,6 +2700,25 @@ def owner_cloud_correction_graph(run, validation_head, required, api, now, jobs)
     return {"runtime_evidence": verified, "backend_evidence": backends}
 
 
+def internal_report_only(paths, base, head):
+    """One frozen native/report release; all other product and workflow inputs fixed."""
+    if not reviewed_hub_only(paths, base, head, product_blobs=INTERNAL_REPORT_BLOBS,
+                             companion_paths=frozenset(), companion_digests={}, companion_name="unused"):
+        return False
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    for path in INTERNAL_REPORT_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not trusted.startswith("100644 blob ") or any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)):
+            return False
+    for ref in (base, head):
+        records = [r for r in git("ls-tree", "-r", "-z", ref).split("\0") if r]
+        immutable = [r for r in records if not is_handoff(r.split("\t", 1)[1])
+                     and r.split("\t", 1)[1] not in INTERNAL_REPORT_PATHS | INTERNAL_REPORT_CONTROLS]
+        if hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() != INTERNAL_REPORT_IMMUTABLE_TREE_SHA256:
+            return False
+    return True
+
+
 def owner_cloud_control_approved(base, head):
     approved = git("merge-base", "refs/remotes/origin/main", head)
     for path in OWNER_CLOUD_CONTROLS:
@@ -2748,6 +2769,13 @@ def owner_cloud_native_evidence(jobs, sha, now):
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources == INTERNAL_REPORT_PATHS:
+        try:
+            base = comparison_base(event, env)
+            if base and internal_report_only(paths, base, env["GITHUB_SHA"]):
+                return INTERNAL_REPORT_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
     if sources in (OWNER_CLOUD_PATHS, OWNER_CLOUD_CORRECTED_PATHS):
         try:
             base = comparison_base(event, env)
@@ -5033,7 +5061,7 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"required_backend_runs": moderation_resolution_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
-           if selected_scope == OWNER_CLOUD_SCOPE else {}),
+           if selected_scope in (OWNER_CLOUD_SCOPE, INTERNAL_REPORT_SCOPE) else {}),
         **({"required_backend_runs": moderation_resolution_requirements(
               MODERATION_BUILD_CORRECTION_SOURCE if chained_build_recovery is not None or moderation_chained_inputs(env["GITHUB_SHA"])
                   or production_ui_recovery is not None or moderation_ui_recovery_inputs(env["GITHUB_SHA"])

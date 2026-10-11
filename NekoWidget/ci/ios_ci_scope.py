@@ -549,7 +549,109 @@ OWNER_CLOUD_CORRECTED_PATHS = OWNER_CLOUD_PATHS | frozenset(OWNER_CLOUD_CORRECTI
 OWNER_CLOUD_CORRECTION_TREE_SHA256 = "89ee4dfd25338a918303d4e36656f1a114e4d5d9a61d11ef0481d71c915d221f"
 OWNER_CLOUD_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/release-testflight.py', 'NekoWidget/ci/test-ci-lanes.py', 'NekoWidget/ci/test-plan-ios-ci.py', 'NekoWidget/ci/test-preflight-ci.py', 'NekoWidget/ci/test-release-testflight.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
 OWNER_CLOUD_IMMUTABLE_TREE_SHA256 = '13544fd9144dcb91b986a5a4967cdfbc4e5eb199d6497a9af617b3f9e8321dc9'
-SCOPES = (OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+INTERNAL_REPORT_SCOPE = "reviewed-internal-report-v1"
+INTERNAL_REPORT_BLOBS = {
+    ".github/workflows/testflight.yml": [
+        "49bfdbeb810ba6242129d5096f68fe2cba7c9a7d",
+        "5d9d8d0d3c044eda28f1f84bf254db8b4ef403d1"
+    ],
+    "NekoWidget/NekoWidget/Info.plist": [
+        "9f845d765a1e00521f0a0269f68c34a700e23bb0",
+        "d232b8388cd0984305637420e760f2b2a1b831e1"
+    ],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": [
+        "8a54062ac6254b0a4232bd0264e00ddedf887126",
+        "a42303b7b13a4e80e6b8aeb05c4a24c41787f0ab"
+    ],
+    "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": [
+        "64afd57a5a20687145745c4298e01e938084f64e",
+        "0c11b353e54ed4acfe1848dbd848e44ee7f8cfa0"
+    ],
+    "NekoWidget/NekoWidgetShareExtension/Info.plist": [
+        "702db21529957fd14d80061cbe828eaac878ee2b",
+        "cf9ae3a48bf6ddf46b7d8eac53d1d838a88d7b44"
+    ],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
+        "20ddec85b8a34ec1369bf503adf0a6582e7dcd8a",
+        "d322b0b7b0ec3de74cf81d7b8d010e1334cec542"
+    ],
+    "NekoWidget/NekoWidgetWidget/Info.plist": [
+        "c99fa5698ec34744f7bcff4b5352e1f5f347b8ee",
+        "838f19e55e15c7e45c72f31c8788c683b11300be"
+    ],
+    "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": [
+        "bd45d9c2a8638099887e7b564bd2299dc6bdb448",
+        "838289603e84b6c770900831a2f608fa4d0d73d3"
+    ],
+    "NekoWidget/SharingService/scripts/check-staging-runtime.mjs": [
+        "f370eb52f34bde7c769bbe08131f304937f15dad",
+        "3360ab01843904cb6af0cca73ecfdf5104de8131"
+    ],
+    "NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs": [
+        "da98dd72bbcfe8c83cf3b3addd46c8e7ccfaf3a3",
+        "34719ddef978f486d0a57fc7ba73995feed182ac"
+    ],
+    "NekoWidget/SharingService/test/staging-runtime-check.node-tests.mjs": [
+        "de55b2f46049ca00a6ba278a01fb1e53a067353f",
+        "ef25fe8b60ac03e751e4e22a69945202fd441630"
+    ],
+    "NekoWidget/ci/internal_report_release.py": [
+        "0000000000000000000000000000000000000000",
+        "a2742099c9d19005df353f214c1cc27ea1479ca3"
+    ],
+    "NekoWidget/ci/moderation-v2-readiness.json": [
+        "e0714e26c3c16a8258f1514346e5e0d554698b13",
+        "4efa166f1ffd5416295d01ba7e517b50df3b345e"
+    ],
+    "NekoWidget/ci/release-testflight.py": [
+        "2a86f9830adbb0163ae7d732f6282cfbd0f2df51",
+        "a9f5ad8b359c6e45464a4ff67c292cdf57ec54da"
+    ],
+    "NekoWidget/ci/test-internal-report-release.py": [
+        "0000000000000000000000000000000000000000",
+        "0fdcfca2c633f3dd5d48669a278236266c14952c"
+    ],
+    "NekoWidget/ci/test-limited-external-beta-reporting.py": [
+        "37e722c19f5ab6531f996a25de9c23cbfdeceba6",
+        "69a4a596977ed028dd5a64ff9675061ec3e9e8cc"
+    ],
+    "NekoWidget/ci/test-media-staging-release-config.py": [
+        "5a247a1f9f08ebb72ebd254a139517bbe7b40e32",
+        "ca98ccdd3d8a3bcea9243a2739fc3de82ba6d591"
+    ],
+    "NekoWidget/ci/test-release-testflight.py": [
+        "37a2a730a189c42f53ac9700df06505f9968bc4a",
+        "88b8c53326113cdaf902021986a7d979db78ae6f"
+    ],
+    "NekoWidget/ci/test-verify-moderation-upload-payload.py": [
+        "c9296d685f2b5abaed77938b7d7dcaf2fe0944dc",
+        "efe8ecf88495439e49132d0c9d40b7354e29af06"
+    ],
+    "NekoWidget/ci/test-verify-signed-artifact-contents.py": [
+        "c1d248509bac79948e18ca613dd795975f4078f7",
+        "a9ea3bf67158f9b8f811670ab34c7a0b611dee1c"
+    ],
+    "NekoWidget/ci/verify-moderation-readiness.mjs": [
+        "8cb3bdaad7d6b096c9c801a84fe7f7ed59b03b1e",
+        "719cfcb942d78807b97bc38c47b4c5952e270b21"
+    ],
+    "NekoWidget/ci/verify-moderation-upload-payload.py": [
+        "ca1ade0095d864a54b7253374836ffb17775dfc4",
+        "43a0105eae358795fcf244e60871e46e502c1663"
+    ],
+    "NekoWidget/ci/verify-signed-artifact-contents.py": [
+        "115c2d1e6e40343183a31840707475cf62485bf6",
+        "38ea64b830557e89da2d1bc001c124ac957e8e80"
+    ],
+    "NekoWidget/ci/write-moderation-release-metadata.py": [
+        "575a676fde3b47da1807a238273fe0d42128454f",
+        "ba47e5f0a664f4058654769e8525454d145695bc"
+    ]
+}
+INTERNAL_REPORT_PATHS = frozenset(INTERNAL_REPORT_BLOBS)
+INTERNAL_REPORT_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
+INTERNAL_REPORT_IMMUTABLE_TREE_SHA256 = '08eb42906174154b18c5f2c88f9494bf7009df3fc9042c9a237b2ac004aa99bd'
+SCOPES = (INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -3183,6 +3285,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == INTERNAL_REPORT_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == INTERNAL_REPORT_PATHS
     if scope == OWNER_CLOUD_SCOPE:
         return sources in (OWNER_CLOUD_PATHS, OWNER_CLOUD_CORRECTED_PATHS)
     if scope == MODERATION_RESOLUTION_SCOPE:
@@ -3394,6 +3498,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == INTERNAL_REPORT_SCOPE:
+        return MODERATION_RESOLUTION_TESTS + ("NekoWidgetUITests/MomentDeliveryComposerUITests/testInternalReportActionUsesExplicitAvailabilityAndConsent",)
     if scope == OWNER_CLOUD_SCOPE:
         return ()  # Runtime lane runs the complete executable self-test, no UI selection.
     if scope == MODERATION_RESOLUTION_SCOPE:
