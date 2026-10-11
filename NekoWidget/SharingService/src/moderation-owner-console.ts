@@ -18,7 +18,7 @@ const reopen=document.getElementById('reopen');
 const route=/^\\/operator\\/owner\\/console\\/([0-9a-f]{64})\\/([1-9][0-9]{0,9})$/.exec(location.pathname);
 const releaseSection=document.getElementById('release-section'),releaseConfirmed=document.getElementById('release-confirmed'),releaseButton=document.getElementById('release'),reply=document.getElementById('reply');
 let resolution=null;
-let busy=false,generation=0,controller=null,imageURL=null,receipt=null,source=null,timer=null,expiresAt=0;
+let busy=false,generation=0,controller=null,imageURL=null,receipt=null,source=null,timer=null,expiresAt=0,photoStage='state';
 const base=route?'/operator/owner/v1/cases/'+route[1]+'/'+route[2]:null;
 const resolutionBase=route?'/operator/resolution/v1/cases/'+route[1]+'/'+route[2]:null;
 function erase(){clearTimeout(timer);if(imageURL)URL.revokeObjectURL(imageURL);imageURL=null;photo.removeAttribute('src');photo.hidden=true;decision.hidden=true;confirmed.checked=false;receipt=null;source=null;expiresAt=0;finish.disabled=true}
@@ -28,11 +28,16 @@ function lock(value){busy=value;open.disabled=value||!base||resolution?.operatio
 reopen.addEventListener('click',()=>{if(!busy)location.reload()});
 function photoFailure(error){
  const code=error?.message;
- status.dataset.failure=['session','connection','permission','authenticator_NotAllowedError','authenticator_SecurityError','authenticator_InvalidStateError','authenticator_AbortError','authenticator_other','authenticator_unavailable'].includes(code)?code:'photo_request';
+ status.dataset.failure=['session','connection','permission','authenticator_NotAllowedError','authenticator_SecurityError','authenticator_InvalidStateError','authenticator_AbortError','authenticator_other','authenticator_unavailable','authenticator_empty','authenticator_invalid_response','authenticator_expired','request_400','request_409','request_429','request_503'].includes(code)?code:'photo_request';
+ status.dataset.failureStage=photoStage;
  reopen.hidden=!['session','connection'].includes(code);
  if(code==='session')return 'ログインの有効期限が切れています。「ログイン状態を更新して開き直す」でログインを確認してください。写真の取得や署名は自動で再送しません。';
  if(code==='connection')return 'ログインまたは通信の状態を確認できません。「ログイン状態を更新して開き直す」で接続を確認してください。写真の取得や署名は自動で再送しません。';
  if(code==='permission')return '写真を開く権限を確認できません。登録と接続設定の確認が必要です。';
+ if(/^request_(400|409|429|503)$/.test(code??''))return '写真の確認処理を受理できませんでした（HTTP '+code.slice('request_'.length)+'）。登録した鍵・期限・接続を確認します。自動で再送しません。';
+ if(code==='authenticator_empty')return '本人認証の結果が返りませんでした（empty）。写真はまだ取得していません。';
+ if(code==='authenticator_invalid_response')return '本人認証の応答を確認できませんでした（invalid_response）。写真はまだ取得していません。';
+ if(code==='authenticator_expired')return '本人認証中に確認の有効期限が過ぎました（expired）。署名は送信していません。';
  if(code==='authenticator_NotAllowedError')return '本人認証が完了しませんでした（NotAllowedError）。キャンセル・時間切れ・登録した鍵を選べない場合に出ます。写真はまだ取得していません。';
  if(code?.startsWith('authenticator_'))return '本人認証を完了できませんでした（'+code.slice('authenticator_'.length)+'）。写真はまだ取得していません。';
  return '写真を開けませんでした。認証・権限・期限を確認してください。失敗した操作は自動で再送しません。';
@@ -42,23 +47,30 @@ releaseConfirmed.addEventListener('change',()=>lock(busy));
 for(const radio of document.querySelectorAll('input[name=action]'))radio.addEventListener('change',()=>{confirmed.checked=false;reply.textContent=radio.value==='hide'?'通報いただいた共有写真を一時的に非表示にしました。':'通報いただいた内容を確認しました。今回は追加の対応は行いません。';lock(busy)});
 function decode(value){if(typeof value!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(value))throw Error('challenge');return Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')+'='),c=>c.charCodeAt(0))}
 function encode(value){return btoa(String.fromCharCode(...new Uint8Array(value))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}
-async function post(path,body){let response;try{response=await fetch(path,{method:'POST',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(65000)]),...(body===undefined?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})})}catch(error){if(error?.name==='TypeError')throw Error('connection');throw error}if(!response.ok)throw Error(response.status===401?'session':response.status===403?'permission':'request');return response}
+async function post(path,body){let response;try{response=await fetch(path,{method:'POST',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(65000)]),...(body===undefined?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})})}catch(error){if(error?.name==='TypeError')throw Error('connection');throw error}if(!response.ok)throw Error(response.status===401?'session':response.status===403?'permission':[400,409,429,503].includes(response.status)?'request_'+response.status:'request');return response}
 async function authorize(path,purpose,epoch){
+ if(purpose==='content_read'&&epoch===generation)photoStage='challenge';
  const challenge=await(await post(path)).json();if(epoch!==generation)throw Error('stale');
  if(challenge.caseReferenceHmac!==route[1]||(purpose==='content_read'?challenge.purpose!==purpose:challenge.operation!==purpose)||challenge.rpId!==location.hostname||challenge.userVerification!=='required'||!Number.isSafeInteger(challenge.expiresAt)||challenge.expiresAt*1000<=Date.now()||!/^[0-9a-f]{64}$/.test(challenge.sourceSHA256)||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(challenge.challengeId)||challenge.assertionPath!==path+'/assertions/'+challenge.challengeId)throw Error('challenge');
  if(purpose!=='content_read'&&(!/^[0-9a-f]{64}$/.test(challenge.bindingSHA256)||challenge.expectedRevision!==resolution?.revision))throw Error('revision');
  if((purpose==='hide'||purpose==='no_action')&&challenge.sourceSHA256!==source)throw Error('source');
  if(!window.PublicKeyCredential||!navigator.credentials?.get)throw Error('authenticator_unavailable');
+ if(purpose==='content_read'&&epoch===generation)photoStage='native_authentication';
  let credential;try{credential=await navigator.credentials.get({publicKey:{challenge:decode(challenge.challenge),rpId:challenge.rpId,userVerification:'required',timeout:Math.min(60000,challenge.expiresAt*1000-Date.now())},signal:controller.signal})}catch(error){throw Error('authenticator_'+(['NotAllowedError','SecurityError','InvalidStateError','AbortError'].includes(error?.name)?error.name:'other'))}
- if(epoch!==generation||!credential||credential.type!=='public-key'||Date.now()>=challenge.expiresAt*1000)throw Error('stale');
- const proof=ownerAssertionPayload(credential);
+ if(epoch!==generation)throw Error('stale');
+ if(!credential)throw Error('authenticator_empty');
+ if(credential.type!=='public-key')throw Error('authenticator_invalid_response');
+ if(Date.now()>=challenge.expiresAt*1000)throw Error('authenticator_expired');
+ if(purpose==='content_read')photoStage='serialize_proof';
+ let proof;try{proof=ownerAssertionPayload(credential)}catch{throw Error('authenticator_invalid_response')}
+ if(purpose==='content_read')photoStage='submit_proof';
  return {response:await post(challenge.assertionPath,proof),challenge};
 }
 async function loadState(epoch){const state=await(await post(resolutionBase+'/state')).json();if(epoch!==generation)throw Error('stale');if(state.caseReferenceHmac!==route[1]||!Number.isSafeInteger(state.revision)||state.revision<0||typeof state.targetAvailable!=='boolean'||typeof state.canRelease!=='boolean'||(state.canRelease&&!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(state.restrictionEventId)))throw Error('state');resolution=state;releaseSection.hidden=!state.canRelease;releaseConfirmed.checked=false;return state}
 open.addEventListener('click',async()=>{
- if(busy||!base)return;erase();reopen.hidden=true;delete status.dataset.failure;lock(true);const epoch=++generation;controller?.abort();controller=new AbortController();status.textContent='本人認証と写真の有効性を確認しています…';
+ if(busy||!base)return;erase();reopen.hidden=true;delete status.dataset.failure;delete status.dataset.failureStage;photoStage='state';lock(true);const epoch=++generation;controller?.abort();controller=new AbortController();status.textContent='本人認証と写真の有効性を確認しています…';
  try{await loadState(epoch);const result=await authorize(base+'/content-read','content_read',epoch);if(epoch!==generation)return;
- const response=result.response,id=response.headers.get('X-Moderation-Read-Receipt'),digest=response.headers.get('X-Moderation-Source-SHA256'),expiry=Number(response.headers.get('X-Moderation-Expires-At'))*1000;
+ photoStage='image_response';const response=result.response,id=response.headers.get('X-Moderation-Read-Receipt'),digest=response.headers.get('X-Moderation-Source-SHA256'),expiry=Number(response.headers.get('X-Moderation-Expires-At'))*1000;
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id??'')||digest!==result.challenge.sourceSHA256||response.headers.get('Content-Type')!=='image/jpeg'||!Number.isSafeInteger(expiry)||expiry<=Date.now()||expiry>Date.now()+60000)throw Error('response');
  expiresAt=expiry;timer=setTimeout(leave,Math.max(1,expiry-Date.now()));
  const blob=await response.blob();if(epoch!==generation)return;if(blob.size<4||blob.size>950244||Date.now()>=expiry)throw Error('image');
