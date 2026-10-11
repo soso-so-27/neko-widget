@@ -5712,7 +5712,12 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertTrue(app.buttons[reason].isEnabled)
         }
         attach(app, name: "internal-report-shipping-action-and-explicit-photo-consent")
-        app.buttons["キャンセル"].tap()
+        // iOS 26 presents this as a popover without a Cancel button.
+        // Dismiss outside the popover; do not submit a report in this fixture.
+        app.staticTexts["届いた写真"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.staticTexts["この写真を通報しますか？"])], timeout: 5), .completed)
         app.terminate()
 
         app.launchArguments = arguments + ["--internal-report-off"]
