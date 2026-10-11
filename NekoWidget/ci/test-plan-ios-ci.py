@@ -48,6 +48,7 @@ class OwnerCloudCorrectionTests(unittest.TestCase):
         worker=next(j for j in self.backend_jobs if j["name"]=="Typecheck, test, and bundle Worker")
         worker.update(id=planner.OWNER_CLOUD_CORRECTION_WORKER_JOB,conclusion="failure",
                       steps=[{"name":"Run Worker, D1, staging, moderation, and key ceremony tests","status":"completed","conclusion":"failure"}])
+        self.backend_jobs.append(dict(job("Validate private billing caller",114415116222,"skipped"),run_id=self.backend["id"]))
         self.plan={"schema_version":1,"repository":self.repo,"head_sha":self.sha,"scope":scope.OWNER_CLOUD_SCOPE,
             "required_jobs":list(self.required),"required_backend_runs":planner.moderation_resolution_requirements(self.sha),
             "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
@@ -78,6 +79,26 @@ class OwnerCloudCorrectionTests(unittest.TestCase):
         self.native[2]['steps'][1]['conclusion']='success'
         self.native[1]['steps'].append({'name':'unrelated failure','status':'completed','conclusion':'failure'})
         self.assertIsNone(self.proof())
+
+    def test_source_backend_accepts_only_exact_five_job_inventory_and_fixed_empty_skip(self):
+        self.assertEqual(len(self.backend_jobs),5)
+        self.assertIsNotNone(self.proof())
+        original=copy.deepcopy(self.backend_jobs)
+        for key,value in [('id',114415116223),('name','Other skipped job'),
+                          ('run_id',38120852417),('head_sha',self.head),('run_attempt',2),
+                          ('status','in_progress'),('conclusion','success'),
+                          ('steps',[{'name':'unexpected','status':'completed','conclusion':'skipped'}])]:
+            self.backend_jobs=copy.deepcopy(original);self.backend_jobs[-1][key]=value
+            with self.subTest(placeholder=key):self.assertIsNone(self.proof())
+        for inventory in [original[:-1],original+[dict(original[-1],id=123)],
+                          original[:-1]+[copy.deepcopy(original[0])]]:
+            self.backend_jobs=copy.deepcopy(inventory)
+            with self.subTest(inventory=len(inventory)):self.assertIsNone(self.proof())
+        for index in range(4):
+            self.backend_jobs=copy.deepcopy(original)
+            self.backend_jobs[index].update(conclusion='skipped',steps=[])
+            with self.subTest(executed=index):self.assertIsNone(self.proof())
+        self.backend_jobs=original
 
     def test_fixed_input_closure_requires_exact_repair_and_main_approval(self):
         rows={p:[':000000' if b=='0'*40 else ':100644','100644',b,a,'A' if b=='0'*40 else 'M'] for p,(b,a) in scope.OWNER_CLOUD_CORRECTION_BLOBS.items()}
