@@ -886,6 +886,9 @@ final class UnrelatedUITests: XCTestCase {
                             continue
                     if selected == scope.ICON_SCOPE and identifier != "build-without-signing":
                         continue
+                    if selected == scope.OWNER_CLOUD_SCOPE and identifier == "simulator-smoke-test":
+                        self.assertIn("needs.plan.outputs.smoke == 'true'", body)
+                        continue
                     if identifier == "sharing-app-ui" and not has_app_ui:
                         self.assertIn("if: needs.plan.outputs.app_ui == 'true'", body)
                         continue
@@ -943,6 +946,8 @@ final class UnrelatedUITests: XCTestCase {
                     self.assertEqual(ui_running + deferred_running + early_running, 5)
                     self.assertEqual(deferred_running, 1)
                     self.assertEqual(early_running, 1)
+                if selected == scope.OWNER_CLOUD_SCOPE:
+                    self.assertEqual(maximum_running, 2)
                 if selected == scope.ICON_SCOPE:
                     self.assertEqual(maximum_running, 1)
                 if not deferred and selected != scope.ICON_SCOPE:

@@ -342,7 +342,201 @@ REVIEWED_DELIVERY_MEMBERSHIP_SCOPE = "reviewed-delivery-membership-v1"
 REVIEWED_WINDOW_SUPPORT_SCOPE = "reviewed-window-support-resume-v1"
 REVIEWED_RECORD_PORTABILITY_SCOPE = "reviewed-record-portability-v1"
 REVIEWED_MANAGED_PRESERVATION_SCOPE = "reviewed-managed-preservation-app-v6"
-SCOPES = (MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+OWNER_CLOUD_SCOPE = "reviewed-owner-cloud-v1"
+OWNER_CLOUD_BLOBS = {
+    ".github/workflows/sharing-service.yml": [
+        "8038107503651173741b1502aa3e836a2cb2790a",
+        "7dda83f373dbf254c0c5d2931a2a1834d1f6a8b6"
+    ],
+    ".github/workflows/testflight.yml": [
+        "a7025c9d71bd20a43765df7ce9e52b00412b02c6",
+        "49bfdbeb810ba6242129d5096f68fe2cba7c9a7d"
+    ],
+    "NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql": [
+        "0000000000000000000000000000000000000000",
+        "06be80f53139fd5207267bc68fa7667fe155138d"
+    ],
+    "NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql": [
+        "0000000000000000000000000000000000000000",
+        "8ce77e36683f5cf2fac097a59e63b419b946c77f"
+    ],
+    "NekoWidget/SharingService/package.json": [
+        "041348065c85deec3879e55b4b97ef879118061c",
+        "90d7506579c8f9b084f85723a6a5d69cc3a7919f"
+    ],
+    "NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs": [
+        "752739de541931d4a297f2f41b401995a305f114",
+        "42819095df17e1a1c4495375d80b21ad444cd8f2"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-operator-local-server.mjs": [
+        "b553242b87a8d840b3e9b0fe275b1537dd7b1db8",
+        "9a3c17399cc8376d38181a1488aeb2971be71ee3"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-operator-local-start.mjs": [
+        "b449060cd19dc7be16ef9203dc8a2c88d0674bea",
+        "1c363978bfbb2ac634d68cda2673f3b9e903401a"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-operator-staging-start.mjs": [
+        "0000000000000000000000000000000000000000",
+        "ac21d7504d5a23b3b4c1e8af5aaaa8db55d005d9"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-owner-file-transport.mjs": [
+        "0000000000000000000000000000000000000000",
+        "8af7637ce09f5b1d5896fff888a0aa849f6349b4"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-owner-key-check-broker-windows.ps1": [
+        "0000000000000000000000000000000000000000",
+        "7e5acf2dc10e752be2002b55d9b1e088041ce1d1"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-owner-key-check-client-windows.ps1": [
+        "0000000000000000000000000000000000000000",
+        "c94dc9e898df16770e17ade96441da5dc3ee82a8"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-owner-r2-transport.mjs": [
+        "0000000000000000000000000000000000000000",
+        "db7a06b4ebf100783a33814125125444dc405b36"
+    ],
+    "NekoWidget/SharingService/scripts/moderation-staging-keygen-windows-security.ps1": [
+        "fa1f15ba3c59cf5dbc6bf3dcbf13038c9cb897c6",
+        "6054a7ed5d1bc34ebce6d661f433bec14090b1fd"
+    ],
+    "NekoWidget/SharingService/scripts/staging-config.node-tests.mjs": [
+        "a6741326e1bc181ed8f111c45a34eeea4b21337b",
+        "dd9955e2674f1a90895fe4454312a86c2f589270"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-auth.ts": [
+        "64946255c70caeef181699b51e12c8bb4c0c2970",
+        "6d7515ff9195a8a5044be05581119a66b2dd013d"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-console.ts": [
+        "0943d4d7cbe8613429570c49d4646df4282aa4c2",
+        "d146eb25e4ad7cbcdf69ae75d567547edda0bc09"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-enrollment-console.ts": [
+        "6863550c050009531a770cea47e930655c53d301",
+        "89d0355a1e9a84dd41b7c0726d154aa9b5903dec"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-enrollment-local.ts": [
+        "4e84b94dcd619fe41101790cfda295151e3793de",
+        "81e3f4b87e1850af1de6d0ae62752b3e9236b04b"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-host-local.ts": [
+        "dcdaefbf73b81a7240c4c5e93f11c17dc4d8508f",
+        "f309d20497ba8ef767816537f26ae777e360a613"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-identity.ts": [
+        "8f18c5a99be3218182d743ceee14b627456105cc",
+        "5925eaa6c298805040a3fb73b00537491d2a85f8"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-request.ts": [
+        "ef9f4df26f590a46477207e38f6854169f2d5ac8",
+        "206edfb8e429474547eb1901331eb108ed56a40b"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-triage-local.ts": [
+        "4417406391bed3a7be308ebf275a2191b53c7fee",
+        "46e2a411f3cf2d4b19fcaea7364acf2533d6a0d9"
+    ],
+    "NekoWidget/SharingService/src/moderation-operator-webauthn.ts": [
+        "33b4201b20fb7077815e3dbe6b2aac23f5ee1aee",
+        "5eb121f2ffa0b287f49fa8f85b32d4b00d99a985"
+    ],
+    "NekoWidget/SharingService/src/moderation-owner-console.ts": [
+        "ed14463d049c71a71eaf7d24d9022011e25cb89d",
+        "70943d090d43875ba6b6df1ae0564e06b00912a9"
+    ],
+    "NekoWidget/SharingService/src/moderation-owner-local.ts": [
+        "4fa477e34b456d5a26e4713df0f4e13a55495080",
+        "2290a82b3036676888fe89448826f27e43696057"
+    ],
+    "NekoWidget/SharingService/src/moderation-owner-scope-adoption.ts": [
+        "0000000000000000000000000000000000000000",
+        "17c4481058164263f145e722901f4a7badf9ad88"
+    ],
+    "NekoWidget/SharingService/src/moderation-report-key-policy.ts": [
+        "0000000000000000000000000000000000000000",
+        "d78b6d7e1bd5be2673dd8164c66617f1f8d67477"
+    ],
+    "NekoWidget/SharingService/src/moments.ts": [
+        "9099b1bfaa3080df2896462fed7efcedcf66b482",
+        "a65fd9f9519ae6d88446dbaa00c53a2df5573911"
+    ],
+    "NekoWidget/SharingService/test/fixtures/moderation-enrollment.ts": [
+        "cc35df78798fa49bbd33aa46ad0b4dc231554eb4",
+        "3a183a123b29b87efab96e422213bf5abc1d6a76"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-auth.integration.test.ts": [
+        "cef7205cdf6498aabc3f5fb945242c084de48a42",
+        "41aa20337bc24ab76af32baede0c8d5be81e96f9"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-enrollment-console.node-tests.mjs": [
+        "0000000000000000000000000000000000000000",
+        "909b7365c0eeff648c89a3f0957cf3cc3365dec2"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-enrollment-local.test.ts": [
+        "058375c60e54da29d28cbdaaed6ee16602dec7cf",
+        "a94dad62899f9573d478e8dd20384590ed3f12fc"
+    ],
+    "NekoWidget/SharingService/test/moderation-operator-webauthn.test.ts": [
+        "6424368e592cf8cd74c8f00ab80a79b0839d41a3",
+        "02cfe5a0ab0d044a4149b18ad0acd598adc2d5b2"
+    ],
+    "NekoWidget/SharingService/test/moderation-owner-file-transport.node-tests.mjs": [
+        "0000000000000000000000000000000000000000",
+        "1210929a41f972e34234a741d5146b7aa8fb2ee7"
+    ],
+    "NekoWidget/SharingService/test/moderation-owner-r2-transport.node-tests.mjs": [
+        "0000000000000000000000000000000000000000",
+        "d7290bfea54f5e22364e5c8c4210919870f2762c"
+    ],
+    "NekoWidget/SharingService/test/moderation-owner-report-key.node-tests.mjs": [
+        "0000000000000000000000000000000000000000",
+        "87de21a869f346c7a6d7488aa1ec4ac78cfd32e5"
+    ],
+    "NekoWidget/SharingService/test/moderation-owner-scope-adoption.test.ts": [
+        "0000000000000000000000000000000000000000",
+        "250802dc0bc9be0c741aff43560f2ef9b210af02"
+    ],
+    "NekoWidget/SharingService/test/moderation-owner.integration.test.ts": [
+        "264ff54d275ddab79ad7adf46ff4141036e13e8c",
+        "e4cf0f6978fafb2234acad81eca26d45441e00c7"
+    ],
+    "NekoWidget/ci/moderation-client-rollout-policy.json": [
+        "957c3f0bb497fe1c00a8249e688d43ff598e157d",
+        "2cdbb3bd1d1a07f927ef735d613be08ed2b449f9"
+    ],
+    "NekoWidget/ci/moderation-v2-readiness.json": [
+        "0000000000000000000000000000000000000000",
+        "6fa75329d05f69e83f88e1ae360d8da61f999bb3"
+    ],
+    "NekoWidget/ci/moderation_readiness.py": [
+        "0000000000000000000000000000000000000000",
+        "a1de07dace40174194e2f07ef08ba1f4bee3a7e7"
+    ],
+    "NekoWidget/ci/test-media-staging-release-config.py": [
+        "9c760456b5d00b9171602f7011796be2ef64254b",
+        "5a247a1f9f08ebb72ebd254a139517bbe7b40e32"
+    ],
+    "NekoWidget/ci/test-moderation-readiness.mjs": [
+        "0000000000000000000000000000000000000000",
+        "0dfa9d141c0f564eaf4280dc9e4f9bc11977577d"
+    ],
+    "NekoWidget/ci/verify-moderation-readiness.mjs": [
+        "0000000000000000000000000000000000000000",
+        "4c805a4c6a46527b5ed3fa64231fcbd7394cefb9"
+    ],
+    "NekoWidget/ci/write-moderation-release-metadata.py": [
+        "fc5273627a1c6e4da2d8aa30e0f96b893cec6232",
+        "575a676fde3b47da1807a238273fe0d42128454f"
+    ],
+    "NekoWidget/docs/Media-Staging-TestFlight\u624b\u9806.md": [
+        "afa152af83e6a2892b39a595bafa4bb62ab1904f",
+        "aff8c09c81af9d6aa535fbcbc624061e10dd926d"
+    ]
+}
+OWNER_CLOUD_PATHS = frozenset(OWNER_CLOUD_BLOBS)
+OWNER_CLOUD_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/release-testflight.py', 'NekoWidget/ci/test-ci-lanes.py', 'NekoWidget/ci/test-plan-ios-ci.py', 'NekoWidget/ci/test-preflight-ci.py', 'NekoWidget/ci/test-release-testflight.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
+OWNER_CLOUD_IMMUTABLE_TREE_SHA256 = '13544fd9144dcb91b986a5a4967cdfbc4e5eb199d6497a9af617b3f9e8321dc9'
+SCOPES = (OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -2976,6 +3170,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == OWNER_CLOUD_SCOPE:
+        return sources == OWNER_CLOUD_PATHS
     if scope == MODERATION_RESOLUTION_SCOPE:
         return (bool(paths) and len(paths) == len(set(paths))
                 and sources in (MODERATION_RESOLUTION_PATHS,
@@ -3185,6 +3381,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == OWNER_CLOUD_SCOPE:
+        return ()  # Runtime lane runs the complete executable self-test, no UI selection.
     if scope == MODERATION_RESOLUTION_SCOPE:
         return MODERATION_RESOLUTION_TESTS
     if scope == PRESERVATION_EXPORT_SCOPE:
@@ -3272,6 +3470,8 @@ def native_tests(scope: str) -> tuple[str, ...]:
 
 def lanes(scope: str) -> tuple[str, ...]:
     native_tests(scope)  # Validate even when no Gallery is selected.
+    if scope == OWNER_CLOUD_SCOPE:
+        return ("runtime",)
     if scope == FULL_SCOPE:
         return ("runtime",) + FULL_APP_UI_LANES + LANES[2:]
     if scope in (APP_VIEW_SCOPE, APP_DATA_SCOPE):

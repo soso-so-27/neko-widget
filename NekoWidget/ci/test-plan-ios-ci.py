@@ -24,6 +24,73 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class OwnerCloudScopeTests(unittest.TestCase):
+    def test_frozen_actual_base_tree_digest_matches_declared_pin(self):
+        records = [r for r in planner.git("ls-tree", "-r", "-z", "3b8dfc68cf1fc66b20f55172f0c9879c4ebd02e4").split("\0") if r]
+        immutable = [r for r in records if not planner.is_handoff(r.split("\t", 1)[1])
+                     and r.split("\t", 1)[1] not in planner.OWNER_CLOUD_PATHS | planner.OWNER_CLOUD_CONTROLS]
+        self.assertEqual(len(immutable), 1107)
+        self.assertEqual(planner.hashlib.sha256(("\0".join(immutable)+"\0").encode()).hexdigest(),
+                         planner.OWNER_CLOUD_IMMUTABLE_TREE_SHA256)
+
+    def rows(self):
+        return {p: [":000000" if b == "0" * 40 else ":100644", "100644", b, a,
+                    "A" if b == "0" * 40 else "M"] for p, (b, a) in planner.OWNER_CLOUD_BLOBS.items()}
+
+    def accepts(self, rows=None, *, approved=True, mutate_tree=False):
+        rows = self.rows() if rows is None else rows
+        tree = "100644 blob " + "c" * 40 + "\tNekoWidget/Shared/Unchanged.swift\0"
+        digest = planner.hashlib.sha256(tree.encode()).hexdigest()
+        def git(*args):
+            if args[0] == "diff":
+                return "".join(" ".join(f) + "\0" + p + "\0" for p, f in rows.items())
+            if args[:3] == ("ls-tree", "-r", "-z"):
+                return tree.replace("c" * 40, "d" * 40) if mutate_tree and args[3] == "head" else tree
+            raise AssertionError(args)
+        with patch.object(planner, "git", side_effect=git), patch.object(planner, "owner_cloud_control_approved", return_value=approved), patch.object(planner, "OWNER_CLOUD_IMMUTABLE_TREE_SHA256", digest):
+            return planner.owner_cloud_only(list(rows), "base", "head")
+
+    def test_closed_batch_keeps_full_build_runtime_without_ui(self):
+        self.assertTrue(self.accepts())
+        self.assertEqual(scope.lanes(scope.OWNER_CLOUD_SCOPE), ("runtime",))
+        self.assertEqual(scope.lane_tests(scope.OWNER_CLOUD_SCOPE, "runtime"), ())
+        self.assertEqual(planner.required_jobs(list(self.rows()), scope.OWNER_CLOUD_SCOPE),
+                         (planner.BUILD, scope.lane_job(scope.OWNER_CLOUD_SCOPE, "runtime")))
+
+    def test_partial_unknown_mode_delete_content_control_and_immutable_change_fail_closed(self):
+        rows = self.rows(); first = next(iter(rows))
+        mutations=[]
+        partial=copy.deepcopy(rows); del partial[first]; mutations.append(partial)
+        unknown=copy.deepcopy(rows); unknown["NekoWidget/Views/New.swift"]=[":000000","100644","0"*40,"f"*40,"A"]; mutations.append(unknown)
+        for index,value in ((0,":100755"),(1,"120000"),(3,"f"*40),(4,"D")):
+            changed=copy.deepcopy(rows); changed[first][index]=value; mutations.append(changed)
+        for changed in mutations:
+            with self.subTest(changed=changed[first] if first in changed else "partial"):
+                self.assertFalse(self.accepts(changed))
+        self.assertFalse(self.accepts(approved=False))
+        self.assertFalse(self.accepts(mutate_tree=True))
+
+    def test_controls_must_match_main_approved_tree_in_both_revisions(self):
+        def git(*args):
+            if args[0] == "merge-base": return "approved"
+            return "100644 blob " + ("d" if args[1] == "head" else "c") * 40 + "\t" + args[-1]
+        with patch.object(planner,"git",side_effect=git):
+            self.assertFalse(planner.owner_cloud_control_approved("base","head"))
+
+    def test_native_steps_cannot_be_skipped_or_replaced_by_build_only(self):
+        sha="a"*40; now=dt.datetime.now(dt.timezone.utc)
+        required=planner.required_jobs_from_scope(scope.OWNER_CLOUD_SCOPE)
+        build_steps=planner.moderation_build_steps()
+        jobs=[{"name":name,"id":i+1,"head_sha":sha,"status":"completed","conclusion":"success","completed_at":now.isoformat(),
+               "steps":[{"name":n,"status":"completed","conclusion":"success"} for n in
+                        (build_steps if name==planner.BUILD else ("Check out repository","Run sharing runtime matrix","Upload sharing runtime matrix artifacts"))]}
+              for i,name in enumerate(required)]
+        self.assertTrue(planner.owner_cloud_native_evidence(jobs,sha,now))
+        with self.assertRaises(ValueError): planner.owner_cloud_native_evidence(jobs[:1],sha,now)
+        jobs[0]["steps"][3]["conclusion"]="skipped"
+        with self.assertRaises(ValueError): planner.owner_cloud_native_evidence(jobs,sha,now)
+
+
 class ModerationBuildCorrectionTests(unittest.TestCase):
     def setUp(self):
         self.source, self.head = planner.MODERATION_BUILD_CORRECTION_SOURCE, planner.MODERATION_BUILD_CORRECTION_PRODUCT
