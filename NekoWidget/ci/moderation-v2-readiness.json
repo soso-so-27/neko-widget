@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-first-connection",
-    "issuedAtMs": 1791715842275,
+    "issuedAtMs": 1791720603727,
     "expiresAtMs": 1791781542930,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -56,7 +56,7 @@
       "NekoWidget/ci/verify-moderation-readiness.mjs": "c358c5eb41149faa9d1fc35187413f10cc4e9a4efb9f2364fca4536d8b23a88b",
       "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
       "NekoWidget/ci/internal_report_release.py": "09addcb49bce3f48f33355495268e1718b7eb9e3dc12fa11f7203678a0ba0305",
-      "NekoWidget/ci/release-testflight.py": "b9bbccbcad2af1ecc8bbb21756fcd5a213f3862d46864d6f923cf6095565b294",
+      "NekoWidget/ci/release-testflight.py": "e10af44cfc9697131f4dd67215ac400997156c237017c76ff26a12626fce5774",
       "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
       "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "uo_BbQ8N4ER3-YifcGIzOdZIReAL9pfjnHTjXgDHXpGShZ3ZhtmqwMCeDz5aye31kmjN_31ETOxzi_n7iQMqDg"
+      "signatureBase64url": "FTCWon2mxWSgvNqklJltnpK42ycueVUo8iS79Lj7hfRuMREfLop4uRngRoowvT27gk_NM9lgf3TVgJVuaqkXBQ"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "Sj8Vo7H-hSx8YVQ6SyU6IkkMED1DlEmM1fvTHD0opyMtFAGba8k2ZAx4sLazrZqTLpGtkSkNIDSMjxzlKTIVDw"
+      "signatureBase64url": "PKKRDBOo_46KyeYbdl8qYqDeC7A0QUZsMzXcGjSKQoVe409hjGAH0JLbX_sn_7v6IQNkV0FIa8s8NQcyHRhAAQ"
     }
   ]
 }

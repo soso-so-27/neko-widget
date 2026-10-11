@@ -219,6 +219,28 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 "scope": plan["scope"], "required_jobs": list(required),
                 "chained_build_recovery": chained, "backend_evidence": chained["backend_evidence"]}
     correction = plan.get("test_correction_evidence")
+    if correction is not None and plan.get("scope") == "reviewed-internal-report-v1":
+        require(plan.get("required_backend_runs") == planner.internal_report_requirements(sha),
+                "Internal report correction must declare five fresh candidate backend jobs.")
+        def internal_correction_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected internal report correction API path.")
+            if path.endswith("/logs"):
+                job_id = int(path.split("/")[-2])
+                job = gh.get(f"actions/jobs/{job_id}")
+                require(type(job.get("run_id")) is int, "Internal correction log owning run unavailable.")
+                return gh.raw_job_log(job_id)
+            return gh.get(path[len(prefix):])
+        try:
+            proof = planner.internal_report_correction_graph(
+                current, sha, required, internal_correction_api, now, executed_jobs_for(gh, current))
+        except (OSError, KeyError, AttributeError, TypeError, ValueError):
+            raise Blocked("Fixed internal report correction evidence is unavailable or invalid.") from None
+        require(proof is not None and proof["native_evidence"] == correction,
+                "Fresh full Build/backend and original exact three Debug native jobs are required.")
+        return {"main_ci_run": run_id, "tested_run": run_id, "tested_sha": sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "native_evidence": proof["native_evidence"], "backend_evidence": proof["backend_evidence"]}
     if correction is not None and plan.get("scope") == planner.OWNER_CLOUD_SCOPE:
         require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(sha),
                 "Counter repair plan must declare all five fresh candidate backend jobs.")
@@ -369,14 +391,14 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             raise Blocked("Same-candidate preservation and Sharing backend success is required before release.") from None
     if plan["scope"] == "reviewed-internal-report-v1":
         require(not corrected, "Internal reports require the complete fresh native candidate graph.")
-        require(plan.get("required_backend_runs") == planner.moderation_resolution_requirements(source_sha),
+        require(plan.get("required_backend_runs") == planner.internal_report_requirements(source_sha),
                 "Internal report plan must declare five same-candidate backend jobs.")
         def internal_report_api(path):
             prefix = f"/repos/{REPOSITORY}/"
             require(path.startswith(prefix + "actions/"), "Unexpected internal report backend API path.")
             return gh.get(path[len(prefix):])
         try:
-            result["backend_evidence"] = planner.moderation_resolution_backend_evidence(
+            result["backend_evidence"] = planner.internal_report_backend_evidence(
                 source_sha, REPOSITORY, internal_report_api, now)
         except (OSError, KeyError, AttributeError, TypeError, ValueError):
             raise Blocked("Five fresh same-candidate backend successes are required for internal reporting.") from None
