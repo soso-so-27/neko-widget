@@ -573,7 +573,7 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": [
         "20ddec85b8a34ec1369bf503adf0a6582e7dcd8a",
-        "d322b0b7b0ec3de74cf81d7b8d010e1334cec542"
+        "2ea1c9b7565738f769251e3506003aa5ae9bc723"
     ],
     "NekoWidget/NekoWidgetWidget/Info.plist": [
         "c99fa5698ec34744f7bcff4b5352e1f5f347b8ee",
