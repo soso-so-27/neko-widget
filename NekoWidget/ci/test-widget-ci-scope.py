@@ -1029,10 +1029,12 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         before,after=scope.INTERNAL_REPORT_BLOBS[path]
         def prove(fields=None,extra=''):
             fields=fields or [':100644','100644',before,after,'M']
-            raw=' '.join(fields)+'\0'+path+'\0'+extra
+            ui=planner.INTERNAL_REPORT_CORRECTION_UI_PATH
+            raw=' '.join(fields)+'\0'+path+'\0'+f':100644 100644 2ea1c9b7565738f769251e3506003aa5ae9bc723 {scope.INTERNAL_REPORT_BLOBS[ui][1]} M\0{ui}\0'+extra
             def git(*a):
                 if a[0]=='merge-base':return ''
                 if a[0]=='diff':return raw
+                if a[-1]==ui:return f'100644 blob 2ea1c9b7565738f769251e3506003aa5ae9bc723\t{ui}'
                 return f'100644 blob {before}\t{path}'
             with patch.object(planner,'internal_report_candidate_inputs',return_value=True),patch.object(planner,'git',side_effect=git):
                 return planner.internal_report_correction_inputs(head)
@@ -1062,6 +1064,8 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
             jobs.append(dict(id=identifier, name=name, run_id=run['id'], head_sha=sha, run_attempt=1,
                 status="completed", conclusion="success", completed_at=now.isoformat(),
                 steps=[dict(name=step,status="completed",conclusion="success") for step in steps]))
+        ui=next(j for j in jobs if j['id']==planner.INTERNAL_REPORT_CORRECTION_UI_JOB)
+        ui['conclusion']='failure';ui['steps'][1]['conclusion']='failure'
         jobs.append(dict(id=planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB, name=planner.BUILD,
             run_id=run['id'], head_sha=sha, run_attempt=1, status="completed", conclusion="failure",
             steps=[dict(name="Verify sharing release privacy gates",status="completed",conclusion="failure")]))
@@ -1073,24 +1077,28 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         responses = {f"{prefix}/runs/{run['id']}":run,
             f"{prefix}/runs/{run['id']}/jobs?filter=latest&per_page=100&page=1":dict(total_count=len(jobs),jobs=jobs),
             f"{prefix}/jobs/{planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB}/logs":"the fixed synthetic failure log",
+            f"{prefix}/jobs/{planner.INTERNAL_REPORT_CORRECTION_UI_JOB}/logs":"Executed 12 tests, with 1 failure (0 unexpected)\nPhotoPermissionUITests.swift:5864: error: testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
             f"{prefix}/jobs/{planner.INTERNAL_REPORT_CORRECTION_JOB_IDS[planner.PLAN_JOB]}/logs":"IOS_CI_PLAN_JSON="+json.dumps(record)}
         return run,jobs,responses,repository,now,hashlib.sha256(b"the fixed synthetic failure log").hexdigest()
 
-    def test_correction_requires_actual_three_debug_successes_and_only_known_release_failure(self):
+    def test_correction_requires_two_debug_successes_and_exact_two_failures(self):
         def prove(mutation=None):
             run,jobs,responses,repository,now,digest = self.correction_source_fixture()
+            ui_digest=__import__("hashlib").sha256(responses[f"/repos/{repository}/actions/jobs/{planner.INTERNAL_REPORT_CORRECTION_UI_JOB}/logs"].encode()).hexdigest()
             if mutation: mutation(run,jobs,responses)
             for response in responses.values():
                 if isinstance(response,dict) and 'jobs' in response: response['total_count']=len(jobs)
-            with patch.object(planner,"internal_report_correction_inputs",return_value=True), \
+            with patch.object(planner,"internal_report_recovery_diagnostic_ready",return_value=True), \
+                    patch.object(planner,"INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256",ui_digest), \
+                    patch.object(planner,"internal_report_correction_inputs",return_value=True), \
                     patch.object(planner,"INTERNAL_REPORT_CORRECTION_LOG_SHA256",digest), \
                     patch.object(planner,"git",return_value="d"*40):
                 return planner.internal_report_correction_source("c"*40,repository,responses.__getitem__,now)
         got=prove()
         self.assertEqual(got['sha'],planner.INTERNAL_REPORT_CORRECTION_SOURCE)
         self.assertEqual(got['candidate_sha'],"c"*40)
-        self.assertEqual(len(got['jobs']),3)
-        self.assertEqual(got['owning_jobs_to_execute'],[planner.BUILD])
+        self.assertEqual(len(got['jobs']),2)
+        self.assertEqual(got['owning_jobs_to_execute'],[planner.BUILD,planner.lane_job(scope.INTERNAL_REPORT_SCOPE,'app-ui')])
         for mutation in (
             lambda r,j,a:r.update(status="in_progress"),
             lambda r,j,a:r.update(conclusion="success"),
@@ -1099,6 +1107,9 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
             lambda r,j,a:j[1].update(conclusion="failure"),
             lambda r,j,a:j[2].update(status="in_progress"),
             lambda r,j,a:j[3].update(conclusion="skipped"),
+            lambda r,j,a:j[3].update(conclusion="success"),
+            lambda r,j,a:j[3].update(id=123),
+            lambda r,j,a:a.__setitem__(next(k for k in a if k.endswith('/logs') and str(planner.INTERNAL_REPORT_CORRECTION_UI_JOB) in k),'different UI failure'),
             lambda r,j,a:j[1].update(id=123),
             lambda r,j,a:j[2]['steps'][0].update(conclusion="skipped"),
             lambda r,j,a:j[-1]['steps'][0].update(name="Unknown product failure"),
@@ -1106,6 +1117,61 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
             lambda r,j,a:a.__setitem__(next(k for k in a if k.endswith('/logs') and str(planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB) in k),'different failure'),
         ):
             with self.subTest(mutation=mutation): self.assertIsNone(prove(mutation))
+
+    def test_fixed_new_diagnostic_requires_actual_one_case_success(self):
+        run,jobs,responses,repository,now,_=self.correction_source_fixture()
+        source=planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE
+        run.update(id=planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN,head_sha=source,
+            head_branch='diagnostic/internal-report-ui-20261011',path='.github/workflows/ios-ui-diagnostic.yml',
+            event='workflow_dispatch',conclusion='success',display_title='UI diagnosis: MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess')
+        job=dict(id=planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_JOB,name='Diagnostic only - up to three native UI tests (not release evidence)',run_id=run['id'],head_sha=source,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in ('Validate diagnostic inputs before checkout','Check out the exact diagnostic commit','Run requested diagnostic tests with the existing fixture preparation','Upload diagnostic evidence only')])
+        case='NekoWidgetUITests.MomentDeliveryComposerUITests testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess'
+        log=f"Test Case '-[{case}]' started\nTest Case '-[{case}]' passed\nExecuted 1 test, with 0 failures (0 unexpected)"
+        prefix=f'/repos/{repository}/actions'
+        def prove(mutation=None):
+            r,j=copy.deepcopy(run),copy.deepcopy(job);body=dict(total_count=1,jobs=[j]);logs=[log]
+            if mutation:mutation(r,j,body,logs)
+            api={f'{prefix}/runs/{r["id"]}':r,f'{prefix}/runs/{r["id"]}/attempts/1/jobs?per_page=100':body,f'{prefix}/jobs/{j["id"]}/logs':logs[0]}
+            with patch.object(planner,'internal_report_recovery_diagnostic_inputs',return_value=True):
+                return planner.internal_report_recovery_diagnostic_ready('c'*40,repository,api.__getitem__,now)
+        self.assertTrue(prove())
+        for mutation in (
+            lambda r,j,b,l:r.update(status='in_progress',conclusion=None),
+            lambda r,j,b,l:r.update(conclusion='failure'),
+            lambda r,j,b,l:r.update(head_sha='e'*40),
+            lambda r,j,b,l:r.update(run_attempt=2),
+            lambda r,j,b,l:r.update(display_title='UI diagnosis: MomentDeliveryComposerUITests/testOther'),
+            lambda r,j,b,l:j.update(id=123),
+            lambda r,j,b,l:j.update(conclusion='skipped'),
+            lambda r,j,b,l:j['steps'][2].update(conclusion='failure'),
+            lambda r,j,b,l:b.update(total_count=2),
+            lambda r,j,b,l:l.__setitem__(0,l[0].replace('passed','failed')),
+            lambda r,j,b,l:l.__setitem__(0,l[0]+f"\nTest Case '-[{case}]' skipped"),
+            lambda r,j,b,l:l.__setitem__(0,l[0].replace('Executed 1 test','Executed 2 tests')),
+        ):
+            with self.subTest(mutation=mutation):self.assertFalse(prove(mutation))
+
+    def test_new_diagnostic_inputs_allow_only_exact_release_pairs_not_ui_changes(self):
+        source=planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE;head='c'*40
+        path='NekoWidget/ci/release-testflight.py';before='d'*40;after=scope.INTERNAL_REPORT_BLOBS[path][1]
+        def prove(extra='',approved=True):
+            raw=f':100644 100644 {before} {after} M\0{path}\0'+extra
+            def git(*a):
+                if a[0]=='merge-base':return ''
+                if a[0]=='diff':return raw
+                return f'100644 blob {before}\t{path}'
+            with patch.object(planner,'internal_report_candidate_inputs',return_value=approved),patch.object(planner,'git',side_effect=git):
+                return planner.internal_report_recovery_diagnostic_inputs(source,head)
+        self.assertTrue(prove());self.assertFalse(prove(approved=False))
+        for path in (planner.INTERNAL_REPORT_CORRECTION_UI_PATH,'.github/workflows/ios-ui-diagnostic.yml','NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift'):
+            self.assertFalse(prove(f':100644 100644 {before} {after} M\0{path}\0'))
+
+    def test_pending_recovery_diagnostic_never_authorizes_candidate(self):
+        run,jobs,responses,repository,now,_=self.correction_source_fixture()
+        with patch.object(planner,'internal_report_correction_inputs',return_value=True),patch.object(planner,'internal_report_recovery_diagnostic_inputs',return_value=False):
+            self.assertIsNone(planner.internal_report_correction_source('c'*40,repository,responses.__getitem__,now))
+        self.assertEqual(planner.correction_owning_jobs(scope.INTERNAL_REPORT_SCOPE,run['head_sha']),
+                         (planner.BUILD,planner.lane_job(scope.INTERNAL_REPORT_SCOPE,'app-ui')))
 
     def test_corrected_graph_requires_fresh_complete_build_and_exact_plan_proof(self):
         import json
@@ -1119,7 +1185,8 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         self.assertEqual(len(names),39)
         jobs=[dict(id=901,name=planner.PLAN_JOB,run_id=900,head_sha=head,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name='Select checks',status='completed',conclusion='success')]),
               dict(id=902,name=planner.BUILD,run_id=900,head_sha=head,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in names])]
-        proof=dict(kind='internal-report-release-plist-correction-v1',sha=planner.INTERNAL_REPORT_CORRECTION_SOURCE,candidate_sha=head)
+        jobs.append(dict(id=903,name=planner.lane_job(scope.INTERNAL_REPORT_SCOPE,'app-ui'),run_id=900,head_sha=head,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in ('Check out repository','Run sharing runtime matrix','Upload sharing runtime matrix artifacts')]))
+        proof=dict(kind='internal-report-release-plist-ui-correction-v1',sha=planner.INTERNAL_REPORT_CORRECTION_SOURCE,candidate_sha=head)
         record=dict(schema_version=1,repository=repository,head_sha=head,scope=scope.INTERNAL_REPORT_SCOPE,
             required_jobs=list(planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE)),
             required_backend_runs=planner.internal_report_requirements(head),evidence_run_id=None,evidence_sha=None,test_correction_evidence=proof)
@@ -1128,7 +1195,10 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
                     patch.object(planner,'internal_report_correction_source',return_value=proof), \
                     patch.object(planner,'git',return_value=workflow), \
                     patch.object(planner,'internal_report_backend_evidence',side_effect=ValueError('missing current backend') if backend_failure else None,return_value={'fresh_sha':head}) as backend:
-                result=planner.internal_report_correction_graph(run,head,planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE),lambda p:'IOS_CI_PLAN_JSON='+json.dumps(changed_record or record),now,changed_jobs or jobs)
+                cases=[test.replace('NekoWidgetUITests/','NekoWidgetUITests.',1).replace('/',' ') for test in scope.native_tests(scope.INTERNAL_REPORT_SCOPE)]
+                ui_log='\n'.join(f"Test Case '-[{case}]' {status}" for case in cases for status in ('started','passed'))+'\nExecuted 12 tests, with 0 failures (0 unexpected)'
+                api=lambda path:ui_log if '/903/' in path else 'IOS_CI_PLAN_JSON='+json.dumps(changed_record or record)
+                result=planner.internal_report_correction_graph(run,head,planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE),api,now,changed_jobs or jobs)
                 if result is not None:self.assertEqual(backend.call_args.args[0],head)
                 return result
         self.assertEqual(prove(),{'native_evidence':proof,'backend_evidence':{'fresh_sha':head}})
@@ -1138,6 +1208,11 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         self.assertIsNone(prove(changed_record=dict(record,test_correction_evidence=dict(proof,candidate_sha='e'*40))))
         changed=copy.deepcopy(jobs);changed[1]['head_sha']='e'*40
         self.assertIsNone(prove(changed_jobs=changed))
+        changed=copy.deepcopy(jobs);changed[2]['conclusion']='failure'
+        self.assertIsNone(prove(changed_jobs=changed))
+        changed=copy.deepcopy(jobs);changed[2]['steps'][1]['conclusion']='skipped'
+        self.assertIsNone(prove(changed_jobs=changed))
+        self.assertIsNone(prove(changed_jobs=jobs[:2]))
         with self.assertRaises(ValueError):prove(backend_failure=True)
 
     def test_internal_task_gate_preserves_failure_active_unknown_and_cumulative_cost(self):
@@ -1152,16 +1227,16 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
             path='.github/workflows/ios-build.yml',status='completed',conclusion='failure',
             created_at=(now-dt.timedelta(minutes=30)).isoformat(),updated_at=now.isoformat(),
             failed_tests=[],unsupported_failed_tests=['DisabledReleaseConfigTests/test_disabled_permission_copy_and_share_activation_are_truthful'])
-        proof=dict(kind='internal-report-release-plist-correction-v1',candidate_sha=head,
+        proof=dict(kind='internal-report-release-plist-ui-correction-v1',candidate_sha=head,
             run_id=source['id'],sha=source['head_sha'],failed_build_job_id=p.INTERNAL_REPORT_CORRECTION_BUILD_JOB,
-            failed_build_log_sha256=p.INTERNAL_REPORT_CORRECTION_LOG_SHA256,owning_jobs_to_execute=[p.BUILD],
-            jobs=[dict(name=n,job_id=i) for n,i in p.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if n!=p.PLAN_JOB])
+            failed_build_log_sha256=p.INTERNAL_REPORT_CORRECTION_LOG_SHA256,failed_ui_job_id=p.INTERNAL_REPORT_CORRECTION_UI_JOB,failed_ui_log_sha256=p.INTERNAL_REPORT_CORRECTION_UI_LOG_SHA256,owning_jobs_to_execute=[p.BUILD,p.lane_job(p.INTERNAL_REPORT_SCOPE,'app-ui')],
+            jobs=[dict(name=n,job_id=i) for n,i in p.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if n not in {p.PLAN_JOB,p.lane_job(p.INTERNAL_REPORT_SCOPE,"app-ui")}])
         result=dict(scope=p.INTERNAL_REPORT_SCOPE,head=head,required_jobs=list(p.required_jobs_from_scope(p.INTERNAL_REPORT_SCOPE)),
             target_minutes=200,cost={'status':'unmeasured'},ready=False)
         measured=preflight.internal_report_correction_cost(result,proof,False,{'upload_minutes':0})
         got=preflight.apply_task_gate(copy.deepcopy(measured),[source],now,correction_evidence=proof)
         self.assertTrue(got['ready']);self.assertEqual(got['task']['failed_runs'],[source['id']])
-        self.assertEqual(got['task']['projected_total_minutes'],60)
+        self.assertEqual(got['task']['projected_total_minutes'],90)
         active=dict(source,id=999,status='in_progress',conclusion=None,head_sha=head)
         self.assertIn('ci_already_running',preflight.apply_task_gate(copy.deepcopy(measured),[source,active],now,correction_evidence=proof)['task']['blockers'])
         unknown=dict(source,id=998,head_sha=head,unsupported_failed_tests=[])
@@ -1254,12 +1329,12 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         with patch.object(preflight.planner, "git", side_effect=git), patch.object(
                 preflight.planner, "internal_report_only", return_value=approved) as selector:
             result = preflight.diagnostic_source_matches(source, head)
-            if source == preflight.INTERNAL_REPORT_DIAGNOSTIC_SOURCE and ancestor:
-                selector.assert_called_once_with(sorted(scope.INTERNAL_REPORT_PATHS), "base", head)
+            if source == preflight.INTERNAL_REPORT_DIAGNOSTIC_SOURCE:
+                selector.assert_not_called()
             return result
 
     def test_fixed_diagnostic_forwards_only_complete_approved_candidate(self):
-        self.assertTrue(self.diagnostic_fixture())
+        self.assertFalse(self.diagnostic_fixture())
         self.assertFalse(self.diagnostic_fixture(approved=False))
         self.assertFalse(self.diagnostic_fixture(ancestor=False))
         self.assertFalse(self.diagnostic_fixture(source="b" * 40))
