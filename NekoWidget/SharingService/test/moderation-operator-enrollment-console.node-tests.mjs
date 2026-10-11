@@ -13,7 +13,7 @@ const request={kind:'unadmitted-local-initial-enrollment-request',ceremonyID,req
 const challenge=phase=>({phase,ceremonyID,challengeID:'33333333-3333-4333-8333-333333333333',challenge:Buffer.alloc(32,1).toString('base64url'),userID:Buffer.alloc(32,2).toString('base64url'),rpId:'operator.synthetic.invalid',expiresAt,enrollmentAdmissionAuthorized:false});
 const credential=()=>({id:'AQ',rawId:Uint8Array.of(1).buffer,type:'public-key',getClientExtensionResults:()=>({}),response:{clientDataJSON:Uint8Array.of(1).buffer,attestationObject:Uint8Array.of(2).buffer,authenticatorData:Uint8Array.of(3).buffer,signature:Uint8Array.of(4).buffer}});
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};}
-function page({fragment='',fetchImpl,createImpl}={}){
+function page({fragment='',fetchImpl,createImpl,getImpl}={}){
   const elements=new Map([...html.matchAll(/id="([^"]+)"/gu)].map(m=>[m[1],{id:m[1],disabled:false,hidden:/\bhidden(?:[ >])/u.test(m.input.slice(m.index,m.input.indexOf('>',m.index))),value:'',textContent:'',className:'',listeners:{},addEventListener(type,fn){this.listeners[type]=fn;}}]));
   const document={hidden:false,listeners:{},getElementById:id=>elements.get(id),querySelectorAll:selector=>selector==='button'?[...elements.values()].filter(e=>['start','possession','check','download','admit'].includes(e.id)):[],addEventListener(type,fn){this.listeners[type]=fn;}};
   const window={PublicKeyCredential:function(){},listeners:{},addEventListener(type,fn){this.listeners[type]=fn;}};
@@ -21,7 +21,7 @@ function page({fragment='',fetchImpl,createImpl}={}){
   const calls=[],timers=new Map();let timerID=0,createCalls=0,getCalls=0;
   const context={document,window,location,history:{replaceState(_s,_t,value){location.hash=value;}},AbortController,AbortSignal,TextEncoder,Uint8Array,atob,btoa,Blob,URL,
     setTimeout(fn){timers.set(++timerID,fn);return timerID;},clearTimeout(id){timers.delete(id);},
-    navigator:{credentials:{async create(){createCalls++;return createImpl?createImpl():credential();},async get(){getCalls++;return credential();}}},
+    navigator:{credentials:{async create(options){createCalls++;return createImpl?createImpl(options):credential();},async get(options){getCalls++;return getImpl?getImpl(options):credential();}}},
     async fetch(path,options){calls.push({path,options});if(fetchImpl)return fetchImpl(path,options);if(path.endsWith('/start'))return Response.json(challenge('registration'),{status:202});if(path.endsWith('/registration'))return Response.json(challenge('possession'),{status:202});if(path.endsWith('/possession'))return Response.json(request,{status:202});if(path.endsWith('/status'))return Response.json({status:'pending',request});throw Error('unexpected mutation');}}
   vm.runInNewContext(script,context);
   return {elements,document,window,location,calls,timers,get createCalls(){return createCalls;},get getCalls(){return getCalls;},
@@ -36,6 +36,30 @@ test('idle possession survives switching screens in the same document and still 
   const p=page();await p.click('start');assert.match(p.location.hash,/^#ceremony=/u);assert.equal(p.elements.get('check').hidden,true);p.leave();p.return();
   assert.equal(p.elements.get('possession').hidden,false);assert.equal(p.elements.get('possession').disabled,false);assert.equal(p.getCalls,0);assert.equal(p.calls.length,2);
   await p.click('possession');assert.equal(p.getCalls,1);assert.equal(p.calls.length,3);assert.equal(p.elements.get('approval').hidden,false);assert.equal(p.location.hash,'#request='+requestID);
+});
+
+test('enrollment requests a discoverable key and checks possession using the same discovery mode as photo review',async()=>{
+  let creation,assertion;
+  const p=page({createImpl:options=>{creation=options.publicKey;return credential();},getImpl:options=>{assertion=options.publicKey;return credential();}});
+  await p.click('start');await p.click('possession');
+  assert.equal(creation.authenticatorSelection.residentKey,'required');
+  assert.equal(creation.authenticatorSelection.requireResidentKey,true);
+  assert.equal(creation.authenticatorSelection.userVerification,'required');
+  assert.equal(assertion.rpId,creation.rp.id);
+  assert.equal(assertion.userVerification,'required');
+  assert.equal(Object.hasOwn(assertion,'allowCredentials'),false);
+  assert.equal(p.elements.get('approval').hidden,false);
+});
+
+test('a key that cannot be discovered never reaches offline approval and its failed assertion is not sent',async()=>{
+  const p=page({getImpl:()=>{throw new DOMException('Key not discoverable','NotAllowedError');}});
+  await p.click('start');await p.click('possession');
+  assert.equal(p.elements.get('approval').hidden,true);
+  assert.equal(p.elements.get('complete').hidden,true);
+  assert.equal(p.calls.filter(c=>c.path.endsWith('/possession')).length,0);
+  assert.equal(p.getCalls,1);
+  p.leave();p.return();
+  assert.equal(p.getCalls,1);
 });
 test('copying approval from another screen clears text but preserves the same pending form without any request',async()=>{
   const p=page();await p.click('start');await p.click('possession');p.elements.get('signatures').value='test-approval';p.leave();p.return();
