@@ -1004,6 +1004,219 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
 
 
 class InternalReportNativeBoundaryTests(unittest.TestCase):
+    def test_backend_snapshot_requires_registered_main_full_product_controls_and_rest(self):
+        import hashlib
+        head='c'*40
+        tree=f"100644 blob {'d'*40}\tunchanged.swift\0"
+        registration=f'INTERNAL_REPORT_CORRECTION_SOURCE = "{planner.INTERNAL_REPORT_CORRECTION_SOURCE}"'
+        def prove(changed=None):
+            def git(*a):
+                if a[0]=='merge-base':return 'approved'
+                if a[0]=='show':return '' if changed=='registration' else registration
+                if a[:3]==('ls-tree','-r','-z'):return tree + (f"100644 blob {'e'*40}\textra.swift\0" if changed=='rest' else '')
+                path=a[3]
+                if path in scope.INTERNAL_REPORT_PATHS:
+                    return f"{'120000' if changed=='product' else '100644'} blob {scope.INTERNAL_REPORT_BLOBS[path][1]}\t{path}"
+                return f"100644 blob {('e' if changed=='control' and a[1]==head else 'd')*40}\t{path}"
+            with patch.object(planner,'git',side_effect=git),patch.object(planner,'INTERNAL_REPORT_IMMUTABLE_TREE_SHA256',hashlib.sha256(tree.encode()).hexdigest()):
+                return planner.internal_report_candidate_inputs(head)
+        self.assertTrue(prove())
+        for changed in ('registration','product','control','rest'):self.assertFalse(prove(changed))
+
+    def test_release_correction_inputs_reject_extra_native_or_wrong_release_pair(self):
+        head='c'*40
+        path='NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist'
+        before,after=scope.INTERNAL_REPORT_BLOBS[path]
+        def prove(fields=None,extra=''):
+            fields=fields or [':100644','100644',before,after,'M']
+            raw=' '.join(fields)+'\0'+path+'\0'+extra
+            def git(*a):
+                if a[0]=='merge-base':return ''
+                if a[0]=='diff':return raw
+                return f'100644 blob {before}\t{path}'
+            with patch.object(planner,'internal_report_candidate_inputs',return_value=True),patch.object(planner,'git',side_effect=git):
+                return planner.internal_report_correction_inputs(head)
+        self.assertTrue(prove())
+        self.assertFalse(prove(extra=f":100644 100644 {'d'*40} {'e'*40} M\0NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift\0"))
+        for index,value in ((0,':100755'),(1,'120000'),(2,'d'*40),(3,'e'*40),(4,'A')):
+            fields=[':100644','100644',before,after,'M'];fields[index]=value
+            self.assertFalse(prove(fields))
+
+    def correction_source_fixture(self):
+        import datetime as dt
+        import hashlib
+        sha = planner.INTERNAL_REPORT_CORRECTION_SOURCE
+        now = dt.datetime(2026, 10, 11, 13, tzinfo=dt.timezone.utc)
+        repository = "soso-so-27/neko-widget"
+        prefix = f"/repos/{repository}/actions"
+        run = dict(id=planner.INTERNAL_REPORT_CORRECTION_RUN, head_sha=sha,
+            head_branch=planner.INTERNAL_REPORT_CORRECTION_BRANCH, workflow_id=335014238,
+            path=".github/workflows/ios-build.yml", event="push", run_attempt=1,
+            status="completed", conclusion="failure", repository={"full_name":repository},
+            head_repository={"full_name":repository}, updated_at=now.isoformat())
+        jobs = []
+        for name, identifier in planner.INTERNAL_REPORT_CORRECTION_JOB_IDS.items():
+            steps = (["Select checks"] if name == planner.PLAN_JOB else
+                     ["Check out repository","Run Simulator smoke test","Upload Simulator smoke-test artifacts"] if name == planner.BOOTSTRAP_SMOKE else
+                     ["Check out repository","Run sharing runtime matrix","Upload sharing runtime matrix artifacts"])
+            jobs.append(dict(id=identifier, name=name, run_id=run['id'], head_sha=sha, run_attempt=1,
+                status="completed", conclusion="success", completed_at=now.isoformat(),
+                steps=[dict(name=step,status="completed",conclusion="success") for step in steps]))
+        jobs.append(dict(id=planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB, name=planner.BUILD,
+            run_id=run['id'], head_sha=sha, run_attempt=1, status="completed", conclusion="failure",
+            steps=[dict(name="Verify sharing release privacy gates",status="completed",conclusion="failure")]))
+        record = dict(schema_version=1, repository=repository, head_sha=sha, scope=scope.INTERNAL_REPORT_SCOPE,
+            required_jobs=list(planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE)),
+            required_backend_runs=planner.moderation_resolution_requirements(sha),
+            evidence_run_id=None,evidence_sha=None,test_correction_evidence=None)
+        import json
+        responses = {f"{prefix}/runs/{run['id']}":run,
+            f"{prefix}/runs/{run['id']}/jobs?filter=latest&per_page=100&page=1":dict(total_count=len(jobs),jobs=jobs),
+            f"{prefix}/jobs/{planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB}/logs":"the fixed synthetic failure log",
+            f"{prefix}/jobs/{planner.INTERNAL_REPORT_CORRECTION_JOB_IDS[planner.PLAN_JOB]}/logs":"IOS_CI_PLAN_JSON="+json.dumps(record)}
+        return run,jobs,responses,repository,now,hashlib.sha256(b"the fixed synthetic failure log").hexdigest()
+
+    def test_correction_requires_actual_three_debug_successes_and_only_known_release_failure(self):
+        def prove(mutation=None):
+            run,jobs,responses,repository,now,digest = self.correction_source_fixture()
+            if mutation: mutation(run,jobs,responses)
+            for response in responses.values():
+                if isinstance(response,dict) and 'jobs' in response: response['total_count']=len(jobs)
+            with patch.object(planner,"internal_report_correction_inputs",return_value=True), \
+                    patch.object(planner,"INTERNAL_REPORT_CORRECTION_LOG_SHA256",digest), \
+                    patch.object(planner,"git",return_value="d"*40):
+                return planner.internal_report_correction_source("c"*40,repository,responses.__getitem__,now)
+        got=prove()
+        self.assertEqual(got['sha'],planner.INTERNAL_REPORT_CORRECTION_SOURCE)
+        self.assertEqual(got['candidate_sha'],"c"*40)
+        self.assertEqual(len(got['jobs']),3)
+        self.assertEqual(got['owning_jobs_to_execute'],[planner.BUILD])
+        for mutation in (
+            lambda r,j,a:r.update(status="in_progress"),
+            lambda r,j,a:r.update(conclusion="success"),
+            lambda r,j,a:r.update(head_sha="e"*40),
+            lambda r,j,a:r.update(run_attempt=2),
+            lambda r,j,a:j[1].update(conclusion="failure"),
+            lambda r,j,a:j[2].update(status="in_progress"),
+            lambda r,j,a:j[3].update(conclusion="skipped"),
+            lambda r,j,a:j[1].update(id=123),
+            lambda r,j,a:j[2]['steps'][0].update(conclusion="skipped"),
+            lambda r,j,a:j[-1]['steps'][0].update(name="Unknown product failure"),
+            lambda r,j,a:j.append(dict(j[-1],id=777)),
+            lambda r,j,a:a.__setitem__(next(k for k in a if k.endswith('/logs') and str(planner.INTERNAL_REPORT_CORRECTION_BUILD_JOB) in k),'different failure'),
+        ):
+            with self.subTest(mutation=mutation): self.assertIsNone(prove(mutation))
+
+    def test_corrected_graph_requires_fresh_complete_build_and_exact_plan_proof(self):
+        import json
+        run,_,_,repository,now,_=self.correction_source_fixture()
+        head="c"*40
+        run.update(id=900,head_sha=head,status="completed",conclusion="success")
+        workflow=(ROOT/'.github/workflows/ios-build.yml').read_text(encoding='utf-8')
+        block=workflow.split('  build-without-signing:\n',1)[1].split('  simulator-smoke-test:\n',1)[0]
+        excluded={'Verify packaged icons and capture first launch','Upload icon display evidence','Upload build result bundle'}
+        names=[n for n in re.findall(r'^      - name: (.+)$',block,re.M) if n not in excluded]
+        self.assertEqual(len(names),39)
+        jobs=[dict(id=901,name=planner.PLAN_JOB,run_id=900,head_sha=head,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name='Select checks',status='completed',conclusion='success')]),
+              dict(id=902,name=planner.BUILD,run_id=900,head_sha=head,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in names])]
+        proof=dict(kind='internal-report-release-plist-correction-v1',sha=planner.INTERNAL_REPORT_CORRECTION_SOURCE,candidate_sha=head)
+        record=dict(schema_version=1,repository=repository,head_sha=head,scope=scope.INTERNAL_REPORT_SCOPE,
+            required_jobs=list(planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE)),
+            required_backend_runs=planner.internal_report_requirements(head),evidence_run_id=None,evidence_sha=None,test_correction_evidence=proof)
+        def prove(changed_jobs=None,changed_record=None,backend_failure=False):
+            with patch.object(planner,'internal_report_correction_inputs',return_value=True), \
+                    patch.object(planner,'internal_report_correction_source',return_value=proof), \
+                    patch.object(planner,'git',return_value=workflow), \
+                    patch.object(planner,'internal_report_backend_evidence',side_effect=ValueError('missing current backend') if backend_failure else None,return_value={'fresh_sha':head}) as backend:
+                result=planner.internal_report_correction_graph(run,head,planner.required_jobs_from_scope(scope.INTERNAL_REPORT_SCOPE),lambda p:'IOS_CI_PLAN_JSON='+json.dumps(changed_record or record),now,changed_jobs or jobs)
+                if result is not None:self.assertEqual(backend.call_args.args[0],head)
+                return result
+        self.assertEqual(prove(),{'native_evidence':proof,'backend_evidence':{'fresh_sha':head}})
+        for index in range(len(names)):
+            changed=copy.deepcopy(jobs);changed[1]['steps'][index]['conclusion']='skipped'
+            self.assertIsNone(prove(changed_jobs=changed))
+        self.assertIsNone(prove(changed_record=dict(record,test_correction_evidence=dict(proof,candidate_sha='e'*40))))
+        changed=copy.deepcopy(jobs);changed[1]['head_sha']='e'*40
+        self.assertIsNone(prove(changed_jobs=changed))
+        with self.assertRaises(ValueError):prove(backend_failure=True)
+
+    def test_internal_task_gate_preserves_failure_active_unknown_and_cumulative_cost(self):
+        import datetime as dt
+        spec=importlib.util.spec_from_file_location('internal_report_budget',Path(__file__).with_name('preflight-ci.py'))
+        preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        p=preflight.planner
+        now=dt.datetime(2026,10,11,13,tzinfo=dt.timezone.utc)
+        head='c'*40
+        source=dict(id=p.INTERNAL_REPORT_CORRECTION_RUN,head_sha=p.INTERNAL_REPORT_CORRECTION_SOURCE,
+            head_branch=p.INTERNAL_REPORT_CORRECTION_BRANCH,event='push',run_attempt=1,
+            path='.github/workflows/ios-build.yml',status='completed',conclusion='failure',
+            created_at=(now-dt.timedelta(minutes=30)).isoformat(),updated_at=now.isoformat(),
+            failed_tests=[],unsupported_failed_tests=['DisabledReleaseConfigTests/test_disabled_permission_copy_and_share_activation_are_truthful'])
+        proof=dict(kind='internal-report-release-plist-correction-v1',candidate_sha=head,
+            run_id=source['id'],sha=source['head_sha'],failed_build_job_id=p.INTERNAL_REPORT_CORRECTION_BUILD_JOB,
+            failed_build_log_sha256=p.INTERNAL_REPORT_CORRECTION_LOG_SHA256,owning_jobs_to_execute=[p.BUILD],
+            jobs=[dict(name=n,job_id=i) for n,i in p.INTERNAL_REPORT_CORRECTION_JOB_IDS.items() if n!=p.PLAN_JOB])
+        result=dict(scope=p.INTERNAL_REPORT_SCOPE,head=head,required_jobs=list(p.required_jobs_from_scope(p.INTERNAL_REPORT_SCOPE)),
+            target_minutes=200,cost={'status':'unmeasured'},ready=False)
+        measured=preflight.internal_report_correction_cost(result,proof,False,{'upload_minutes':0})
+        got=preflight.apply_task_gate(copy.deepcopy(measured),[source],now,correction_evidence=proof)
+        self.assertTrue(got['ready']);self.assertEqual(got['task']['failed_runs'],[source['id']])
+        self.assertEqual(got['task']['projected_total_minutes'],60)
+        active=dict(source,id=999,status='in_progress',conclusion=None,head_sha=head)
+        self.assertIn('ci_already_running',preflight.apply_task_gate(copy.deepcopy(measured),[source,active],now,correction_evidence=proof)['task']['blockers'])
+        unknown=dict(source,id=998,head_sha=head,unsupported_failed_tests=[])
+        self.assertIn('internal_report_has_unresolved_candidate_failure',preflight.apply_task_gate(copy.deepcopy(measured),[source,unknown],now,correction_evidence=proof)['task']['blockers'])
+        small=dict(measured,target_minutes=45)
+        self.assertIn('cumulative_cost_requires_replanning',preflight.apply_task_gate(small,[source],now,correction_evidence=proof)['task']['blockers'])
+        for wrong in (dict(proof,failed_build_log_sha256='e'*64),dict(proof,jobs=[]),dict(proof,candidate_sha='d'*40)):
+            with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[source],now,correction_evidence=wrong)
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[dict(source,run_attempt=2)],now,correction_evidence=proof)
+
+    def backend_fixture(self):
+        spec = importlib.util.spec_from_file_location("internal_report_backend_fixture", Path(__file__).with_name("test-plan-ios-ci.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        fixture = module.ModerationResolutionBackendEvidenceTests()
+        fixture.setUp()
+        return fixture
+
+    def test_internal_backends_accept_dispatch_only_for_strictly_absent_push(self):
+        fixture = self.backend_fixture()
+        responses = fixture.responses
+        for index in fixture.indexes:
+            dispatch = index.replace("event=push", "event=workflow_dispatch")
+            responses[dispatch] = copy.deepcopy(responses[index])
+            for run in responses[dispatch]["workflow_runs"]:
+                run["event"] = "workflow_dispatch"
+            responses[index] = {"total_count": 0, "workflow_runs": []}
+        with patch.object(planner, "internal_report_candidate_inputs", return_value=True):
+            result = planner.internal_report_backend_evidence(fixture.sha, fixture.fixture.repo, responses.__getitem__, fixture.now)
+            self.assertEqual(sum(len(value["job_ids"]) for value in result.values()), 5)
+            self.assertTrue(all(value["sha"] == fixture.sha and value["event"] == "workflow_dispatch" for value in result.values()))
+            with self.assertRaises(ValueError):
+                planner.moderation_resolution_backend_evidence(fixture.sha, fixture.fixture.repo, responses.__getitem__, fixture.now)
+        with patch.object(planner, "internal_report_candidate_inputs", return_value=False), self.assertRaises(ValueError):
+            planner.internal_report_backend_evidence(fixture.sha, fixture.fixture.repo, responses.__getitem__, fixture.now)
+
+    def test_internal_backends_never_replace_failed_pending_incomplete_or_wrong_source_push(self):
+        for value in ("failure", "in_progress", "wrong_sha", "incomplete", "extra_index_field", "boolean_count"):
+            fixture = self.backend_fixture()
+            key = fixture.indexes[0]
+            response = fixture.responses[key]
+            if value == "failure": response["workflow_runs"][0]["conclusion"] = "failure"
+            elif value == "in_progress": response["workflow_runs"][0]["status"] = "in_progress"
+            elif value == "wrong_sha": response["workflow_runs"][0]["head_sha"] = "e" * 40
+            elif value == "incomplete": response["total_count"] += 1
+            elif value == "extra_index_field": fixture.responses[key] = {"total_count": 0, "workflow_runs": [], "unknown": True}
+            else: fixture.responses[key] = {"total_count": False, "workflow_runs": []}
+            calls = []
+            def api(path):
+                calls.append(path)
+                return fixture.responses[path]
+            with patch.object(planner, "internal_report_candidate_inputs", return_value=True), self.assertRaises(ValueError):
+                planner.internal_report_backend_evidence(fixture.sha, fixture.fixture.repo, api, fixture.now)
+            self.assertFalse(any("event=workflow_dispatch" in path for path in calls))
+
     def diagnostic_fixture(self, *, source=None, raw_change=None, extra=None, approved=True, ancestor=True):
         spec = importlib.util.spec_from_file_location("internal_report_preflight", Path(__file__).with_name("preflight-ci.py"))
         preflight = importlib.util.module_from_spec(spec)
@@ -1011,7 +1224,8 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         source = source or preflight.INTERNAL_REPORT_DIAGNOSTIC_SOURCE
         head = "c" * 40
         fixture = preflight.INTERNAL_REPORT_RELEASE_FIXTURE
-        before, after = preflight.INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS
+        before = preflight.INTERNAL_REPORT_RELEASE_FIXTURE_BLOBS[0]
+        after = scope.INTERNAL_REPORT_BLOBS[fixture][1]
         fields = [":100644", "100644", before, after, "M"]
         if raw_change:
             raw_change(fields)
@@ -1023,6 +1237,8 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         raw = "\0".join(records) + "\0"
 
         def git(*arguments):
+            if arguments == ("ls-tree", source, "--", fixture):
+                return f"100644 blob {before}\t{fixture}"
             if arguments == ("merge-base", "--is-ancestor", source, head):
                 if not ancestor:
                     raise subprocess.CalledProcessError(1, ["git", *arguments])

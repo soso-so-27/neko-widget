@@ -2454,6 +2454,10 @@ def moderation_resolution_requirements(head):
             for workflow, jobs in PRESERVATION_EXPORT_BACKEND_JOBS.items() for job in jobs]
 
 
+def internal_report_requirements(head):
+    return [row | {"absent_push_dispatch_allowed": True} for row in moderation_resolution_requirements(head)]
+
+
 def tools_hub_only(paths: list[str], base: str, head: str) -> bool:
     return reviewed_hub_only(paths, base, head, product_blobs=TOOLS_HUB_BLOBS,
                              companion_paths=TOOLS_HUB_COMPANIONS,
@@ -2698,6 +2702,131 @@ def owner_cloud_correction_graph(run, validation_head, required, api, now, jobs)
     if verified is None or record.get("test_correction_evidence") != verified: return None
     backends = moderation_resolution_backend_evidence(run["head_sha"], repository, api, now, branch=run["head_branch"])
     return {"runtime_evidence": verified, "backend_evidence": backends}
+
+
+INTERNAL_REPORT_CORRECTION_SOURCE = "bab5abfda65562a065994c5a98a1ec8050090877"
+INTERNAL_REPORT_CORRECTION_RUN = 38137593169
+INTERNAL_REPORT_CORRECTION_BUILD_JOB = 114464704534
+INTERNAL_REPORT_CORRECTION_BRANCH = "codex/internal-report-ui-20261011"
+INTERNAL_REPORT_CORRECTION_LOG_SHA256 = "37f1bb281116871c375e2de598a808d83bc72edafc7a4cff70b55a9e0700b554"
+# Fixed actual job identities; pending/failed jobs cannot authorize reuse.
+INTERNAL_REPORT_CORRECTION_JOB_IDS = {
+    PLAN_JOB: 114464561890, BOOTSTRAP_SMOKE: 114464704598,
+    lane_job(INTERNAL_REPORT_SCOPE, "runtime"): 114464704599,
+    lane_job(INTERNAL_REPORT_SCOPE, "app-ui"): 114464704698,
+}
+INTERNAL_REPORT_CORRECTION_RELEASE_PATHS = frozenset({
+    "NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist",
+    "NekoWidget/ci/release-testflight.py", "NekoWidget/ci/test-release-testflight.py",
+    "NekoWidget/ci/moderation-v2-readiness.json",
+})
+
+
+def internal_report_correction_inputs(head):
+    if not internal_report_candidate_inputs(head):
+        return False
+    try:
+        source = INTERNAL_REPORT_CORRECTION_SOURCE
+        git("merge-base", "--is-ancestor", source, head)
+        rows = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if rows[-1:] == [""]: rows.pop()
+        if not rows or len(rows) % 2: return False
+        seen = set()
+        for index in range(0, len(rows), 2):
+            fields, path = rows[index].split(), rows[index + 1]
+            if (path in seen or len(fields) != 5 or fields[:2] != [":100644", "100644"]
+                    or fields[4] != "M" or not all(SHA.fullmatch(v) and v != "0" * 40 for v in fields[2:4])):
+                return False
+            if path in INTERNAL_REPORT_CORRECTION_RELEASE_PATHS:
+                original = git("ls-tree", source, "--", path)
+                if original != f"100644 blob {fields[2]}\t{path}" or fields[3] != INTERNAL_REPORT_BLOBS[path][1]: return False
+            elif path not in INTERNAL_REPORT_CONTROLS:
+                return False
+            seen.add(path)
+        return "NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist" in seen
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def internal_report_plan_record(log, sha, requirements):
+    if not isinstance(log, str): return None
+    try:
+        rows = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+        if len(rows) != 1: return None
+        row = rows[0]
+        return row if (type(row.get("schema_version")) is int and row["schema_version"] == 1
+            and row.get("repository") == "soso-so-27/neko-widget" and row.get("head_sha") == sha
+            and row.get("scope") == INTERNAL_REPORT_SCOPE
+            and row.get("required_jobs") == list(required_jobs_from_scope(INTERNAL_REPORT_SCOPE))
+            and row.get("required_backend_runs") == requirements
+            and row.get("evidence_run_id") is None and row.get("evidence_sha") is None) else None
+    except (AttributeError, TypeError, ValueError): return None
+
+
+def internal_report_correction_source(head, repository, api, now):
+    """Only the fixed Release plist failure and three actually successful Debug jobs."""
+    if repository != "soso-so-27/neko-widget" or not internal_report_correction_inputs(head): return None
+    source = INTERNAL_REPORT_CORRECTION_SOURCE
+    required = (PLAN_JOB, BOOTSTRAP_SMOKE, lane_job(INTERNAL_REPORT_SCOPE, "runtime"), lane_job(INTERNAL_REPORT_SCOPE, "app-ui"))
+    if set(INTERNAL_REPORT_CORRECTION_JOB_IDS) != set(required): return None
+    prefix = f"/repos/{repository}/actions"
+    run = api(f"{prefix}/runs/{INTERNAL_REPORT_CORRECTION_RUN}")
+    if (run.get("id") != INTERNAL_REPORT_CORRECTION_RUN or run.get("head_sha") != source
+            or run.get("head_branch") != INTERNAL_REPORT_CORRECTION_BRANCH or run.get("workflow_id") != 335014238
+            or run.get("path") != ".github/workflows/ios-build.yml" or run.get("event") != "push"
+            or run.get("run_attempt") != 1 or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return None
+    jobs = executed_jobs(run, repository, api)
+    if (len({j.get("id") for j in jobs}) != len(jobs) or not covers_jobs(jobs, required, source, now)
+            or any(j.get("run_id") != run["id"] or j.get("head_sha") != source or j.get("run_attempt") != 1 or j.get("status") != "completed" for j in jobs)): return None
+    by_name = {j["name"]: j for j in jobs}
+    for name in required:
+        steps = (("Select checks",) if name == PLAN_JOB else
+                 ("Check out repository", "Run Simulator smoke test", "Upload Simulator smoke-test artifacts") if name == BOOTSTRAP_SMOKE else
+                 ("Check out repository", "Run sharing runtime matrix", "Upload sharing runtime matrix artifacts"))
+        if by_name[name].get("id") != INTERNAL_REPORT_CORRECTION_JOB_IDS[name] or not moderation_steps_succeeded(by_name[name], steps): return None
+    build = by_name.get(BUILD)
+    if (len([j for j in jobs if j.get("name") == BUILD]) != 1 or not build
+            or build.get("id") != INTERNAL_REPORT_CORRECTION_BUILD_JOB or build.get("conclusion") != "failure"
+            or [s.get("name") for s in build.get("steps", []) if s.get("conclusion") in {"failure", "cancelled", "timed_out"}] != ["Verify sharing release privacy gates"]
+            or any(j.get("name") not in set(required) | {BUILD} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
+    log = api(f"{prefix}/jobs/{build['id']}/logs")
+    if not isinstance(log, str): return None
+    normalized = "\n".join(re.sub(r"^.*?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.splitlines())
+    if hashlib.sha256(normalized.encode()).hexdigest() != INTERNAL_REPORT_CORRECTION_LOG_SHA256: return None
+    record = internal_report_plan_record(api(f"{prefix}/jobs/{by_name[PLAN_JOB]['id']}/logs"), source, moderation_resolution_requirements(source))
+    if record is None or record.get("test_correction_evidence") is not None: return None
+    return {"kind": "internal-report-release-plist-correction-v1", "run_id": run["id"], "sha": source,
+            "candidate_sha": head, "failed_build_job_id": build["id"], "failed_build_log_sha256": INTERNAL_REPORT_CORRECTION_LOG_SHA256,
+            "jobs": [{"name": name, "job_id": by_name[name]["id"]} for name in required if name != PLAN_JOB],
+            "owning_jobs_to_execute": [BUILD], "changed_inputs": {p: [git("rev-parse", f"{source}:{p}"), INTERNAL_REPORT_BLOBS[p][1]] for p in sorted(INTERNAL_REPORT_CORRECTION_RELEASE_PATHS)},
+            "unchanged_inputs": "all Debug/native/UI/runtime/Photos/workflow inputs; source failure remains failure"}
+
+
+def internal_report_correction_graph(run, validation_head, required, api, now, jobs):
+    """Fresh full Release Build/backends; separately attributed original Debug proof."""
+    repository = "soso-so-27/neko-widget"
+    if (required != required_jobs_from_scope(INTERNAL_REPORT_SCOPE) or run.get("head_branch") != INTERNAL_REPORT_CORRECTION_BRANCH
+            or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("event") != "push" or run.get("run_attempt") != 1 or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository or run.get("head_repository", {}).get("full_name") != repository
+            or not internal_report_correction_inputs(run.get("head_sha")) or not internal_report_correction_inputs(validation_head)
+            or not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now)
+            or len({j.get("id") for j in jobs}) != len(jobs)
+            or any(j.get("run_id") != run["id"] or j.get("head_sha") != run["head_sha"] or j.get("run_attempt") != 1 or j.get("status") != "completed"
+                   or j.get("name") not in {PLAN_JOB, BUILD} and (j.get("conclusion") != "skipped" or j.get("steps") != []) for j in jobs)): return None
+    plan = next(j for j in jobs if j["name"] == PLAN_JOB)
+    build = next(j for j in jobs if j["name"] == BUILD)
+    workflow = git("show", f"{INTERNAL_REPORT_CORRECTION_SOURCE}:.github/workflows/ios-build.yml")
+    block = workflow.split("  build-without-signing:\n", 1)[1].split("  simulator-smoke-test:\n", 1)[0]
+    excluded = {"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"}
+    steps = tuple(name for name in re.findall(r"^      - name: (.+)$", block, re.M) if name not in excluded)
+    if len(steps) != 39 or len(set(steps)) != 39 or not moderation_steps_succeeded(build, steps) or not moderation_steps_succeeded(plan, ("Select checks",)): return None
+    record = internal_report_plan_record(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"), run["head_sha"], internal_report_requirements(run["head_sha"]))
+    proof = internal_report_correction_source(run["head_sha"], repository, api, now)
+    if proof is None or record is None or record.get("test_correction_evidence") != proof: return None
+    return {"native_evidence": proof, "backend_evidence": internal_report_backend_evidence(run["head_sha"], repository, api, now, branch=run["head_branch"])}
 
 
 def internal_report_only(paths, base, head):
@@ -3044,6 +3173,7 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
+    if required == required_jobs_from_scope(INTERNAL_REPORT_SCOPE): return INTERNAL_REPORT_SCOPE
     if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE): return OWNER_CLOUD_SCOPE
     # The registered failed sources executed the historical monolithic Solo
     # graph. Never reinterpret that evidence as either of the new shards.
@@ -3063,6 +3193,8 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == INTERNAL_REPORT_SCOPE and source == INTERNAL_REPORT_CORRECTION_SOURCE:
+        return (BUILD,)
     if selected_scope == OWNER_CLOUD_SCOPE and source == OWNER_CLOUD_CORRECTION_SOURCE:
         return (BUILD,)
     if selected_scope == MODERATION_RESOLUTION_SCOPE and source == MODERATION_BUILD_CORRECTION_SOURCE:
@@ -4100,6 +4232,12 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == INTERNAL_REPORT_SCOPE:
+        if branch != INTERNAL_REPORT_CORRECTION_BRANCH or not internal_report_correction_inputs(head): return None
+        result = internal_report_correction_source(head, repository, api, now)
+        if result is None:
+            raise CorrectionEvidenceUnavailable("Fixed internal Release failure and all three original Debug jobs must be complete; no Mac retry authorized")
+        return result
     if test_correction_scope(required) == OWNER_CLOUD_SCOPE:
         if not owner_cloud_correction_inputs(head): return None
         prefix = f"/repos/{repository}/actions"
@@ -4221,6 +4359,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(INTERNAL_REPORT_SCOPE):
+        return internal_report_correction_graph(run, validation_head, required, api, now, jobs) is not None
     if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE):
         return owner_cloud_correction_graph(run, validation_head, required, api, now, jobs) is not None
     if required == required_jobs_from_scope(MODERATION_RESOLUTION_SCOPE):
@@ -4607,6 +4747,45 @@ def moderation_ai_durable_backend_evidence(candidate_sha: str, repository: str, 
 
 def moderation_resolution_backend_evidence(sha: str, repository: str, api, now: dt.datetime,
                                            *, branch: str | None = None) -> dict:
+    return _moderation_resolution_backend_evidence(sha, repository, api, now, branch=branch)
+
+
+def internal_report_candidate_inputs(sha: str) -> bool:
+    """Exact registered product tree, including controls approved on main."""
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        return False
+    try:
+        approved = git("merge-base", "refs/remotes/origin/main", sha)
+        registration = f'INTERNAL_REPORT_CORRECTION_SOURCE = "{INTERNAL_REPORT_CORRECTION_SOURCE}"'
+        if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1:
+            return False
+        for path, (_, after) in INTERNAL_REPORT_BLOBS.items():
+            if git("ls-tree", sha, "--", path) != f"100644 blob {after}\t{path}":
+                return False
+        for path in INTERNAL_REPORT_CONTROLS:
+            trusted = git("ls-tree", approved, "--", path)
+            if not trusted.startswith("100644 blob ") or git("ls-tree", sha, "--", path) != trusted:
+                return False
+        rows = [row for row in git("ls-tree", "-r", "-z", sha).split("\0") if row]
+        immutable = [row for row in rows if not is_handoff(row.split("\t", 1)[1])
+                     and row.split("\t", 1)[1] not in INTERNAL_REPORT_PATHS | INTERNAL_REPORT_CONTROLS]
+        return hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() == INTERNAL_REPORT_IMMUTABLE_TREE_SHA256
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def internal_report_backend_evidence(sha: str, repository: str, api, now: dt.datetime,
+                                    *, branch: str | None = None) -> dict:
+    """Frozen internal candidate only: absent push permits exact-SHA dispatch."""
+    if not internal_report_candidate_inputs(sha):
+        raise ValueError("Unregistered internal report candidate")
+    return _moderation_resolution_backend_evidence(sha, repository, api, now, branch=branch,
+                                                  allow_absent_push_dispatch=True)
+
+
+def _moderation_resolution_backend_evidence(sha: str, repository: str, api, now: dt.datetime,
+                                            *, branch: str | None = None,
+                                            allow_absent_push_dispatch: bool = False) -> dict:
     """Same-SHA owning push proof; no dispatch, previous-SHA or absent-run fallback."""
     if (not SHA.fullmatch(sha) or repository != "soso-so-27/neko-widget"
             or branch is not None and not branch.startswith("codex/")):
@@ -4634,6 +4813,12 @@ def moderation_resolution_backend_evidence(sha: str, repository: str, api, now: 
             raise ValueError("Backend workflow identity mismatch")
         query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
         response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        expected_event = "push"
+        if (allow_absent_push_dispatch and type(response.get("total_count")) is int
+                and response == {"total_count": 0, "workflow_runs": []}):
+            expected_event = "workflow_dispatch"
+            query = urllib.parse.urlencode({"head_sha": sha, "event": expected_event, "per_page": 100})
+            response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
         runs = response.get("workflow_runs")
         if (not isinstance(runs, list) or not runs or type(response.get("total_count")) is not int
                 or response["total_count"] != len(runs)):
@@ -4641,7 +4826,7 @@ def moderation_resolution_backend_evidence(sha: str, repository: str, api, now: 
         for run in runs:
             if (type(run.get("id")) is not int or run["id"] <= 0
                     or type(run.get("run_number")) is not int or run["run_number"] <= 0
-                    or run.get("head_sha") != sha or run.get("event") != "push"
+                    or run.get("head_sha") != sha or run.get("event") != expected_event
                     or run.get("workflow_id") != identity["id"] or run.get("path") != identity["path"]
                     or run.get("repository", {}).get("full_name") != repository
                     or run.get("head_repository", {}).get("full_name") != repository
@@ -4675,7 +4860,7 @@ def moderation_resolution_backend_evidence(sha: str, repository: str, api, now: 
                 matches = [step for step in steps if step.get("name") == step_name]
                 if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
                     raise ValueError("Backend required validation step did not execute")
-        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "event": "push", "branch": branch,
+        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "event": expected_event, "branch": branch,
                               "required_jobs": list(required), "job_ids": [next(job["id"] for job in jobs
                                   if job["name"] == name) for name in required]}
     return evidence
@@ -5060,7 +5245,7 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
-        **({"required_backend_runs": moderation_resolution_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+        **({"required_backend_runs": (internal_report_requirements if selected_scope == INTERNAL_REPORT_SCOPE else moderation_resolution_requirements)(evidence[1] if evidence else env["GITHUB_SHA"])}
            if selected_scope in (OWNER_CLOUD_SCOPE, INTERNAL_REPORT_SCOPE) else {}),
         **({"required_backend_runs": moderation_resolution_requirements(
               MODERATION_BUILD_CORRECTION_SOURCE if chained_build_recovery is not None or moderation_chained_inputs(env["GITHUB_SHA"])

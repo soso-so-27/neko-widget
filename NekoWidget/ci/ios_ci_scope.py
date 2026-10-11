@@ -551,6 +551,10 @@ OWNER_CLOUD_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/c
 OWNER_CLOUD_IMMUTABLE_TREE_SHA256 = '13544fd9144dcb91b986a5a4967cdfbc4e5eb199d6497a9af617b3f9e8321dc9'
 INTERNAL_REPORT_SCOPE = "reviewed-internal-report-v1"
 INTERNAL_REPORT_BLOBS = {
+    "NekoWidget/NekoWidgetShareExtension/Info.Disabled.plist": [
+        "de0f2444ca407aa22d5f77a95454403be23d7755",
+        "25532e5357a4302a98a8160f8f13813b87e644c7"
+    ],
     ".github/workflows/testflight.yml": [
         "49bfdbeb810ba6242129d5096f68fe2cba7c9a7d",
         "5d9d8d0d3c044eda28f1f84bf254db8b4ef403d1"
@@ -601,11 +605,11 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/ci/moderation-v2-readiness.json": [
         "e0714e26c3c16a8258f1514346e5e0d554698b13",
-        "4efa166f1ffd5416295d01ba7e517b50df3b345e"
+        "520c843216eedb27d28c16c4bd364ec0f90210b7"
     ],
     "NekoWidget/ci/release-testflight.py": [
         "2a86f9830adbb0163ae7d732f6282cfbd0f2df51",
-        "a9f5ad8b359c6e45464a4ff67c292cdf57ec54da"
+        "7fdc405304fa33910c0497e71a9208a195a445d2"
     ],
     "NekoWidget/ci/test-internal-report-release.py": [
         "0000000000000000000000000000000000000000",
@@ -621,7 +625,7 @@ INTERNAL_REPORT_BLOBS = {
     ],
     "NekoWidget/ci/test-release-testflight.py": [
         "37a2a730a189c42f53ac9700df06505f9968bc4a",
-        "f739adf1cf7c0551dbc3ca805baea26d00416198"
+        "164f22c77e9b14996cde87cf2ea107668d9991be"
     ],
     "NekoWidget/ci/test-verify-moderation-upload-payload.py": [
         "c9296d685f2b5abaed77938b7d7dcaf2fe0944dc",
@@ -650,7 +654,7 @@ INTERNAL_REPORT_BLOBS = {
 }
 INTERNAL_REPORT_PATHS = frozenset(INTERNAL_REPORT_BLOBS)
 INTERNAL_REPORT_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
-INTERNAL_REPORT_IMMUTABLE_TREE_SHA256 = '08eb42906174154b18c5f2c88f9494bf7009df3fc9042c9a237b2ac004aa99bd'
+INTERNAL_REPORT_IMMUTABLE_TREE_SHA256 = '3a9c9ef8d0fee18887338222a200a084b83b3862bd139212c86d4227ea727f61'
 SCOPES = (INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
