@@ -1131,7 +1131,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
             "required_jobs": list(required), "cost": cost, "target_minutes": target_minutes,
             **({"required_backend_runs": planner.moderation_resolution_requirements(head)}
-               if selected == planner.MODERATION_RESOLUTION_SCOPE else {}),
+               if selected in (planner.MODERATION_RESOLUTION_SCOPE, planner.INTERNAL_REPORT_SCOPE) else {}),
             **({"required_backend_runs": planner.preservation_provider_requirements(head)}
                if selected == planner.PRESERVATION_PROVIDER_SCOPE else {}),
             **({"required_backend_runs": planner.preservation_r2_view_requirements(head)}
