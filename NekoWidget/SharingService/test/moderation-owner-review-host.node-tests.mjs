@@ -1,15 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import { createHash, randomBytes } from "node:crypto";
 import { createLocalOwnerReviewHost } from "../scripts/moderation-owner-review-host.mjs";
 import { moderationReviewSourceBinding } from "../scripts/moderation-bound-review-lib.mjs";
 import { deriveRawModerationPublicKey } from "../scripts/moderation-report-lib.mjs";
 import { createSyntheticModerationBundle, SYNTHETIC_CANONICAL_JPEG } from "../scripts/moderation-staging-drill-lib.mjs";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const ownerBundle = await build({entryPoints:[new URL('../src/moderation-owner-console.ts',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')],bundle:true,platform:'node',format:'esm',write:false});
-const {localModerationOwnerConsole}=await import('data:text/javascript;base64,'+Buffer.from(ownerBundle.outputFiles[0].text).toString('base64'));
+const moduleURL = source => 'data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(source)).toString('base64');
+const browserURL=moduleURL(await readFile(new URL('../src/moderation-owner-browser.ts',import.meta.url),'utf8'));
+const consoleSource=await readFile(new URL('../src/moderation-owner-console.ts',import.meta.url),'utf8');
+assert.equal(consoleSource.split('"./moderation-owner-browser"').length,2);
+const {localModerationOwnerConsole}=await import(moduleURL(consoleSource.replace('"./moderation-owner-browser"',JSON.stringify(browserURL))));
 const ownerHTML=await localModerationOwnerConsole(true).text();
 const ownerScript=/<script nonce="[^"]+">([\s\S]+)<\/script>/u.exec(ownerHTML)[1];
 
