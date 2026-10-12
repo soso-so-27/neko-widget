@@ -867,6 +867,19 @@ MODERATION_OPERATOR_STARTUP_INPUT_BLOBS = {'NekoWidget/SharingService/src/index.
 MODERATION_OPERATOR_STARTUP_INPUT_PATHS = frozenset(MODERATION_OPERATOR_STARTUP_INPUT_BLOBS)
 MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS = {'Select backend checks': 5, 'Typecheck, test, and build Apple transaction verifier': 10, 'Windows moderation key, drill, and report policy fixtures': 10, 'Typecheck, test, and bundle Worker': 20}
 MODERATION_OPERATOR_STARTUP_JOBS = tuple(MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS)
+MODERATION_REPORT_BPLIST_SCOPE = "moderation-report-bplist-width-v1"
+MODERATION_REPORT_BPLIST_BLOBS = {
+    "NekoWidget/SharingService/scripts/moderation-report-lib.mjs": (
+        "1450993f3bd0183c6faf8cab9919effea37689a9", "5f300942cdf55a4592a12ab5a981543874ce6207"),
+    "NekoWidget/SharingService/test/moderation-report-tool.node-tests.mjs": (
+        "d915e3dcb89c78988d823dc380e04d599a3a3486", "22a5e11598ed8d75cf7ac957ddf7b90463a69d18"),
+}
+MODERATION_REPORT_BPLIST_PATHS = frozenset(MODERATION_REPORT_BPLIST_BLOBS)
+MODERATION_REPORT_BPLIST_CONTROLS = INTERNAL_REPORT_CONTROLS
+MODERATION_REPORT_BPLIST_TREE_SHA256 = "eb77344fb7a9dfc80aa012036640ce615e2b309a857d7bd9470a7f1c504220c4"
+MODERATION_REPORT_BPLIST_WORKFLOW = ".github/workflows/sharing-service.yml"
+MODERATION_REPORT_BPLIST_JOB_TIMEOUTS = dict(MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS)
+MODERATION_REPORT_BPLIST_JOBS = tuple(MODERATION_REPORT_BPLIST_JOB_TIMEOUTS)
 
 
 # Exact local owner read/no_action decision/reply, migration and owning checks.
@@ -1646,6 +1659,38 @@ def moderation_initial_admission_requirements(head):
             for job in MODERATION_INITIAL_ADMISSION_JOBS]
 
 
+def moderation_report_bplist_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_REPORT_BPLIST_PATHS)
+
+
+def moderation_report_bplist_backend_only(paths, base, head):
+    """Exact reviewed Node parser fix; every other product input remains frozen."""
+    if not moderation_report_bplist_paths_only(paths): return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=MODERATION_REPORT_BPLIST_BLOBS,
+            companion_paths=frozenset(), companion_digests={}, companion_name="unused"): return False
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    registration = 'MODERATION_REPORT_BPLIST_SCOPE = "moderation-report-bplist-width-v1"'
+    if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return False
+    for path in MODERATION_REPORT_BPLIST_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not trusted.startswith("100644 blob ") or any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)): return False
+    for ref in (base, head):
+        for path, pair in MODERATION_REPORT_BPLIST_BLOBS.items():
+            blob = pair[0 if ref == base else 1]
+            if git("ls-tree", ref, "--", path) != f"100644 blob {blob}\t{path}": return False
+        rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+        frozen = [row for row in rows if not is_handoff(row.split("\t", 1)[1])
+                  and row.split("\t", 1)[1] not in MODERATION_REPORT_BPLIST_PATHS | MODERATION_REPORT_BPLIST_CONTROLS]
+        if hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != MODERATION_REPORT_BPLIST_TREE_SHA256: return False
+    return True
+
+
+def moderation_report_bplist_requirements(head):
+    return [{"workflow": MODERATION_REPORT_BPLIST_WORKFLOW, "job": job, "head_sha": head,
+             "event": "push", "success_required": True} for job in MODERATION_REPORT_BPLIST_JOBS]
+
+
 def moderation_operator_startup_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == MODERATION_OPERATOR_STARTUP_PATHS
@@ -2105,6 +2150,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return MODERATION_INITIAL_ADMISSION_JOBS
     if runtime_scope == MODERATION_OPERATOR_STARTUP_SCOPE and moderation_operator_startup_paths_only(paths):
         return MODERATION_OPERATOR_STARTUP_JOBS
+    if runtime_scope == MODERATION_REPORT_BPLIST_SCOPE and moderation_report_bplist_paths_only(paths):
+        return MODERATION_REPORT_BPLIST_JOBS
     if runtime_scope == MODERATION_OPERATOR_HOST_SCOPE and moderation_operator_host_paths_only(paths):
         return MODERATION_OPERATOR_HOST_JOBS
     if runtime_scope == MODERATION_OWNER_FLOW_SCOPE and moderation_owner_flow_paths_only(paths):
@@ -3203,6 +3250,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             pass
         return FULL_SCOPE
     for selected, matches, verify in ((MODERATION_ENROLLMENT_CEREMONY_SCOPE, moderation_enrollment_ceremony_paths_only, moderation_enrollment_ceremony_backend_only),
+                                       (MODERATION_REPORT_BPLIST_SCOPE, moderation_report_bplist_paths_only, moderation_report_bplist_backend_only),
                                        (MODERATION_INITIAL_ADMISSION_SCOPE, moderation_initial_admission_paths_only, moderation_initial_admission_backend_only),
                                        (MODERATION_OPERATOR_STARTUP_SCOPE, moderation_operator_startup_paths_only, moderation_operator_startup_backend_only),
                                        (MODERATION_OPERATOR_HOST_SCOPE, moderation_operator_host_paths_only, moderation_operator_host_backend_only),
@@ -5248,7 +5296,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -5279,6 +5327,8 @@ def main() -> None:
                  if selected_scope == MODERATION_INITIAL_ADMISSION_SCOPE else {}),
               **({"required_backend_runs": moderation_operator_startup_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_OPERATOR_STARTUP_SCOPE else {}),
+              **({"required_backend_runs": moderation_report_bplist_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_REPORT_BPLIST_SCOPE else {}),
               **({"required_backend_runs": moderation_operator_host_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_OPERATOR_HOST_SCOPE else {}),
               **({"required_backend_runs": moderation_owner_flow_requirements(env["GITHUB_SHA"])}
@@ -5300,7 +5350,13 @@ def main() -> None:
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
-            if selected_scope == MODERATION_AI_DURABLE_SCOPE:
+            if selected_scope == MODERATION_REPORT_BPLIST_SCOPE:
+                summary = ("## Backend-only verification\n\nThe exact reviewed binary-plist offset-width fix requires all four Sharing jobs "
+                           "to succeed on the owning push at this SHA: "
+                           + "; ".join(row["job"] for row in moderation_report_bplist_requirements(env["GITHUB_SHA"]))
+                           + ". Existing Node CLI, bound crypto/owner and Windows custody checks remain mandatory. "
+                           "This plan does not certify backend success, runtime application, photo delivery or iOS release. Mac jobs are not requested.\n")
+            elif selected_scope == MODERATION_AI_DURABLE_SCOPE:
                 requirement = (moderation_ai_durable_reason(env["GITHUB_SHA"]) + ": "
                                if env["GITHUB_SHA"] == MODERATION_AI_DURABLE_REUSE_CANDIDATE else
                                "All five jobs must execute successfully on the owning push at the same candidate SHA: ")
