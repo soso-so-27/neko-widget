@@ -301,6 +301,14 @@ MEMBERSHIP_TOOLS_SCOPE = "reviewed-membership-tools-v1"
 TOOLS_HUB_SCOPE = "reviewed-tools-hub-ui-v1"
 WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
+REPORT_REPLY_ENTRY_SCOPE = "reviewed-report-reply-entry-ui-v1"
+REPORT_REPLY_ENTRY_DIGESTS = {'NekoWidget/NekoWidget/Views/FamilyWindowView.swift': ('dc63d1f7f110a78be2c37efa095dce8afdf4a819daa33292c0530765348ab441', 'a34c5b564949956aa3e53e8add683f1a2471440bc988e25aac9509d0c9ef4a2c'), 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('b2c0b484207e5f0ab6b0906deb7fa06ca577bf3a3ba41dd375e586f1c0381754', '8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf')}
+REPORT_REPLY_ENTRY_TESTS = tuple("NekoWidgetUITests/MomentDeliveryComposerUITests/" + name for name in (
+    "testReportReplyEntryIsVisibleBeforeScrollingAndOpensSavedReply",
+    "testReportReplyEntryRemainsVisibleWithLargestText",
+    "testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure",
+    "testReportResponsesExpireAndClearWhenIdentityChanges",
+))
 REVIEWED_FAMILY_EXPORT_SCOPE = "reviewed-family-export-v1"
 # This one frozen evidence-maintenance batch is plan-only, never iOS evidence.
 # Deliberately absent from SCOPES and native/release scope lookup.
@@ -664,7 +672,7 @@ INTERNAL_REPORT_METADATA_REPAIR_BLOBS = {
 INTERNAL_REPORT_METADATA_REPAIR_PATHS = frozenset(INTERNAL_REPORT_METADATA_REPAIR_BLOBS)
 SCOPES = (INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
-          APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
+          APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
           REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE, REVIEWED_MEMBERSHIP_OFFER_SCOPE, REVIEWED_PURCHASE_CATALOG_SCOPE, REVIEWED_MEMBERSHIP_STATE_SCOPE, REVIEWED_MEMBERSHIP_MANAGEMENT_SCOPE, REVIEWED_MEMBERSHIP_ACCESS_SCOPE, REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, REVIEWED_WINDOW_SUPPORT_SCOPE, REVIEWED_RECORD_PORTABILITY_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, ICON_SCOPE)
 SHARING_JOB_PREFIX = "Sharing runtime self-test (iOS 18.5 / 26.2)"
@@ -2972,6 +2980,14 @@ def family_window_test_changes(before: str, after: str) -> bool:
     return fixed(before, old, ()) == fixed(after, new, added)
 
 
+def report_reply_entry_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    # Exact reviewed UI movement and simulator fixture; no model, network,
+    # storage, identity, project, dependency, workflow or release input edits.
+    return (set(changes) == set(REPORT_REPLY_ENTRY_DIGESTS)
+            and all(tuple(source_digest(text) for text in changes[path]) == pair
+                    for path, pair in REPORT_REPLY_ENTRY_DIGESTS.items()))
+
+
 def family_window_ui_changes(changes: dict[str, tuple[str, str]]) -> bool:
     """Window views with edits confined to selected XCTest operations.
 
@@ -3347,6 +3363,8 @@ def accepts_paths(scope: str, paths) -> bool:
     if scope == LOST_CAT_PHOTO_SCOPE:
         return LOST_CAT_PHOTO_PATH in sources and sources <= {
             LOST_CAT_PHOTO_PATH, MEMORY_TEST_PATH}
+    if scope == REPORT_REPLY_ENTRY_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == set(REPORT_REPLY_ENTRY_DIGESTS)
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
@@ -3550,6 +3568,8 @@ def native_tests(scope: str) -> tuple[str, ...]:
         return CARE_HANDOFF_TESTS
     if scope in (LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE):
         return LOST_CAT_PHOTO_TESTS
+    if scope == REPORT_REPLY_ENTRY_SCOPE:
+        return REPORT_REPLY_ENTRY_TESTS
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return FAMILY_WINDOW_NATIVE_TESTS + (
                 "NekoWidgetUITests/OfficialWindowUITests/testWidgetURLsColdOpenPhotoBeforeSourceResolvesAndCloseOnce",
@@ -3822,6 +3842,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     # A partial or mutated instance of this frozen batch is not a generic UI edit.
     if set(changes) & EVACUATION_NEW_PATHS:
         return FULL_SCOPE
+    if report_reply_entry_changes(changes):
+        return REPORT_REPLY_ENTRY_SCOPE
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
 
