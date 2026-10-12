@@ -18,10 +18,11 @@ const reopen=document.getElementById('reopen');
 const route=/^\\/operator\\/owner\\/console\\/([0-9a-f]{64})\\/([1-9][0-9]{0,9})$/.exec(location.pathname);
 const releaseSection=document.getElementById('release-section'),releaseConfirmed=document.getElementById('release-confirmed'),releaseButton=document.getElementById('release'),reply=document.getElementById('reply');
 let resolution=null;
-let busy=false,generation=0,controller=null,imageURL=null,receipt=null,source=null,timer=null,expiresAt=0,photoStage='state';
+let busy=false,generation=0,controller=null,imageURL=null,receipt=null,source=null,timer=null,photoTimer=null,expiresAt=0,photoStage='state';
 const base=route?'/operator/owner/v1/cases/'+route[1]+'/'+route[2]:null;
 const resolutionBase=route?'/operator/resolution/v1/cases/'+route[1]+'/'+route[2]:null;
-function erase(){clearTimeout(timer);if(imageURL)URL.revokeObjectURL(imageURL);imageURL=null;photo.removeAttribute('src');photo.hidden=true;decision.hidden=true;confirmed.checked=false;receipt=null;source=null;expiresAt=0;finish.disabled=true}
+function eraseImage(){clearTimeout(photoTimer);if(imageURL)URL.revokeObjectURL(imageURL);imageURL=null;photo.removeAttribute('src');photo.hidden=true}
+function erase(){clearTimeout(timer);eraseImage();decision.hidden=true;confirmed.checked=false;receipt=null;source=null;expiresAt=0;finish.disabled=true}
 function leave(){generation++;controller?.abort();erase();resolution=null;releaseSection.hidden=true;releaseConfirmed.checked=false;releaseButton.disabled=true;busy=false;open.disabled=!base;status.textContent='写真の表示を終了しました。必要ならもう一度認証してください。'}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)leave()});window.addEventListener('pagehide',leave);
 function actionAllowed(operation){return operation==='no_action'?resolution?.canNoAction:resolution?.targetAvailable}
@@ -76,10 +77,13 @@ open.addEventListener('click',async()=>{
  try{await loadState(epoch);const result=await authorize(base+'/content-read','content_read',epoch);if(epoch!==generation)return;
  photoStage='image_response';const response=result.response,id=response.headers.get('X-Moderation-Read-Receipt'),digest=response.headers.get('X-Moderation-Source-SHA256'),expiry=Number(response.headers.get('X-Moderation-Expires-At'))*1000;
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id??'')||digest!==result.challenge.sourceSHA256||response.headers.get('Content-Type')!=='image/jpeg'||!Number.isSafeInteger(expiry)||expiry<=Date.now()||expiry>Date.now()+60000)throw Error('response');
- expiresAt=expiry;timer=setTimeout(leave,Math.max(1,expiry-Date.now()));
+ const retiredNoAction=!resolution.targetAvailable&&resolution.canNoAction;
+ const decisionExpiry=retiredNoAction?result.challenge.expiresAt*1000:expiry;
+ expiresAt=decisionExpiry;timer=setTimeout(leave,Math.max(1,decisionExpiry-Date.now()));
+ if(retiredNoAction)photoTimer=setTimeout(()=>{if(epoch===generation||receipt===id){eraseImage();if(!busy)status.textContent='写真の表示を終了しました。確認済みの通報は、本人認証して対応を確定できます。';lock(busy)}},Math.max(1,expiry-Date.now()));
  const blob=await response.blob();if(epoch!==generation)return;if(blob.size<4||blob.size>950244||Date.now()>=expiry)throw Error('image');
  imageURL=URL.createObjectURL(blob);photo.src=imageURL;await photo.decode();if(epoch!==generation)return;
- if(Date.now()>=expiry)throw Error('expired');receipt=id;source=digest;expiresAt=expiry;photo.hidden=false;decision.hidden=false;
+ if(Date.now()>=expiry)throw Error('expired');receipt=id;source=digest;expiresAt=decisionExpiry;photo.hidden=false;decision.hidden=false;
  status.textContent='写真を確認し、必要な対応を選んでください。';
  }catch(error){if(epoch===generation){erase();status.textContent=photoFailure(error)}}finally{if(epoch===generation)lock(false)}
 });

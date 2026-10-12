@@ -5,11 +5,12 @@ import { routeLocalModerationOwner, type LocalModerationOwnerEnvironment } from 
 import { routeLocalModerationResolution } from '../../src/moderation-resolution-local';
 
 export const resolutionDB=(env as unknown as {DB:D1Database}).DB;
-export async function resolutionFixture(existingReportId?: string, crossCommitSecond?: 'scope'|'event'|'reply') {
+export async function resolutionFixture(existingReportId?: string, crossCommitSecond?: 'scope'|'event'|'reply', shortReadWindow=false) {
  const f=await fixture(existingReportId),db=resolutionDB;
  const databaseFailures:string[]=[];
  let observedOperation:'issue'|'prove'|undefined;
  const observedDB=new Proxy(db,{get(target,key){
+  if(key==='prepare'&&shortReadWindow)return(sql:string)=>target.prepare(sql.replace('MIN(unixepoch()+60,?)','MIN(unixepoch()+4,?)'));
   if(key==='batch')return async(statements:D1PreparedStatement[])=>{
    // Keep the real atomic transaction and constraints. A read-only SQL workload
    // forces a clock boundary before the event or reply, independently of request time.

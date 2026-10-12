@@ -58,6 +58,7 @@ const expectedMigrationNames = [
   "0036_moderation_owner_report_key.sql",
   "0037_moderation_enrollment_counter_floor.sql",
   "0038_moderation_retired_report_no_action.sql",
+  "0039_moderation_retired_decision_receipt.sql",
 ];
 
 const databaseGateColumns = [
