@@ -22,6 +22,40 @@ spec.loader.exec_module(planner)
 ROOT = Path(__file__).resolve().parents[2]
 
 
+
+class ReportReplyEntryBoundaryTests(unittest.TestCase):
+    def test_exact_two_files_are_required_and_every_changed_byte_is_bound(self):
+        changes = {path: ("before" + str(i), "after" + str(i))
+                   for i, path in enumerate(scope.REPORT_REPLY_ENTRY_DIGESTS)}
+        pairs = {path: tuple(scope.source_digest(v) for v in pair) for path, pair in changes.items()}
+        with patch.dict(scope.REPORT_REPLY_ENTRY_DIGESTS, pairs, clear=True):
+            self.assertTrue(scope.report_reply_entry_changes(changes))
+            self.assertEqual(scope.select_scope(changes), scope.REPORT_REPLY_ENTRY_SCOPE)
+            for path in changes:
+                missing = dict(changes); missing.pop(path)
+                self.assertFalse(scope.report_reply_entry_changes(missing))
+                for side in (0, 1):
+                    mutated = dict(changes); value = list(mutated[path]); value[side] += "changed"
+                    mutated[path] = tuple(value)
+                    self.assertFalse(scope.report_reply_entry_changes(mutated))
+            extra = dict(changes); extra["NekoWidget/Shared/Sharing/MomentSharingCore.swift"] = ("old", "new")
+            self.assertFalse(scope.report_reply_entry_changes(extra))
+
+    def test_required_native_checks_and_owned_operations_remain_real(self):
+        selected = scope.REPORT_REPLY_ENTRY_SCOPE
+        self.assertIn(selected, scope.SCOPES)
+        jobs = planner.required_jobs_from_scope(selected)
+        self.assertEqual(jobs, (planner.BUILD, planner.BOOTSTRAP_SMOKE,
+            scope.lane_job(selected, "runtime"), scope.lane_job(selected, "app-ui")))
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(len(scope.native_tests(selected)), 4)
+        self.assertIn("NekoWidgetUITests/MomentDeliveryComposerUITests/testReportReplyEntryRemainsVisibleWithLargestText", scope.native_tests(selected))
+        self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(selected))
+        paths = list(scope.REPORT_REPLY_ENTRY_DIGESTS)
+        self.assertTrue(scope.accepts_paths(selected, paths))
+        self.assertFalse(scope.accepts_paths(selected, paths + [paths[0]]))
+        self.assertFalse(scope.accepts_paths(selected, paths + ["NekoWidget/SharingService/src/moments.ts"]))
+
 class MembershipStateNativeBoundaryTests(unittest.TestCase):
     def test_exact_owning_operations_keep_build_photos_and_both_os_runtime(self):
         selected = scope.REVIEWED_MEMBERSHIP_STATE_SCOPE
