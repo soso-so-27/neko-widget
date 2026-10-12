@@ -24,6 +24,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReportReplyEntryBoundaryTests(unittest.TestCase):
+    def test_known_recovery_stops_if_current_signature_or_lease_is_invalid(self):
+        import datetime as dt
+        with patch.object(planner,'reply_readiness_inputs',side_effect=lambda head,**kw:not kw.get('current',False)):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.reply_readiness_source('a'*40,'soso-so-27/neko-widget',lambda _:self.fail('No API call after invalid readiness'),dt.datetime.now(dt.timezone.utc))
+
     def test_recovery_rejects_wrong_source_failed_siblings_and_unknown_build_failure(self):
         import datetime as dt
         now = dt.datetime.now(dt.timezone.utc)

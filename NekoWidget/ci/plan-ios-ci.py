@@ -3889,7 +3889,8 @@ def reply_readiness_inputs(head, *, current=False):
     except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired,ValueError,KeyError,TypeError):return False
 
 def reply_readiness_source(head,repository,api,now):
-    if repository!='soso-so-27/neko-widget' or not reply_readiness_inputs(head,current=True):return None
+    if repository!='soso-so-27/neko-widget' or not reply_readiness_inputs(head):return None
+    if not reply_readiness_inputs(head,current=True):raise CorrectionEvidenceUnavailable('Fixed reply readiness signature, expiry or current input check failed; no native retry authorized')
     prefix=f'/repos/{repository}/actions'
     run=api(f'{prefix}/runs/{REPLY_READINESS_RUN}')
     if (run.get('id')!=REPLY_READINESS_RUN or run.get('head_sha')!=REPLY_READINESS_SOURCE
