@@ -24,7 +24,8 @@ const resolutionBase=route?'/operator/resolution/v1/cases/'+route[1]+'/'+route[2
 function erase(){clearTimeout(timer);if(imageURL)URL.revokeObjectURL(imageURL);imageURL=null;photo.removeAttribute('src');photo.hidden=true;decision.hidden=true;confirmed.checked=false;receipt=null;source=null;expiresAt=0;finish.disabled=true}
 function leave(){generation++;controller?.abort();erase();resolution=null;releaseSection.hidden=true;releaseConfirmed.checked=false;releaseButton.disabled=true;busy=false;open.disabled=!base;status.textContent='写真の表示を終了しました。必要ならもう一度認証してください。'}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)leave()});window.addEventListener('pagehide',leave);
-function lock(value){busy=value;open.disabled=value||!base||resolution?.operation==='no_action';finish.disabled=value||!confirmed.checked||!receipt||Date.now()>=expiresAt||!resolution?.targetAvailable||resolution?.operation==='hide';releaseButton.disabled=value||!releaseConfirmed.checked||!resolution?.canRelease}
+function actionAllowed(operation){return operation==='no_action'?resolution?.canNoAction:resolution?.targetAvailable}
+function lock(value){busy=value;open.disabled=value||!base||resolution?.operation==='no_action';finish.disabled=value||!confirmed.checked||!receipt||Date.now()>=expiresAt||!actionAllowed(document.querySelector('input[name=action]:checked').value)||resolution?.operation==='hide';releaseButton.disabled=value||!releaseConfirmed.checked||!resolution?.canRelease}
 reopen.addEventListener('click',()=>{if(!busy)location.reload()});
 function photoFailure(error){
  const code=error?.message;
@@ -66,7 +67,10 @@ async function authorize(path,purpose,epoch){
  if(purpose==='content_read')photoStage='submit_proof';
  return {response:await post(challenge.assertionPath,proof),challenge};
 }
-async function loadState(epoch){const state=await(await post(resolutionBase+'/state')).json();if(epoch!==generation)throw Error('stale');if(state.caseReferenceHmac!==route[1]||!Number.isSafeInteger(state.revision)||state.revision<0||typeof state.targetAvailable!=='boolean'||typeof state.canRelease!=='boolean'||(state.canRelease&&!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(state.restrictionEventId)))throw Error('state');resolution=state;releaseSection.hidden=!state.canRelease;releaseConfirmed.checked=false;return state}
+async function loadState(epoch){const state=await(await post(resolutionBase+'/state')).json();if(epoch!==generation)throw Error('stale');if(state.caseReferenceHmac!==route[1]||!Number.isSafeInteger(state.revision)||state.revision<0||typeof state.targetAvailable!=='boolean'||typeof state.canNoAction!=='boolean'||typeof state.canRelease!=='boolean'||(state.canRelease&&!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(state.restrictionEventId)))throw Error('state');resolution=state;releaseSection.hidden=!state.canRelease;releaseConfirmed.checked=false;
+ const hide=document.querySelector('input[name=action][value=hide]'),noAction=document.querySelector('input[name=action][value=no_action]');hide.disabled=!state.targetAvailable;noAction.disabled=!state.canNoAction;
+ if(!state.targetAvailable&&state.canNoAction){noAction.checked=true;confirmed.checked=false;reply.textContent='通報いただいた内容を確認しました。今回は追加の対応は行いません。'}
+ return state}
 open.addEventListener('click',async()=>{
  if(busy||!base)return;erase();reopen.hidden=true;delete status.dataset.failure;delete status.dataset.failureStage;photoStage='state';lock(true);const epoch=++generation;controller?.abort();controller=new AbortController();status.textContent='本人認証と写真の有効性を確認しています…';
  try{await loadState(epoch);const result=await authorize(base+'/content-read','content_read',epoch);if(epoch!==generation)return;
@@ -80,7 +84,7 @@ open.addEventListener('click',async()=>{
  }catch(error){if(epoch===generation){erase();status.textContent=photoFailure(error)}}finally{if(epoch===generation)lock(false)}
 });
 async function resolve(operation){
- if(busy||!resolution?.targetAvailable)return;if(operation==='release'){if(!releaseConfirmed.checked||!resolution.canRelease)return}else if(!receipt||!confirmed.checked||Date.now()>=expiresAt)return;
+ if(busy||!actionAllowed(operation))return;if(operation==='release'){if(!releaseConfirmed.checked||!resolution.canRelease)return}else if(!receipt||!confirmed.checked||Date.now()>=expiresAt)return;
  const revision=resolution.revision,identity=operation==='release'?resolution.restrictionEventId:receipt;
  lock(true);const epoch=++generation;controller?.abort();controller=new AbortController();status.textContent='対応を認証して保存しています…';
  try{const result=await authorize(resolutionBase+'/'+operation+'/'+identity+'/'+revision,operation,epoch),value=await result.response.json();if(epoch!==generation)return;
@@ -90,7 +94,7 @@ async function resolve(operation){
 }
 finish.addEventListener('click',()=>resolve(document.querySelector('input[name=action]:checked').value));releaseButton.addEventListener('click',()=>resolve('release'));
 if(!base){open.disabled=true;status.textContent='通報一覧から写真を選び直してください。'}
-else{const epoch=++generation;controller=new AbortController();lock(true);loadState(epoch).then(()=>{if(epoch===generation)status.textContent=resolution.canRelease?'この通報による非表示は継続中です。解除操作は下にあります。':resolution.targetAvailable?'写真を開いて確認してください。':'共有期限などにより、この写真への操作はできません。'}).catch(error=>{if(epoch===generation){resolution=null;status.textContent=photoFailure(error)}}).finally(()=>{if(epoch===generation)lock(false)})}
+else{const epoch=++generation;controller=new AbortController();lock(true);loadState(epoch).then(()=>{if(epoch===generation)status.textContent=resolution.canRelease?'この通報による非表示は継続中です。解除操作は下にあります。':resolution.targetAvailable?'写真を開いて確認してください。':resolution.canNoAction?'共有表示は終了しています。通報写真を確認して、追加の対応は不要として完了できます。':'共有期限などにより、この写真への操作はできません。'}).catch(error=>{if(epoch===generation){resolution=null;status.textContent=photoFailure(error)}}).finally(()=>{if(epoch===generation)lock(false)})}
 </script></body></html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
     "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
     "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY" } });

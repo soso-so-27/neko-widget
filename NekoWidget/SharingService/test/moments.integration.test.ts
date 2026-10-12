@@ -77,6 +77,20 @@ describe('moderation visibility over authenticated moment transport',()=>{
   expect(await(await signedFetch('/v2/reports/responses','GET',space.invitee)).json()).toMatchObject({responses:[{id:result.eventId}]});
   expect(await testEnv.DB.prepare('SELECT COUNT(*) n FROM moderation_resolution_reply_receipts').first()).toEqual({n:0});
  });
+ it.each(['deleted','expired'])('returns a completed %s-photo report only to its reporter while download and ACK remain denied',async state=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id),moment=p.reservation.moment.id;
+  await testEnv.DB.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch() WHERE id=?`).bind(moment).run();
+  if(state==='deleted')await testEnv.DB.prepare(`UPDATE moments SET state='deleted' WHERE id=?`).bind(moment).run();
+  const before=await testEnv.DB.prepare('SELECT state,acknowledged_at FROM moment_deliveries WHERE moment_id=?').bind(moment).first();
+  const result=await f.act('no_action',await f.read(),0);
+  expect((await signedFetch(`/v2/moments/${moment}/ciphertext`,'GET',space.invitee)).status).toBe(404);
+  expect((await signedFetch(`/v2/moments/${moment}/ack`,'POST',space.invitee,{protocolVersion:2,clientRequestId:crypto.randomUUID(),ciphertextSHA256:p.reservation.moment.ciphertextSHA256})).status).toBe(404);
+  expect(await testEnv.DB.prepare('SELECT state,acknowledged_at FROM moment_deliveries WHERE moment_id=?').bind(moment).first()).toEqual(before);
+  expect(await testEnv.DB.prepare('SELECT state FROM moments WHERE id=?').bind(moment).first()).toEqual({state});
+  expect(await(await signedFetch('/v2/reports/responses','GET',space.invitee)).json()).toMatchObject({responses:[{id:result.eventId,reportId:p.report.id,templateCode:'no_action'}]});
+  expect(await(await signedFetch('/v2/reports/responses','GET',space.owner)).json()).toMatchObject({responses:[]});
+  expect(await testEnv.DB.prepare('SELECT COUNT(*) n FROM moment_changes WHERE moderation_event_id=?').bind(result.eventId).first()).toEqual({n:0});
+ });
  it('rejects delivery expiry during R2 await even while the moment lifetime remains valid',async()=>{
   const space=await seedActiveSpace(),p=await publish(space.owner),moment=p.reservation.moment.id;
   await testEnv.DB.prepare(`UPDATE moment_deliveries SET access_expires_at=unixepoch()+1 WHERE moment_id=?`).bind(moment).run();

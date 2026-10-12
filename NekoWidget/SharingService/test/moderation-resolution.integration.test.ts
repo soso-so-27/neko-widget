@@ -110,6 +110,33 @@ describe('case-bound signed reversible moderation',()=>{
   expect(await count('moderation_resolution_scopes')).toBe(0);
   expect(await count('moderation_resolution_events')).toBe(1);
  });
+ it.each(['deleted','expired'])('completes a retained report for a %s moment without restoring sharing or announcing a new photo',async state=>{
+  const f=await resolutionFixture();
+  if(state==='deleted')await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();
+  await db.prepare(`UPDATE moments SET state=?,closed_at=unixepoch()`).bind(state).run();
+  const beforeMoments=await db.prepare('SELECT * FROM moments').all(),beforeDeliveries=await db.prepare('SELECT * FROM moment_deliveries').all();
+  const receipt=await f.read();
+  const availability=await routeLocalModerationResolution(f.request(f.path()+'/state','POST'),f.local);
+  expect(await availability.json()).toMatchObject({targetAvailable:false,canNoAction:true,canRelease:false});
+  expect((await routeLocalModerationResolution(f.request(`${f.path()}/hide/${receipt}/0`,'POST'),f.local)).status).toBe(409);
+  const result=await f.act('no_action',receipt,0);
+  expect(result.reply).toBe('available_in_app');
+  expect((await db.prepare('SELECT * FROM moments').all()).results).toEqual(beforeMoments.results);
+  expect((await db.prepare('SELECT * FROM moment_deliveries').all()).results).toEqual(beforeDeliveries.results);
+  expect(await db.prepare('SELECT COUNT(*) n FROM moment_changes WHERE moderation_event_id=?').bind(result.eventId).first()).toEqual({n:0});
+  expect(await db.prepare(`SELECT COUNT(*) n FROM moderation_resolution_replies reply JOIN moment_reports report ON report.id=reply.report_id
+   WHERE reply.event_id=? AND reply.recipient_participant_id=report.reporter_participant_id AND reply.template_code='no_action'`).bind(result.eventId).first()).toEqual({n:1});
+  expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/1`,'POST'),f.local)).status).toBe(409);
+ });
+ it('refuses retired report completion when its evidence expires after the challenge, with no partial result',async()=>{
+  const f=await resolutionFixture();await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();await db.prepare(`UPDATE moments SET state='deleted'`).run();
+  const receipt=await f.read(),issued=await f.issue('no_action',receipt,0);
+  await db.prepare(`UPDATE moment_reports SET state='expired',closed_at=unixepoch() WHERE id=?`).bind(f.reportId).run();
+  expect((await f.prove(issued)).status).toBe(409);
+  expect(await count('moderation_resolution_events')).toBe(0);expect(await count('moderation_resolution_replies')).toBe(0);
+  const availability=await routeLocalModerationResolution(f.request(f.path()+'/state','POST'),f.local);
+  expect(await availability.json()).toMatchObject({targetAvailable:false,canNoAction:false,canRelease:false});
+ });
  it('pins a case to its original moment and suppresses replies after the report source changes',async()=>{
   const f=await resolutionFixture(),receipt=await f.read(),h=await f.act('hide',receipt,0);
   const original=(await db.prepare('SELECT * FROM moments').first())!;
