@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "worker": "neko-window-sharing-staging",
+  "cloudflareAccount": "829a34ef925a39d81b0e9e08800d7c7f",
+  "activeVersion": "6a391be4-85a3-4a76-ade6-75e8cc43a289",
+  "moduleSha256": "22351ae445819bcec78895b740b91e55eda2f3de2aee8e6a57aaf82f218f499b",
+  "moduleBytes": 376554,
+  "exports": [
+    "default",
+    "route"
+  ],
+  "sourceRole": "Exact deployed family input including existing private billing dispatch. Every non-response request and scheduled callback retains these bytes."
+}

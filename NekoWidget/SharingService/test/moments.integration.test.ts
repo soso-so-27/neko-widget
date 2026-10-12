@@ -17,6 +17,7 @@ import { REACTION_USAGE_RETENTION_DAYS } from "../src/reactions";
 import { runScheduledCleanup } from "../src/scheduled";
 import { resolutionFixture } from './fixtures/moderation-resolution';
 import { routeLocalModerationResolution } from '../src/moderation-resolution-local';
+import { readModerationResponses } from '../src/moderation-response-entry';
 
 async function reportedMoment(space:TestSpace) {
  const published=await publish(space.owner),evidence=crypto.getRandomValues(new Uint8Array(192));
@@ -76,6 +77,22 @@ describe('moderation visibility over authenticated moment transport',()=>{
   expect(await(await signedFetch('/v2/reports/responses/'+own.nextCursor,'GET',space.invitee)).json()).toMatchObject({responses:[],hasMore:false});
   expect((await signedFetch('/v1/pairing/revoke','POST',space.owner,{protocolVersion:1,clientRequestId:crypto.randomUUID()})).status).toBe(202);
   expect(await(await signedFetch('/v2/reports/responses','GET',space.invitee)).json()).toMatchObject({responses:[{id:result.eventId}]});
+  expect(await testEnv.DB.prepare('SELECT COUNT(*) n FROM moderation_resolution_reply_receipts').first()).toEqual({n:0});
+ });
+ it('the deployed reply entry preserves recipient identity, signature checks and nonce replay rejection',async()=>{
+  const space=await seedActiveSpace(),p=await reportedMoment(space),f=await resolutionFixture(p.report.id);
+  const result=await f.act('no_action',await f.read(),0);
+  const ownRequest=await signedRequest('/v2/reports/responses','GET',space.invitee);
+  const replay=new Request(ownRequest.url,{headers:ownRequest.headers});
+  const own=await readModerationResponses(ownRequest,testEnv);
+  expect(own.status).toBe(200);expect(await own.json()).toMatchObject({responses:[{id:result.eventId,templateCode:'no_action'}]});
+  const repeated=await readModerationResponses(replay,testEnv);
+  expect(repeated.status).toBe(409);expect(await repeated.json()).toMatchObject({error:{code:'replayed_request'}});
+  const other=await readModerationResponses(await signedRequest('/v2/reports/responses','GET',space.owner),testEnv);
+  expect(await other.json()).toMatchObject({responses:[]});
+  const bad=await signedRequest('/v2/reports/responses','GET',space.invitee);
+  bad.headers.set('neko-signature',base64urlEncode(new Uint8Array(64)));
+  expect((await readModerationResponses(bad,testEnv)).status).toBe(401);
   expect(await testEnv.DB.prepare('SELECT COUNT(*) n FROM moderation_resolution_reply_receipts').first()).toEqual({n:0});
  });
  it.each(['deleted','expired'])('returns a completed %s-photo report only to its reporter while download and ACK remain denied',async state=>{

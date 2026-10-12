@@ -1,4 +1,5 @@
 NekoWidget/SharingService/migrations/*.sql text eol=lf
+NekoWidget/SharingService/gateway/family-v6-frozen.mjs -text
 acceptance/movie/fixed-inputs/* -text
 
 # The pinned manifest includes CRLF bytes; preserve it as an opaque fixture.
