@@ -29,6 +29,7 @@ import {
   MODERATION_ALGORITHM,
   MODERATION_ENVELOPE_DOMAIN,
   MODERATION_EXPORT_SCHEMA,
+  parseBinaryPlist,
   readBoundedRegularFile,
 } from "../scripts/moderation-report-lib.mjs";
 
@@ -87,7 +88,7 @@ function countedMarker(type, length) {
 }
 
 /** Minimal fixture encoder for the exact Foundation binary-plist value types. */
-function binaryPlist(root) {
+function binaryPlist(root, offsetWidthOverride) {
   const nodes = [];
   function add(value) {
     if (Buffer.isBuffer(value)) {
@@ -145,7 +146,7 @@ function binaryPlist(root) {
     offsets.push(nextOffset);
     nextOffset += object.length;
   }
-  const offsetWidth = byteWidth(nextOffset);
+  const offsetWidth = offsetWidthOverride ?? byteWidth(nextOffset);
   const offsetTable = Buffer.concat(offsets.map((offset) => unsigned(offset, offsetWidth)));
   const trailer = Buffer.alloc(32);
   trailer[6] = offsetWidth;
@@ -155,6 +156,46 @@ function binaryPlist(root) {
   unsigned(nextOffset, 8).copy(trailer, 24);
   return Buffer.concat([header, ...encoded, offsetTable, trailer]);
 }
+
+test("parses Foundation three-byte offsets in a large report envelope", () => {
+  const envelope = {
+    protocolVersion: 2, moderationKeyID: "moderation-v2",
+    ephemeralPublicKey: Buffer.alloc(32, 0x42), ciphertext: Buffer.alloc(827_000, 0x47),
+  };
+  const encoded = binaryPlist(envelope, 3);
+  assert.equal(encoded[encoded.length - 26], 3);
+  assert.equal(encoded[encoded.length - 25], 1);
+  const decoded = parseBinaryPlist(encoded);
+  assert.deepEqual(Object.keys(decoded).sort(), Object.keys(envelope).sort());
+  assert.equal(decoded.protocolVersion, envelope.protocolVersion);
+  assert.equal(decoded.moderationKeyID, envelope.moderationKeyID);
+  assert.ok(Buffer.isBuffer(decoded.ephemeralPublicKey) && decoded.ephemeralPublicKey.equals(envelope.ephemeralPublicKey));
+  assert.ok(Buffer.isBuffer(decoded.ciphertext) && decoded.ciphertext.equals(envelope.ciphertext));
+});
+
+test("non-power-of-two plist offset widths retain table and numeric bounds", () => {
+  for (const width of [3, 5, 6, 7]) {
+    const encoded = binaryPlist({ message: "synthetic" }, width);
+    assert.deepEqual({ ...parseBinaryPlist(encoded) }, { message: "synthetic" });
+    const table = Number(encoded.readBigUInt64BE(encoded.length - 8));
+    const duplicate = Buffer.from(encoded);
+    duplicate.copy(duplicate, table + width, table, table + width);
+    assert.throws(() => parseBinaryPlist(duplicate), /object offset is invalid/u);
+    const outside = Buffer.from(encoded);
+    unsigned(table, width).copy(outside, table);
+    assert.throws(() => parseBinaryPlist(outside), /object offset is invalid/u);
+    assert.throws(() => parseBinaryPlist(encoded.subarray(0, encoded.length - 1)));
+  }
+  for (const width of [0, 9, 255]) {
+    const invalid = binaryPlist({ message: "synthetic" });
+    invalid[invalid.length - 26] = width;
+    assert.throws(() => parseBinaryPlist(invalid), /reference width is invalid/u);
+  }
+  const overflow = binaryPlist({ message: "synthetic" }, 8);
+  const table = Number(overflow.readBigUInt64BE(overflow.length - 8));
+  overflow.writeBigUInt64BE(BigInt(Number.MAX_SAFE_INTEGER) + 1n, table);
+  assert.throws(() => parseBinaryPlist(overflow), /integer is too large/u);
+});
 
 function rawX25519Private(bytes) {
   return createPrivateKey({

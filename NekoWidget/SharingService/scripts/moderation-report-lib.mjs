@@ -368,7 +368,9 @@ export function parseBinaryPlist(input) {
   const trailer = input.length - 32;
   const offsetIntegerSize = input[trailer + 6];
   const objectReferenceSize = input[trailer + 7];
-  if (![1, 2, 4, 8].includes(offsetIntegerSize)
+  // Foundation emits three-byte offsets for ordinary large report photos.
+  // Offset-table widths are byte counts, unlike integer marker exponents.
+  if (offsetIntegerSize < 1 || offsetIntegerSize > 8
       || ![1, 2, 4, 8].includes(objectReferenceSize)) {
     fail("binary plist reference width is invalid");
   }
