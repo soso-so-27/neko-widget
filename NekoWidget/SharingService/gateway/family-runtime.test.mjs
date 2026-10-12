@@ -50,5 +50,7 @@ test('real workerd preserves the exact deployed family and adds signed reply rea
       assert.equal((await current.json()).error.code,'invalid_authentication');
       assert.match(current.headers.get('cache-control'),/no-store/);
     }
+    const query=await mf.dispatchFetch('http://local/candidate/v2/reports/responses?after=untrusted');
+    assert.equal(query.status,400);assert.equal((await query.json()).error.code,'query_not_allowed');
   } finally { await mf.dispose(); }
 });
