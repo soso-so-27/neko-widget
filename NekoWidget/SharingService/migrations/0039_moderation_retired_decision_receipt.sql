@@ -39,6 +39,8 @@ CREATE VIEW moderation_resolution_current_challenges AS
      JOIN moderation_owner_source_snapshots snap ON snap.challenge_id=rc.challenge_id
      WHERE receipt.read_receipt_id=c.read_receipt_id AND (claim.expires_at>unixepoch()
       OR (c.operation='no_action' AND m.state IN ('deleted','expired') AND m.closed_at IS NOT NULL AND m.closed_at<=unixepoch()
+       AND NOT EXISTS(SELECT 1 FROM family_record_moments link JOIN family_records record ON record.space_id=link.space_id AND record.id=link.photo_id
+        WHERE link.moment_id=m.id AND link.space_id=m.space_id AND record.kind='photo' AND record.state='active' AND record.key_epoch=m.key_epoch)
        AND receipt.completed_at<=unixepoch() AND receipt.completed_at>unixepoch()-300))
       AND rc.case_reference_hmac=c.case_reference_hmac AND rc.case_reference_hmac_key_version=c.case_reference_hmac_key_version
       AND rc.operator_id=c.operator_id AND rc.credential_id_sha256=c.credential_id_sha256
