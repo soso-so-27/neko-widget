@@ -920,7 +920,7 @@ MODERATION_RETIRED_WINDOW_BLOBS = {'NekoWidget/SharingService/migrations/0039_mo
  'NekoWidget/SharingService/test/fixtures/moderation-resolution.ts': ('cc3dd2374341ff3af4eda193ffb999c450bad0fd',
                                                                       '4a717feb492d3bf2685e0946700a2a4b126fa0a7'),
  'NekoWidget/SharingService/test/moderation-owner-review-host.node-tests.mjs': ('09aded641e92a8aa8da0430d1b41376da18c94d4',
-                                                                                '4e2ab0f84217e918bb73779e9e457f7a532acb63'),
+                                                                                'bfdfccf0f7fc3b503543e0f763a8ca2d5d96293c'),
  'NekoWidget/SharingService/test/moderation-resolution.integration.test.ts': ('49794f1613880814f7b0a65297be11d24368a7a5',
                                                                               '931ea9ccc6472a37d9282329844f80657cb18142'),
  'NekoWidget/SharingService/test/moments.integration.test.ts': ('5b1f85cbbd3c22213c7aef623fd58f0682c9cc90',
