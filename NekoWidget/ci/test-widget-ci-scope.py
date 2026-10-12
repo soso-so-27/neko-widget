@@ -1003,6 +1003,166 @@ class VetSavedCatBoundaryTests(unittest.TestCase):
                 self.assertFalse(planner.covers_jobs(changed, required, self.head))
 
 
+class InternalReportMetadataRepairTests(unittest.TestCase):
+    def test_complete_repair_closure_rejects_every_other_input_and_unapproved_controls(self):
+        head, source, approved = 'c'*40, planner.INTERNAL_REPORT_METADATA_SOURCE, 'd'*40
+        blobs = dict(planner.INTERNAL_REPORT_METADATA_REPAIR_BLOBS)
+        blobs['NekoWidget/ci/moderation-v2-readiness.json'] = 'e'*40
+        raw = ''.join(f':100644 100644 {"a"*40} {blob} M\0{path}\0' for path,blob in blobs.items())
+        def prove(change=None):
+            def git(*args):
+                if args[0] == 'merge-base': return approved
+                if args[0] == 'show': return '' if change == 'registration' else f'INTERNAL_REPORT_METADATA_SOURCE = "{source}"'
+                if args[0] == 'diff':
+                    value = raw
+                    if change == 'extra': value += f':100644 100644 {"a"*40} {"b"*40} M\0NekoWidget/Shared/Privacy.swift\0'
+                    if change == 'mode': value = value.replace(':100644',' :100755',1)
+                    if change == 'type': value = value.replace('100644','120000',1)
+                    if change == 'missing': value = value.split('\0',2)[2]
+                    if change == 'duplicate': value += value.split('\0',2)[0]+'\0'+value.split('\0',2)[1]+'\0'
+                    return value
+                path = args[-1]
+                blob = 'a'*40 if args[1] == source else blobs.get(path,'b'*40)
+                if change == 'control' and args[1] == head and path in planner.INTERNAL_REPORT_CONTROLS: blob='f'*40
+                return f'100644 blob {blob}\t{path}'
+            with patch.object(planner,'INTERNAL_REPORT_METADATA_REPAIR_BLOBS',blobs), \
+                    patch.object(planner,'internal_report_candidate_inputs',return_value=change != 'source'),patch.object(planner,'git',side_effect=git):
+                return planner.internal_report_metadata_repair_inputs(head)
+        got = prove(); self.assertEqual(got['candidate_sha'],head)
+        self.assertEqual(got['source_sha'],source); self.assertEqual(got['repair_blobs'],blobs)
+        # After main integration the merge-base commit changes; identical approved
+        # control bytes must keep the candidate's exact release proof stable.
+        approved = 'f'*40
+        self.assertEqual(prove(),got)
+        for change in ('registration','extra','mode','type','missing','duplicate','control','source'):
+            self.assertIsNone(prove(change),change)
+        # Exercise the zero pin with the otherwise valid source, registration,
+        # tracked repair inputs and approved control fixture used above.
+        blobs['NekoWidget/ci/moderation-v2-readiness.json'] = '0'*40
+        self.assertIsNone(prove())
+
+    def fixture(self):
+        import datetime as dt, hashlib
+        now=dt.datetime(2026,10,11,14,tzinfo=dt.timezone.utc)
+        failure=dict(id=planner.INTERNAL_REPORT_METADATA_FAILURE_RUN,head_sha=planner.INTERNAL_REPORT_METADATA_FAILURE_HEAD,
+            head_branch='main',workflow_id=335014239,path='.github/workflows/testflight.yml',event='workflow_dispatch',
+            run_attempt=1,status='completed',conclusion='failure',display_title=f'TestFlight build 250 @ {planner.INTERNAL_REPORT_METADATA_SOURCE}',
+            created_at='2026-10-11T13:42:18Z',run_started_at='2026-10-11T13:42:18Z',updated_at='2026-10-11T13:52:26Z',
+            repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
+        names=re.findall(r'^      - name: (.+)$',(ROOT/'.github/workflows/testflight.yml').read_text(encoding='utf-8'),re.M)
+        self.assertEqual(len(names),31)
+        names = ['Set up job'] + names + ['Post Set up Node.js for public policy gate','Post Check out repository','Complete job']
+        steps=[dict(name=name,status='completed',conclusion='failure' if name=='Generate build-bound moderation release metadata'
+            else 'skipped' if 21 <= index < 29 else 'success') for index,name in enumerate(names)]
+        steps[names.index('Validate and upload IPA to TestFlight')]['conclusion']='skipped'
+        job=dict(id=planner.INTERNAL_REPORT_METADATA_FAILURE_JOB,run_id=failure['id'],head_sha=failure['head_sha'],
+            run_attempt=1,name='Archive, export IPA, and upload',status='completed',conclusion='failure',
+            started_at='2026-10-11T13:43:13Z',completed_at='2026-10-11T13:52:26Z',steps=steps)
+        log='Moderation v2 readiness verification failed: reviewed_code_changed'
+        pin=hashlib.sha256(log.encode()).hexdigest()
+        prefix='/repos/soso-so-27/neko-widget/actions'
+        api={f'{prefix}/runs/{failure["id"]}':failure,
+             f'{prefix}/runs/{failure["id"]}/attempts/1/jobs?per_page=100':{'total_count':1,'jobs':[job]},
+             f'{prefix}/jobs/{job["id"]}/logs':log}
+        return failure,job,log,pin,api,now
+
+    def test_failed_release_keeps_archive_export_success_metadata_failure_and_upload_skipped(self):
+        failure,job,log,pin,api,now=self.fixture()
+        def prove(values=api,stamp=now):
+            with patch.object(planner,'INTERNAL_REPORT_METADATA_FAILURE_LOG',pin):
+                return planner.internal_report_metadata_failure_evidence(values.__getitem__,stamp)
+        got=prove(); self.assertEqual(got['apple_upload'],'skipped'); self.assertEqual(got['build_number'],250)
+        for field,value in (('id',True),('head_sha','f'*40),('run_attempt',2),('status','in_progress'),('updated_at','2026-10-11T13:52:27Z')):
+            changed=copy.deepcopy(api);changed[next(k for k in api if k.endswith(str(failure['id'])))][field]=value
+            self.assertIsNone(prove(changed),(field,value))
+        key=next(k for k in api if '/attempts/' in k)
+        for name,conclusion in (('Archive app and widget','skipped'),('Export IPA','failure'),('Validate and upload IPA to TestFlight','success'),('Generate build-bound moderation release metadata','success')):
+            changed=copy.deepcopy(api)
+            next(s for s in changed[key]['jobs'][0]['steps'] if s['name']==name)['conclusion']=conclusion
+            self.assertIsNone(prove(changed),(name,conclusion))
+        changed=copy.deepcopy(api);changed[next(k for k in api if k.endswith('/logs'))]=log+'\nunknown'
+        self.assertIsNone(prove(changed))
+        self.assertIsNone(prove(stamp=now+planner.dt.timedelta(days=1)))
+
+    def test_graph_checks_original_composite_at_source_and_never_fabricates_candidate_backend(self):
+        source=planner.INTERNAL_REPORT_METADATA_SOURCE; head='c'*40
+        run={'id':planner.INTERNAL_REPORT_METADATA_RUN,'head_sha':source}
+        required=planner.required_jobs_from_scope(planner.INTERNAL_REPORT_SCOPE)
+        composite={'native_evidence':{'sha':planner.INTERNAL_REPORT_CORRECTION_SOURCE},
+            'backend_evidence':{w:{'run_id':identifier,'sha':source} for w,identifier in planner.INTERNAL_REPORT_METADATA_BACKEND_RUNS.items()}}
+        def prove(value=composite,index=None):
+            with patch.object(planner,'internal_report_metadata_repair_inputs',return_value={'candidate_sha':head}), \
+                    patch.object(planner,'internal_report_correction_graph',return_value=value) as original, \
+                    patch.object(planner,'internal_report_metadata_failure_evidence',return_value={'apple_upload':'skipped'}):
+                got=planner.internal_report_metadata_repair_graph(run,head,required,lambda _:index or {'total_count':0,'workflow_runs':[]},planner.dt.datetime.now(planner.dt.timezone.utc),[])
+                if got is not None:self.assertEqual(original.call_args.args[:3],(run,source,required))
+                return got
+        got=prove();self.assertEqual(got['backend_evidence'],composite['backend_evidence']);self.assertEqual(got['source_sha'],source)
+        self.assertIsNone(prove(None))
+        wrong=copy.deepcopy(composite);wrong['backend_evidence']['sharing-service.yml']['sha']=head
+        self.assertIsNone(prove(wrong))
+        wrong=copy.deepcopy(composite);wrong['backend_evidence']['sharing-service.yml']['run_id']+=1
+        self.assertIsNone(prove(wrong))
+        self.assertIsNone(prove(index={'total_count':1,'workflow_runs':[{'conclusion':'failure'}]}))
+
+    def test_plan_only_route_outputs_exact_proof_and_no_native_flags(self):
+        import contextlib,io,json
+        head='c'*40;source={'id':planner.INTERNAL_REPORT_METADATA_RUN,'head_sha':planner.INTERNAL_REPORT_METADATA_SOURCE}
+        proof={'kind':'internal-report-source-metadata-repair-v1','candidate_sha':head,'source_sha':source['head_sha']}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);event=root/'event.json';event.write_text('{}')
+            env={'GITHUB_EVENT_PATH':str(event),'GITHUB_OUTPUT':str(root/'output'),'GITHUB_STEP_SUMMARY':str(root/'summary'),
+                'GITHUB_SHA':head,'GITHUB_REPOSITORY':'soso-so-27/neko-widget','GITHUB_EVENT_NAME':'push',
+                'GITHUB_REF':'refs/heads/'+planner.INTERNAL_REPORT_METADATA_BRANCH,'GITHUB_SERVER_URL':'https://github.com'}
+            output=io.StringIO()
+            with patch.dict(os.environ,env,clear=True),patch.object(planner,'changed_paths',return_value=sorted(scope.INTERNAL_REPORT_METADATA_REPAIR_PATHS)), \
+                    patch.object(planner,'runtime_scope',return_value=scope.INTERNAL_REPORT_SCOPE),patch.object(planner,'internal_report_metadata_repair_inputs',return_value={'candidate_sha':head}), \
+                    patch.object(planner,'github_api',return_value=source),patch.object(planner,'executed_jobs',return_value=[]), \
+                    patch.object(planner,'internal_report_metadata_repair_graph',return_value=proof),patch.object(planner,'find_evidence') as ordinary, \
+                    patch.object(planner,'find_test_correction_evidence') as correction,contextlib.redirect_stdout(output):
+                planner.main()
+            ordinary.assert_not_called();correction.assert_not_called()
+            record=json.loads(next(x.split('=',1)[1] for x in output.getvalue().splitlines() if x.startswith('IOS_CI_PLAN_JSON=')))
+            self.assertEqual(record['internal_report_metadata_repair'],proof)
+            self.assertEqual((record['evidence_run_id'],record['evidence_sha']),(source['id'],source['head_sha']))
+            self.assertEqual(record['required_backend_runs'],planner.internal_report_requirements(source['head_sha']))
+            self.assertIsNone(record['test_correction_evidence'])
+            flags=(root/'output').read_text()
+            for flag in ('build','smoke','sharing','app_ui'):self.assertIn(flag+'=false\n',flags)
+
+    def test_preflight_retains_both_failures_diagnostic_and_first_candidate_cost(self):
+        import datetime as dt
+        spec=importlib.util.spec_from_file_location('metadata_repair_preflight',Path(__file__).with_name('preflight-ci.py'))
+        preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        p=preflight.planner;head='c'*40;now=dt.datetime(2026,10,11,14,tzinfo=dt.timezone.utc)
+        common=dict(status='completed',conclusion='success',created_at=(now-dt.timedelta(minutes=120)).isoformat(),
+            updated_at=now.isoformat(),run_attempt=1,event='push',path='.github/workflows/ios-build.yml',failed_tests=[],unsupported_failed_tests=[])
+        original=dict(common,id=p.INTERNAL_REPORT_CORRECTION_RUN,head_sha=p.INTERNAL_REPORT_CORRECTION_SOURCE,conclusion='failure',
+            unsupported_failed_tests=['privacy_failure'])
+        source=dict(common,id=p.INTERNAL_REPORT_METADATA_RUN,head_sha=p.INTERNAL_REPORT_METADATA_SOURCE)
+        failure=dict(common,id=p.INTERNAL_REPORT_METADATA_FAILURE_RUN,head_sha=p.INTERNAL_REPORT_METADATA_FAILURE_HEAD,
+            conclusion='failure',path='.github/workflows/testflight.yml')
+        diagnostic=dict(common,id=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN,head_sha=p.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE,
+            event='workflow_dispatch',path=preflight.DIAGNOSTIC_WORKFLOW)
+        proof=dict(kind='internal-report-source-metadata-repair-v1',candidate_sha=head,
+            source_sha=p.INTERNAL_REPORT_METADATA_SOURCE,source_run_id=p.INTERNAL_REPORT_METADATA_RUN)
+        result=dict(scope=p.INTERNAL_REPORT_SCOPE,head=head,required_jobs=list(p.required_jobs_from_scope(p.INTERNAL_REPORT_SCOPE)),
+            target_minutes=200,cost={'status':'reference','with_upload_minutes':[1,1]},ready=True)
+        runs=[original,source,failure,diagnostic]
+        got=preflight.apply_task_gate(copy.deepcopy(result),runs,now,metadata_repair=proof)
+        self.assertTrue(got['ready']);self.assertEqual(got['task']['failed_runs'],[original['id'],failure['id']])
+        self.assertEqual(got['task']['diagnostic_runs'],[diagnostic['id']]);self.assertEqual(got['task']['projected_total_minutes'],121)
+        unknown=dict(common,id=999,head_sha=head,conclusion='failure')
+        self.assertIn('internal_report_has_unresolved_candidate_failure',preflight.apply_task_gate(copy.deepcopy(result),runs+[unknown],now,metadata_repair=proof)['task']['blockers'])
+        active=dict(common,id=998,head_sha=head,status='in_progress',conclusion=None)
+        self.assertIn('ci_already_running',preflight.apply_task_gate(copy.deepcopy(result),runs+[active],now,metadata_repair=proof)['task']['blockers'])
+        short=dict(result,target_minutes=30)
+        self.assertIn('cumulative_cost_requires_replanning',preflight.apply_task_gate(short,runs,now,metadata_repair=proof)['task']['blockers'])
+        for missing in (original,source,failure,diagnostic):
+            with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(result),[r for r in runs if r is not missing],now,metadata_repair=proof)
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(result),runs,now,metadata_repair=dict(proof,candidate_sha='f'*40))
+
+
 class InternalReportNativeBoundaryTests(unittest.TestCase):
     def test_backend_snapshot_requires_registered_main_full_product_controls_and_rest(self):
         import hashlib
