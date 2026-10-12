@@ -2991,7 +2991,7 @@ def internal_report_metadata_failure_evidence(api, now):
     if len(upload) != 1 or upload[0].get("conclusion") != "skipped" or len(metadata) != 1 or metadata[0].get("conclusion") != "failure": return None
     log = api(f"{prefix}/jobs/{job['id']}/logs")
     if not isinstance(log, str): return None
-    normalized = "\n".join(re.sub(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.splitlines())
+    normalized = "\n".join(re.sub(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.removeprefix("\ufeff").splitlines())
     if (hashlib.sha256(normalized.encode()).hexdigest() != INTERNAL_REPORT_METADATA_FAILURE_LOG
             or "Moderation v2 readiness verification failed: reviewed_code_changed" not in normalized): return None
     return {"run_id": run["id"], "workflow_head_sha": run["head_sha"], "release_source_sha": INTERNAL_REPORT_METADATA_SOURCE,
