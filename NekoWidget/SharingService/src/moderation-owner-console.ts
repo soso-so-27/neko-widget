@@ -80,7 +80,7 @@ open.addEventListener('click',async()=>{
  const retiredNoAction=!resolution.targetAvailable&&resolution.canNoAction;
  const decisionExpiry=retiredNoAction?result.challenge.expiresAt*1000:expiry;
  expiresAt=decisionExpiry;timer=setTimeout(leave,Math.max(1,decisionExpiry-Date.now()));
- if(retiredNoAction)photoTimer=setTimeout(()=>{if(epoch===generation||receipt===id){eraseImage();status.textContent='写真の表示を終了しました。確認済みの通報は、本人認証して対応を確定できます。';lock(busy)}},Math.max(1,expiry-Date.now()));
+ if(retiredNoAction)photoTimer=setTimeout(()=>{if(epoch===generation||receipt===id){eraseImage();if(!busy)status.textContent='写真の表示を終了しました。確認済みの通報は、本人認証して対応を確定できます。';lock(busy)}},Math.max(1,expiry-Date.now()));
  const blob=await response.blob();if(epoch!==generation)return;if(blob.size<4||blob.size>950244||Date.now()>=expiry)throw Error('image');
  imageURL=URL.createObjectURL(blob);photo.src=imageURL;await photo.decode();if(epoch!==generation)return;
  if(Date.now()>=expiry)throw Error('expired');receipt=id;source=digest;expiresAt=decisionExpiry;photo.hidden=false;decision.hidden=false;
