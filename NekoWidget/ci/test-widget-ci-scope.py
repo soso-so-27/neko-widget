@@ -1223,6 +1223,116 @@ class ModerationRetiredReportScopeTests(unittest.TestCase):
                  'event':'push','status':status,'conclusion':conclusion,'created_at':now.isoformat(),'failed_tests':[],'unsupported_failed_tests':[]}
             self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result),[run],now,measure_baseline=True)['ready'])
 
+class ModerationRetiredDecisionWindowScopeTests(unittest.TestCase):
+    base, head = 'b'*40, 'a'*40
+
+    def rows(self):
+        return {path:[':000000' if before=='0'*40 else ':100644','100644',before,after,'A' if before=='0'*40 else 'M']
+                for path,(before,after) in planner.MODERATION_RETIRED_WINDOW_BLOBS.items()}
+
+    def select(self, rows=None, *, paths=None, raw=None, change=None):
+        import hashlib
+        rows=self.rows() if rows is None else rows
+        paths=list(rows) if paths is None else paths
+        tree=f'100644 blob {"d"*40}\tunchanged-product.swift\0'
+        def git(*args):
+            if args[0]=='merge-base':
+                if change=='ancestry' and '--is-ancestor' in args:raise subprocess.CalledProcessError(1,args)
+                return self.base
+            if args[0]=='rev-parse':return self.head if args[1]=='HEAD' else '0'*40
+            if args[0]=='diff':return raw if raw is not None else ''.join(' '.join(r)+'\0'+p+'\0' for p,r in rows.items())
+            if args[0]=='show':return '' if change=='registration' else 'MODERATION_RETIRED_WINDOW_SCOPE = "moderation-retired-decision-window-v1"'
+            if args[:3]==('ls-tree','-r','-z'):
+                return tree+(f'100644 blob {"e"*40}\tprivacy.swift\0' if change=='frozen' and args[3]==self.head else '')
+            if args[0]=='ls-tree':
+                ref,path=args[1],args[-1]
+                if path in planner.MODERATION_RETIRED_WINDOW_BLOBS:
+                    blob=planner.MODERATION_RETIRED_WINDOW_BLOBS[path][ref==self.head]
+                else:blob=('f' if change=='control' and ref==self.head else 'c')*40
+                return '' if blob=='0'*40 else f'100644 blob {blob}\t{path}'
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'MODERATION_RETIRED_WINDOW_TREE_SHA256',hashlib.sha256(tree.encode()).hexdigest()):
+            return planner.runtime_scope(paths,{}, {'GITHUB_SHA':self.head,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/codex/parser'})
+
+    def test_exact_reviewed_eight_window_changes_require_current_backend_and_reject_release(self):
+        selected=planner.MODERATION_RETIRED_WINDOW_SCOPE
+        self.assertEqual(self.select(),selected)
+        self.assertEqual(planner.required_jobs(list(self.rows()),selected),planner.MODERATION_RETIRED_WINDOW_JOBS)
+        self.assertEqual(planner.moderation_retired_window_requirements(self.head),[
+            {'workflow':planner.PRESERVATION_WORKFLOW if job==planner.PRESERVATION_JOB else '.github/workflows/sharing-service.yml','job':job,'head_sha':self.head,'event':'push','success_required':True}
+            for job in (*planner.MODERATION_OPERATOR_STARTUP_JOBS,planner.PRESERVATION_JOB)])
+        self.assertNotIn(selected,scope.SCOPES)
+        with self.assertRaises(ValueError):planner.required_jobs_from_scope(selected)
+        import json
+        package=json.loads((ROOT/'NekoWidget/SharingService/package.json').read_text(encoding='utf-8'))
+        command=package['scripts']['check:moderation-tool']
+        for name in ('moderation-report-tool','moderation-report-windows-boundary','moderation-bound-review',
+                     'moderation-owner-review-host','moderation-owner-r2-transport'):
+            self.assertIn(name+'.node-tests.mjs',command)
+        workflow=(ROOT/'.github/workflows/sharing-service.yml').read_text(encoding='utf-8')
+        self.assertIn('npm run check:moderation-tool',workflow)
+        self.assertIn('run: npm run check',workflow)
+        for job in planner.MODERATION_RETIRED_WINDOW_JOBS:self.assertIn('name: '+job,workflow)
+
+    def test_partial_unknown_product_control_workflow_and_permission_mix_are_full(self):
+        for path in self.rows():self.assertEqual(self.select({p:r for p,r in self.rows().items() if p!=path}),scope.FULL_SCOPE)
+        for path in ('NekoWidget/Shared/Privacy.swift','NekoWidget/NekoWidget/Info.plist',
+                     'NekoWidget/SharingService/src/index.ts','NekoWidget/SharingService/migrations/0040_new.sql',
+                     'NekoWidget/SharingService/scripts/moderation-owner-key-check-client-windows.ps1',
+                     '.github/workflows/sharing-service.yml','NekoWidget/ci/plan-ios-ci.py','unknown.txt'):
+            self.assertEqual(self.select(self.rows()|{path:[':100644','100644','c'*40,'d'*40,'M']}),scope.FULL_SCOPE,path)
+        self.assertEqual(self.select(paths=list(self.rows())+[next(iter(self.rows()))]),scope.FULL_SCOPE)
+        for change in ('registration','ancestry','control','frozen'):self.assertEqual(self.select(change=change),scope.FULL_SCOPE,change)
+
+    def test_exact_blob_pairs_raw_modes_types_and_handoffs_fail_closed(self):
+        for path,row in self.rows().items():
+            for index,value in ((0,':100755'),(1,'100755'),(1,'120000'),(2,'0'*40),(2,'e'*40),(3,'f'*40),(4,'A'),(4,'D')):
+                if value==row[index]:continue
+                changed=self.rows();changed[path]=row.copy();changed[path][index]=value
+                self.assertEqual(self.select(changed),scope.FULL_SCOPE,(path,index,value))
+        raw=''.join(' '.join(r)+'\0'+p+'\0' for p,r in self.rows().items())
+        for malformed in (raw+raw,raw+'malformed\0',raw.split('\0',2)[2]):self.assertEqual(self.select(raw=malformed),scope.FULL_SCOPE)
+        for status in ('A','M'):
+            rows=self.rows()|{'handoffs/parser.md':[':000000' if status=='A' else ':100644','100644','0'*40 if status=='A' else 'c'*40,'d'*40,status]}
+            self.assertEqual(self.select(rows),planner.MODERATION_RETIRED_WINDOW_SCOPE)
+            rows['handoffs/parser.md'][1]='120000';self.assertEqual(self.select(rows),scope.FULL_SCOPE)
+
+    def test_backend_plan_names_current_jobs_and_starts_no_mac_or_evidence_lookup(self):
+        import contextlib,io,json
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);event=root/'event.json';event.write_text('{}')
+            env={'GITHUB_EVENT_PATH':str(event),'GITHUB_OUTPUT':str(root/'output'),'GITHUB_STEP_SUMMARY':str(root/'summary'),
+                'GITHUB_SHA':self.head,'GITHUB_REPOSITORY':'soso-so-27/neko-widget','GITHUB_EVENT_NAME':'push'}
+            output=io.StringIO()
+            with patch.dict(os.environ,env,clear=True),patch.object(planner,'changed_paths',return_value=list(self.rows())), \
+                    patch.object(planner,'runtime_scope',return_value=planner.MODERATION_RETIRED_WINDOW_SCOPE), \
+                    patch.object(planner,'github_api') as api,contextlib.redirect_stdout(output):planner.main()
+            api.assert_not_called()
+            record=json.loads(next(x.split('=',1)[1] for x in output.getvalue().splitlines() if x.startswith('IOS_CI_PLAN_JSON=')))
+            self.assertEqual(record['required_backend_runs'],planner.moderation_retired_window_requirements(self.head))
+            self.assertIsNone(record['evidence_sha']);self.assertIsNone(record['evidence_run_id'])
+            flags=(root/'output').read_text()
+            for flag in ('build','smoke','sharing','app_ui'):self.assertIn(flag+'=false\n',flags)
+            for flag in ('lanes','matrix_lanes','app_ui_lanes'):self.assertIn(flag+'=[]\n',flags)
+
+    def test_preflight_is_unmeasured_with_first_measurement_gates_and_no_upload(self):
+        import datetime as dt
+        spec=importlib.util.spec_from_file_location('bplist_preflight',Path(__file__).with_name('preflight-ci.py'))
+        preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        selected=preflight.planner.MODERATION_RETIRED_WINDOW_SCOPE;history={'observations':[],'upload_minutes':12}
+        cost=preflight.observe_cost(selected,history,False)
+        self.assertEqual(cost['status'],'unmeasured');self.assertEqual(cost['samples'],[])
+        self.assertEqual(cost['measurement_job_timeouts_minutes'],planner.MODERATION_RETIRED_WINDOW_MEASUREMENT_TIMEOUTS)
+        with self.assertRaises(ValueError):preflight.observe_cost(selected,history,True)
+        now=dt.datetime.now(dt.timezone.utc)
+        result={'scope':selected,'head':self.head,'required_jobs':list(planner.MODERATION_RETIRED_WINDOW_JOBS),
+                'cost':cost,'target_minutes':30,'ready':False}
+        self.assertTrue(preflight.apply_task_gate(copy.deepcopy(result),[],now,measure_baseline=True)['ready'])
+        for status,conclusion in (('completed','failure'),('in_progress',None),('completed','success')):
+            run={'id':10,'path':preflight.planner.BILLING_WORKFLOW,'head_branch':'codex/parser','head_sha':self.head,
+                 'event':'push','status':status,'conclusion':conclusion,'created_at':now.isoformat(),'failed_tests':[],'unsupported_failed_tests':[]}
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result),[run],now,measure_baseline=True)['ready'])
+
 
 class InternalReportMetadataRepairTests(unittest.TestCase):
     def test_complete_repair_closure_rejects_every_other_input_and_unapproved_controls(self):
