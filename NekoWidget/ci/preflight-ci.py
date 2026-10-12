@@ -1016,7 +1016,7 @@ def photo_correction_replay_cost(result, correction, include_upload, history):
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_ENROLLMENT_CEREMONY_SCOPE, planner.MODERATION_INITIAL_ADMISSION_SCOPE, planner.MODERATION_OPERATOR_STARTUP_SCOPE, planner.MODERATION_REPORT_BPLIST_SCOPE, planner.MODERATION_OPERATOR_HOST_SCOPE, planner.MODERATION_OWNER_FLOW_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_ENROLLMENT_CEREMONY_SCOPE, planner.MODERATION_INITIAL_ADMISSION_SCOPE, planner.MODERATION_OPERATOR_STARTUP_SCOPE, planner.MODERATION_REPORT_BPLIST_SCOPE, planner.MODERATION_RETIRED_SCOPE, planner.MODERATION_OPERATOR_HOST_SCOPE, planner.MODERATION_OWNER_FLOW_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.BILLING_LOCAL_PREPARATION_SCOPE):
@@ -1068,6 +1068,10 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeouts_minutes": dict(planner.MODERATION_REPORT_BPLIST_JOB_TIMEOUTS),
                     "note": "First measurement of the four existing same-SHA Sharing push jobs for the frozen Node parser fix. Their 5/10/10/20 minute timeouts are bounds, not observed or guaranteed durations. App/Worker/migration inputs are unchanged; no Mac, upload or release evidence."}
+        if selected == planner.MODERATION_RETIRED_SCOPE:
+            return {"status": "unmeasured", "samples": [],
+                    "measurement_job_timeouts_minutes": dict(planner.MODERATION_RETIRED_MEASUREMENT_TIMEOUTS),
+                    "note": "First measurement of four Sharing jobs and the automatically triggered Preservation job at the same frozen candidate SHA. Timeouts are bounds, not observed durations; no Mac/upload or runtime approval."}
         if selected == planner.MODERATION_OPERATOR_STARTUP_SCOPE:
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeouts_minutes": dict(planner.MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS),
@@ -1198,6 +1202,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.MODERATION_INITIAL_ADMISSION_SCOPE else
               "Exact reviewed Node binary-plist offset-width correction; all other tracked product/workflow/permission inputs frozen, four owning same-SHA Sharing jobs preserve Node CLI, bound crypto/owner and Windows custody checks; no native, upload, runtime-application or release evidence"
               if selected == planner.MODERATION_REPORT_BPLIST_SCOPE else
+              "Exact local retired-report no-action repair; same-SHA owning Sharing four jobs plus Preservation required; all other product inputs frozen; no native, upload or live-operation evidence"
+              if selected == planner.MODERATION_RETIRED_SCOPE else
               "Exact local loopback startup, isolated D1 and Access-authenticated transport; public/disabled entrypoints and existing authentication stay fixed; all four same-SHA Sharing workflow jobs must execute successfully on the owning push; unchanged Preservation inputs retain prior successful evidence; no native, live-cloud or release evidence"
               if selected == planner.MODERATION_OPERATOR_STARTUP_SCOPE else
               "Exact local enrollment-to-triage host with snapshotted shared installation and current authorization; public/disabled entrypoints and existing authentication stay fixed; all four same-SHA Sharing workflow jobs plus the automatically triggered Preservation job must execute successfully on the owning push; no native, live-cloud or release evidence"
@@ -1248,6 +1254,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                if selected == planner.MODERATION_OPERATOR_STARTUP_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_report_bplist_requirements(head)}
                if selected == planner.MODERATION_REPORT_BPLIST_SCOPE else {}),
+            **({"required_backend_runs": planner.moderation_retired_requirements(head)}
+               if selected == planner.MODERATION_RETIRED_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_operator_host_requirements(head)}
                if selected == planner.MODERATION_OPERATOR_HOST_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_owner_flow_requirements(head)}
