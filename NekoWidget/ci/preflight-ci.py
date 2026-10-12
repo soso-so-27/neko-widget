@@ -720,6 +720,16 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                             if owner_correction else set())
     if internal_correction:
         fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
+    if correction_evidence is not None and result.get('scope') == scope.REPORT_REPLY_ENTRY_SCOPE:
+        expected = {'kind':'report-reply-readiness-build-recovery-v1','run_id':planner.REPLY_READINESS_RUN,
+                    'sha':planner.REPLY_READINESS_SOURCE,'owning_jobs_to_execute':[planner.BUILD],
+                    'failed_build_job_id':planner.REPLY_READINESS_JOB_IDS[planner.BUILD],
+                    'failed_build_log_sha256':planner.REPLY_READINESS_LOG_HASHES[planner.BUILD]}
+        if any(correction_evidence.get(k)!=v for k,v in expected.items()):raise ValueError('Unregistered reply readiness correction')
+        source=[r for r in runs if r['id']==planner.REPLY_READINESS_RUN]
+        if len(source)!=1 or source[0].get('head_sha')!=planner.REPLY_READINESS_SOURCE or (source[0].get('status'),source[0].get('conclusion'))!=('completed','failure'):raise ValueError('Retained reply failure history differs')
+        fixed_owner_failures.add(planner.REPLY_READINESS_RUN)
+
     if metadata_repair is not None:
         source = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_METADATA_RUN), {})
         original = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_CORRECTION_RUN), {})
@@ -936,6 +946,19 @@ def internal_report_correction_cost(result, correction, include_upload, history)
         "note": "Fresh full Build, owning UI and five same-candidate backends are required. Only two completed original Photos/runtime jobs retain their actual original SHA. The Release plist defect/failure and cumulative/active history remain recorded. 60 minutes is the immutable parallel owning UI timeout, not an observed duration."}
     result["cost_review_required"] = upper > result["target_minutes"]
     result["ready"] = not result["cost_review_required"]
+    return result
+
+
+def report_reply_readiness_cost(result, correction, include_upload, history):
+    if result['scope'] != scope.REPORT_REPLY_ENTRY_SCOPE or correction is None: return result
+    upload = float(history['upload_minutes']) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError('Invalid upload timing reference')
+    result['cost'] = {'status':'reference','ci_minutes':[0,30], 'with_upload_minutes':[0,30+upload], 'samples':[],
+        'includes_future_rework':False,
+        'required_jobs_to_execute':[planner.BUILD],'native_input_reuse':correction['jobs'],
+        'reference':'Pinned Build30 minute timeout plus recorded upload reference; not measured new-scope speed; retains original failed/diagnostic time and unknown queues.'}
+    result['cost_review_required'] = 30+upload > result['target_minutes']
+    result['ready'] = not result['cost_review_required']
     return result
 
 
@@ -1394,6 +1417,8 @@ def main(argv=None):
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
+            result = report_reply_readiness_cost(result, correction, args.include_upload, history)
+
             result = owner_cloud_correction_cost(result, correction, args.include_upload, history)
             result = internal_report_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
