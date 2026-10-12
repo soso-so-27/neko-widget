@@ -1144,7 +1144,7 @@ class ModerationRetiredReportScopeTests(unittest.TestCase):
         with patch.object(planner,'git',side_effect=git),patch.object(planner,'MODERATION_RETIRED_TREE_SHA256',hashlib.sha256(tree.encode()).hexdigest()):
             return planner.runtime_scope(paths,{}, {'GITHUB_SHA':self.head,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/codex/parser'})
 
-    def test_exact_reviewed_six_changes_require_current_backend_and_reject_release(self):
+    def test_exact_reviewed_eight_changes_require_current_backend_and_reject_release(self):
         selected=planner.MODERATION_RETIRED_SCOPE
         self.assertEqual(self.select(),selected)
         self.assertEqual(planner.required_jobs(list(self.rows()),selected),planner.MODERATION_RETIRED_JOBS)
