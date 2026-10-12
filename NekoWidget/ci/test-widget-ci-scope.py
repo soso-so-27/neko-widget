@@ -24,6 +24,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReportReplyEntryBoundaryTests(unittest.TestCase):
+    def test_preflight_routes_reply_scope_through_required_recovery_verification(self):
+        import contextlib, io
+        spec = importlib.util.spec_from_file_location('reply_routing_preflight', Path(__file__).with_name('preflight-ci.py'))
+        preflight = importlib.util.module_from_spec(spec); spec.loader.exec_module(preflight)
+        candidate = {'scope': scope.REPORT_REPLY_ENTRY_SCOPE, 'head': 'a'*40,
+                     'required_jobs': list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE))}
+        errors = io.StringIO()
+        with patch.object(preflight, 'candidate_plan', return_value=candidate), \
+             patch.object(preflight, 'read_task_runs', return_value=[]), \
+             patch.object(preflight.planner, 'git', return_value=planner.REPLY_READINESS_BRANCH), \
+             patch.object(preflight.planner, 'find_test_correction_evidence', side_effect=ValueError('Required recovery reached')) as verifier, \
+             contextlib.redirect_stderr(errors):
+            self.assertEqual(preflight.main([]), 2)
+        verifier.assert_called_once()
+        self.assertIn('Required recovery reached', errors.getvalue())
+
     def test_readiness_cost_rejects_invalid_upload_and_keeps_reference_bounds(self):
         spec = importlib.util.spec_from_file_location('reply_cost_preflight', Path(__file__).with_name('preflight-ci.py'))
         preflight = importlib.util.module_from_spec(spec); spec.loader.exec_module(preflight)
