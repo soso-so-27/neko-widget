@@ -934,6 +934,33 @@ MODERATION_RETIRED_WINDOW_JOBS = tuple(MODERATION_RETIRED_WINDOW_JOB_TIMEOUTS)
 MODERATION_RETIRED_WINDOW_MEASUREMENT_TIMEOUTS = {**MODERATION_RETIRED_WINDOW_JOB_TIMEOUTS, PRESERVATION_JOB: 5}
 
 
+MODERATION_RESPONSE_READER_SCOPE = "moderation-response-reader-v1"
+MODERATION_RESPONSE_READER_BLOBS = {'.gitattributes': ('f0f53b80054bce613de0be561d59cd950260f29b', '79a5639f7b68e4aab4f5447a283afbf86cd53c96'),
+ 'NekoWidget/SharingService/gateway/family-entry.mjs': ('02bf231a8642f465d83d7990ad154d89d2033b7c',
+                                                        'a0c39fc77662d2205c3512a7e28e27343e4ed850'),
+ 'NekoWidget/SharingService/gateway/family-response-router.mjs': ('0000000000000000000000000000000000000000',
+                                                                  '2b4e3480768500ff1c3502a3f7c76f281217f98b'),
+ 'NekoWidget/SharingService/gateway/family-response-router.test.mjs': ('0000000000000000000000000000000000000000',
+                                                                       '5e510f017fc855d24f4e41713f06367ac6e2d83b'),
+ 'NekoWidget/SharingService/gateway/family-runtime.test.mjs': ('6bff736e1f409f704e00a5f4229064ca1c2beb8e',
+                                                               'fc0a7290cb173adc1ff93cd99333ecbb07bd3064'),
+ 'NekoWidget/SharingService/gateway/family-v6-frozen.json': ('0000000000000000000000000000000000000000',
+                                                             '24698587df6cf591ef25fa0faed8d5569b87e0e2'),
+ 'NekoWidget/SharingService/gateway/family-v6-frozen.mjs': ('0000000000000000000000000000000000000000',
+                                                            'f68ab4a8999ec6de6448d3164588adc34a88082f'),
+ 'NekoWidget/SharingService/src/moderation-response-entry.ts': ('0000000000000000000000000000000000000000',
+                                                                'd753208b2bd3faa060e2aa0d1e51293651cd67f9'),
+ 'NekoWidget/SharingService/test/moments.integration.test.ts': ('709a8bc31a5f1450f14c3698e61f965e9916844c',
+                                                                'ca5e713f95bcfa55c34f6a032307f5cc1e64bc4f')}
+MODERATION_RESPONSE_READER_PATHS = frozenset(MODERATION_RESPONSE_READER_BLOBS)
+MODERATION_RESPONSE_READER_CONTROLS = INTERNAL_REPORT_CONTROLS
+MODERATION_RESPONSE_READER_TREE_SHA256 = "f0926974dd27dae8ccd2637cf11cc73af4efe369cd021a9b33774dc7ca1d51d1"
+MODERATION_RESPONSE_READER_WORKFLOW = ".github/workflows/sharing-service.yml"
+MODERATION_RESPONSE_READER_JOB_TIMEOUTS = dict(MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS)
+MODERATION_RESPONSE_READER_JOBS = tuple(MODERATION_RESPONSE_READER_JOB_TIMEOUTS)
+MODERATION_RESPONSE_READER_MEASUREMENT_TIMEOUTS = {**MODERATION_RESPONSE_READER_JOB_TIMEOUTS, PRESERVATION_JOB: 5}
+
+
 # Exact local owner read/no_action decision/reply, migration and owning checks.
 # Complete18-path product pin; public/disabled entrypoints and crypto stay fixed.
 MODERATION_OWNER_FLOW_SCOPE = "moderation-owner-flow-v1"
@@ -1809,6 +1836,39 @@ def moderation_retired_window_requirements(head):
              "event": "push", "success_required": True} for job in (*MODERATION_RETIRED_WINDOW_JOBS, PRESERVATION_JOB)]
 
 
+def moderation_response_reader_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == MODERATION_RESPONSE_READER_PATHS)
+
+
+def moderation_response_reader_backend_only(paths, base, head):
+    """Exact reviewed deployed family reply reader; all other product inputs remain frozen."""
+    if not moderation_response_reader_paths_only(paths): return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=MODERATION_RESPONSE_READER_BLOBS,
+            companion_paths=frozenset(), companion_digests={}, companion_name="unused"): return False
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    registration = 'MODERATION_RESPONSE_READER_SCOPE = "moderation-response-reader-v1"'
+    if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return False
+    for path in MODERATION_RESPONSE_READER_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not trusted.startswith("100644 blob ") or any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)): return False
+    for ref in (base, head):
+        for path, pair in MODERATION_RESPONSE_READER_BLOBS.items():
+            blob = pair[0 if ref == base else 1]
+            expected = "" if blob == "0" * 40 else f"100644 blob {blob}\t{path}"
+            if git("ls-tree", ref, "--", path) != expected: return False
+        rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+        frozen = [row for row in rows if not is_handoff(row.split("\t", 1)[1])
+                  and row.split("\t", 1)[1] not in MODERATION_RESPONSE_READER_PATHS | MODERATION_RESPONSE_READER_CONTROLS]
+        if hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != MODERATION_RESPONSE_READER_TREE_SHA256: return False
+    return True
+
+
+def moderation_response_reader_requirements(head):
+    return [{"workflow": PRESERVATION_WORKFLOW if job == PRESERVATION_JOB else MODERATION_RESPONSE_READER_WORKFLOW, "job": job, "head_sha": head,
+             "event": "push", "success_required": True} for job in (*MODERATION_RESPONSE_READER_JOBS, PRESERVATION_JOB)]
+
+
 def moderation_operator_startup_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == MODERATION_OPERATOR_STARTUP_PATHS
@@ -2274,6 +2334,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return MODERATION_RETIRED_JOBS
     if runtime_scope == MODERATION_RETIRED_WINDOW_SCOPE and moderation_retired_window_paths_only(paths):
         return MODERATION_RETIRED_WINDOW_JOBS
+    if runtime_scope == MODERATION_RESPONSE_READER_SCOPE and moderation_response_reader_paths_only(paths):
+        return MODERATION_RESPONSE_READER_JOBS
     if runtime_scope == MODERATION_OPERATOR_HOST_SCOPE and moderation_operator_host_paths_only(paths):
         return MODERATION_OPERATOR_HOST_JOBS
     if runtime_scope == MODERATION_OWNER_FLOW_SCOPE and moderation_owner_flow_paths_only(paths):
@@ -3375,6 +3437,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (MODERATION_REPORT_BPLIST_SCOPE, moderation_report_bplist_paths_only, moderation_report_bplist_backend_only),
                                        (MODERATION_RETIRED_SCOPE, moderation_retired_paths_only, moderation_retired_backend_only),
                                        (MODERATION_RETIRED_WINDOW_SCOPE, moderation_retired_window_paths_only, moderation_retired_window_backend_only),
+                                       (MODERATION_RESPONSE_READER_SCOPE, moderation_response_reader_paths_only, moderation_response_reader_backend_only),
                                        (MODERATION_INITIAL_ADMISSION_SCOPE, moderation_initial_admission_paths_only, moderation_initial_admission_backend_only),
                                        (MODERATION_OPERATOR_STARTUP_SCOPE, moderation_operator_startup_paths_only, moderation_operator_startup_backend_only),
                                        (MODERATION_OPERATOR_HOST_SCOPE, moderation_operator_host_paths_only, moderation_operator_host_backend_only),
@@ -5420,7 +5483,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -5457,6 +5520,8 @@ def main() -> None:
                  if selected_scope == MODERATION_RETIRED_SCOPE else {}),
               **({"required_backend_runs": moderation_retired_window_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_RETIRED_WINDOW_SCOPE else {}),
+              **({"required_backend_runs": moderation_response_reader_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == MODERATION_RESPONSE_READER_SCOPE else {}),
               **({"required_backend_runs": moderation_operator_host_requirements(env["GITHUB_SHA"])}
                  if selected_scope == MODERATION_OPERATOR_HOST_SCOPE else {}),
               **({"required_backend_runs": moderation_owner_flow_requirements(env["GITHUB_SHA"])}
@@ -5491,6 +5556,10 @@ def main() -> None:
             elif selected_scope == MODERATION_RETIRED_WINDOW_SCOPE:
                 summary = ("## Backend-only verification\n\nThe exact reviewed retired-report decision window requires the owning same-SHA Sharing four jobs plus Preservation job: "
                            + "; ".join(row["job"] for row in moderation_retired_window_requirements(env["GITHUB_SHA"]))
+                           + ". All existing privacy, migration, identity, crypto, Windows custody and worker checks remain mandatory. No Mac, upload, release or live-operation success is certified by this plan.\n")
+            elif selected_scope == MODERATION_RESPONSE_READER_SCOPE:
+                summary = ("## Backend-only verification\n\nThe exact reviewed deployed family reply reader requires the owning same-SHA Sharing four jobs plus Preservation job: "
+                           + "; ".join(row["job"] for row in moderation_response_reader_requirements(env["GITHUB_SHA"]))
                            + ". All existing privacy, migration, identity, crypto, Windows custody and worker checks remain mandatory. No Mac, upload, release or live-operation success is certified by this plan.\n")
             elif selected_scope == MODERATION_AI_DURABLE_SCOPE:
                 requirement = (moderation_ai_durable_reason(env["GITHUB_SHA"]) + ": "
