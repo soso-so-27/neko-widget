@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-first-connection",
-    "issuedAtMs": 1791722430444,
+    "issuedAtMs": 1791767506174,
     "expiresAtMs": 1791781542930,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -51,12 +51,12 @@
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
     "codeSHA256": {
-      ".github/workflows/testflight.yml": "a58bb277865f4967c0696afb9fedf587b175a94e83c58fc9a5383fb5529f4581",
+      ".github/workflows/testflight.yml": "49ae881151bcb713ea83f80bd56cafb82f4d088c3263e8be01b769ff074000c9",
       "NekoWidget/ci/moderation_readiness.py": "c8c252cbd0375858ae2510dfa56c6804149d1ae15f58167042faba89c4eba27f",
       "NekoWidget/ci/verify-moderation-readiness.mjs": "c358c5eb41149faa9d1fc35187413f10cc4e9a4efb9f2364fca4536d8b23a88b",
       "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
       "NekoWidget/ci/internal_report_release.py": "09addcb49bce3f48f33355495268e1718b7eb9e3dc12fa11f7203678a0ba0305",
-      "NekoWidget/ci/release-testflight.py": "cf15f99cc311d630730aa3d2d7d4a6f010d97dd7bab3a9e786e4c3703514110b",
+      "NekoWidget/ci/release-testflight.py": "0dddf7ad67a9ebdc611b1adbd83803d92bde7cb1c3316b809f3bcabca3d5b3e1",
       "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
       "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "p447U9kA6i8i4zC4ivXBSobHAUocK89JMRW5pktLUB1XVSjG7gNkDsuDzi61rCBqHYq2BFgDV2HDKy6WaWTZCQ"
+      "signatureBase64url": "cTt0zIsuBcjDyq9qWH_9ZF0nrgP9GbQ1eR5TQ78kORTqsgyk9tipqrw9iKazxqwi5NOXTTteV_tqyJFga9BHCw"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "AEB-lKQlwP1WFqqwb80ykZwncNqvmgd9F2nPN6p4ToF3L2r9MiGZCKpSOt9BNRwiJGTha1hUS0IQD-h28F3nAA"
+      "signatureBase64url": "Fz8AEJJ4JWS-DEWg1Xx38j9e2C8frd8EaEIbcXEJQVC6Yj0VxhohfeV17fqbmGRUmJxAxYfiztZmlnJ6iyHfCw"
     }
   ]
 }
