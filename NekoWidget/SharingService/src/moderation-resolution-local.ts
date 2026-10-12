@@ -28,10 +28,13 @@ const activeTargetSQL=`((m.state='committed' AND m.closed_at IS NULL AND m.unrec
  AND NOT EXISTS(SELECT 1 FROM moment_object_deletions d WHERE d.object_key=m.object_key OR (d.object_type='moment' AND d.owner_id=m.id)))
  OR EXISTS(SELECT 1 FROM family_record_moments link JOIN family_records record ON record.space_id=link.space_id AND record.id=link.photo_id
   WHERE link.moment_id=m.id AND link.space_id=m.space_id AND record.kind='photo' AND record.state='active' AND record.key_epoch=m.key_epoch))`;
+// A retained report can be completed after sharing ends. This condition only
+// admits no_action; it never makes a retired photo readable or releasable.
+const retiredTargetSQL=`(m.state IN ('deleted','expired') AND m.closed_at IS NOT NULL AND m.closed_at<=unixepoch())`;
 
-async function target(db:D1Database,reference:string,version:number):Promise<Target|null> {
+async function target(db:D1Database,reference:string,version:number,operation:Operation='hide'):Promise<Target|null> {
  return db.prepare(`SELECT m.id AS moment_id,m.space_id,m.key_epoch,m.ciphertext_sha256,m.committed_at,m.unreceived_expires_at
-  FROM moments m WHERE ${activeTargetSQL}
+  FROM moments m WHERE (${activeTargetSQL}${operation==='no_action'?` OR ${retiredTargetSQL}`:''})
   AND EXISTS(SELECT 1 FROM moment_spaces WHERE space_id=m.space_id AND state='active')
   AND (EXISTS(SELECT 1 FROM moderation_resolution_case_states s WHERE s.case_reference_hmac=? AND s.case_reference_hmac_key_version=? AND s.moment_id=m.id)
    OR (NOT EXISTS(SELECT 1 FROM moderation_resolution_events e JOIN moderation_resolution_challenges c USING(challenge_id)
@@ -60,7 +63,7 @@ function sourceGuard(db:D1Database,s:LocalModerationReviewSource) {
 }
 async function issue(env:LocalModerationOwnerEnvironment,access:AuthenticatedModerationOperatorAccess,actor:Actor,
  reference:string,version:number,operation:Operation,identity:string,revision:number,path:string,policy:number) {
- const t=await target(env.db,reference,version); if(!t)fail();
+ const t=await target(env.db,reference,version,operation); if(!t)fail();
  const previous=await caseState(env.db,reference,version), effective=await momentState(env.db,t.moment_id);
  if(effective.revision!==revision||previous?.operation==='no_action')fail();
  let sourceSHA:string;
@@ -158,7 +161,10 @@ export async function routeLocalModerationResolution(request:Request,env:LocalMo
        THEN r.moment_id ELSE NULL END
      LEFT JOIN moderation_moment_states ms ON ms.moment_id=m.id`).bind(ref,version)]);
    const state=result[2]!.results[0] as {event_id:string|null;operation:Operation|null;revision:number;hidden:number;available:number};
-   return json({caseReferenceHmac:ref,targetAvailable:state.available===1,revision:state.revision,hidden:state.available===1?state.hidden===1:null,
+   const noActionTarget=state.operation!=='hide'&&state.operation!=='no_action'?await target(env.db,ref,version,'no_action'):null;
+   const report=noActionTarget?await readLocalModerationReviewSource(env.db,{caseReferenceHmac:ref,caseReferenceHmacKeyVersion:version}):null;
+   const canNoAction=report!==null&&report.metadata.momentId===noActionTarget?.moment_id;
+   return json({caseReferenceHmac:ref,targetAvailable:state.available===1,canNoAction,revision:state.revision,hidden:state.available===1?state.hidden===1:null,
     restrictionEventId:state.operation==='hide'?state.event_id:null,canRelease:state.available===1&&state.operation==='hide',operation:state.operation});
   }
   const operation=m[3]!.split('/')[0] as Operation,identity=m[4]!,revision=Number(m[5]);if(revision>=2147483647)fail(400);
