@@ -217,7 +217,7 @@ def dispatch_recovery(result, recovery, output):
     result["dispatch"] = {"state": "updated" if recovery.get("refresh") else "created", **payload}
 
 
-def read_task_runs(head=None, recovery=None):
+def read_task_runs(head=None, recovery=None, metadata_repair=False):
     # A task uses matching codex/<task> and diagnostic/<task> branches. Look at
     # both, so a diagnostic push cannot reset the time/failure accounting.
     branch = planner.git("branch", "--show-current")
@@ -225,6 +225,10 @@ def read_task_runs(head=None, recovery=None):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
+    if metadata_repair:
+        refs.update(task_refs(planner.INTERNAL_REPORT_CORRECTION_BRANCH))
+        failed_release = github(f"repos/{REPOSITORY}/actions/runs/{planner.INTERNAL_REPORT_METADATA_FAILURE_RUN}")
+        runs[failed_release["id"]] = failed_release
     if recovery:
         refs.add(recovery["recovery_branch"])
     for ref in refs:
@@ -623,7 +627,7 @@ def moderation_resolution_diagnostic_backend_recovery(result, runs, now=None):
             "checked_at": now.isoformat(), "native_evidence": False, "release_evidence": False}
 
 
-def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None, diagnostic_backend_recovery=None):
+def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None, diagnostic_backend_recovery=None, metadata_repair=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -716,6 +720,29 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                             if owner_correction else set())
     if internal_correction:
         fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
+    if metadata_repair is not None:
+        source = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_METADATA_RUN), {})
+        original = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_CORRECTION_RUN), {})
+        release_failure = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_METADATA_FAILURE_RUN), {})
+        diagnostic = next((run for run in runs if run['id'] == planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN), {})
+        if (result.get('scope') != planner.INTERNAL_REPORT_SCOPE or correction_evidence is not None
+                or metadata_repair.get('kind') != 'internal-report-source-metadata-repair-v1'
+                or metadata_repair.get('candidate_sha') != result.get('head')
+                or metadata_repair.get('source_sha') != planner.INTERNAL_REPORT_METADATA_SOURCE
+                or metadata_repair.get('source_run_id') != planner.INTERNAL_REPORT_METADATA_RUN
+                or source.get('head_sha') != planner.INTERNAL_REPORT_METADATA_SOURCE
+                or (source.get('status'),source.get('conclusion')) != ('completed','success')
+                or original.get('head_sha') != planner.INTERNAL_REPORT_CORRECTION_SOURCE
+                or (original.get('status'),original.get('conclusion')) != ('completed','failure')
+                or release_failure.get('head_sha') != planner.INTERNAL_REPORT_METADATA_FAILURE_HEAD
+                or (release_failure.get('status'),release_failure.get('conclusion')) != ('completed','failure')
+                or release_failure.get('run_attempt') != 1 or release_failure.get('path') != '.github/workflows/testflight.yml'
+                or diagnostic.get('head_sha') != planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE
+                or (diagnostic.get('status'),diagnostic.get('conclusion')) != ('completed','success')):
+            raise ValueError('Metadata repair proof differs from retained source, diagnostic or release failure history')
+        fixed_owner_failures.update({planner.INTERNAL_REPORT_CORRECTION_RUN, planner.INTERNAL_REPORT_METADATA_FAILURE_RUN})
+        if any(run['id'] not in fixed_owner_failures and run['path'] != DIAGNOSTIC_WORKFLOW for run in failed):
+            blockers.append('internal_report_has_unresolved_candidate_failure')
     correction_cases = (planner.PRESERVATION_EXPORT_CORRECTION_CASES if export_correction else
                         planner.PHOTO_SMOKE_CORRECTION_CASES if photo_smoke_correction else
                         {planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
@@ -802,10 +829,12 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     if (projected is None and not first_measurement) or (projected is not None and projected > result["target_minutes"]):
         blockers.append("cumulative_cost_requires_replanning")
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
-                      "active_runs": active, "diagnostic_runs": [run["id"] for run in diagnostics],
+                      "active_runs": active, "diagnostic_runs": sorted({run["id"] for run in diagnostics} |
+                          ({planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN} if metadata_repair is not None else set())),
                       "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
                       "test_correction_evidence": correction_evidence,
+                      **({"internal_report_metadata_repair": metadata_repair} if metadata_repair is not None else {}),
                       **({"failed_jobs_to_repeat": chained["source_failed_jobs"]} if chained else {}),
                       "known_test_failure_diagnosis": diagnosed_failure,
                       "recovery": recovery,
@@ -1292,15 +1321,40 @@ def main(argv=None):
                 recovery = recovery_source(identifier, result["head"], original["head_branch"], existing=True,
                                            refresh=result["head"] != original["head_sha"])
                 recovery["control_sha"] = control_sha
-            runs = read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"])
+            is_metadata_repair = (result["scope"] == planner.INTERNAL_REPORT_SCOPE
+                and planner.internal_report_metadata_repair_inputs(result["head"]) is not None)
+            runs = (read_task_runs(result["head"], metadata_repair=True) if is_metadata_repair else
+                    read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"]))
             correction = None
+            metadata_repair = None
+            if is_metadata_repair:
+                if branch != planner.INTERNAL_REPORT_METADATA_BRANCH or recovery is not None:
+                    raise ValueError('Metadata repair requires its exact owning candidate branch')
+                api = lambda path: github(path.removeprefix('/'), raw=path.endswith('/logs'))
+                source = api(f'/repos/{REPOSITORY}/actions/runs/{planner.INTERNAL_REPORT_METADATA_RUN}')
+                metadata_repair = planner.internal_report_metadata_repair_graph(source, result['head'], tuple(result['required_jobs']),
+                    api, dt.datetime.now(dt.timezone.utc), planner.executed_jobs(source, REPOSITORY, api))
+                if metadata_repair is None: raise ValueError('Metadata repair source proof unavailable; no Mac job authorized')
+                result['internal_report_metadata_repair'] = metadata_repair
+                result['required_backend_runs'] = planner.internal_report_requirements(planner.INTERNAL_REPORT_METADATA_SOURCE)
+                result['full_cost_before_metadata_repair'] = result['cost']
+                upload = float(history['upload_minutes']) if args.include_upload else 0
+                if not math.isfinite(upload) or upload < 0: raise ValueError('Invalid upload timing observation')
+                reference = 47 / 60
+                result['cost'] = {'status': 'reference', 'ci_minutes': [reference,reference],
+                    'with_upload_minutes': [round(reference + upload,1)] * 2,
+                    'reference_runs': [38135057790], 'owning_jobs': [planner.PLAN_JOB], 'samples': [],
+                    'scope_unmeasured': True, 'includes_future_rework': False,
+                    'note': '47-second actual prior control plan is a planning reference; this repair plan is unmeasured. Native/backend jobs are separately attributed to source8a, failed build 250 remains in cumulative elapsed time; new archive/readiness/upload is required.'}
+                result['cost_review_required'] = reference + upload > result['target_minutes']
+                result['ready'] = not result['cost_review_required']
             chained = (planner.moderation_chained_evidence(result["head"], REPOSITORY,
                 lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
                 if result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_chained_inputs(result["head"]) else None)
             production = (planner.moderation_ui_recovery_evidence(result["head"], REPOSITORY,
                 lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
                 if chained is None and result["scope"] == planner.MODERATION_RESOLUTION_SCOPE and planner.moderation_ui_recovery_inputs(result["head"]) else None)
-            if chained is None and production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE, planner.OWNER_CLOUD_SCOPE, planner.INTERNAL_REPORT_SCOPE):
+            if metadata_repair is None and chained is None and production is None and result["scope"] in (scope.LOST_CAT_UX_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.FULL_SCOPE, planner.PRESERVATION_EXPORT_SCOPE, planner.MODERATION_RESOLUTION_SCOPE, planner.OWNER_CLOUD_SCOPE, planner.INTERNAL_REPORT_SCOPE):
                 branch = planner.git("branch", "--show-current")
                 correction = planner.find_test_correction_evidence(
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
@@ -1313,6 +1367,7 @@ def main(argv=None):
             result = moderation_chained_cost(result, chained, args.include_upload, history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
+                                     metadata_repair=metadata_repair,
                                      diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,
                                      diagnostic_backend_recovery=moderation_resolution_diagnostic_backend_recovery(result, runs)
                                      if args.measure_baseline else None)

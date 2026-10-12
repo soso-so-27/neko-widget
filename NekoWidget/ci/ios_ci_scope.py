@@ -655,6 +655,13 @@ INTERNAL_REPORT_BLOBS = {
 INTERNAL_REPORT_PATHS = frozenset(INTERNAL_REPORT_BLOBS)
 INTERNAL_REPORT_CONTROLS = frozenset(('NekoWidget/ci/ios_ci_scope.py', 'NekoWidget/ci/plan-ios-ci.py', 'NekoWidget/ci/preflight-ci.py', 'NekoWidget/ci/test-widget-ci-scope.py'))
 INTERNAL_REPORT_IMMUTABLE_TREE_SHA256 = '3a9c9ef8d0fee18887338222a200a084b83b3862bd139212c86d4227ea727f61'
+INTERNAL_REPORT_METADATA_REPAIR_BLOBS = {
+    '.github/workflows/testflight.yml': '076fc195237fab83150d5ca6afaf57a46f2170e7',
+    'NekoWidget/ci/release-testflight.py': '218f4f3e0d6862fef0c6c0f0f5769889e12da863',
+    'NekoWidget/ci/test-release-testflight.py': '71283b1a47bae838dcb17e2dfd18c1c9a4d86004',
+    'NekoWidget/ci/moderation-v2-readiness.json': 'c468264db0056dec7603e7c9f215fa081ab78df6',
+}
+INTERNAL_REPORT_METADATA_REPAIR_PATHS = frozenset(INTERNAL_REPORT_METADATA_REPAIR_BLOBS)
 SCOPES = (INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
@@ -3290,7 +3297,10 @@ def source_paths(paths):
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
     if scope == INTERNAL_REPORT_SCOPE:
-        return bool(paths) and len(paths) == len(set(paths)) and sources == INTERNAL_REPORT_PATHS
+        return (bool(paths) and len(paths) == len(set(paths)) and
+                (sources == INTERNAL_REPORT_PATHS or
+                 INTERNAL_REPORT_METADATA_REPAIR_PATHS <= sources <=
+                 INTERNAL_REPORT_METADATA_REPAIR_PATHS | INTERNAL_REPORT_CONTROLS))
     if scope == OWNER_CLOUD_SCOPE:
         return sources in (OWNER_CLOUD_PATHS, OWNER_CLOUD_CORRECTED_PATHS)
     if scope == MODERATION_RESOLUTION_SCOPE:

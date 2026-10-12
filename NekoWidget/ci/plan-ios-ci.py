@@ -17,7 +17,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
+from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, INTERNAL_REPORT_METADATA_REPAIR_BLOBS, INTERNAL_REPORT_METADATA_REPAIR_PATHS, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
                           MODERATION_RESOLUTION_IMMUTABLE_PATHS, MODERATION_RESOLUTION_TESTS,
@@ -2909,6 +2909,126 @@ def internal_report_correction_graph(run, validation_head, required, api, now, j
     return {"native_evidence": proof, "backend_evidence": internal_report_backend_evidence(run["head_sha"], repository, api, now, branch=run["head_branch"])}
 
 
+INTERNAL_REPORT_METADATA_SOURCE = "8a6d9f446c2dffd98c6d03f5351ccccfd46a7e3d"
+INTERNAL_REPORT_METADATA_RUN = 38142073051
+INTERNAL_REPORT_METADATA_BRANCH = "codex/internal-report-readiness-source-repair-20261011"
+INTERNAL_REPORT_METADATA_FAILURE_RUN = 38144234681
+INTERNAL_REPORT_METADATA_FAILURE_HEAD = "7c7b340022f860d625b103b1eb5c99e827275888"
+INTERNAL_REPORT_METADATA_FAILURE_JOB = 114484136336
+INTERNAL_REPORT_METADATA_FAILURE_LOG = "994c810af5240578b127c4bc274c285aaf6b39c753f78c95858c0298e9cde6d9"
+INTERNAL_REPORT_METADATA_BACKEND_RUNS = {"sharing-service.yml": 38142093918, "preservation-service.yml": 38142096775}
+
+
+def internal_report_metadata_repair_inputs(head):
+    """One exact metadata repair; every other tracked input stays at tested source."""
+    if not isinstance(head, str) or not SHA.fullmatch(head): return None
+    try:
+        source = INTERNAL_REPORT_METADATA_SOURCE
+        if not internal_report_candidate_inputs(source): return None
+        git("merge-base", "--is-ancestor", source, head)
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        registration = f'INTERNAL_REPORT_METADATA_SOURCE = "{source}"'
+        if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return None
+        for path, blob in INTERNAL_REPORT_METADATA_REPAIR_BLOBS.items():
+            if blob == "0" * 40 or git("ls-tree", head, "--", path) != f"100644 blob {blob}\t{path}": return None
+        control_blobs = {}
+        for path in INTERNAL_REPORT_CONTROLS:
+            trusted = git("ls-tree", approved, "--", path)
+            if not trusted.startswith("100644 blob ") or git("ls-tree", head, "--", path) != trusted: return None
+            control_blobs[path] = trusted.split()[2]
+        rows = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if rows[-1:] == [""]: rows.pop()
+        if not rows or len(rows) % 2: return None
+        seen = set()
+        for index in range(0, len(rows), 2):
+            fields, path = rows[index].split(), rows[index + 1]
+            if (path in seen or len(fields) != 5 or fields[1] != "100644"
+                    or not SHA.fullmatch(fields[3]) or fields[3] == "0" * 40): return None
+            if is_handoff(path):
+                if (fields[4], fields[0]) not in {("A", ":000000"), ("M", ":100644")}: return None
+            elif path in INTERNAL_REPORT_METADATA_REPAIR_PATHS | INTERNAL_REPORT_CONTROLS:
+                if fields[0] != ":100644" or fields[4] != "M" or not SHA.fullmatch(fields[2]) or fields[2] == "0" * 40: return None
+                if git("ls-tree", source, "--", path) != f"100644 blob {fields[2]}\t{path}": return None
+                if path in INTERNAL_REPORT_METADATA_REPAIR_BLOBS and fields[3] != INTERNAL_REPORT_METADATA_REPAIR_BLOBS[path]: return None
+            else: return None
+            seen.add(path)
+        if not INTERNAL_REPORT_METADATA_REPAIR_PATHS <= seen: return None
+        return {"source_sha": source, "candidate_sha": head, "approved_control_blobs": control_blobs,
+                "repair_blobs": dict(INTERNAL_REPORT_METADATA_REPAIR_BLOBS),
+                "unchanged_inputs": "all other tracked content, modes and types; ordinary handoff A/M only"}
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError): return None
+
+
+def internal_report_metadata_failure_evidence(api, now):
+    """Keep the actual failed build 250 and its skipped Apple upload boundary."""
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    run = api(f"{prefix}/runs/{INTERNAL_REPORT_METADATA_FAILURE_RUN}")
+    expected = {"id": INTERNAL_REPORT_METADATA_FAILURE_RUN, "head_sha": INTERNAL_REPORT_METADATA_FAILURE_HEAD,
+                "head_branch": "main", "workflow_id": 335014239, "path": ".github/workflows/testflight.yml",
+                "event": "workflow_dispatch", "run_attempt": 1, "status": "completed", "conclusion": "failure",
+                "display_title": f"TestFlight build 250 @ {INTERNAL_REPORT_METADATA_SOURCE}",
+                "created_at": "2026-10-11T13:42:18Z", "run_started_at": "2026-10-11T13:42:18Z", "updated_at": "2026-10-11T13:52:26Z"}
+    if (not isinstance(run, dict) or any(run.get(k) != v or type(run.get(k)) is not type(v) for k, v in expected.items())
+            or any(run.get(k, {}).get("full_name") != "soso-so-27/neko-widget" for k in ("repository", "head_repository"))
+            or not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24)): return None
+    result = api(f"{prefix}/runs/{run['id']}/attempts/1/jobs?per_page=100")
+    if not isinstance(result, dict) or type(result.get("total_count")) is not int or result["total_count"] != 1 or len(result.get("jobs", [])) != 1: return None
+    job = result["jobs"][0]
+    expected_job = {"id": INTERNAL_REPORT_METADATA_FAILURE_JOB, "run_id": run["id"], "head_sha": run["head_sha"],
+                    "run_attempt": 1, "name": "Archive, export IPA, and upload", "status": "completed", "conclusion": "failure",
+                    "started_at": "2026-10-11T13:43:13Z", "completed_at": "2026-10-11T13:52:26Z"}
+    if any(job.get(k) != v or type(job.get(k)) is not type(v) for k, v in expected_job.items()): return None
+    steps = job.get("steps")
+    if not isinstance(steps, list) or len(steps) != 35 or len({s.get("name") for s in steps}) != 35: return None
+    if any(s.get("status") != "completed" for s in steps): return None
+    if [s.get("name") for s in steps if s.get("conclusion") not in {"success", "skipped"}] != ["Generate build-bound moderation release metadata"]: return None
+    for name in ("Archive app and widget", "Validate sharing privacy and export gates",
+                 "Verify archive signatures and App Group entitlements", "Export IPA"):
+        matches = [s for s in steps if s.get("name") == name]
+        if len(matches) != 1 or matches[0].get("conclusion") != "success": return None
+    upload = [s for s in steps if s.get("name") == "Validate and upload IPA to TestFlight"]
+    metadata = [s for s in steps if s.get("name") == "Generate build-bound moderation release metadata"]
+    if len(upload) != 1 or upload[0].get("conclusion") != "skipped" or len(metadata) != 1 or metadata[0].get("conclusion") != "failure": return None
+    log = api(f"{prefix}/jobs/{job['id']}/logs")
+    if not isinstance(log, str): return None
+    normalized = "\n".join(re.sub(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ", "", line) for line in log.splitlines())
+    if (hashlib.sha256(normalized.encode()).hexdigest() != INTERNAL_REPORT_METADATA_FAILURE_LOG
+            or "Moderation v2 readiness verification failed: reviewed_code_changed" not in normalized): return None
+    return {"run_id": run["id"], "workflow_head_sha": run["head_sha"], "release_source_sha": INTERNAL_REPORT_METADATA_SOURCE,
+            "build_number": 250, "job_id": job["id"], "created_at": run["created_at"], "updated_at": run["updated_at"],
+            "job_started_at": job["started_at"], "job_completed_at": job["completed_at"],
+            "log_sha256": INTERNAL_REPORT_METADATA_FAILURE_LOG, "archive": "success", "export": "success",
+            "metadata": "reviewed_code_changed", "apple_upload": "skipped"}
+
+
+def internal_report_metadata_repair_graph(run, validation_head, required, api, now, jobs):
+    """Reuse one actual composite native/backend graph with exact repair closure."""
+    if (not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] != INTERNAL_REPORT_METADATA_RUN
+            or run.get("head_sha") != INTERNAL_REPORT_METADATA_SOURCE
+            or required != required_jobs_from_scope(INTERNAL_REPORT_SCOPE)): return None
+    closure = internal_report_metadata_repair_inputs(validation_head)
+    if closure is None: return None
+    for workflow in INTERNAL_REPORT_METADATA_BACKEND_RUNS:
+        for event in ("push", "workflow_dispatch"):
+            query = urllib.parse.urlencode({"head_sha": validation_head, "event": event, "per_page": 100})
+            index = api(f"/repos/soso-so-27/neko-widget/actions/workflows/{workflow}/runs?{query}")
+            if (not isinstance(index, dict) or type(index.get("total_count")) is not int
+                    or index != {"total_count": 0, "workflow_runs": []}): return None
+    source = internal_report_correction_graph(run, INTERNAL_REPORT_METADATA_SOURCE, required, api, now, jobs)
+    if source is None: return None
+    backends = source.get("backend_evidence")
+    if (not isinstance(backends, dict) or set(backends) != set(INTERNAL_REPORT_METADATA_BACKEND_RUNS)
+            or any(type(backends[w].get("run_id")) is not int or backends[w]["run_id"] != identifier
+                   or backends[w].get("sha") != INTERNAL_REPORT_METADATA_SOURCE
+                   for w, identifier in INTERNAL_REPORT_METADATA_BACKEND_RUNS.items())): return None
+    failure = internal_report_metadata_failure_evidence(api, now)
+    if failure is None: return None
+    return {"kind": "internal-report-source-metadata-repair-v1", "source_run_id": run["id"],
+            "source_sha": INTERNAL_REPORT_METADATA_SOURCE, "candidate_sha": validation_head,
+            "native_evidence": source["native_evidence"], "backend_evidence": backends,
+            "release_failure_evidence": failure, "source_closure": closure}
+
+
 def internal_report_only(paths, base, head):
     """One frozen native/report release; all other product and workflow inputs fixed."""
     if not reviewed_hub_only(paths, base, head, product_blobs=INTERNAL_REPORT_BLOBS,
@@ -2978,6 +3098,9 @@ def owner_cloud_native_evidence(jobs, sha, now):
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if (INTERNAL_REPORT_METADATA_REPAIR_PATHS <= sources <= INTERNAL_REPORT_METADATA_REPAIR_PATHS | INTERNAL_REPORT_CONTROLS
+            and paths and len(paths) == len(set(paths)) and internal_report_metadata_repair_inputs(env["GITHUB_SHA"]) is not None):
+        return INTERNAL_REPORT_SCOPE
     if sources == INTERNAL_REPORT_PATHS:
         try:
             base = comparison_base(event, env)
@@ -5279,7 +5402,18 @@ def main() -> None:
     try:
         api = lambda path: github_api(env, path)
         now = dt.datetime.now(dt.timezone.utc)
-        evidence = find_evidence(env, required, api, now)
+        metadata_repair = None
+        if selected_scope == INTERNAL_REPORT_SCOPE and internal_report_metadata_repair_inputs(env["GITHUB_SHA"]) is not None:
+            if (env["GITHUB_REPOSITORY"] != "soso-so-27/neko-widget" or env["GITHUB_EVENT_NAME"] != "push"
+                    or env["GITHUB_REF"] not in {"refs/heads/main", "refs/heads/" + INTERNAL_REPORT_METADATA_BRANCH}):
+                raise ValueError("Metadata repair is restricted to its owning candidate/main push")
+            source = api(f"/repos/{env['GITHUB_REPOSITORY']}/actions/runs/{INTERNAL_REPORT_METADATA_RUN}")
+            metadata_repair = internal_report_metadata_repair_graph(source, env["GITHUB_SHA"], required, api, now,
+                executed_jobs(source, env["GITHUB_REPOSITORY"], api))
+            if metadata_repair is None: raise ValueError("Metadata repair source graph or failed upload boundary differs")
+            evidence = (INTERNAL_REPORT_METADATA_RUN, INTERNAL_REPORT_METADATA_SOURCE)
+        else:
+            evidence = find_evidence(env, required, api, now)
         chained_build_recovery = (moderation_chained_evidence(env["GITHUB_SHA"], env["GITHUB_REPOSITORY"], api, now)
             if evidence is None and selected_scope == MODERATION_RESOLUTION_SCOPE
             and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/" + MODERATION_BUILD_CORRECTION_BRANCH
@@ -5336,11 +5470,16 @@ def main() -> None:
         "evidence_run_id": evidence[0] if evidence else None,
         "evidence_sha": evidence[1] if evidence else None,
         "test_correction_evidence": correction,
+        **({"internal_report_metadata_repair": metadata_repair} if metadata_repair is not None else {}),
         **({"production_ui_recovery": production_ui_recovery} if production_ui_recovery is not None else {}),
         **({"chained_build_recovery": chained_build_recovery} if chained_build_recovery is not None else {}),
     }, separators=(",", ":")))
     summary = f"## iOS CI plan\n\nCommit: `{env['GITHUB_SHA']}`\n\nScope: `{scope}`.\n\n"
-    if evidence is not None:
+    if metadata_repair is not None:
+        summary += (f"Reusing the actual composite native graph from run {INTERNAL_REPORT_METADATA_RUN} at `{INTERNAL_REPORT_METADATA_SOURCE}` "
+                    "and its five backend successes after exact metadata repair closure. Original Build/UI failures, diagnostic and failed build 250 remain retained. "
+                    "Only the plan executes here; archive, signing, full readiness and Apple upload require a new release run.\n")
+    elif evidence is not None:
         run_id, tested_sha = evidence
         url = f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}/actions/runs/{run_id}"
         relation = "the same commit" if tested_sha == env["GITHUB_SHA"] else (
