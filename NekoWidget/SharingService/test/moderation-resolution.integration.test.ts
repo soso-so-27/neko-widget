@@ -128,6 +128,21 @@ describe('case-bound signed reversible moderation',()=>{
    WHERE reply.event_id=? AND reply.recipient_participant_id=report.reporter_participant_id AND reply.template_code='no_action'`).bind(result.eventId).first()).toEqual({n:1});
   expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/1`,'POST'),f.local)).status).toBe(409);
  });
+ it.each([false,true])('keeps read expiry for active reports and permits only completed retired decision receipts after photo expiry (retired=%s)',async retired=>{
+  const f=await resolutionFixture(undefined,undefined,true);
+  if(retired){await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();await db.prepare(`UPDATE moments SET state='deleted'`).run()}
+  const receipt=await f.read();
+  const claim=await db.prepare('SELECT expires_at,claimed_at FROM moderation_owner_read_claims WHERE read_receipt_id=?').bind(receipt).first<{expires_at:number;claimed_at:number}>();
+  expect(claim!.expires_at-claim!.claimed_at).toBeLessThanOrEqual(4);
+  await new Promise(resolve=>setTimeout(resolve,Math.max(0,claim!.expires_at*1000-Date.now()+100)));
+  expect((await db.prepare('SELECT expires_at>unixepoch() AS live FROM moderation_owner_read_claims WHERE read_receipt_id=?').bind(receipt).first<{live:number}>())!.live).toBe(0);
+  if(retired){
+   expect((await routeLocalModerationResolution(f.request(`${f.path()}/hide/${receipt}/0`,'POST'),f.local)).status).toBe(409);
+   const result=await f.act('no_action',receipt,0);expect(result.reply).toBe('available_in_app');
+   expect((await db.prepare('SELECT state FROM moments').first<{state:string}>())!.state).toBe('deleted');
+   expect(await db.prepare('SELECT COUNT(*) AS n FROM moment_changes WHERE moderation_event_id=?').bind(result.eventId).first()).toEqual({n:0});
+  }else expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/0`,'POST'),f.local)).status).toBe(409);
+ });
  it('refuses retired report completion when its evidence expires after the challenge, with no partial result',async()=>{
   const f=await resolutionFixture();await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();await db.prepare(`UPDATE moments SET state='deleted'`).run();
   const receipt=await f.read(),issued=await f.issue('no_action',receipt,0);
