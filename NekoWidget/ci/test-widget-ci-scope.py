@@ -1072,6 +1072,13 @@ class InternalReportMetadataRepairTests(unittest.TestCase):
             with patch.object(planner,'INTERNAL_REPORT_METADATA_FAILURE_LOG',pin):
                 return planner.internal_report_metadata_failure_evidence(values.__getitem__,stamp)
         got=prove(); self.assertEqual(got['apple_upload'],'skipped'); self.assertEqual(got['build_number'],250)
+        log_key=next(k for k in api if k.endswith('/logs'))
+        transported='\ufeff2026-10-11T13:52:21.3063590Z '+log+'\r\n'
+        changed=copy.deepcopy(api);changed[log_key]=transported
+        self.assertEqual(prove(changed),got)
+        for altered in ('\ufeff'+transported,transported+'\ufeff',transported.replace('reviewed_code_changed','unknown_failure')):
+            changed=copy.deepcopy(api);changed[log_key]=altered
+            self.assertIsNone(prove(changed))
         for field,value in (('id',True),('head_sha','f'*40),('run_attempt',2),('status','in_progress'),('updated_at','2026-10-11T13:52:27Z')):
             changed=copy.deepcopy(api);changed[next(k for k in api if k.endswith(str(failure['id'])))][field]=value
             self.assertIsNone(prove(changed),(field,value))
