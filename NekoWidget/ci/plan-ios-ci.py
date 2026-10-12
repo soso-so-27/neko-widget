@@ -17,6 +17,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
+from ios_ci_scope import REPORT_REPLY_ENTRY_SCOPE
 from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, INTERNAL_REPORT_METADATA_REPAIR_BLOBS, INTERNAL_REPORT_METADATA_REPAIR_PATHS, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
@@ -3618,7 +3619,7 @@ def test_correction_scope(required: tuple[str, ...]) -> str | None:
     if required == required_jobs_from_scope(FULL_SCOPE) and required != ALBUM_CORRECTION_REQUIRED:
         return None
     if required == ALBUM_CORRECTION_REQUIRED: return FULL_SCOPE
-    return next((selected for selected in (LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE, PRESERVATION_EXPORT_SCOPE, MODERATION_RESOLUTION_SCOPE)
+    return next((selected for selected in (REPORT_REPLY_ENTRY_SCOPE, LOST_CAT_UX_SCOPE, REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE, PRESERVATION_EXPORT_SCOPE, MODERATION_RESOLUTION_SCOPE)
                  if required == required_jobs_from_scope(selected)), None)
 
 
@@ -3631,6 +3632,8 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source == REPLY_READINESS_SOURCE:
+        return (BUILD,)
     if selected_scope == INTERNAL_REPORT_SCOPE and source == INTERNAL_REPORT_CORRECTION_SOURCE:
         return (BUILD, lane_job(INTERNAL_REPORT_SCOPE, "app-ui"))
     if selected_scope == OWNER_CLOUD_SCOPE and source == OWNER_CLOUD_CORRECTION_SOURCE:
@@ -3823,6 +3826,139 @@ def moderation_build_plan(log, sha, required):
             and record.get("evidence_run_id") is None and record.get("evidence_sha") is None) else None
     except (TypeError, ValueError):
         return None
+
+
+# Inserted into the existing planner; no import-time network or mutations.
+REPLY_READINESS_SOURCE = '18f070d7599a90a7ff640f294c0e1f2babacf7af'
+REPLY_READINESS_RUN = 38319480089
+REPLY_READINESS_BRANCH = 'codex/report-reply-entry-20261013'
+REPLY_READINESS_BLOBS = {
+ 'NekoWidget/ci/moderation-v2-readiness.json': ('c468264db0056dec7603e7c9f215fa081ab78df6','ae439e1d76d949a9b348b5e0ddfe36790745f771'),
+ 'NekoWidget/ci/verify-moderation-readiness.mjs': ('719cfcb942d78807b97bc38c47b4c5952e270b21','59e2df9f1d198013100afa4c092ac1c2215908cd'),
+ 'NekoWidget/ci/test-moderation-readiness.mjs': ('0dfa9d141c0f564eaf4280dc9e4f9bc11977577d','8d9c6ca3e0c1f3338c8508a7f113fe3703600cab'),
+}
+REPLY_READINESS_CONTROLS = frozenset('NekoWidget/ci/'+name for name in (
+ 'ios_ci_scope.py','plan-ios-ci.py','preflight-ci.py','test-widget-ci-scope.py'))
+REPLY_READINESS_JOB_IDS = {
+ PLAN_JOB:115043868733, BUILD:115044057412, BOOTSTRAP_SMOKE:115044057405,
+ lane_job(REPORT_REPLY_ENTRY_SCOPE,'app-ui'):115044057393,
+ lane_job(REPORT_REPLY_ENTRY_SCOPE,'runtime'):115044057414,
+}
+REPLY_READINESS_LOG_HASHES = {
+ BUILD:'7333a2599c8a030fa066b68bb8b919d4c14139a755347764a06e47fa70884221',
+ BOOTSTRAP_SMOKE:'27b2f7b0a34dcdf88c57a9855b980130d6682075beb64aff4d84e119eb9a6bcc',
+ lane_job(REPORT_REPLY_ENTRY_SCOPE,'app-ui'):'3ce97eb54816cb9aef4b53be6244b17bad66f993522e36624374f4770f7cdd98',
+ lane_job(REPORT_REPLY_ENTRY_SCOPE,'runtime'):'f1da3c61f8c67ba64e3b74833363dc3519d7fd65068c4d8249469a18f7da5c4d',
+}
+
+def reply_readiness_inputs(head, *, current=False):
+    try:
+        if not isinstance(head,str) or not SHA.fullmatch(head):return False
+        git('merge-base','--is-ancestor',REPLY_READINESS_SOURCE,head)
+        approval=git('merge-base',head,'origin/main')
+        parts=git('diff','--raw','--no-renames','--no-abbrev','-z',REPLY_READINESS_SOURCE,head).split('\0')
+        if parts[-1:]==['']:parts.pop()
+        if len(parts)%2:return False
+        seen=set()
+        for index in range(0,len(parts),2):
+            fields,path=parts[index].split(),parts[index+1]
+            if len(fields)!=5 or path in seen:return False
+            seen.add(path)
+            if path in REPLY_READINESS_BLOBS:
+                before,after=REPLY_READINESS_BLOBS[path]
+                if fields!=[':100644','100644',before,after,'M']:return False
+            elif path in REPLY_READINESS_CONTROLS:
+                if fields[0:2]!=[':100644','100644'] or fields[4]!='M':return False
+                if git('ls-tree',head,'--',path)!=git('ls-tree',approval,'--',path):return False
+            elif not is_handoff(path) or fields[1]!='100644' or fields[4] not in ('A','M'):return False
+        if not set(REPLY_READINESS_BLOBS)<=seen:return False
+        for path in REPLY_READINESS_CONTROLS:
+            if git('ls-tree',head,'--',path)!=git('ls-tree',approval,'--',path):return False
+        if current:
+            if git('rev-parse','HEAD')!=head:return False
+            for owned in REPLY_READINESS_CONTROLS | set(REPLY_READINESS_BLOBS):
+                disk=Path(__file__).resolve().parents[2]/owned
+                if disk.read_text(encoding='utf-8').rstrip('\n')!=git('show',head+':'+owned).replace('\r\n','\n').rstrip('\n'):return False
+            policy=json.loads(git('show',head+':NekoWidget/ci/moderation-client-rollout-policy.json'))
+            evidence=json.loads(git('show',head+':NekoWidget/ci/moderation-v2-readiness.json'))
+            checked=subprocess.run(['node','NekoWidget/ci/verify-moderation-readiness.mjs'],
+                input=json.dumps({'policy':policy,'evidence':evidence}),capture_output=True,text=True,encoding='utf-8',timeout=20)
+            if checked.returncode:return False
+            if json.loads(checked.stdout).get('purpose')!='testflight-owner-report-ui-continuation':return False
+        return True
+    except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired,ValueError,KeyError,TypeError):return False
+
+def reply_readiness_source(head,repository,api,now):
+    if repository!='soso-so-27/neko-widget' or not reply_readiness_inputs(head,current=True):return None
+    prefix=f'/repos/{repository}/actions'
+    run=api(f'{prefix}/runs/{REPLY_READINESS_RUN}')
+    if (run.get('id')!=REPLY_READINESS_RUN or run.get('head_sha')!=REPLY_READINESS_SOURCE
+        or run.get('head_branch')!=REPLY_READINESS_BRANCH or run.get('event')!='push'
+        or run.get('path')!='.github/workflows/ios-build.yml' or run.get('workflow_id')!=335014238
+        or run.get('run_attempt')!=1 or (run.get('status'),run.get('conclusion'))!=('completed','failure')
+        or run.get('repository',{}).get('full_name')!=repository or run.get('head_repository',{}).get('full_name')!=repository):
+        raise CorrectionEvidenceUnavailable('Fixed reply readiness failure or original native checks not complete')
+    finished=dt.datetime.fromisoformat(run['updated_at'].replace('Z','+00:00'))
+    if not dt.timedelta(0)<=now-finished<=dt.timedelta(hours=24):raise CorrectionEvidenceUnavailable('Reply source outside24h')
+    jobs=executed_jobs(run,repository,api)
+    required=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE)
+    reusable=tuple(name for name in required if name!=BUILD)
+    if not covers_jobs(jobs,(PLAN_JOB,)+reusable,REPLY_READINESS_SOURCE,now):raise CorrectionEvidenceUnavailable('Reply native siblings unverified')
+    expected_steps={PLAN_JOB:('Test CI selection and evidence boundaries','Select checks'),
+        BOOTSTRAP_SMOKE:('Run Simulator smoke test','Upload Simulator smoke-test artifacts')}
+    for name in reusable:
+        if name!=BOOTSTRAP_SMOKE:expected_steps[name]=('Run sharing runtime matrix','Upload sharing runtime matrix artifacts')
+    for job in jobs:
+        name=job.get('name')
+        if (job.get('head_sha')!=REPLY_READINESS_SOURCE or job.get('run_id')!=REPLY_READINESS_RUN or job.get('run_attempt')!=1):
+            raise CorrectionEvidenceUnavailable('Reply job identity differs')
+        if name not in REPLY_READINESS_JOB_IDS:
+            if job.get('name') not in {UNEXPANDED_SHARING_JOB,'needs.plan.outputs.smoke_name','needs.plan.outputs.build_name'} or (job.get('status'),job.get('conclusion'))!=('completed','skipped') or job.get('steps')!=[]:
+                raise CorrectionEvidenceUnavailable('Additional reply source job or failure')
+            continue
+        if job.get('id')!=REPLY_READINESS_JOB_IDS[name]:raise CorrectionEvidenceUnavailable('Reply job ID differs')
+        if name!=BUILD and not moderation_steps_succeeded(job,expected_steps[name]):raise CorrectionEvidenceUnavailable('Reply source step incomplete')
+    builds=[j for j in jobs if j.get('name')==BUILD]
+    if len(builds)!=1 or (builds[0]['status'],builds[0]['conclusion'])!=('completed','failure'):raise CorrectionEvidenceUnavailable('Reply Build failure differs')
+    failed=[s['name'] for s in builds[0]['steps'] if s.get('conclusion')=='failure']
+    if failed!=['Verify sharing release privacy gates']:raise CorrectionEvidenceUnavailable('Unknown Build failure')
+    for name,expected in REPLY_READINESS_LOG_HASHES.items():
+        log=api(f'{prefix}/jobs/{REPLY_READINESS_JOB_IDS[name]}/logs')
+        if not isinstance(log,str) or hashlib.sha256(log.replace('\r\n','\n').rstrip('\n').encode()).hexdigest()!=expected:
+            raise CorrectionEvidenceUnavailable('Fixed source log changed or incomplete')
+    return {'kind':'report-reply-readiness-build-recovery-v1','run_id':REPLY_READINESS_RUN,'sha':REPLY_READINESS_SOURCE,
+        'failed_build_job_id':REPLY_READINESS_JOB_IDS[BUILD],'failed_build_log_sha256':REPLY_READINESS_LOG_HASHES[BUILD],
+        'owning_jobs_to_execute':[BUILD],'jobs':[{'name':name,'job_id':REPLY_READINESS_JOB_IDS[name]} for name in reusable],
+        'input_changes':'exact three release-readiness files and main-approved controls; all app/native inputs unchanged'}
+
+def reply_readiness_build_steps():
+    workflow=git('show',REPLY_READINESS_SOURCE+':.github/workflows/ios-build.yml')
+    block=workflow.split('  build-without-signing:\n',1)[1].split('  simulator-smoke-test:\n',1)[0]
+    omitted={'Verify packaged icons and capture first launch','Upload icon display evidence','Upload build result bundle'}
+    names=tuple(name for name in re.findall(r'^      - name: (.+)$',block,re.M) if name not in omitted)
+    if len(names)<30 or len(set(names))!=len(names):raise ValueError('Pinned reply Build graph unavailable')
+    return names
+
+def covers_reply_readiness_recovery(run,validation_head,required,api,now,jobs):
+    if (required!=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE) or run.get('head_branch')!=REPLY_READINESS_BRANCH
+        or run.get('event')!='push' or run.get('run_attempt')!=1 or run.get('workflow_id')!=335014238
+        or run.get('path')!='.github/workflows/ios-build.yml' or (run.get('status'),run.get('conclusion'))!=('completed','success')
+        or run.get('repository',{}).get('full_name')!='soso-so-27/neko-widget'
+        or run.get('head_repository',{}).get('full_name')!='soso-so-27/neko-widget'
+        or not reply_readiness_inputs(run.get('head_sha')) or not reply_readiness_inputs(validation_head,current=True)
+        or not covers_jobs(jobs,(PLAN_JOB,BUILD),run.get('head_sha'),now)):return False
+    for job in jobs:
+        if job.get('head_sha')!=run['head_sha'] or job.get('run_id')!=run['id'] or job.get('run_attempt')!=1:return False
+        if job.get('name') not in (PLAN_JOB,BUILD) and (job.get('name') not in {UNEXPANDED_SHARING_JOB,'needs.plan.outputs.smoke_name','needs.plan.outputs.build_name'} or (job.get('status'),job.get('conclusion'))!=('completed','skipped') or job.get('steps')!=[]):return False
+    plan=next(j for j in jobs if j['name']==PLAN_JOB);build=next(j for j in jobs if j['name']==BUILD)
+    if not moderation_steps_succeeded(plan,('Test CI selection and evidence boundaries','Select checks')) or not moderation_steps_succeeded(build,reply_readiness_build_steps()):return False
+    log=api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plan['id']}/logs")
+    records=[json.loads(line.split('IOS_CI_PLAN_JSON=',1)[1]) for line in log.splitlines() if 'IOS_CI_PLAN_JSON=' in line and '{' in line.split('IOS_CI_PLAN_JSON=',1)[1]]
+    if len(records)!=1:return False
+    record=records[0]
+    if record.get('head_sha')!=run['head_sha'] or record.get('scope')!=REPORT_REPLY_ENTRY_SCOPE or record.get('required_jobs')!=list(required) or record.get('evidence_run_id') is not None:return False
+    proof=reply_readiness_source(validation_head,'soso-so-27/neko-widget',api,now)
+    return proof is not None and record.get('test_correction_evidence')==proof
 
 
 def moderation_build_steps():
@@ -4670,6 +4806,9 @@ def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if test_correction_scope(required) is None or not branch.startswith("codex/"):
         return None
+    if test_correction_scope(required) == REPORT_REPLY_ENTRY_SCOPE:
+        if branch != REPLY_READINESS_BRANCH or not reply_readiness_inputs(head):return None
+        return reply_readiness_source(head,repository,api,now)
     if test_correction_scope(required) == INTERNAL_REPORT_SCOPE:
         if branch != INTERNAL_REPORT_CORRECTION_BRANCH or not internal_report_correction_inputs(head): return None
         result = internal_report_correction_source(head, repository, api, now)
@@ -4797,6 +4936,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):
+        return covers_reply_readiness_recovery(run,validation_head,required,api,now,jobs)
     if required == required_jobs_from_scope(INTERNAL_REPORT_SCOPE):
         return internal_report_correction_graph(run, validation_head, required, api, now, jobs) is not None
     if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE):

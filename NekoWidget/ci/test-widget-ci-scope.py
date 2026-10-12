@@ -24,6 +24,66 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReportReplyEntryBoundaryTests(unittest.TestCase):
+    def test_recovery_rejects_wrong_source_failed_siblings_and_unknown_build_failure(self):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        stamp = now.isoformat()
+        run = dict(id=planner.REPLY_READINESS_RUN, head_sha=planner.REPLY_READINESS_SOURCE,
+            head_branch=planner.REPLY_READINESS_BRANCH, event='push', run_attempt=1,
+            path='.github/workflows/ios-build.yml', workflow_id=335014238,
+            status='completed', conclusion='failure', updated_at=stamp,
+            repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
+        jobs=[]
+        for name,identifier in planner.REPLY_READINESS_JOB_IDS.items():
+            steps = (['Verify sharing release privacy gates'] if name==planner.BUILD else
+                ['Test CI selection and evidence boundaries','Select checks'] if name==planner.PLAN_JOB else
+                ['Run Simulator smoke test','Upload Simulator smoke-test artifacts'] if name==planner.BOOTSTRAP_SMOKE else
+                ['Run sharing runtime matrix','Upload sharing runtime matrix artifacts'])
+            jobs.append(dict(id=identifier,name=name,head_sha=run['head_sha'],run_id=run['id'],run_attempt=1,
+                status='completed',conclusion='failure' if name==planner.BUILD else 'success',completed_at=stamp,
+                steps=[dict(name=n,status='completed',conclusion='failure' if name==planner.BUILD else 'success') for n in steps]))
+        def api(path):
+            if '/jobs?' in path:return {'total_count':len(jobs),'jobs':jobs}
+            if path.endswith('/logs'):return 'fixed log'
+            return run
+        hashes={name:scope.hashlib.sha256(b'fixed log').hexdigest() for name in planner.REPLY_READINESS_LOG_HASHES}
+        with patch.object(planner,'reply_readiness_inputs',return_value=True), patch.dict(planner.REPLY_READINESS_LOG_HASHES,hashes,clear=True):
+            proof=planner.reply_readiness_source('a'*40,'soso-so-27/neko-widget',api,now)
+            self.assertEqual(proof['owning_jobs_to_execute'],[planner.BUILD])
+            self.assertEqual(len(proof['jobs']),3)
+            for key,value in [('head_sha','b'*40),('event','workflow_dispatch'),('head_branch','codex/other'),('conclusion','success')]:
+                saved=run[key];run[key]=value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.reply_readiness_source('a'*40,'soso-so-27/neko-widget',api,now)
+                run[key]=saved
+            for job in jobs:
+                if job['name']==planner.BUILD:continue
+                saved=job['conclusion'];job['conclusion']='skipped'
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.reply_readiness_source('a'*40,'soso-so-27/neko-widget',api,now)
+                job['conclusion']=saved
+            build=next(j for j in jobs if j['name']==planner.BUILD)
+            build['steps'][0]['name']='Unrelated failure'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.reply_readiness_source('a'*40,'soso-so-27/neko-widget',api,now)
+
+    def test_readiness_recovery_requires_exact_three_metadata_pairs_and_approved_controls(self):
+        head='a'*40;before=planner.REPLY_READINESS_SOURCE
+        changes=[]
+        for path,(old,new) in planner.REPLY_READINESS_BLOBS.items():changes.extend([f':100644 100644 {old} {new} M',path])
+        raw='\0'.join(changes)+'\0'
+        def git(*args):
+            if args[0]=='merge-base':return 'c'*40 if args[1]!='--is-ancestor' else ''
+            if args[0]=='diff':return raw
+            if args[0]=='ls-tree':return '100644 blob '+('d'*40)+'\t'+args[-1]
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git):
+            self.assertTrue(planner.reply_readiness_inputs(head))
+            saved=raw
+            raw=raw.replace('100644 100644','100644 100755',1)
+            self.assertFalse(planner.reply_readiness_inputs(head))
+            raw=saved+':100644 100644 '+('e'*40)+' '+('f'*40)+' M\0NekoWidget/Shared/Sharing/MomentSharingCore.swift\0'
+            self.assertFalse(planner.reply_readiness_inputs(head))
+            raw='\0'.join(changes[2:])+'\0'
+            self.assertFalse(planner.reply_readiness_inputs(head))
+
     def test_exact_two_files_are_required_and_every_changed_byte_is_bound(self):
         changes = {path: ("before" + str(i), "after" + str(i))
                    for i, path in enumerate(scope.REPORT_REPLY_ENTRY_DIGESTS)}
