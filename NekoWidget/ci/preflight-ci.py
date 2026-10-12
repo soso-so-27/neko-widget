@@ -949,6 +949,19 @@ def internal_report_correction_cost(result, correction, include_upload, history)
     return result
 
 
+def report_reply_readiness_cost(result, correction, include_upload, history):
+    if result['scope'] != scope.REPORT_REPLY_ENTRY_SCOPE or correction is None: return result
+    upload = float(history['upload_minutes']) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError('Invalid upload timing reference')
+    result['cost'] = {'status':'reference','ci_minutes':[0,30], 'with_upload_minutes':[0,30+upload], 'samples':[],
+        'includes_future_rework':False,
+        'required_jobs_to_execute':[planner.BUILD],'native_input_reuse':correction['jobs'],
+        'reference':'Pinned Build30 minute timeout plus recorded upload reference; not measured new-scope speed; retains original failed/diagnostic time and unknown queues.'}
+    result['cost_review_required'] = 30+upload > result['target_minutes']
+    result['ready'] = not result['cost_review_required']
+    return result
+
+
 def moderation_build_correction_cost(result, correction, include_upload, history):
     """Reserve the complete immutable Build timeout; do not invent an observed runtime."""
     if (result.get("scope") != planner.MODERATION_RESOLUTION_SCOPE or not isinstance(correction, dict)
@@ -1404,14 +1417,7 @@ def main(argv=None):
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
-            if result['scope'] == scope.REPORT_REPLY_ENTRY_SCOPE and correction is not None:
-                upload = float(history['upload_minutes']) if args.include_upload else 0
-                result['cost'] = {'status':'reference','ci_minutes':[0,30], 'with_upload_minutes':[0,30+upload], 'samples':[],
-                    'includes_future_rework':False,
-                    'required_jobs_to_execute':[planner.BUILD],'native_input_reuse':correction['jobs'],
-                    'reference':'Pinned Build30 minute timeout plus recorded upload reference; not measured new-scope speed; retains original failed/diagnostic time and unknown queues.'}
-                result['cost_review_required'] = 30+upload > result['target_minutes']
-                result['ready'] = not result['cost_review_required']
+            result = report_reply_readiness_cost(result, correction, args.include_upload, history)
 
             result = owner_cloud_correction_cost(result, correction, args.include_upload, history)
             result = internal_report_correction_cost(result, correction, args.include_upload, history)

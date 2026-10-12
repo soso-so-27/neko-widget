@@ -24,6 +24,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReportReplyEntryBoundaryTests(unittest.TestCase):
+    def test_readiness_cost_rejects_invalid_upload_and_keeps_reference_bounds(self):
+        spec = importlib.util.spec_from_file_location('reply_cost_preflight', Path(__file__).with_name('preflight-ci.py'))
+        preflight = importlib.util.module_from_spec(spec); spec.loader.exec_module(preflight)
+        proof = {'jobs': ['Photos', 'Runtime', 'ReplyUI']}
+        result = {'scope': scope.REPORT_REPLY_ENTRY_SCOPE, 'target_minutes': 30}
+        for value in (float('nan'), float('inf'), -1):
+            with self.assertRaises(ValueError):
+                preflight.report_reply_readiness_cost(dict(result), proof, True, {'upload_minutes': value})
+        actual = preflight.report_reply_readiness_cost(dict(result), proof, True, {'upload_minutes': 12})
+        self.assertEqual(actual['cost']['with_upload_minutes'], [0, 42])
+        self.assertFalse(actual['ready'])
+        self.assertEqual(actual['cost']['required_jobs_to_execute'], [planner.BUILD])
+
     def test_known_recovery_stops_if_current_signature_or_lease_is_invalid(self):
         import datetime as dt
         with patch.object(planner,'reply_readiness_inputs',side_effect=lambda head,**kw:not kw.get('current',False)):
