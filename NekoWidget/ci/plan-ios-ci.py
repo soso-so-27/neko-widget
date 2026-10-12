@@ -884,19 +884,23 @@ MODERATION_REPORT_BPLIST_JOBS = tuple(MODERATION_REPORT_BPLIST_JOB_TIMEOUTS)
 MODERATION_RETIRED_SCOPE = "moderation-retired-no-action-v1"
 MODERATION_RETIRED_BLOBS = {'NekoWidget/SharingService/migrations/0038_moderation_retired_report_no_action.sql': ('0000000000000000000000000000000000000000',
                                                                                        '8e28a3f42adfce8351ce50df7ce7136c5b3c3d20'),
+ 'NekoWidget/SharingService/scripts/billing-sponsorship-local-drill.mjs': ('4c4ca0e81bb400cabf550731b31c188d34dcf2f2',
+                                                                           '36ae00032d5d72f630a6b749a44c32504fc05047'),
  'NekoWidget/SharingService/scripts/staging-config.node-tests.mjs': ('b793284c305b46630666b05d649430e0caa8ef72',
                                                                      '74085ebd556101709ef3bb1bbcc017ff48e06b75'),
  'NekoWidget/SharingService/src/moderation-owner-console.ts': ('70943d090d43875ba6b6df1ae0564e06b00912a9',
                                                                'b34416cbdd96899fc619f535c725030942af79fc'),
  'NekoWidget/SharingService/src/moderation-resolution-local.ts': ('dc8f9086b588f6ed5b4a1d68126028056ed63b47',
                                                                   '287d5faf0b0ff11b28ea508b6f577c4ca5dd2125'),
+ 'NekoWidget/SharingService/test/billing-sponsorship-local-drill.node-tests.mjs': ('391f65b03672192c06e56019ad0204ed9ce83ee9',
+                                                                                   '7519202c211557cf55c8ddb0cdbbcdafbf93ad67'),
  'NekoWidget/SharingService/test/moderation-resolution.integration.test.ts': ('e39c1a0ff0a9f02c7387fec9605c45c8c8b21948',
                                                                               '49794f1613880814f7b0a65297be11d24368a7a5'),
  'NekoWidget/SharingService/test/moments.integration.test.ts': ('5953eddb0753cc4c591e58a64b6c03e66e43e161',
                                                                 '5b1f85cbbd3c22213c7aef623fd58f0682c9cc90')}
 MODERATION_RETIRED_PATHS = frozenset(MODERATION_RETIRED_BLOBS)
 MODERATION_RETIRED_CONTROLS = INTERNAL_REPORT_CONTROLS
-MODERATION_RETIRED_TREE_SHA256 = "c45c8aa21691c05a8c474cbf035edafc542d92f3d81f174a87c2691f31cd42a5"
+MODERATION_RETIRED_TREE_SHA256 = "c20dea5e6d7d562f950b3280c818682b70bc715041567cd85a05134c093298f4"
 MODERATION_RETIRED_WORKFLOW = ".github/workflows/sharing-service.yml"
 MODERATION_RETIRED_JOB_TIMEOUTS = dict(MODERATION_OPERATOR_STARTUP_JOB_TIMEOUTS)
 MODERATION_RETIRED_JOBS = tuple(MODERATION_RETIRED_JOB_TIMEOUTS)
