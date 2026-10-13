@@ -531,6 +531,30 @@ PRESERVATION_OWNED_BUFFERS_PATHS = frozenset(PRESERVATION_OWNED_BUFFERS_BLOBS)
 PRESERVATION_OWNED_BUFFERS_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
 
 
+# One reviewed authenticated photo-upload body policy and its boundary tests.
+# Register controls first; keep provider/default limits and workflow immutable.
+PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE = "preservation-photo-upload-body-v1"
+PRESERVATION_PHOTO_UPLOAD_BODY_BLOBS = {
+    "NekoWidget/PreservationService/src/bounded-body.ts": (
+        "a402c21bd3f2566594d0172fa385b40b2552669f", "72ca2bd0909eb9383d809782f14fad504347d2ad"),
+    "NekoWidget/PreservationService/src/index.ts": (
+        "644c4a6b2033a0b175cd4d304864b851c05d7471", "bf1dd745df413ae097b7c5928f444d2179afe7e4"),
+    "NekoWidget/PreservationService/src/request-json.ts": (
+        "36ff148cc15e76fd4aa962c342d3a21ea623387c", "6b15a86126ab4a5ad3ecc8cae2061bb6423a8b4d"),
+    "NekoWidget/PreservationService/test/bounded-body.test.ts": (
+        "5ddcb47e62f18c90c169df74a1a19ac9c48bffad", "905d78885ee52aa3179bbbc502c59dcd8a2699c1"),
+    "NekoWidget/PreservationService/test/owner-request-limiter.test.ts": (
+        "f3e91b51f3ff396591c5e896bddcc5aec38fa3dd", "330ee4cd80ab57b2a5da88e1b312e9a325d93637"),
+    "NekoWidget/PreservationService/test/photo-upload-json.test.ts": (
+        "0" * 40, "eb98b6fdc7c67c61f150e8121597d28ac8c2801d"),
+}
+PRESERVATION_PHOTO_UPLOAD_BODY_PATHS = frozenset(PRESERVATION_PHOTO_UPLOAD_BODY_BLOBS)
+PRESERVATION_PHOTO_UPLOAD_BODY_ADDITIONS = frozenset((
+    "NekoWidget/PreservationService/test/photo-upload-json.test.ts",
+))
+PRESERVATION_PHOTO_UPLOAD_BODY_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
 # One reviewed dedicated request-buffer release and its owning boundary tests.
 # Product commit fab42d8a920332233c6861d78dd7dcb4271aecc3; control lands first.
 PRESERVATION_REQUEST_BUFFER_SCOPE = "preservation-request-buffer-v1"
@@ -1563,6 +1587,36 @@ def preservation_owned_buffers_requirements(head):
              "head_sha": head, "event": "push", "success_required": True}]
 
 
+def preservation_photo_upload_body_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_PHOTO_UPLOAD_BODY_PATHS
+            and all(path in PRESERVATION_PHOTO_UPLOAD_BODY_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_photo_upload_body_backend_only(paths, base, head):
+    if (not preservation_photo_upload_body_paths_only(paths)
+            or set(PRESERVATION_PHOTO_UPLOAD_BODY_BLOBS) != PRESERVATION_PHOTO_UPLOAD_BODY_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       and (pair[0] == "0" * 40) == (path in PRESERVATION_PHOTO_UPLOAD_BODY_ADDITIONS)
+                       for path, pair in PRESERVATION_PHOTO_UPLOAD_BODY_BLOBS.items())):
+        return False
+    blob = PRESERVATION_PHOTO_UPLOAD_BODY_WORKFLOW_BLOB
+    if (not SHA.fullmatch(blob) or blob == "0" * 40
+            or any(git("ls-tree", revision, "--", PRESERVATION_WORKFLOW)
+                   != f"100644 blob {blob}\t{PRESERVATION_WORKFLOW}" for revision in (base, head))):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_PHOTO_UPLOAD_BODY_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_PHOTO_UPLOAD_BODY_COMPANION_DIGESTS")
+
+
+def preservation_photo_upload_body_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True}]
+
+
 def preservation_request_buffer_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_REQUEST_BUFFER_PATHS
@@ -2366,6 +2420,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_OWNED_BUFFERS_SCOPE and preservation_owned_buffers_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_REQUEST_BUFFER_SCOPE and preservation_request_buffer_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE and preservation_photo_upload_body_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_RECOVERY_READ_SCOPE and preservation_recovery_read_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3499,6 +3555,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
+                                       (PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, preservation_photo_upload_body_paths_only, preservation_photo_upload_body_backend_only),
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
                                        (PRESERVATION_OWNED_BUFFERS_SCOPE, preservation_owned_buffers_paths_only, preservation_owned_buffers_backend_only),
                                        (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
@@ -6075,7 +6132,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6096,6 +6153,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_OWNED_BUFFERS_SCOPE else {}),
               **({"required_backend_runs": preservation_request_buffer_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_REQUEST_BUFFER_SCOPE else {}),
+              **({"required_backend_runs": preservation_photo_upload_body_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE else {}),
               **({"required_backend_runs": preservation_recovery_read_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_RECOVERY_READ_SCOPE else {}),
               **({"required_backend_runs": moderation_enrollment_requirements(env["GITHUB_SHA"])}
@@ -6135,6 +6194,7 @@ def main() -> None:
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_OWNED_BUFFERS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
                        BILLING_AUTHORITY_SCOPE: (BILLING_AUTHORITY_JOB, BILLING_WORKFLOW)}.get(selected_scope)
