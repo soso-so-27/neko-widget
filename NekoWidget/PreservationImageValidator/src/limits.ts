@@ -7,7 +7,8 @@ export const MAX_REQUEST_BYTES = MAX_BASE64_LENGTH + 64;
 export const MAX_BODY_CHUNKS = 4096;
 export const MAX_MARKERS = 4096;
 export const MAX_SCANS = 64;
-export const BODY_TIMEOUT_MS = 2000;
+export const BODY_TIMEOUT_MS = 10_000;
+export const BODY_IDLE_TIMEOUT_MS = 2_000;
 export const DECODE_TIMEOUT_MS = 6000;
 
 export class Unavailable extends Error {

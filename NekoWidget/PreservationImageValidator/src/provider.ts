@@ -1,6 +1,6 @@
 import { setImmediate } from 'node:timers/promises';
 import { validateJPEG } from './decoder.js';
-import { BODY_TIMEOUT_MS, MAX_BASE64_LENGTH, MAX_BODY_CHUNKS, MAX_PHOTO_BYTES, MAX_REQUEST_BYTES } from './limits.js';
+import { BODY_TIMEOUT_MS, BODY_IDLE_TIMEOUT_MS, MAX_BASE64_LENGTH, MAX_BODY_CHUNKS, MAX_PHOTO_BYTES, MAX_REQUEST_BYTES } from './limits.js';
 
 class InvalidRequest extends Error {}
 const json = (value: unknown, status = 200) => Response.json(value, {
@@ -18,16 +18,30 @@ async function readPhoto(request: Request, signal: AbortSignal, deadline: number
   signal.addEventListener('abort', cancel, { once: true });
   const parts: Uint8Array[] = [];
   let length = 0, chunks = 0;
+  let idleUntil = performance.now() + BODY_IDLE_TIMEOUT_MS;
+  let idleAborted = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let rejectIdle: (error: Error) => void;
+  const idleExpired = new Promise<never>((_, reject) => { rejectIdle = reject; });
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    idleUntil = performance.now() + BODY_IDLE_TIMEOUT_MS;
+    idleTimer = setTimeout(() => { idleAborted = true; rejectIdle(new Error('body idle')); cancel(); }, BODY_IDLE_TIMEOUT_MS);
+  };
+  resetIdle();
   try {
     if (signal.aborted) throw new Error('aborted');
     while (true) {
-      const part = await reader.read();
+      const part = await Promise.race([reader.read(), idleExpired]);
       // Ready streams can starve timers with a chain of resolved promises.
-      if (signal.aborted || performance.now() >= deadline) { cancel(); throw new Error('aborted'); }
+      if (signal.aborted || idleAborted || performance.now() >= deadline || performance.now() >= idleUntil) { cancel(); throw new Error('aborted'); }
       if (part.done) break;
+      if (!(part.value instanceof Uint8Array)) { cancel(); throw new InvalidRequest(); }
       length += part.value.length;
-      if (++chunks > MAX_BODY_CHUNKS || length > MAX_REQUEST_BYTES) { cancel(); throw new InvalidRequest(); }
-      if (part.value.length) parts.push(part.value);
+      // A finite read allowance grows only with actual bytes, never headers.
+      // Keep the base allowance for empty/tiny chunks; earn one read per KiB.
+      if (++chunks > MAX_BODY_CHUNKS + Math.floor(length / 1024) || length > MAX_REQUEST_BYTES) { cancel(); throw new InvalidRequest(); }
+      if (part.value.length) { parts.push(part.value); resetIdle(); }
       if (chunks % 64 === 0) await setImmediate();
     }
     const bytes = new Uint8Array(length);
@@ -45,6 +59,7 @@ async function readPhoto(request: Request, signal: AbortSignal, deadline: number
     if (photo.length > MAX_PHOTO_BYTES || photo.toString('base64') !== encoded) throw new InvalidRequest();
     return photo;
   } finally {
+    clearTimeout(idleTimer);
     signal.removeEventListener('abort', cancel);
     reader.releaseLock();
   }

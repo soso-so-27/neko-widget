@@ -78,7 +78,10 @@ export class JPEGValidatorContainer extends Container {
         this.#startup = { token, controller };
         try {
           await this.startAndWaitForPorts({ ports: this.defaultPort,
-            cancellationOptions: { abort: controller.signal } });
+            // SDK options bound retry counts, not independent wall times. The
+            // caller's 60s deadline and reserved 120s lease remain outer fences.
+            cancellationOptions: { abort: controller.signal,
+              instanceGetTimeoutMS: 20_000, portReadyTimeoutMS: 30_000 } });
         } finally {
           if (this.#startup?.token === token) this.#startup = undefined;
         }

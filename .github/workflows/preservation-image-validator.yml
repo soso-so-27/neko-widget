@@ -57,4 +57,39 @@ jobs:
             neko-preservation-validator-ci:local
           trap 'docker stop neko-preservation-validator-ci' EXIT
           node test/container-probe.mjs
+      - name: Export the validated linux amd64 image and provenance
+        working-directory: NekoWidget/PreservationImageValidator
+        run: |
+          set -euo pipefail
+          mkdir -p image-artifact
+          docker image inspect --format '{{.Id}}' neko-preservation-validator-ci:local > image-artifact/image-id.txt
+          docker image inspect --format '{{.Os}}/{{.Architecture}}' neko-preservation-validator-ci:local > image-artifact/platform.txt
+          test "$(cat image-artifact/platform.txt)" = "linux/amd64"
+          docker save neko-preservation-validator-ci:local | gzip -n > image-artifact/image.tar.gz
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('image-artifact')
+          archive = root / 'image.tar.gz'
+          with archive.open('rb') as stream:
+              checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
+          record = {'sourceCommit': os.environ['GITHUB_SHA'],
+                    'owningRunId': os.environ['GITHUB_RUN_ID'],
+                    'owningRunAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                    'repository': os.environ['GITHUB_REPOSITORY'],
+                    'imageId': (root / 'image-id.txt').read_text().strip(),
+                    'platform': (root / 'platform.txt').read_text().strip(),
+                    'archive': archive.name, 'archiveSHA256': checksum,
+                    'validatedBy': 'all preceding Node and image probe steps',
+                    'deploymentPerformed': False}
+          (root / 'provenance.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - name: Save the validated image for private deployment preparation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: preservation-jpeg-image-${{ github.sha }}
+          path: NekoWidget/PreservationImageValidator/image-artifact/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
       # This is neither native iOS release evidence nor a deployment.
