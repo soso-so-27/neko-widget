@@ -1,12 +1,12 @@
 import { contactEmailValid, ServiceError } from './contracts';
-import { parseDeliveredNoticeEvent, type NoticeEventSource } from './notice-events';
+import { parseDeliveredNoticeEvent, noticeMessageIdValid, type NoticeEventSource } from './notice-events';
 import { NOTICE_DELIVERY_EVIDENCE_WINDOW_MS, NOTICE_SUBMISSION_RETRY_DELAY_MS, RetentionLedger,
   type ExpiryReviewCandidate, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 
 const day = 24 * 60 * 60 * 1000;
 const ownerPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const messagePattern = /^[A-Za-z0-9._:-]{8,256}$/u;
+const deliveryEventPattern = /^[A-Za-z0-9._:-]{8,256}$/u;
 const claimPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const hex32 = /^[0-9a-f]{32}$/u;
 const domainPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u;
@@ -152,7 +152,7 @@ export class NoticeSubmissions {
         || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0
         || !contact || !Number.isSafeInteger(contact.updatedAt) || contact.updatedAt < 0
         || contact.updatedAt > now || !claimPattern.test(claimId)
-        || !messagePattern.test(messageId) || !validNoticeEventSource(source)
+        || !noticeMessageIdValid(messageId) || !validNoticeEventSource(source)
         || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
     const tag = await this.recipientTag(candidate.ownerId, contact.email);
     const result = await this.db.prepare(`INSERT INTO pa_notice_submissions
@@ -184,7 +184,7 @@ export class NoticeSubmissions {
    * An unknown message must be retried by the Queue, not acknowledged as absent.
    */
   async ownerForSubmission(messageId: string, source: NoticeEventSource): Promise<string> {
-    if (!messagePattern.test(messageId) || !validNoticeEventSource(source)) throw unavailable();
+    if (!noticeMessageIdValid(messageId) || !validNoticeEventSource(source)) throw unavailable();
     const row = await this.db.prepare(`SELECT owner_id FROM pa_notice_submissions
       WHERE message_id=? AND account_id=? AND zone_id=? AND subscription_id=?
         AND domain=? AND sender=?`)
@@ -248,7 +248,7 @@ export class NoticeSubmissions {
     const now = this.now();
     if (!Number.isSafeInteger(now) || now <= 0 || !Number.isSafeInteger(limit)
         || limit < 1 || limit > 100 || (after !== null &&
-        (!messagePattern.test(after.messageId) || !Number.isSafeInteger(after.deliveredAt)
+        (!noticeMessageIdValid(after.messageId) || !Number.isSafeInteger(after.deliveredAt)
           || after.deliveredAt <= 0))) throw unavailable();
     const rows = await this.db.prepare(`SELECT s.message_id,s.delivered_at
       FROM pa_notice_submissions s JOIN pa_retention r ON r.owner_id=s.owner_id
@@ -297,7 +297,7 @@ export class NoticeSubmissions {
     currentContact: (candidate: NoticeReviewCandidate) => Promise<VerifiedNoticeContact | null>,
     statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipStatus>): Promise<boolean> {
     const now = this.now();
-    if (!messagePattern.test(messageId) || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
+    if (!noticeMessageIdValid(messageId) || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
     const row = await this.db.prepare(`SELECT s.*,l.billing_account_id FROM pa_notice_submissions s
       JOIN pa_membership_links l ON l.owner_id=s.owner_id
       JOIN pa_owners o ON o.owner_id=s.owner_id
@@ -359,7 +359,7 @@ export class NoticeSubmissions {
       || !Number.isSafeInteger(candidate.revision) || candidate.revision < 1
       || !Number.isSafeInteger(candidate.dueAt) || candidate.dueAt <= 0
       || !Number.isSafeInteger(candidate.deliveredAt) || candidate.deliveredAt <= 0
-      || !messagePattern.test(candidate.deliveryEventId)
+      || !deliveryEventPattern.test(candidate.deliveryEventId)
       || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
     if (!contact || !contactEmailValid(contact.email) || !Number.isSafeInteger(contact.updatedAt)
       || contact.updatedAt < 0 || contact.updatedAt > now) return null;

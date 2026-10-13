@@ -50,6 +50,25 @@ async function submit(f: Awaited<ReturnType<typeof fixture>>, id: string): Promi
 }
 
 describe('final-notice submission evidence, with all external effects disabled', () => {
+  it('round trips the actual provider angle Message-ID through submission, delivery and pending promotion', async () => {
+    const f = await fixture();
+    const id = '<9gxFXkfTVlQTT3aEp6IFGn4D1Roi5j46fyil@neko-notify.trade-solo.com>';
+    const claim = await f.submissions.claimNotice(f.candidate, f.contact);
+    expect(claim).not.toBeNull();
+    for (const invalid of [id + '\n', '<unsafe space@example.com>', '<x..y@example.com>', '<x@bad-.example>']) {
+      await expect(f.submissions.recordSubmission(f.candidate, f.contact, claim!, invalid, source))
+        .rejects.toMatchObject({ code: 'NOTICE_EVIDENCE_UNAVAILABLE' });
+    }
+    await f.submissions.recordSubmission(f.candidate, f.contact, claim!, id, source);
+    expect(await f.submissions.ownerForSubmission(id, source)).toBe(f.ownerId);
+    await f.submissions.recordDelivery(f.makeEvent(id), source, async () => f.contact);
+    const pending = await f.submissions.listPendingPromotions();
+    expect(pending.some(row => row.messageId === id)).toBe(true);
+    expect(await processDeliveredNoticeEvent(f.makeEvent(id), { source, submissions: f.submissions,
+      ledger: f.ledger, now: () => Date.parse(f.makeEvent(id).metadata.eventTimestamp), statusForOwner: async () => 'expired',
+      statusForBillingAccount: async () => 'expired', currentContact: async () => f.contact })).toBe(true);
+  });
+
   it('does not correlate different owners sharing the same notice address', async () => {
     const noticeSecret = secret();
     const first = await fixture(noticeSecret);
@@ -159,6 +178,9 @@ describe('final-notice submission evidence, with all external effects disabled',
     const review = await f.ledger.expiryReviewAfterFreshCheck(f.ownerId, 'expired');
     expect(review).not.toBeNull();
     expect(await f.submissions.verifiedFinalNoticeForExpiry(review!, f.contact)).toBe(true);
+    await expect(f.submissions.verifiedFinalNoticeEvidenceForExpiry(
+      { ...review!, deliveryEventId: '<mail-provider-id@example.com>' }, f.contact))
+      .rejects.toMatchObject({ code: 'NOTICE_EVIDENCE_UNAVAILABLE' });
     expect(await f.submissions.verifiedFinalNoticeForExpiry(
       { ...review!, deliveryEventId: crypto.randomUUID() }, f.contact)).toBe(false);
     expect(await f.submissions.verifiedFinalNoticeForExpiry(review!,

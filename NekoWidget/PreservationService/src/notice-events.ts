@@ -21,8 +21,15 @@ function invalid(): never { throw new ServiceError('NOTICE_EVENT_INVALID', 503);
 const hex32 = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{32}$/u.test(value);
 const eventIdValid = (value: unknown): value is string => typeof value === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value);
-const messageIdValid = (value: unknown): value is string => typeof value === 'string'
-  && /^[A-Za-z0-9._:-]{8,256}$/u.test(value);
+/** Preserve opaque provider IDs byte-for-byte. Also accept canonical angle
+ * Message-IDs with an ASCII dot-atom and DNS name; never headers or whitespace.
+ */
+export function noticeMessageIdValid(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 8 || value.length > 256) return false;
+  return /^[A-Za-z0-9._:-]+(?![\s\S])/u.test(value)
+    || /^<[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}>(?![\s\S])/u.test(value);
+}
+
 const domainValid = (value: unknown): value is string => typeof value === 'string'
   && value.length <= 253 && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u.test(value);
 
@@ -48,7 +55,7 @@ export function parseDeliveredNoticeEvent(input: unknown, expected: NoticeEventS
       || metadata.eventSubscriptionId !== expected.subscriptionId || metadata.eventSchemaVersion !== 1
       || payload.terminal !== true || delivery?.status !== 'delivered') invalid();
   const { eventId, messageId, recipient } = payload;
-  if (!eventIdValid(eventId) || !messageIdValid(messageId)
+  if (!eventIdValid(eventId) || !noticeMessageIdValid(messageId)
       || payload.sender !== expected.sender || !contactEmailValid(recipient)) invalid();
   const timestamp = metadata.eventTimestamp;
   if (typeof timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(timestamp)) {
