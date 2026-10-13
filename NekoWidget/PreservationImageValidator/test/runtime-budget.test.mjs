@@ -24,6 +24,8 @@ class MockContainer {
     return { taskId: String(this.ctx.schedules.length) };
   }
   async startAndWaitForPorts({ cancellationOptions }) {
+    assert.equal(cancellationOptions.instanceGetTimeoutMS, 20_000);
+    assert.equal(cancellationOptions.portReadyTimeoutMS, 30_000);
     this.ctx.starts++;
     const state = await this.ctx.storage.get('neko-validator-runtime-budget-v1');
     assert.equal(state.usedMs, this.ctx.starts * LEASE_MS, 'the lease is durable before startup');

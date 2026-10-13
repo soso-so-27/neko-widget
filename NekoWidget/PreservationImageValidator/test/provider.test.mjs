@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { createImageValidator } from '../dist/provider.js';
-import { BODY_TIMEOUT_MS, MAX_BODY_CHUNKS, MAX_REQUEST_BYTES } from '../dist/limits.js';
+import { BODY_TIMEOUT_MS, BODY_IDLE_TIMEOUT_MS, MAX_BODY_CHUNKS, MAX_REQUEST_BYTES } from '../dist/limits.js';
 import { jpeg, request, truncateEntropy } from './fixtures.mjs';
 
 test('disabled by default; no body is consumed before activation', async () => {
@@ -89,7 +90,7 @@ test('body deadline cancels a stalled upload and releases capacity', async (t) =
     method: 'POST', headers: { 'content-type': 'application/json' }, duplex: 'half',
     body: new ReadableStream({ start() {}, cancel() { cancelled = true; } }),
   }));
-  t.mock.timers.tick(BODY_TIMEOUT_MS);
+  t.mock.timers.tick(BODY_IDLE_TIMEOUT_MS);
   assert.equal((await held).status, 503); assert.equal(cancelled, true);
   t.mock.timers.reset();
   assert.equal((await provider.fetch(request(photo))).status, 200);
@@ -108,6 +109,51 @@ test('bounds empty and tiny ready chunks even when total bytes stay below the li
       }),
     }));
     assert.equal(response.status, 400); assert.equal(cancelled, true);
-    assert.ok(reads <= MAX_BODY_CHUNKS + 2, 'one read-ahead chunk is allowed; unbounded loops are not');
+    assert.ok(reads <= MAX_BODY_CHUNKS + Math.floor(reads * size / 1024) + 2, 'one read-ahead chunk is allowed; unbounded loops are not');
   }
+});
+
+
+test('steady progress cannot exceed the total ten-second body deadline', async (t) => {
+ const photo=await jpeg();const provider=createImageValidator({enabled:true});let feed,cancelled=false;
+ t.mock.timers.enable({apis:['setTimeout']});
+ const body=new ReadableStream({start(c){feed=c;c.enqueue(new Uint8Array([123]));},cancel(){cancelled=true;}});
+ const held=provider.fetch(new Request('http://validator/images/validate-jpeg',{method:'POST',
+  headers:{'content-type':'application/json'},body,duplex:'half'}));
+ await setImmediate();
+ for(let elapsed=1000;elapsed<BODY_TIMEOUT_MS;elapsed+=1000){t.mock.timers.tick(1000);feed.enqueue(new Uint8Array([32]));await setImmediate();}
+ t.mock.timers.tick(1000);assert.equal((await held).status,503);assert.equal(cancelled,true);
+ t.mock.timers.reset();assert.equal((await provider.fetch(request(photo))).status,200);
+});
+
+test('idle timeout does not wait for hostile cancellation and releases busy capacity',async(t)=>{
+ const photo=await jpeg();const provider=createImageValidator({enabled:true});let cancelled=false;
+ t.mock.timers.enable({apis:['setTimeout']});
+ const body=new ReadableStream({start(){},cancel(){cancelled=true;return new Promise(()=>{});}});
+ const held=provider.fetch(new Request('http://validator/images/validate-jpeg',{method:'POST',
+  headers:{'content-type':'application/json'},body,duplex:'half'}));
+ t.mock.timers.tick(BODY_IDLE_TIMEOUT_MS);assert.equal((await held).status,503);assert.equal(cancelled,true);assert.equal(body.locked,false);
+ t.mock.timers.reset();assert.equal((await provider.fetch(request(photo))).status,200);
+});
+
+
+test('empty transport chunks cannot renew the two-second idle deadline',async(t)=>{
+ const provider=createImageValidator({enabled:true});let feed,cancelled=false;
+ t.mock.timers.enable({apis:['setTimeout']});
+ const body=new ReadableStream({start(c){feed=c;},cancel(){cancelled=true;}});
+ const held=provider.fetch(new Request('http://validator/images/validate-jpeg',{method:'POST',
+  headers:{'content-type':'application/json'},body,duplex:'half'}));
+ t.mock.timers.tick(1000);feed.enqueue(new Uint8Array());await setImmediate();
+ t.mock.timers.tick(1000);assert.equal((await held).status,503);assert.equal(cancelled,true);
+ t.mock.timers.reset();
+});
+
+
+test('malformed stream chunks cannot turn finite byte and read budgets into NaN',async()=>{
+ const provider=createImageValidator({enabled:true});let reads=0,cancelled=false;
+ const body=new ReadableStream({pull(c){reads++;c.enqueue({length:undefined});},cancel(){cancelled=true;}},{highWaterMark:0});
+ const response=await provider.fetch(new Request('http://validator/images/validate-jpeg',{method:'POST',
+  headers:{'content-type':'application/json'},body,duplex:'half'}));
+ assert.equal(response.status,400);assert.equal(reads,1);assert.equal(cancelled,true);assert.equal(body.locked,false);
+ assert.equal((await provider.fetch(request(await jpeg()))).status,200);
 });
