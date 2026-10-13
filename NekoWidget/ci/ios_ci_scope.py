@@ -303,6 +303,7 @@ WINDOW_HUB_SCOPE = "reviewed-window-hub-ui-v1"
 FAMILY_WINDOW_UI_SCOPE = "family-window-ui-v2"
 REPORT_REPLY_ENTRY_SCOPE = "reviewed-report-reply-entry-ui-v1"
 REPORT_REPLY_ENTRY_DIGESTS = {'NekoWidget/NekoWidget/Views/FamilyWindowView.swift': ('dc63d1f7f110a78be2c37efa095dce8afdf4a819daa33292c0530765348ab441', 'a34c5b564949956aa3e53e8add683f1a2471440bc988e25aac9509d0c9ef4a2c'), 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('b2c0b484207e5f0ab6b0906deb7fa06ca577bf3a3ba41dd375e586f1c0381754', '8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf'), 'NekoWidget/ci/moderation-v2-readiness.json': ('845cc1383f0761c56e550727b4057a9f17f2119a9bcb0c6ca669c9dfe6ca0e73', '631087d5b28f77262eb8ebe847bb9451905f443d3d1f1895e86e6c4e96768df4'), 'NekoWidget/ci/verify-moderation-readiness.mjs': ('9bf1fe4c298c59195beabd0a53ee53de3f41f883fd8e656a2182dfbbd82e0f08', '3b90b7f2ef85e523280cde1fdb6870424b22a489d9cd2d5985ecc04ecbfa0dca'), 'NekoWidget/ci/test-moderation-readiness.mjs': ('e4428b19275ada511d7e71c4a937ae5c85031e9d32fec7b5202eda543807381e', '498b20baf356af37c43e9e5afa732f785fb1fcc5c9556fc7d634ad195c9b2169')}
+REPORT_RUNTIME_CONTINUATION_DIGESTS = {'NekoWidget/SharingService/scripts/check-staging-runtime.mjs': ('4f6a488305d896150cf3948cc04f5c88efd5bb84310d8aa12145770d97f7d2c8', 'e24bda3cb8b213437324fdd25636834713d5f031af05f9a707fca220fc3d8881'), 'NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs': ('84ca42bad89ce8e0319e7f432c7ba7eb360d684f4af9aefa2f531de4989138f0', 'c20a8c11e68160baef0c44d3c7af952d1191af32e1a4be12f351f7f527fd1289'), 'NekoWidget/SharingService/test/staging-runtime-check.node-tests.mjs': ('4ffbf6f4c48a0cca3288afa44cbdaf2270b834500c1d0a7310d3eb254ccd63b8', '4be02d23ec4cd9cfb91196f50b817728a3fea7f1590d921f8767d98a6f005f15'), 'NekoWidget/ci/moderation-v2-readiness.json': ('631087d5b28f77262eb8ebe847bb9451905f443d3d1f1895e86e6c4e96768df4', '98fe21a672c37d8708f2348eb64d5c8f97f3da0328e74b58b465d3d2e8aae9b9')}
 REPORT_REPLY_ENTRY_TESTS = tuple("NekoWidgetUITests/MomentDeliveryComposerUITests/" + name for name in (
     "testReportReplyEntryIsVisibleBeforeScrollingAndOpensSavedReply",
     "testReportReplyEntryRemainsVisibleWithLargestText",
@@ -2378,7 +2379,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (frozenset(REPORT_REPLY_ENTRY_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = (frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -2980,6 +2981,12 @@ def family_window_test_changes(before: str, after: str) -> bool:
     return fixed(before, old, ()) == fixed(after, new, added)
 
 
+def report_runtime_continuation_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == set(REPORT_RUNTIME_CONTINUATION_DIGESTS)
+            and all(tuple(source_digest(text) for text in changes[path]) == pair
+                    for path, pair in REPORT_RUNTIME_CONTINUATION_DIGESTS.items()))
+
+
 def report_reply_entry_changes(changes: dict[str, tuple[str, str]]) -> bool:
     # Exact reviewed UI movement and simulator fixture; no model, network,
     # storage, identity, project, dependency, workflow or release input edits.
@@ -3364,7 +3371,7 @@ def accepts_paths(scope: str, paths) -> bool:
         return LOST_CAT_PHOTO_PATH in sources and sources <= {
             LOST_CAT_PHOTO_PATH, MEMORY_TEST_PATH}
     if scope == REPORT_REPLY_ENTRY_SCOPE:
-        return bool(paths) and len(paths) == len(set(paths)) and sources == set(REPORT_REPLY_ENTRY_DIGESTS)
+        return bool(paths) and len(paths) == len(set(paths)) and sources in (set(REPORT_REPLY_ENTRY_DIGESTS), set(REPORT_RUNTIME_CONTINUATION_DIGESTS))
     if scope == FAMILY_WINDOW_UI_SCOPE:
         return bool(sources & FAMILY_WINDOW_UI_PATHS and sources <= FAMILY_WINDOW_UI_PATHS | {MEMORY_TEST_PATH, FAMILY_WINDOW_CONTRACT_TEST})
     if scope == REVIEWED_FAMILY_EXPORT_SCOPE:
@@ -3842,7 +3849,7 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     # A partial or mutated instance of this frozen batch is not a generic UI edit.
     if set(changes) & EVACUATION_NEW_PATHS:
         return FULL_SCOPE
-    if report_reply_entry_changes(changes):
+    if report_reply_entry_changes(changes) or report_runtime_continuation_changes(changes):
         return REPORT_REPLY_ENTRY_SCOPE
     if family_window_ui_changes(changes):
         return FAMILY_WINDOW_UI_SCOPE
