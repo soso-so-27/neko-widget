@@ -170,6 +170,14 @@ struct FamilyWindowView: View {
     private static var isSettingsFixture: Bool {
         CommandLine.arguments.contains("--family-window-settings-fixture")
     }
+    private static var isResponseEntryFixture: Bool {
+#if targetEnvironment(simulator)
+        CommandLine.arguments.contains("--moderation-resolution-ui-fixture")
+            && CommandLine.arguments.contains("--moderation-response-window-entry")
+#else
+        false
+#endif
+    }
     private static var isInternalReportFixture: Bool {
 #if targetEnvironment(simulator)
         CommandLine.arguments.contains("--internal-report-actions-ui-fixture")
@@ -178,7 +186,7 @@ struct FamilyWindowView: View {
 #endif
     }
 
-    private static var internalReportFixtureConfiguration: SharingAPIConfiguration {
+    fileprivate static var internalReportFixtureConfiguration: SharingAPIConfiguration {
         SharingAPIConfiguration.from(info: [
             "SharingFeatureEnabled": true, "SharingMediaEnabled": true,
             "SharingReleaseMode": "media-staging",
@@ -275,12 +283,24 @@ struct FamilyWindowView: View {
         _pendingNotificationRoute = .constant(nil)
     }
 
+#if DEBUG && targetEnvironment(simulator)
+    fileprivate init(reportResponseFixtureModel: MomentSharingViewModel) {
+        self.init()
+        precondition(CommandLine.arguments.contains("--moderation-resolution-ui-fixture")
+            && CommandLine.arguments.contains("--moderation-response-window-entry"))
+        _model = StateObject(wrappedValue: reportResponseFixtureModel)
+    }
+#endif
+
     var body: some View {
         if widgetPhotoRequest != nil {
             widgetPhotoContent
         } else {
 #if DEBUG
-        if Self.isInternalReportFixture {
+        if Self.isResponseEntryFixture {
+            // Exercise the shipping entry and sheet with the offline model.
+            pairedContent
+        } else if Self.isInternalReportFixture {
             internalReportFixtureContent
         } else if Self.isSettingsFixture {
             // The shipping settings view, without baseContent's bootstrap,
@@ -968,6 +988,25 @@ struct FamilyWindowView: View {
     private var pairedContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
+                if model.isEncryptedReportAvailable && !model.isShowingLastKnownState {
+                    Button { showsReportResponses = true } label: {
+                        HStack {
+                            Label("通報への返答", systemImage: "text.bubble")
+                            Spacer(minLength: 12)
+                            Image(systemName: "chevron.right")
+                                .accessibilityHidden(true)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .accessibilityHint("運営からの返答を確認します")
+                    .accessibilityIdentifier("family-window-report-responses")
+                }
+
                 if model.isReportOnly {
                     reportOnlyCard
                     if let message = model.errorMessage {
@@ -994,12 +1033,6 @@ struct FamilyWindowView: View {
                     receivedSectionContent
                 } else {
                     sharedPhotoContent
-                }
-
-                if model.isEncryptedReportAvailable && !model.isShowingLastKnownState {
-                    Button("通報への返答", systemImage: "text.bubble") { showsReportResponses = true }
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("family-window-report-responses")
                 }
 
                 if !model.isReportOnly {
@@ -3869,20 +3902,27 @@ private struct MomentReportResponsesView: View {
 @MainActor
 struct ModerationResolutionUIFixture: View {
     @StateObject private var fixture = ModerationResolutionUIFixtureState()
-    private var replies: Bool { CommandLine.arguments.contains("--moderation-responses") }
+    private var windowEntry: Bool { CommandLine.arguments.contains("--moderation-response-window-entry") }
+    private var replies: Bool { windowEntry || CommandLine.arguments.contains("--moderation-responses") }
 
     var body: some View {
         VStack(spacing: 0) {
             if CommandLine.arguments.contains("--internal-report-actions-ui-fixture") {
                 FamilyWindowView()
             } else if fixture.ready {
-                if replies {
+                if windowEntry {
+                    NavigationStack { FamilyWindowView(reportResponseFixtureModel: fixture.replyModel) }
+                        .environment(\.dynamicTypeSize,
+                            CommandLine.arguments.contains("--moderation-response-entry-large-text") ? .accessibility5 : .large)
+                } else if replies {
                     MomentReportResponsesView(model: fixture.replyModel)
                 } else {
                     FamilyRecordView(fixtureClient: fixture.client, fixturePhoto: nil)
                 }
                 VStack(spacing: 4) {
-                    if replies {
+                    if windowEntry {
+                        EmptyView()
+                    } else if replies {
                         HStack {
                             Button("空") { fixture.mode = .empty }.accessibilityIdentifier("moderation-fixture-empty")
                             Button("失敗") { fixture.mode = .failure }.accessibilityIdentifier("moderation-fixture-failure")
@@ -3926,7 +3966,7 @@ private final class ModerationResolutionUIFixtureState: ObservableObject {
     @Published var mode = ReplyMode.replies
     @Published var preservationStatus = "準備中"
     @Published var deliveryStatus = "配信あり"
-    let replyModel = MomentSharingViewModel()
+    let replyModel = MomentSharingViewModel(configuration: FamilyWindowView.internalReportFixtureConfiguration)
     let client: FamilyRecordFixtureClient
     private let jpeg: Data
     private let momentID = "moderation_fixture_photo_a"
@@ -3939,6 +3979,11 @@ private final class ModerationResolutionUIFixtureState: ObservableObject {
     private var until: Date?
 
     init() {
+        if CommandLine.arguments.contains("--moderation-response-window-entry") {
+            // Long shipping report-only content demonstrates that the entry
+            // remains available before scrolling, without a live album read.
+            until = .now.addingTimeInterval(3_600)
+        }
         jpeg = MomentExperiencePhotoFixture.image(index: 0).jpegData(compressionQuality: 0.9) ?? Data()
         client = FamilyRecordFixtureClient(jpeg: jpeg,
             visibilityClient: FamilyRecordClient(expectedSpaceID: "fixture_family_space"))

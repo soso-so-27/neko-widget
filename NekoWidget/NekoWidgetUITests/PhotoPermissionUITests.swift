@@ -5730,6 +5730,44 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testReportReplyEntryIsVisibleBeforeScrollingAndOpensSavedReply() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--moderation-resolution-ui-fixture", "--moderation-response-window-entry",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let entry = app.buttons["family-window-report-responses"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        XCTAssertTrue(entry.isHittable, "The reply entry must be visible without scrolling the window.")
+        XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
+        attach(app, name: "report-reply-entry-at-top-of-window")
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["通報いただいた内容を確認しました。今回は追加の対応は行いません。"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["report-responses-failed"].exists)
+        attach(app, name: "report-reply-opened-from-window")
+        app.terminate()
+    }
+
+    @MainActor
+    func testReportReplyEntryRemainsVisibleWithLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--moderation-resolution-ui-fixture", "--moderation-response-window-entry",
+                               "--moderation-response-entry-large-text",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let entry = app.buttons["family-window-report-responses"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        XCTAssertTrue(entry.isHittable, "Large text must not push the reply entry below the visible window.")
+        XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
+        attach(app, name: "report-reply-entry-largest-text")
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["通報への返答"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["通報いただいた共有写真を一時的に非表示にしました。"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testReportResponsesUseFixedTemplatesAndRecoverFromEmptyOrFailure() {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -37,14 +37,18 @@ const hex=value=>typeof value==='string'&&/^[0-9a-f]{64}$/u.test(value);
 export async function verifyReadiness(evidence,policy,now=Date.now()){
  exact(evidence,['payload','signatures']);const p=evidence.payload;
  exact(p,['schema','purpose','issuedAtMs','expiresAtMs','policyRevision','keyID','publicKeySHA256','trustManifestRevision','trustManifestSHA256','target','scopeSHA256','v1ReportCount','unresolvedReportObjects','reportIntakeEnabled','reportKeyPolicyTriggers','nativeCustodyVerified','backupRestoreVerified','v1HistoricalIntakeVerified','productionApproved','cloudImage','readReceiptSHA256','sourceSnapshotSHA256','readPhases','resolution','recipientReadVerified','realUserPhotoVerified','evidenceSHA256','codeSHA256']);
- requireValue(p.schema==='jp.nekowidget.moderation-owner-v2-readiness.v1'&&p.purpose==='testflight-owner-first-connection','unsupported_purpose');
+ const firstConnection=p.purpose==='testflight-owner-first-connection';
+ const uiContinuation=p.purpose==='testflight-owner-report-ui-continuation';
+ requireValue(p.schema==='jp.nekowidget.moderation-owner-v2-readiness.v1'&&(firstConnection||uiContinuation),'unsupported_purpose');
  requireValue(Number.isSafeInteger(p.issuedAtMs)&&Number.isSafeInteger(p.expiresAtMs)&&p.issuedAtMs<=now+30000&&now<p.expiresAtMs&&p.expiresAtMs>p.issuedAtMs&&p.expiresAtMs-p.issuedAtMs<=86400000,'stale_readiness');
  requireValue(p.keyID==='moderation-v2'&&policy.clientKeyId===p.keyID&&policy.v2ClientReleaseAllowed===true&&hex(p.publicKeySHA256)&&p.publicKeySHA256===policy.clientPublicKeySha256&&p.policyRevision===policy.revision&&p.trustManifestRevision===policy.trustManifestRevision&&p.trustManifestSHA256===policy.trustManifestSha256,'rollout_binding_mismatch');
  exact(p.target,['accountID','databaseID','serviceIdentity','reportBucket','origin','rpId','apiOrigin']);
  const target={accountID:'829a34ef925a39d81b0e9e08800d7c7f',databaseID:'cb3b2386-3a6f-4253-b918-8aafed9ff735',serviceIdentity:'neko-window-sharing-staging',reportBucket:'neko-window-sharing-staging-moderation-private',origin:'https://neko-operator.trade-solo.com',rpId:'neko-operator.trade-solo.com',apiOrigin:'https://neko-window-sharing-staging.nakanishisoya.workers.dev'};
  requireValue(canonical(p.target)===canonical(target),'target_mismatch');
  requireValue(p.scopeSHA256==='1fa03eb65a5fc3002e6fb48824d1814eb60390e57c8e40852c5586c3071fdf9a','owner_adoption_mismatch');
- requireValue(p.v1ReportCount===0&&p.unresolvedReportObjects===0&&p.reportIntakeEnabled===false&&p.reportKeyPolicyTriggers===2&&p.nativeCustodyVerified===true&&p.backupRestoreVerified===false&&p.v1HistoricalIntakeVerified===false&&p.productionApproved===false&&p.recipientReadVerified===false&&p.realUserPhotoVerified===false,'readiness_boundary_mismatch');
+ // Preserve the original intake-OFF admission boundary. A separately signed
+ // UI continuation records an already enabled intake; it cannot enable it.
+ requireValue(p.v1ReportCount===0&&p.unresolvedReportObjects===0&&p.reportIntakeEnabled===uiContinuation&&p.reportKeyPolicyTriggers===2&&p.nativeCustodyVerified===true&&p.backupRestoreVerified===false&&p.v1HistoricalIntakeVerified===false&&p.productionApproved===false&&p.recipientReadVerified===false&&p.realUserPhotoVerified===false,'readiness_boundary_mismatch');
  exact(p.cloudImage,['complete','width','height','visible']);
  requireValue(p.cloudImage.complete===true&&p.cloudImage.width===1&&p.cloudImage.height===1&&p.cloudImage.visible===true&&canonical(p.readPhases)===canonical(['started','disclosure_ready'])&&p.resolution==='no_action','cloud_drill_incomplete');
  requireValue([p.scopeSHA256,p.readReceiptSHA256,p.sourceSnapshotSHA256].every(hex),'invalid_evidence_binding');
