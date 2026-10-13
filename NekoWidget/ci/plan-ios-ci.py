@@ -593,6 +593,25 @@ PRESERVATION_PUBLIC_RETENTION_IMMUTABLE = {
     "NekoWidget/PreservationService/test/photo-provider.test.ts": "b1ff58ae7d867c0dd4fae50264a0c8df84afdd2d",
 }
 
+# Canonical notice mail IDs only; four frozen existing source/test inputs.
+PRESERVATION_NOTICE_MESSAGE_ID_SCOPE = "preservation-notice-message-id-v1"
+PRESERVATION_NOTICE_MESSAGE_ID_BLOBS = {
+    'NekoWidget/PreservationService/src/notice-events.ts': ('d97ccf9547cec4152553a311785f7e901ea3a4de', '1027b52b27e3bd66d487b604be1846775dd0ceee'),
+    'NekoWidget/PreservationService/src/notice-submissions.ts': ('68ce2b065caf81d49310ffad2cf953f5424ef470', 'ac45fbdbb194ac664fb7bb3df9ed2c6d2a4fa1ab'),
+    'NekoWidget/PreservationService/test/notice-events.test.ts': ('1c2a09a769d0143caf23ab366f3ab4ee1e55f67b', '5a5271baa12078033e6a142d24bb7d15762426fc'),
+    'NekoWidget/PreservationService/test/notice-submissions.test.ts': ('bcc64369d0f0103a30a6b8402fe695458c9de1bb', 'fc91e374bcaabb06a2514847010daf835b9a405a'),
+}
+PRESERVATION_NOTICE_MESSAGE_ID_PATHS = frozenset(PRESERVATION_NOTICE_MESSAGE_ID_BLOBS)
+PRESERVATION_NOTICE_MESSAGE_ID_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
+PRESERVATION_NOTICE_MESSAGE_ID_IMMUTABLE = {
+    PRESERVATION_WORKFLOW: PRESERVATION_NOTICE_MESSAGE_ID_WORKFLOW_BLOB,
+    JPEG_WORKFLOW: "60d26ce8d94730f7fa81eb09bb19d15f111b497f",
+    "NekoWidget/PreservationService/src/providers.ts": "c0a20f99d3154764a89641bb4510a207278128a6",
+    "NekoWidget/PreservationService/test/photo-provider.test.ts": "b1ff58ae7d867c0dd4fae50264a0c8df84afdd2d",
+}
+
 
 # One reviewed owned encryption/readback buffer release and its boundary tests.
 # Register the control separately; no mixed product/control companion exception.
@@ -1779,6 +1798,43 @@ def preservation_public_retention_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_notice_message_id_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_NOTICE_MESSAGE_ID_PATHS
+            and all(path in PRESERVATION_NOTICE_MESSAGE_ID_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_notice_message_id_backend_only(paths, base, head):
+    # Registration must already exist on main; mixed controls cannot self-approve.
+    registration = 'PRESERVATION_NOTICE_MESSAGE_ID_SCOPE = "preservation-notice-message-id-v1"'
+    if git("show", "refs/remotes/origin/main:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1:
+        return False
+    if (not preservation_notice_message_id_paths_only(paths)
+            or set(PRESERVATION_NOTICE_MESSAGE_ID_BLOBS) != PRESERVATION_NOTICE_MESSAGE_ID_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PRESERVATION_NOTICE_MESSAGE_ID_BLOBS.values())):
+        return False
+    if set(PRESERVATION_NOTICE_MESSAGE_ID_IMMUTABLE) != {
+            PRESERVATION_WORKFLOW, JPEG_WORKFLOW,
+            "NekoWidget/PreservationService/src/providers.ts",
+            "NekoWidget/PreservationService/test/photo-provider.test.ts"}:
+        return False
+    for path, blob in PRESERVATION_NOTICE_MESSAGE_ID_IMMUTABLE.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", path)
+                       != f"100644 blob {blob}\t{path}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_NOTICE_MESSAGE_ID_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_NOTICE_MESSAGE_ID_COMPANION_DIGESTS")
+
+
+def preservation_notice_message_id_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "success_required": True}]
+
+
 def preservation_owned_buffers_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_OWNED_BUFFERS_PATHS
@@ -2640,6 +2696,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_PHOTO_STARTUP_SCOPE and preservation_photo_startup_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_NOTICE_MESSAGE_ID_SCOPE and preservation_notice_message_id_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_PUBLIC_RETENTION_SCOPE and preservation_public_retention_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3783,6 +3841,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
                                        (PRESERVATION_RECOVERY_CHUNKS_SCOPE, preservation_recovery_chunks_paths_only, preservation_recovery_chunks_backend_only),
                                        (PRESERVATION_PUBLIC_RETENTION_SCOPE, preservation_public_retention_paths_only, preservation_public_retention_backend_only),
+                                       (PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, preservation_notice_message_id_paths_only, preservation_notice_message_id_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
                                        (PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, preservation_photo_upload_body_paths_only, preservation_photo_upload_body_backend_only),
@@ -6369,7 +6428,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6390,6 +6449,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE else {}),
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
+              **({"required_backend_runs": preservation_notice_message_id_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_NOTICE_MESSAGE_ID_SCOPE else {}),
               **({"required_backend_runs": preservation_public_retention_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_PUBLIC_RETENTION_SCOPE else {}),
               **({"required_backend_runs": preservation_recovery_chunks_requirements(env["GITHUB_SHA"])}
@@ -6439,6 +6500,7 @@ def main() -> None:
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_RECOVERY_CHUNKS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_PUBLIC_RETENTION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_NOTICE_MESSAGE_ID_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_OWNED_BUFFERS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),

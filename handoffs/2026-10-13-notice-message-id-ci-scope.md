@@ -1,0 +1,5 @@
+# Notice provider Message-ID CI route
+
+`preservation-notice-message-id-v1` freezes the four existing notice-events/submissions source and test before/after blobs at product a1d0833. It admits bounded canonical mail IDs; delivery event/purge IDs retain their prior predicate. No workflow, dependency, native/privacy/signature/public-gate inputs change. Complete raw tracked closure requires regular exact product modifications and normal handoff A/M only; unknown, partial, new/deleted/type/mode changes fall back to full.
+
+Control must be separately main-approved before the product push. Merge approved main controls into the product so the comparison base contains them; no mixed product/control companion bypass. Existing same-SHA owning Preservation all checks/migrations/bundles plus iOS plan must pass. No native placeholders, JPEG/release/upload/cloud success implied. Initial timing baseline remains unmeasured; no arbitrary budget or duration exception. Primary owns mandatory development checks, preflight, all CI and deployment.
