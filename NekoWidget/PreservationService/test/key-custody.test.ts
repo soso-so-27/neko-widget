@@ -22,6 +22,19 @@ it('envelope survives new instances and key rotation while preserving input and 
   expect(new TextDecoder().decode(text)).toBe('写真と、その日の大切な記録');
   expect(authority.rawKeys.every(key => key.every(byte => byte === 0))).toBe(true);
 });
+it('preserves a borrowed plaintext view and its surrounding bytes after sealing', async () => {
+  const authority = await syntheticKeyAuthority(); const scope = context();
+  const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.make() });
+  const backing = new Uint8Array(4096).fill(0xa7);
+  const plaintext = backing.subarray(11, 4083); plaintext.fill(0x5c);
+  const original = backing.slice();
+  const sealed = await keys.seal(plaintext, scope);
+  expect(backing).toEqual(original);
+  expect(plaintext.byteLength).toBe(4072);
+  expect(await keys.open(sealed, scope)).toEqual(plaintext);
+  expect(backing).toEqual(original);
+});
+
 it('another owner, another record and another purpose cannot open a valid envelope', async () => {
   const authority = await syntheticKeyAuthority(); const scope = context();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.make() }); const sealed = await keys.seal(text, scope);

@@ -179,6 +179,42 @@ it('preserves an owned ciphertext view through R2 verification and recovery with
   expect(restored.photoBase64).toBe(encodePhoto(photo));
 });
 
+it('rejects a corrupt R2 verification copy before recovery or record commit', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  const remote = syntheticRecovery(f.options.keys);
+  let verificationCopy: ArrayBuffer | undefined;
+  const bucket = new Proxy(binding.ARCHIVE, { get(target, property) {
+    if (property === 'get') return async (key: string) => {
+      const object = await target.get(key);
+      if (!object) return object;
+      return new Proxy(object, { get(readback, field) {
+        if (field === 'arrayBuffer') return async () => {
+          verificationCopy = await readback.arrayBuffer();
+          const corrupted = new Uint8Array(verificationCopy);
+          corrupted[corrupted.length - 1] = corrupted[corrupted.length - 1]! ^ 1;
+          return verificationCopy;
+        };
+        const value = Reflect.get(readback, field);
+        return typeof value === 'function' ? value.bind(readback) : value;
+      } });
+    };
+    const value = Reflect.get(target, property);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const request = f.request(); const original = JSON.stringify(request);
+  const archive = new ArchiveStore({ ...f.options, bucket, recovery: remote.recovery });
+  await expect(archive.put(f.session.token, id, request))
+    .rejects.toMatchObject({ code: 'ARCHIVE_STORAGE_UNAVAILABLE', status: 503 });
+  expect(verificationCopy).toBeDefined();
+  expect(verificationCopy!.byteLength).toBe(0);
+  expect(JSON.stringify(request)).toBe(original);
+  expect(remote.references).toHaveLength(0);
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first()).toBeNull();
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_uploads WHERE owner_id=?')
+    .bind(f.session.ownerId).first()).toBeNull();
+});
+
 it('ties each acknowledged D1 revision to an exact recovery version and fails closed on S3 outage', async () => {
   const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
   const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });

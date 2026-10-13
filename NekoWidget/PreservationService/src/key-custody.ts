@@ -71,6 +71,9 @@ export function envelopeKeyCustody(options: { enabled?: boolean; wrapper: KeyWra
           additionalData: prefix, tagLength: 128 }, key, plaintext as BufferSource));
         const result = new Uint8Array(prefix.length + ciphertext.length);
         result.set(prefix); result.set(ciphertext, prefix.length);
+        // WebCrypto owns this temporary allocation. The returned envelope has its
+        // own copy; release the temporary without touching the caller's plaintext.
+        (ciphertext.buffer as ArrayBuffer).transfer(0);
         return result;
       } catch { throw unavailable(); }
       finally { raw?.fill(0); }
