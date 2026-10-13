@@ -14,7 +14,10 @@ async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 4
     body: body instanceof ReadableStream ? body : JSON.stringify(body),
     // Workers supports manual/follow, not Request's browser-only error mode.
     // Never follow a provider redirect (response.ok below rejects every 3xx).
-    redirect: 'manual', signal: AbortSignal.timeout(10_000),
+    // The private JPEG container may spend up to 8s obtaining an instance and
+    // 20s waiting for its port before the bounded body/decode work begins.
+    // One finite photo call covers that cold start; other authorities keep 10s.
+    redirect: 'manual', signal: AbortSignal.timeout(path === '/images/validate-jpeg' ? 60_000 : 10_000),
   });
   if (!response.ok || !response.body) throw new ServiceError('DEPENDENCY_UNAVAILABLE', 503);
   try {
