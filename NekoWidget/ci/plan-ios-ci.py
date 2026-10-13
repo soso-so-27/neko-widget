@@ -514,6 +514,23 @@ PRESERVATION_R2_VIEW_PATHS = frozenset(PRESERVATION_R2_VIEW_BLOBS)
 PRESERVATION_R2_VIEW_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
 
 
+# One reviewed owned encryption/readback buffer release and its boundary tests.
+# Register the control separately; no mixed product/control companion exception.
+PRESERVATION_OWNED_BUFFERS_SCOPE = "preservation-owned-buffers-v1"
+PRESERVATION_OWNED_BUFFERS_BLOBS = {
+    "NekoWidget/PreservationService/src/key-custody.ts": (
+        "06387f8ffc598fb380daf46bdd8759a102989ccc", "2f40e985f96d2867b8cd1947c62f0f530c3adb04"),
+    "NekoWidget/PreservationService/src/storage.ts": (
+        "5384f5c5cd45f6290748fad20adfbfd41a25066c", "1b161f4597394cc7bb90905b5cf078d11ce8604b"),
+    "NekoWidget/PreservationService/test/key-custody.test.ts": (
+        "69e0a90b0a9574407d889e522b03855d8be75594", "c05b46be9f62075b2548125949435a00cd30a225"),
+    "NekoWidget/PreservationService/test/storage.integration.test.ts": (
+        "f74ac499d0a32a3df5cf6484cf7a78048e0b2844", "df1423120e0ec31394ef4ebe459f8beff55d7110"),
+}
+PRESERVATION_OWNED_BUFFERS_PATHS = frozenset(PRESERVATION_OWNED_BUFFERS_BLOBS)
+PRESERVATION_OWNED_BUFFERS_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
 # One reviewed dedicated request-buffer release and its owning boundary tests.
 # Product commit fab42d8a920332233c6861d78dd7dcb4271aecc3; control lands first.
 PRESERVATION_REQUEST_BUFFER_SCOPE = "preservation-request-buffer-v1"
@@ -1518,6 +1535,34 @@ def preservation_r2_view_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_owned_buffers_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_OWNED_BUFFERS_PATHS
+            and all(path in PRESERVATION_OWNED_BUFFERS_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_owned_buffers_backend_only(paths, base, head):
+    if (not preservation_owned_buffers_paths_only(paths)
+            or set(PRESERVATION_OWNED_BUFFERS_BLOBS) != PRESERVATION_OWNED_BUFFERS_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PRESERVATION_OWNED_BUFFERS_BLOBS.values())):
+        return False
+    blob = PRESERVATION_OWNED_BUFFERS_WORKFLOW_BLOB
+    if (not SHA.fullmatch(blob) or blob == "0" * 40
+            or any(git("ls-tree", revision, "--", PRESERVATION_WORKFLOW)
+                   != f"100644 blob {blob}\t{PRESERVATION_WORKFLOW}" for revision in (base, head))):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_OWNED_BUFFERS_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_OWNED_BUFFERS_COMPANION_DIGESTS")
+
+
+def preservation_owned_buffers_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True}]
+
+
 def preservation_request_buffer_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_REQUEST_BUFFER_PATHS
@@ -2317,6 +2362,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_PROVIDER_SCOPE and preservation_provider_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_OWNED_BUFFERS_SCOPE and preservation_owned_buffers_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_REQUEST_BUFFER_SCOPE and preservation_request_buffer_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3453,6 +3500,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
+                                       (PRESERVATION_OWNED_BUFFERS_SCOPE, preservation_owned_buffers_paths_only, preservation_owned_buffers_backend_only),
                                        (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
                                        (PRESERVATION_UPLOAD_SCOPE, preservation_upload_paths_only, preservation_upload_backend_only),
                                        (BILLING_AUTHORITY_SCOPE, billing_authority_paths_only, billing_authority_backend_only),
@@ -6027,7 +6075,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6044,6 +6092,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_PROVIDER_SCOPE else {}),
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
+              **({"required_backend_runs": preservation_owned_buffers_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_OWNED_BUFFERS_SCOPE else {}),
               **({"required_backend_runs": preservation_request_buffer_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_REQUEST_BUFFER_SCOPE else {}),
               **({"required_backend_runs": preservation_recovery_read_requirements(env["GITHUB_SHA"])}
@@ -6083,6 +6133,7 @@ def main() -> None:
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_UPLOAD_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_OWNED_BUFFERS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
