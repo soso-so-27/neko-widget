@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1791850876726,
+    "issuedAtMs": 1791854946200,
     "expiresAtMs": 1791890818492,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -51,7 +51,7 @@
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
     "codeSHA256": {
-      ".github/workflows/testflight.yml": "49ae881151bcb713ea83f80bd56cafb82f4d088c3263e8be01b769ff074000c9",
+      ".github/workflows/testflight.yml": "882e87fec0c05d60c8c2949df2c5ac48bc7e182e1de3fe22574f7bc0447df87c",
       "NekoWidget/ci/moderation_readiness.py": "c8c252cbd0375858ae2510dfa56c6804149d1ae15f58167042faba89c4eba27f",
       "NekoWidget/ci/verify-moderation-readiness.mjs": "219caba30f21e8b7d3eaa62a661a21fbac944e4d59fcb660f4e4932d659a30ed",
       "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "WA_2XxzY84yHmfuoO0owZiKOhMV9MrDMRaOs-l-R0ICmicPq4jguQVqShCCnkEZdM5e8M7qafGqfmjfTIw1cDA"
+      "signatureBase64url": "nWRDzaCwp78G7m_WvUPZPY83eRifpE4xRPwqz6_m_7uoaPLG28g-TFDQ7jWWXjDxmt5XY_aKaxdtJ9lXvu0BBA"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "JVnEi7wUQ8HNpNu3cFiBW2fkFAYoPy0z8NKmKT0wlxmsTTbdAebDEXmAx7SeigfbaHKm3v7qcf-mv04LmxrgCg"
+      "signatureBase64url": "sZfpK7EEKeb5XeIMlUPJuhDDc_b5AfjWqV3UQ3Ne5t1NBxbM7KTpDK224Y9Rk7-hn7i-Ysf6OlkTf4nVw2COCw"
     }
   ]
 }
