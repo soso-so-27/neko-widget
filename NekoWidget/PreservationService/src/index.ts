@@ -5,7 +5,7 @@ import { AppleIdentityVerifier, AppleSignInFailure, createAppleClientSecret } fr
 import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './providers';
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
-import { readRequestJSON as body } from './request-json';
+import { readRequestJSON as body, readPhotoUploadJSON } from './request-json';
 import { RetentionLedger, type VerifiedMembershipStatus } from './retention-ledger';
 import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions';
 import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
@@ -180,8 +180,11 @@ export async function route(request: Request, services: Services, context?: Pick
     const revision = record.revision;
     return recordResponse(record, () => services.archive.validateRead(token, id, revision, session.ownerId), signal);
   });
-  if (id && request.method === 'PUT') return payloadWork.run(async () =>
-    response(await services.archive.put(token, id, await body(request, 29 * 1024 * 1024))), request.signal);
+  if (id && request.method === 'PUT') return payloadWork.run(async () => {
+    // Revalidate after waiting for the payload permit, before receiving a large body.
+    await services.auth.requireSession(token);
+    return response(await services.archive.put(token, id, await readPhotoUploadJSON(request, 29 * 1024 * 1024)));
+  }, request.signal);
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');

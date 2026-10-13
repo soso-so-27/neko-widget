@@ -9,6 +9,7 @@ import { OwnerDeletionRequests } from '../src/owner-deletion';
 import { ArchiveStore } from '../src/storage';
 import { IntakeControl } from '../src/intake-control';
 import worker, { route, type Env, type Services } from '../src/index';
+import { payloadWork } from '../src/payload-work';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket; TEST_MIGRATIONS: D1Migration[] };
 const db = binding.DB;
@@ -54,6 +55,36 @@ async function awayFromBoundary(): Promise<void> {
   const seconds = await db.prepare('SELECT unixepoch() AS seconds').first<{ seconds: number }>();
   if (seconds!.seconds % 60 >= 57) await new Promise(resolve => setTimeout(resolve, (61 - seconds!.seconds % 60) * 1000));
 }
+
+it.each([false, true])('rejects a revoked photo session before reading its body (limiter=%s)', async withLimiter => {
+  const f = await fixture(); await f.auth.revokeSession(f.first.token);
+  if (!withLimiter) delete f.services.ownerRequestLimiter;
+  let reads = 0;
+  const body = new ReadableStream<Uint8Array>({ pull(controller) { reads++; controller.enqueue(new Uint8Array([123])); } },
+    { highWaterMark: 0 });
+  const upload = new Request(`https://preservation.test/v1/records/${crypto.randomUUID()}`, { method: 'PUT', body,
+    headers: { authorization: `Bearer ${f.first.token}`, 'content-type': 'application/json' } });
+  await expect(route(upload, f.services)).rejects.toMatchObject({ code: 'unauthorized', status: 401 });
+  expect(reads).toBe(0); await body.cancel();
+});
+
+it('revalidates a photo session revoked while waiting for the payload permit before reading bytes', async () => {
+  const f = await fixture(); const release = await payloadWork.acquire();
+  let admitted!: () => void; const admission = new Promise<void>(resolve => { admitted = resolve; });
+  const original = f.ownerRequestLimiter.admit.bind(f.ownerRequestLimiter);
+  vi.spyOn(f.ownerRequestLimiter, 'admit').mockImplementation(async session => { await original(session); admitted(); });
+  let reads = 0;
+  const body = new ReadableStream<Uint8Array>({ pull(controller) { reads++; controller.enqueue(new Uint8Array([123])); } },
+    { highWaterMark: 0 });
+  const upload = new Request(`https://preservation.test/v1/records/${crypto.randomUUID()}`, { method: 'PUT', body,
+    headers: { authorization: `Bearer ${f.first.token}`, 'content-type': 'application/json' } });
+  const pending = route(upload, f.services);
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'unauthorized', status: 401 });
+  try {
+    await admission; await f.auth.revokeSession(f.first.token); release(); await rejected;
+    expect(reads).toBe(0);
+  } finally { release(); await body.cancel(); }
+});
 
 it('shares exactly 30 admitted HTTP requests across simultaneous sessions of one owner', async () => {
   const f = await fixture(); const second = await f.auth.establish(f.identity);

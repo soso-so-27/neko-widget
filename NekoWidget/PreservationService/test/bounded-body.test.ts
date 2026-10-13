@@ -1,7 +1,57 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { readBoundedBody } from '../src/bounded-body';
 import { ServiceError } from '../src/contracts';
 const error = () => new ServiceError('BODY_UNAVAILABLE', 503);
+const photoPolicy = { totalMilliseconds: 60_000, idleMilliseconds: 5000, progressChunkBytes: 512 };
+
+it('photo reads keep a fixed total deadline despite continued byte progress', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  try {
+    let source!: ReadableStreamDefaultController<Uint8Array>; let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { source = controller; }, cancel() { cancelled = true; } });
+    const pending = readBoundedBody(body, 100, error, undefined, error, 4096, photoPolicy);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
+    for (let i = 0; i < 14; i++) {
+      await vi.advanceTimersByTimeAsync(4000); source.enqueue(new Uint8Array([i]));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await vi.advanceTimersByTimeAsync(3999); expect(cancelled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await rejected;
+    expect(cancelled).toBe(true); expect(body.locked).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+it('empty chunks cannot extend the photo idle deadline', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  try {
+    let source!: ReadableStreamDefaultController<Uint8Array>; let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { source = controller; }, cancel() { cancelled = true; } });
+    const pending = readBoundedBody(body, 100, error, undefined, error, 4096, photoPolicy);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
+    await vi.advanceTimersByTimeAsync(4000); source.enqueue(new Uint8Array([1]));
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(1000); source.enqueue(new Uint8Array());
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await vi.advanceTimersByTimeAsync(999); expect(cancelled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await rejected;
+    expect(cancelled).toBe(true); expect(body.locked).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+it('photo chunk credit cannot admit tiny or empty floods, or bypass the byte cap', async () => {
+  for (const bytes of [0, 1]) {
+    let produced = 0; let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) { produced++; controller.enqueue(new Uint8Array(bytes)); },
+      cancel() { cancelled = true; } }, { highWaterMark: 0 });
+    await expect(readBoundedBody(body, 29 * 1024 * 1024, error, undefined, error, 4096, photoPolicy))
+      .rejects.toMatchObject({ code: 'BODY_UNAVAILABLE' });
+    expect(produced).toBeLessThan(4110); expect(cancelled).toBe(true); expect(body.locked).toBe(false);
+  }
+  await expect(readBoundedBody(new Response(new Uint8Array(1025)).body, 1024, error, undefined,
+    () => new ServiceError('TOO_LARGE', 413), 4096, photoPolicy)).rejects.toMatchObject({ code: 'TOO_LARGE', status: 413 });
+});
 it('assembles bounded streams, preserving byte order and using the exact limit', async () => {
   const body = new ReadableStream<Uint8Array>({ start(controller) {
     controller.enqueue(new Uint8Array([1])); controller.enqueue(new Uint8Array());
