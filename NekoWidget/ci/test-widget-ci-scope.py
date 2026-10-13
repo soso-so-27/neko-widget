@@ -53,6 +53,9 @@ class ReportRuntimeContinuationBoundaryTests(unittest.TestCase):
         with patch.object(planner,'report_runtime_inputs',side_effect=lambda head,**kw:not kw.get('current',False)):
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):
                 planner.report_runtime_source('a'*40,'soso-so-27/neko-widget',lambda _:self.fail('No API before current readiness'),now)
+        with patch.object(planner,'report_runtime_inputs',return_value=True),patch.object(planner,'reply_readiness_inputs',return_value=False):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.report_runtime_source('a'*40,'soso-so-27/neko-widget',lambda _:self.fail('No API before original native closure'),now)
         with self.assertRaises(planner.CorrectionEvidenceUnavailable):
             planner.find_test_correction_evidence('a'*40,planner.REPORT_RUNTIME_BRANCH,'soso-so-27/neko-widget',planner.required_jobs_from_scope(scope.FULL_SCOPE),lambda _:self.fail('No API for wrong native graph'),now)
 

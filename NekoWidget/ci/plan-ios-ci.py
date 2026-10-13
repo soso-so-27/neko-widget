@@ -4087,6 +4087,7 @@ def report_runtime_jobs(jobs,run,required,*,placeholders=()):
 def report_runtime_source(head,repository,api,now):
     if repository!='soso-so-27/neko-widget' or not report_runtime_inputs(head):raise CorrectionEvidenceUnavailable('Frozen runtime continuation inputs differ')
     if not report_runtime_inputs(head,current=True):raise CorrectionEvidenceUnavailable('Runtime continuation signature, expiry or current code invalid; no native retry authorized')
+    if not reply_readiness_inputs(REPORT_RUNTIME_BUILD_SOURCE):raise CorrectionEvidenceUnavailable('Original18f to e996 native input closure differs')
     original=reply_readiness_source_facts(repository,api,now)
     run=api(f'/repos/{repository}/actions/runs/{REPORT_RUNTIME_BUILD_RUN}')
     report_runtime_run(run,REPORT_RUNTIME_BUILD_RUN,REPORT_RUNTIME_BUILD_SOURCE,REPLY_READINESS_BRANCH,'.github/workflows/ios-build.yml','push',now,'success')
