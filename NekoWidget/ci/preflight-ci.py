@@ -225,9 +225,13 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
-    if branch == planner.REPORT_RUNTIME_BRANCH:
+    if branch in (planner.REPORT_RUNTIME_BRANCH,planner.REPORT_RUNTIME_ORDER_BRANCH):
         refs.update(task_refs(planner.REPLY_READINESS_BRANCH))
-        for identifier in (38318066862,planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_BUILD_RUN,38325044657,planner.REPORT_RUNTIME_FAILED_RELEASE):
+        retained_ids=(38318066862,planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_BUILD_RUN,38325044657,planner.REPORT_RUNTIME_FAILED_RELEASE)
+        if branch==planner.REPORT_RUNTIME_ORDER_BRANCH:
+            refs.update(task_refs(planner.REPORT_RUNTIME_BRANCH))
+            retained_ids+=(planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE)
+        for identifier in retained_ids:
             retained=github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
             if retained.get("id")!=identifier or retained.get("repository",{}).get("full_name")!=REPOSITORY:
                 raise ValueError("Retained report task history differs")
@@ -642,7 +646,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     elapsed = max(0, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60) if runs else 0
     ci_elapsed = elapsed
     runtime_continuation = (isinstance(correction_evidence,dict)
-                            and correction_evidence.get("kind")==planner.REPORT_RUNTIME_KIND)
+                            and correction_evidence.get("kind") in (planner.REPORT_RUNTIME_KIND,planner.REPORT_RUNTIME_ORDER_KIND))
+    runtime_order=runtime_continuation and correction_evidence['kind']==planner.REPORT_RUNTIME_ORDER_KIND
     if runtime_continuation:
         # A new branch cannot reset the original server/native candidate clock.
         first=parse(planner.REPORT_RUNTIME_FIRST_SERVER_AT)
@@ -742,14 +747,38 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
             'failed_release_job_id':planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,
             'failed_release_log_sha256':planner.REPORT_RUNTIME_FAILED_RELEASE_LOG,'failed_release_upload_skipped':True,
             'required_backend_runs':planner.report_runtime_requirements(result.get('head'))}
+        if runtime_order:
+            expected={'kind':planner.REPORT_RUNTIME_ORDER_KIND,'candidate_sha':result.get('head'),
+                'run_id':planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,
+                'owning_jobs_to_execute':[],'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD),
+                'failed_release_253_run_id':planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,'failed_release_253_job_id':planner.REPORT_RUNTIME_ORDER_FAILED_JOB,
+                'failed_release_253_log_sha256':planner.REPORT_RUNTIME_ORDER_FAILED_LOG,'failed_release_253_archived_raw_sha256':planner.REPORT_RUNTIME_ORDER_FAILED_RAW_LOG,'failed_release_253_archive_upload_skipped':True,
+                'backend_evidence':{'run_id':planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'event':'push','required_jobs':list(planner.REPORT_RUNTIME_SHARING_JOBS),
+                    'cancelled_duplicate':{'run_id':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,'conclusion':'cancelled','executed_step_count':0,'success_evidence':False}}}
+            original=correction_evidence.get('original_runtime_proof')
+            old_expected={'kind':planner.REPORT_RUNTIME_KIND,'candidate_sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,
+                'run_id':planner.REPORT_RUNTIME_BUILD_RUN,'sha':planner.REPORT_RUNTIME_BUILD_SOURCE,'owning_jobs_to_execute':[],
+                'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD),
+                'failed_release_run_id':planner.REPORT_RUNTIME_FAILED_RELEASE,'failed_release_job_id':planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,
+                'failed_release_log_sha256':planner.REPORT_RUNTIME_FAILED_RELEASE_LOG,'failed_release_upload_skipped':True}
+            if not isinstance(original,dict) or any(original.get(k)!=v for k,v in old_expected.items()) or correction_evidence.get('jobs')!=original.get('jobs'):raise ValueError('Original native/failed252 proof differs')
         if result.get('scope')!=scope.REPORT_REPLY_ENTRY_SCOPE or any(correction_evidence.get(k)!=v for k,v in expected.items()):
             raise ValueError('Unregistered runtime continuation proof')
-        for identifier,sha,path in ((planner.REPLY_READINESS_RUN,planner.REPLY_READINESS_SOURCE,IOS_WORKFLOW),
-                                    (planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml')):
+        retained_failures=((planner.REPLY_READINESS_RUN,planner.REPLY_READINESS_SOURCE,IOS_WORKFLOW),
+                           (planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml'))
+        if runtime_order:retained_failures+=((planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_BASE,'.github/workflows/testflight.yml'),)
+        for identifier,sha,path in retained_failures:
             source=[r for r in runs if r['id']==identifier]
             if len(source)!=1 or source[0].get('head_sha')!=sha or source[0].get('path')!=path or (source[0].get('status'),source[0].get('conclusion'))!=('completed','failure'):
                 raise ValueError('Original runtime/report failures missing or changed')
         fixed_owner_failures.update({planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_FAILED_RELEASE})
+        if runtime_order:
+            cancelled=[r for r in runs if r['id']==planner.REPORT_RUNTIME_CANCELLED_DUPLICATE]
+            if (len(cancelled)!=1 or cancelled[0].get('head_sha')!=planner.REPORT_RUNTIME_DUPLICATE_HEAD or cancelled[0].get('path')!='.github/workflows/sharing-service.yml'
+                or cancelled[0].get('head_branch')!=planner.REPORT_RUNTIME_BRANCH or cancelled[0].get('event')!='push' or cancelled[0].get('run_attempt')!=1
+                or (cancelled[0].get('status'),cancelled[0].get('conclusion'))!=('completed','cancelled')):raise ValueError('Zero-step cancelled backend duplicate missing or changed')
+            fixed_owner_failures.update({planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,planner.REPORT_RUNTIME_CANCELLED_DUPLICATE})
+            if any(r['id'] not in fixed_owner_failures for r in failed):blockers.append('preparation_order_has_unknown_failure')
     if not runtime_continuation and correction_evidence is not None and result.get('scope') == scope.REPORT_REPLY_ENTRY_SCOPE:
         expected = {'kind':'report-reply-readiness-build-recovery-v1','run_id':planner.REPLY_READINESS_RUN,
                     'sha':planner.REPLY_READINESS_SOURCE,'owning_jobs_to_execute':[planner.BUILD],
@@ -885,6 +914,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                           "first_native_candidate_at":planner.REPORT_RUNTIME_FIRST_NATIVE_AT,
                           "minutes_since_first_candidate":round(elapsed,1),
                           "retained_release_failure":planner.REPORT_RUNTIME_FAILED_RELEASE,
+                          **({'retained_release_failures':[planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE],
+                              'retained_zero_step_cancelled_run':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE} if runtime_order else {}),
                           "retained_historical_diagnostic":38318066862} if runtime_continuation else {}),
                       "projected_total_minutes": projected, "blockers": blockers}
     result["task"]["first_baseline_measurement"] = first_measurement
@@ -988,6 +1019,14 @@ def report_reply_readiness_cost(result, correction, include_upload, history):
     if result['scope'] != scope.REPORT_REPLY_ENTRY_SCOPE or correction is None: return result
     upload = float(history['upload_minutes']) if include_upload else 0
     if not math.isfinite(upload) or upload < 0: raise ValueError('Invalid upload timing reference')
+    if correction.get('kind')==planner.REPORT_RUNTIME_ORDER_KIND:
+        upper=5+upload
+        result['cost']={'status':'reference','ci_minutes':[0,5],'with_upload_minutes':[0,upper],
+            'samples':[],'includes_future_rework':False,'required_jobs_to_execute':[planner.PLAN_JOB],
+            'native_input_reuse':correction['jobs'],'backend_input_reuse':correction['required_backend_runs'],
+            'reference':'Existing plan5 minute execution bound plus recorded upload reference; not measured completion, queue or rework. Fixed native/backend successes, failed252/253 and original elapsed remain attributed.'}
+        result['cost_review_required']=upper>result['target_minutes'];result['ready']=not result['cost_review_required']
+        return result
     if correction.get('kind')==planner.REPORT_RUNTIME_KIND:
         upper=20+upload
         result['cost']={'status':'reference','ci_minutes':[0,20],'with_upload_minutes':[0,upper],
