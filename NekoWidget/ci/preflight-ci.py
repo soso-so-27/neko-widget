@@ -1166,7 +1166,7 @@ def photo_correction_replay_cost(result, correction, include_upload, history):
 def observe_cost(selected, history, include_upload, use_full_baseline=False):
     # Scope-specific historical observations, not a delivery guarantee. Keep
     # failed/retried candidates: the last green job alone hides feedback cost.
-    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_ENROLLMENT_CEREMONY_SCOPE, planner.MODERATION_INITIAL_ADMISSION_SCOPE, planner.MODERATION_OPERATOR_STARTUP_SCOPE, planner.MODERATION_REPORT_BPLIST_SCOPE, planner.MODERATION_RETIRED_SCOPE, planner.MODERATION_RETIRED_WINDOW_SCOPE, planner.MODERATION_RESPONSE_READER_SCOPE, planner.MODERATION_OPERATOR_HOST_SCOPE, planner.MODERATION_OWNER_FLOW_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
+    if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.MODERATION_ENROLLMENT_SCOPE, planner.MODERATION_AI_SCOPE, planner.MODERATION_AI_TRANSPORT_SCOPE, planner.MODERATION_AI_DURABLE_SCOPE, planner.MODERATION_CONSOLE_SCOPE, planner.MODERATION_REVIEW_EVIDENCE_SCOPE, planner.MODERATION_ENROLLMENT_CEREMONY_SCOPE, planner.MODERATION_INITIAL_ADMISSION_SCOPE, planner.MODERATION_OPERATOR_STARTUP_SCOPE, planner.MODERATION_REPORT_BPLIST_SCOPE, planner.MODERATION_RETIRED_SCOPE, planner.MODERATION_RETIRED_WINDOW_SCOPE, planner.MODERATION_RESPONSE_READER_SCOPE, planner.MODERATION_OPERATOR_HOST_SCOPE, planner.MODERATION_OWNER_FLOW_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE, planner.RELEASE_PREP_SCOPE, planner.POLICY_DOC_SCOPE, planner.BILLING_OPERATOR_SCOPE) and include_upload:
         raise ValueError("A backend-only scope cannot authorize or estimate an iOS upload")
     if use_full_baseline and selected not in (scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.REVIEWED_MEMBERSHIP_ACCESS_SCOPE,
                                              scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, scope.BILLING_LOCAL_PREPARATION_SCOPE):
@@ -1269,7 +1269,7 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
                         planner.PRESERVATION_WORKFLOW: planner.PRESERVATION_JOB_TIMEOUT_MINUTES,
                         planner.JPEG_WORKFLOW: planner.JPEG_JOB_TIMEOUT_MINUTES},
                     "note": "First measurement of both same-SHA backend jobs. Their 5/10 minute execution timeouts are not observed durations or a queue/total-time guarantee."}
-        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE):
+        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
                        else planner.BILLING_JOB_TIMEOUT_MINUTES if selected == planner.BILLING_SCOPE
                        else planner.BILLING_AUTHORITY_JOB_TIMEOUT_MINUTES if selected == planner.BILLING_AUTHORITY_SCOPE
@@ -1351,6 +1351,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.PRESERVATION_OWNED_BUFFERS_SCOPE else
               "Exact dedicated request-buffer release and boundary tests; same-SHA preservation Node job with all tests, migrations and dry-run bundles required; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_REQUEST_BUFFER_SCOPE else
+              "Exact authenticated photo-upload receive policy and boundary tests; same-SHA preservation Node job with all tests, migrations and dry-run bundles required; no native, live-cloud or release evidence"
+              if selected == planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE else
               "Exact S3 recovery reader and boundary tests; same-SHA preservation Node job with all tests, migrations and dry-run bundles required; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_RECOVERY_READ_SCOPE else
               "Exact moderation enrollment verifier and tests; all four same-SHA Sharing workflow jobs must execute successfully on the owning push; no native, live-cloud or release evidence"
@@ -1407,6 +1409,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
                if selected == planner.PRESERVATION_OWNED_BUFFERS_SCOPE else {}),
             **({"required_backend_runs": planner.preservation_request_buffer_requirements(head)}
                if selected == planner.PRESERVATION_REQUEST_BUFFER_SCOPE else {}),
+            **({"required_backend_runs": planner.preservation_photo_upload_body_requirements(head)}
+               if selected == planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE else {}),
             **({"required_backend_runs": planner.preservation_recovery_read_requirements(head)}
                if selected == planner.PRESERVATION_RECOVERY_READ_SCOPE else {}),
             **({"required_backend_runs": planner.moderation_enrollment_requirements(head)}
