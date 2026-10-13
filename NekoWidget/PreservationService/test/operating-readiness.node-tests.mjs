@@ -69,6 +69,26 @@ const publicFixture = () => {
     perParticipantRequestsPerMinute: 30, ownerQuotaBytes: plan.archive.ownerQuotaBytes,
     maximumRecordsPerOwner: plan.archive.maximumRecordsPerOwner, maximumOwners: plan.maximumParticipants,
     globalActiveBytesLimit: plan.archive.globalActiveBytesLimit };
+  Object.assign(evidence.configuration, { deploymentId: 'synthetic-deployment',
+    noticeAccountId: 'synthetic-account', noticeZoneId: 'synthetic-zone',
+    noticeSubscriptionId: 'synthetic-subscription', noticeDomain: 'example.invalid',
+    noticeSender: 'notice@example.invalid', noticeQueue: 'synthetic-private-queue' });
+  evidence.budgetApproval = { status: 'approved', evidenceReference: 'synthetic-only',
+    monthlyTargetYen: plan.currency.monthlyTargetYen, warningForecastYen: plan.currency.warningForecastYen,
+    pauseNewIntakeForecastYen: plan.currency.pauseNewIntakeForecastYen };
+  evidence.retentionOperations = { version: 1, confirmedAt: now, deploymentId: 'synthetic-deployment',
+    recoveryAwsAccountId: '111122223333',
+    tracking: { enabled: true, billingAuthorityVerified: true, scheduled: true, evidenceReference: 'synthetic-only' },
+    notices: { noticeAccountId: 'synthetic-account', noticeZoneId: 'synthetic-zone',
+      noticeSubscriptionId: 'synthetic-subscription', noticeDomain: 'example.invalid',
+      noticeSender: 'notice@example.invalid', noticeQueue: 'synthetic-private-queue',
+      deliveryEvidenceVersion: 2, sendEnabled: true, eventsEnabled: true, providerReady: true,
+      privateQueueVerified: true, deliveredCorrelationVerified: true, acceptanceOnlyRejected: true,
+      changedContactRejected: true, renewalRejected: true, evidenceReference: 'synthetic-only' },
+    cleanup: { mode: 'reviewed-manual', inventoryAndHistoricalVersionsAccounted: true,
+      recoveryReconciled: true, retainedCostsIncluded: true, orphanCleanupReadinessVerified: true,
+      expiredOwnerPurgeProtocolVerified: true, independentApprovalRequired: true,
+      unknownOrUndeliveredPreventsPurge: true, rejoinPreventsPurge: true, evidenceReference: 'synthetic-only' } };
   evidence.intake = { enabled: true, reviewedAt: now, validUntil: now + 86400000,
     maximumOwners: plan.maximumParticipants, dailyNewIntakeAttempts: plan.archive.dailyNewIntakeAttempts,
     monthlyNewIntakeAttempts: plan.archive.monthlyNewIntakeAttempts, monthlyNewIntakeBytes: plan.archive.monthlyNewIntakeBytes,
@@ -217,6 +237,82 @@ test('paid AWS alone does not prove funding for retained owners, historical vers
     e => e.retentionFunding.reviewedAt = now - 86400000, e => e.retentionFunding.evidenceReference = '']) {
     const { evidence, offer } = publicFixture(); mutate(evidence);
     assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-funding-unconfirmed'));
+  }
+});
+
+test('public budget needs its own approval and can adopt reviewed boundaries instead of inheriting pilot numbers', () => {
+  for (const mutate of [e => delete e.budgetApproval, e => e.budgetApproval.status = 'proposed',
+    e => e.budgetApproval.evidenceReference = ' ', e => e.budgetApproval.monthlyTargetYen++,
+    e => e.budgetApproval.warningForecastYen = true, e => e.budgetApproval.pauseNewIntakeForecastYen++]) {
+    const { evidence, offer } = publicFixture(); mutate(evidence);
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('cost-boundaries-changed'));
+  }
+  const { evidence, offer } = publicFixture(), p = structuredClone(plan);
+  Object.assign(p.currency, { monthlyTargetYen: 5000, warningForecastYen: 3000, pauseNewIntakeForecastYen: 4000 });
+  Object.assign(evidence.budgetApproval, p.currency);
+  evidence.intake.pauseForecastYen = 4000;
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, p, now).publicOfferReviewReady, true);
+  p.currency.monthlyTargetYen = 4000;
+  evidence.budgetApproval.monthlyTargetYen = 4000;
+  assert.equal(reviewPublicPreservationOffer(evidence, offer, p, now).publicOfferReviewReady, false);
+});
+
+test('funding cannot replace fresh operation evidence tied to the actual deployment and recovery account', () => {
+  for (const mutate of [e => delete e.retentionOperations, e => e.retentionOperations.version = 0,
+    e => e.retentionOperations.confirmedAt = now - 86400000, e => e.retentionOperations.confirmedAt = now + 1,
+    e => e.retentionOperations.deploymentId = 'other-version', e => delete e.configuration.deploymentId,
+    e => e.retentionOperations.recoveryAwsAccountId = '999999999999']) {
+    const { evidence, offer } = publicFixture(); mutate(evidence);
+    const r = reviewPublicPreservationOffer(evidence, offer, plan, now);
+    for (const part of ['tracking', 'notice', 'cleanup']) assert.ok(r.blockers.includes(`retention-${part}-operations-unconfirmed`));
+    assert.equal(r.publicOfferReviewReady, false);
+    assert.equal(reviewOperatingEvidence(evidence, plan, now).newIntakeReviewReady, true);
+  }
+});
+
+test('off or unverified retention tracking cannot qualify public readiness', () => {
+  for (const key of ['enabled', 'billingAuthorityVerified', 'scheduled']) for (const value of [false, undefined, 'true']) {
+    const { evidence, offer } = publicFixture(); evidence.retentionOperations.tracking[key] = value;
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-tracking-operations-unconfirmed'));
+  }
+});
+
+test('notice acceptance, wrong event sources and unverified contact or renewal boundaries reject public readiness', () => {
+  const flags = ['sendEnabled', 'eventsEnabled', 'providerReady', 'privateQueueVerified',
+    'deliveredCorrelationVerified', 'acceptanceOnlyRejected', 'changedContactRejected', 'renewalRejected'];
+  const scope = ['noticeAccountId', 'noticeZoneId', 'noticeSubscriptionId', 'noticeDomain', 'noticeSender', 'noticeQueue'];
+  for (const key of flags) for (const value of [false, undefined, 'true']) {
+    const { evidence, offer } = publicFixture(); evidence.retentionOperations.notices[key] = value;
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-notice-operations-unconfirmed'));
+  }
+  for (const key of scope) {
+    const { evidence, offer } = publicFixture(); evidence.retentionOperations.notices[key] += '-other';
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-notice-operations-unconfirmed'));
+    evidence.retentionOperations.notices[key] = ' '; evidence.configuration[key] = ' ';
+    assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, false);
+  }
+  const { evidence, offer } = publicFixture(); evidence.retentionOperations.notices.deliveryEvidenceVersion = 1;
+  assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-notice-operations-unconfirmed'));
+});
+
+test('controlled cleanup requires physical inventory, recovery and independent purge boundaries without granting permissions', () => {
+  for (const key of ['inventoryAndHistoricalVersionsAccounted', 'recoveryReconciled', 'retainedCostsIncluded',
+    'orphanCleanupReadinessVerified', 'expiredOwnerPurgeProtocolVerified', 'independentApprovalRequired',
+    'unknownOrUndeliveredPreventsPurge', 'rejoinPreventsPurge']) {
+    const { evidence, offer } = publicFixture(); evidence.retentionOperations.cleanup[key] = false;
+    assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-cleanup-operations-unconfirmed'));
+  }
+  for (const part of ['tracking', 'notices', 'cleanup']) {
+    const { evidence, offer } = publicFixture(); evidence.retentionOperations[part].evidenceReference = ' ';
+    assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, false);
+    delete evidence.retentionOperations[part];
+    assert.equal(reviewPublicPreservationOffer(evidence, offer, plan, now).publicOfferReviewReady, false);
+  }
+  const { evidence, offer } = publicFixture(); evidence.retentionOperations.cleanup.mode = 'automatic-unreviewed';
+  assert.ok(reviewPublicPreservationOffer(evidence, offer, plan, now).blockers.includes('retention-cleanup-operations-unconfirmed'));
+  const valid = publicFixture(), r = reviewPublicPreservationOffer(valid.evidence, valid.offer, plan, now);
+  for (const flag of ['deployPermission', 'salesApprovalPermission', 'noticePermission', 'permanentDeletionPermission', 'remoteStateChanged']) {
+    assert.equal(r[flag], false);
   }
 });
 
