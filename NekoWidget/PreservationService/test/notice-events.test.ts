@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDeliveredNoticeEvent, type NoticeEventSource } from '../src/notice-events';
+import { parseDeliveredNoticeEvent, noticeMessageIdValid, type NoticeEventSource } from '../src/notice-events';
 
 const expected: NoticeEventSource = {
   accountId: 'f9f79265f388666de8122cfb508d7776',
@@ -57,6 +57,23 @@ describe('private final-notice delivery event parser', () => {
       expect(() => parseDeliveredNoticeEvent(event, expected, now)).toThrowError(/NOTICE_EVENT_INVALID/u);
     }
     expect(() => parseDeliveredNoticeEvent(null, expected, now)).toThrowError(/NOTICE_EVENT_INVALID/u);
+  });
+
+  it('preserves bounded opaque and canonical provider Message-IDs and rejects header injection', () => {
+    const providerId = '<9gxFXkfTVlQTT3aEp6IFGn4D1Roi5j46fyil@neko-notify.trade-solo.com>';
+    for (const id of [providerId, '<safe.atom+tag@example.com>', 'mail-12345678']) {
+      const event = sample(); event.payload.messageId = id;
+      expect(parseDeliveredNoticeEvent(event, expected, now).messageId).toBe(id);
+    }
+    for (const id of [providerId + '\n', 'mail-12345678\n', providerId + '\r\nBcc: victim@example.net',
+      '<with space@example.com>', '<.start@example.com>', '<end.@example.com>', '<two..dots@example.com>',
+      '<safe@-bad.example>', '<safe@bad-.example>', '<safe@example..com>', '<safe@[127.0.0.1]>',
+      '<safe@localhost>', 'safe@example.com', '<safe@example.com', '<safe@example.com>>',
+      '<非ASCII@example.com>', '<safe@' + 'a'.repeat(64) + '.com>', 'x'.repeat(257), '<' + 'a'.repeat(250) + '@example.com>']) {
+      expect(noticeMessageIdValid(id)).toBe(false);
+      const event = sample(); event.payload.messageId = id;
+      expect(() => parseDeliveredNoticeEvent(event, expected, now)).toThrowError(/NOTICE_EVENT_INVALID/u);
+    }
   });
 
   it('fails closed on an invalid trusted-source configuration', () => {
