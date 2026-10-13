@@ -18,7 +18,7 @@ import urllib.request
 
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
-from ios_ci_scope import REPORT_REPLY_ENTRY_SCOPE, REPORT_RUNTIME_CONTINUATION_DIGESTS
+from ios_ci_scope import REPORT_REPLY_ENTRY_SCOPE, REPORT_RUNTIME_CONTINUATION_DIGESTS, REPORT_RUNTIME_ORDER_DIGESTS
 from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, INTERNAL_REPORT_METADATA_REPAIR_BLOBS, INTERNAL_REPORT_METADATA_REPAIR_PATHS, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
@@ -3633,7 +3633,7 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
-    if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source == REPORT_RUNTIME_BUILD_SOURCE:
+    if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source in (REPORT_RUNTIME_BUILD_SOURCE,REPORT_RUNTIME_DUPLICATE_HEAD):
         return ()
     if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source == REPLY_READINESS_SOURCE:
         return (BUILD,)
@@ -4114,6 +4114,9 @@ def report_runtime_jobs(jobs,run,required,*,placeholders=()):
 def report_runtime_source(head,repository,api,now):
     if repository!='soso-so-27/neko-widget' or not report_runtime_inputs(head):raise CorrectionEvidenceUnavailable('Frozen runtime continuation inputs differ')
     if not report_runtime_inputs(head,current=True):raise CorrectionEvidenceUnavailable('Runtime continuation signature, expiry or current code invalid; no native retry authorized')
+    return report_runtime_source_facts(head,repository,api,now)
+
+def report_runtime_source_facts(head,repository,api,now):
     if not reply_readiness_inputs(REPORT_RUNTIME_BUILD_SOURCE):raise CorrectionEvidenceUnavailable('Original18f to e996 native input closure differs')
     original=reply_readiness_source_facts(repository,api,now)
     run=api(f'/repos/{repository}/actions/runs/{REPORT_RUNTIME_BUILD_RUN}')
@@ -4213,6 +4216,126 @@ def covers_report_runtime_continuation(run,validation_head,required,api,now,jobs
     if (record.get('test_correction_evidence')!=proof or record.get('required_backend_runs')!=proof['required_backend_runs']
         or record.get('report_runtime_boundary_checks')!={'head_sha':run['head_sha'],'passed':True,'commands':[list(command) for command in REPORT_RUNTIME_BOUNDARY_COMMANDS]}):return False
     report_runtime_backend_evidence(run['head_sha'],api,now)
+    return True
+
+# Forward-only release preparation order repair. Every native/backend input
+# remains at the already verified runtime candidate; only this three-file
+# product and its current signed readiness may own the new plan.
+REPORT_RUNTIME_ORDER_BASE = '6d3635decb81f0712c0b6e6d26914e0c6508c7a2'
+REPORT_RUNTIME_ORDER_PRODUCT = '8ecd1511f53ac236762238516bd0ee73d43f74c5'
+REPORT_RUNTIME_ORDER_BRANCH = 'codex/report-preparation-order-20261013'
+REPORT_RUNTIME_ORDER_KIND = 'report-runtime-preparation-order-fixed-reuse-v1'
+REPORT_RUNTIME_ORDER_BLOBS = {
+ '.github/workflows/testflight.yml':('076fc195237fab83150d5ca6afaf57a46f2170e7','a995823ebd45becaa4cc1ce0b80ba5c4e676966e'),
+ 'NekoWidget/ci/test-media-staging-release-config.py':('ca98ccdd3d8a3bcea9243a2739fc3de82ba6d591','23e8859b7a927d5defb459b3f9cf5459d580316b'),
+ 'NekoWidget/ci/moderation-v2-readiness.json':('3ab6d5807b1cbf8aa3be598924c91cd7a1a10d2f','7518c658c7b5e64b2f8bbbb36f844c97154bc40d'),
+}
+REPORT_RUNTIME_ORDER_SOURCE_RUN = 38329817620
+REPORT_RUNTIME_ORDER_FAILED_RELEASE = 38331763468
+REPORT_RUNTIME_ORDER_FAILED_JOB = 115082849483
+# The saved raw file retains its final LF. Existing API/CLI comparison permits
+# only LF/terminal-newline normalization, so keep both identities explicit.
+REPORT_RUNTIME_ORDER_FAILED_RAW_LOG = 'b3382a68a3b41f1235e650ca99784d0ca1facc5e3726c91646311a5a6d89450c'
+REPORT_RUNTIME_ORDER_FAILED_LOG = '886016264e4f969eec2f1403407bdac6fd708e24d12bc8f7e9d265312aa5ffdc'
+
+def report_runtime_order_inputs(head,*,current=False):
+    try:
+        if not isinstance(head,str) or not SHA.fullmatch(head):return False
+        git('merge-base','--is-ancestor',REPORT_RUNTIME_ORDER_PRODUCT,head)
+        if not report_runtime_inputs(REPORT_RUNTIME_ORDER_BASE) or not report_runtime_inputs(REPORT_RUNTIME_DUPLICATE_HEAD):return False
+        approval=git('merge-base',head,'origin/main')
+        registration='REPORT_RUNTIME_ORDER_DIGESTS = '+repr(REPORT_RUNTIME_ORDER_DIGESTS)
+        if git('show',approval+':NekoWidget/ci/ios_ci_scope.py').splitlines().count(registration)!=1:return False
+        parts=git('diff','--raw','--no-renames','--no-abbrev','-z',REPORT_RUNTIME_ORDER_BASE,head).split('\0')
+        if parts[-1:]==['']:parts.pop()
+        if len(parts)%2:return False
+        seen=set()
+        for index in range(0,len(parts),2):
+            fields,path=parts[index].split(),parts[index+1]
+            if len(fields)!=5 or path in seen:return False
+            seen.add(path)
+            if path in REPORT_RUNTIME_ORDER_BLOBS:
+                if fields!=[':100644','100644',*REPORT_RUNTIME_ORDER_BLOBS[path],'M']:return False
+            elif path in REPLY_READINESS_CONTROLS:
+                if fields[:2]!=[':100644','100644'] or fields[4]!='M':return False
+            elif not is_handoff(path) or (fields[:2],fields[4]) not in (([':000000','100644'],'A'),([':100644','100644'],'M')):return False
+        if not set(REPORT_RUNTIME_ORDER_BLOBS)<=seen:return False
+        for path in REPLY_READINESS_CONTROLS:
+            trusted=git('ls-tree',approval,'--',path)
+            if not trusted.startswith('100644 blob ') or git('ls-tree',head,'--',path)!=trusted:return False
+        if current:
+            if git('rev-parse','HEAD')!=head:return False
+            for path in set(REPORT_RUNTIME_ORDER_BLOBS)|REPLY_READINESS_CONTROLS:
+                if (Path.cwd()/path).read_text(encoding='utf-8').replace('\r\n','\n').rstrip('\n')!=git('show',head+':'+path).replace('\r\n','\n').rstrip('\n'):return False
+            evidence=json.loads(git('show',head+':NekoWidget/ci/moderation-v2-readiness.json'))
+            policy=json.loads(git('show',head+':NekoWidget/ci/moderation-client-rollout-policy.json'))
+            verified=subprocess.run(['node','NekoWidget/ci/verify-moderation-readiness.mjs'],input=json.dumps({'evidence':evidence,'policy':policy}),capture_output=True,text=True,encoding='utf-8',timeout=20)
+            if verified.returncode or json.loads(verified.stdout).get('purpose')!='testflight-owner-report-ui-continuation':return False
+        return True
+    except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired,ValueError,KeyError,TypeError):return False
+
+def report_runtime_order_equivalent_inputs(candidate,head):
+    try:
+        if not isinstance(head,str) or not SHA.fullmatch(head) or git('rev-parse','HEAD')!=head:return False
+        git('merge-base','--is-ancestor',candidate,head)
+        return report_runtime_order_inputs(candidate) and report_runtime_order_inputs(head,current=True)
+    except (OSError,subprocess.CalledProcessError,ValueError,KeyError,TypeError):return False
+
+def report_runtime_order_source(head,repository,api,now):
+    if repository!='soso-so-27/neko-widget' or not report_runtime_order_inputs(head) or not report_runtime_order_inputs(head,current=True):raise CorrectionEvidenceUnavailable('Fixed preparation order, main controls or current signature differ; no native/backend retry authorized')
+    report_runtime_order_no_backend_push(head,api)
+    original=report_runtime_source_facts(REPORT_RUNTIME_DUPLICATE_HEAD,repository,api,now)
+    run=api(f'/repos/{repository}/actions/runs/{REPORT_RUNTIME_ORDER_SOURCE_RUN}')
+    report_runtime_run(run,REPORT_RUNTIME_ORDER_SOURCE_RUN,REPORT_RUNTIME_DUPLICATE_HEAD,REPORT_RUNTIME_BRANCH,'.github/workflows/ios-build.yml','push',now,'success')
+    if run.get('workflow_id')!=335014238:raise CorrectionEvidenceUnavailable('Original runtime plan workflow differs')
+    jobs=executed_jobs(run,repository,api)
+    report_runtime_jobs(jobs,run,(PLAN_JOB,),placeholders=(UNEXPANDED_SHARING_JOB,'needs.plan.outputs.smoke_name','needs.plan.outputs.build_name'))
+    if not covers_jobs(jobs,(PLAN_JOB,),REPORT_RUNTIME_DUPLICATE_HEAD,now):raise CorrectionEvidenceUnavailable('Original owning runtime plan has not passed')
+    plan=next(j for j in jobs if j['name']==PLAN_JOB)
+    if not moderation_steps_succeeded(plan,('Test CI selection and evidence boundaries','Select checks')):raise CorrectionEvidenceUnavailable('Original owning runtime plan steps differ')
+    record=report_runtime_plan(api(f"/repos/{repository}/actions/jobs/{plan['id']}/logs"),REPORT_RUNTIME_DUPLICATE_HEAD)
+    if (record.get('test_correction_evidence')!=original or record.get('required_backend_runs')!=report_runtime_requirements(REPORT_RUNTIME_DUPLICATE_HEAD)
+        or record.get('report_runtime_boundary_checks')!={'head_sha':REPORT_RUNTIME_DUPLICATE_HEAD,'passed':True,'commands':[list(c) for c in REPORT_RUNTIME_BOUNDARY_COMMANDS]}):raise CorrectionEvidenceUnavailable('Original runtime native proof or owning checks differ')
+    backend=report_runtime_backend_evidence(REPORT_RUNTIME_DUPLICATE_HEAD,api,now)
+    failed=api(f'/repos/{repository}/actions/runs/{REPORT_RUNTIME_ORDER_FAILED_RELEASE}')
+    report_runtime_run(failed,REPORT_RUNTIME_ORDER_FAILED_RELEASE,REPORT_RUNTIME_ORDER_BASE,'main','.github/workflows/testflight.yml','workflow_dispatch',now,'failure')
+    if failed.get('workflow_id')!=335014239:raise CorrectionEvidenceUnavailable('Failed253 workflow differs')
+    failed_jobs=executed_jobs(failed,repository,api)
+    if len(failed_jobs)!=1 or failed_jobs[0].get('id')!=REPORT_RUNTIME_ORDER_FAILED_JOB:raise CorrectionEvidenceUnavailable('Failed253 job differs')
+    report_runtime_jobs(failed_jobs,failed,('Archive, export IPA, and upload',))
+    failed_job=failed_jobs[0]
+    if (failed_job.get('conclusion')!='failure' or [s['name'] for s in failed_job['steps'] if s.get('conclusion')=='failure']!=['Validate the exact runtime embedded in the limited external beta']
+        or any(len(matches:=[s for s in failed_job['steps'] if s.get('name')==name])!=1 or (matches[0].get('status'),matches[0].get('conclusion'))!=('completed','skipped') for name in ('Archive app and widget','Validate and upload IPA to TestFlight'))):raise CorrectionEvidenceUnavailable('Release253 has unknown failure or archive/upload execution')
+    report_runtime_log(api,REPORT_RUNTIME_ORDER_FAILED_JOB,REPORT_RUNTIME_ORDER_FAILED_LOG)
+    return {'kind':REPORT_RUNTIME_ORDER_KIND,'candidate_sha':head,'run_id':REPORT_RUNTIME_ORDER_SOURCE_RUN,'sha':REPORT_RUNTIME_DUPLICATE_HEAD,
+        'owning_jobs_to_execute':[],'jobs':original['jobs'],'original_runtime_proof':original,'backend_evidence':backend,
+        'required_backend_runs':report_runtime_requirements(REPORT_RUNTIME_DUPLICATE_HEAD),'boundary_commands':[list(c) for c in REPORT_RUNTIME_BOUNDARY_COMMANDS],
+        'failed_release_253_run_id':REPORT_RUNTIME_ORDER_FAILED_RELEASE,'failed_release_253_job_id':REPORT_RUNTIME_ORDER_FAILED_JOB,
+        'failed_release_253_log_sha256':REPORT_RUNTIME_ORDER_FAILED_LOG,'failed_release_253_archived_raw_sha256':REPORT_RUNTIME_ORDER_FAILED_RAW_LOG,'failed_release_253_archive_upload_skipped':True,
+        'input_changes':'exact release workflow/order test/current readiness; all native and backend inputs remain at fixed f4; new plan owns all current runtime and privacy/order checks'}
+
+def report_runtime_order_no_backend_push(head,api):
+    prefix='/repos/soso-so-27/neko-widget/actions'
+    for workflow in ('sharing-service.yml','preservation-service.yml'):
+        identity=api(prefix+'/workflows/'+workflow)
+        if type(identity.get('id')) is not int or identity['id']<=0 or identity.get('path')!='.github/workflows/'+workflow or identity.get('state')!='active':raise CorrectionEvidenceUnavailable('Unchanged backend workflow identity unavailable')
+        query=urllib.parse.urlencode({'head_sha':head,'event':'push','per_page':100})
+        index=api(prefix+'/workflows/'+workflow+'/runs?'+query)
+        if type(index.get('total_count')) is not int or index['total_count']!=0 or index.get('workflow_runs')!=[]:raise CorrectionEvidenceUnavailable('Unexpected new backend execution cannot be hidden by fixed reuse')
+
+def covers_report_runtime_order(run,validation_head,required,api,now,jobs):
+    if required!=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE) or not report_runtime_order_inputs(run.get('head_sha')) or not report_runtime_order_inputs(validation_head,current=True):return False
+    report_runtime_run(run,run['id'],run['head_sha'],REPORT_RUNTIME_ORDER_BRANCH,'.github/workflows/ios-build.yml','push',now,'success')
+    if run.get('workflow_id')!=335014238:return False
+    report_runtime_jobs(jobs,run,(PLAN_JOB,),placeholders=(UNEXPANDED_SHARING_JOB,'needs.plan.outputs.smoke_name','needs.plan.outputs.build_name'))
+    if not covers_jobs(jobs,(PLAN_JOB,),run['head_sha'],now):return False
+    plan=next(j for j in jobs if j['name']==PLAN_JOB)
+    if not moderation_steps_succeeded(plan,('Test CI selection and evidence boundaries','Select checks')):return False
+    record=report_runtime_plan(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plan['id']}/logs"),run['head_sha'])
+    proof=report_runtime_order_source(validation_head,'soso-so-27/neko-widget',api,now);proof['candidate_sha']=run['head_sha']
+    if (record.get('test_correction_evidence')!=proof or record.get('required_backend_runs')!=proof['required_backend_runs']
+        or record.get('report_runtime_boundary_checks')!={'head_sha':run['head_sha'],'passed':True,'commands':[list(c) for c in REPORT_RUNTIME_BOUNDARY_COMMANDS]}):return False
+    report_runtime_order_no_backend_push(run['head_sha'],api)
     return True
 
 def moderation_build_steps():
@@ -5058,6 +5181,9 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
+    if branch==REPORT_RUNTIME_ORDER_BRANCH:
+        if required!=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):raise CorrectionEvidenceUnavailable('Fixed preparation order scope differs; no native/backend retry authorized')
+        return report_runtime_order_source(head,repository,api,now)
     if branch == REPORT_RUNTIME_BRANCH:
         if required != required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):
             raise CorrectionEvidenceUnavailable("Frozen runtime continuation scope differs; no native retry authorized")
@@ -5195,6 +5321,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     successfully at the corrected candidate SHA.
     """
     if required == required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):
+        if report_runtime_order_inputs(run.get('head_sha')):
+            return covers_report_runtime_order(run,validation_head,required,api,now,jobs)
         if report_runtime_inputs(run.get("head_sha")):
             return covers_report_runtime_continuation(run,validation_head,required,api,now,jobs)
         return covers_reply_readiness_recovery(run,validation_head,required,api,now,jobs)
@@ -5311,11 +5439,12 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
             if not (repository=='soso-so-27/neko-widget' and run.get('workflow_id')==335014238
                     and run.get('path')==current.get('path')=='.github/workflows/ios-build.yml'
-                    and run.get('head_branch')==REPORT_RUNTIME_BRANCH and current.get('head_branch')=='main'
+                    and run.get('head_branch') in (REPORT_RUNTIME_BRANCH,REPORT_RUNTIME_ORDER_BRANCH) and current.get('head_branch')=='main'
                     and current.get('event')=='push' and type(run.get('run_attempt')) is int and run['run_attempt']==1
                     and type(current.get('run_attempt')) is int and current['run_attempt']==1
                     and current.get('repository',{}).get('full_name')==repository and current.get('head_repository',{}).get('full_name')==repository
-                    and report_runtime_equivalent_inputs(run['head_sha'],current['head_sha'])):
+                    and (report_runtime_equivalent_inputs(run['head_sha'],current['head_sha']) if run['head_branch']==REPORT_RUNTIME_BRANCH
+                         else report_runtime_order_equivalent_inputs(run['head_sha'],current['head_sha']))):
                 return reject("different_inputs")
         return True
     except (AttributeError, KeyError, TypeError, ValueError):
@@ -6112,7 +6241,7 @@ def main() -> None:
         raise SystemExit("No matching candidate evidence for main. No duplicate Mac checks started. "
                          "Use the tested merged candidate for release, or validate a new integration candidate.")
     runtime_checks = (report_runtime_boundary_checks(env["GITHUB_SHA"])
-        if correction is not None and correction.get("kind")==REPORT_RUNTIME_KIND else None)
+        if correction is not None and correction.get("kind") in (REPORT_RUNTIME_KIND,REPORT_RUNTIME_ORDER_KIND) else None)
     correction_jobs = MODERATION_CHAIN_OWNING if chained_build_recovery is not None else correction_owning_jobs(selected_scope, correction["sha"]) if correction else ()
     smoke_correction = SMOKE in correction_jobs
     values = {
@@ -6153,7 +6282,9 @@ def main() -> None:
            if selected_scope==REPORT_REPLY_ENTRY_SCOPE and report_runtime_inputs(env["GITHUB_SHA"]) else {}),
         "test_correction_evidence": correction,
         **({"required_backend_runs":report_runtime_requirements(env["GITHUB_SHA"]),"report_runtime_boundary_checks":runtime_checks}
-           if runtime_checks is not None else {}),
+           if runtime_checks is not None and correction.get('kind')==REPORT_RUNTIME_KIND else {}),
+        **({"required_backend_runs":correction['required_backend_runs'],"report_runtime_boundary_checks":runtime_checks}
+           if runtime_checks is not None and correction.get('kind')==REPORT_RUNTIME_ORDER_KIND else {}),
         **({"internal_report_metadata_repair": metadata_repair} if metadata_repair is not None else {}),
         **({"production_ui_recovery": production_ui_recovery} if production_ui_recovery is not None else {}),
         **({"chained_build_recovery": chained_build_recovery} if chained_build_recovery is not None else {}),
@@ -6167,12 +6298,17 @@ def main() -> None:
         run_id, tested_sha = evidence
         url = f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}/actions/runs/{run_id}"
         relation = "the same commit" if tested_sha == env["GITHUB_SHA"] else (
-            f"an ancestor with identical tracked files outside `{INDEPENDENT_RESEARCH}`"
-        )
+            'the registered preparation-order ancestor with exact product inputs and separately approved controls'
+            if selected_scope==REPORT_REPLY_ENTRY_SCOPE and report_runtime_order_inputs(env['GITHUB_SHA']) else
+            f"an ancestor with identical tracked files outside `{INDEPENDENT_RESEARCH}`")
         summary += f"Reusing successful required jobs from {relation}: [run {run_id}]({url}), tested `{tested_sha}`.\n"
     elif chained_build_recovery is not None:
         summary += (f"Retaining both failed source runs; reusing the unchanged runtime and UI jobs from {MODERATION_CHAIN_RUN} "
                     f"and the original five backend jobs. Executing complete Build and Photos at this commit.\n")
+    elif correction is not None and correction.get('kind')==REPORT_RUNTIME_ORDER_KIND:
+        summary += (f"Retaining native Build39 and three native jobs at their original SHAs, and all four actual Sharing successes from {REPORT_RUNTIME_SUCCESSFUL_DUPLICATE} at `{REPORT_RUNTIME_DUPLICATE_HEAD}`. "
+                    "This push executes all current signed privacy/configuration/order and runtime checks in the plan only. No Mac or backend jobs are requested. "
+                    f"Failed252 ({REPORT_RUNTIME_FAILED_RELEASE}), failed253 ({REPORT_RUNTIME_ORDER_FAILED_RELEASE}), both skipped archives/uploads, the zero-step cancellation and original cumulative time remain retained. New archive, signing and upload remain required.\n")
     elif correction is not None and correction.get("kind")==REPORT_RUNTIME_KIND:
         summary += (f"Reusing actual Build39 from {REPORT_RUNTIME_BUILD_RUN} at `{REPORT_RUNTIME_BUILD_SOURCE}` and three native jobs from {REPLY_READINESS_RUN} at `{REPLY_READINESS_SOURCE}` after exact input closure. "
                     "This push executes runtime/readiness boundary checks and requires all four owning Sharing jobs at its own SHA. No Mac jobs are requested. "
