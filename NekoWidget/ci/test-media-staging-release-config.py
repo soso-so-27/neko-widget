@@ -7,8 +7,10 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import plistlib
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -212,6 +214,32 @@ def load_plist(path: Path) -> dict:
 
 
 class MediaStagingReleaseConfigTests(unittest.TestCase):
+    def test_signed_runtime_check_precedes_both_source_plist_preparations(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        runtime = workflow.index("      - name: Validate the exact runtime embedded in the limited external beta\n")
+        for name in ("Prepare internal preservation release settings", "Prepare owner-only internal report settings"):
+            self.assertLess(runtime, workflow.index("      - name: " + name + "\n"))
+        self.assertLess(workflow.index("      - name: Select fail-closed release mode\n"), runtime)
+        self.assertLess(workflow.index("      - name: Prepare owner-only internal report settings\n"), workflow.index("      - name: Archive app and widget\n"))
+
+    def test_runtime_phase_runs_before_generated_release_flags_exist(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        block = workflow.split("      - name: Validate the exact runtime embedded in the limited external beta\n", 1)[1].split("      - name:", 1)[0]
+        command = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        shell = Path("C:/Program Files/Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+        self.assertTrue(shell and Path(shell).is_file(), "Bash must be available to execute the actual workflow command")
+        for reports, billing, expected in (("true", "false", "internal-report-first-connection"), ("false", "true", "internal-purchase-sandbox"), ("false", "false", "limited-external-beta")):
+            with self.subTest(reports=reports, billing=billing):
+                environment = {key: value for key, value in os.environ.items() if not key.startswith("RELEASE_")}
+                environment.update(RELEASE_SHARING_API_ORIGIN=MEDIA_ORIGIN, INTERNAL_REPORTS_REQUESTED=reports, BILLING_SANDBOX_REQUESTED=billing)
+                result = subprocess.run([str(shell), "--noprofile", "--norc", "-c", "node(){ printf '%s\\n' \"$*\"; }\n" + command], env=environment, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "scripts/check-staging-runtime.mjs --expected " + expected)
+        environment["RELEASE_SHARING_API_ORIGIN"] = "https://foreign.example"
+        rejected = subprocess.run([str(shell), "--noprofile", "--norc", "-c", "node(){ echo UNEXPECTED; }\n" + command], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn("UNEXPECTED", rejected.stdout)
+
     def test_signed_readiness_boundaries(self) -> None:
         result = subprocess.run(['node', '--test', str(ROOT / 'ci/test-moderation-readiness.mjs')], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

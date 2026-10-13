@@ -698,6 +698,27 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Validate the exact runtime embedded in the limited external beta
+        if: ${{ inputs.release_mode == 'media-staging' }}
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        env:
+          INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
+          BILLING_SANDBOX_REQUESTED: ${{ inputs.billing_sandbox }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-report-first-connection
+          elif [[ "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox
+          else
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected limited-external-beta
+          fi
+
       - name: Prepare internal preservation release settings
         shell: bash
         env:
@@ -783,24 +804,6 @@ jobs:
             --profile "$policy_profile" \
             --site-base "$policy_site_base" \
             --expected-revision "$policy_revision"
-
-      - name: Validate the exact runtime embedded in the limited external beta
-        if: ${{ inputs.release_mode == 'media-staging' }}
-        working-directory: NekoWidget/SharingService
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          if [[ "$RELEASE_INTERNAL_REPORTS_ENABLED" == "true" ]]; then
-            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
-              node scripts/check-staging-runtime.mjs --expected internal-report-first-connection
-          elif [[ "$RELEASE_PLUS_BILLING_CLIENT_ENABLED" == "YES" ]]; then
-            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
-              node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox
-          else
-            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
-              node scripts/check-staging-runtime.mjs --expected limited-external-beta
-          fi
 
       - name: Validate required secrets
         shell: bash
