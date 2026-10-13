@@ -571,8 +571,14 @@ export class ArchiveStore {
             throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
           }
           const confirmedBytes = new Uint8Array(await confirmed.arrayBuffer());
-          if (await sha256(confirmedBytes) !== await sha256(sealedPhoto)) {
-            throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
+          try {
+            if (await sha256(confirmedBytes) !== await sha256(sealedPhoto)) {
+              throw new ServiceError('ARCHIVE_STORAGE_UNAVAILABLE', 503);
+            }
+          } finally {
+            // R2 returned a dedicated readback buffer. Recovery uses sealedPhoto,
+            // so this verification copy can be released after both hashes finish.
+            (confirmedBytes.buffer as ArrayBuffer).transfer(0);
           }
         }
       }
