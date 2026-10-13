@@ -501,6 +501,29 @@ PRESERVATION_PROVIDER_WORKFLOWS = {
 PRESERVATION_PROVIDER_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
 
 
+# One reviewed private JPEG body transport correction with owning tests.
+# The control registration lands first; no product/control companion exception.
+JPEG_BODY_TRANSPORT_SCOPE = "jpeg-body-transport-v1"
+JPEG_BODY_TRANSPORT_BLOBS = {
+    ".github/workflows/preservation-image-validator.yml": ("6ab681d902851b6546c2295e16a0eba48f9c41fb", "60d26ce8d94730f7fa81eb09bb19d15f111b497f"),
+    "NekoWidget/PreservationImageValidator/src/container-worker.mjs": ("600b35e357cd279df10a0c28faa85b8cb8b072c2", "04ff0c84622040d55439546f2e29ad6237a46826"),
+    "NekoWidget/PreservationImageValidator/src/limits.ts": ("2269cde36fdde0ea9e5b988491e766734ce82efc", "db61c59088a585507855909a00b27cf145546f08"),
+    "NekoWidget/PreservationImageValidator/src/provider.ts": ("e0ff028ffa6216d1329c22a5ed1401e3bbfeb82f", "2161e269a5e315f12cb8c93fef19198e310f4ed1"),
+    "NekoWidget/PreservationImageValidator/test/body-transport.test.mjs": ("0000000000000000000000000000000000000000", "f4ba642c40345dce2cc9f4dbfecbe62d9663b707"),
+    "NekoWidget/PreservationImageValidator/test/provider.test.mjs": ("e083aa031210f3d2a9b111fd10f9e18c76cccf42", "50f8d19335b8f1144f72ba6fe2ffb95fffc2bf12"),
+    "NekoWidget/PreservationImageValidator/test/runtime-budget.test.mjs": ("296ebe1223f5f04a382453c7a7fcdb38c27f185e", "f539daf9dc1ee9078af9e082b8b65e7d73d719d8"),
+    "NekoWidget/PreservationImageValidator/test/startup-retry-budget.test.mjs": ("0000000000000000000000000000000000000000", "2421c37bbe92c5b8e505501f477601a5ca129c91"),
+    "NekoWidget/PreservationService/src/providers.ts": ("00828bbf1cd0f0216be8c5321c8ce1aae0c9a6c8", "c0a20f99d3154764a89641bb4510a207278128a6"),
+}
+JPEG_BODY_TRANSPORT_PATHS = frozenset(JPEG_BODY_TRANSPORT_BLOBS)
+JPEG_BODY_TRANSPORT_WORKFLOWS = {
+    PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+    JPEG_WORKFLOW: ("6ab681d902851b6546c2295e16a0eba48f9c41fb", "60d26ce8d94730f7fa81eb09bb19d15f111b497f"),
+}
+JPEG_BODY_TRANSPORT_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
+JPEG_BODY_TRANSPORT_SERVICE_TREES = ('4209c462d6317e6e2a00622ebd21a2e0591efe58', 'eef59beee0cab99bd232c247c8b237a76fa9f54d')
+
+
 # One reviewed JPEG-only finite startup deadline and its real-time boundary test.
 # The control registration lands first; no product/control companion exception.
 PRESERVATION_PHOTO_STARTUP_SCOPE = "preservation-photo-startup-v1"
@@ -1571,6 +1594,46 @@ def preservation_provider_requirements(head):
             for workflow, job in PRESERVATION_PROVIDER_JOBS.items()]
 
 
+def jpeg_body_transport_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == JPEG_BODY_TRANSPORT_PATHS
+            and all(path in JPEG_BODY_TRANSPORT_PATHS or is_handoff(path) for path in paths))
+
+
+def jpeg_body_transport_backend_only(paths, base, head):
+    if (not jpeg_body_transport_paths_only(paths)
+            or set(JPEG_BODY_TRANSPORT_BLOBS) != JPEG_BODY_TRANSPORT_PATHS
+            or set(JPEG_BODY_TRANSPORT_WORKFLOWS) != {PRESERVATION_WORKFLOW, JPEG_WORKFLOW}
+            or len(JPEG_BODY_TRANSPORT_SERVICE_TREES) != 2
+            or not all(SHA.fullmatch(tree) and tree != "0" * 40 for tree in JPEG_BODY_TRANSPORT_SERVICE_TREES)
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       for pair in JPEG_BODY_TRANSPORT_BLOBS.values())):
+        return False
+    # The JPEG owning workflow adds only the frozen validated-image export.
+    # Every other workflow input remains unchanged; no general exception.
+    for workflow, blobs in JPEG_BODY_TRANSPORT_WORKFLOWS.items():
+        pair = blobs if isinstance(blobs, tuple) else (blobs, blobs)
+        if len(pair) != 2 or not all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair):
+            return False
+        if any(git("ls-tree", revision, "--", workflow)
+               != f"100644 blob {blob}\t{workflow}" for revision, blob in zip((base, head), pair)):
+            return False
+    service = "NekoWidget/PreservationService"
+    if any(git("ls-tree", revision, "--", service)
+           != f"040000 tree {tree}\t{service}" for revision, tree in zip((base, head), JPEG_BODY_TRANSPORT_SERVICE_TREES)):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=JPEG_BODY_TRANSPORT_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="JPEG_BODY_TRANSPORT_COMPANION_DIGESTS")
+
+
+def jpeg_body_transport_requirements(head):
+    # A declaration for subsequent evidence checking, never successful evidence.
+    return [{"workflow": workflow, "job": job, "head_sha": head, "success_required": True}
+            for workflow, job in JPEG_BODY_TRANSPORT_JOBS.items()]
+
+
 def preservation_photo_startup_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_PHOTO_STARTUP_PATHS
@@ -2517,6 +2580,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_UPLOAD_SCOPE and preservation_upload_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_PROVIDER_SCOPE and preservation_provider_paths_only(paths):
+        return (PRESERVATION_JOB, JPEG_JOB)
+    if runtime_scope == JPEG_BODY_TRANSPORT_SCOPE and jpeg_body_transport_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
     if runtime_scope == PRESERVATION_PHOTO_STARTUP_SCOPE and preservation_photo_startup_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3667,6 +3732,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
                                        (PRESERVATION_OWNED_BUFFERS_SCOPE, preservation_owned_buffers_paths_only, preservation_owned_buffers_backend_only),
                                        (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
+                                       (JPEG_BODY_TRANSPORT_SCOPE, jpeg_body_transport_paths_only, jpeg_body_transport_backend_only),
                                        (PRESERVATION_PHOTO_STARTUP_SCOPE, preservation_photo_startup_paths_only, preservation_photo_startup_backend_only),
                                        (PRESERVATION_UPLOAD_SCOPE, preservation_upload_paths_only, preservation_upload_backend_only),
                                        (BILLING_AUTHORITY_SCOPE, billing_authority_paths_only, billing_authority_backend_only),
@@ -6246,7 +6312,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6261,6 +6327,8 @@ def main() -> None:
               "evidence_run_id": None, "evidence_sha": None,
               **({"required_backend_runs": preservation_provider_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_PROVIDER_SCOPE else {}),
+              **({"required_backend_runs": jpeg_body_transport_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == JPEG_BODY_TRANSPORT_SCOPE else {}),
               **({"required_backend_runs": preservation_photo_startup_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE else {}),
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
@@ -6416,6 +6484,12 @@ def main() -> None:
                 summary = ("## Backend-only verification\n\nRequired separately at the same candidate SHA: "
                            + "; ".join(job + " in `" + workflow + "`"
                                        for workflow, job in PRESERVATION_PROVIDER_JOBS.items())
+                           + ". Both jobs must execute successfully; this plan does not certify their success. "
+                           "Mac jobs are not requested. Not iOS release evidence.\n")
+            elif selected_scope == JPEG_BODY_TRANSPORT_SCOPE:
+                summary = ("## Backend-only verification\n\nRequired separately at the same candidate SHA: "
+                           + "; ".join(job + " in `" + workflow + "`"
+                                       for workflow, job in JPEG_BODY_TRANSPORT_JOBS.items())
                            + ". Both jobs must execute successfully; this plan does not certify their success. "
                            "Mac jobs are not requested. Not iOS release evidence.\n")
             elif selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE:
