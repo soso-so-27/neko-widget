@@ -501,6 +501,23 @@ PRESERVATION_PROVIDER_WORKFLOWS = {
 PRESERVATION_PROVIDER_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
 
 
+# One reviewed JPEG-only finite startup deadline and its real-time boundary test.
+# The control registration lands first; no product/control companion exception.
+PRESERVATION_PHOTO_STARTUP_SCOPE = "preservation-photo-startup-v1"
+PRESERVATION_PHOTO_STARTUP_BLOBS = {
+    "NekoWidget/PreservationService/src/providers.ts": (
+        "0092a213082f7894ec72f5c253a110543888f7d1", "00828bbf1cd0f0216be8c5321c8ce1aae0c9a6c8"),
+    "NekoWidget/PreservationService/test/photo-provider.test.ts": (
+        "95edd1f1ae1cab41501aa7e3fef76addf4c7fbea", "b1ff58ae7d867c0dd4fae50264a0c8df84afdd2d"),
+}
+PRESERVATION_PHOTO_STARTUP_PATHS = frozenset(PRESERVATION_PHOTO_STARTUP_BLOBS)
+PRESERVATION_PHOTO_STARTUP_WORKFLOWS = {
+    PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
+    JPEG_WORKFLOW: "6ab681d902851b6546c2295e16a0eba48f9c41fb",
+}
+PRESERVATION_PHOTO_STARTUP_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
+
+
 # One reviewed R2 ciphertext-view correction and its storage boundary test.
 # Register the control separately; no mixed product/control companion exception.
 PRESERVATION_R2_VIEW_SCOPE = "preservation-r2-view-v1"
@@ -1531,6 +1548,36 @@ def preservation_provider_requirements(head):
             for workflow, job in PRESERVATION_PROVIDER_JOBS.items()]
 
 
+def preservation_photo_startup_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_PHOTO_STARTUP_PATHS
+            and all(path in PRESERVATION_PHOTO_STARTUP_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_photo_startup_backend_only(paths, base, head):
+    if (not preservation_photo_startup_paths_only(paths)
+            or set(PRESERVATION_PHOTO_STARTUP_BLOBS) != PRESERVATION_PHOTO_STARTUP_PATHS
+            or set(PRESERVATION_PHOTO_STARTUP_WORKFLOWS) != {PRESERVATION_WORKFLOW, JPEG_WORKFLOW}
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       for pair in PRESERVATION_PHOTO_STARTUP_BLOBS.values())):
+        return False
+    for workflow, blob in PRESERVATION_PHOTO_STARTUP_WORKFLOWS.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", workflow)
+                       != f"100644 blob {blob}\t{workflow}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_PHOTO_STARTUP_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_PHOTO_STARTUP_COMPANION_DIGESTS")
+
+
+def preservation_photo_startup_requirements(head):
+    # A declaration for subsequent evidence checking, never successful evidence.
+    return [{"workflow": workflow, "job": job, "head_sha": head, "success_required": True}
+            for workflow, job in PRESERVATION_PHOTO_STARTUP_JOBS.items()]
+
+
 def preservation_r2_view_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_R2_VIEW_PATHS
@@ -2414,6 +2461,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_UPLOAD_SCOPE and preservation_upload_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_PROVIDER_SCOPE and preservation_provider_paths_only(paths):
+        return (PRESERVATION_JOB, JPEG_JOB)
+    if runtime_scope == PRESERVATION_PHOTO_STARTUP_SCOPE and preservation_photo_startup_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3559,6 +3608,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (PRESERVATION_R2_VIEW_SCOPE, preservation_r2_view_paths_only, preservation_r2_view_backend_only),
                                        (PRESERVATION_OWNED_BUFFERS_SCOPE, preservation_owned_buffers_paths_only, preservation_owned_buffers_backend_only),
                                        (PRESERVATION_PROVIDER_SCOPE, preservation_provider_paths_only, preservation_provider_backend_only),
+                                       (PRESERVATION_PHOTO_STARTUP_SCOPE, preservation_photo_startup_paths_only, preservation_photo_startup_backend_only),
                                        (PRESERVATION_UPLOAD_SCOPE, preservation_upload_paths_only, preservation_upload_backend_only),
                                        (BILLING_AUTHORITY_SCOPE, billing_authority_paths_only, billing_authority_backend_only),
                                        (JPEG_SCOPE, jpeg_paths_only, jpeg_backend_only),
@@ -6132,7 +6182,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6147,6 +6197,8 @@ def main() -> None:
               "evidence_run_id": None, "evidence_sha": None,
               **({"required_backend_runs": preservation_provider_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_PROVIDER_SCOPE else {}),
+              **({"required_backend_runs": preservation_photo_startup_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE else {}),
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
               **({"required_backend_runs": preservation_owned_buffers_requirements(env["GITHUB_SHA"])}
@@ -6297,6 +6349,12 @@ def main() -> None:
                 summary = ("## Backend-only verification\n\nRequired separately at the same candidate SHA: "
                            + "; ".join(job + " in `" + workflow + "`"
                                        for workflow, job in PRESERVATION_PROVIDER_JOBS.items())
+                           + ". Both jobs must execute successfully; this plan does not certify their success. "
+                           "Mac jobs are not requested. Not iOS release evidence.\n")
+            elif selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE:
+                summary = ("## Backend-only verification\n\nRequired separately at the same candidate SHA: "
+                           + "; ".join(job + " in `" + workflow + "`"
+                                       for workflow, job in PRESERVATION_PHOTO_STARTUP_JOBS.items())
                            + ". Both jobs must execute successfully; this plan does not certify their success. "
                            "Mac jobs are not requested. Not iOS release evidence.\n")
             elif selected_scope == BILLING_OPERATOR_SCOPE:

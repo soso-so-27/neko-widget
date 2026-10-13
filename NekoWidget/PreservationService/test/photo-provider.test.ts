@@ -1,8 +1,33 @@
 import { expect, it } from 'vitest';
-import { boundPhotoValidator } from '../src/providers';
+import { boundKeyWrapper, boundPhotoValidator } from '../src/providers';
 import { MAX_PHOTO_BYTES } from '../src/documents';
 
 const accepted = () => Response.json({ valid: true, mediaType: 'image/jpeg', frames: 1 });
+
+it('allows a valid JPEG reply after ten seconds while key authority still aborts at ten seconds', async () => {
+  const binding = { async fetch(url: string, init: RequestInit) {
+    const signal = init.signal!;
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, 11_000);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    expect(url).toBe('https://preservation-internal/images/validate-jpeg');
+    expect(signal.aborted).toBe(false);
+    const reader = (init.body as ReadableStream<Uint8Array>).getReader();
+    try { while (!(await reader.read()).done) { /* consume the actual photo stream */ } }
+    finally { reader.releaseLock(); }
+    return accepted();
+  } } as unknown as Fetcher;
+  const results = await Promise.allSettled([
+    boundPhotoValidator(binding).validateJPEG(new Uint8Array([1, 2, 3])),
+    boundKeyWrapper(binding, 'x'.repeat(43)).wrap(new Uint8Array(32), '0'.repeat(64)),
+  ]);
+  expect(results[0]).toEqual({ status: 'fulfilled', value: true });
+  expect(results[1].status).toBe('rejected');
+  if (results[1].status === 'rejected') expect(results[1].reason.name).toBe('TimeoutError');
+}, 15_000);
 
 it('streams exact independent base64 JSON across block and padding boundaries, including 20 MiB', async () => {
   for (const length of [0, 1, 2, 3, 49151, 49152, 49153, MAX_PHOTO_BYTES]) {
