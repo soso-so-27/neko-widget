@@ -531,6 +531,27 @@ PRESERVATION_R2_VIEW_PATHS = frozenset(PRESERVATION_R2_VIEW_BLOBS)
 PRESERVATION_R2_VIEW_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
 
 
+# One reviewed progress-bounded S3 reader and its fragmented-stream tests.
+# Register the control separately; no mixed product/control companion exception.
+PRESERVATION_RECOVERY_CHUNKS_SCOPE = "preservation-recovery-chunks-v1"
+PRESERVATION_RECOVERY_CHUNKS_BLOBS = {
+    "NekoWidget/PreservationService/src/s3-recovery-copy.ts": (
+        "0c97d8f15d02d8633917f502fa2614b900e22149", "35f70595c1868690a285d12c9cf9fee753d122a6"),
+    "NekoWidget/PreservationService/test/s3-recovery-read.test.ts": (
+        "18093c2e83cabe9231eeda08c15decd122ef1c54", "6976622ced7889abe53c1aa13b5d4674317c459a"),
+}
+PRESERVATION_RECOVERY_CHUNKS_PATHS = frozenset(PRESERVATION_RECOVERY_CHUNKS_BLOBS)
+PRESERVATION_RECOVERY_CHUNKS_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
+
+PRESERVATION_RECOVERY_CHUNKS_IMMUTABLE = {
+    PRESERVATION_WORKFLOW: PRESERVATION_RECOVERY_CHUNKS_WORKFLOW_BLOB,
+    JPEG_WORKFLOW: "6ab681d902851b6546c2295e16a0eba48f9c41fb",
+    "NekoWidget/PreservationService/src/providers.ts": "00828bbf1cd0f0216be8c5321c8ce1aae0c9a6c8",
+    "NekoWidget/PreservationService/test/photo-provider.test.ts": "b1ff58ae7d867c0dd4fae50264a0c8df84afdd2d",
+}
+
+
 # One reviewed owned encryption/readback buffer release and its boundary tests.
 # Register the control separately; no mixed product/control companion exception.
 PRESERVATION_OWNED_BUFFERS_SCOPE = "preservation-owned-buffers-v1"
@@ -1606,6 +1627,39 @@ def preservation_r2_view_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_recovery_chunks_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_RECOVERY_CHUNKS_PATHS
+            and all(path in PRESERVATION_RECOVERY_CHUNKS_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_recovery_chunks_backend_only(paths, base, head):
+    if (not preservation_recovery_chunks_paths_only(paths)
+            or set(PRESERVATION_RECOVERY_CHUNKS_BLOBS) != PRESERVATION_RECOVERY_CHUNKS_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PRESERVATION_RECOVERY_CHUNKS_BLOBS.values())):
+        return False
+    if set(PRESERVATION_RECOVERY_CHUNKS_IMMUTABLE) != {
+            PRESERVATION_WORKFLOW, JPEG_WORKFLOW,
+            "NekoWidget/PreservationService/src/providers.ts",
+            "NekoWidget/PreservationService/test/photo-provider.test.ts"}:
+        return False
+    for path, blob in PRESERVATION_RECOVERY_CHUNKS_IMMUTABLE.items():
+        if (not SHA.fullmatch(blob) or blob == "0" * 40
+                or any(git("ls-tree", revision, "--", path)
+                       != f"100644 blob {blob}\t{path}" for revision in (base, head))):
+            return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_RECOVERY_CHUNKS_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_RECOVERY_CHUNKS_COMPANION_DIGESTS")
+
+
+def preservation_recovery_chunks_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "success_required": True}]
+
+
 def preservation_owned_buffers_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_OWNED_BUFFERS_PATHS
@@ -2465,6 +2519,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_PHOTO_STARTUP_SCOPE and preservation_photo_startup_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_RECOVERY_CHUNKS_SCOPE and preservation_recovery_chunks_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_OWNED_BUFFERS_SCOPE and preservation_owned_buffers_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -3602,6 +3658,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (MODERATION_AI_TRANSPORT_SCOPE, moderation_ai_transport_paths_only, moderation_ai_transport_backend_only),
                                        (MODERATION_AI_SCOPE, moderation_ai_paths_only, moderation_ai_backend_only),
                                        (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
+                                       (PRESERVATION_RECOVERY_CHUNKS_SCOPE, preservation_recovery_chunks_paths_only, preservation_recovery_chunks_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
                                        (PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, preservation_photo_upload_body_paths_only, preservation_photo_upload_body_backend_only),
@@ -3624,6 +3681,11 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                 return selected
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
+        # This reader's historical correction owns the same two paths. Only
+        # its separately frozen exact blob pair may be considered after the
+        # new pair fails; partial/unknown inputs still fall back to full.
+        if selected == PRESERVATION_RECOVERY_CHUNKS_SCOPE:
+            continue
         return FULL_SCOPE
     if sources and sources <= DEVELOPMENT_PATHS:
         try:
@@ -6182,7 +6244,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -6201,6 +6263,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_PHOTO_STARTUP_SCOPE else {}),
               **({"required_backend_runs": preservation_r2_view_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
+              **({"required_backend_runs": preservation_recovery_chunks_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_RECOVERY_CHUNKS_SCOPE else {}),
               **({"required_backend_runs": preservation_owned_buffers_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_OWNED_BUFFERS_SCOPE else {}),
               **({"required_backend_runs": preservation_request_buffer_requirements(env["GITHUB_SHA"])}
@@ -6244,6 +6308,7 @@ def main() -> None:
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_UPLOAD_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_RECOVERY_CHUNKS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_OWNED_BUFFERS_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
