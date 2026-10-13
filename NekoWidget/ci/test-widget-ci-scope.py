@@ -24,6 +24,86 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
+class ReportRuntimeCancelledDuplicateTests(unittest.TestCase):
+    def fixture(self):
+        import datetime as dt
+        head=planner.REPORT_RUNTIME_DUPLICATE_HEAD
+        now=dt.datetime.fromisoformat('2026-10-13T02:00:00+00:00')
+        runs={identifier:dict(id=identifier,head_sha=head,head_branch=planner.REPORT_RUNTIME_BRANCH,path='.github/workflows/sharing-service.yml',event='push',workflow_id=planner.REPORT_RUNTIME_DUPLICATE_WORKFLOW,run_attempt=1,status='completed',repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'},**fixed) for identifier,fixed in planner.REPORT_RUNTIME_DUPLICATE_RUNS.items()}
+        cancelled=runs[planner.REPORT_RUNTIME_CANCELLED_DUPLICATE];successful=runs[planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE]
+        jobs={cancelled['id']:[dict(id=identifier,name=name,head_sha=head,run_id=cancelled['id'],run_attempt=1,status='completed',conclusion='cancelled',started_at=start,completed_at=end,steps=[]) for identifier,(name,start,end) in planner.REPORT_RUNTIME_CANCELLED_JOBS.items()]}
+        steps=(('Run python NekoWidget/ci/plan-ios-ci.py',),('Verify Apple transaction service boundary','Verify durable nonce and capability credential boundaries','Build nonroot Node image and private Worker without publishing'),('Parse and exercise Windows path, volume, and ACL policy',),('Run Worker, D1, staging, moderation, and key ceremony tests','Build deployment bundle without publishing'))
+        jobs[successful['id']]=[dict(id=i+1,name=name,head_sha=head,run_id=successful['id'],run_attempt=1,status='completed',conclusion='success',completed_at=successful['updated_at'],steps=[dict(name=n,status='completed',conclusion='success') for n in expected]) for i,(name,expected) in enumerate(zip(planner.REPORT_RUNTIME_SHARING_JOBS,steps))]
+        index={'total_count':2,'workflow_runs':[copy.deepcopy(successful),copy.deepcopy(cancelled)]}
+        identity={'id':planner.REPORT_RUNTIME_DUPLICATE_WORKFLOW,'path':'.github/workflows/sharing-service.yml','state':'active'}
+        def api(path):
+            if '/runs?' in path:return index
+            if '/jobs?' in path:
+                owner=int(path.split('/runs/',1)[1].split('/',1)[0]);return {'total_count':len(jobs[owner]),'jobs':jobs[owner]}
+            if '/runs/' in path:return runs[int(path.rsplit('/',1)[1])]
+            return identity
+        return head,now,index,runs,jobs,identity,api
+
+    def test_fixed_zero_step_cancellation_is_retained_only_as_cancellation(self):
+        head,now,index,runs,jobs,identity,api=self.fixture()
+        evidence=planner.report_runtime_backend_evidence(head,api,now)
+        self.assertEqual(evidence['run_id'],planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE)
+        self.assertEqual(evidence['required_jobs'],list(planner.REPORT_RUNTIME_SHARING_JOBS))
+        self.assertEqual(evidence['cancelled_duplicate'],{'run_id':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,'conclusion':'cancelled','executed_step_count':0,'success_evidence':False})
+        index['workflow_runs'].reverse()
+        self.assertEqual(planner.report_runtime_backend_evidence(head,api,now),evidence)
+
+    def test_started_cancel_or_failure_is_never_ignored(self):
+        for mutation in ('step','failed_job','active_job','failed_run','active_run'):
+            with self.subTest(mutation=mutation):
+                head,now,index,runs,jobs,identity,api=self.fixture()
+                cancelled=runs[planner.REPORT_RUNTIME_CANCELLED_DUPLICATE];job=jobs[cancelled['id']][0]
+                if mutation=='step':job['steps']=[{'name':'Set up job','status':'completed','conclusion':'success'}]
+                elif mutation=='failed_job':job['conclusion']='failure'
+                elif mutation=='active_job':job['status']='in_progress'
+                elif mutation=='failed_run':cancelled['conclusion']='failure'
+                else:cancelled['status']='in_progress'
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+
+    def test_unknown_missing_or_ambiguous_runs_and_other_heads_are_rejected(self):
+        for mutation in ('unknown_cancel','unknown_success','extra_success','duplicate_success','missing_cancel','bad_count','other_head'):
+            with self.subTest(mutation=mutation):
+                head,now,index,runs,jobs,identity,api=self.fixture()
+                if mutation=='unknown_cancel':index['workflow_runs'][1]['id']+=1
+                elif mutation=='unknown_success':index['workflow_runs'][0]['id']+=1
+                elif mutation=='extra_success':index['workflow_runs'].append({**index['workflow_runs'][0],'id':900});index['total_count']=3
+                elif mutation=='duplicate_success':index['workflow_runs'][1]=copy.deepcopy(index['workflow_runs'][0])
+                elif mutation=='missing_cancel':index['workflow_runs'].pop();index['total_count']=1
+                elif mutation=='bad_count':index['total_count']=1
+                else:head='a'*40
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+
+    def test_fixed_run_and_zero_step_job_identity_cannot_drift(self):
+        mutations=(('run','head_sha','a'*40),('run','head_branch','main'),('run','event','workflow_dispatch'),('run','path','.github/workflows/ios-build.yml'),('run','workflow_id',123),('run','run_attempt',2),('run','run_number',999),('run','created_at','2026-10-13T00:57:49Z'),('run','updated_at','2026-10-13T00:57:53Z'),('run','repository',{'full_name':'foreign/repo'}),('index','run_number',999),('job','head_sha','a'*40),('job','run_id',900),('job','run_attempt',2),('job','id',900),('job','name','unknown'),('job','started_at','2026-10-13T00:57:50Z'),('job','steps',None))
+        for target,key,value in mutations:
+            with self.subTest(target=target,key=key):
+                head,now,index,runs,jobs,identity,api=self.fixture()
+                owner=runs[planner.REPORT_RUNTIME_CANCELLED_DUPLICATE] if target=='run' else index['workflow_runs'][1] if target=='index' else jobs[planner.REPORT_RUNTIME_CANCELLED_DUPLICATE][0]
+                owner[key]=value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+        head,now,index,runs,jobs,identity,api=self.fixture()
+        jobs[planner.REPORT_RUNTIME_CANCELLED_DUPLICATE].pop()
+        with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+
+    def test_successful_run_still_requires_all_four_jobs_and_actual_steps(self):
+        for mutation in ('missing_job','skipped_job','skipped_step','duplicate_job','failed_run','wrong_success_identity'):
+            with self.subTest(mutation=mutation):
+                head,now,index,runs,jobs,identity,api=self.fixture()
+                run=runs[planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE];executed=jobs[run['id']]
+                if mutation=='missing_job':executed.pop()
+                elif mutation=='skipped_job':executed[0]['conclusion']='skipped'
+                elif mutation=='skipped_step':executed[0]['steps'][0]['conclusion']='skipped'
+                elif mutation=='duplicate_job':executed.append({**executed[0],'id':900})
+                elif mutation=='failed_run':run['conclusion']='failure'
+                else:run['head_sha']='a'*40
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+
+
 class ReportRuntimeContinuationBoundaryTests(unittest.TestCase):
     def test_exact_four_product_pairs_and_native_tool_transition_are_closed(self):
         head='a'*40; raw='\0'.join(item for path,pair in planner.REPORT_RUNTIME_BLOBS.items() for item in (':100644 100644 '+' '.join(pair)+' M',path))+'\0'

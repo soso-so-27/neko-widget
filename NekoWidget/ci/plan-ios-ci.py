@@ -4004,6 +4004,23 @@ REPORT_RUNTIME_SHARING_JOBS = (
  'Select backend checks','Typecheck, test, and build Apple transaction verifier',
  'Windows moderation key, drill, and report policy fixtures','Typecheck, test, and bundle Worker',
 )
+# This one duplicate push was cancelled before any job step executed. It is
+# retained as a cancellation, never as success or a generic duplicate waiver.
+REPORT_RUNTIME_DUPLICATE_HEAD = 'f4c3e7e5501db8705a154b4dd0d1c9638e59272b'
+REPORT_RUNTIME_DUPLICATE_WORKFLOW = 336272571
+REPORT_RUNTIME_DUPLICATE_RUNS = {
+ 38329817145: {'run_number':278,'created_at':'2026-10-13T00:57:50Z','run_started_at':'2026-10-13T00:57:50Z','updated_at':'2026-10-13T00:57:52Z','conclusion':'cancelled'},
+ 38329817616: {'run_number':279,'created_at':'2026-10-13T00:57:51Z','run_started_at':'2026-10-13T00:57:51Z','updated_at':'2026-10-13T01:02:25Z','conclusion':'success'},
+}
+REPORT_RUNTIME_CANCELLED_DUPLICATE = 38329817145
+REPORT_RUNTIME_SUCCESSFUL_DUPLICATE = 38329817616
+REPORT_RUNTIME_CANCELLED_JOBS = {
+ 115076788663: ('Select backend checks','2026-10-13T00:57:51Z','2026-10-13T00:57:52Z'),
+ 115076794007: ('Typecheck, test, and build Apple transaction verifier','2026-10-13T00:57:52Z','2026-10-13T00:57:52Z'),
+ 115076794023: ('Validate private billing caller','2026-10-13T00:57:52Z','2026-10-13T00:57:52Z'),
+ 115076794097: ('Windows moderation key, drill, and report policy fixtures','2026-10-13T00:57:52Z','2026-10-13T00:57:52Z'),
+ 115076794206: ('Typecheck, test, and bundle Worker','2026-10-13T00:57:52Z','2026-10-13T00:57:52Z'),
+}
 
 def report_runtime_requirements(sha):
     return [{'workflow':'sharing-service.yml','job':name,'sha':sha,'event':'push','success_required':True}
@@ -4136,8 +4153,27 @@ def report_runtime_backend_evidence(head,api,now):
     if type(identity.get('id')) is not int or identity['id']<=0 or identity.get('path')!='.github/workflows/sharing-service.yml' or identity.get('state')!='active':raise CorrectionEvidenceUnavailable('Owning Sharing workflow unavailable')
     query=urllib.parse.urlencode({'head_sha':head,'event':'push','per_page':100})
     index=api(prefix+'/workflows/sharing-service.yml/runs?'+query)
-    if type(index.get('total_count')) is not int or index['total_count']!=1 or not isinstance(index.get('workflow_runs'),list) or len(index['workflow_runs'])!=1:raise CorrectionEvidenceUnavailable('Owning Sharing push missing or ambiguous')
-    indexed=index['workflow_runs'][0];run=api(prefix+f"/runs/{indexed['id']}")
+    expected_count=2 if head==REPORT_RUNTIME_DUPLICATE_HEAD else 1
+    if type(index.get('total_count')) is not int or index['total_count']!=expected_count or not isinstance(index.get('workflow_runs'),list) or len(index['workflow_runs'])!=expected_count:raise CorrectionEvidenceUnavailable('Owning Sharing push missing or ambiguous')
+    if head==REPORT_RUNTIME_DUPLICATE_HEAD:
+        rows=index['workflow_runs']
+        if (identity['id']!=REPORT_RUNTIME_DUPLICATE_WORKFLOW or any(not isinstance(row,dict) or type(row.get('id')) is not int for row in rows)
+            or {row['id'] for row in rows}!=set(REPORT_RUNTIME_DUPLICATE_RUNS)):raise CorrectionEvidenceUnavailable('Unknown duplicate Sharing push')
+        for row in rows:
+            detail=api(prefix+f"/runs/{row['id']}");fixed=REPORT_RUNTIME_DUPLICATE_RUNS[row['id']]
+            for value in (row,detail):
+                report_runtime_run(value,row['id'],head,REPORT_RUNTIME_BRANCH,identity['path'],'push',now,fixed['conclusion'])
+                if value.get('workflow_id')!=REPORT_RUNTIME_DUPLICATE_WORKFLOW or type(value.get('run_number')) is not int or any(value.get(key)!=expected for key,expected in fixed.items()):raise CorrectionEvidenceUnavailable('Pinned duplicate Sharing identity or time differs')
+            if row['id']==REPORT_RUNTIME_CANCELLED_DUPLICATE:
+                cancelled=executed_jobs(detail,'soso-so-27/neko-widget',api)
+                report_runtime_jobs(cancelled,detail,tuple(item[0] for item in REPORT_RUNTIME_CANCELLED_JOBS.values()))
+                if len(cancelled)!=len(REPORT_RUNTIME_CANCELLED_JOBS) or {job['id'] for job in cancelled}!=set(REPORT_RUNTIME_CANCELLED_JOBS):raise CorrectionEvidenceUnavailable('Cancelled duplicate job graph differs')
+                for job in cancelled:
+                    if ((job.get('name'),job.get('started_at'),job.get('completed_at'))!=REPORT_RUNTIME_CANCELLED_JOBS[job['id']]
+                        or job.get('conclusion')!='cancelled' or job.get('steps')!=[]):raise CorrectionEvidenceUnavailable('Cancelled duplicate executed a step or changed identity')
+            else:indexed,run=row,detail
+    else:
+        indexed=index['workflow_runs'][0];run=api(prefix+f"/runs/{indexed['id']}")
     for value in (indexed,run):
         report_runtime_run(value,indexed['id'],head,REPORT_RUNTIME_BRANCH,identity['path'],'push',now,'success')
         if value.get('workflow_id')!=identity['id'] or type(value.get('run_number')) is not int or value['run_number']<=0:raise CorrectionEvidenceUnavailable('Sharing workflow identity or run number differs')
@@ -4148,7 +4184,10 @@ def report_runtime_backend_evidence(head,api,now):
     steps=(('Run python NekoWidget/ci/plan-ios-ci.py',),('Verify Apple transaction service boundary','Verify durable nonce and capability credential boundaries','Build nonroot Node image and private Worker without publishing'),('Parse and exercise Windows path, volume, and ACL policy',),('Run Worker, D1, staging, moderation, and key ceremony tests','Build deployment bundle without publishing'))
     for name,expected in zip(REPORT_RUNTIME_SHARING_JOBS,steps):
         if not moderation_steps_succeeded(next(j for j in jobs if j['name']==name),expected):raise CorrectionEvidenceUnavailable('New Sharing required steps not successful')
-    return {'run_id':run['id'],'sha':head,'event':'push','required_jobs':list(REPORT_RUNTIME_SHARING_JOBS)}
+    evidence={'run_id':run['id'],'sha':head,'event':'push','required_jobs':list(REPORT_RUNTIME_SHARING_JOBS)}
+    if head==REPORT_RUNTIME_DUPLICATE_HEAD:
+        evidence['cancelled_duplicate']={'run_id':REPORT_RUNTIME_CANCELLED_DUPLICATE,'conclusion':'cancelled','executed_step_count':0,'success_evidence':False}
+    return evidence
 
 def covers_report_runtime_continuation(run,validation_head,required,api,now,jobs):
     if required!=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE) or not report_runtime_inputs(run.get('head_sha')) or not report_runtime_inputs(validation_head,current=True):return False
