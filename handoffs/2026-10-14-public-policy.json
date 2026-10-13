@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "decisionDateJST": "2026-10-14",
+  "sourceMain": "21a6dfa7b4d7d5f80c4b60ba4db29b41f46f8dc8",
+  "scope": "policy-and-financing-package-only",
+  "userInstruction": "容量・継続運営費・公開条件の確定させて",
+  "policyStatus": "selected-for-implementation",
+  "remoteApplied": false,
+  "publicReady": false,
+  "permissions": {
+    "newRecurringSpendApproved": false,
+    "AWSUpgradeApproved": false,
+    "publicationApproved": false,
+    "mailSendApproved": false,
+    "permanentDeletionApproved": false
+  },
+  "offer": {
+    "monthlyPriceJPYJapan": 980,
+    "priceSource": "actual-StoreKit-product",
+    "trialDays": 7,
+    "trialEligibility": "StoreKit-qualified-only",
+    "ownerQuotaBytes": 5000000000,
+    "maximumActiveAndPendingRecords": 1000,
+    "maximumOwnersIncludingTrialRetainedDisabled": 3,
+    "globalCurrentAndReservationBytes": 15000000000,
+    "photoBytesLimit": 20971520,
+    "storageScope": "selected-viewing-JPEG-and-encrypted-metadata; not-photo-original-video-or-library-backup",
+    "sharingAndPreservationIncluded": true,
+    "capacityReservedBeforePurchaseRequired": true
+  },
+  "retention": {
+    "calendarMonthsAfterVerifiedMembershipEnd": 12,
+    "minimumDaysAfterDeliveredFinalNotice": 30,
+    "unknownStatusPausesClock": true,
+    "undeliveredNoticePreventsExpiryPurge": true,
+    "sameOwnerRejoinClearsPreviousDeadlineAndNotice": true,
+    "businessExitAdvanceNoticeDays": 90,
+    "businessExitDoesNotShortenPromisedRetention": true,
+    "accountDeletionAndSubscriptionCancellationSeparate": true,
+    "localOriginalPhotoMemoNotDeletedByServiceCopyDeletion": true,
+    "historicalCopiesNeedSeparateInventoryAndIndependentReview": true
+  },
+  "planningControlsNotApplied": {
+    "dailyNewAttemptsUTC": 1100,
+    "monthlyNewAttemptsUTC": 3300,
+    "monthlyNewPlannedBytesUTC": 24000000000,
+    "dailyPUTIncludingEditsRetriesUTC": 1200,
+    "monthlyPUTIncludingEditsRetriesUTC": 3600,
+    "ownerRequestsPerFixedUTCMinuteGlobalAtomic": 30,
+    "maximumJPEGInstances": 1,
+    "coldStartReservedSeconds": 120,
+    "coldStartMonthlyHoursArithmeticOnly": 110,
+    "reviewLifetimeHours": 24,
+    "initialFill": {
+      "records": 3000,
+      "newAttemptReserve": 300,
+      "editAttemptReserve": 300,
+      "newAttempts": 3300,
+      "mutationAttempts": 3600,
+      "conservativeAdmissionBytes": 23048646000,
+      "dailyCalendarAllocations": 3,
+      "monthlyCalendarAllocations": 1,
+      "elapsedCompletionDeadlineGuaranteed": false
+    }
+  },
+  "currentByteCounterCaveat": {
+    "coversOnlyNewRecordIds": true,
+    "existingPUTPhotoBytesAtMaximumMonthlyMutationCount": 75497472000,
+    "allPUTByteCounterRequiredBeforePublicActivation": true,
+    "allCopyPhysicalDebtFenceRequiredBeforePublicActivation": true,
+    "safeHistoricalCopyReconciliationRequiredBeforePublicActivation": true
+  },
+  "financialPackage": {
+    "status": "pending-owner-authorization-and-physical-cost-controls",
+    "normalMonthlyPlanningBudgetJPY": 10000,
+    "normalWarningForecastJPY": 7500,
+    "normalPauseNewIntakeForecastJPY": 9000,
+    "normalOpenRequiresForecastStrictlyBelowJPY": 9000,
+    "initialFillOneMonthPlanningBudgetJPY": 25000,
+    "initialWarningForecastJPY": 18000,
+    "initialPauseNewIntakeForecastJPY": 22000,
+    "initialOpenRequiresForecastStrictlyBelowJPY": 22000,
+    "rollingFundingMonths": 15,
+    "proposedRollingFundingJPY": 150000,
+    "initialFillIncrementAboveNormalMonthJPY": 15000,
+    "newMonthlyContractCloudflare": false,
+    "existingAWSAccountPaidContinuityRequired": true,
+    "invoiceHardCap": false,
+    "actualInvoiceJPY": null,
+    "noAutomaticUserDataDeletionToHitBudget": true,
+    "completeAllProviderInvoiceForecastClaimed": false,
+    "completeAllAppBusinessCostForecastClaimed": false,
+    "pricedFiniteScenariosAndExplicitReservesAvailable": true,
+    "independentCostEvidence": "C:/dev/neko-evidence/public-policy-20261014/cost-independent.json",
+    "cloudExternalReservesJPY": { "registryAndDomain": 400, "operationsAndPrices": 1000 },
+    "nonCloudBusinessCostsSeparatelyAccounted": [
+      "existing-Apple-annual-membership",
+      "development-CI-and-Codex",
+      "human-support-and-moderation",
+      "existing-operator-PC-and-electricity"
+    ],
+    "customerRevenueIsNotRetentionFundingProof": true,
+    "finiteApprovedTestBudgetJPYNotReused": 200
+  },
+  "publicConditions": [
+    "exact-general-capacity-intake-rate-and-before-purchase-reservation",
+    "all-PUT-byte-accounting-and-physical-historical-copy-forecast",
+    "approved-recurring-budget-and-rolling-retention-funding",
+    "paid-AWS-recovery-account-continuity",
+    "production-membership-contact-tracking-and-private-delivery-correlation",
+    "reviewed-safe-orphan-cleanup-and-separate-expired-owner-purge",
+    "actual-public-report-filter-block-human-decision-reply-and-private-support",
+    "independent-identity-key-recovery-and-major-action-approvals",
+    "matching-app-store-privacy-price-capacity-retention-and-review-material",
+    "explicit-final-human-public-release-review-submission-and-paid-activation"
+  ],
+  "humanActionPackage": {
+    "onlyFinancialAuthorizationRequestedAtThisStage": true,
+    "contents": [
+      "normal-month-budget-and-warning-pause",
+      "one-initial-fill-month-budget-and-warning-pause",
+      "rolling-retention-funding",
+      "existing-AWS-paid-continuity"
+    ],
+    "repeatDeviceMailReportPurchaseRegistrationRequired": false,
+    "publicReleaseNotIncludedInFinancialAuthorization": true
+  }
+}
