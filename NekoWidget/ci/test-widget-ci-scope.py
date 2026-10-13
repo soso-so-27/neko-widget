@@ -23,6 +23,149 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
+
+class ReportRuntimeContinuationBoundaryTests(unittest.TestCase):
+    def test_exact_four_product_pairs_and_native_tool_transition_are_closed(self):
+        head='a'*40; raw='\0'.join(item for path,pair in planner.REPORT_RUNTIME_BLOBS.items() for item in (':100644 100644 '+' '.join(pair)+' M',path))+'\0'
+        tools='\0'.join(item for path,pair in planner.REPORT_RUNTIME_TOOL_BLOBS.items() for item in (':100644 100644 '+' '.join(pair)+' M',path))+'\0'
+        approved=True
+        def git(*args):
+            if args[0]=='merge-base':return 'c'*40
+            if args[0]=='diff':return tools if args[-1]==planner.REPORT_RUNTIME_BASE else raw
+            if args[0]=='show':return 'REPORT_RUNTIME_CONTINUATION_DIGESTS = '+repr(planner.REPORT_RUNTIME_CONTINUATION_DIGESTS)
+            if args[0]=='ls-tree':return '100644 blob '+(('d' if approved or args[1]!='a'*40 else 'e')*40)+'\t'+args[-1]
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git):
+            self.assertTrue(planner.report_runtime_inputs(head))
+            saved=raw
+            for mutate in (lambda v:v.replace('100644 100644','100644 100755',1),
+                           lambda v:v.replace(next(iter(planner.REPORT_RUNTIME_BLOBS.values()))[1],'f'*40,1),
+                           lambda v:v+':100644 100644 '+('e'*40)+' '+('f'*40)+' M\0NekoWidget/Shared/Sharing/MomentSharingCore.swift\0',
+                           lambda v:'\0'.join(v.split('\0')[2:])):
+                raw=mutate(saved);self.assertFalse(planner.report_runtime_inputs(head))
+            raw=saved;approved=False;self.assertFalse(planner.report_runtime_inputs(head))
+            approved=True;tools+=':100644 100644 '+('e'*40)+' '+('f'*40)+' M\0NekoWidget/NekoWidget/Info.plist\0'
+            self.assertFalse(planner.report_runtime_inputs(head))
+
+    def test_known_branch_bad_scope_or_current_readiness_cannot_start_native_jobs(self):
+        import datetime as dt
+        now=dt.datetime.now(dt.timezone.utc)
+        with patch.object(planner,'report_runtime_inputs',side_effect=lambda head,**kw:not kw.get('current',False)):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.report_runtime_source('a'*40,'soso-so-27/neko-widget',lambda _:self.fail('No API before current readiness'),now)
+        with patch.object(planner,'report_runtime_inputs',return_value=True),patch.object(planner,'reply_readiness_inputs',return_value=False):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.report_runtime_source('a'*40,'soso-so-27/neko-widget',lambda _:self.fail('No API before original native closure'),now)
+        with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+            planner.find_test_correction_evidence('a'*40,planner.REPORT_RUNTIME_BRANCH,'soso-so-27/neko-widget',planner.required_jobs_from_scope(scope.FULL_SCOPE),lambda _:self.fail('No API for wrong native graph'),now)
+
+    def test_new_graph_requires_boundary_marker_fixed_proof_and_actual_backend(self):
+        import datetime as dt,json
+        now=dt.datetime.now(dt.timezone.utc);head='a'*40;validation='b'*40
+        required=planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE)
+        run=dict(id=900,head_sha=head,head_branch=planner.REPORT_RUNTIME_BRANCH,path='.github/workflows/ios-build.yml',event='push',workflow_id=335014238,run_attempt=1,status='completed',conclusion='success',updated_at=now.isoformat(),repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
+        jobs=[dict(id=777,name=planner.PLAN_JOB,head_sha=head,run_id=900,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in ('Test CI selection and evidence boundaries','Select checks')])]
+        proof=dict(kind=planner.REPORT_RUNTIME_KIND,candidate_sha=validation,required_backend_runs=planner.report_runtime_requirements(validation),jobs=[{'sha':planner.REPORT_RUNTIME_BUILD_SOURCE}])
+        recorded={**proof,'candidate_sha':head,'required_backend_runs':planner.report_runtime_requirements(head)}
+        record=dict(schema_version=1,repository='soso-so-27/neko-widget',head_sha=head,scope=scope.REPORT_REPLY_ENTRY_SCOPE,required_jobs=list(required),evidence_run_id=None,evidence_sha=None,test_correction_evidence=recorded,required_backend_runs=recorded['required_backend_runs'],report_runtime_boundary_checks={'head_sha':head,'passed':True,'commands':[list(c) for c in planner.REPORT_RUNTIME_BOUNDARY_COMMANDS]})
+        api=lambda _: 'IOS_CI_PLAN_JSON='+json.dumps(record)
+        with patch.object(planner,'report_runtime_inputs',return_value=True),patch.object(planner,'report_runtime_source',side_effect=lambda *_:dict(proof)),patch.object(planner,'report_runtime_backend_evidence',return_value={}) as backend:
+            self.assertTrue(planner.covers_report_runtime_continuation(run,validation,required,api,now,jobs))
+            backend.assert_called_once_with(head,api,now)
+            for key in ('report_runtime_boundary_checks','required_backend_runs','test_correction_evidence'):
+                saved=record.pop(key);backend.reset_mock()
+                self.assertFalse(planner.covers_report_runtime_continuation(run,validation,required,api,now,jobs));backend.assert_not_called();record[key]=saved
+            duplicate=[*jobs,{**jobs[0],'id':778}]
+            self.assertFalse(planner.covers_report_runtime_continuation(run,validation,required,api,now,duplicate))
+            record['schema_version']=2
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.covers_report_runtime_continuation(run,validation,required,api,now,jobs)
+
+    def test_all_four_new_sharing_jobs_and_steps_are_required(self):
+        import datetime as dt
+        now=dt.datetime.now(dt.timezone.utc);head='a'*40
+        run=dict(id=900,head_sha=head,head_branch=planner.REPORT_RUNTIME_BRANCH,path='.github/workflows/sharing-service.yml',event='push',workflow_id=123,run_attempt=1,status='completed',conclusion='success',updated_at=now.isoformat(),run_number=9,repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
+        names=(('Run python NekoWidget/ci/plan-ios-ci.py',),('Verify Apple transaction service boundary','Verify durable nonce and capability credential boundaries','Build nonroot Node image and private Worker without publishing'),('Parse and exercise Windows path, volume, and ACL policy',),('Run Worker, D1, staging, moderation, and key ceremony tests','Build deployment bundle without publishing'))
+        jobs=[dict(id=i+1,name=name,head_sha=head,run_id=900,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in steps]) for i,(name,steps) in enumerate(zip(planner.REPORT_RUNTIME_SHARING_JOBS,names))]
+        def api(path):
+            if '/jobs?' in path:return {'total_count':len(jobs),'jobs':jobs}
+            if '/runs?' in path:return {'total_count':1,'workflow_runs':[run]}
+            if path.endswith('/900'):return run
+            return {'id':123,'path':'.github/workflows/sharing-service.yml','state':'active'}
+        self.assertEqual(planner.report_runtime_backend_evidence(head,api,now)['sha'],head)
+        for job in jobs:
+            saved=job['conclusion'];job['conclusion']='skipped'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+            job['conclusion']=saved
+            step=job['steps'][0];saved=step['conclusion'];step['conclusion']='skipped'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+            step['conclusion']=saved
+        run['event']='workflow_dispatch'
+        with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_backend_evidence(head,api,now)
+
+    def test_fixed_build_requires_all39_checks_and_failed_release_upload_skip(self):
+        import datetime as dt,json
+        now=dt.datetime.now(dt.timezone.utc);head='a'*40;repo='soso-so-27/neko-widget'
+        def run(identifier,sha,path,branch,event,outcome,wid):
+            return dict(id=identifier,head_sha=sha,path=path,head_branch=branch,event=event,status='completed',conclusion=outcome,workflow_id=wid,run_attempt=1,updated_at=now.isoformat(),repository={'full_name':repo},head_repository={'full_name':repo})
+        buildrun=run(planner.REPORT_RUNTIME_BUILD_RUN,planner.REPORT_RUNTIME_BUILD_SOURCE,'.github/workflows/ios-build.yml',planner.REPLY_READINESS_BRANCH,'push','success',335014238)
+        release=run(planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml','main','workflow_dispatch','failure',335014239)
+        names=tuple('check'+str(i) for i in range(39))
+        def job(identifier,name,owner,steps,outcome='success'):
+            return dict(id=identifier,name=name,head_sha=owner['head_sha'],run_id=owner['id'],run_attempt=1,status='completed',conclusion=outcome,completed_at=now.isoformat(),steps=steps)
+        steps=lambda items:[dict(name=n,status='completed',conclusion='success') for n in items]
+        jobs=[job(planner.REPORT_RUNTIME_BUILD_PLAN,planner.PLAN_JOB,buildrun,steps(('Test CI selection and evidence boundaries','Select checks'))),job(planner.REPORT_RUNTIME_BUILD_JOB,planner.BUILD,buildrun,steps(names))]
+        failed_steps=[dict(name=n,status='completed',conclusion=c) for n,c in [('Validate the exact runtime embedded in the limited external beta','failure'),('Archive app and widget','skipped'),('Validate and upload IPA to TestFlight','skipped')]]
+        release_jobs=[job(planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,'Archive, export IPA, and upload',release,failed_steps,'failure')]
+        original={'jobs':[{'name':n,'job_id':planner.REPLY_READINESS_JOB_IDS[n]} for n in planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE) if n!=planner.BUILD]}
+        record=dict(schema_version=1,repository=repo,head_sha=buildrun['head_sha'],scope=scope.REPORT_REPLY_ENTRY_SCOPE,required_jobs=list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE)),evidence_run_id=None,evidence_sha=None,test_correction_evidence=original)
+        def api(path):
+            if '/jobs?' in path:return {'total_count':len(release_jobs if str(release['id']) in path else jobs),'jobs':release_jobs if str(release['id']) in path else jobs}
+            return release if path.endswith('/'+str(release['id'])) else buildrun
+        with patch.object(planner,'report_runtime_inputs',return_value=True),patch.object(planner,'reply_readiness_source_facts',return_value=original),patch.object(planner,'reply_readiness_build_steps',return_value=names),patch.object(planner,'report_runtime_log',side_effect=lambda api,id,digest:'IOS_CI_PLAN_JSON='+json.dumps(record) if id==planner.REPORT_RUNTIME_BUILD_PLAN else 'pinned'):
+            proof=planner.report_runtime_source(head,repo,api,now);self.assertEqual(len(proof['jobs']),4)
+            saved=jobs[1]['steps'].pop()
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_source(head,repo,api,now)
+            jobs[1]['steps'].append(saved);failed_steps[-1]['conclusion']='success'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_source(head,repo,api,now)
+
+    def test_native_plan_executes_boundaries_and_emits_no_mac_flags(self):
+        import contextlib,io,json,tempfile
+        head='a'*40
+        proof={'kind':planner.REPORT_RUNTIME_KIND,'sha':planner.REPORT_RUNTIME_BUILD_SOURCE,'run_id':planner.REPORT_RUNTIME_BUILD_RUN,'jobs':[]}
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);event=folder/'event.json';event.write_text('{}');output=folder/'output';summary=folder/'summary'
+            env={'GITHUB_EVENT_PATH':str(event),'GITHUB_OUTPUT':str(output),'GITHUB_STEP_SUMMARY':str(summary),'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/'+planner.REPORT_RUNTIME_BRANCH,'GITHUB_REPOSITORY':'soso-so-27/neko-widget','GITHUB_SHA':head,'GITHUB_RUN_ID':'900','GITHUB_WORKFLOW':'iOS build'}
+            marker={'head_sha':head,'passed':True,'commands':[list(c) for c in planner.REPORT_RUNTIME_BOUNDARY_COMMANDS]}
+            captured=io.StringIO()
+            with patch.dict(planner.os.environ,env,clear=True),patch.object(planner,'changed_paths',return_value=list(planner.REPORT_RUNTIME_BLOBS)),patch.object(planner,'runtime_scope',return_value=scope.REPORT_REPLY_ENTRY_SCOPE),patch.object(planner,'find_evidence',return_value=None),patch.object(planner,'find_test_correction_evidence',return_value=proof),patch.object(planner,'report_runtime_inputs',return_value=True),patch.object(planner,'preservation_sharing_plan',return_value=False),patch.object(planner,'report_runtime_boundary_checks',return_value=marker) as boundary,contextlib.redirect_stdout(captured):
+                planner.main()
+            boundary.assert_called_once_with(head)
+            flags=output.read_text()
+            for flag in ('build','smoke','sharing','app_ui'):self.assertIn(flag+'=false',flags)
+            record=json.loads(next(line.split('=',1)[1] for line in captured.getvalue().splitlines() if line.startswith('IOS_CI_PLAN_JSON=')))
+            self.assertEqual(record['report_runtime_boundary_checks'],marker)
+            self.assertEqual(record['required_backend_runs'],planner.report_runtime_requirements(head))
+
+    def test_cost_retains_original_clock_failure_and_reference(self):
+        import datetime as dt
+        spec=importlib.util.spec_from_file_location('runtime_cost_preflight',Path(__file__).with_name('preflight-ci.py'));preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        result={'scope':scope.REPORT_REPLY_ENTRY_SCOPE,'target_minutes':180}
+        proof={'kind':planner.REPORT_RUNTIME_KIND,'jobs':[]}
+        cost=preflight.report_reply_readiness_cost(dict(result),proof,True,{'upload_minutes':12})
+        self.assertEqual(cost['cost']['with_upload_minutes'],[0,32]);self.assertFalse(cost['cost']['includes_future_rework'])
+        for upload in (float('nan'),float('inf'),-1):
+            with self.assertRaises(ValueError):preflight.report_reply_readiness_cost(dict(result),proof,True,{'upload_minutes':upload})
+        now=dt.datetime.fromisoformat('2026-10-13T01:13:27+00:00');head='a'*40
+        proof.update(candidate_sha=head,run_id=planner.REPORT_RUNTIME_BUILD_RUN,sha=planner.REPORT_RUNTIME_BUILD_SOURCE,owning_jobs_to_execute=[],failed_release_run_id=planner.REPORT_RUNTIME_FAILED_RELEASE,failed_release_job_id=planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,failed_release_log_sha256=planner.REPORT_RUNTIME_FAILED_RELEASE_LOG,failed_release_upload_skipped=True,required_backend_runs=planner.report_runtime_requirements(head))
+        runs=[dict(id=id,head_sha=sha,path=path,status='completed',conclusion='failure',created_at='2026-10-13T00:00:00Z',failed_tests=[],unsupported_failed_tests=[]) for id,sha,path in ((planner.REPLY_READINESS_RUN,planner.REPLY_READINESS_SOURCE,preflight.IOS_WORKFLOW),(planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml'))]
+        cost['head']=head;cost['required_jobs']=list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE))
+        gated=preflight.apply_task_gate(cost,runs,now,correction_evidence=proof)
+        self.assertEqual(gated['task']['failed_runs'],[planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_FAILED_RELEASE])
+        self.assertEqual(gated['task']['minutes_since_first_candidate'],180)
+        self.assertEqual(gated['task']['projected_total_minutes'],212)
+        self.assertIn('cumulative_cost_requires_replanning',gated['task']['blockers']);self.assertFalse(gated['ready'])
+
+
 class ReportReplyEntryBoundaryTests(unittest.TestCase):
     def test_preflight_routes_reply_scope_through_required_recovery_verification(self):
         import contextlib, io
