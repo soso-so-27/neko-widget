@@ -4066,6 +4066,16 @@ def report_runtime_inputs(head, *, current=False):
         return True
     except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired,ValueError,KeyError,TypeError):return False
 
+def report_runtime_equivalent_inputs(candidate,head):
+    # Eligibility only: the subsequent fixed native/backend graph is mandatory.
+    # Source controls keep their original main approval; target controls must
+    # match its own main approval, with the current signed readiness rechecked.
+    try:
+        if candidate!=REPORT_RUNTIME_DUPLICATE_HEAD or not isinstance(head,str) or not SHA.fullmatch(head) or git('rev-parse','HEAD')!=head:return False
+        git('merge-base','--is-ancestor',candidate,head)
+        return report_runtime_inputs(candidate) and report_runtime_inputs(head,current=True)
+    except (OSError,subprocess.CalledProcessError,ValueError,KeyError,TypeError):return False
+
 def report_runtime_plan(log,sha):
     if not isinstance(log,str):raise CorrectionEvidenceUnavailable('Runtime plan log unavailable')
     rows=[json.loads(line.split('IOS_CI_PLAN_JSON=',1)[1]) for line in log.splitlines() if 'IOS_CI_PLAN_JSON=' in line]
@@ -5299,7 +5309,14 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
-            return reject("different_inputs")
+            if not (repository=='soso-so-27/neko-widget' and run.get('workflow_id')==335014238
+                    and run.get('path')==current.get('path')=='.github/workflows/ios-build.yml'
+                    and run.get('head_branch')==REPORT_RUNTIME_BRANCH and current.get('head_branch')=='main'
+                    and current.get('event')=='push' and type(run.get('run_attempt')) is int and run['run_attempt']==1
+                    and type(current.get('run_attempt')) is int and current['run_attempt']==1
+                    and current.get('repository',{}).get('full_name')==repository and current.get('head_repository',{}).get('full_name')==repository
+                    and report_runtime_equivalent_inputs(run['head_sha'],current['head_sha'])):
+                return reject("different_inputs")
         return True
     except (AttributeError, KeyError, TypeError, ValueError):
         return reject("invalid_run_metadata")

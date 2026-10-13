@@ -25,6 +25,55 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReportRuntimeCancelledDuplicateTests(unittest.TestCase):
+    def test_main_input_eligibility_requires_fixed_source_ancestry_and_current_signature(self):
+        candidate=planner.REPORT_RUNTIME_DUPLICATE_HEAD;head='b'*40
+        def git(*args):
+            return head if args[0]=='rev-parse' else ''
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'report_runtime_inputs',return_value=True) as inputs:
+            self.assertTrue(planner.report_runtime_equivalent_inputs(candidate,head))
+            self.assertEqual(inputs.call_args_list,[unittest.mock.call(candidate),unittest.mock.call(head,current=True)])
+            inputs.reset_mock();self.assertFalse(planner.report_runtime_equivalent_inputs('a'*40,head));inputs.assert_not_called()
+        for rejected in ('source','current'):
+            with self.subTest(rejected=rejected),patch.object(planner,'git',side_effect=git),patch.object(planner,'report_runtime_inputs',side_effect=lambda sha,**kw:bool(kw.get('current')) if rejected=='source' else not kw.get('current',False)):
+                self.assertFalse(planner.report_runtime_equivalent_inputs(candidate,head))
+        with patch.object(planner,'git',return_value='c'*40),patch.object(planner,'report_runtime_inputs') as inputs:
+            self.assertFalse(planner.report_runtime_equivalent_inputs(candidate,head));inputs.assert_not_called()
+        def not_ancestor(*args):
+            if args[0]=='merge-base':raise subprocess.CalledProcessError(1,['git',*args])
+            return head
+        with patch.object(planner,'git',side_effect=not_ancestor),patch.object(planner,'report_runtime_inputs') as inputs:
+            self.assertFalse(planner.report_runtime_equivalent_inputs(candidate,head));inputs.assert_not_called()
+
+    def test_reusable_run_only_enters_fixed_main_push_route_and_never_dispatch(self):
+        import datetime as dt
+        now=dt.datetime.now(dt.timezone.utc);repo='soso-so-27/neko-widget'
+        run=dict(id=38329817620,workflow_id=335014238,head_sha=planner.REPORT_RUNTIME_DUPLICATE_HEAD,head_branch=planner.REPORT_RUNTIME_BRANCH,path='.github/workflows/ios-build.yml',event='push',run_attempt=1,status='completed',conclusion='success',updated_at=now.isoformat(),repository={'full_name':repo},head_repository={'full_name':repo})
+        current={**run,'id':900,'head_sha':'b'*40,'head_branch':'main','status':'in_progress','conclusion':None}
+        with patch.object(planner,'equivalent_inputs',return_value=False),patch.object(planner,'report_runtime_equivalent_inputs',return_value=True) as inputs:
+            self.assertTrue(planner.reusable_run(run,current,repo,now));inputs.assert_called_once_with(run['head_sha'],current['head_sha'])
+            mutations=(('source','event','workflow_dispatch'),('current','event','workflow_dispatch'),('source','head_branch','codex/unknown'),('current','head_branch','codex/unknown'),('source','path','.github/workflows/sharing-service.yml'),('current','path','.github/workflows/sharing-service.yml'),('source','run_attempt',2),('current','run_attempt',2),('current','repository',{'full_name':'foreign/repo'}))
+            for target,key,value in mutations:
+                with self.subTest(target=target,key=key):
+                    changed_run,changed_current=copy.deepcopy(run),copy.deepcopy(current)
+                    (changed_run if target=='source' else changed_current)[key]=value;inputs.reset_mock()
+                    self.assertFalse(planner.reusable_run(changed_run,changed_current,repo,now));inputs.assert_not_called()
+        with patch.object(planner,'equivalent_inputs',return_value=False),patch.object(planner,'git',return_value=current['head_sha']),patch.object(planner,'report_runtime_inputs',return_value=False):
+            self.assertFalse(planner.reusable_run(run,current,repo,now))
+            run['head_sha']='a'*40
+            self.assertFalse(planner.reusable_run(run,current,repo,now))
+
+    def test_main_eligibility_does_not_substitute_for_full_native_and_backend_graph(self):
+        import datetime as dt
+        now=dt.datetime.now(dt.timezone.utc);repo='soso-so-27/neko-widget'
+        run=dict(id=38329817620,workflow_id=335014238,head_sha=planner.REPORT_RUNTIME_DUPLICATE_HEAD,head_branch=planner.REPORT_RUNTIME_BRANCH,path='.github/workflows/ios-build.yml',event='push',run_attempt=1,status='completed',conclusion='success',updated_at=now.isoformat(),repository={'full_name':repo},head_repository={'full_name':repo})
+        current={**run,'id':900,'head_sha':'b'*40,'head_branch':'main','status':'in_progress','conclusion':None}
+        env={'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':repo,'GITHUB_RUN_ID':'900','GITHUB_SHA':current['head_sha']}
+        def api(path):
+            return current if path.endswith('/900') else {'workflow_runs':[run]}
+        with patch.object(planner,'git',return_value=current['head_sha']),patch.object(planner,'equivalent_inputs',return_value=False),patch.object(planner,'report_runtime_equivalent_inputs',return_value=True),patch.object(planner,'executed_jobs',return_value=[]),patch.object(planner,'covers_corrected_full_graph',return_value=False) as graph:
+            self.assertIsNone(planner.find_evidence(env,planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE),api,now))
+            graph.assert_called_once()
+
     def fixture(self):
         import datetime as dt
         head=planner.REPORT_RUNTIME_DUPLICATE_HEAD
