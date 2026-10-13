@@ -17,6 +17,43 @@ const response = (body: ReadableStream<Uint8Array>, extraHeaders = {}) =>
 const transport = (reply: Response) => new S3RecoveryCopy(config, async () => reply);
 
 describe('exact-size recovery-object reads', () => {
+  it('verifies an actual 20 MiB object delivered in 4 KiB transport chunks', async () => {
+    const bytes = new Uint8Array(20 * 1024 * 1024).fill(0x5a);
+    const item = { key, bytes: bytes.length, versionId: 'exact-v1',
+      sha256: [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('') };
+    let offset = 0; let reads = 0;
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) {
+      reads++;
+      if (offset === bytes.length) { controller.close(); return; }
+      controller.enqueue(bytes.subarray(offset, offset + 4096)); offset += 4096;
+    } }, { highWaterMark: 0 });
+    const received = await transport(response(stream, { 'content-length': String(bytes.length) })).getVerified(item);
+    expect(received.length).toBe(bytes.length);
+    expect(received.every(byte => byte === 0x5a)).toBe(true);
+    expect(reads).toBe(5121); expect(stream.locked).toBe(false);
+  });
+
+  it('bounds extra read work by actual copied bytes rather than claimed content-length', async () => {
+    const bytes = new Uint8Array(1024).fill(0x5a);
+    const item = { key, bytes: bytes.length, versionId: 'exact-v1',
+      sha256: [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('') };
+    for (const extraEmpty of [4096, 4097]) {
+      let reads = 0; let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({ pull(controller) {
+        reads++;
+        if (reads === 1) controller.enqueue(bytes);
+        else if (reads <= extraEmpty + 1) controller.enqueue(new Uint8Array());
+        else controller.close();
+      }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
+      const pending = transport(response(stream, { 'content-length': '33554432' })).getVerified(item);
+      if (extraEmpty === 4096) expect(await pending).toEqual(bytes);
+      else { await expect(pending).rejects.toMatchObject(failure); expect(cancelled).toBe(true); }
+      expect(stream.locked).toBe(false);
+    }
+  });
+
   it('returns verified bytes from sliced and empty chunks without changing the source buffers', async () => {
     const backing = new Uint8Array([99, ...ciphertext, 88]);
     const first = backing.subarray(1, 3); const second = backing.subarray(3, 7);

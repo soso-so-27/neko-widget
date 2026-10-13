@@ -93,9 +93,13 @@ async function readRecoveryObject(body: ReadableStream<Uint8Array>, expected: nu
       if (performance.now() >= until) throw unavailable();
       const { value, done } = await Promise.race([reader.read(), expired]);
       if (done) break;
-      if (++count > 4096 || !(value instanceof Uint8Array)) throw unavailable();
+      if (!(value instanceof Uint8Array)) throw unavailable();
       if (value.length > expected - size) throw unavailable();
       result.set(value, size); size += value.length;
+      // Transport chunk sizes are not controlled by the object writer. Keep
+      // 4096 base reads (including empty ones), earning one extra per KiB of
+      // real progress: at most 36864 reads for the fixed 32 MiB object bound.
+      if (++count > 4096 + Math.floor(size / 1024)) throw unavailable();
       if (count % 64 === 0) await Promise.race([new Promise(resolve => setTimeout(resolve, 0)), expired]);
     }
     if (performance.now() >= until || size !== expected) throw unavailable();
