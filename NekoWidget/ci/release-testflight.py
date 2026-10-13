@@ -396,7 +396,8 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
                 job = gh.get(f"actions/jobs/{job_id}")
                 require(type(job.get("run_id")) is int, "Corrected candidate job identity unavailable.")
                 return gh.raw_job_log(job_id) if (planner.moderation_chained_inputs(source_sha)
-                    or required == planner.required_jobs_from_scope(planner.OWNER_CLOUD_SCOPE)) else gh.log(job["run_id"], job_id)
+                    or required in (planner.required_jobs_from_scope(planner.OWNER_CLOUD_SCOPE),
+                        planner.required_jobs_from_scope(planner.REPORT_REPLY_ENTRY_SCOPE))) else gh.log(job["run_id"], job_id)
             return gh.get(path[len(prefix):])
         try:
             covered = planner.covers_corrected_full_graph(source, sha, required, candidate_api, now, jobs)

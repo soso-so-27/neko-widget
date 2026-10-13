@@ -438,6 +438,25 @@ class ReleaseTests(unittest.TestCase):
                 release.prepare(self.gh, self.sha, "165", 20, self.now, {},
                                 preservation_pilot=pilot, billing_sandbox=requested)
 
+    def test_main_reply_recovery_uses_raw_job_api_and_retains_graph_rejection(self):
+        self.plan.update(scope=release.planner.REPORT_REPLY_ENTRY_SCOPE,
+                         required_jobs=list(release.planner.required_jobs_from_scope(release.planner.REPORT_REPLY_ENTRY_SCOPE)))
+        self.candidate()
+        self.gh.values['actions/runs/10/jobs?filter=latest&per_page=100&page=1']['jobs'][1]['conclusion']='skipped'
+        self.gh.values['actions/jobs/777']={'run_id':10}
+        def graph(run,head,required,api,now,jobs):
+            self.assertEqual(api(f'/repos/{release.REPOSITORY}/actions/jobs/777/logs'),'raw transcript')
+            return True
+        with patch.object(self.gh,'raw_job_log',return_value='raw transcript',create=True) as raw, \
+             patch.object(release.planner,'moderation_chained_inputs',return_value=False), \
+             patch.object(release.planner,'covers_corrected_full_graph',side_effect=graph):
+            result=release.check_ci(self.gh,self.sha,20,self.now)
+        raw.assert_called_once_with(777)
+        self.assertEqual(result['tested_run'],10)
+        with patch.object(release.planner,'covers_corrected_full_graph',return_value=False), self.assertRaises(release.Blocked):
+            release.check_ci(self.gh,self.sha,20,self.now)
+        self.assertEqual(self.gh.dispatches,[])
+
     def test_skipped_main_jobs_require_real_referenced_candidate_jobs(self):
         self.candidate()
         self.assertEqual(self.prepare()["ci"]["tested_run"], 10)
