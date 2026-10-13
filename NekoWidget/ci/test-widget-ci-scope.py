@@ -24,6 +24,121 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
+class ReportRuntimeOrderBoundaryTests(unittest.TestCase):
+    def test_exact_three_pairs_all_modes_controls_and_source_closure_are_required(self):
+        head='a'*40;raw='\0'.join(item for p,pair in planner.REPORT_RUNTIME_ORDER_BLOBS.items() for item in (':100644 100644 '+' '.join(pair)+' M',p))+'\0';trusted=True
+        def git(*args):
+            if args[0]=='merge-base':return 'c'*40
+            if args[0]=='diff':return raw
+            if args[0]=='show':return 'REPORT_RUNTIME_ORDER_DIGESTS = '+repr(planner.REPORT_RUNTIME_ORDER_DIGESTS)
+            if args[0]=='ls-tree':return '100644 blob '+(('d' if trusted or args[1]!=head else 'e')*40)+'\t'+args[-1]
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'report_runtime_inputs',return_value=True) as original:
+            self.assertTrue(planner.report_runtime_order_inputs(head))
+            self.assertEqual(original.call_args_list[:2],[unittest.mock.call(planner.REPORT_RUNTIME_ORDER_BASE),unittest.mock.call(planner.REPORT_RUNTIME_DUPLICATE_HEAD)])
+            saved=raw
+            for mutate in (lambda v:v.replace('100644 100644','100644 100755',1),lambda v:v.replace(next(iter(planner.REPORT_RUNTIME_ORDER_BLOBS.values()))[1],'f'*40,1),lambda v:'\0'.join(v.split('\0')[2:]),lambda v:v+':100644 100644 '+('e'*40)+' '+('f'*40)+' M\0NekoWidget/NekoWidget/FamilyWindowView.swift\0'):
+                raw=mutate(saved);self.assertFalse(planner.report_runtime_order_inputs(head))
+            raw=saved;trusted=False;self.assertFalse(planner.report_runtime_order_inputs(head))
+            trusted=True;original.return_value=False;self.assertFalse(planner.report_runtime_order_inputs(head))
+        with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+            planner.find_test_correction_evidence(head,planner.REPORT_RUNTIME_ORDER_BRANCH,'soso-so-27/neko-widget',planner.required_jobs_from_scope(scope.FULL_SCOPE),lambda _:self.fail('No lookup for bad scope'),None)
+        with patch.object(planner,'report_runtime_order_inputs',side_effect=lambda h,**kw:not kw.get('current',False)):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_source(head,'soso-so-27/neko-widget',lambda _:self.fail('No API before current signature'),None)
+
+    def test_new_backend_absence_is_required_and_unknown_execution_is_not_hidden(self):
+        def api(path):
+            workflow=path.split('/workflows/',1)[1].split('/',1)[0]
+            if '/runs?' in path:return index
+            return {'id':123,'path':'.github/workflows/'+workflow,'state':'active'}
+        index={'total_count':0,'workflow_runs':[]}
+        planner.report_runtime_order_no_backend_push('a'*40,api)
+        for index in ({'total_count':1,'workflow_runs':[{'conclusion':'failure'}]},{'total_count':1,'workflow_runs':[{'status':'in_progress'}]},{'total_count':False,'workflow_runs':[]},{'total_count':0,'workflow_runs':[{}]}):
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_no_backend_push('a'*40,api)
+
+    def test_original_f4_plan_and_failed253_raw_upload_boundary_are_required(self):
+        import datetime as dt,hashlib,json
+        now=dt.datetime.now(dt.timezone.utc);head='a'*40;repo='soso-so-27/neko-widget';raw='fixed253raw'
+        original={'kind':planner.REPORT_RUNTIME_KIND,'candidate_sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'jobs':[{'sha':planner.REPORT_RUNTIME_BUILD_SOURCE}],'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD)}
+        def run(identifier,sha,branch,path,event,conclusion,workflow):return dict(id=identifier,head_sha=sha,head_branch=branch,path=path,event=event,conclusion=conclusion,status='completed',workflow_id=workflow,run_attempt=1,updated_at=now.isoformat(),repository={'full_name':repo},head_repository={'full_name':repo})
+        owner=run(planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,planner.REPORT_RUNTIME_DUPLICATE_HEAD,planner.REPORT_RUNTIME_BRANCH,'.github/workflows/ios-build.yml','push','success',335014238)
+        failed=run(planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_BASE,'main','.github/workflows/testflight.yml','workflow_dispatch','failure',335014239)
+        def job(identifier,name,run,steps):return dict(id=identifier,name=name,head_sha=run['head_sha'],run_id=run['id'],run_attempt=1,status='completed',conclusion=run['conclusion'],completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion=c) for n,c in steps])
+        plan=job(777,planner.PLAN_JOB,owner,[(n,'success') for n in ('Test CI selection and evidence boundaries','Select checks')])
+        failure=job(planner.REPORT_RUNTIME_ORDER_FAILED_JOB,'Archive, export IPA, and upload',failed,[('Validate the exact runtime embedded in the limited external beta','failure'),('Archive app and widget','skipped'),('Validate and upload IPA to TestFlight','skipped')])
+        marker={'head_sha':owner['head_sha'],'passed':True,'commands':[list(c) for c in planner.REPORT_RUNTIME_BOUNDARY_COMMANDS]}
+        record=dict(schema_version=1,repository=repo,head_sha=owner['head_sha'],scope=scope.REPORT_REPLY_ENTRY_SCOPE,required_jobs=list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE)),evidence_run_id=None,evidence_sha=None,test_correction_evidence=original,required_backend_runs=original['required_backend_runs'],report_runtime_boundary_checks=marker)
+        def api(path):
+            if '/jobs?' in path:return {'total_count':1,'jobs':[failure if str(failed['id']) in path else plan]}
+            if path.endswith('/777/logs'):return 'IOS_CI_PLAN_JSON='+json.dumps(record)
+            if path.endswith('/logs'):return raw
+            return failed if path.endswith('/'+str(failed['id'])) else owner
+        with patch.object(planner,'report_runtime_order_inputs',return_value=True),patch.object(planner,'report_runtime_order_no_backend_push'),patch.object(planner,'report_runtime_source_facts',return_value=original),patch.object(planner,'report_runtime_backend_evidence',return_value={'sha':owner['head_sha']}),patch.object(planner,'REPORT_RUNTIME_ORDER_FAILED_LOG',hashlib.sha256(raw.encode()).hexdigest()):
+            proof=planner.report_runtime_order_source(head,repo,api,now)
+            self.assertEqual(proof['required_backend_runs'],planner.report_runtime_requirements(owner['head_sha']));self.assertEqual(proof['jobs'],original['jobs']);self.assertEqual(proof['owning_jobs_to_execute'],[])
+            saved=record.pop('report_runtime_boundary_checks')
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_source(head,repo,api,now)
+            record['report_runtime_boundary_checks']=saved;raw+='tampered'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_source(head,repo,api,now)
+            raw='fixed253raw';failure['steps'][-1]['conclusion']='success'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_source(head,repo,api,now)
+            failure['steps'][-1]['conclusion']='skipped';plan['steps'][0]['conclusion']='skipped'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.report_runtime_order_source(head,repo,api,now)
+
+    def test_new_plan_owns_current_checks_without_mac_or_backend_sha_substitution(self):
+        import contextlib,io,json
+        head='a'*40;proof={'kind':planner.REPORT_RUNTIME_ORDER_KIND,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'run_id':planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,'jobs':[],'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD)}
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);event=folder/'event.json';event.write_text('{}');output=folder/'out';summary=folder/'summary'
+            env={'GITHUB_EVENT_PATH':str(event),'GITHUB_OUTPUT':str(output),'GITHUB_STEP_SUMMARY':str(summary),'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/'+planner.REPORT_RUNTIME_ORDER_BRANCH,'GITHUB_REPOSITORY':'soso-so-27/neko-widget','GITHUB_SHA':head,'GITHUB_RUN_ID':'900','GITHUB_WORKFLOW':'iOS build'}
+            marker={'head_sha':head,'passed':True,'commands':[list(c) for c in planner.REPORT_RUNTIME_BOUNDARY_COMMANDS]};captured=io.StringIO()
+            with patch.dict(planner.os.environ,env,clear=True),patch.object(planner,'changed_paths',return_value=list(planner.REPORT_RUNTIME_ORDER_BLOBS)),patch.object(planner,'runtime_scope',return_value=scope.REPORT_REPLY_ENTRY_SCOPE),patch.object(planner,'find_evidence',return_value=None),patch.object(planner,'find_test_correction_evidence',return_value=proof),patch.object(planner,'report_runtime_inputs',return_value=False),patch.object(planner,'report_runtime_order_inputs',return_value=True),patch.object(planner,'report_runtime_boundary_checks',return_value=marker) as boundary,contextlib.redirect_stdout(captured):planner.main()
+            boundary.assert_called_once_with(head)
+            for flag in ('build','smoke','sharing','app_ui'):self.assertIn(flag+'=false',output.read_text())
+            record=json.loads(next(line.split('=',1)[1] for line in captured.getvalue().splitlines() if line.startswith('IOS_CI_PLAN_JSON=')))
+            self.assertEqual(record['required_backend_runs'],proof['required_backend_runs']);self.assertEqual(record['report_runtime_boundary_checks'],marker)
+
+    def test_current_plan_full_proof_and_main_input_eligibility_remain_required(self):
+        import datetime as dt,json
+        now=dt.datetime.now(dt.timezone.utc);head='a'*40;target='b'*40
+        run=dict(id=900,head_sha=head,head_branch=planner.REPORT_RUNTIME_ORDER_BRANCH,path='.github/workflows/ios-build.yml',event='push',workflow_id=335014238,run_attempt=1,status='completed',conclusion='success',updated_at=now.isoformat(),repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
+        job=dict(id=777,name=planner.PLAN_JOB,head_sha=head,run_id=900,run_attempt=1,status='completed',conclusion='success',completed_at=now.isoformat(),steps=[dict(name=n,status='completed',conclusion='success') for n in ('Test CI selection and evidence boundaries','Select checks')])
+        proof={'kind':planner.REPORT_RUNTIME_ORDER_KIND,'candidate_sha':target,'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD)}
+        record=dict(schema_version=1,repository='soso-so-27/neko-widget',head_sha=head,scope=scope.REPORT_REPLY_ENTRY_SCOPE,required_jobs=list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE)),evidence_run_id=None,evidence_sha=None,test_correction_evidence={**proof,'candidate_sha':head},required_backend_runs=proof['required_backend_runs'],report_runtime_boundary_checks={'head_sha':head,'passed':True,'commands':[list(c) for c in planner.REPORT_RUNTIME_BOUNDARY_COMMANDS]})
+        api=lambda _: 'IOS_CI_PLAN_JSON='+json.dumps(record)
+        with patch.object(planner,'report_runtime_order_inputs',return_value=True),patch.object(planner,'report_runtime_order_source',side_effect=lambda *_:dict(proof)),patch.object(planner,'report_runtime_order_no_backend_push') as absence:
+            self.assertTrue(planner.covers_report_runtime_order(run,target,tuple(record['required_jobs']),api,now,[job]));absence.assert_called_once_with(head,api)
+            saved=record.pop('report_runtime_boundary_checks');absence.reset_mock()
+            self.assertFalse(planner.covers_report_runtime_order(run,target,tuple(record['required_jobs']),api,now,[job]));absence.assert_not_called();record['report_runtime_boundary_checks']=saved
+            absence.side_effect=planner.CorrectionEvidenceUnavailable('new backend failed')
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):planner.covers_report_runtime_order(run,target,tuple(record['required_jobs']),api,now,[job])
+        with patch.object(planner,'git',return_value=target),patch.object(planner,'report_runtime_order_inputs',side_effect=lambda h,**kw:not kw.get('current',False)):
+            self.assertFalse(planner.report_runtime_order_equivalent_inputs(head,target))
+        current={**run,'id':999,'head_sha':target,'head_branch':'main'}
+        with patch.object(planner,'equivalent_inputs',return_value=False),patch.object(planner,'report_runtime_order_equivalent_inputs',return_value=True):
+            self.assertTrue(planner.reusable_run(run,current,'soso-so-27/neko-widget',now));current['event']='workflow_dispatch'
+            self.assertFalse(planner.reusable_run(run,current,'soso-so-27/neko-widget',now))
+
+    def test_cost_keeps252253_cancellation_and_original_clock(self):
+        import datetime as dt
+        spec=importlib.util.spec_from_file_location('order_preflight',Path(__file__).with_name('preflight-ci.py'));preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(preflight)
+        head='a'*40;proof={'kind':planner.REPORT_RUNTIME_ORDER_KIND,'candidate_sha':head,'run_id':planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'owning_jobs_to_execute':[],'jobs':[], 'required_backend_runs':planner.report_runtime_requirements(planner.REPORT_RUNTIME_DUPLICATE_HEAD),'failed_release_253_run_id':planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,'failed_release_253_job_id':planner.REPORT_RUNTIME_ORDER_FAILED_JOB,'failed_release_253_log_sha256':planner.REPORT_RUNTIME_ORDER_FAILED_LOG,'failed_release_253_archive_upload_skipped':True}
+        proof['failed_release_253_archived_raw_sha256']=planner.REPORT_RUNTIME_ORDER_FAILED_RAW_LOG
+        proof['original_runtime_proof']={'kind':planner.REPORT_RUNTIME_KIND,'candidate_sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'run_id':planner.REPORT_RUNTIME_BUILD_RUN,'sha':planner.REPORT_RUNTIME_BUILD_SOURCE,'owning_jobs_to_execute':[],'jobs':[],'required_backend_runs':proof['required_backend_runs'],'failed_release_run_id':planner.REPORT_RUNTIME_FAILED_RELEASE,'failed_release_job_id':planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,'failed_release_log_sha256':planner.REPORT_RUNTIME_FAILED_RELEASE_LOG,'failed_release_upload_skipped':True}
+        proof['backend_evidence']={'run_id':planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'event':'push','required_jobs':list(planner.REPORT_RUNTIME_SHARING_JOBS),'cancelled_duplicate':{'run_id':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,'conclusion':'cancelled','executed_step_count':0,'success_evidence':False}}
+        result={'scope':scope.REPORT_REPLY_ENTRY_SCOPE,'target_minutes':240,'head':head,'required_jobs':list(planner.required_jobs_from_scope(scope.REPORT_REPLY_ENTRY_SCOPE))}
+        cost=preflight.report_reply_readiness_cost(result,proof,True,{'upload_minutes':12});self.assertEqual(cost['cost']['with_upload_minutes'],[0,17]);self.assertEqual(cost['cost']['required_jobs_to_execute'],[planner.PLAN_JOB])
+        runs=[dict(id=id,head_sha=sha,path=path,status='completed',conclusion='failure',created_at='2026-10-13T00:00:00Z',failed_tests=[],unsupported_failed_tests=[]) for id,sha,path in ((planner.REPLY_READINESS_RUN,planner.REPLY_READINESS_SOURCE,preflight.IOS_WORKFLOW),(planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml'),(planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_BASE,'.github/workflows/testflight.yml'))]
+        runs.append(dict(id=planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,head_sha=planner.REPORT_RUNTIME_DUPLICATE_HEAD,head_branch=planner.REPORT_RUNTIME_BRANCH,event='push',run_attempt=1,path='.github/workflows/sharing-service.yml',status='completed',conclusion='cancelled',created_at='2026-10-13T00:57:50Z',failed_tests=[],unsupported_failed_tests=[]))
+        now=dt.datetime.fromisoformat('2026-10-13T01:13:27+00:00');gated=preflight.apply_task_gate(cost,runs,now,correction_evidence=proof)
+        self.assertEqual(gated['task']['minutes_since_first_candidate'],180);self.assertEqual(gated['task']['projected_total_minutes'],197);self.assertEqual(len(gated['task']['failed_runs']),4)
+        self.assertEqual(gated['task']['retained_release_failures'],[planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE])
+        unknown={**runs[0],'id':999};blocked=preflight.apply_task_gate(cost,[*runs,unknown],now,correction_evidence=proof)
+        self.assertIn('preparation_order_has_unknown_failure',blocked['task']['blockers']);self.assertFalse(blocked['ready'])
+        proof['failed_release_253_archive_upload_skipped']=False
+        with self.assertRaises(ValueError):preflight.apply_task_gate(cost,runs,now,correction_evidence=proof)
+
+
 class ReportRuntimeCancelledDuplicateTests(unittest.TestCase):
     def test_main_input_eligibility_requires_fixed_source_ancestry_and_current_signature(self):
         candidate=planner.REPORT_RUNTIME_DUPLICATE_HEAD;head='b'*40
