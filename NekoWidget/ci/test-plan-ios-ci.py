@@ -4012,6 +4012,17 @@ class PreservationProviderStreamScopeTests(unittest.TestCase):
 class PreservationPhotoStartupScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
+    def test_actual_jpeg_push_filter_excludes_caller_only_scope(self):
+        workflow = (Path(__file__).resolve().parents[2] / planner.JPEG_WORKFLOW).read_text()
+        push = workflow.split("  push:", 1)[1].split("  pull_request:", 1)[0]
+        paths = [line.strip()[3:-1] for line in push.splitlines()
+                 if line.strip().startswith('- "') and 'diagnostic/' not in line]
+        self.assertEqual(paths, ["NekoWidget/PreservationImageValidator/**", planner.JPEG_WORKFLOW])
+        self.assertTrue(all(not path.startswith("NekoWidget/PreservationImageValidator/")
+                            and path != planner.JPEG_WORKFLOW for path in self.rows()))
+        self.assertEqual(planner.PRESERVATION_PHOTO_STARTUP_JOBS,
+                         {planner.PRESERVATION_WORKFLOW: planner.PRESERVATION_JOB})
+
     def rows(self):
         return {path: [":000000" if before == "0" * 40 else ":100644", "100644",
                        before, after, "A" if before == "0" * 40 else "M"]
@@ -4043,7 +4054,7 @@ class PreservationPhotoStartupScopeTests(unittest.TestCase):
     def test_exact_two_paths_require_both_existing_jobs_without_native_evidence(self):
         self.assertEqual(self.select(), planner.PRESERVATION_PHOTO_STARTUP_SCOPE)
         self.assertEqual(planner.required_jobs(list(self.rows()), planner.PRESERVATION_PHOTO_STARTUP_SCOPE),
-                         (planner.PRESERVATION_JOB, planner.JPEG_JOB))
+                         (planner.PRESERVATION_JOB,))
         self.assertNotIn(planner.PRESERVATION_PHOTO_STARTUP_SCOPE, scope.SCOPES)
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_PHOTO_STARTUP_SCOPE)
         for absent in (None, []):
@@ -4063,7 +4074,11 @@ class PreservationPhotoStartupScopeTests(unittest.TestCase):
             changed[path][0], changed[path][4] = (":100644", "M") if fields[4] == "A" else (":000000", "A")
             self.assertEqual(self.select(changed), scope.FULL_SCOPE)
         for unknown in ("NekoWidget/PreservationService/src/index.ts", "NekoWidget/PreservationService/package.json",
-                        "NekoWidget/PreservationImageValidator/src/provider.ts", "NekoWidget/SharingService/src/index.ts",
+                        "NekoWidget/PreservationImageValidator/src/provider.ts",
+                        "NekoWidget/PreservationImageValidator/src/container-worker.mjs",
+                        "NekoWidget/PreservationImageValidator/Dockerfile",
+                        "NekoWidget/PreservationImageValidator/package-lock.json",
+                        "NekoWidget/PreservationImageValidator/test/test-adapter.mjs", "NekoWidget/SharingService/src/index.ts",
                         "NekoWidget/Shared/MembershipAccessPolicy.swift", "docs/provider.md",
                         *planner.PRESERVATION_PHOTO_STARTUP_WORKFLOWS, ".github/workflows/ios-build.yml",
                         *planner.PRESERVATION_COMPANION_PATHS):
@@ -4087,7 +4102,7 @@ class PreservationPhotoStartupScopeTests(unittest.TestCase):
             changed = original | {path: fields}
             self.assertEqual(self.select(changed), planner.PRESERVATION_PHOTO_STARTUP_SCOPE)
             self.assertEqual(planner.required_jobs(list(changed), planner.PRESERVATION_PHOTO_STARTUP_SCOPE),
-                             (planner.PRESERVATION_JOB, planner.JPEG_JOB))
+                             (planner.PRESERVATION_JOB,))
         for fields in ([":000000", "120000", "0" * 40, "c" * 40, "A"],
                        [":100644", "100755", "c" * 40, "d" * 40, "M"],
                        [":100644", "000000", "c" * 40, "0" * 40, "D"],
@@ -4122,18 +4137,16 @@ class PreservationPhotoStartupScopeTests(unittest.TestCase):
                 self.assertEqual([flags[name] for name in ("build", "smoke", "sharing", "app_ui")], ["false"] * 4)
                 self.assertTrue(all(flags[name] == "[]" for name in ("lanes", "matrix_lanes", "app_ui_lanes")))
                 record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=", 1)[1].splitlines()[0])
-                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB, planner.JPEG_JOB])
+                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB])
                 self.assertEqual(record["required_backend_runs"], [
                     {"workflow": planner.PRESERVATION_WORKFLOW, "job": planner.PRESERVATION_JOB,
-                     "head_sha": self.head, "success_required": True},
-                    {"workflow": planner.JPEG_WORKFLOW, "job": planner.JPEG_JOB,
                      "head_sha": self.head, "success_required": True}])
                 self.assertIsNone(record["evidence_run_id"])
                 self.assertIsNone(record["evidence_sha"])
                 summary = (root / "summary").read_text()
-                for workflow in planner.PRESERVATION_PHOTO_STARTUP_WORKFLOWS: self.assertIn(workflow, summary)
-                self.assertIn("Both jobs must execute successfully", summary)
-                self.assertIn("does not certify their success", summary)
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("The owning Preservation push job must execute successfully", summary)
+                self.assertIn("does not certify that job's success", summary)
 
 
 class PreservationUploadMemoryScopeTests(unittest.TestCase):

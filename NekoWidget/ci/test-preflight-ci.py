@@ -445,13 +445,12 @@ class PreservationPhotoStartupBudgetTests(unittest.TestCase):
         cost = preflight.observe_cost(selected, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
-        self.assertEqual(cost["measurement_job_timeouts_minutes"],
-                         {planner.PRESERVATION_WORKFLOW: 5, planner.JPEG_WORKFLOW: 10})
+        self.assertEqual(cost["measurement_job_timeout_minutes"], 5)
         self.assertNotIn("with_upload_minutes", cost)
         with self.assertRaises(ValueError): preflight.observe_cost(selected, history, True)
         with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
         result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30,
-                  "required_jobs": [planner.PRESERVATION_JOB, planner.JPEG_JOB], "cost": cost}
+                  "required_jobs": [planner.PRESERVATION_JOB], "cost": cost}
         self.assertFalse(preflight.apply_task_gate(result, [])["ready"])
         self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
         now = dt.datetime.now(dt.timezone.utc)
@@ -474,14 +473,14 @@ class PreservationPhotoStartupBudgetTests(unittest.TestCase):
                 patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_PHOTO_STARTUP_SCOPE):
             result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
         self.assertEqual(result["head"], head)
-        self.assertEqual(result["required_jobs"], [planner.PRESERVATION_JOB, planner.JPEG_JOB])
+        self.assertEqual(result["required_jobs"], [planner.PRESERVATION_JOB])
         self.assertEqual({row["workflow"] for row in result["required_backend_runs"]},
-                         {planner.PRESERVATION_WORKFLOW, planner.JPEG_WORKFLOW})
+                         {planner.PRESERVATION_WORKFLOW})
         self.assertTrue(all(row["head_sha"] == head and row["success_required"]
                             for row in result["required_backend_runs"]))
         self.assertEqual(result["unmapped_files"], [])
         self.assertFalse(result["ready"])
-        self.assertIn("both same-SHA", result["reason"])
+        self.assertIn("same-SHA owning", result["reason"])
         self.assertIn("no native, live-cloud or release evidence", result["reason"])
 
     def test_task_history_collects_both_backend_workflows_before_gating(self):

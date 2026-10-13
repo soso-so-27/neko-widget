@@ -1263,13 +1263,13 @@ def observe_cost(selected, history, include_upload, use_full_baseline=False):
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeouts_minutes": dict(planner.MODERATION_ENROLLMENT_JOB_TIMEOUTS),
                     "note": "First measurement of all four same-SHA Sharing push jobs. Their 5/10/10/20 minute timeouts are not observed durations or a queue/total-time guarantee."}
-        if selected in (planner.PRESERVATION_PROVIDER_SCOPE, planner.PRESERVATION_PHOTO_STARTUP_SCOPE):
+        if selected == planner.PRESERVATION_PROVIDER_SCOPE:
             return {"status": "unmeasured", "samples": [],
                     "measurement_job_timeouts_minutes": {
                         planner.PRESERVATION_WORKFLOW: planner.PRESERVATION_JOB_TIMEOUT_MINUTES,
                         planner.JPEG_WORKFLOW: planner.JPEG_JOB_TIMEOUT_MINUTES},
                     "note": "First measurement of both same-SHA backend jobs. Their 5/10 minute execution timeouts are not observed durations or a queue/total-time guarantee."}
-        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_RECOVERY_CHUNKS_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE):
+        if selected in (planner.JPEG_SCOPE, planner.PRESERVATION_SCOPE, planner.PRESERVATION_UPLOAD_SCOPE, planner.PRESERVATION_PHOTO_STARTUP_SCOPE, planner.PRESERVATION_R2_VIEW_SCOPE, planner.PRESERVATION_RECOVERY_CHUNKS_SCOPE, planner.PRESERVATION_OWNED_BUFFERS_SCOPE, planner.PRESERVATION_REQUEST_BUFFER_SCOPE, planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, planner.PRESERVATION_RECOVERY_READ_SCOPE, planner.BILLING_SCOPE, planner.BILLING_AUTHORITY_SCOPE):
             timeout = (planner.JPEG_JOB_TIMEOUT_MINUTES if selected == planner.JPEG_SCOPE
                        else planner.BILLING_JOB_TIMEOUT_MINUTES if selected == planner.BILLING_SCOPE
                        else planner.BILLING_AUTHORITY_JOB_TIMEOUT_MINUTES if selected == planner.BILLING_AUTHORITY_SCOPE
@@ -1345,7 +1345,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.PRESERVATION_UPLOAD_SCOPE else
               "Exact streaming photo-provider request and both boundary tests; both same-SHA preservation Node and JPEG Node/Docker jobs must execute successfully; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_PROVIDER_SCOPE else
-              "Exact JPEG-only finite startup deadline and real-time boundary test; both same-SHA preservation Node and JPEG Node/Docker jobs must execute successfully; no native, live-cloud or release evidence"
+              "Exact JPEG-only finite startup deadline and real-time boundary test; same-SHA owning preservation Node job must execute successfully; JPEG push inputs are unchanged; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_PHOTO_STARTUP_SCOPE else
               "Exact R2 ciphertext-view correction and storage boundary test; same-SHA preservation Node job with all tests, migrations and dry-run bundles required; no native, live-cloud or release evidence"
               if selected == planner.PRESERVATION_R2_VIEW_SCOPE else

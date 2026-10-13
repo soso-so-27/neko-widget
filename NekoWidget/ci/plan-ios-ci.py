@@ -515,7 +515,9 @@ PRESERVATION_PHOTO_STARTUP_WORKFLOWS = {
     PRESERVATION_WORKFLOW: "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
     JPEG_WORKFLOW: "6ab681d902851b6546c2295e16a0eba48f9c41fb",
 }
-PRESERVATION_PHOTO_STARTUP_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB, JPEG_WORKFLOW: JPEG_JOB}
+# JPEG push paths exclude this caller-only change; raw tracked closure keeps
+# every JPEG implementation, dependency and workflow input unchanged.
+PRESERVATION_PHOTO_STARTUP_JOBS = {PRESERVATION_WORKFLOW: PRESERVATION_JOB}
 
 
 # One reviewed R2 ciphertext-view correction and its storage boundary test.
@@ -2517,7 +2519,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_PROVIDER_SCOPE and preservation_provider_paths_only(paths):
         return (PRESERVATION_JOB, JPEG_JOB)
     if runtime_scope == PRESERVATION_PHOTO_STARTUP_SCOPE and preservation_photo_startup_paths_only(paths):
-        return (PRESERVATION_JOB, JPEG_JOB)
+        return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_RECOVERY_CHUNKS_SCOPE and preservation_recovery_chunks_paths_only(paths):
@@ -6420,7 +6422,7 @@ def main() -> None:
                 summary = ("## Backend-only verification\n\nRequired separately at the same candidate SHA: "
                            + "; ".join(job + " in `" + workflow + "`"
                                        for workflow, job in PRESERVATION_PHOTO_STARTUP_JOBS.items())
-                           + ". Both jobs must execute successfully; this plan does not certify their success. "
+                           + ". The owning Preservation push job must execute successfully; this plan does not certify that job's success. "
                            "Mac jobs are not requested. Not iOS release evidence.\n")
             elif selected_scope == BILLING_OPERATOR_SCOPE:
                 summary = ("## Billing operator tools only\n\nThe mocked Node boundary checks run in this plan job. "
