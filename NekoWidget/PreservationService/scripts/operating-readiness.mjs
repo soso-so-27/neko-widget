@@ -119,10 +119,17 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
   if (!validOffer) blockers.push('invalid-public-offer');
   if (offer?.approval?.status !== 'approved' || typeof offer?.approval?.evidenceReference !== 'string'
     || !offer.approval.evidenceReference.trim()) blockers.push('public-offer-not-approved');
-  // Keep the agreed currency boundaries. A candidate cannot increase them by
-  // passing a different local plan; prices and paid cloud usage still need review.
-  if (plan?.currency?.warningForecastYen !== 1800 || plan?.currency?.pauseNewIntakeForecastYen !== 2200
-    || plan?.currency?.monthlyTargetYen !== 3000) blockers.push('cost-boundaries-changed');
+  // Pilot planning numbers are not public budget approval. Bind any candidate
+  // budget to explicit approval rather than treating the old3000JPY as agreed.
+  const reference = value => typeof value === 'string' && value.trim().length > 0;
+  const budget = evidence?.budgetApproval;
+  if (!budget || budget.status !== 'approved' || !reference(budget.evidenceReference)
+    || !positive(plan?.currency?.monthlyTargetYen)
+    || plan.currency.pauseNewIntakeForecastYen >= plan.currency.monthlyTargetYen
+    || !['warningForecastYen', 'pauseNewIntakeForecastYen', 'monthlyTargetYen']
+      .every(key => positive(budget[key]) && budget[key] === plan?.currency?.[key])) {
+    blockers.push('cost-boundaries-changed');
+  }
   if (!validOffer || offer.ownerQuotaBytes !== plan?.archive?.ownerQuotaBytes
     || offer.maximumRecordsPerOwner !== plan?.archive?.maximumRecordsPerOwner
     || offer.maximumOwners !== plan?.maximumParticipants) blockers.push('offer-exceeds-reviewed-plan');
@@ -200,9 +207,9 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
   if (!intake || intake.enabled !== true || !fresh(intake.reviewedAt)
     || !Number.isSafeInteger(intake.validUntil) || intake.validUntil <= now
     || intake.validUntil > intake.reviewedAt + 86_400_000
-    || intake.pauseForecastYen !== 2200 || !count(intake.forecastMonthlyYen)
+    || intake.pauseForecastYen !== plan?.currency?.pauseNewIntakeForecastYen || !count(intake.forecastMonthlyYen)
     || intake.forecastMonthlyYen !== evidence?.cost?.forecastMonthlyYen
-    || intake.forecastMonthlyYen >= 2200
+    || intake.forecastMonthlyYen >= plan?.currency?.pauseNewIntakeForecastYen
     || !Object.entries(expected).every(([key, value]) => positive(value) && intake[key] === value)) {
     blockers.push('general-intake-controls-unconfirmed');
   }
@@ -260,6 +267,38 @@ export function reviewPublicPreservationOffer(evidence, offer, plan, now = Date.
     || funding.coversUnknownStatusAndUndeliveredNoticeExtension !== true
     || typeof funding.evidenceReference !== 'string' || !funding.evidenceReference.trim()) {
     blockers.push('retention-funding-unconfirmed');
+  }
+  // Funding and a policy statement do not prove the deployed notification or
+  // cleanup path. These aggregate observations contain references, never keys
+  // or recipient identities, and confer no permission to send or erase data.
+  const operations = evidence?.retentionOperations;
+  const currentDeployment = operations?.version === 1 && fresh(operations.confirmedAt)
+    && reference(configuration?.deploymentId)
+    && operations.deploymentId === configuration.deploymentId
+    && operations.recoveryAwsAccountId === configuration.recoveryAwsAccountId;
+  const tracking = operations?.tracking;
+  if (!currentDeployment || !tracking || !reference(tracking.evidenceReference)
+    || !['enabled', 'billingAuthorityVerified', 'scheduled'].every(key => tracking[key] === true)) {
+    blockers.push('retention-tracking-operations-unconfirmed');
+  }
+  const notices = operations?.notices;
+  const noticeScope = ['noticeAccountId', 'noticeZoneId', 'noticeSubscriptionId',
+    'noticeDomain', 'noticeSender', 'noticeQueue'];
+  if (!currentDeployment || !notices || !reference(notices.evidenceReference)
+    || !noticeScope.every(key => reference(configuration?.[key]) && notices[key] === configuration[key])
+    || notices.deliveryEvidenceVersion !== 2
+    || !['sendEnabled', 'eventsEnabled', 'providerReady', 'privateQueueVerified',
+      'deliveredCorrelationVerified', 'acceptanceOnlyRejected', 'changedContactRejected',
+      'renewalRejected'].every(key => notices[key] === true)) {
+    blockers.push('retention-notice-operations-unconfirmed');
+  }
+  const cleanup = operations?.cleanup;
+  if (!currentDeployment || !cleanup || !reference(cleanup.evidenceReference)
+    || cleanup.mode !== 'reviewed-manual'
+    || !['inventoryAndHistoricalVersionsAccounted', 'recoveryReconciled', 'retainedCostsIncluded',
+      'orphanCleanupReadinessVerified', 'expiredOwnerPurgeProtocolVerified', 'independentApprovalRequired',
+      'unknownOrUndeliveredPreventsPurge', 'rejoinPreventsPurge'].every(key => cleanup[key] === true)) {
+    blockers.push('retention-cleanup-operations-unconfirmed');
   }
   return { ...operating, publicOfferReviewReady: blockers.length === 0,
     newIntakeReviewReady: blockers.length === 0, blockers: [...new Set(blockers)],
