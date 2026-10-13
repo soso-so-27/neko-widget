@@ -225,6 +225,14 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
+    if branch == planner.REPORT_RUNTIME_BRANCH:
+        refs.update(task_refs(planner.REPLY_READINESS_BRANCH))
+        for identifier in (38318066862,planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_BUILD_RUN,38325044657,planner.REPORT_RUNTIME_FAILED_RELEASE):
+            retained=github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
+            if retained.get("id")!=identifier or retained.get("repository",{}).get("full_name")!=REPOSITORY:
+                raise ValueError("Retained report task history differs")
+            runs[identifier]=retained
+
     if metadata_repair:
         refs.update(task_refs(planner.INTERNAL_REPORT_CORRECTION_BRANCH))
         failed_release = github(f"repos/{REPOSITORY}/actions/runs/{planner.INTERNAL_REPORT_METADATA_FAILURE_RUN}")
@@ -632,6 +640,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     now = now or dt.datetime.now(dt.timezone.utc)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     elapsed = max(0, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60) if runs else 0
+    ci_elapsed = elapsed
+    runtime_continuation = (isinstance(correction_evidence,dict)
+                            and correction_evidence.get("kind")==planner.REPORT_RUNTIME_KIND)
+    if runtime_continuation:
+        # A new branch cannot reset the original server/native candidate clock.
+        first=parse(planner.REPORT_RUNTIME_FIRST_SERVER_AT)
+        elapsed=max(elapsed,max(0,(now-first).total_seconds()/60))
     failed = [run for run in runs if run["status"] == "completed" and
               run["conclusion"] in {"failure", "timed_out", "cancelled", "startup_failure"}]
     active = [run["id"] for run in runs if run["status"] != "completed"]
@@ -720,7 +735,22 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                             if owner_correction else set())
     if internal_correction:
         fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
-    if correction_evidence is not None and result.get('scope') == scope.REPORT_REPLY_ENTRY_SCOPE:
+    if runtime_continuation:
+        expected={'kind':planner.REPORT_RUNTIME_KIND,'candidate_sha':result.get('head'),
+            'run_id':planner.REPORT_RUNTIME_BUILD_RUN,'sha':planner.REPORT_RUNTIME_BUILD_SOURCE,
+            'owning_jobs_to_execute':[],'failed_release_run_id':planner.REPORT_RUNTIME_FAILED_RELEASE,
+            'failed_release_job_id':planner.REPORT_RUNTIME_FAILED_RELEASE_JOB,
+            'failed_release_log_sha256':planner.REPORT_RUNTIME_FAILED_RELEASE_LOG,'failed_release_upload_skipped':True,
+            'required_backend_runs':planner.report_runtime_requirements(result.get('head'))}
+        if result.get('scope')!=scope.REPORT_REPLY_ENTRY_SCOPE or any(correction_evidence.get(k)!=v for k,v in expected.items()):
+            raise ValueError('Unregistered runtime continuation proof')
+        for identifier,sha,path in ((planner.REPLY_READINESS_RUN,planner.REPLY_READINESS_SOURCE,IOS_WORKFLOW),
+                                    (planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_BASE,'.github/workflows/testflight.yml')):
+            source=[r for r in runs if r['id']==identifier]
+            if len(source)!=1 or source[0].get('head_sha')!=sha or source[0].get('path')!=path or (source[0].get('status'),source[0].get('conclusion'))!=('completed','failure'):
+                raise ValueError('Original runtime/report failures missing or changed')
+        fixed_owner_failures.update({planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_FAILED_RELEASE})
+    if not runtime_continuation and correction_evidence is not None and result.get('scope') == scope.REPORT_REPLY_ENTRY_SCOPE:
         expected = {'kind':'report-reply-readiness-build-recovery-v1','run_id':planner.REPLY_READINESS_RUN,
                     'sha':planner.REPLY_READINESS_SOURCE,'owning_jobs_to_execute':[planner.BUILD],
                     'failed_build_job_id':planner.REPLY_READINESS_JOB_IDS[planner.BUILD],
@@ -850,7 +880,12 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       "recovery": recovery,
                       "diagnostic_backend_recovery": diagnostic_backend_recovery,
                       "unsupported_failed_tests": unsupported,
-                      "minutes_since_first_ci": round(elapsed, 1),
+                      "minutes_since_first_ci": round(ci_elapsed, 1),
+                      **({"first_candidate_at":planner.REPORT_RUNTIME_FIRST_SERVER_AT,
+                          "first_native_candidate_at":planner.REPORT_RUNTIME_FIRST_NATIVE_AT,
+                          "minutes_since_first_candidate":round(elapsed,1),
+                          "retained_release_failure":planner.REPORT_RUNTIME_FAILED_RELEASE,
+                          "retained_historical_diagnostic":38318066862} if runtime_continuation else {}),
                       "projected_total_minutes": projected, "blockers": blockers}
     result["task"]["first_baseline_measurement"] = first_measurement
     result["ready"] = (result["ready"] or first_measurement) and not blockers
@@ -953,6 +988,15 @@ def report_reply_readiness_cost(result, correction, include_upload, history):
     if result['scope'] != scope.REPORT_REPLY_ENTRY_SCOPE or correction is None: return result
     upload = float(history['upload_minutes']) if include_upload else 0
     if not math.isfinite(upload) or upload < 0: raise ValueError('Invalid upload timing reference')
+    if correction.get('kind')==planner.REPORT_RUNTIME_KIND:
+        upper=20+upload
+        result['cost']={'status':'reference','ci_minutes':[0,20],'with_upload_minutes':[0,upper],
+            'samples':[],'includes_future_rework':False,'required_jobs_to_execute':[planner.PLAN_JOB,*planner.REPORT_RUNTIME_SHARING_JOBS],
+            'native_input_reuse':correction['jobs'],
+            'reference':'Same-SHA Sharing Worker20 minute timeout plus recorded upload; not an observed duration. Old Build39/native, failed252 and all original elapsed/active history remain separately attributed.'}
+        result['cost_review_required']=upper>result['target_minutes']
+        result['ready']=not result['cost_review_required']
+        return result
     result['cost'] = {'status':'reference','ci_minutes':[0,30], 'with_upload_minutes':[0,30+upload], 'samples':[],
         'includes_future_rework':False,
         'required_jobs_to_execute':[planner.BUILD],'native_input_reuse':correction['jobs'],
