@@ -24,6 +24,41 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
+class ReportRuntimeCancelledPlanHistoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec=importlib.util.spec_from_file_location('cancelled_plan_preflight',Path(__file__).with_name('preflight-ci.py'));cls.preflight=importlib.util.module_from_spec(spec);spec.loader.exec_module(cls.preflight)
+
+    @staticmethod
+    def fixture(preflight):
+        run=dict(id=preflight.REPORT_ORDER_CANCELLED_PLAN,head_sha=planner.REPORT_RUNTIME_DUPLICATE_HEAD,head_branch=planner.REPORT_RUNTIME_BRANCH,path=preflight.IOS_WORKFLOW,event='push',workflow_id=335014238,run_attempt=1,status='completed',conclusion='cancelled',repository={'full_name':preflight.REPOSITORY},head_repository={'full_name':preflight.REPOSITORY},**preflight.REPORT_ORDER_CANCELLED_PLAN_TIMES)
+        jobs=[dict(id=id,name=name,started_at=start,completed_at=end,run_id=run['id'],head_sha=run['head_sha'],run_attempt=1,status='completed',conclusion='cancelled',steps=[]) for id,(name,start,end) in preflight.REPORT_ORDER_CANCELLED_PLAN_JOBS.items()]
+        return run,{'total_count':7,'jobs':jobs}
+
+    def test_only_exact_empty_cancellation_is_classified_never_as_success(self):
+        p=self.preflight;run,jobs=self.fixture(p);record=p.classify_report_order_cancelled_plan(run,jobs)
+        self.assertFalse(record['success_evidence']);self.assertEqual(record['conclusion'],'cancelled');self.assertEqual(record['executed_step_count'],0);self.assertEqual(record['job_ids'],sorted(p.REPORT_ORDER_CANCELLED_PLAN_JOBS))
+
+    def test_started_failed_unknown_or_wrong_identity_cannot_be_classified(self):
+        p=self.preflight
+        for target,key,value in (('run','id',999),('run','head_sha','a'*40),('run','repository',{'full_name':'foreign/repo'}),('run','event','workflow_dispatch'),('run','workflow_id',123),('run','run_attempt',2),('run','updated_at','2026-10-13T00:57:53Z'),('run','conclusion','failure'),('run','status','in_progress'),('job','id',999),('job','head_sha','a'*40),('job','name','unknown'),('job','run_attempt',2),('job','conclusion','failure'),('job','steps',[{'name':'Set up job','status':'completed','conclusion':'success'}]),('payload','total_count',6)):
+            with self.subTest(target=target,key=key):
+                run,jobs=self.fixture(p);(run if target=='run' else jobs['jobs'][0] if target=='job' else jobs)[key]=value
+                with self.assertRaises(ValueError):p.classify_report_order_cancelled_plan(run,jobs)
+        run,jobs=self.fixture(p);jobs['jobs'][-1]=copy.deepcopy(jobs['jobs'][0])
+        with self.assertRaises(ValueError):p.classify_report_order_cancelled_plan(run,jobs)
+
+    def test_read_history_fetches_actual_jobs_and_retains_cancellation(self):
+        p=self.preflight;run,jobs=self.fixture(p)
+        def github(path,**kw):
+            if '/jobs?' in path:return jobs
+            if '/runs?' in path:return {'total_count':0,'workflow_runs':[]}
+            identifier=int(path.rsplit('/',1)[1])
+            return run if identifier==run['id'] else dict(id=identifier,repository={'full_name':p.REPOSITORY},path=p.IOS_WORKFLOW,status='completed',conclusion='success')
+        with patch.object(p.planner,'git',return_value=planner.REPORT_RUNTIME_ORDER_BRANCH),patch.object(p,'github',side_effect=github):history=p.read_task_runs('a'*40)
+        saved=next(r for r in history if r['id']==run['id']);self.assertEqual(saved['zero_step_cancelled_runtime_plan_jobs'],jobs);self.assertEqual(saved['conclusion'],'cancelled')
+
+
 class ReportRuntimeOrderBoundaryTests(unittest.TestCase):
     def test_exact_three_pairs_all_modes_controls_and_source_closure_are_required(self):
         head='a'*40;raw='\0'.join(item for p,pair in planner.REPORT_RUNTIME_ORDER_BLOBS.items() for item in (':100644 100644 '+' '.join(pair)+' M',p))+'\0';trusted=True
@@ -133,6 +168,12 @@ class ReportRuntimeOrderBoundaryTests(unittest.TestCase):
         now=dt.datetime.fromisoformat('2026-10-13T01:13:27+00:00');gated=preflight.apply_task_gate(cost,runs,now,correction_evidence=proof)
         self.assertEqual(gated['task']['minutes_since_first_candidate'],180);self.assertEqual(gated['task']['projected_total_minutes'],197);self.assertEqual(len(gated['task']['failed_runs']),4)
         self.assertEqual(gated['task']['retained_release_failures'],[planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE])
+        cancelled_plan,empty_jobs=ReportRuntimeCancelledPlanHistoryTests.fixture(preflight)
+        cancelled_plan.update(zero_step_cancelled_runtime_plan_jobs=empty_jobs,failed_tests=[],unsupported_failed_tests=[])
+        kept=preflight.apply_task_gate(cost,[*runs,cancelled_plan],now,correction_evidence=proof)
+        self.assertIn(cancelled_plan['id'],kept['task']['failed_runs']);self.assertFalse(kept['task']['retained_zero_step_cancelled_ios']['success_evidence'])
+        empty_jobs['jobs'][0]['steps']=[{'name':'Set up job'}]
+        with self.assertRaises(ValueError):preflight.apply_task_gate(cost,[*runs,cancelled_plan],now,correction_evidence=proof)
         unknown={**runs[0],'id':999};blocked=preflight.apply_task_gate(cost,[*runs,unknown],now,correction_evidence=proof)
         self.assertIn('preparation_order_has_unknown_failure',blocked['task']['blockers']);self.assertFalse(blocked['ready'])
         proof['failed_release_253_archive_upload_skipped']=False
