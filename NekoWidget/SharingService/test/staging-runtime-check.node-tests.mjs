@@ -1,3 +1,4 @@
+import { resolveReportRuntimeExpected } from '../scripts/check-staging-runtime.mjs';
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -464,4 +465,37 @@ test("accepts only canonical public HTTPS origins", () => {
   ]) {
     assert.throws(() => normalizePublicHttpsOrigin(unsafe));
   }
+});
+
+
+test('continued owner report build requires ON intake and all original auth and billing boundaries', async () => {
+  const headers = { 'neko-runtime-billing-gate-generation':'7',
+    'neko-runtime-billing-apple-notification-rate-limiter':'READY', 'neko-runtime-billing-owner-admission': 'CLOSED',
+    ...Object.fromEntries(['account-bootstrap','transaction-ingestion','apple-notification-ingestion',
+      'apple-notification-history-recovery','subscription-reconciliation','effective-entitlement',
+      'account-recovery','window-sponsorship'].map(name => [`neko-runtime-billing-${name}`, 'OFF'])) };
+  const run = (options = {}) => checkStagingRuntime({ origin, expected: 'internal-report-ui-continuation',
+    fetchImpl: runtimeFetch({ momentStatus: 401, momentCode: 'invalid_authentication',
+      healthReportRuntime: 'ON', healthMediaRuntime:'ON', billingHeaders: headers, ...options }) });
+  assert.equal((await run()).checks.length, 13);
+  await assert.rejects(run({healthReportRuntime:'OFF'}), /runtime gate state/u);
+  for (const name of Object.keys(headers)) {
+    const missing = {...headers}; delete missing[name];
+    await assert.rejects(run({billingHeaders:missing}), /internal billing runtime state/u);
+    await assert.rejects(run({billingHeaders:{...headers,[name]:'ON'}}), /internal billing runtime state/u);
+  }
+  for (const route of ['moment','reaction','push','targetedPush','report','windowName']) {
+    await assert.rejects(run({[route+'Status']:200}), /returned HTTP/u);
+  }
+});
+
+test('CLI selects report continuation only from verified current source readiness', async () => {
+  const evidence={}, policy={};
+  const verified = purpose => ({evidence,policy,verify:async()=>({purpose})});
+  assert.equal(await resolveReportRuntimeExpected('internal-report-first-connection',verified('testflight-owner-report-ui-continuation')), 'internal-report-ui-continuation');
+  assert.equal(await resolveReportRuntimeExpected('internal-report-first-connection',verified('testflight-owner-first-connection')), 'internal-report-first-connection');
+  await assert.rejects(resolveReportRuntimeExpected('internal-report-ui-continuation',verified('testflight-owner-first-connection')), /purpose/u);
+  await assert.rejects(resolveReportRuntimeExpected('internal-report-first-connection',verified('public-release')), /purpose/u);
+  await assert.rejects(resolveReportRuntimeExpected('internal-report-first-connection',{evidence,policy,verify:async()=>{throw Error('invalid signature or expired code binding')}}), /invalid signature/u);
+  assert.equal(await resolveReportRuntimeExpected('off',{verify:()=>assert.fail('Ordinary mode must not read owner readiness')}), 'off');
 });
