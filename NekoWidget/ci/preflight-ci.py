@@ -217,6 +217,38 @@ def dispatch_recovery(result, recovery, output):
     result["dispatch"] = {"state": "updated" if recovery.get("refresh") else "created", **payload}
 
 
+REPORT_ORDER_CANCELLED_PLAN = 38329817139
+REPORT_ORDER_CANCELLED_PLAN_TIMES = {'run_number':1725,'created_at':'2026-10-13T00:57:50Z','run_started_at':'2026-10-13T00:57:50Z','updated_at':'2026-10-13T00:57:52Z'}
+REPORT_ORDER_CANCELLED_PLAN_JOBS = {
+    115076788562:(planner.PLAN_JOB,'2026-10-13T00:57:51Z','2026-10-13T00:57:51Z'),
+    115076792148:(planner.UNEXPANDED_SHARING_JOB,'2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+    115076792417:('needs.plan.outputs.smoke_name','2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+    115076792545:('needs.plan.outputs.build_name','2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+    115076792940:(planner.UNEXPANDED_SHARING_JOB,'2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+    115076793248:(planner.UNEXPANDED_SHARING_JOB,'2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+    115076793303:(planner.UNEXPANDED_SHARING_JOB,'2026-10-13T00:57:52Z','2026-10-13T00:57:51Z'),
+}
+
+def classify_report_order_cancelled_plan(run,payload):
+    # History classification only. Empty cancelled jobs are never CI success.
+    if (type(run.get('id')) is not int or run['id']!=REPORT_ORDER_CANCELLED_PLAN or run.get('head_sha')!=planner.REPORT_RUNTIME_DUPLICATE_HEAD
+        or run.get('head_branch')!=planner.REPORT_RUNTIME_BRANCH or run.get('path')!=IOS_WORKFLOW or run.get('event')!='push'
+        or run.get('workflow_id')!=335014238 or type(run.get('run_attempt')) is not int or run['run_attempt']!=1
+        or (run.get('status'),run.get('conclusion'))!=('completed','cancelled')
+        or run.get('repository',{}).get('full_name')!=REPOSITORY or run.get('head_repository',{}).get('full_name')!=REPOSITORY
+        or type(run.get('run_number')) is not int or any(run.get(k)!=v for k,v in REPORT_ORDER_CANCELLED_PLAN_TIMES.items())):
+        raise ValueError('Fixed cancelled runtime plan identity differs')
+    if (not isinstance(payload,dict) or type(payload.get('total_count')) is not int or payload['total_count']!=7
+        or not isinstance(payload.get('jobs'),list) or len(payload['jobs'])!=7):raise ValueError('Cancelled runtime plan jobs incomplete')
+    seen=set()
+    for job in payload['jobs']:
+        if (not isinstance(job,dict) or type(job.get('id')) is not int or job['id'] in seen or job['id'] not in REPORT_ORDER_CANCELLED_PLAN_JOBS
+            or job.get('run_id')!=REPORT_ORDER_CANCELLED_PLAN or job.get('head_sha')!=planner.REPORT_RUNTIME_DUPLICATE_HEAD
+            or type(job.get('run_attempt')) is not int or job['run_attempt']!=1 or (job.get('status'),job.get('conclusion'))!=('completed','cancelled')
+            or job.get('steps')!=[] or (job.get('name'),job.get('started_at'),job.get('completed_at'))!=REPORT_ORDER_CANCELLED_PLAN_JOBS[job['id']]):raise ValueError('Cancelled runtime plan started a step or changed job identity')
+        seen.add(job['id'])
+    return {'run_id':REPORT_ORDER_CANCELLED_PLAN,'sha':planner.REPORT_RUNTIME_DUPLICATE_HEAD,'conclusion':'cancelled','executed_step_count':0,'success_evidence':False,'job_ids':sorted(seen)}
+
 def read_task_runs(head=None, recovery=None, metadata_repair=False):
     # A task uses matching codex/<task> and diagnostic/<task> branches. Look at
     # both, so a diagnostic push cannot reset the time/failure accounting.
@@ -230,7 +262,7 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         retained_ids=(38318066862,planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_BUILD_RUN,38325044657,planner.REPORT_RUNTIME_FAILED_RELEASE)
         if branch==planner.REPORT_RUNTIME_ORDER_BRANCH:
             refs.update(task_refs(planner.REPORT_RUNTIME_BRANCH))
-            retained_ids+=(planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE)
+            retained_ids+=(planner.REPORT_RUNTIME_ORDER_SOURCE_RUN,planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,planner.REPORT_RUNTIME_SUCCESSFUL_DUPLICATE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,REPORT_ORDER_CANCELLED_PLAN)
         for identifier in retained_ids:
             retained=github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
             if retained.get("id")!=identifier or retained.get("repository",{}).get("full_name")!=REPOSITORY:
@@ -258,6 +290,11 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         run["unsupported_failed_tests"] = []
         if run["path"] == ".github/workflows/ios-build.yml" and run["conclusion"] in {"failure", "timed_out", "cancelled"}:
             jobs = github(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?per_page=100")
+            if branch==planner.REPORT_RUNTIME_ORDER_BRANCH and run['id']==REPORT_ORDER_CANCELLED_PLAN:
+                detail=github(f"repos/{REPOSITORY}/actions/runs/{REPORT_ORDER_CANCELLED_PLAN}")
+                classify_report_order_cancelled_plan(detail,jobs)
+                classify_report_order_cancelled_plan(run,jobs)
+                run['zero_step_cancelled_runtime_plan_jobs']=jobs
             if jobs["total_count"] >= 100:
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
@@ -648,6 +685,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     runtime_continuation = (isinstance(correction_evidence,dict)
                             and correction_evidence.get("kind") in (planner.REPORT_RUNTIME_KIND,planner.REPORT_RUNTIME_ORDER_KIND))
     runtime_order=runtime_continuation and correction_evidence['kind']==planner.REPORT_RUNTIME_ORDER_KIND
+    cancelled_plan_classification=None
     if runtime_continuation:
         # A new branch cannot reset the original server/native candidate clock.
         first=parse(planner.REPORT_RUNTIME_FIRST_SERVER_AT)
@@ -778,6 +816,11 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                 or cancelled[0].get('head_branch')!=planner.REPORT_RUNTIME_BRANCH or cancelled[0].get('event')!='push' or cancelled[0].get('run_attempt')!=1
                 or (cancelled[0].get('status'),cancelled[0].get('conclusion'))!=('completed','cancelled')):raise ValueError('Zero-step cancelled backend duplicate missing or changed')
             fixed_owner_failures.update({planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE,planner.REPORT_RUNTIME_CANCELLED_DUPLICATE})
+            cancelled_plans=[r for r in runs if r['id']==REPORT_ORDER_CANCELLED_PLAN]
+            if cancelled_plans:
+                if len(cancelled_plans)!=1:raise ValueError('Duplicate cancelled runtime plan history')
+                cancelled_plan_classification=classify_report_order_cancelled_plan(cancelled_plans[0],cancelled_plans[0].get('zero_step_cancelled_runtime_plan_jobs'))
+                fixed_owner_failures.add(REPORT_ORDER_CANCELLED_PLAN)
             if any(r['id'] not in fixed_owner_failures for r in failed):blockers.append('preparation_order_has_unknown_failure')
     if not runtime_continuation and correction_evidence is not None and result.get('scope') == scope.REPORT_REPLY_ENTRY_SCOPE:
         expected = {'kind':'report-reply-readiness-build-recovery-v1','run_id':planner.REPLY_READINESS_RUN,
@@ -915,7 +958,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                           "minutes_since_first_candidate":round(elapsed,1),
                           "retained_release_failure":planner.REPORT_RUNTIME_FAILED_RELEASE,
                           **({'retained_release_failures':[planner.REPORT_RUNTIME_FAILED_RELEASE,planner.REPORT_RUNTIME_ORDER_FAILED_RELEASE],
-                              'retained_zero_step_cancelled_run':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE} if runtime_order else {}),
+                              'retained_zero_step_cancelled_run':planner.REPORT_RUNTIME_CANCELLED_DUPLICATE,
+                              'retained_zero_step_cancelled_ios':cancelled_plan_classification} if runtime_order else {}),
                           "retained_historical_diagnostic":38318066862} if runtime_continuation else {}),
                       "projected_total_minutes": projected, "blockers": blockers}
     result["task"]["first_baseline_measurement"] = first_measurement
