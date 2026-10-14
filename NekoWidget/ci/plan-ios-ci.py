@@ -133,6 +133,25 @@ TOOL_STORAGE_COMPILE_FAILURE = {
     "cause": "ManagedPreservationView.swift:37 expression type-check timeout",
     "ui_executed": False, "fixed_source_sha": TOOL_STORAGE_SOURCE,
 }
+TOOL_STORAGE_PR_SOURCE = "c033abe3de5dabb04636d4707ceb370a4a0fd3e5"
+TOOL_STORAGE_PR_NATIVE_RUN = 38653609078
+TOOL_STORAGE_PR_RUN, TOOL_STORAGE_PR_JOB = 38653642493, 116158156307
+TOOL_STORAGE_PR_NUMBER, TOOL_STORAGE_PR_ID = 311, 4865888681
+TOOL_STORAGE_PR_BASE = "a5279dfd17cf533c534c2e16a70fb01b2084eaef"
+TOOL_STORAGE_PR_CHECKOUT = "9ce7328fddf1cde8a9e5787e569b08bb800dc6b8"
+TOOL_STORAGE_PR_TREE = "87f8d74871dce07db861dd55065a396c0785ca55"
+TOOL_STORAGE_PR_LOG_SHA256 = "cbadac5084da55e30a6bff79c21e554640790db8c1c3643be31aae1028c8786a"
+TOOL_STORAGE_PR_KIND = "tool-storage-fixed-pr-checkout-backend-v1"
+TOOL_STORAGE_PR_CONTROL_PATHS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
+TOOL_STORAGE_PR_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c',
+ 'NekoWidget/ci/plan-ios-ci.py': 'f701198be9dadc702acd2bff7309bd02e06b09dd',
+ 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb',
+ 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174',
+ 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6',
+ 'NekoWidget/ci/test-plan-ios-ci.py': '6256f878ccb63f4b7fd3be38f8ff0f3e4afc5335',
+ 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011',
+ 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}
+
 TOOL_STORAGE_BACKEND_STEPS = (
     "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
     "Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
@@ -4155,10 +4174,162 @@ def tool_storage_control_only(paths, base, head):
     return tool_storage_signature(head)
 
 
-def tool_storage_requirements(head):
+def tool_storage_push_requirements(head):
+    # Preserve the exact declaration emitted by the original running native CI.
     return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
              "head_sha": head, "event": "push", "success_required": True,
              "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
+def tool_storage_requirements(head):
+    if head != TOOL_STORAGE_PR_SOURCE: return tool_storage_push_requirements(head)
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "pull_request", "run_id": TOOL_STORAGE_PR_RUN,
+             "job_id": TOOL_STORAGE_PR_JOB, "pr_number": TOOL_STORAGE_PR_NUMBER,
+             "checkout_sha": TOOL_STORAGE_PR_CHECKOUT, "tree": TOOL_STORAGE_PR_TREE,
+             "proof_kind": TOOL_STORAGE_PR_KIND, "push_evidence": False,
+             "success_required": True, "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
+def tool_storage_pr_git_observation(path):
+    """Two fixed GETs; the release caller's actions-only API boundary stays intact."""
+    prefix = "repos/soso-so-27/neko-widget/git/commits/"
+    if path not in {prefix + TOOL_STORAGE_PR_SOURCE, prefix + TOOL_STORAGE_PR_CHECKOUT}:
+        raise ValueError("Unregistered storage PR Git observation")
+    result = subprocess.run(["gh", "api", "--hostname", "github.com", "--method", "GET", path],
+        capture_output=True, text=True, encoding="utf-8", timeout=45,
+        env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_DEBUG": ""})
+    if result.returncode: raise ValueError("Fixed storage PR Git identity unavailable")
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict): raise ValueError("Invalid storage PR Git observation")
+    return value
+
+
+def tool_storage_pr_backend_proof(repository, api, now):
+    """Only PR311's real eight-step checkout; never claim absent push success."""
+    if repository != "soso-so-27/neko-widget": raise ValueError("Storage PR repository differs")
+    prefix = f"/repos/{repository}/actions"
+    identity = api(f"{prefix}/workflows/preservation-service.yml")
+    if (identity.get("id") != 363932714 or identity.get("state") != "active"
+            or identity.get("path") != PRESERVATION_WORKFLOW):
+        raise ValueError("Storage PR workflow differs")
+    query = urllib.parse.urlencode({"head_sha": TOOL_STORAGE_PR_SOURCE, "event": "push", "per_page": 100})
+    push_path = f"{prefix}/workflows/preservation-service.yml/runs?{query}"
+    absent = {"total_count": 0, "workflow_runs": []}
+    push = api(push_path)
+    if type(push.get("total_count")) is not int or push != absent:
+        raise ValueError("A storage backend push cannot be replaced")
+    query = urllib.parse.urlencode({"head_sha": TOOL_STORAGE_PR_SOURCE, "event": "pull_request", "per_page": 100})
+    index = api(f"{prefix}/workflows/preservation-service.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if (type(index.get("total_count")) is not int or index["total_count"] != 1
+            or not isinstance(runs, list) or len(runs) != 1):
+        raise ValueError("Fixed storage PR index is incomplete or ambiguous")
+    indexed = runs[0]
+    run = api(f"{prefix}/runs/{TOOL_STORAGE_PR_RUN}")
+    keys = ("id", "head_sha", "head_branch", "event", "workflow_id", "path", "status", "conclusion",
+            "run_number", "run_attempt", "updated_at")
+    if any(run.get(key) != indexed.get(key) for key in keys):
+        raise ValueError("Storage PR changed during verification")
+    if (run.get("id") != TOOL_STORAGE_PR_RUN or run.get("head_sha") != TOOL_STORAGE_PR_SOURCE
+            or run.get("head_branch") != TOOL_STORAGE_BRANCH or run.get("event") != "pull_request"
+            or run.get("workflow_id") != 363932714 or run.get("path") != PRESERVATION_WORKFLOW
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository
+            or run.get("head_repository", {}).get("full_name") != repository
+            or run.get("repository", {}).get("id") != 1335079243
+            or run.get("head_repository", {}).get("id") != 1335079243
+            or run.get("head_commit", {}).get("id") != TOOL_STORAGE_PR_SOURCE
+            or run["head_commit"].get("tree_id") != TOOL_STORAGE_PR_TREE):
+        raise ValueError("Fixed storage PR run identity differs")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+        raise ValueError("Storage PR evidence is stale")
+    # GitHub can clear/update these mutable PR pointers after merge. Historical
+    # source identity is bound by the immutable commit, parents and raw checkout.
+    prs = run.get("pull_requests")
+    if not isinstance(prs, list) or len(prs) > 1: raise ValueError("Storage PR pointer differs")
+    if prs and (prs[0].get("number") != TOOL_STORAGE_PR_NUMBER or prs[0].get("id") != TOOL_STORAGE_PR_ID
+            or any(prs[0].get(side, {}).get("ref") != ref
+                or prs[0][side].get("repo", {}).get("id") != 1335079243
+                for side, ref in (("head", TOOL_STORAGE_BRANCH), ("base", "main")))):
+        raise ValueError("Storage PR pointer differs")
+    jobs = executed_jobs(run, repository, api)
+    if (len(jobs) != 1 or jobs[0].get("id") != TOOL_STORAGE_PR_JOB or jobs[0].get("name") != PRESERVATION_JOB
+            or jobs[0].get("run_id") != TOOL_STORAGE_PR_RUN or jobs[0].get("head_sha") != TOOL_STORAGE_PR_SOURCE
+            or type(jobs[0].get("run_attempt")) is not int or jobs[0]["run_attempt"] != 1
+            or not covers_jobs(jobs, (PRESERVATION_JOB,), TOOL_STORAGE_PR_SOURCE, now=now)):
+        raise ValueError("Fixed storage PR owning job differs")
+    steps = jobs[0].get("steps")
+    if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+        raise ValueError("Storage PR steps unavailable")
+    for name in TOOL_STORAGE_BACKEND_STEPS:
+        matches = [step for step in steps if step.get("name") == name]
+        if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+            raise ValueError("All eight storage PR steps must execute")
+    expected = ((TOOL_STORAGE_PR_CHECKOUT, [TOOL_STORAGE_PR_BASE, TOOL_STORAGE_PR_SOURCE]),
+                (TOOL_STORAGE_PR_SOURCE, ["0d11066368acdfae9fdd2678ea53e35177be5eec", TOOL_STORAGE_PR_BASE]))
+    for sha, parents in expected:
+        commit = tool_storage_pr_git_observation(f"repos/{repository}/git/commits/{sha}")
+        if (commit.get("sha") != sha or commit.get("tree", {}).get("sha") != TOOL_STORAGE_PR_TREE
+                or [parent.get("sha") for parent in commit.get("parents", [])] != parents):
+            raise ValueError("Storage PR checkout tree/parents differ")
+    raw = api(f"{prefix}/jobs/{TOOL_STORAGE_PR_JOB}/logs")
+    if (tool_log_digest(raw) != TOOL_STORAGE_PR_LOG_SHA256
+            or f"+{TOOL_STORAGE_PR_CHECKOUT}:refs/remotes/pull/{TOOL_STORAGE_PR_NUMBER}/merge" not in raw
+            or f"HEAD is now at {TOOL_STORAGE_PR_CHECKOUT[:7]} Merge {TOOL_STORAGE_PR_SOURCE} into {TOOL_STORAGE_PR_BASE}" not in raw):
+        raise ValueError("Storage PR actual checkout log differs")
+    push = api(push_path)
+    if type(push.get("total_count")) is not int or push != absent:
+        raise ValueError("A backend push appeared during PR verification")
+    return {"kind": TOOL_STORAGE_PR_KIND, "run_id": TOOL_STORAGE_PR_RUN, "job_id": TOOL_STORAGE_PR_JOB,
+            "event": "pull_request", "pr_number": TOOL_STORAGE_PR_NUMBER, "pr_id": TOOL_STORAGE_PR_ID,
+            "candidate_sha": TOOL_STORAGE_PR_SOURCE, "checkout_sha": TOOL_STORAGE_PR_CHECKOUT,
+            "base_sha": TOOL_STORAGE_PR_BASE, "tree": TOOL_STORAGE_PR_TREE, "push_evidence": False,
+            "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}
+
+
+def tool_storage_pr_control_equivalent_inputs(source, head):
+    """Only this source plus the two approved proof controls; all real inputs fixed."""
+    try:
+        if (source != TOOL_STORAGE_PR_SOURCE or not SHA.fullmatch(head) or source == head
+                or git("rev-parse", "HEAD") != head or not tool_storage_inputs(source) or not tool_storage_inputs(head)
+                or git("rev-parse", source + "^{tree}") != TOOL_STORAGE_PR_TREE): return False
+        git("merge-base", "--is-ancestor", source, head)
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        marker = f'TOOL_STORAGE_PR_SOURCE = "{TOOL_STORAGE_PR_SOURCE}"'
+        if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(marker) != 1: return False
+        before, after = tool_storage_tree(source), tool_storage_tree(head)
+        if (set(TOOL_STORAGE_PR_CONTROL_BEFORE) != TOOL_STORAGE_CONTROLS
+                or TOOL_STORAGE_PR_CONTROL_PATHS != {"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"}): return False
+        for path in TOOL_STORAGE_CONTROLS:
+            if before.get(path) != f"100644 blob {TOOL_STORAGE_PR_CONTROL_BEFORE[path]}\t{path}": return False
+            trusted = git("ls-tree", approved, "--", path)
+            if not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), trusted) or after.get(path) != trusted: return False
+            if path not in TOOL_STORAGE_PR_CONTROL_PATHS and before.get(path) != after.get(path): return False
+        frozen_before = {path: row for path, row in before.items() if path not in TOOL_STORAGE_CONTROLS and not tool_storage_handoff(path)}
+        frozen_after = {path: row for path, row in after.items() if path not in TOOL_STORAGE_CONTROLS and not tool_storage_handoff(path)}
+        if frozen_before != frozen_after: return False  # Includes product22 and signed artifact.
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        changed = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if path in seen or len(fields) != 5: return False
+            seen.add(path)
+            if path in TOOL_STORAGE_PR_CONTROL_PATHS:
+                if (fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                        or before.get(path) != f"100644 blob {fields[2]}\t{path}"
+                        or after.get(path) != f"100644 blob {fields[3]}\t{path}"): return False
+                changed.add(path)
+            elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+                  (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+        return changed == TOOL_STORAGE_PR_CONTROL_PATHS
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
 
 
 def tool_storage_ui_results(log):
@@ -4219,7 +4390,8 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
             or (run.get("status"), run.get("conclusion")) != ("completed", "success")
             or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo
             or not tool_storage_inputs(sha) or not tool_storage_readiness(validation_head)
-            or sha != validation_head and not equivalent_inputs(sha, validation_head)):
+            or sha != validation_head and not (equivalent_inputs(sha, validation_head)
+                or run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN and tool_storage_pr_control_equivalent_inputs(sha, validation_head))):
         raise ValueError("Fresh storage completion candidate identity/inputs/readiness differs")
     updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
     if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
@@ -4262,12 +4434,20 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     if (len(plans) != 1 or type(plans[0].get("schema_version")) is not int
             or plans[0].get("schema_version") != 1 or plans[0].get("scope") != TOOL_STORAGE_SCOPE
             or plans[0].get("required_jobs") != list(required)
-            or plans[0].get("required_backend_runs") != tool_storage_requirements(sha)
+            or plans[0].get("required_backend_runs") != tool_storage_push_requirements(sha)
             or any(plans[0].get(key) is not None for key in ("evidence_run_id", "evidence_sha", "test_correction_evidence"))):
         raise ValueError("Storage completion source plan is not the fresh owning graph")
     ui = next(job for job in jobs if job["name"] == lane_job(TOOL_STORAGE_SCOPE, "app-ui"))
     if not tool_storage_ui_results(api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")):
         raise ValueError("All nine storage UI cases must start and pass exactly once")
+    if sha == TOOL_STORAGE_PR_SOURCE:
+        if run["id"] != TOOL_STORAGE_PR_NATIVE_RUN:
+            raise ValueError("Only the original storage native run can use the fixed PR proof")
+        proof = tool_storage_pr_backend_proof(repo, api, now)
+        return {"backend_evidence": {"preservation-service.yml": proof}, "backend_substitution": proof,
+                "source_required_backend_runs": tool_storage_push_requirements(sha),
+                "native_evidence": {"run_id": run["id"], "sha": sha,
+                    "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required]}}
     backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=TOOL_STORAGE_BRANCH)
     proof = backends["preservation-service.yml"]
     backend_run = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
@@ -7304,6 +7484,17 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
+            if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
+                    and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and run.get("head_branch") == TOOL_STORAGE_BRANCH
+                    and run.get("workflow_id") == current.get("workflow_id") == 335014238
+                    and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
+                    and current.get("event") == "push" and current.get("head_branch") == "main"
+                    and type(run.get("run_attempt")) is int and run["run_attempt"] == 1
+                    and type(current.get("run_attempt")) is int and current["run_attempt"] == 1
+                    and current.get("repository", {}).get("full_name") == repository
+                    and current.get("head_repository", {}).get("full_name") == repository
+                    and tool_storage_pr_control_equivalent_inputs(run["head_sha"], current["head_sha"])):
+                return True
             if (repository == "soso-so-27/neko-widget" and run.get("workflow_id") == 335014238
                     and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
                     and run.get("head_branch") == TOOL_RELEASE_BRANCH and current.get("head_branch") == "main"
@@ -8275,7 +8466,10 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
-        **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+        **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"]),
+            **({"backend_substitution_kind": TOOL_STORAGE_PR_KIND,
+                "source_required_backend_runs": tool_storage_push_requirements(evidence[1])}
+               if evidence and evidence[1] == TOOL_STORAGE_PR_SOURCE else {})}
            if selected_scope == TOOL_STORAGE_SCOPE else {}),
         **({"required_backend_runs": ([correction["backend_evidence"]] if correction is not None else
                [tool_pr_backend_proof(env["GITHUB_REPOSITORY"], api, now)] if evidence else tool_preservation_requirements(env["GITHUB_SHA"]))}

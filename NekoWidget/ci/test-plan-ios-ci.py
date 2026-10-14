@@ -10649,5 +10649,161 @@ class ToolStorageCompletionGraphTests(unittest.TestCase):
                 with self.assertRaises(ValueError):self.prove()
 
 
+
+class ToolStorageFixedPRProofTests(unittest.TestCase):
+    def setUp(self):
+        self.p=planner;self.now=dt.datetime(2026,10,15,0,tzinfo=dt.timezone.utc);repo={"full_name":"soso-so-27/neko-widget","id":1335079243}
+        self.run={"id":planner.TOOL_STORAGE_PR_RUN,"head_sha":planner.TOOL_STORAGE_PR_SOURCE,"head_branch":planner.TOOL_STORAGE_BRANCH,
+            "event":"pull_request","workflow_id":363932714,"path":planner.PRESERVATION_WORKFLOW,"status":"completed","conclusion":"success",
+            "run_number":237,"run_attempt":1,"updated_at":self.now.isoformat(),"repository":repo,"head_repository":repo,
+            "head_commit":{"id":planner.TOOL_STORAGE_PR_SOURCE,"tree_id":planner.TOOL_STORAGE_PR_TREE},
+            "pull_requests":[{"id":planner.TOOL_STORAGE_PR_ID,"number":311,
+                "head":{"ref":planner.TOOL_STORAGE_BRANCH,"repo":{"id":1335079243}},"base":{"ref":"main","repo":{"id":1335079243}}}]}
+        self.job={"id":planner.TOOL_STORAGE_PR_JOB,"run_id":planner.TOOL_STORAGE_PR_RUN,"head_sha":planner.TOOL_STORAGE_PR_SOURCE,
+            "run_attempt":1,"name":planner.PRESERVATION_JOB,"status":"completed","conclusion":"success","completed_at":self.now.isoformat(),
+            "steps":[{"name":n,"status":"completed","conclusion":"success"} for n in planner.TOOL_STORAGE_BACKEND_STEPS]}
+        self.jobs=[self.job];self.push={"total_count":0,"workflow_runs":[]};self.after_push=None
+        self.index={"total_count":1,"workflow_runs":[self.run]};self.push_reads=0
+        self.raw=(f"+{planner.TOOL_STORAGE_PR_CHECKOUT}:refs/remotes/pull/311/merge\n"
+            f"HEAD is now at {planner.TOOL_STORAGE_PR_CHECKOUT[:7]} Merge {planner.TOOL_STORAGE_PR_SOURCE} into {planner.TOOL_STORAGE_PR_BASE}\n")
+        self.commits={planner.TOOL_STORAGE_PR_CHECKOUT:{"sha":planner.TOOL_STORAGE_PR_CHECKOUT,"tree":{"sha":planner.TOOL_STORAGE_PR_TREE},
+            "parents":[{"sha":planner.TOOL_STORAGE_PR_BASE},{"sha":planner.TOOL_STORAGE_PR_SOURCE}]},
+            planner.TOOL_STORAGE_PR_SOURCE:{"sha":planner.TOOL_STORAGE_PR_SOURCE,"tree":{"sha":planner.TOOL_STORAGE_PR_TREE},
+            "parents":[{"sha":"0d11066368acdfae9fdd2678ea53e35177be5eec"},{"sha":planner.TOOL_STORAGE_PR_BASE}]}}
+        binding=patch.object(planner,"TOOL_STORAGE_PR_LOG_SHA256",planner.tool_log_digest(self.raw));binding.start();self.addCleanup(binding.stop)
+    def api(self,path):
+        if path.endswith("/workflows/preservation-service.yml"):return {"id":363932714,"path":planner.PRESERVATION_WORKFLOW,"state":"active"}
+        if "/workflows/preservation-service.yml/runs?" in path:
+            if "event=push" in path:
+                self.push_reads+=1
+                return self.after_push if self.push_reads%2==0 and self.after_push is not None else self.push
+            return self.index
+        if path.endswith(f"/runs/{planner.TOOL_STORAGE_PR_RUN}"):return self.run
+        if "/jobs?" in path:return {"total_count":len(self.jobs),"jobs":self.jobs}
+        if path.endswith("/logs"):return self.raw
+        raise AssertionError(path)
+    def prove(self):
+        self.push_reads=0
+        with patch.object(planner,"tool_storage_pr_git_observation",side_effect=lambda path:self.commits[path.rsplit('/',1)[1]]):
+            return planner.tool_storage_pr_backend_proof("soso-so-27/neko-widget",self.api,self.now)
+    def test_exact_pr_proof_preserves_actual_event_and_absent_push(self):
+        proof=self.prove();self.assertEqual(proof["event"],"pull_request");self.assertFalse(proof["push_evidence"])
+        self.assertEqual(proof["checkout_sha"],planner.TOOL_STORAGE_PR_CHECKOUT);self.assertEqual(len(proof["required_steps"]),8)
+        self.assertEqual(self.push_reads,2)
+        self.run["pull_requests"]=[];self.assertEqual(self.prove()["pr_id"],planner.TOOL_STORAGE_PR_ID)
+    def test_foreign_pr_sha_identity_active_failed_attempt_and_stale_reject(self):
+        for field,value in (("id",1),("head_sha","a"*40),("head_branch","codex/other"),("event","push"),
+                ("status","in_progress"),("conclusion","failure"),("run_attempt",2),
+                ("updated_at",(self.now-dt.timedelta(hours=25)).isoformat())):
+            with patch.dict(self.run,{field:value}),self.assertRaises(ValueError):self.prove()
+        for field,value in (("number",312),("id",1)):
+            with patch.dict(self.run["pull_requests"][0],{field:value}),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.run["head_commit"],{"tree_id":"a"*40}),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.run["head_repository"],{"id":1}),self.assertRaises(ValueError):self.prove()
+        with self.assertRaises(ValueError):planner.tool_storage_pr_backend_proof("other/repo",self.api,self.now)
+    def test_any_push_even_active_failed_or_late_cannot_be_replaced(self):
+        for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success")):
+            present={"total_count":1,"workflow_runs":[dict(self.run,event="push",status=status,conclusion=conclusion)]}
+            self.push=present
+            with self.assertRaises(ValueError):self.prove()
+            self.push={"total_count":0,"workflow_runs":[]};self.after_push=present
+            with self.assertRaises(ValueError):self.prove()
+            self.after_push=None
+        for bad in ({"workflow_runs":[]},{"total_count":False,"workflow_runs":[]},{"total_count":1,"workflow_runs":[]}):
+            self.push=bad
+            with self.assertRaises(ValueError):self.prove()
+    def test_all_eight_steps_exact_single_job_and_attempt_required(self):
+        for step in self.job["steps"]:
+            with patch.dict(step,{"conclusion":"skipped"}),self.assertRaises(ValueError):self.prove()
+        for field,value in (("id",1),("head_sha","a"*40),("run_id",1),("run_attempt",2),("status","in_progress")):
+            with patch.dict(self.job,{field:value}),self.assertRaises(ValueError):self.prove()
+        self.jobs.append(dict(self.job,id=999,name="Unexpected job"))
+        with self.assertRaises(ValueError):self.prove()
+        self.jobs.pop();self.job["steps"].append(dict(self.job["steps"][0]))
+        with self.assertRaises(ValueError):self.prove()
+    def test_checkout_parent_tree_raw_digest_and_transcript_required(self):
+        for commit in self.commits.values():
+            with patch.dict(commit["tree"],{"sha":"a"*40}),self.assertRaises(ValueError):self.prove()
+            with patch.dict(commit,{"parents":list(reversed(commit["parents"]))}),self.assertRaises(ValueError):self.prove()
+            with patch.dict(commit,{"sha":"a"*40}),self.assertRaises(ValueError):self.prove()
+        original=self.raw
+        for bad in ("",original.replace("pull/311","pull/312"),original.replace("HEAD is now at","different checkout")):
+            self.raw=bad
+            with self.assertRaises(ValueError):self.prove()
+        self.raw=original
+        with patch.object(planner,"TOOL_STORAGE_PR_LOG_SHA256","0"*64),self.assertRaises(ValueError):self.prove()
+        with self.assertRaises(ValueError):planner.tool_storage_pr_git_observation("repos/other/git/commits/"+planner.TOOL_STORAGE_PR_SOURCE)
+    def test_pr_index_and_detail_must_be_unique_and_consistent(self):
+        for bad in ({"total_count":0,"workflow_runs":[]},{"total_count":2,"workflow_runs":[self.run,self.run]},
+                {"total_count":1,"workflow_runs":[dict(self.run,status="in_progress")]}, {"workflow_runs":[self.run]}):
+            self.index=bad
+            with self.assertRaises(ValueError):self.prove()
+
+
+class ToolStoragePRControlInputTests(unittest.TestCase):
+    def setUp(self):
+        self.source=planner.TOOL_STORAGE_PR_SOURCE;self.head="a"*40;self.approved="b"*40
+        self.before={p:f"100644 blob {blob}\t{p}" for p,blob in planner.TOOL_STORAGE_PR_CONTROL_BEFORE.items()}
+        self.before |= {p:f"100644 blob {pair[1]}\t{p}" for p,pair in planner.TOOL_STORAGE_BLOBS.items()}
+        self.before[planner.TOOL_STORAGE_READINESS_PATH]=f"100644 blob {planner.TOOL_STORAGE_READINESS_PAIR[1]}\t{planner.TOOL_STORAGE_READINESS_PATH}"
+        self.before['NekoWidget/Shared/unchanged.swift']=f"100644 blob {'e'*40}\tNekoWidget/Shared/unchanged.swift"
+        self.after=dict(self.before)
+        for p in planner.TOOL_STORAGE_PR_CONTROL_PATHS:self.after[p]=f"100644 blob {'d'*40}\t{p}"
+        self.raw="".join(f":100644 100644 {self.before[p].split()[2]} {self.after[p].split()[2]} M\0{p}\0" for p in planner.TOOL_STORAGE_PR_CONTROL_PATHS)
+    def prove(self,override=None):
+        def git(*args):
+            if override and args in override:return override[args]
+            if args[0]=="rev-parse":return self.head if args[1]=="HEAD" else planner.TOOL_STORAGE_PR_TREE
+            if args[0]=="merge-base":return "" if "--is-ancestor" in args else self.approved
+            if args[0]=="show":return f'TOOL_STORAGE_PR_SOURCE = "{self.source}"'
+            if args[0]=="ls-tree":return self.after[args[-1]]
+            if args[0]=="diff":return self.raw
+            raise AssertionError(args)
+        with patch.object(planner,"tool_storage_inputs",return_value=True),patch.object(planner,"git",side_effect=git), \
+                patch.object(planner,"tool_storage_tree",side_effect=lambda ref:self.before if ref==self.source else self.after):
+            return planner.tool_storage_pr_control_equivalent_inputs(self.source,self.head)
+    def test_only_exact_two_approved_control_changes_are_equivalent(self):
+        self.assertTrue(self.prove())
+        for p in self.after:
+            if p in planner.TOOL_STORAGE_PR_CONTROL_PATHS:continue
+            original=self.after[p];self.after[p]=f"100644 blob {'c'*40}\t{p}"
+            self.assertFalse(self.prove());self.after[p]=original
+    def test_unapproved_mode_truncated_unknown_and_changed_artifact_reject(self):
+        for p in planner.TOOL_STORAGE_CONTROLS:
+            self.assertFalse(self.prove({("ls-tree",self.approved,"--",p):f"100644 blob {'c'*40}\t{p}"}))
+        self.assertFalse(self.prove({("show",f"{self.approved}:NekoWidget/ci/plan-ios-ci.py"):""}))
+        for bad in ("",self.raw+self.raw,self.raw.rsplit("\0",2)[0],self.raw.replace(":100644",":100755",1)):
+            with patch.object(self,"raw",bad):self.assertFalse(self.prove())
+        self.after["unknown.txt"]=f"100644 blob {'c'*40}\tunknown.txt";self.assertFalse(self.prove())
+    def test_approved_control_exception_is_only_the_fixed_native_source(self):
+        now=dt.datetime(2026,10,15,0,tzinfo=dt.timezone.utc);repo={"full_name":"soso-so-27/neko-widget"}
+        run={"id":planner.TOOL_STORAGE_PR_NATIVE_RUN,"head_sha":self.source,"head_branch":planner.TOOL_STORAGE_BRANCH,
+            "workflow_id":335014238,"path":".github/workflows/ios-build.yml","event":"push","run_attempt":1,
+            "status":"completed","conclusion":"success","updated_at":now.isoformat(),"repository":repo,"head_repository":repo}
+        current=dict(run,id=999,head_sha=self.head,head_branch="main")
+        with patch.object(planner,"equivalent_inputs",return_value=False),patch.object(planner,"tool_storage_pr_control_equivalent_inputs",return_value=True):
+            self.assertTrue(planner.reusable_run(run,current,repo['full_name'],now))
+            for field,value in (("id",1),("head_sha","c"*40),("head_branch","codex/other"),("run_attempt",2),("status","in_progress")):
+                with patch.dict(run,{field:value}):self.assertFalse(planner.reusable_run(run,current,repo['full_name'],now))
+
+
+class ToolStorageFixedPRGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.f=ToolStorageCompletionGraphTests();self.f.setUp();self.f.sha=planner.TOOL_STORAGE_PR_SOURCE
+        self.f.run.update(id=planner.TOOL_STORAGE_PR_NATIVE_RUN,head_sha=self.f.sha)
+        for job in self.f.jobs:job.update(head_sha=self.f.sha,run_id=self.f.run['id'])
+        self.f.plan.update(head_sha=self.f.sha,required_backend_runs=planner.tool_storage_push_requirements(self.f.sha))
+    def test_original_push_declaration_stays_historical_and_native_success_is_separate(self):
+        f=self.f
+        proof={"kind":planner.TOOL_STORAGE_PR_KIND,"event":"pull_request","push_evidence":False}
+        with f.mocks(),patch.object(planner,"tool_storage_pr_backend_proof",return_value=proof) as backend:
+            got=f.prove();self.assertEqual(got['source_required_backend_runs'],planner.tool_storage_push_requirements(f.sha))
+            self.assertEqual(got['backend_substitution']['event'],'pull_request');self.assertFalse(got['backend_substitution']['push_evidence'])
+            self.assertEqual(planner.tool_storage_requirements(f.sha)[0]['event'],'pull_request')
+            with patch.dict(f.run,{'status':'in_progress'}),self.assertRaises(ValueError):f.prove()
+            f.plan['required_backend_runs']=planner.tool_storage_requirements(f.sha)
+            with self.assertRaises(ValueError):f.prove()
+
+
 if __name__ == "__main__":
     unittest.main()

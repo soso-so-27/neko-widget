@@ -1,0 +1,9 @@
+# 保存改善候補の固定PR backend証拠
+
+初回製品候補は2026-10-14T12:59:13Z。`reviewed-tool-storage-completion-v1` の候補 `c033abe3de5dabb04636d4707ceb370a4a0fd3e5` は、初pushのtipが承認controlのmergeだったためPreservationのpushが0件だった。実PR311/run38653642493/job116158156307はpull_requestのまま扱い、同repo/source/attempt1、checkout `9ce7328fddf1cde8a9e5787e569b08bb800dc6b8`、parents、sourceとcheckoutの全tree一致、固定raw checkout log、全8必須step、前後のpush厳密0件を共有plannerで検証する。一般fallbackや旧scopeの変更ではない。
+
+原native run38653609078のpush backend宣言は履歴のまま保持する。新mainのqualified planだけがactual pull_request proofと`push_evidence=false`を宣言し、main/releaseは同じ共有graphを使う。原candidateからはmain承認済みplanner/test-planの2control変更と通常handoff A/Mだけを許し、他control6、製品22、署名artifact、残り全tracked入力は不変を要求する。CLI・署名29入力・workflowは変更しない。固定backend proofだけでnative成功や配布可とは扱わず、Build/Photos/runtime/UIの4実成功とUI9件・現時刻署名が必要。
+
+次回の初pushは、main first-parentから製品確定commitを最後に積み、controlだけのmergeをtipにしない。path-filterで未起動のjobを成功に読み替えず、未知/active/failed/skipを拒否する。今回のPhotos失敗の原因は主担当が診断中であり、このcontrolは失敗許容を追加しない。
+
+所有する固定PR拒否境界・承認control閉包・原push宣言保持と既存新scopeの25ローカル検査は成功。保存済み実run/job/rawとローカルimmutable Git objectsも照合した。現在の新main承認やnative4実成功は、このローカル準備の成功に含めない。privateな将来main文脈probe手順と結果は`C:/dev/neko-evidence/storage-completion-20261014/release-control/`に保存する。
