@@ -1721,23 +1721,33 @@ class ToolBuildRecoveryBudgetTests(unittest.TestCase):
         self.assertEqual(measured["cost"]["samples"],[])
         self.assertEqual(measured["required_backend_runs"],[proof["backend_evidence"]])
         source=dict(f.source,created_at=(f.now-dt.timedelta(minutes=60)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
+        plan_failure=dict(f.failed_plan,created_at=(f.now-dt.timedelta(minutes=10)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
         diagnostic={"id":90,"path":preflight.DIAGNOSTIC_WORKFLOW,"status":"completed","conclusion":"failure",
                     "created_at":(f.now-dt.timedelta(minutes=80)).isoformat(),"failed_tests":[],"unsupported_failed_tests":[]}
-        result=preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source],f.now,correction_evidence=proof)
+        retained=[diagnostic,source,plan_failure]
+        result=preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=proof)
         self.assertTrue(result["ready"])
-        self.assertEqual(set(result["task"]["failed_runs"]),{90,planner.TOOL_BUILD_SOURCE_RUN})
+        self.assertEqual(set(result["task"]["failed_runs"]),{90,planner.TOOL_BUILD_SOURCE_RUN,planner.TOOL_PLAN_FAILURE_RUN})
         self.assertEqual(result["task"]["minutes_since_first_ci"],80)
         self.assertEqual(result["task"]["projected_total_minutes"],110)
         self.assertFalse(result["task"]["first_baseline_measurement"])
         for state,conclusion in (("in_progress",None),("completed","failure")):
             extra=dict(source,id=99,status=state,conclusion=conclusion,created_at=(f.now-dt.timedelta(minutes=10)).isoformat())
-            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source,extra],f.now,correction_evidence=proof)["ready"])
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(measured),retained+[extra],f.now,correction_evidence=proof)["ready"])
         small=copy.deepcopy(measured);small["target_minutes"]=100
-        result=preflight.apply_task_gate(small,[diagnostic,source],f.now,correction_evidence=proof)
+        result=preflight.apply_task_gate(small,retained,f.now,correction_evidence=proof)
         self.assertFalse(result["ready"])
         self.assertIn("cumulative_cost_requires_replanning",result["task"]["blockers"])
         with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic],f.now,correction_evidence=proof)
         with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[source],f.now,correction_evidence=dict(proof,candidate_sha="f"*40))
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source],f.now,correction_evidence=proof)
+        for field,value in (("head_sha","f"*40),("run_attempt",2),("event","pull_request"),("status","in_progress"),("conclusion","success")):
+            with self.subTest(field=field),self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source,dict(plan_failure,**{field:value})],f.now,correction_evidence=proof)
+        for field,value in (("run_id",1),("job_id",1),("log_sha256","f"*64),("native_jobs_executed",True),("success_evidence",True)):
+            altered=dict(proof,failed_plan_evidence=dict(proof["failed_plan_evidence"],**{field:value}))
+            with self.subTest(proof_field=field),self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=altered)
 
 
 class ToolPreservationBudgetTests(unittest.TestCase):
