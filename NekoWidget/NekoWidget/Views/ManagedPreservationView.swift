@@ -34,7 +34,7 @@ struct ManagedPreservationView: View {
             }, client: client, toolBackupSource: toolBackupSource))
     }
 
-    var body: some View {
+    private var navigationContent: some View {
         Group {
             if coordinator.isEnabled { content }
             else {
@@ -54,6 +54,10 @@ struct ManagedPreservationView: View {
         } message: {
             Text("この画面だけに残っている編集は失われます。サービスに保管済みのメモは変更しません。必要な文章を控えてから破棄してください。")
         }
+    }
+
+    private var lifecycleContent: some View {
+        navigationContent
         .task { coordinator.start() }
         .onDisappear { AppIdleTimer.setPreventSleep(false, for: "tool-preservation"); exporter.cancelPreparation(); coordinator.stop() }
         .onChange(of: coordinator.toolBackupProgress) { _, value in
@@ -87,6 +91,10 @@ struct ManagedPreservationView: View {
             exporter.invalidate()
             coordinator.signOut()
         }
+    }
+
+    var body: some View {
+        lifecycleContent
         .confirmationDialog("サービスに保管したコピーを削除しますか？",
                             isPresented: $confirmsDeletion, titleVisibility: .visible) {
             Button("保管コピーを削除", role: .destructive) { coordinator.deleteSelectedCopy() }
