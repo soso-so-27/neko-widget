@@ -199,6 +199,44 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             "CI plan identity/version does not match this release.")
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
+    if plan["scope"] == planner.TOOL_PRESERVATION_SCOPE:
+        source_id, source_sha = plan.get("evidence_run_id"), plan.get("evidence_sha")
+        if source_id is None:
+            require(source_sha is None, "Tool CI plan has an incomplete evidence reference.")
+            source, source_id, source_sha = current, run_id, sha
+        else:
+            require(type(source_id) is int and source_id > 0 and isinstance(source_sha, str)
+                    and SHA.fullmatch(source_sha) is not None
+                    and plan.get("test_correction_evidence") is None,
+                    "Tool CI plan has a malformed or chained evidence reference.")
+            source = gh.get(f"actions/runs/{source_id}")
+            require(source.get("id") == source_id and source.get("head_sha") == source_sha
+                    and planner.reusable_run(source, current, REPOSITORY, now),
+                    "Tool candidate evidence is stale or does not match the release inputs.")
+
+        def tool_api(path: str):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected tool correction API path.")
+            if path.endswith("/logs"):
+                return gh.raw_job_log(int(path.split("/")[-2]))
+            return gh.get(path[len(prefix):])
+
+        try:
+            source_jobs = executed_jobs_for(gh, source)
+            valid = planner.covers_corrected_full_graph(source, sha, required, tool_api, now, source_jobs)
+            require(valid, "Fixed tool Build39, original three native jobs and exact PR backend proof are required.")
+            source_plans = [job for job in source_jobs if job.get("name") == PLAN_JOB]
+            require(len(source_plans) == 1, "Tool candidate has no unique plan job.")
+            source_plan = plan_from_log(gh.raw_job_log(source_plans[0]["id"]), source_sha)
+            proof = source_plan["test_correction_evidence"]
+            backend = proof["backend_evidence"]
+            require(plan.get("required_backend_runs") == [backend],
+                    "Tool release plan must declare the exact verified PR backend evidence.")
+        except (planner.CorrectionEvidenceUnavailable, OSError, AttributeError, KeyError, TypeError, ValueError):
+            raise Blocked("Fixed tool correction graph is unavailable or invalid.") from None
+        return {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
+                "scope": plan["scope"], "required_jobs": list(required),
+                "tool_build_recovery": proof, "backend_evidence": backend}
     chained = plan.get("chained_build_recovery")
     if chained is not None:
         require(plan.get("scope") == planner.MODERATION_RESOLUTION_SCOPE, "Chained Build recovery scope differs.")

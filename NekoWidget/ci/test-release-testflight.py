@@ -397,26 +397,63 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release.planner, "tool_preservation_backend_evidence", side_effect=failure), self.assertRaises(release.Blocked): self.prepare()
         self.assertEqual(self.gh.dispatches, [])
 
-    def test_tool_build_recovery_main_and_signed_release_use_the_identical_graph(self):
+    def tool_build_fixture(self):
         spec=importlib.util.spec_from_file_location("tool_fixture",Path(__file__).with_name("test-plan-ios-ci.py"))
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         module.planner=release.planner
         fixture=module.ToolBuildRecoveryTests();fixture.setUp()
+        with fixture.mocks():
+            logs={job["id"]:fixture.api(f"/repos/{release.REPOSITORY}/actions/jobs/{job['id']}/logs")
+                  for jobs in (fixture.source_jobs,fixture.candidate_jobs,fixture.current_jobs,fixture.privacy_jobs)
+                  for job in jobs if job["name"]==release.PLAN_JOB}
+            record=fixture.record(fixture.main)
+            record["required_backend_runs"]=[fixture.prove()["backend_evidence"]]
+            logs[10041]=release.PLAN_MARKER+json.dumps(record)
         class ToolGitHub:
             def get(self,path):return fixture.api("/repos/"+release.REPOSITORY+"/"+path)
-            def log(self,run_id,job_id):return fixture.api(f"/repos/{release.REPOSITORY}/actions/jobs/{job_id}/logs")
-        gh=ToolGitHub()
+            def raw_job_log(self,job_id):return logs[job_id]
+            def log(self,run_id,job_id):return self.raw_job_log(job_id)
+        return fixture,ToolGitHub()
+
+    def test_tool_build_recovery_main_and_signed_release_use_the_identical_graph(self):
+        fixture,gh=self.tool_build_fixture()
         with fixture.mocks(),patch.object(release.planner,"git",return_value=fixture.main),patch.object(release.planner,"equivalent_inputs",return_value=True):
             for prs in (fixture.pr["pull_requests"],[]):
                 fixture.pr["pull_requests"]=prs
                 result=release.check_ci(gh,fixture.main,1004,fixture.now)
                 self.assertEqual(result["tested_sha"],fixture.head)
                 self.assertEqual(result["tested_run"],1003)
+                self.assertFalse(result["tool_build_recovery"]["source_build_success"])
+                self.assertEqual(result["backend_evidence"]["event"],"pull_request")
+                self.assertFalse(result["backend_evidence"]["push_evidence"])
+            result=release.check_ci(gh,fixture.head,1003,fixture.now)
+            self.assertEqual(result["tested_sha"],fixture.head)
+            self.assertEqual(result["tested_run"],1003)
             fixture.candidate_jobs[1]["steps"][2]["conclusion"]="skipped"
-            with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
+            for sha,run_id in ((fixture.main,1004),(fixture.head,1003)):
+                with self.assertRaises(release.Blocked):release.check_ci(gh,sha,run_id,fixture.now)
             fixture.candidate_jobs[1]["steps"][2]["conclusion"]="success"
             fixture.pr_jobs[0]["steps"][0]["conclusion"]="skipped"
-            with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
+            for sha,run_id in ((fixture.main,1004),(fixture.head,1003)):
+                with self.assertRaises(release.Blocked):release.check_ci(gh,sha,run_id,fixture.now)
+
+    def test_tool_release_rejects_changed_signed_inputs_and_malformed_main_declarations(self):
+        fixture,gh=self.tool_build_fixture()
+        with fixture.mocks(),patch.object(release.planner,"git",return_value=fixture.main),patch.object(release.planner,"equivalent_inputs",return_value=True):
+            with patch.object(release.planner,"tool_recovery_inputs",return_value=False):
+                with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.head,1003,fixture.now)
+            original_log=gh.log
+            for field,value in (("required_backend_runs",None),("required_backend_runs",[]),
+                                ("evidence_sha",None),("evidence_run_id",True),
+                                ("test_correction_evidence",{"unreviewed":"chain"})):
+                def altered_log(run_id,job_id):
+                    record=json.loads(original_log(run_id,job_id).split(release.PLAN_MARKER,1)[1])
+                    record[field]=value
+                    return release.PLAN_MARKER+json.dumps(record)
+                with self.subTest(field=field,value=value),patch.object(gh,"log",side_effect=altered_log):
+                    with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
+            with self.assertRaises(release.Blocked):
+                release.check_ci(gh,fixture.head,1003,fixture.now+dt.timedelta(hours=25))
 
     def test_tool_preservation_release_rejects_missing_or_wrong_backend_declaration(self):
         selected = release.planner.TOOL_PRESERVATION_SCOPE

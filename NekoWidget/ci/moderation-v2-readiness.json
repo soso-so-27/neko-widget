@@ -2,8 +2,8 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1791854946200,
-    "expiresAtMs": 1791890818492,
+    "issuedAtMs": 1791962602268,
+    "expiresAtMs": 1791973618711,
     "policyRevision": 2,
     "keyID": "moderation-v2",
     "publicKeySHA256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
@@ -56,7 +56,7 @@
       "NekoWidget/ci/verify-moderation-readiness.mjs": "219caba30f21e8b7d3eaa62a661a21fbac944e4d59fcb660f4e4932d659a30ed",
       "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
       "NekoWidget/ci/internal_report_release.py": "09addcb49bce3f48f33355495268e1718b7eb9e3dc12fa11f7203678a0ba0305",
-      "NekoWidget/ci/release-testflight.py": "a9476f83aff3a2451d36b9bc636c3481fd6f379c3a4d7cc4197b6eb108ea5413",
+      "NekoWidget/ci/release-testflight.py": "af2dc1ff0a056fdcf5c73ab33d90e833c8a9a84f893be3ab9f53c8232c97c1d3",
       "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
       "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "nWRDzaCwp78G7m_WvUPZPY83eRifpE4xRPwqz6_m_7uoaPLG28g-TFDQ7jWWXjDxmt5XY_aKaxdtJ9lXvu0BBA"
+      "signatureBase64url": "o-6bpOAdC1lIiWl3XnYAFdwt_6ZWIiSh2MXermuZ6LGRz75OhqGnU0zJ_2eW7eGeWUZ-qSzdwabL_7gc0QxgAg"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "sZfpK7EEKeb5XeIMlUPJuhDDc_b5AfjWqV3UQ3Ne5t1NBxbM7KTpDK224Y9Rk7-hn7i-Ysf6OlkTf4nVw2COCw"
+      "signatureBase64url": "8ZdDhkxNLMXEWS3u7vjeljqD-4XchrqUTJw7sYyTNwmuVidRT9PPtqtZE415AK__05hbTj3sSpxR6vZ2YfcxCA"
     }
   ]
 }
