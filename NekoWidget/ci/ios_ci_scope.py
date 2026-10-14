@@ -3842,6 +3842,9 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
             assigned = SOLO_TEST_METHODS[offset::2] + tuple(
                 method for method, shard in SOLO_ADDITIONAL_TEST_METHODS.items()
                 if shard == offset and method in methods)
+            foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
+            if offset == 1 and foreground in methods:
+                assigned += (foreground,)
             return tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method
                          for method in assigned)
         if lane == "app-ui-other":

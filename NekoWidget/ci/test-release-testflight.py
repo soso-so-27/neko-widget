@@ -265,9 +265,18 @@ class ReleaseTests(unittest.TestCase):
                     self.plan["required_backend_runs"] = release.planner.internal_report_requirements(self.sha)
                 if scope == release.planner.TOOL_PRESERVATION_SCOPE:
                     self.plan["required_backend_runs"] = release.planner.tool_preservation_requirements(self.sha)
+                if scope == release.planner.TOOL_STORAGE_SCOPE:
+                    self.plan["required_backend_runs"] = release.planner.tool_storage_requirements(self.sha)
                 self.set_plan()
-                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}):
-                    self.assertEqual(self.prepare()["ci"]["scope"], scope)
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "tool_storage_graph", return_value={"native_evidence": {"sha": self.sha}, "backend_evidence": {"preservation-service.yml": {"sha": self.sha}}}):
+                    # The new fresh-only graph is owned by its candidate push;
+                    # generic routing still mocks the separately tested graph.
+                    candidate = {"head_branch": release.planner.TOOL_STORAGE_BRANCH, "run_attempt": 1,
+                                 "path": ".github/workflows/ios-build.yml", "workflow_id": 335014238}
+                    with patch.dict(self.run, candidate if scope == release.planner.TOOL_STORAGE_SCOPE else {}), \
+                            patch.dict(self.gh.values["actions/workflows/ios-build.yml"],
+                                       {"id": 335014238} if scope == release.planner.TOOL_STORAGE_SCOPE else {}):
+                        self.assertEqual(self.prepare()["ci"]["scope"], scope)
 
     def test_internal_report_release_requires_five_same_candidate_backend_declarations(self):
         p = release.planner

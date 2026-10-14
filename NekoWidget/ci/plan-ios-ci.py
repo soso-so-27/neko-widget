@@ -106,8 +106,9 @@ TOOL_STORAGE_BLOBS = {'NekoWidget/NekoWidget/App/AppRootView.swift': ('caa771c60
                                                                           'ad3e7f23b4f2c08d4c8d104500df69bb5a6598dc'),
  'NekoWidget/PreservationService/test/tool-trial-resume-repair.integration.test.ts': ('74f49b6808b3821078e0b0596b80eae83e2baa9a',
                                                                                       '8a230f2698e66450396b556ebff17fe1525f9fa0')}
-TOOL_STORAGE_CONTROLS = TOOL_PRESERVATION_CONTROLS
-TOOL_STORAGE_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': 'd86467eaf6290d3c4c8bfe54e5c4425e974d5a74',
+TOOL_STORAGE_CONTROLS = TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/test-ci-lanes.py"}
+TOOL_STORAGE_CONTROL_BEFORE = {'NekoWidget/ci/test-ci-lanes.py': '4d25792636c7c611449eec06535fc76912c57397',
+ 'NekoWidget/ci/ios_ci_scope.py': 'd86467eaf6290d3c4c8bfe54e5c4425e974d5a74',
  'NekoWidget/ci/plan-ios-ci.py': '5fd691fefce3680eebed7bc5a28f1530394f12bb',
  'NekoWidget/ci/preflight-ci.py': 'cbdceae4fc0d20288d08d734461eee968a4feae6',
  'NekoWidget/ci/release-testflight.py': '9b2708fb55175295018c4d49df737c1f217aa139',
@@ -115,8 +116,8 @@ TOOL_STORAGE_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': 'd86467eaf6290d3
  'NekoWidget/ci/test-preflight-ci.py': 'ecee4ecffb6182b74087aeaeaee5fee64e4414f5',
  'NekoWidget/ci/test-release-testflight.py': 'c0a6569bde4f217fda69a0784b31f87a8e0f3363'}
 TOOL_STORAGE_ADDITIONS = frozenset({"NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql"})
-TOOL_STORAGE_CLOSURE_COUNT = 1164
-TOOL_STORAGE_CLOSURE_SHA256 = "87d1928531576ccaea6a4611ed9c4875a3b18f7656c2a5e208d9cb5db91973c5"
+TOOL_STORAGE_CLOSURE_COUNT = 1163
+TOOL_STORAGE_CLOSURE_SHA256 = "9f99d7dfac6012d74eb6ad8d11bc75ff702db772f1c1ed9b233ef6b7ecd28bdc"
 TOOL_STORAGE_READINESS_BEFORE = "f599ffbfebe28bb59c2bf96c5e2d32b076281dbc"
 TOOL_STORAGE_READINESS_PAIR = (TOOL_STORAGE_READINESS_BEFORE, "8858703e587f6b372e084e3e42968c768562282e")
 TOOL_STORAGE_BRANCH = "codex/tool-storage-completion-20261014"
@@ -3990,7 +3991,7 @@ def tool_storage_paths_only(paths):
 
 def tool_storage_registration():
     if (set(TOOL_STORAGE_BLOBS) != TOOL_STORAGE_PATHS or len(TOOL_STORAGE_BLOBS) != 22
-            or TOOL_STORAGE_CONTROLS != TOOL_PRESERVATION_CONTROLS
+            or TOOL_STORAGE_CONTROLS != TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/test-ci-lanes.py"}
             or TOOL_STORAGE_ADDITIONS != {"NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql"}
             or not re.fullmatch(r"[0-9a-f]{64}", TOOL_STORAGE_CLOSURE_SHA256)
             or type(TOOL_STORAGE_CLOSURE_COUNT) is not int or TOOL_STORAGE_CLOSURE_COUNT <= 0
@@ -4117,7 +4118,7 @@ def tool_storage_control_paths_only(paths):
 
 
 def tool_storage_control_only(paths, base, head):
-    """The exact seven control introduction plus its genuine signed CLI artifact.
+    """The exact eight control introduction plus its genuine signed CLI artifact.
 
     This is plan-only. Every product remains at its before blob; the existing
     generic orchestration allowance is not extended to arbitrary metadata.
