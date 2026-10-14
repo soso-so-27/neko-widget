@@ -2837,7 +2837,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == OWNER_CLOUD_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
-    if runtime_scope == TOOL_PRESERVATION_SCOPE and tool_preservation_paths_only(paths):
+    if runtime_scope == TOOL_PRESERVATION_SCOPE and (tool_preservation_paths_only(paths)
+            or source_paths(paths) == set(TOOL_RELEASE_BLOBS)):
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
@@ -3057,6 +3058,19 @@ TOOL_BUILD_SOURCE_JOBS = {
 TOOL_BUILD_SOURCE_PLACEHOLDERS = frozenset({115692221303, 115692221807})
 TOOL_BUILD_FAILED_STEP = "Verify sharing release privacy gates"
 TOOL_RESTORED_RELEASE = "42d085b49a2226b3895c7506ea67facc51acf7f7"
+TOOL_RELEASE_BASE = "4018fe4e6445bcd7dd265043062c1581d6a58e9c"
+TOOL_RELEASE_BASE_RUN = 38522165824
+TOOL_RELEASE_BRANCH = "codex/tool-preservation-release-preparation-20261014"
+TOOL_RELEASE_KIND = "tool-preservation-release-readiness-build-v1"
+TOOL_RELEASE_BLOBS = {
+    "NekoWidget/ci/release-testflight.py": (TOOL_RESTORED_RELEASE, "9b2708fb55175295018c4d49df737c1f217aa139"),
+    "NekoWidget/ci/test-release-testflight.py": ("bd5fe2e6874f3ce6aa908b28f8472f01e920da9f", "c0a6569bde4f217fda69a0784b31f87a8e0f3363"),
+    "NekoWidget/ci/moderation-v2-readiness.json": ("7518c658c7b5e64b2f8bbbb36f844c97154bc40d", "f599ffbfebe28bb59c2bf96c5e2d32b076281dbc"),
+}
+TOOL_RELEASE_CONTROLS = frozenset("NekoWidget/ci/" + name for name in (
+    "plan-ios-ci.py", "preflight-ci.py", "test-plan-ios-ci.py", "test-preflight-ci.py"))
+TOOL_RELEASE_INPUT_COUNT = 1183
+TOOL_RELEASE_INPUT_SHA256 = "4c8fcee0e7c46537fccb4c38b7aa5b44123b659c2c8ee4d5dce863da32dc04ec"
 TOOL_RECOVERY_CONTROLS = TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/check-development-flow.py"}
 TOOL_PR_RUN, TOOL_PR_JOB = 38513358211, 115686619818
 TOOL_PR_MERGE = "22efa05feb50d81f5f095196003c78628864fc6b"
@@ -3222,8 +3236,8 @@ def tool_pr_backend_proof(repository, api, now):
             "checkout_sha": TOOL_PR_MERGE, "tree": TOOL_PR_TREE, "push_evidence": False}
 
 
-def tool_run_identity(run, identifier, sha, workflow, event, conclusion, now, *, workflow_id=335014238):
-    if (run.get("id") != identifier or run.get("head_sha") != sha or run.get("head_branch") != TOOL_BUILD_BRANCH
+def tool_run_identity(run, identifier, sha, workflow, event, conclusion, now, *, workflow_id=335014238, branch=TOOL_BUILD_BRANCH):
+    if (run.get("id") != identifier or run.get("head_sha") != sha or run.get("head_branch") != branch
             or run.get("workflow_id") != workflow_id or run.get("path") != ".github/workflows/" + workflow
             or run.get("event") != event or run.get("run_attempt") != 1
             or (run.get("status"), run.get("conclusion")) != ("completed", conclusion)
@@ -3473,6 +3487,121 @@ def covers_tool_build_recovery(run, validation_head, required, api, now, jobs):
         record = tool_plan_record(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plan['id']}/logs"), run["head_sha"], corrected=True)
         return record.get("test_correction_evidence") == proof and record.get("required_backend_runs") == [proof["backend_evidence"]]
     except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
+def tool_release_readiness_inputs(head, *, current=False):
+    """One signed three-file preparation; never relax the original recovery."""
+    try:
+        if not isinstance(head, str) or not SHA.fullmatch(head): return False
+        git("merge-base", "--is-ancestor", TOOL_RELEASE_BASE, head)
+        approval = git("merge-base", "refs/remotes/origin/main", head)
+        marker = f'TOOL_RELEASE_BASE = "{TOOL_RELEASE_BASE}"'
+        if git("show", f"{approval}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(marker) != 1: return False
+        def rows(ref):
+            records = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+            result = {}
+            for row in records:
+                metadata, path = row.split("\t", 1)
+                if (path in result or not re.fullmatch(r"100644 blob [0-9a-f]{40}", metadata)): raise ValueError("Invalid release tree")
+                result[path] = row
+            return result
+        before, after = rows(TOOL_RELEASE_BASE), rows(head)
+        if not before or set(before) - set(after): return False  # No deletion, including handoffs.
+        normalized = []
+        for path, row in after.items():
+            # Match the direct1183-input observation: existing release-candidate
+            # notes outside handoffs remain pinned too.
+            if path.startswith("handoffs/") and path.endswith(".md"): continue
+            if path in TOOL_RELEASE_BLOBS:
+                pair = TOOL_RELEASE_BLOBS[path]
+                if (before.get(path) != f"100644 blob {pair[0]}\t{path}"
+                        or row != f"100644 blob {pair[1]}\t{path}"): return False
+            elif path in TOOL_RELEASE_CONTROLS:
+                if path not in before or git("ls-tree", approval, "--", path) != row: return False
+                normalized.append(before[path])
+            else:
+                if before.get(path) != row: return False
+                normalized.append(row)
+        if not (set(TOOL_RELEASE_BLOBS) | TOOL_RELEASE_CONTROLS) <= set(after): return False
+        normalized.sort(key=lambda row: row.split("\t", 1)[1])
+        if (len(normalized) != TOOL_RELEASE_INPUT_COUNT
+                or hashlib.sha256(("\0".join(normalized) + "\0").encode()).hexdigest() != TOOL_RELEASE_INPUT_SHA256): return False
+        if current:
+            if git("rev-parse", "HEAD") != head or git("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none"): return False
+            policy = json.loads(git("show", head + ":NekoWidget/ci/moderation-client-rollout-policy.json"))
+            evidence = json.loads(git("show", head + ":NekoWidget/ci/moderation-v2-readiness.json"))
+            checked = subprocess.run(["node", "NekoWidget/ci/verify-moderation-readiness.mjs"],
+                input=json.dumps({"policy": policy, "evidence": evidence}), capture_output=True, text=True, encoding="utf-8", timeout=20)
+            if checked.returncode or json.loads(checked.stdout).get("purpose") != "testflight-owner-report-ui-continuation": return False
+        return True
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_release_no_backend_execution(head, repository, api):
+    # The fully compared workflow/source input paths do not trigger these workflows.
+    # An unexpected dispatch, active run or failure cannot disappear into old evidence.
+    for name in ("preservation-service.yml", "sharing-service.yml", "preservation-image-validator.yml"):
+        query = urllib.parse.urlencode({"head_sha": head, "per_page": 100})
+        if api(f"/repos/{repository}/actions/workflows/{name}/runs?{query}") != {"total_count": 0, "workflow_runs": []}:
+            raise ValueError("Unexpected release-preparation backend execution")
+
+
+def tool_release_readiness_source(head, repository, api, now):
+    if repository != "soso-so-27/neko-widget" or not tool_release_readiness_inputs(head, current=True):
+        raise CorrectionEvidenceUnavailable("Fixed release preparation, approved controls or current signed readiness differ")
+    try:
+        original = tool_recovery_source(TOOL_RELEASE_BASE, repository, api, now)
+        baseline = api(f"/repos/{repository}/actions/runs/{TOOL_RELEASE_BASE_RUN}")
+        tool_run_identity(baseline, TOOL_RELEASE_BASE_RUN, TOOL_RELEASE_BASE, "ios-build.yml", "push", "success", now)
+        if not covers_tool_build_recovery(baseline, TOOL_RELEASE_BASE,
+                required_jobs_from_scope(TOOL_PRESERVATION_SCOPE), api, now, executed_jobs(baseline, repository, api)):
+            raise ValueError("Original corrected Build39 graph differs")
+        tool_release_no_backend_execution(head, repository, api)
+        return {**original, "kind": TOOL_RELEASE_KIND, "candidate_sha": head,
+                "release_base_sha": TOOL_RELEASE_BASE, "release_base_run_id": TOOL_RELEASE_BASE_RUN,
+                "release_blob_pairs": {path: list(pair) for path, pair in TOOL_RELEASE_BLOBS.items()},
+                "unchanged_input_count": TOOL_RELEASE_INPUT_COUNT, "unchanged_input_sha256": TOOL_RELEASE_INPUT_SHA256,
+                "new_build_required": True, "current_signed_readiness_required": True}
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError) as error:
+        raise CorrectionEvidenceUnavailable("Fixed release preparation source graph unavailable") from error
+
+
+def covers_tool_release_readiness(run, validation_head, required, api, now, jobs):
+    try:
+        if required != required_jobs_from_scope(TOOL_PRESERVATION_SCOPE): return False
+        if (type(run.get("id")) is not int or run["id"] <= 0
+                or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+                or run.get("head_branch") != TOOL_RELEASE_BRANCH or not tool_release_readiness_inputs(run.get("head_sha"))
+                or not tool_release_readiness_inputs(validation_head, current=True)): return False
+        tool_run_identity(run, run["id"], run["head_sha"], "ios-build.yml", "push", "success", now, branch=TOOL_RELEASE_BRANCH)
+        if not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now): return False
+        if len({job.get("id") for job in jobs}) != len(jobs): return False
+        for job in jobs:
+            tool_job_identity(job, run)
+            if job.get("name") not in set(required) | {PLAN_JOB, UNEXPANDED_SHARING_JOB, "needs.plan.outputs.smoke_name"}: return False
+            if job.get("name") not in {PLAN_JOB, BUILD} and ((job.get("status"), job.get("conclusion")) != ("completed", "skipped") or job.get("steps") != []): return False
+        plan = next(job for job in jobs if job["name"] == PLAN_JOB)
+        build = next(job for job in jobs if job["name"] == BUILD)
+        if not moderation_steps_succeeded(plan, ("Select checks",)) or not moderation_steps_succeeded(build, tool_build_steps()): return False
+        proof = tool_release_readiness_source(validation_head, "soso-so-27/neko-widget", api, now)
+        proof["candidate_sha"] = run["head_sha"]
+        record = tool_plan_record(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plan['id']}/logs"), run["head_sha"], corrected=True)
+        query = urllib.parse.urlencode({"head_sha": run["head_sha"], "event": "push", "per_page": 100})
+        index = api(f"/repos/soso-so-27/neko-widget/actions/workflows/ios-build.yml/runs?{query}")
+        if index != {"total_count": 1, "workflow_runs": [run]}: return False
+        tool_release_no_backend_execution(run["head_sha"], "soso-so-27/neko-widget", api)
+        return record.get("test_correction_evidence") == proof and record.get("required_backend_runs") == [proof["backend_evidence"]]
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
+def tool_release_readiness_equivalent_inputs(candidate, head):
+    try:
+        git("merge-base", "--is-ancestor", candidate, head)
+        return tool_release_readiness_inputs(candidate) and tool_release_readiness_inputs(head, current=True)
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
         return False
 
 
@@ -4355,6 +4484,12 @@ def owner_cloud_native_evidence(jobs, sha, now):
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    release_branch = env.get("GITHUB_REF") == "refs/heads/" + TOOL_RELEASE_BRANCH
+    if release_branch or sources == set(TOOL_RELEASE_BLOBS):
+        if paths and len(paths) == len(set(paths)) and tool_release_readiness_inputs(env["GITHUB_SHA"], current=True):
+            return TOOL_PRESERVATION_SCOPE
+        if release_branch:
+            raise ValueError("Fixed signed release preparation inputs differ; no native retry authorized")
     if (INTERNAL_REPORT_METADATA_REPAIR_PATHS <= sources <= INTERNAL_REPORT_METADATA_REPAIR_PATHS | INTERNAL_REPORT_CONTROLS
             and paths and len(paths) == len(set(paths)) and internal_report_metadata_repair_inputs(env["GITHUB_SHA"]) is not None):
         return INTERNAL_REPORT_SCOPE
@@ -6222,6 +6357,8 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+        if branch == TOOL_RELEASE_BRANCH:
+            return tool_release_readiness_source(head, repository, api, now)
         if branch != TOOL_BUILD_BRANCH: raise CorrectionEvidenceUnavailable("Tool recovery branch differs")
         return tool_recovery_source(head, repository, api, now)
     if branch==REPORT_RUNTIME_ORDER_BRANCH:
@@ -6364,6 +6501,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     successfully at the corrected candidate SHA.
     """
     if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+        if run.get("head_branch") == TOOL_RELEASE_BRANCH:
+            return covers_tool_release_readiness(run, validation_head, required, api, now, jobs)
         return covers_tool_build_recovery(run, validation_head, required, api, now, jobs)
     if required == required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):
         if report_runtime_order_inputs(run.get('head_sha')):
@@ -6484,6 +6623,15 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
+            if (repository == "soso-so-27/neko-widget" and run.get("workflow_id") == 335014238
+                    and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
+                    and run.get("head_branch") == TOOL_RELEASE_BRANCH and current.get("head_branch") == "main"
+                    and current.get("event") == "push" and type(run.get("run_attempt")) is int
+                    and type(current.get("run_attempt")) is int and run["run_attempt"] == current["run_attempt"] == 1
+                    and current.get("repository", {}).get("full_name") == repository
+                    and current.get("head_repository", {}).get("full_name") == repository
+                    and tool_release_readiness_equivalent_inputs(run["head_sha"], current["head_sha"])):
+                return True
             if not (repository=='soso-so-27/neko-widget' and run.get('workflow_id')==335014238
                     and run.get('path')==current.get('path')=='.github/workflows/ios-build.yml'
                     and run.get('head_branch') in (REPORT_RUNTIME_BRANCH,REPORT_RUNTIME_ORDER_BRANCH) and current.get('head_branch')=='main'

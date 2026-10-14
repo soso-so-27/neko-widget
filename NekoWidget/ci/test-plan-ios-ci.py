@@ -9688,5 +9688,160 @@ class PhotoSmokeCorrectionTests(unittest.TestCase):
         self.assertFalse(check(selected_record={**record, "test_correction_evidence": {**evidence, "run_id": 7}}))
 
 
+class ToolReleaseReadinessInputTests(unittest.TestCase):
+    def setUp(self):
+        self.head, self.approval = "c"*40, "d"*40
+        self.before = {path: f"100644 blob {pair[0]}\t{path}" for path, pair in planner.TOOL_RELEASE_BLOBS.items()}
+        self.after = {path: f"100644 blob {pair[1]}\t{path}" for path, pair in planner.TOOL_RELEASE_BLOBS.items()}
+        for path in planner.TOOL_RELEASE_CONTROLS:
+            self.before[path] = f"100644 blob {'a'*40}\t{path}"
+            self.after[path] = f"100644 blob {'b'*40}\t{path}"
+        for path in ("NekoWidget/Shared/native.swift", ".github/workflows/ios-build.yml"):
+            self.before[path] = self.after[path] = f"100644 blob {'e'*40}\t{path}"
+        self.before["handoffs/old.md"] = self.after["handoffs/old.md"] = f"100644 blob {'f'*40}\thandoffs/old.md"
+        self.after["handoffs/new.md"] = f"100644 blob {'f'*40}\thandoffs/new.md"
+        inputs = [row for path, row in sorted(self.before.items()) if path not in planner.TOOL_RELEASE_BLOBS and not planner.is_handoff(path)]
+        self.count = len(inputs)
+        self.digest = planner.hashlib.sha256(("\0".join(inputs)+"\0").encode()).hexdigest()
+
+    def verify(self, *, after=None, approved=True, ancestor=True, current=False, dirty=False, signature=True, marker=True):
+        after = self.after if after is None else after
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor: raise subprocess.CalledProcessError(1,args)
+                return self.approval
+            if args[0] == "ls-tree":
+                if "-r" in args:
+                    rows = self.before if args[-1] == planner.TOOL_RELEASE_BASE else after
+                    return "\0".join(rows[path] for path in sorted(rows))+"\0"
+                return after[args[-1]] if approved else self.before[args[-1]]
+            if args[0] == "show":
+                if args[1].endswith("plan-ios-ci.py"):
+                    return f'TOOL_RELEASE_BASE = "{planner.TOOL_RELEASE_BASE}"' if marker else "not_approved"
+                return "{}"
+            if args[0] == "rev-parse": return self.head
+            if args[0] == "status": return " M changed" if dirty else ""
+            raise AssertionError(args)
+        result = subprocess.CompletedProcess([],0 if signature else 1,stdout=json.dumps({"purpose":"testflight-owner-report-ui-continuation"}))
+        with patch.object(planner,"git",side_effect=git), patch.object(planner,"TOOL_RELEASE_INPUT_COUNT",self.count), \
+             patch.object(planner,"TOOL_RELEASE_INPUT_SHA256",self.digest), patch.object(planner.subprocess,"run",return_value=result) as check:
+            valid=planner.tool_release_readiness_inputs(self.head,current=current)
+            if current and valid:
+                self.assertEqual(check.call_args.args[0],["node","NekoWidget/ci/verify-moderation-readiness.mjs"])
+                self.assertNotIn("now",json.loads(check.call_args.kwargs["input"]))
+            return valid
+
+    def test_exact_three_pairs_full_input_closure_and_current_clock_signature(self):
+        self.assertTrue(self.verify())
+        self.assertTrue(self.verify(current=True))
+        for kwargs in ({"approved":False},{"ancestor":False},{"marker":False},
+                       {"current":True,"dirty":True},{"current":True,"signature":False}):
+            self.assertFalse(self.verify(**kwargs),kwargs)
+        for path in planner.TOOL_RELEASE_BLOBS:
+            for metadata in (f"100644 blob {'0'*40}",f"100755 blob {planner.TOOL_RELEASE_BLOBS[path][1]}",f"120000 blob {planner.TOOL_RELEASE_BLOBS[path][1]}"):
+                changed=dict(self.after);changed[path]=metadata+"\t"+path
+                self.assertFalse(self.verify(after=changed))
+        for path in ("NekoWidget/Shared/native.swift",".github/workflows/ios-build.yml"):
+            changed=dict(self.after);changed[path]=f"100644 blob {'0'*40}\t{path}"
+            self.assertFalse(self.verify(after=changed))
+        for path in ("NekoWidget/ci/unknown.py","NekoWidget/ci/new-test.py"):
+            changed=dict(self.after);changed[path]=f"100644 blob {'e'*40}\t{path}"
+            self.assertFalse(self.verify(after=changed))
+        changed=dict(self.after);del changed["handoffs/old.md"]
+        self.assertFalse(self.verify(after=changed))
+
+    def test_registered_closure_matches_the_actual_successful_source_tree(self):
+        result=subprocess.run(["git","ls-tree","-r","-z",planner.TOOL_RELEASE_BASE],
+            cwd=Path(__file__).parents[2],capture_output=True,text=True,encoding="utf-8",check=True)
+        rows=[]
+        for row in result.stdout.split("\0"):
+            if not row:continue
+            metadata,path=row.split("\t",1)
+            self.assertRegex(metadata,r"^100644 blob [0-9a-f]{40}$")
+            if path not in planner.TOOL_RELEASE_BLOBS and not (path.startswith("handoffs/") and path.endswith(".md")):rows.append(row)
+        rows.sort(key=lambda row:row.split("\t",1)[1])
+        self.assertEqual(len(rows),planner.TOOL_RELEASE_INPUT_COUNT)
+        self.assertEqual(planner.hashlib.sha256(("\0".join(rows)+"\0").encode()).hexdigest(),planner.TOOL_RELEASE_INPUT_SHA256)
+
+    def test_owning_branch_failure_stops_before_native_and_success_keeps_existing_tuple(self):
+        env={"GITHUB_REF":"refs/heads/"+planner.TOOL_RELEASE_BRANCH,"GITHUB_SHA":self.head}
+        paths=list(planner.TOOL_RELEASE_BLOBS)
+        with patch.object(planner,"tool_release_readiness_inputs",return_value=True):
+            self.assertEqual(planner.runtime_scope(paths,{},env),planner.TOOL_PRESERVATION_SCOPE)
+            self.assertEqual(planner.required_jobs(paths,planner.TOOL_PRESERVATION_SCOPE),planner.required_jobs_from_scope(planner.TOOL_PRESERVATION_SCOPE))
+        with patch.object(planner,"tool_release_readiness_inputs",return_value=False),self.assertRaises(ValueError):
+            planner.runtime_scope(paths,{},env)
+
+
+class ToolReleaseReadinessGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.old=ToolBuildRecoveryTests();self.old.setUp()
+        f=self.old
+        self.head,self.main="c"*40,"d"*40
+        self.run=dict(f.candidate,id=2001,head_sha=self.head,head_branch=planner.TOOL_RELEASE_BRANCH)
+        self.jobs=copy.deepcopy(f.candidate_jobs)
+        for index,job in enumerate(self.jobs):job.update(id=20011+index,run_id=2001,head_sha=self.head)
+        self.log=None
+        self.extra_backend=False
+        self.extra_native=False
+
+    def api(self,path):
+        prefix=f"/repos/{self.old.repo}/actions/"
+        for head in (self.head,self.main):
+            if f"head_sha={head}" in path:
+                if "/workflows/ios-build.yml/" in path:
+                    return {"total_count":2 if self.extra_native else 1,"workflow_runs":[self.run,self.run] if self.extra_native else [self.run]}
+                return {"total_count":1,"workflow_runs":[{"status":"in_progress"}]} if self.extra_backend else {"total_count":0,"workflow_runs":[]}
+        if path==prefix+"jobs/20011/logs":return self.log
+        if path==prefix+"runs/2001":return self.run
+        if path==prefix+"runs/2001/jobs?filter=latest&per_page=100&page=1":return {"total_count":len(self.jobs),"jobs":self.jobs}
+        return self.old.api(path)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with self.old.mocks(),patch.object(planner,"TOOL_RELEASE_BASE",self.old.head), \
+             patch.object(planner,"TOOL_RELEASE_BASE_RUN",self.old.candidate["id"]), \
+             patch.object(planner,"tool_release_readiness_inputs",return_value=True):
+            if self.log is None:
+                proof=planner.tool_release_readiness_source(self.head,self.old.repo,self.api,self.old.now)
+                record=self.old.record(self.old.head)
+                record.update(head_sha=self.head,test_correction_evidence=proof,required_backend_runs=[proof["backend_evidence"]])
+                self.log="IOS_CI_PLAN_JSON="+json.dumps(record)
+            yield
+
+    def covers(self):
+        return planner.covers_corrected_full_graph(self.run,self.main,self.old.required,self.api,self.old.now,self.jobs)
+
+    def test_new_full_build_old_three_native_fixed_backend_and_failure_history_are_one_proof(self):
+        with self.mocks():
+            self.assertTrue(self.covers())
+            proof=json.loads(self.log.split("=",1)[1])["test_correction_evidence"]
+            self.assertEqual(proof["kind"],planner.TOOL_RELEASE_KIND)
+            self.assertEqual(len(proof["jobs"]),3)
+            self.assertFalse(proof["source_build_success"])
+            self.assertFalse(proof["backend_evidence"]["push_evidence"])
+            self.assertTrue(proof["new_build_required"])
+            self.assertEqual(planner.find_test_correction_evidence(self.head,planner.TOOL_RELEASE_BRANCH,self.old.repo,self.old.required,self.api,self.old.now),proof)
+            for step in self.jobs[1]["steps"]:
+                step["conclusion"]="skipped";self.assertFalse(self.covers(),step["name"]);step["conclusion"]="success"
+            self.extra_backend=True;self.assertFalse(self.covers());self.extra_backend=False
+            self.extra_native=True;self.assertFalse(self.covers());self.extra_native=False
+            with patch.object(planner,"tool_release_readiness_inputs",return_value=False):self.assertFalse(self.covers())
+            for field,value in (("run_attempt",True),("status","in_progress"),("head_branch","codex/other"),("updated_at","2026-10-12T06:00:00Z")):
+                original=self.run[field];self.run[field]=value;self.assertFalse(self.covers());self.run[field]=original
+
+    def test_unknown_decl_changed_old_native_and_bad_backend_fail_without_rerun(self):
+        with self.mocks():
+            original=self.log
+            for field,value in (("required_backend_runs",[]),("evidence_run_id",1),("test_correction_evidence",{})):
+                record=json.loads(original.split("=",1)[1]);record[field]=value;self.log="IOS_CI_PLAN_JSON="+json.dumps(record)
+                self.assertFalse(self.covers(),field)
+            self.log=original
+            self.old.pr_jobs[0]["steps"][0]["conclusion"]="skipped";self.assertFalse(self.covers())
+            self.old.pr_jobs[0]["steps"][0]["conclusion"]="success"
+            native=next(job for job in self.old.source_jobs if job["name"]==planner.BOOTSTRAP_SMOKE)
+            native["conclusion"]="failure";self.assertFalse(self.covers())
+
+
 if __name__ == "__main__":
     unittest.main()
