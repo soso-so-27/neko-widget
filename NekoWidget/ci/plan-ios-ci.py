@@ -3212,6 +3212,63 @@ def tool_job_identity(job, run):
             or job.get("run_attempt") != 1 or job.get("status") != "completed"): raise ValueError("Tool job identity differs")
 
 
+def tool_wait_candidate_backend(head, repository, api):
+    """Plan entry only: bounded observation, followed by the unchanged full proof."""
+    if repository != "soso-so-27/neko-widget" or not tool_recovery_inputs(head):
+        raise ValueError("Unapproved candidate cannot wait for backend evidence")
+    approval = git("merge-base", "refs/remotes/origin/main", head)
+    tree = git("rev-parse", head + "^{tree}")
+    start = time.monotonic()
+    deadline = start + 120
+    observed = set()
+    query = urllib.parse.urlencode({"head_sha": head, "per_page": 100})
+    path = f"/repos/{repository}/actions/workflows/preservation-service.yml/runs?{query}"
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Candidate backend wait deadline reached; no Mac checks authorized")
+        index = api(path, timeout=min(15, remaining))
+        if time.monotonic() >= deadline:
+            raise ValueError("Candidate backend API response exceeded wait deadline")
+        runs = index.get("workflow_runs")
+        if (type(index.get("total_count")) is not int or not isinstance(runs, list)
+                or index["total_count"] != len(runs) or len(runs) >= 100
+                or any(not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] <= 0 for run in runs)
+                or len({run["id"] for run in runs}) != len(runs)):
+            raise ValueError("Candidate backend wait index incomplete")
+        active = []
+        for run in runs:
+            if (run.get("head_sha") != head or run.get("head_branch") != TOOL_BUILD_BRANCH
+                    or run.get("workflow_id") != 363932714 or run.get("path") != ".github/workflows/preservation-service.yml"
+                    or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+                    or run.get("repository", {}).get("full_name") != repository
+                    or run.get("head_repository", {}).get("full_name") != repository
+                    or run.get("event") not in {"push", "pull_request"}
+                    or run.get("head_commit", {}).get("id") != head or run["head_commit"].get("tree_id") != tree):
+                raise ValueError("Unknown candidate backend execution cannot be waited through")
+            age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+            if not dt.timedelta(0) <= age <= dt.timedelta(hours=24): raise ValueError("Candidate backend wait evidence expired")
+            if run["event"] == "pull_request":
+                prs = run.get("pull_requests")
+                if (not isinstance(prs, list) or len(prs) != 1 or prs[0].get("number") != 289 or prs[0].get("id") != 4853108830
+                        or any(prs[0].get(side, {}).get("sha") != sha or prs[0][side].get("ref") != ref
+                               or prs[0][side].get("repo", {}).get("id") != 1335079243
+                               for side, sha, ref in (("base", approval, "main"), ("head", head, TOOL_BUILD_BRANCH)))):
+                    raise ValueError("Candidate PR identity differs while waiting")
+            observed.add(run["id"])
+            if (run.get("status"), run.get("conclusion")) == ("completed", "success"):
+                continue
+            if run.get("status") not in {"queued", "in_progress"} or run.get("conclusion") is not None:
+                raise ValueError("Failed or unknown backend result stops the plan")
+            active.append(run["id"])
+        elapsed = time.monotonic() - start
+        evidence_log("tool_backend_wait", elapsed_seconds=round(elapsed, 1), active_run_ids=active)
+        if not active:
+            return {"seconds": round(elapsed, 1), "maximum_seconds": 120,
+                    "run_ids": sorted(observed), "backend_success_evidence": False}
+        time.sleep(min(10, max(0, deadline - time.monotonic())))
+
+
 def tool_recovery_source(head, repository, api, now):
     if repository != "soso-so-27/neko-widget" or not tool_recovery_inputs(head): raise CorrectionEvidenceUnavailable("Unapproved tool recovery inputs")
     try:
@@ -6247,7 +6304,9 @@ def evidence_log(stage: str, **fields) -> None:
     print("IOS_CI_EVIDENCE_JSON=" + json.dumps({"stage": stage, **fields}, separators=(",", ":")), flush=True)
 
 
-def github_api(env: dict, path: str) -> dict | str:
+def github_api(env: dict, path: str, *, timeout: float = 15) -> dict | str:
+    if type(timeout) not in (int, float) or not 0 < timeout <= 15:
+        raise ValueError("Evidence API timeout must stay within the existing 15-second limit")
     start = time.monotonic()
     evidence_log("api_start", path=path)
     try:
@@ -6259,7 +6318,7 @@ def github_api(env: dict, path: str) -> dict | str:
         )
         open_request = (urllib.request.build_opener(EvidenceLogRedirect()).open
                         if path.endswith("/logs") else urllib.request.urlopen)
-        with open_request(request, timeout=15) as response:
+        with open_request(request, timeout=timeout) as response:
             result = response.read().decode("utf-8") if path.endswith("/logs") else json.load(response)
             status = response.status
         if not isinstance(result, str if path.endswith("/logs") else dict):
@@ -7174,6 +7233,7 @@ def main() -> None:
     try:
         api = lambda path: github_api(env, path)
         now = dt.datetime.now(dt.timezone.utc)
+        tool_backend_wait = None
         metadata_repair = None
         if selected_scope == INTERNAL_REPORT_SCOPE and internal_report_metadata_repair_inputs(env["GITHUB_SHA"]) is not None:
             if (env["GITHUB_REPOSITORY"] != "soso-so-27/neko-widget" or env["GITHUB_EVENT_NAME"] != "push"
@@ -7194,6 +7254,11 @@ def main() -> None:
             if evidence is None and selected_scope == MODERATION_RESOLUTION_SCOPE
             and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/" + MODERATION_BUILD_CORRECTION_BRANCH
             and chained_build_recovery is None and moderation_ui_recovery_inputs(env["GITHUB_SHA"]) else None)
+        if (evidence is None and selected_scope == TOOL_PRESERVATION_SCOPE
+                and env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == "refs/heads/" + TOOL_BUILD_BRANCH):
+            tool_backend_wait = tool_wait_candidate_backend(env["GITHUB_SHA"], env["GITHUB_REPOSITORY"],
+                lambda path, timeout: github_api(env, path, timeout=timeout))
+            now = dt.datetime.now(dt.timezone.utc)
         correction = (find_test_correction_evidence(
             env["GITHUB_SHA"], env["GITHUB_REF"].removeprefix("refs/heads/"),
             env["GITHUB_REPOSITORY"], required, api, now)
@@ -7235,6 +7300,7 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
         **({"required_backend_runs": ([correction["backend_evidence"]] if correction is not None else
                [tool_pr_backend_proof(env["GITHUB_REPOSITORY"], api, now)] if evidence else tool_preservation_requirements(env["GITHUB_SHA"]))}
            if selected_scope == TOOL_PRESERVATION_SCOPE else {}),

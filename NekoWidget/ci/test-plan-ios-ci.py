@@ -4146,6 +4146,71 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             self.assertIsNone(planner.find_evidence(env,self.required,self.api,self.now))
 
 
+class ToolBackendWaitTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=ToolBuildRecoveryTests();self.fixture.setUp()
+        f=self.fixture;p=planner
+        self.run=copy.deepcopy(f.pr)
+        self.run.update(id=2001,head_sha=f.head,status="in_progress",conclusion=None,
+                        updated_at=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(seconds=1)).isoformat())
+        self.run["head_commit"]={"id":f.head,"tree_id":"c"*40}
+        self.run["pull_requests"][0]["head"]["sha"]=f.head
+        self.run["pull_requests"][0]["base"]["sha"]="d"*40
+        self.seconds=0
+        self.calls=[]
+
+    def wait(self,responses,latency=0):
+        def api(path,*,timeout):
+            self.calls.append(timeout)
+            self.assertLessEqual(timeout,120-self.seconds)
+            self.assertLessEqual(timeout,15)
+            self.seconds+=latency
+            response=responses.pop(0) if len(responses)>1 else responses[0]
+            return copy.deepcopy(response)
+        def sleep(seconds):self.seconds+=seconds
+        def git(*args):return "c"*40 if args[0]=="rev-parse" else "d"*40
+        with patch.object(planner,"tool_recovery_inputs",return_value=True),patch.object(planner,"git",side_effect=git), \
+                patch.object(planner.time,"monotonic",side_effect=lambda:self.seconds),patch.object(planner.time,"sleep",side_effect=sleep):
+            return planner.tool_wait_candidate_backend(self.fixture.head,self.fixture.repo,api)
+
+    def index(self,run=None):return {"total_count":1,"workflow_runs":[self.run if run is None else run]}
+
+    def test_only_same_candidate_active_can_wait_and_success_is_rechecked_by_common_proof(self):
+        done=dict(self.run,status="completed",conclusion="success")
+        result=self.wait([self.index(),self.index(done)],latency=3)
+        self.assertEqual(result["seconds"],16)
+        self.assertEqual(result["run_ids"],[2001])
+        self.assertFalse(result["backend_success_evidence"])
+        self.assertEqual(result["maximum_seconds"],120)
+        f=self.fixture
+        f.candidate_backend=self.index()
+        with f.mocks(),self.assertRaises(planner.CorrectionEvidenceUnavailable):f.prove()
+
+    def test_api_latency_timeout_and_late_success_are_inside_monotonic_deadline(self):
+        with self.assertRaises(ValueError):self.wait([self.index()],latency=4)
+        self.assertLessEqual(self.seconds,120)
+        self.assertLess(self.calls[-1],15)
+        self.seconds=0;self.calls=[]
+        done=dict(self.run,status="completed",conclusion="success")
+        with self.assertRaises(ValueError):self.wait([self.index(done)],latency=121)
+        self.assertEqual(len(self.calls),1)
+
+    def test_failure_unknown_identity_stale_or_incomplete_stops_without_sleep(self):
+        for field,value in (("head_sha","f"*40),("head_branch","codex/other"),("workflow_id",9),
+                            ("event","workflow_dispatch"),("run_attempt",2),("status","unknown"),
+                            ("updated_at","2020-01-01T00:00:00Z")):
+            self.seconds=0;self.calls=[]
+            bad=dict(self.run,**{field:value})
+            with self.subTest(field=field),self.assertRaises(ValueError):self.wait([self.index(bad)])
+            self.assertEqual(self.seconds,0)
+        for conclusion in ("failure","cancelled","skipped"):
+            with self.assertRaises(ValueError):self.wait([self.index(dict(self.run,status="completed",conclusion=conclusion))])
+        for index in ({"total_count":2,"workflow_runs":[self.run]}, {"total_count":2,"workflow_runs":[self.run,self.run]}):
+            with self.assertRaises(ValueError):self.wait([index])
+        bad=copy.deepcopy(self.run);bad["pull_requests"][0]["number"]=290
+        with self.assertRaises(ValueError):self.wait([self.index(bad)])
+
+
 class ToolPreservationScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
@@ -4264,12 +4329,14 @@ class ToolPreservationScopeTests(unittest.TestCase):
                  "GITHUB_OUTPUT":str(root/"output"),"GITHUB_STEP_SUMMARY":str(root/"summary")}
             output=io.StringIO()
             proof={"sha":planner.TOOL_BUILD_SOURCE,"run_id":planner.TOOL_BUILD_SOURCE_RUN,"jobs":[],"backend_evidence":{"event":"pull_request","candidate_sha":planner.TOOL_BUILD_SOURCE}}
-            with patch.dict(os.environ,env),contextlib.redirect_stdout(output),patch.object(planner,"changed_paths",return_value=list(self.rows())),patch.object(planner,"runtime_scope",return_value=planner.TOOL_PRESERVATION_SCOPE),patch.object(planner,"find_evidence",return_value=None),patch.object(planner,"find_test_correction_evidence",return_value=proof):
+            wait={"seconds":10,"maximum_seconds":120,"run_ids":[99],"backend_success_evidence":False}
+            with patch.dict(os.environ,env),contextlib.redirect_stdout(output),patch.object(planner,"changed_paths",return_value=list(self.rows())),patch.object(planner,"runtime_scope",return_value=planner.TOOL_PRESERVATION_SCOPE),patch.object(planner,"find_evidence",return_value=None),patch.object(planner,"find_test_correction_evidence",return_value=proof),patch.object(planner,"tool_wait_candidate_backend",return_value=wait):
                 planner.main()
             record=json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=",1)[1].splitlines()[0])
             self.assertEqual(record["required_backend_runs"],[proof["backend_evidence"]])
             self.assertEqual(len(record["required_jobs"]),4)
             self.assertIsNone(record["evidence_run_id"])
+            self.assertEqual(record["backend_wait"],wait)
             outputs=(root/"output").read_text()
             self.assertIn("build=true",outputs)
             self.assertIn("smoke=false",outputs)
