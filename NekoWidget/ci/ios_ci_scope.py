@@ -734,6 +734,13 @@ SOLO_TEST_METHODS = (
     'testWindowSettingsPrioritizeDisplayAndKeepSafetyReachable',
 )
 
+# Main still carries the exact prior 51-method source until the product lands.
+# Only that frozen source may omit this reviewed addition; no unknown inventory.
+SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST = "8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf"
+SOLO_ADDITIONAL_TEST_METHODS = {
+    "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity": 1,
+}
+
 LANE_JOB_PREFIX = "Sharing checks"
 GALLERY_CONDITIONS = {
     "gallery-normal": "",
@@ -3689,7 +3696,12 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
                           if name.startswith("test") and not body[5]))
     if sorted(declarations) != list(actual):
         raise ValueError("Unsupported direct Solo test declaration")
-    if actual != SOLO_TEST_METHODS or len(actual) != len(set(actual)):
+    complete = tuple(sorted(SOLO_TEST_METHODS + tuple(SOLO_ADDITIONAL_TEST_METHODS)))
+    if (len(actual) != len(set(actual))
+            or len(complete) != len(set(complete))
+            or any(shard not in (0, 1) for shard in SOLO_ADDITIONAL_TEST_METHODS.values())
+            or actual != complete and not (
+                actual == SOLO_TEST_METHODS and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST)):
         raise ValueError("SoloMemoriesUITests changed: update both explicit shards")
     return actual
 
@@ -3709,8 +3721,13 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
                       "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
             methods = solo_test_methods(source)
             offset = 0 if lane == "app-ui-solo-1" else 1
+            # Preserve every prior assignment; append the one new method to
+            # solo-2 instead of shifting later tests between Mac jobs.
+            assigned = SOLO_TEST_METHODS[offset::2] + tuple(
+                method for method, shard in SOLO_ADDITIONAL_TEST_METHODS.items()
+                if shard == offset and method in methods)
             return tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method
-                         for method in methods[offset::2])
+                         for method in assigned)
         if lane == "app-ui-other":
             return tuple(test for test in tests if not test.startswith("NekoWidgetUITests/SoloMemoriesUITests"))
         return tests
