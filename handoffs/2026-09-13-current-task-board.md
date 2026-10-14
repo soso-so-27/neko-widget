@@ -1,3 +1,9 @@
+## 2026-10-14 実保存量の観測と管理情報圧縮の有効化
+
+- [実観測と圧縮の反映結果](2026-10-14-storage-measurement-compression-live.md)。980円維持。D1台帳とR2 object metadataを既存接続で読取り観測し、前後の集計不変を確認した。S3全版本はAWS CLI session期限切れで未取得、R2は応答にpagination情報が無く全量証明ではない。試験データを通常1人の平均原価にしない。
+- 全10Workerのfresh設定・実module・独立readerレビューを確認し、archive version9cd0f8b0で圧縮gateだけをYESへ反映。既存module全文・他設定/秘密参照・受付・期限・削除Worker・cronは不変。今後大きくなる管理情報を可逆圧縮する。実データの圧縮率・請求削減や実機復元は未実証。rollbackでもdual readerを維持する。
+- 次はS3全版本/費目を含む通常利用の測定、ツールsnapshotで変更のない写真を再利用する設計、実機255の保存・別端末復元。新規有料契約・AWS Paid・公開/課金・過去データ削除・定期タスク変更/再実行・重複配布は0。既存本人試用の新規保存期限は10/15 20:17 JSTのまま。
+
 ## 2026-10-14 保存原価の内訳と復旧安全性（本線反映）
 
 - [保存量の内訳と削減設計](2026-10-14-storage-usage-breakdown.md)。980円維持。R2とS3全版本を写真/記録/目録/owner情報へ分け、任意参照の一致・欠落・不一致・未解決分を出す読み取り専用部品を追加。[PR303](https://github.com/soso-so-27/neko-widget/pull/303)をmain6f37b4cへ反映。型検査、関連14件、独立レビュー、候補同SHAのPreservation全8step（99秒）とiOS plan3step（48秒）が成功。実データ全量・通常1人原価・請求削減は未実測。
