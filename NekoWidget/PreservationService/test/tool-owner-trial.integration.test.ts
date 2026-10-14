@@ -12,7 +12,7 @@ import { OwnerDeletionExecutor, OwnerDeletionRequests } from '../src/owner-delet
 import type { S3RecoveryCopy } from '../src/s3-recovery-copy';
 import { inspectOwnerD1Residue } from '../src/owner-d1-residue';
 import { MembershipLinks } from '../src/membership-links';
-import worker, { type Env } from '../src/index';
+import worker, { route, type Env } from '../src/index';
 
 const {DB:db,ARCHIVE:bucket}=env as unknown as {DB:D1Database;ARCHIVE:R2Bucket};
 const base=Date.parse('2026-10-31T23:59:00Z');
@@ -116,6 +116,35 @@ it('charges actual HTTP 429 retries before rejected body decoding or any provide
   expect((await f.trial.grant(f.session.ownerId))?.admitted_bytes).toBe(2*TRIAL_DOCUMENT_ALLOWANCE);
   expect((await f.trial.grant(f.session.ownerId))?.snapshot_id).toBeNull();
   expect(wrap).not.toHaveBeenCalled();expect(unwrap).not.toHaveBeenCalled();expect(f.copy).not.toHaveBeenCalled();
+});
+it('charges authenticated HTTP body/queue/UUID rejection once and a valid upload only through normal admission',async()=>{
+  const f=await fixture(),p=await piece();
+  const services={auth:f.auth,archive:f.archive,verifier:{} as never,toolTrial:f.trial};
+  const headers={authorization:`Bearer ${f.session.token}`,'content-type':'application/json'};
+  const malformed=new Request(`https://local/v1/records/${p.id}`,{method:'PUT',headers,body:'{'});
+  await expect(route(malformed,services)).rejects.toMatchObject({code:'INVALID_REQUEST'});
+  const contentType=new Request(`https://local/v1/records/${p.id}`,{method:'PUT',
+    headers:{authorization:headers.authorization,'content-type':'text/plain'},body:'{}'});
+  await expect(route(contentType,services)).rejects.toMatchObject({code:'INVALID_REQUEST'});
+  const badID=new Request('https://local/v1/records/a',{method:'PUT',headers,body:JSON.stringify(p.request)});
+  await expect(route(badID,services)).rejects.toThrow();
+  const oversized=new Request(`https://local/v1/records/${p.id}`,{method:'PUT',headers,
+    body:new Uint8Array(29*1024*1024+1)});
+  await expect(route(oversized,services)).rejects.toMatchObject({code:'REQUEST_TOO_LARGE'});
+  const controller=new AbortController();controller.abort();
+  const aborted=new Request(`https://local/v1/records/${p.id}`,{method:'PUT',headers,body:'{}',signal:controller.signal});
+  await expect(route(aborted,services)).rejects.toMatchObject({code:'PRESERVATION_BUSY'});
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(5);
+  expect((await f.trial.grant(f.session.ownerId))?.admitted_bytes).toBe(5*TRIAL_DOCUMENT_ALLOWANCE);
+  expect((await f.trial.grant(f.session.ownerId))?.snapshot_id).toBeNull();
+  expect(f.seal).not.toHaveBeenCalled();expect(f.copy).not.toHaveBeenCalled();expect(f.photo).not.toHaveBeenCalled();
+  const invalidSession=new Request(`https://local/v1/records/${p.id}`,{method:'PUT',
+    headers:{...headers,authorization:`Bearer ${randomToken()}`},body:'{'});
+  await expect(route(invalidSession,services)).rejects.toMatchObject({code:'unauthorized'});
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(5);
+  await route(new Request(`https://local/v1/records/${p.id}`,{method:'PUT',headers,body:JSON.stringify(p.request)}),services);
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(6);
+  expect((await f.trial.grant(f.session.ownerId))?.admitted_bytes).toBe(6*TRIAL_DOCUMENT_ALLOWANCE+p.contentBytes);
 });
 it('keeps failed provider debit and slot debt; retry cannot restore lifetime capacity',async()=>{
   const f=await fixture(),p=await piece();

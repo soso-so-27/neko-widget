@@ -15,3 +15,7 @@ usageは既存encrypted-records-v1の使用量/予約量を保持し、trial入�
 検証は実D1/Workerdの合成データで、native wireタグのfirst-bind、既存membership/usage形式、競合、期限/review、R2受理後のcommit拒否、返却なし、HTTP429、旧record/GET、正規本人削除を確認する。実機表示/本人写真/クラウドtrial成功とは分ける。最初の型検査は新fixtureの配列non-null注釈3件で失敗し修正。HTTP fixtureはCF-Connecting-IP欠落（403）、次にcaller secret欠落（429内で設定検証停止）の2件を修正し、製品側の保護条件は緩めていない。全成功/最終blob/CIは主担当のローカル証拠へ保存する。
 
 09:56 UTCまでの最終ローカル成功はtypecheck、Node運用境界32件、Vitest66files/467件（123.28s）、既存migration5検査。新trialの9件は別途7.53sで成功した。最初のprobe6trial＋3schemaは9件成功8.62s、途中の関連96件は95成功/上記HTTP fixture1失敗36.12sとして保持する。初回候補から最終ローカル検証まで約32分で、7.53sを全作業時間とはしない。CI/push/main/配備/grant発行はまだ0。
+
+前候補f014fdb6の全成功を保存後、HTTP入口のJSON/Content-Type/body cap/UUID/payload待機拒否がArchiveStoreに届く前に終了し、trialのattemptを消費しない不足を発見した。認証済みtrialの前段拒否だけattempt＋2KiBを消費するようrouteを補正した。通常のparse成功はArchiveStoreだけで消費し、double debitしない。invalid tokenはownerを選べず消費しない。ownerRequestLimiterはgeneralのみ、toolTrialはinternalPilot&&!generalのみなので、その一般経路は変更しない。
+
+この追加に対しtypecheck成功、HTTP/decode/payload/rateの既存4files/51件成功、新trial10件成功9.43sを10:06 UTCに確認した。初回5files/61件は60成功/fixture期待エラー名1失敗（既存invalid tokenはunauthorized）で、その期待だけ修正後trial1fileを再検証した。他の前候補成功は不変入力の証拠として保持し、最終全体CIと混同しない。first candidateから追加修正検証まで約41分。実機・実データ・remote mutationは引き続き未実施。

@@ -23,6 +23,7 @@ import { OwnerDeletionRequests } from './owner-deletion';
 import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-limiter';
 import { payloadResponse, payloadWork } from './payload-work';
 import { recordResponse } from './record-frame';
+import { recordId } from './documents';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -51,6 +52,7 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  toolTrial?: ToolOwnerTrial;
   ownerRequestLimiter?: OwnerRequestLimiter;
   ownerDeletion?: OwnerDeletionRequests;
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
@@ -181,11 +183,29 @@ export async function route(request: Request, services: Services, context?: Pick
     const revision = record.revision;
     return recordResponse(record, () => services.archive.validateRead(token, id, revision, session.ownerId), signal);
   });
-  if (id && request.method === 'PUT') return payloadWork.run(async () => {
-    // Revalidate after waiting for the payload permit, before receiving a large body.
-    await services.auth.requireSession(token);
-    return response(await services.archive.put(token, id, await readPhotoUploadJSON(request, 29 * 1024 * 1024)));
-  }, request.signal);
+  if (id && request.method === 'PUT') {
+    let archiveEntered = false;
+    try {
+      return await payloadWork.run(async () => {
+        // Revalidate after waiting for the payload permit, before receiving a large body.
+        await services.auth.requireSession(token);
+        const input = await readPhotoUploadJSON(request, 29 * 1024 * 1024);
+        recordId(id);
+        archiveEntered = true;
+        return response(await services.archive.put(token, id, input));
+      }, request.signal);
+    } catch (error) {
+      if (!archiveEntered && services.toolTrial) {
+        // Queue/body/UUID rejection never reaches ArchiveStore's normal debit.
+        // Unknown or expired sessions cannot select an owner's grant.
+        try {
+          const session = await services.auth.requireSession(token);
+          await services.toolTrial.deniedAttempt(session.ownerId);
+        } catch { /* Preserve the original rejection; no provider operation. */ }
+      }
+      throw error;
+    }
+  }
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
@@ -264,6 +284,7 @@ export function configuredServices(env: Env): Services {
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
     ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
   return { auth, archive, verifier, membership,
+    ...(toolTrial ? { toolTrial } : {}),
     ...(general ? { ownerRequestLimiter: new OwnerRequestLimiter(env.DB) } : {}),
     ...(env.OWNER_DELETION_ENABLED === 'YES' ? { ownerDeletion: new OwnerDeletionRequests({
       db: env.DB, journal: deletionJournal, auth, now }) } : {}),
