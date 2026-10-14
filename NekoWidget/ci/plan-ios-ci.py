@@ -50,7 +50,12 @@ from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL
                           DELIVERY_MEMBERSHIP_PATHS, DELIVERY_MEMBERSHIP_NEW_PATHS, DELIVERY_MEMBERSHIP_COMPANION_PATHS,
                           WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS,
                           MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS,
-                          REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE)
+                          REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE,
+                          TOOL_PRESERVATION_SCOPE, TOOL_PRESERVATION_BLOBS, TOOL_PRESERVATION_PATHS,
+                          TOOL_PRESERVATION_ADDITIONS, TOOL_PRESERVATION_IMMUTABLE, TOOL_PRESERVATION_PROJECT,
+                          TOOL_PRESERVATION_TESTS, TOOL_PRESERVATION_IMMUTABLE_TREES,
+                          TOOL_PRESERVATION_SERVICE_TREES, TOOL_PRESERVATION_SOURCE,
+                          TOOL_PRESERVATION_CONTROLS, TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256)
 
 
 BUILD = "Build disabled app and extensions without signing"
@@ -2832,6 +2837,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == OWNER_CLOUD_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
+    if runtime_scope == TOOL_PRESERVATION_SCOPE and tool_preservation_paths_only(paths):
+        return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
     sources = source_paths(paths)
@@ -3037,6 +3044,112 @@ PRESERVATION_EXPORT_WORKFLOWS = {
     ".github/workflows/preservation-service.yml": "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99",
     ".github/workflows/sharing-service.yml": "8038107503651173741b1502aa3e836a2cb2790a"
 }
+
+
+def tool_preservation_project_only(before, after):
+    before, after = (value.replace("\r\n", "\n") for value in (before, after))
+    ids = ("C02610140000000000000001", "C02610140000000000000002",
+           "C02610140000000000000003", "C02610140000000000000004")
+    if any(identifier in before for identifier in ids): return False
+    additions = [line for line in after.splitlines() if any(identifier in line for identifier in ids)]
+    if len(additions) != 8: return False
+    removed = "\n".join(line for line in after.splitlines() if not any(identifier in line for identifier in ids))
+    if removed != before.rstrip("\n"): return False
+    phases = dict(re.findall(r"(?ms)^\s*([A-F0-9]{24}) /\* Sources \*/ = \{\s*isa = PBXSourcesBuildPhase;(.*?)^\s*\};", after))
+    for build_id, file_id, name in ((ids[0], ids[1], "ToolPreservation.swift"),
+                                    (ids[2], ids[3], "RestoredToolsView.swift")):
+        build = f"{build_id} /* {name} in Sources */ = {{isa = PBXBuildFile; fileRef = {file_id} /* {name} */; }};"
+        reference = f'{file_id} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {name}; sourceTree = "<group>"; }};'
+        if sum(line.strip() == build for line in additions) != 1 or sum(line.strip() == reference for line in additions) != 1: return False
+        if [phase for phase, body in phases.items() if re.search(r"\b" + build_id + r"\b", body)] != ["A00000000000000000000021"]: return False
+    return True
+
+
+def tool_preservation_paths_only(paths):
+    return bool(paths) and len(paths) == len(set(paths)) and source_paths(paths) == TOOL_PRESERVATION_PATHS
+
+
+def tool_preservation_immutable_inputs(ref):
+    records = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+    if not records or any(not re.fullmatch(r"[0-7]{6} (?:blob|commit) [0-9a-f]{40}\t[^\0]+", row) for row in records): return False
+    paths = [row.split("\t", 1)[1] for row in records]
+    if len(paths) != len(set(paths)): return False
+    immutable = [row for row, path in zip(records, paths)
+                 if not is_handoff(path) and path not in TOOL_PRESERVATION_PATHS | TOOL_PRESERVATION_CONTROLS]
+    return hashlib.sha256(("\0".join(immutable) + "\0").encode()).hexdigest() == TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256
+
+
+def tool_preservation_only(paths, base, head):
+    registration = 'TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"'
+    if git("show", "refs/remotes/origin/main:NekoWidget/ci/ios_ci_scope.py").splitlines().count(registration) != 1: return False
+    if TOOL_PRESERVATION_CONTROLS != {"NekoWidget/ci/" + name for name in (
+            "ios_ci_scope.py", "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
+            "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py")}: return False
+    for path in TOOL_PRESERVATION_CONTROLS:
+        approved = git("ls-tree", "refs/remotes/origin/main", "--", path)
+        if not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), approved) or any(git("ls-tree", ref, "--", path) != approved for ref in (base, head)): return False
+    if not all(tool_preservation_immutable_inputs(ref) for ref in (base, head)): return False
+    if (not tool_preservation_paths_only(paths) or set(TOOL_PRESERVATION_BLOBS) != TOOL_PRESERVATION_PATHS
+            or TOOL_PRESERVATION_ADDITIONS != {
+                "NekoWidget/NekoWidget/Services/ToolPreservation.swift", "NekoWidget/NekoWidget/Views/RestoredToolsView.swift",
+                "NekoWidget/PreservationService/test/tool-document.test.ts", "NekoWidget/PreservationService/test/tool-storage.integration.test.ts"}
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       and (pair[0] == "0" * 40) == (path in TOOL_PRESERVATION_ADDITIONS)
+                       for path, pair in TOOL_PRESERVATION_BLOBS.items())): return False
+    if set(TOOL_PRESERVATION_IMMUTABLE) != {
+            ".github/workflows/ios-build.yml", ".github/workflows/ios-ui-diagnostic.yml",
+            ".github/workflows/preservation-service.yml", ".github/workflows/preservation-image-validator.yml",
+            ".github/workflows/sharing-service.yml", "NekoWidget/ci/run-sharing-runtime-matrix.sh"}: return False
+    if set(TOOL_PRESERVATION_IMMUTABLE_TREES) != {
+            "NekoWidget/Shared", "NekoWidget/NekoWidgetWidget", "NekoWidget/SharingService",
+            "NekoWidget/BillingVerificationService", "NekoWidget/PreservationImageValidator", "NekoWidget/ci/fixtures"}: return False
+    for path, tree in TOOL_PRESERVATION_IMMUTABLE_TREES.items():
+        if not SHA.fullmatch(tree) or any(git("ls-tree", ref, "--", path) != f"040000 tree {tree}\t{path}" for ref in (base, head)): return False
+    service = "NekoWidget/PreservationService"
+    if len(TOOL_PRESERVATION_SERVICE_TREES) != 2 or not all(SHA.fullmatch(tree) for tree in TOOL_PRESERVATION_SERVICE_TREES): return False
+    if any(git("ls-tree", ref, "--", service) != f"040000 tree {tree}\t{service}" for ref, tree in zip((base, head), TOOL_PRESERVATION_SERVICE_TREES)): return False
+    for path, blob in TOOL_PRESERVATION_IMMUTABLE.items():
+        if not SHA.fullmatch(blob) or any(git("ls-tree", ref, "--", path) != f"100644 blob {blob}\t{path}" for ref in (base, head)): return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=TOOL_PRESERVATION_BLOBS,
+                             companion_paths=frozenset(), companion_digests={}, companion_name="TOOL_PRESERVATION_COMPANIONS"): return False
+    before, after = (git("show", f"{ref}:{TOOL_PRESERVATION_PROJECT}") for ref in (base, head))
+    return tool_preservation_project_only(before, after) and memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), TOOL_PRESERVATION_TESTS)
+
+
+def tool_preservation_requirements(head):
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB, "head_sha": head, "success_required": True}]
+
+
+def tool_preservation_diagnostic_inputs(source, head):
+    """Fixed source plus approved controls/prose only; never native/release evidence."""
+    try:
+        if source != TOOL_PRESERVATION_SOURCE or not all(isinstance(value, str) and SHA.fullmatch(value) for value in (source, head)): return False
+        git("merge-base", "--is-ancestor", source, head)
+        registration = f'TOOL_PRESERVATION_SOURCE = "{source}"'
+        if git("show", "refs/remotes/origin/main:NekoWidget/ci/ios_ci_scope.py").splitlines().count(registration) != 1: return False
+        paths = [path for path in git("diff", "--no-ext-diff", "--name-only", "--no-renames", "-z", source, head).split("\0") if path]
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        # The final candidate is selected only against its approved main ancestor.
+        product_paths = [path for path in git("diff", "--no-ext-diff", "--name-only", "--no-renames", "-z", approved, head).split("\0") if path]
+        if not tool_preservation_only(product_paths, approved, head) or not tool_preservation_immutable_inputs(source): return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) != 2 * len(paths) or len(paths) != len(set(paths)): return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if len(fields) != 5 or path not in paths or path in seen: return False
+            seen.add(path)
+            if path in TOOL_PRESERVATION_CONTROLS:
+                if fields[:2] != [":100644", "100644"] or fields[4] != "M": return False
+                if git("ls-tree", head, "--", path) != git("ls-tree", "refs/remotes/origin/main", "--", path): return False
+            elif not is_handoff(path) or (fields[:2], fields[4]) not in (([":000000", "100644"], "A"), ([":100644", "100644"], "M")): return False
+            if (not all(SHA.fullmatch(value) for value in fields[2:4]) or fields[3] == "0" * 40
+                    or (fields[2] == "0" * 40) != (fields[4] == "A")): return False
+        return seen == set(paths)
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
 
 
 def preservation_export_only(paths: list[str], base: str, head: str) -> bool:
@@ -3905,7 +4018,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((MODERATION_ENROLLMENT_CEREMONY_SCOPE, moderation_enrollment_ceremony_paths_only, moderation_enrollment_ceremony_backend_only),
+    for selected, matches, verify in ((TOOL_PRESERVATION_SCOPE, tool_preservation_paths_only, tool_preservation_only),
+                                       (MODERATION_ENROLLMENT_CEREMONY_SCOPE, moderation_enrollment_ceremony_paths_only, moderation_enrollment_ceremony_backend_only),
                                        (MODERATION_REPORT_BPLIST_SCOPE, moderation_report_bplist_paths_only, moderation_report_bplist_backend_only),
                                        (MODERATION_RETIRED_SCOPE, moderation_retired_paths_only, moderation_retired_backend_only),
                                        (MODERATION_RETIRED_WINDOW_SCOPE, moderation_retired_window_paths_only, moderation_retired_window_backend_only),
@@ -6324,6 +6438,74 @@ def _moderation_resolution_backend_evidence(sha: str, repository: str, api, now:
     return evidence
 
 
+def tool_preservation_backend_evidence(sha: str, repository: str, api, now: dt.datetime,
+                                      *, branch: str | None = None) -> dict:
+    """Same-SHA owning push proof; no dispatch, previous-SHA or absent-run fallback."""
+    if (not SHA.fullmatch(sha) or repository != "soso-so-27/neko-widget"
+            or branch is not None and not branch.startswith("codex/")):
+        raise ValueError("Invalid tool preservation candidate identity")
+    steps_required = {PRESERVATION_JOB: (
+        "Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+        "Verify legacy notice evidence migration with synthetic owners",
+        "Bundle the private authority without deployment or provisioning",
+        "Bundle the private owner deletion executor without deployment")}
+    evidence = {}
+    for workflow, required in {"preservation-service.yml": (PRESERVATION_JOB,)}.items():
+        prefix = f"/repos/{repository}/actions"
+        identity = api(f"{prefix}/workflows/{workflow}")
+        if (type(identity.get("id")) is not int or identity.get("id", 0) <= 0
+                or identity.get("state") != "active" or identity.get("path") != ".github/workflows/" + workflow):
+            raise ValueError("Backend workflow identity mismatch")
+        query = urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100})
+        response = api(f"{prefix}/workflows/{workflow}/runs?{query}")
+        expected_event = "push"
+        runs = response.get("workflow_runs")
+        if (not isinstance(runs, list) or not runs or type(response.get("total_count")) is not int
+                or response["total_count"] != len(runs)):
+            raise ValueError("Backend push index is absent or incomplete")
+        for run in runs:
+            if (type(run.get("id")) is not int or run["id"] <= 0
+                    or type(run.get("run_number")) is not int or run["run_number"] <= 0
+                    or run.get("head_sha") != sha or run.get("event") != expected_event
+                    or run.get("workflow_id") != identity["id"] or run.get("path") != identity["path"]
+                    or run.get("repository", {}).get("full_name") != repository
+                    or run.get("head_repository", {}).get("full_name") != repository
+                    or not (run.get("head_branch") == "main" or str(run.get("head_branch", "")).startswith("codex/"))):
+                raise ValueError("Backend push identity mismatch")
+        if len({run["id"] for run in runs}) != len(runs) or len({run["run_number"] for run in runs}) != len(runs):
+            raise ValueError("Duplicate backend push")
+        # Main runs do not replace the candidate's owning push or wait on themselves.
+        candidates = [run for run in runs if str(run["head_branch"]).startswith("codex/")]
+        if not candidates or len({run["head_branch"] for run in candidates}) != 1:
+            raise ValueError("No unique owning candidate branch")
+        latest = max(candidates, key=lambda run: run["run_number"])
+        branch = branch or latest["head_branch"]
+        if latest.get("run_attempt") != 1 or latest["head_branch"] != branch or (latest.get("status"), latest.get("conclusion")) != ("completed", "success"):
+            raise ValueError("Latest owning backend push has not succeeded")
+        updated = dt.datetime.fromisoformat(latest["updated_at"].replace("Z", "+00:00"))
+        if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+            raise ValueError("Backend push is outside the evidence window")
+        jobs = executed_jobs(latest, repository, api)
+        if (not isinstance(jobs, list) or any(not isinstance(job, dict) or type(job.get("id")) is not int
+                or job.get("run_id") != latest["id"] or job.get("head_sha") != sha for job in jobs)
+                or len({job["id"] for job in jobs}) != len(jobs)
+                or not covers_jobs(jobs, required, sha, now=now)):
+            raise ValueError("Backend required jobs are missing or invalid")
+        for name in required:
+            job = next(job for job in jobs if job["name"] == name)
+            steps = job.get("steps")
+            if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+                raise ValueError("Backend validation steps unavailable")
+            for step_name in steps_required[name]:
+                matches = [step for step in steps if step.get("name") == step_name]
+                if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+                    raise ValueError("Backend required validation step did not execute")
+        evidence[workflow] = {"run_id": latest["id"], "sha": sha, "event": expected_event, "branch": branch,
+                              "required_jobs": list(required), "job_ids": [next(job["id"] for job in jobs
+                                  if job["name"] == name) for name in required]}
+    return evidence
+
+
 def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt.datetime) -> dict:
     """Exact-SHA executed backend proof, independent of native workflow success."""
     if not SHA.fullmatch(sha):
@@ -6420,6 +6602,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
                 continue
+            if covered and not corrected and required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+                tool_preservation_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
                 preservation_export_backend_evidence(run["head_sha"], repo, api, now)
             if covered and not corrected and required == required_jobs_from_scope(OWNER_CLOUD_SCOPE):
@@ -6785,6 +6969,8 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"required_backend_runs": tool_preservation_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+           if selected_scope == TOOL_PRESERVATION_SCOPE else {}),
         **({"required_backend_runs": (internal_report_requirements if selected_scope == INTERNAL_REPORT_SCOPE else moderation_resolution_requirements)(evidence[1] if evidence else env["GITHUB_SHA"])}
            if selected_scope in (OWNER_CLOUD_SCOPE, INTERNAL_REPORT_SCOPE) else {}),
         **({"required_backend_runs": moderation_resolution_requirements(

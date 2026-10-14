@@ -261,8 +261,10 @@ class ReleaseTests(unittest.TestCase):
                     self.plan["required_backend_runs"] = release.planner.moderation_resolution_requirements(self.sha)
                 if scope == "reviewed-internal-report-v1":
                     self.plan["required_backend_runs"] = release.planner.internal_report_requirements(self.sha)
+                if scope == release.planner.TOOL_PRESERVATION_SCOPE:
+                    self.plan["required_backend_runs"] = release.planner.tool_preservation_requirements(self.sha)
                 self.set_plan()
-                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True):
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}):
                     self.assertEqual(self.prepare()["ci"]["scope"], scope)
 
     def test_internal_report_release_requires_five_same_candidate_backend_declarations(self):
@@ -380,6 +382,26 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(graph.call_args.args[1],self.sha)
         for value in (None,dict(proof,runtime_evidence=dict(correction,sha='b'*40))):
             with patch.object(p,'owner_cloud_correction_graph',return_value=value),self.assertRaises(release.Blocked):self.prepare()
+
+    def test_tool_preservation_release_requires_owning_preservation_and_propagates_rejection(self):
+        selected = release.planner.TOOL_PRESERVATION_SCOPE
+        self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)),
+                         required_backend_runs=release.planner.tool_preservation_requirements(self.sha))
+        self.set_plan()
+        with patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}) as verify:
+            self.assertEqual(self.prepare()["ci"]["backend_evidence"], {"verified": True})
+            self.assertEqual(verify.call_args.args[:2], (self.sha, release.REPOSITORY))
+        for failure in (ValueError("missing push"), KeyError("incomplete"), OSError("API unavailable")):
+            with patch.object(release.planner, "tool_preservation_backend_evidence", side_effect=failure), self.assertRaises(release.Blocked): self.prepare()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_tool_preservation_release_rejects_missing_or_wrong_backend_declaration(self):
+        selected = release.planner.TOOL_PRESERVATION_SCOPE
+        self.plan.update(scope=selected, required_jobs=list(release.planner.required_jobs_from_scope(selected)))
+        for value in (None, [], release.planner.tool_preservation_requirements("b"*40)):
+            self.plan["required_backend_runs"] = value; self.set_plan()
+            with self.assertRaises(release.Blocked): self.prepare()
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_resolution_release_calls_owning_backend_verifier_and_propagates_rejection(self):
         selected = release.planner.MODERATION_RESOLUTION_SCOPE
