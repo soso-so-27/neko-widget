@@ -13,6 +13,7 @@ import type { S3RecoveryCopy } from '../src/s3-recovery-copy';
 import { inspectOwnerD1Residue } from '../src/owner-d1-residue';
 import { MembershipLinks } from '../src/membership-links';
 import worker, { route, type Env } from '../src/index';
+import { validateDocument } from '../src/documents';
 
 const {DB:db,ARCHIVE:bucket}=env as unknown as {DB:D1Database;ARCHIVE:R2Bucket};
 const base=Date.parse('2026-10-31T23:59:00Z');
@@ -61,6 +62,95 @@ async function index(pieces:Awaited<ReturnType<typeof piece>>[]) {
   return {id:snapshotId,request:{...first.request,document:{...first.request.document,text:'ツールの保存',
     toolBackup:{snapshotId,kind:'index',path:'index.json',part:0,count:1,sha256:await sha256(bytes),payload:btoa(bytes)}}}};
 }
+it('resumes an admitted uncommitted piece when only JSON property order changed',async()=>{
+  const f=await fixture(), p=await piece();
+  const first=await f.trial.admit(f.session.ownerId,p.id,p.request);
+  const reordered=Object.fromEntries(Object.entries(p.part).reverse());
+  const resumed=await f.trial.admit(f.session.ownerId,p.id,{...p.request,
+    document:{...p.request.document,toolBackup:reordered}});
+  expect(resumed?.fingerprint).toBe(first?.fingerprint);
+});
+async function photoPiece() {
+  const p=await piece(),raw=new Uint8Array([255,216,255,217]);
+  const part={...p.part,kind:'photo' as const,path:`ShowcasePhotos/${crypto.randomUUID()}.jpg`,
+    sha256:await sha256(raw),payload:''};
+  return {...p,part,contentBytes:raw.length,request:{...p.request,photoBase64:btoa(String.fromCharCode(...raw)),
+    document:{...p.request.document,photoFile:'photo.jpg' as const,toolBackup:part}}};
+}
+async function seedLegacySlot(f:Awaited<ReturnType<typeof fixture>>,p:Awaited<ReturnType<typeof photoPiece>>|Awaited<ReturnType<typeof piece>>) {
+  // Pre-fix admission stored the exact validated wire order, before providers.
+  const fingerprint=await sha256(JSON.stringify({document:validateDocument(p.request.document),
+    photoSHA256:p.part.kind==='photo' ? p.part.sha256 : null}));
+  await db.prepare('UPDATE pa_tool_owner_trials SET snapshot_id=?,attempts=1,admitted_bytes=? WHERE owner_id=?')
+    .bind(p.part.snapshotId,TRIAL_DOCUMENT_ALLOWANCE+p.contentBytes,f.session.ownerId).run();
+  await db.prepare(`INSERT INTO pa_tool_trial_records(owner_id,record_id,snapshot_id,kind,path,part,part_count,
+    payload_sha256,input_fingerprint,content_bytes) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+    .bind(f.session.ownerId,p.id,p.part.snapshotId,p.part.kind,p.part.path,p.part.part,p.part.count,
+      p.part.sha256,fingerprint,p.contentBytes).run();
+  return fingerprint;
+}
+it('recovers a legacy interrupted photo and its lost ACK without changing its fingerprint or refunding debt',async()=>{
+  const f=await fixture(),p=await photoPiece();
+  p.request.document.text='猫'.repeat(400);
+  // Last permutation forces the bounded worst-case compatibility search.
+  p.request.document.toolBackup=Object.fromEntries(Object.entries(p.part).reverse()) as typeof p.part;
+  const fingerprint=await seedLegacySlot(f,p);
+  const changedOrder={...p.request,document:{...p.request.document,toolBackup:p.part}};
+  const started=performance.now();
+  await f.archive.put(f.session.token,p.id,changedOrder);
+  const elapsed=performance.now()-started;
+  expect(elapsed).toBeLessThan(10000);
+  console.info(`Legacy photo full-order search and synthetic commit: ${elapsed.toFixed(0)} ms`);
+  const before=(await f.trial.grant(f.session.ownerId))!;
+  const saved=await db.prepare('SELECT input_fingerprint,committed FROM pa_tool_trial_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId,p.id).first();
+  expect(saved).toEqual({input_fingerprint:fingerprint,committed:1});
+  f.seal.mockClear();f.photo.mockClear();f.copy.mockClear();
+  await f.archive.put(f.session.token,p.id,changedOrder);
+  expect(f.seal).not.toHaveBeenCalled();expect(f.photo).not.toHaveBeenCalled();
+  // Session access still refreshes owner recovery; no photo encryption or new revision occurs.
+  expect((await f.archive.read(f.session.token,p.id)).revision).toBe(1);
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(before.attempts+1);
+  expect((await f.trial.grant(f.session.ownerId))?.admitted_bytes).toBe(before.admitted_bytes+TRIAL_DOCUMENT_ALLOWANCE+p.contentBytes);
+  expect((await f.archive.read(f.session.token,p.id)).document.toolBackup).toEqual(p.part);
+});
+it('keeps legacy JSON exact-order retries without searching permutations of JSON payloads',async()=>{
+  const f=await fixture(),p=await piece();
+  p.request.document.toolBackup=Object.fromEntries(Object.entries(p.part).reverse()) as typeof p.part;
+  const fingerprint=await seedLegacySlot(f,p);
+  expect((await f.trial.admit(f.session.ownerId,p.id,p.request))?.fingerprint).toBe(fingerprint);
+  const digest=vi.spyOn(crypto.subtle,'digest');
+  try {
+    await expect(f.trial.admit(f.session.ownerId,p.id,{...p.request,document:{...p.request.document,toolBackup:p.part}}))
+      .rejects.toMatchObject({code:'PILOT_WRITES_PAUSED'});
+    expect(digest.mock.calls.length).toBeLessThanOrEqual(3);
+  } finally { digest.mockRestore(); }
+});
+it('does not let legacy photo order compatibility change document content, photo bytes, tags, or owner',async()=>{
+  const f=await fixture(),p=await photoPiece();
+  p.request.document.toolBackup=Object.fromEntries(Object.entries(p.part).reverse()) as typeof p.part;
+  const fingerprint=await seedLegacySlot(f,p);
+  for (const change of [{text:'changed'}, {writtenAt:new Date(base+1000).toISOString()},
+    {updatedAt:new Date(base+1000).toISOString()}, {capturedAt:new Date(base).toISOString()}, {catNames:['different']}]) {
+    await expect(f.archive.put(f.session.token,p.id,{...p.request,document:{...p.request.document,...change,toolBackup:p.part}}))
+      .rejects.toMatchObject({code:'PILOT_WRITES_PAUSED'});
+  }
+  for (const change of [{path:`ShowcasePhotos/${crypto.randomUUID()}.jpg`},{snapshotId:crypto.randomUUID()}]) {
+    await expect(f.archive.put(f.session.token,p.id,{...p.request,document:{...p.request.document,toolBackup:{...p.part,...change}}}))
+      .rejects.toMatchObject({code:'PILOT_WRITES_PAUSED'});
+  }
+  const bytes=new Uint8Array([255,216,255,218]);
+  await expect(f.archive.put(f.session.token,p.id,{...p.request,photoBase64:btoa(String.fromCharCode(...bytes)),
+    document:{...p.request.document,toolBackup:{...p.part,sha256:await sha256(bytes)}}}))
+    .rejects.toMatchObject({code:'PILOT_WRITES_PAUSED'});
+  const other=await fixture();
+  // Another owner's new slot cannot borrow this owner's immutable fingerprint.
+  const admitted=await other.trial.admit(other.session.ownerId,p.id,{...p.request,document:{...p.request.document,toolBackup:p.part}});
+  expect(admitted?.fingerprint).not.toBe(fingerprint);
+  expect(f.seal).not.toHaveBeenCalled();expect(f.photo).not.toHaveBeenCalled();expect(f.copy).not.toHaveBeenCalled();
+  expect(await db.prepare('SELECT input_fingerprint,committed FROM pa_tool_trial_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId,p.id).first()).toEqual({input_fingerprint:fingerprint,committed:0});
+});
 it('binds the native wire snapshot tag once, completes its index last and retains old records/GET after expiry',async()=>{
   const f=await fixture(),p=await piece(),p2=await piece(p.part.snapshotId,'LostCatDrafts/drafts.json');
   expect(p.id).not.toBe(p.part.snapshotId);
