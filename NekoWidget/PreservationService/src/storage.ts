@@ -422,8 +422,6 @@ export class ArchiveStore {
   async put(token: string, id: string, input: unknown) {
     recordId(id);
     const session = await this.d.auth.requireSession(token);
-    this.requireRecovery();
-    await this.requireWritePolicy();
     // Bound every PUT before decoding, hashing, key use or backup writes. Even
     // edits carry the photo input, although its unchanged S3 copy is reused.
     const encoded = input && typeof input === 'object'
@@ -432,6 +430,8 @@ export class ArchiveStore {
       ? Math.min(MAX_PHOTO_BYTES, Math.ceil(encoded.length / 4) * 3) : 0;
     const plannedBytes = plannedPhoto + 512 * 1024 + 8192;
     const trial = await this.d.toolTrial?.admit(session.ownerId, id, input);
+    this.requireRecovery();
+    await this.requireWritePolicy();
     if (!trial) await this.d.mutationAdmission?.admitMutation(session.ownerId, plannedBytes);
     const existing = await this.row(session.ownerId, id);
     if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);

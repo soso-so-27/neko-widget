@@ -157,6 +157,18 @@ it('keeps failed provider debit and slot debt; retry cannot restore lifetime cap
   const retried=(await f.trial.grant(f.session.ownerId))!;
   expect(retried.attempts).toBe(2);expect(retried.admitted_bytes).toBe(2*spent.admitted_bytes);
 });
+it('consumes a known trial attempt before local recovery configuration or write policy rejection',async()=>{
+  const f=await fixture(),p=await piece();
+  const {ownerRecovery:_unused,...withoutRecovery}=f.settings;
+  const missingRecovery=new ArchiveStore(withoutRecovery);
+  await expect(missingRecovery.put(f.session.token,p.id,p.request)).rejects.toThrow();
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(1);
+  expect((await f.trial.grant(f.session.ownerId))?.admitted_bytes).toBe(TRIAL_DOCUMENT_ALLOWANCE+p.contentBytes);
+  const stoppedPolicy=new ArchiveStore({...f.settings,requireRecovery:true,recovery:{} as never});
+  await expect(stoppedPolicy.put(f.session.token,p.id,p.request)).rejects.toMatchObject({code:'RECOVERY_POLICY_INACTIVE'});
+  expect((await f.trial.grant(f.session.ownerId))?.attempts).toBe(2);
+  expect(f.seal).not.toHaveBeenCalled();expect(f.copy).not.toHaveBeenCalled();expect(f.photo).not.toHaveBeenCalled();
+});
 it('charges malformed, wrong-snapshot, duplicate and rate-denied attempts without providers or refunds across midnight/review',async()=>{
   const f=await fixture({attempts:5}),p=await piece();
   await expect(f.archive.put(f.session.token,p.id,{bad:true})).rejects.toThrow();
