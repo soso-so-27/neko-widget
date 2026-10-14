@@ -764,6 +764,42 @@ final class UnrelatedUITests: XCTestCase {
             with self.assertRaises(ValueError):
                 scope.solo_test_methods(changed)
 
+    def test_tool_backup_addition_is_explicit_and_keeps_all_prior_shard_assignments(self):
+        source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+        method = "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity"
+        self.assertEqual(scope.SOLO_ADDITIONAL_TEST_METHODS, {method: 1})
+        original = [scope.lane_tests(scope.FULL_SCOPE, lane)
+                    for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+        added = source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                               "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1)
+        expected = tuple(sorted(scope.SOLO_TEST_METHODS + (method,)))
+        self.assertEqual(scope.solo_test_methods(added), expected)
+        with patch.object(scope.Path, "read_text", return_value=added):
+            shards = [scope.lane_tests(scope.FULL_SCOPE, lane)
+                      for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+        self.assertEqual(shards[0], original[0])
+        self.assertEqual(shards[1], original[1] + ("NekoWidgetUITests/SoloMemoriesUITests/" + method,))
+        self.assertEqual((len(shards[0]), len(shards[1])), (26, 26))
+        self.assertEqual(len(set(shards[0] + shards[1])), 52)
+        self.assertEqual({test.rsplit("/", 1)[1] for test in shards[0] + shards[1]}, set(expected))
+
+    def test_tool_backup_transition_only_accepts_frozen_legacy_and_complete_new_inventory(self):
+        source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
+        method = "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity"
+        changed_legacy = source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                        "final class SoloMemoriesUITests: XCTestCase {\n    // changed legacy", 1)
+        with self.assertRaises(ValueError): scope.solo_test_methods(changed_legacy)
+        added = source.replace("final class SoloMemoriesUITests: XCTestCase {",
+                               "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1)
+        for invalid in (added.replace("func " + scope.SOLO_TEST_METHODS[0] + "(", "func removedOldTest("),
+                        added.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                      "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1),
+                        added.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                      "final class SoloMemoriesUITests: XCTestCase {\n    func testUnregisteredAdditionalMethod() {}", 1)):
+            with self.assertRaises(ValueError): scope.solo_test_methods(invalid)
+        with patch.object(scope, "SOLO_ADDITIONAL_TEST_METHODS", {method: 2}):
+            with self.assertRaises(ValueError): scope.solo_test_methods(added)
+
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
                          scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
