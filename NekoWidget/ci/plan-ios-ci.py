@@ -3054,6 +3054,7 @@ TOOL_BUILD_SOURCE_JOBS = {
     lane_job(TOOL_PRESERVATION_SCOPE, "runtime"): 115686804268,
     lane_job(TOOL_PRESERVATION_SCOPE, "app-ui"): 115686804157,
 }
+TOOL_BUILD_SOURCE_PLACEHOLDERS = frozenset({115692221303, 115692221807})
 TOOL_BUILD_FAILED_STEP = "Verify sharing release privacy gates"
 TOOL_RESTORED_RELEASE = "42d085b49a2226b3895c7506ea67facc51acf7f7"
 TOOL_RECOVERY_CONTROLS = TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/check-development-flow.py"}
@@ -3278,10 +3279,15 @@ def tool_recovery_source(head, repository, api, now):
         run = api(f"{prefix}/runs/{TOOL_BUILD_SOURCE_RUN}")
         tool_run_identity(run, TOOL_BUILD_SOURCE_RUN, TOOL_BUILD_SOURCE, "ios-build.yml", "push", "failure", now)
         jobs = executed_jobs(run, repository, api)
-        if len(jobs) != 5 or {job.get("id") for job in jobs} != set(TOOL_BUILD_SOURCE_JOBS.values()): raise ValueError("Tool source job map differs")
+        expected_ids = set(TOOL_BUILD_SOURCE_JOBS.values()) | TOOL_BUILD_SOURCE_PLACEHOLDERS
+        if len(jobs) != len(expected_ids) or {job.get("id") for job in jobs} != expected_ids: raise ValueError("Tool source job map differs")
         for job in jobs:
             tool_job_identity(job, run)
-            if TOOL_BUILD_SOURCE_JOBS.get(job.get("name")) != job["id"]: raise ValueError("Tool source job name differs")
+            if job["id"] in TOOL_BUILD_SOURCE_PLACEHOLDERS:
+                if job.get("name") != UNEXPANDED_SHARING_JOB or job.get("conclusion") != "skipped" or job.get("steps") != []:
+                    raise ValueError("Fixed tool source placeholder differs")
+            elif TOOL_BUILD_SOURCE_JOBS.get(job.get("name")) != job["id"]: raise ValueError("Tool source job name differs")
+        jobs = [job for job in jobs if job["id"] not in TOOL_BUILD_SOURCE_PLACEHOLDERS]
         by_name = {job["name"]: job for job in jobs}
         native = tuple(name for name in required_jobs_from_scope(TOOL_PRESERVATION_SCOPE) if name != BUILD)
         if not covers_jobs(jobs, (PLAN_JOB,) + native, TOOL_BUILD_SOURCE, now): raise ValueError("Source three native jobs are not successful")

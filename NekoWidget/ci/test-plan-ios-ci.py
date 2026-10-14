@@ -4028,6 +4028,8 @@ class ToolBuildRecoveryTests(unittest.TestCase):
                 entry["conclusion"]="failure"
                 for index,step in enumerate(entry["steps"]):step["conclusion"]="success" if index<2 else "failure" if index==2 else "skipped"
             self.source_jobs.append(entry)
+        for identifier in p.TOOL_BUILD_SOURCE_PLACEHOLDERS:
+            self.source_jobs.append(dict(job(identifier,p.UNEXPANDED_SHARING_JOB,self.source,()),conclusion="skipped"))
         steps=("Typecheck the disabled service","Verify local identity, custody and storage boundaries",
                "Verify legacy notice evidence migration with synthetic owners","Bundle the private authority without deployment or provisioning",
                "Bundle the private owner deletion executor without deployment")
@@ -4105,6 +4107,25 @@ class ToolBuildRecoveryTests(unittest.TestCase):
                 step["conclusion"]="success"
             self.candidate_jobs.append(dict(self.candidate_jobs[1],id=99999))
             self.assertFalse(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+
+    def test_only_fixed_empty_skipped_source_placeholders_are_excluded(self):
+        original=copy.deepcopy(self.source_jobs)
+        with self.mocks():
+            self.assertEqual(len(self.source_jobs),7)
+            for identifier in planner.TOOL_BUILD_SOURCE_PLACEHOLDERS:
+                for field,value in (("id",99999),("name","unknown skipped job"),("run_id",1),
+                                    ("head_sha","f"*40),("run_attempt",2),("status","queued"),
+                                    ("conclusion","success"),("steps",[{"name":"unexpected step"}]),("steps",None)):
+                    self.source_jobs=copy.deepcopy(original)
+                    next(job for job in self.source_jobs if job["id"]==identifier)[field]=value
+                    with self.subTest(identifier=identifier,field=field,value=value),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.source_jobs=[job for job in copy.deepcopy(original) if job["id"]!=identifier]
+                with self.subTest(missing=identifier),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            for extra in (original[-1],dict(original[-1],id=99999)):
+                self.source_jobs=copy.deepcopy(original)+[copy.deepcopy(extra)]
+                with self.subTest(extra=extra["id"]),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.source_jobs=original
+            self.assertEqual(len(self.prove()["jobs"]),3)
 
     def test_source_incomplete_wrong_attempt_extra_native_failure_and_pr_identity_fail(self):
         with self.mocks():
