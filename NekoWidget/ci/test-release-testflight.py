@@ -265,9 +265,18 @@ class ReleaseTests(unittest.TestCase):
                     self.plan["required_backend_runs"] = release.planner.internal_report_requirements(self.sha)
                 if scope == release.planner.TOOL_PRESERVATION_SCOPE:
                     self.plan["required_backend_runs"] = release.planner.tool_preservation_requirements(self.sha)
+                if scope == release.planner.TOOL_STORAGE_SCOPE:
+                    self.plan["required_backend_runs"] = release.planner.tool_storage_requirements(self.sha)
                 self.set_plan()
-                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}):
-                    self.assertEqual(self.prepare()["ci"]["scope"], scope)
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "tool_storage_graph", return_value={"native_evidence": {"sha": self.sha}, "backend_evidence": {"preservation-service.yml": {"sha": self.sha}}}):
+                    # The new fresh-only graph is owned by its candidate push;
+                    # generic routing still mocks the separately tested graph.
+                    candidate = {"head_branch": release.planner.TOOL_STORAGE_BRANCH, "run_attempt": 1,
+                                 "path": ".github/workflows/ios-build.yml", "workflow_id": 335014238}
+                    with patch.dict(self.run, candidate if scope == release.planner.TOOL_STORAGE_SCOPE else {}), \
+                            patch.dict(self.gh.values["actions/workflows/ios-build.yml"],
+                                       {"id": 335014238} if scope == release.planner.TOOL_STORAGE_SCOPE else {}):
+                        self.assertEqual(self.prepare()["ci"]["scope"], scope)
 
     def test_internal_report_release_requires_five_same_candidate_backend_declarations(self):
         p = release.planner
@@ -1369,6 +1378,46 @@ class PreservationExportCorrectionTests(unittest.TestCase):
             name="needs.plan.outputs.build_name", conclusion="skipped", steps=[])
         self.gh.values[self.source_jobs_key] = source
         with self.assertRaises(release.Blocked): self.prepare()
+
+
+
+class ToolStorageCompletionReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.p=release.planner;self.sha="a"*40;self.now=dt.datetime(2026,10,15,1,tzinfo=dt.timezone.utc)
+        self.required=self.p.required_jobs_from_scope(self.p.TOOL_STORAGE_SCOPE)
+        self.run={"id":10,"head_sha":self.sha,"workflow_id":335014238,"path":".github/workflows/ios-build.yml",
+            "event":"push","head_branch":self.p.TOOL_STORAGE_BRANCH,"run_attempt":1,"status":"completed","conclusion":"success",
+            "updated_at":self.now.isoformat(),"repository":{"full_name":release.REPOSITORY},"head_repository":{"full_name":release.REPOSITORY}}
+        self.plan={"schema_version":1,"repository":release.REPOSITORY,"head_sha":self.sha,"scope":self.p.TOOL_STORAGE_SCOPE,
+            "required_jobs":list(self.required),"required_backend_runs":self.p.tool_storage_requirements(self.sha),
+            "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
+        self.jobs=[{"id":101,"run_id":10,"head_sha":self.sha,"name":release.PLAN_JOB,"status":"completed","conclusion":"success"}]
+        self.gh=FakeGitHub({"actions/workflows/ios-build.yml":{"id":335014238,"path":".github/workflows/ios-build.yml","state":"active"},
+            "actions/runs/10":self.run,"actions/runs/10/jobs?filter=latest&per_page=100&page=1":{"total_count":1,"jobs":self.jobs}},
+            {(10,101):release.PLAN_MARKER+json.dumps(self.plan)})
+    def test_same_shared_graph_for_direct_candidate_and_reused_main(self):
+        proof={"native_evidence":{"sha":self.sha},"backend_evidence":{"preservation-service.yml":{"sha":self.sha}}}
+        with patch.object(self.p,"executed_jobs",return_value=self.jobs),patch.object(self.p,"tool_storage_graph",return_value=proof) as graph:
+            got=release.check_ci(self.gh,self.sha,10,self.now)
+            self.assertEqual(got["backend_evidence"],proof["backend_evidence"]);self.assertEqual(graph.call_args.args[1],self.sha)
+            main="b"*40
+            self.run=dict(self.run,id=11,head_sha=main,head_branch="main")
+            self.plan=dict(self.plan,head_sha=main,evidence_run_id=10,evidence_sha=self.sha)
+            self.gh.values["actions/runs/11"]=self.run
+            jobs=[dict(self.jobs[0],id=111,head_sha=main,run_id=11)]
+            self.gh.values["actions/runs/11/jobs?filter=latest&per_page=100&page=1"]={"total_count":1,"jobs":jobs}
+            self.gh.logs[(11,111)]=release.PLAN_MARKER+json.dumps(self.plan)
+            with patch.object(self.p,"reusable_run",return_value=True):
+                got=release.check_ci(self.gh,main,11,self.now)
+                self.assertEqual(got["tested_sha"],self.sha);self.assertEqual(graph.call_args.args[1],main)
+    def test_no_correction_wrong_backend_or_failed_shared_proof_can_authorize_release(self):
+        for field,value in (("required_backend_runs",[]),("test_correction_evidence",{})):
+            plan=dict(self.plan,**{field:value});self.gh.logs[(10,101)]=release.PLAN_MARKER+json.dumps(plan)
+            with patch.object(self.p,"tool_storage_graph") as graph,self.assertRaises(release.Blocked):release.check_ci(self.gh,self.sha,10,self.now)
+            graph.assert_not_called()
+        self.gh.logs[(10,101)]=release.PLAN_MARKER+json.dumps(self.plan)
+        with patch.object(self.p,"executed_jobs",return_value=self.jobs),patch.object(self.p,"tool_storage_graph",side_effect=ValueError("stale/skip/unknown")), \
+                self.assertRaises(release.Blocked):release.check_ci(self.gh,self.sha,10,self.now)
 
 
 if __name__ == "__main__":

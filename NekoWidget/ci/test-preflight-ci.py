@@ -3351,5 +3351,54 @@ class ToolReleaseReadinessBudgetTests(ToolBuildRecoveryBudgetTests):
             self.assertTrue(any(preflight.urllib.parse.urlencode({"branch":branch}) in path for path in paths),branch)
 
 
+
+class ToolStorageCompletionBudgetTests(unittest.TestCase):
+    def test_fresh_native_four_plus_backend_eight_and_unmeasured_scope(self):
+        selected=planner.TOOL_STORAGE_SCOPE;head="a"*40
+        with patch.object(planner,"git",side_effect=["",head,"b"*40]),patch.object(planner,"comparison_base",return_value="b"*40), \
+                patch.object(planner,"changed_paths",return_value=list(planner.TOOL_STORAGE_PATHS)), \
+                patch.object(planner,"runtime_scope",return_value=selected),patch.object(planner,"tool_storage_readiness",return_value=False):
+            got=preflight.candidate_plan("origin/main",30,False,{"upload_minutes":9,"observations":[]})
+        self.assertEqual(got["required_jobs"],list(planner.required_jobs_from_scope(selected)))
+        self.assertEqual(got["required_backend_runs"],planner.tool_storage_requirements(head))
+        self.assertEqual(got["unmapped_files"],[]);self.assertFalse(got["readiness_verified"])
+        self.assertEqual(got["first_candidate_at"],"2026-10-14T12:59:13Z")
+        gated=preflight.apply_task_gate(got,[],measure_baseline=True)
+        self.assertFalse(gated["ready"]);self.assertIn("fresh_signed_readiness_required",gated["task"]["blockers"])
+        got["readiness_verified"]=True
+        self.assertFalse(preflight.apply_task_gate(got,[],measure_baseline=True)["ready"])
+        self.assertEqual(preflight.apply_task_gate(got,[],measure_baseline=True)["task"]["missing_diagnostic_tests"],sorted(planner.TOOL_STORAGE_DIAGNOSTIC_TESTS))
+    def test_full_or_older_tool_timings_are_not_new_scope_measurements(self):
+        history={"upload_minutes":9,"observations":[{"scope":planner.TOOL_PRESERVATION_SCOPE,"candidate_minutes":24,"outcome":"success","run_id":1}]}
+        self.assertEqual(preflight.observe_cost(planner.TOOL_STORAGE_SCOPE,history,True),{"status":"unmeasured","samples":[]})
+    def test_later_exact_success_preserves_compile_failure_and_never_certifies_skip_or_empty(self):
+        now=dt.datetime(2026,10,15,2,tzinfo=dt.timezone.utc);head="a"*40
+        result={"head":head,"scope":planner.TOOL_STORAGE_SCOPE,"readiness_verified":True,"ready":False,
+            "target_minutes":30,"cost":{"status":"unmeasured","samples":[]}}
+        tests=list(planner.TOOL_STORAGE_DIAGNOSTIC_TESTS)
+        title="SoloMemoriesUITests/"+",".join(test.split("/",1)[1] for test in tests)
+        failed={"id":38647679284,"status":"completed","conclusion":"failure","path":preflight.DIAGNOSTIC_WORKFLOW,
+            "event":"workflow_dispatch","head_branch":"diagnostic/tool-storage-completion-20261014","display_title":title,
+            "created_at":(now-dt.timedelta(minutes=12)).isoformat(),"head_sha":"b52b6586937b0be6bbc407eee56ca628bec00823"}
+        success=dict(failed,id=38648352352,conclusion="success",head_sha=planner.TOOL_STORAGE_SOURCE,
+            created_at=(now-dt.timedelta(minutes=6)).isoformat(),run_attempt=1,
+            diagnostic_evidence={"head":head,"source_sha":planner.TOOL_STORAGE_SOURCE,"run_attempt":1,
+                "job_id":116140726381,"started_at":(now-dt.timedelta(minutes=5)).isoformat(),"results":{test:"passed" for test in tests}})
+        with patch.object(preflight,"diagnostic_title_tests",return_value=set(tests)):
+            gated=preflight.apply_task_gate(copy.deepcopy(result),[failed,success],now,measure_baseline=True)
+            self.assertTrue(gated["ready"]);self.assertEqual(gated["task"]["failed_runs"],[38647679284])
+            self.assertFalse(gated["task"]["retained_compile_failure"]["ui_executed"])
+            for bad in ("skipped","incomplete","failed"):
+                success["diagnostic_evidence"]["results"][tests[0]]=bad
+                self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result),[failed,success],now,measure_baseline=True)["ready"])
+            success["diagnostic_evidence"]["results"]={}
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(result),[failed,success],now,measure_baseline=True)["ready"])
+    def test_source_matching_uses_the_dedicated_input_proof_not_the_old_tool_scope(self):
+        for valid in (True,False):
+            with patch.object(planner,"tool_storage_diagnostic_inputs",return_value=valid) as proof:
+                self.assertEqual(preflight.diagnostic_source_matches(planner.TOOL_STORAGE_SOURCE,"a"*40),valid)
+                proof.assert_called_once_with(planner.TOOL_STORAGE_SOURCE,"a"*40)
+
+
 if __name__ == "__main__":
     unittest.main()

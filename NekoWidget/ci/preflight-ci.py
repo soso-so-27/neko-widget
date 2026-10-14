@@ -404,6 +404,8 @@ def diagnostic_source_matches(source, head):
         return False
     if source == head:
         return True
+    if source == planner.TOOL_STORAGE_SOURCE:
+        return planner.tool_storage_diagnostic_inputs(source, head)
     if source == planner.TOOL_PRESERVATION_SOURCE:
         return planner.tool_preservation_diagnostic_inputs(source, head)
     if source in {INTERNAL_REPORT_DIAGNOSTIC_SOURCE, planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE}:
@@ -717,6 +719,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     cost = result["cost"]
     projected = round(elapsed + cost["with_upload_minutes"][1], 1) if cost["status"] in {"observed", "reference"} else None
     blockers = []
+    if result.get("scope") == planner.TOOL_STORAGE_SCOPE and result.get("readiness_verified") is not True:
+        blockers.append("fresh_signed_readiness_required")
     if active:
         blockers.append("ci_already_running")
     chained = result.get("chained_build_recovery")
@@ -938,6 +942,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     failed_tests = sorted(set(failed_tests) | {test for test, value in latest.items() if value["outcome"] != "passed"})
     passed_tests = {test for test, value in latest.items() if value["outcome"] == "passed"}
     missing = sorted(set(failed_tests) - passed_tests)
+    if result.get("scope") == planner.TOOL_STORAGE_SCOPE:
+        missing = sorted(set(missing) | (set(planner.TOOL_STORAGE_DIAGNOSTIC_TESTS) - passed_tests))
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
                           if run.get("id") not in fixed_owner_failures
                           if not repeated_photos(run, test)
@@ -1000,6 +1006,10 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       **({"internal_report_metadata_repair": metadata_repair} if metadata_repair is not None else {}),
                       **({"failed_jobs_to_repeat": chained["source_failed_jobs"]} if chained else {}),
                       "known_test_failure_diagnosis": diagnosed_failure,
+                      **({"first_candidate_at": planner.TOOL_STORAGE_FIRST_CANDIDATE_AT,
+                          "minutes_since_first_candidate": round(max(0, (now - parse(planner.TOOL_STORAGE_FIRST_CANDIDATE_AT)).total_seconds() / 60), 1),
+                          "retained_compile_failure": planner.TOOL_STORAGE_COMPILE_FAILURE}
+                         if result.get("scope") == planner.TOOL_STORAGE_SCOPE else {}),
                       "recovery": recovery,
                       "diagnostic_backend_recovery": diagnostic_backend_recovery,
                       "unsupported_failed_tests": unsupported,
@@ -1405,7 +1415,9 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
         and "NekoWidget/ci/run-recorded-command.py" in paths
         and scope.CI_DIAGNOSTIC_MATRIX in paths)
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Exact private tool snapshot/isolated restore and legacy preservation/export paths; preserve Build privacy/migration, Photos bootstrap, both runtime OS, eight owning UI cases and same-SHA Preservation Node all tests/migration/private bundles; unchanged Widget/Sharing/JPEG inputs"
+    reason = ("Exact photo reuse, immutable source references, disabled restore/deletion integrity and count/foreground UI; fresh Build39, Photos bootstrap, both runtime OS, nine owning UI cases and same-SHA full Preservation eight steps; all other tracked inputs frozen"
+              if selected == planner.TOOL_STORAGE_SCOPE else
+              "Exact private tool snapshot/isolated restore and legacy preservation/export paths; preserve Build privacy/migration, Photos bootstrap, both runtime OS, eight owning UI cases and same-SHA Preservation Node all tests/migration/private bundles; unchanged Widget/Sharing/JPEG inputs"
               if selected == scope.TOOL_PRESERVATION_SCOPE else
               "Exact moderation hide/release and reporter response batch; preserve build/privacy/migration, Photos bootstrap, both runtime OS, shared5 + WidgetURL3 + moderation3 UI and all five same-SHA owning backend push jobs; no Gallery variants. New UI requires direct Apple feedback before the first normal candidate measurement"
               if selected == planner.MODERATION_RESOLUTION_SCOPE else
@@ -1495,6 +1507,10 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     return {"head": head, "base": comparison, "changed_files": paths, "scope": selected,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
             "required_jobs": list(required), "cost": cost, "target_minutes": target_minutes,
+            **({"required_backend_runs": planner.tool_storage_requirements(head),
+                "readiness_verified": planner.tool_storage_readiness(head),
+                "first_candidate_at": planner.TOOL_STORAGE_FIRST_CANDIDATE_AT}
+               if selected == planner.TOOL_STORAGE_SCOPE else {}),
             **({"required_backend_runs": planner.tool_preservation_requirements(head)}
                if selected == scope.TOOL_PRESERVATION_SCOPE else {}),
             **({"required_backend_runs": (planner.internal_report_requirements if selected == planner.INTERNAL_REPORT_SCOPE else planner.moderation_resolution_requirements)(head)}

@@ -10375,5 +10375,279 @@ class ToolReleaseReadinessGraphTests(unittest.TestCase):
             native["conclusion"]="failure";self.assertFalse(self.covers())
 
 
+
+class ToolStorageCompletionScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+    def setUp(self):
+        self.common = f"100644 blob {'f' * 40}\tNekoWidget/Shared/unchanged.swift"
+        binding = patch.object(planner, "TOOL_STORAGE_READINESS_PAIR", None)
+        binding.start(); self.addCleanup(binding.stop)
+        for name, value in (("TOOL_STORAGE_CLOSURE_COUNT", 1), ("TOOL_STORAGE_CLOSURE_SHA256",
+                hashlib.sha256((self.common + "\0").encode()).hexdigest())):
+            binding = patch.object(planner, name, value); binding.start(); self.addCleanup(binding.stop)
+    def rows(self, fresh=False):
+        pairs = dict(planner.TOOL_STORAGE_BLOBS)
+        if fresh: pairs[planner.TOOL_STORAGE_READINESS_PATH] = (planner.TOOL_STORAGE_READINESS_BEFORE, "d" * 40)
+        return {p: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                    "A" if before == "0" * 40 else "M"] for p, (before, after) in pairs.items()}
+    def test_none_and_unknown_path_inputs_reject_before_iteration(self):
+        for paths in (None, [], (), "path", True, 1, [None], [["path"]], {"path": "blob"}):
+            self.assertFalse(planner.tool_storage_paths_only(paths))
+            self.assertFalse(planner.tool_storage_control_paths_only(paths))
+    def select(self, rows=None, *, raw=None, paths=None, override=None, event="push", ref="refs/heads/codex/tool-storage-completion-20261014"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if override and args in override: return override[args]
+            if args[0] == "merge-base": return self.base
+            if args[0] == "rev-parse": return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return 'TOOL_STORAGE_SCOPE = "reviewed-tool-storage-completion-v1"'
+            if args[0] == "diff": return raw if raw is not None else "".join(" ".join(v)+"\0"+p+"\0" for p,v in rows.items())
+            if args[0] == "ls-tree" and "-r" in args:
+                pos = 0 if args[-1] == self.base else 1
+                entries = [self.common]
+                for p, pair in planner.TOOL_STORAGE_BLOBS.items():
+                    if pair[pos] != "0" * 40: entries.append(f"100644 blob {pair[pos]}\t{p}")
+                blob = (rows.get(planner.TOOL_STORAGE_READINESS_PATH) or
+                        ["", "", planner.TOOL_STORAGE_READINESS_BEFORE, planner.TOOL_STORAGE_READINESS_BEFORE])[2+pos]
+                entries.append(f"100644 blob {blob}\t{planner.TOOL_STORAGE_READINESS_PATH}")
+                entries += [f"100644 blob {'e' * 40}\t{p}" for p in planner.TOOL_STORAGE_CONTROLS]
+                return "\0".join(entries)+"\0"
+            if args[0] == "ls-tree":
+                revision,p=args[1],args[3]
+                if p in planner.TOOL_STORAGE_CONTROLS: return f"100644 blob {'e' * 40}\t{p}"
+                pair=planner.TOOL_STORAGE_BLOBS[p];blob=pair[0 if revision==self.base else 1]
+                return "" if blob=="0"*40 else f"100644 blob {blob}\t{p}"
+            raise AssertionError(args)
+        with patch.object(planner,"git",side_effect=git):
+            payload = {"pull_request": {"base": {"sha": self.base}}} if event=="pull_request" else {"before":self.base}
+            return planner.runtime_scope(paths,payload,{"GITHUB_SHA":self.head,"GITHUB_EVENT_NAME":event,"GITHUB_REF":ref})
+    def test_exact_twenty_two_inputs_select_fresh_four_and_nine_ui_cases(self):
+        selected=planner.TOOL_STORAGE_SCOPE
+        self.assertEqual(self.select(),selected)
+        self.assertEqual(self.select(ref="refs/heads/main"),selected)
+        self.assertEqual(self.select(event="pull_request",ref="refs/pull/310/merge"),selected)
+        jobs=planner.required_jobs(list(self.rows()),selected)
+        self.assertEqual(jobs,planner.required_jobs_from_scope(selected));self.assertEqual(len(jobs),4)
+        self.assertEqual(scope.lanes(selected),("runtime","app-ui"))
+        self.assertEqual(len(scope.native_tests(selected)),9)
+        self.assertEqual(len(planner.tool_storage_requirements(self.head)[0]["required_steps"]),8)
+        self.assertIsNone(planner.test_correction_scope(jobs))
+    def test_partial_unknown_mode_rename_duplicate_and_truncated_are_rejected(self):
+        original=self.rows()
+        for p,row in original.items():
+            self.assertNotEqual(self.select({k:v for k,v in original.items() if k!=p}),planner.TOOL_STORAGE_SCOPE)
+            for index,value in ((0,":100755"),(1,"120000"),(2,"c"*40),(3,"d"*40),(4,"D"),(4,"R100")):
+                changed=copy.deepcopy(original);changed[p][index]=value
+                self.assertEqual(self.select(changed),scope.FULL_SCOPE,(p,index,value))
+        for p in [planner.PRESERVATION_WORKFLOW,"NekoWidget/Shared/MembershipAccessPolicy.swift",*planner.TOOL_STORAGE_CONTROLS]:
+            changed=original|{p:[":100644","100644","c"*40,"d"*40,"M"]}
+            self.assertEqual(self.select(changed),scope.FULL_SCOPE,p)
+        raw="".join(" ".join(v)+"\0"+p+"\0" for p,v in original.items())
+        for bad in ("",raw+raw,raw.rsplit("\0",2)[0]): self.assertEqual(self.select(raw=bad),scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original)+[next(iter(original))]),scope.FULL_SCOPE)
+    def test_all_controls_and_nonhandoff_input_closure_are_bound(self):
+        for ref in (self.base,self.head):
+            for p in planner.TOOL_STORAGE_CONTROLS:
+                self.assertEqual(self.select(override={("ls-tree",ref,"--",p):f"100644 blob {'c'*40}\t{p}"}),scope.FULL_SCOPE)
+            self.assertEqual(self.select(override={("ls-tree","-r","-z",ref):self.common+"\0"}),scope.FULL_SCOPE)
+        self.assertEqual(self.select(override={("show",f"{self.base}:NekoWidget/ci/ios_ci_scope.py"):""}),scope.FULL_SCOPE)
+        note="NekoWidget/ci/release-candidates/2026-10-14-tool-preservation.md"
+        self.assertTrue(planner.is_handoff(note));self.assertFalse(planner.tool_storage_handoff(note))
+        with patch.object(planner,"git",return_value=self.common+"\0"+f"100644 blob {'f'*40}\t{note}\0"):
+            with self.assertRaises(ValueError):planner.tool_storage_tree(self.head)
+    def test_fresh_artifact_requires_separate_exact_pair_and_handoffs_do_not_hide_inputs(self):
+        rows=self.rows(fresh=True)
+        self.assertEqual(self.select(rows),scope.FULL_SCOPE)
+        with patch.object(planner,"TOOL_STORAGE_READINESS_PAIR",(planner.TOOL_STORAGE_READINESS_BEFORE,"d"*40)):
+            self.assertEqual(self.select(rows),planner.TOOL_STORAGE_SCOPE)
+            rows[planner.TOOL_STORAGE_READINESS_PATH][3]="c"*40
+            self.assertEqual(self.select(rows),scope.FULL_SCOPE)
+        row=[":000000","100644","0"*40,"c"*40,"A"]
+        self.assertEqual(self.select(self.rows()|{"handoffs/storage-completion.md":row}),planner.TOOL_STORAGE_SCOPE)
+        self.assertEqual(self.select(self.rows()|{"NekoWidget/ci/release-candidates/new.md":row}),scope.FULL_SCOPE)
+    def test_signature_uses_real_current_clock_and_never_accepts_verifier_failure(self):
+        def git(*args):
+            if args[0]=="rev-parse":return self.head
+            if args[0]=="status":return ""
+            if args[0]=="show":return "{}"
+            if args[0]=="ls-tree":return f"100644 blob {'d'*40}\t{planner.TOOL_STORAGE_READINESS_PATH}"
+            raise AssertionError(args)
+        with patch.object(planner,"tool_storage_inputs",return_value=True),patch.object(planner,"git",side_effect=git), \
+                patch.object(planner,"TOOL_STORAGE_READINESS_PAIR",(planner.TOOL_STORAGE_READINESS_BEFORE,"d"*40)):
+            for returncode,stdout in ((1,'{"verified":true,"purpose":"testflight-owner-report-ui-continuation"}'),
+                    (0,'{}'),(0,'{"verified":false,"purpose":"testflight-owner-report-ui-continuation"}'),(0,'bad')):
+                result=type("Process",(),{"returncode":returncode,"stdout":stdout})()
+                with patch.object(planner.subprocess,"run",return_value=result):self.assertFalse(planner.tool_storage_readiness(self.head))
+            result=type("Process",(),{"returncode":0,"stdout":'{"verified":true,"purpose":"testflight-owner-report-ui-continuation"}'})()
+            with patch.object(planner.subprocess,"run",return_value=result) as verify:
+                self.assertTrue(planner.tool_storage_readiness(self.head))
+                self.assertNotIn("now",json.loads(verify.call_args.kwargs["input"]))
+
+
+class ToolStorageCompletionControlTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+    def setUp(self):
+        self.common=f"100644 blob {'f'*40}\tNekoWidget/Shared/unchanged.swift"
+        self.pair=(planner.TOOL_STORAGE_READINESS_BEFORE,"d"*40)
+        for name,value in (("TOOL_STORAGE_CLOSURE_COUNT",1),("TOOL_STORAGE_CLOSURE_SHA256",hashlib.sha256((self.common+"\0").encode()).hexdigest()),
+                ("TOOL_STORAGE_READINESS_PAIR",self.pair)):
+            binding=patch.object(planner,name,value);binding.start();self.addCleanup(binding.stop)
+        self.rows={p:[":100644","100644",before,"e"*40,"M"] for p,before in planner.TOOL_STORAGE_CONTROL_BEFORE.items()}
+        self.rows[planner.TOOL_STORAGE_READINESS_PATH]=[":100644","100644",*self.pair,"M"]
+    def prove(self,rows=None,override=None,signature=True):
+        rows=self.rows if rows is None else rows
+        def git(*args):
+            if override and args in override:return override[args]
+            if args[0]=="diff":return "".join(" ".join(v)+"\0"+p+"\0" for p,v in rows.items())
+            if args[0]=="ls-tree" and "-r" in args:
+                entries=[self.common]
+                entries += [f"100644 blob {pair[0]}\t{p}" for p,pair in planner.TOOL_STORAGE_BLOBS.items() if pair[0]!="0"*40]
+                entries += [f"100644 blob {r[2 if args[-1]==self.base else 3]}\t{p}" for p,r in self.rows.items()]
+                return "\0".join(entries)+"\0"
+            if args[0]=="ls-tree":
+                ref,p=args[1],args[3];blob=self.rows[p][2 if ref==self.base else 3]
+                return f"100644 blob {blob}\t{p}"
+            raise AssertionError(args)
+        with patch.object(planner,"git",side_effect=git),patch.object(planner,"tool_storage_signature",return_value=signature):
+            return planner.tool_storage_control_only(list(rows),self.base,self.head)
+    def test_only_control_introduction_with_exact_genuine_artifact_is_plan_only(self):
+        self.assertTrue(self.prove())
+        self.assertEqual(planner.required_jobs(list(self.rows),planner.ORCHESTRATION_SCOPE),(planner.PLAN_JOB,))
+        self.assertFalse(self.prove(signature=False))
+        with patch.object(planner,"TOOL_STORAGE_READINESS_PAIR",None):self.assertFalse(self.prove())
+    def test_product_workflow_mode_old_control_missing_and_artifact_drift_reject(self):
+        for p in self.rows:
+            self.assertFalse(self.prove({k:v for k,v in self.rows.items() if k!=p}))
+            for i,value in ((0,":100755"),(1,"120000"),(2,"c"*40),(4,"D")):
+                changed=copy.deepcopy(self.rows);changed[p][i]=value;self.assertFalse(self.prove(changed))
+        for p in [planner.PRESERVATION_WORKFLOW,*planner.TOOL_STORAGE_PATHS]:
+            self.assertFalse(self.prove(self.rows|{p:[":100644","100644","c"*40,"d"*40,"M"]}))
+        for ref in (self.base,self.head):
+            self.assertFalse(self.prove(override={("ls-tree","-r","-z",ref):self.common+"\0"}))
+
+
+class ToolStorageCompletionDiagnosticTests(unittest.TestCase):
+    def test_only_exact_diagnostic_product_can_cross_approved_controls_and_artifact(self):
+        source=planner.TOOL_STORAGE_SOURCE;head="a"*40
+        before={p:f"100644 blob {pair[1]}\t{p}" for p,pair in planner.TOOL_STORAGE_BLOBS.items()}
+        before |= {p:f"100644 blob {blob}\t{p}" for p,blob in planner.TOOL_STORAGE_CONTROL_BEFORE.items()}
+        before[planner.TOOL_STORAGE_READINESS_PATH]=f"100644 blob {planner.TOOL_STORAGE_READINESS_BEFORE}\t{planner.TOOL_STORAGE_READINESS_PATH}"
+        after=dict(before)
+        for p in planner.TOOL_STORAGE_CONTROLS|{planner.TOOL_STORAGE_READINESS_PATH}:after[p]=f"100644 blob {'d'*40}\t{p}"
+        raw="".join(f":100644 100644 {before[p].split()[2]} {after[p].split()[2]} M\0{p}\0"
+            for p in planner.TOOL_STORAGE_CONTROLS|{planner.TOOL_STORAGE_READINESS_PATH})
+        def git(*args):return "" if args[0]=="merge-base" else raw
+        with patch.object(planner,"tool_storage_inputs",return_value=True),patch.object(planner,"tool_storage_tree",side_effect=lambda ref:before if ref==source else after), \
+                patch.object(planner,"git",side_effect=git):
+            self.assertTrue(planner.tool_storage_diagnostic_inputs(source,head))
+            self.assertFalse(planner.tool_storage_diagnostic_inputs("c"*40,head))
+            p=next(iter(planner.TOOL_STORAGE_PATHS));saved=after[p];after[p]=f"100644 blob {'c'*40}\t{p}"
+            self.assertFalse(planner.tool_storage_diagnostic_inputs(source,head));after[p]=saved
+            with patch.object(planner,"tool_storage_inputs",return_value=False):self.assertFalse(planner.tool_storage_diagnostic_inputs(source,head))
+
+
+class ToolStorageCompletionGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.now=dt.datetime(2026,10,15,1,tzinfo=dt.timezone.utc);self.sha="a"*40;self.main="b"*40
+        self.repo="soso-so-27/neko-widget";self.required=planner.required_jobs_from_scope(planner.TOOL_STORAGE_SCOPE)
+        self.run={"id":123,"head_sha":self.sha,"workflow_id":335014238,"path":".github/workflows/ios-build.yml",
+            "event":"push","head_branch":planner.TOOL_STORAGE_BRANCH,"run_attempt":1,"status":"completed",
+            "conclusion":"success","updated_at":self.now.isoformat(),"repository":{"full_name":self.repo},"head_repository":{"full_name":self.repo}}
+        self.build_steps=tuple("Build step "+str(i) for i in range(39))
+        def job(name,identifier,run,steps):
+            return {"id":identifier,"name":name,"run_id":run["id"],"head_sha":self.sha,"run_attempt":1,
+                "status":"completed","conclusion":"success","completed_at":self.now.isoformat(),
+                "steps":[{"name":n,"status":"completed","conclusion":"success"} for n in steps]}
+        names={planner.BUILD:self.build_steps,planner.BOOTSTRAP_SMOKE:("Check out repository","Run Simulator smoke test","Upload Simulator smoke-test artifacts"),
+            planner.lane_job(planner.TOOL_STORAGE_SCOPE,"runtime"):planner.OWNER_CLOUD_RUNTIME_STEPS,
+            planner.lane_job(planner.TOOL_STORAGE_SCOPE,"app-ui"):planner.OWNER_CLOUD_RUNTIME_STEPS,
+            planner.PLAN_JOB:("Check out repository","Test CI selection and evidence boundaries","Select checks")}
+        self.jobs=[job(n,100+i,self.run,s) for i,(n,s) in enumerate(names.items())]
+        self.jobs += [dict(job(planner.UNEXPANDED_SHARING_JOB,200+i,self.run,()),conclusion="skipped") for i in range(2)]
+        self.plan={"schema_version":1,"repository":self.repo,"head_sha":self.sha,"scope":planner.TOOL_STORAGE_SCOPE,
+            "required_jobs":list(self.required),"required_backend_runs":planner.tool_storage_requirements(self.sha),
+            "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
+        self.backend=dict(self.run,id=456,workflow_id=363932714,path=planner.PRESERVATION_WORKFLOW,run_number=4)
+        self.backend_jobs=[job(planner.PRESERVATION_JOB,500,self.backend,planner.TOOL_STORAGE_BACKEND_STEPS)]
+    def api(self,path):
+        if path.endswith("/jobs/103/logs"):
+            return "\n".join(f"Test Case '-[NekoWidgetUITests.{test.removeprefix('NekoWidgetUITests/').replace('/', ' ')}]' {status}"
+                for test in scope.native_tests(planner.TOOL_STORAGE_SCOPE) for status in ("started", "passed"))
+        if path.endswith("/logs"):return "IOS_CI_PLAN_JSON="+json.dumps(self.plan)
+        if path.endswith("/workflows/preservation-service.yml"):return {"id":363932714,"path":planner.PRESERVATION_WORKFLOW,"state":"active"}
+        if "/workflows/preservation-service.yml/runs?" in path:return {"total_count":1,"workflow_runs":[self.backend]}
+        if path.endswith("/runs/456"):return self.backend
+        if "/runs/456/jobs?" in path:return {"total_count":len(self.backend_jobs),"jobs":self.backend_jobs}
+        raise AssertionError(path)
+    def mocks(self):
+        stack=contextlib.ExitStack()
+        for name,value in (("tool_storage_inputs",True),("tool_storage_readiness",True),("equivalent_inputs",True)):
+            stack.enter_context(patch.object(planner,name,return_value=value))
+        stack.enter_context(patch.object(planner,"tool_build_steps",return_value=self.build_steps))
+        return stack
+    def prove(self):return planner.tool_storage_graph(self.run,self.main,self.api,self.now,self.jobs)
+    def test_fresh_four_and_all_eight_backend_steps_are_shared_main_release_proof(self):
+        with self.mocks():
+            got=self.prove();self.assertEqual(got["native_evidence"]["sha"],self.sha)
+            self.assertEqual(len(got["native_evidence"]["job_ids"]),4)
+            self.assertEqual(got["backend_evidence"]["preservation-service.yml"]["required_steps"],list(planner.TOOL_STORAGE_BACKEND_STEPS))
+    def test_unknown_active_skipped_wrong_sha_duplicate_stale_and_reused_sources_fail(self):
+        with self.mocks():
+            for field,value in (("head_branch","codex/other"),("status","in_progress"),("conclusion","failure"),("run_attempt",2),
+                    ("updated_at",(self.now-dt.timedelta(hours=25)).isoformat())):
+                with patch.dict(self.run,{field:value}),self.assertRaises(ValueError):self.prove()
+            for j in [job for job in self.jobs if job["name"] in set(self.required)|{planner.PLAN_JOB}]:
+                for field,value in (("status","in_progress"),("conclusion","skipped"),("head_sha","c"*40)):
+                    with patch.dict(j,{field:value}),self.assertRaises(ValueError):self.prove()
+                with patch.dict(j["steps"][0],{"conclusion":"skipped"}),self.assertRaises(ValueError):self.prove()
+            self.jobs.append(copy.deepcopy(self.jobs[0]))
+            with self.assertRaises(ValueError):self.prove()
+            self.jobs.pop()
+            for field,value in (("required_backend_runs",[]),("evidence_run_id",99),("test_correction_evidence",{})):
+                with patch.dict(self.plan,{field:value}),self.assertRaises(ValueError):self.prove()
+            for name in ("tool_storage_inputs","tool_storage_readiness","equivalent_inputs"):
+                with patch.object(planner,name,return_value=False),self.assertRaises(ValueError):self.prove()
+    def test_backend_all_eight_steps_and_owning_attempt_are_mandatory(self):
+        with self.mocks():
+            for step in self.backend_jobs[0]["steps"]:
+                with patch.dict(step,{"conclusion":"skipped"}),self.assertRaises(ValueError):self.prove()
+            for field,value in (("status","in_progress"),("head_sha","c"*40),("head_branch","codex/other"),("run_attempt",2)):
+                with patch.dict(self.backend,{field:value}),self.assertRaises(ValueError):self.prove()
+    def test_raw_nine_ui_cases_reject_empty_skip_missing_duplicate_and_unexpected(self):
+        good=self.api("/jobs/103/logs")
+        self.assertTrue(planner.tool_storage_ui_results(good))
+        for bad in ("",good.replace("passed","skipped",1),good.split("\n",2)[2],good+"\n"+good,
+                good+"\nTest Case '-[NekoWidgetUITests.OtherTests testUnexpected]' started"):
+            self.assertFalse(planner.tool_storage_ui_results(bad))
+            def api(path):return bad if path.endswith("/jobs/103/logs") else self.api(path)
+            with self.mocks(),self.assertRaises(ValueError):planner.tool_storage_graph(self.run,self.main,api,self.now,self.jobs)
+    def test_only_known_empty_skipped_native_placeholders_can_be_extra(self):
+        extra=self.jobs[-1]
+        extra.update(name="Unexpected job",status="in_progress",conclusion=None,steps=[])
+        with self.mocks():
+            for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success"),("completed","skipped")):
+                extra.update(status=status,conclusion=conclusion)
+                with self.assertRaises(ValueError):self.prove()
+            extra.update(name=planner.UNEXPANDED_SHARING_JOB,status="completed",conclusion="skipped")
+            self.assertTrue(self.prove())
+            extra["steps"]=[{"name":"Unknown step","status":"completed","conclusion":"success"}]
+            with self.assertRaises(ValueError):self.prove()
+            extra["steps"]=[];extra["status"]="in_progress"
+            with self.assertRaises(ValueError):self.prove()
+            extra["status"]="completed"
+            self.jobs.pop()
+            with self.assertRaises(ValueError):self.prove()
+            self.jobs.extend([dict(extra,id=999),dict(extra,id=1000)])
+            with self.assertRaises(ValueError):self.prove()
+    def test_backend_job_set_rejects_every_extra_execution(self):
+        extra=dict(self.backend_jobs[0],id=999,name="Unexpected job",status="in_progress",conclusion=None,steps=[])
+        self.backend_jobs.append(extra)
+        with self.mocks():
+            for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success"),("completed","skipped")):
+                extra.update(status=status,conclusion=conclusion)
+                with self.assertRaises(ValueError):self.prove()
+
+
 if __name__ == "__main__":
     unittest.main()
