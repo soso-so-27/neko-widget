@@ -1,0 +1,25 @@
+# 既存本人だけのツール保管試用（ローカル候補・未発行）
+
+初回候補開始2026-10-14 09:24:48 UTC。基点317a5b927a33be1cbe0f72d7ab3b3927814a4a69、branch codex/tool-owner-trial-20261014。既存内部版255のnative入力、署名対象codePaths、workflow、JPEG provider、依存、価格980円を変更しない。配備・grant発行・実データ送信・別iPhone復元・公開・課金・契約・定期taskはこの候補だけでは実行しない。
+
+0035は空のtrial/record台帳だけを追加し、既owner・旧record・pilot期限・旧intake counterを変えない。後で独立レビュー済みoperatorが既存本人/epochだけをtargetに、24時間以内の絶対終了、新しい費用証拠hash、最大20MiB、有限attempt/record上限を発行する。live owner識別子・残額・秘密はrepoへ置かない。原pilotの100/day・500/monthと一般用0034 byte列は変更せず、限定grantをそれらの包括延長として扱わない。
+
+既存app255の全partはtoolBackup.snapshotIdを持つ。URLのrecord IDは別で、目録は最後。最初の新しいpartでローカルのdocument/base64/hash/pathを検証した後、同一D1 transactionでsnapshotIdを一度だけbindし、不変のrecord slotを取る。JPEG provider/KMS/S3/record commitの成功を待ってbindする設計ではない。後段失敗でも同じsnapshot/slotを保持し、別snapshotを許さない。現appはcanSave=falseではcaptureに入らないので、既存membershipのunknown/未linked/access=pilot/有限pilotEndsAt形式を用いる。新しいclient enumやsnapshot手入力は不要。目録の応答を失った場合に同じpending IDを照合/再開できるよう、完了後も期限/残attempt内のpilot accessを保持するがusageの新規残量は0にする。
+
+入力上限は**デコード後のJSON部品/目録/JPEG bytes＋各試行2KiBのdocument予約、累積最大20MiB**。documentからpayloadを除いたUTF-8形が2KiBを超える入力を拒否する。暗号文・base64 transport・S3 owner snapshot/旧版本・読取・ログイン費の20MiB上限ではない。全attemptを最初に消費し、malformedでも2KiB、正しい型の入力はそのcontent分もKMS/S3/JPEG前に消費する。IP429で本文を処理せず拒否した認証済みPUTはattempt＋2KiBを消費する。既appの429時1回再試行も別attemptで、失敗/重複/日月替わり/review更新で戻さない。有限枠で成功が保証されるとは説明しない。
+
+usageは既存encrypted-records-v1の使用量/予約量を保持し、trial入力残量から残record slot×2KiBと目録256KiBを保守的に先引した新規残量を表示する。limitBytesを現在の使用/予約＋その残量から導き、app255のavailableBytes/overLimit検証式を維持する。record上限も既存件数/予約＋trial残slotに縮める。原1GiB/200件/全体3GiBの暗号文quotaはreservation/commitで別途維持する。source量がusageを超えたら現clientが送信前に容量不足を返す。
+
+目録は全trial部品のcommit・同一snapshot/path/part/count/byteを要求する。専用slot_generationを同一DB snapshotで読み、bindとreservation/commitでCASする。目録確認後の新slot追加、expiry/review/epoch/disable変更、完了後の新createを拒否する。既存record更新はgrantに入れず、新ownerも発行済みtrialから作成しない。正規本人削除/erasing authorityだけtrialの2台帳をchild-firstで消去できる。通常削除で試用枠を作り直せず、既ownerGET/ログイン/復元権利は期限停止と切り離す。期限を跨いだ拒否は既存recordを変えず、消費済み枠/slotや通常pending/orphan処理を残す。
+
+検証は実D1/Workerdの合成データで、native wireタグのfirst-bind、既存membership/usage形式、競合、期限/review、R2受理後のcommit拒否、返却なし、HTTP429、旧record/GET、正規本人削除を確認する。実機表示/本人写真/クラウドtrial成功とは分ける。最初の型検査は新fixtureの配列non-null注釈3件で失敗し修正。HTTP fixtureはCF-Connecting-IP欠落（403）、次にcaller secret欠落（429内で設定検証停止）の2件を修正し、製品側の保護条件は緩めていない。全成功/最終blob/CIは主担当のローカル証拠へ保存する。
+
+09:56 UTCまでの最終ローカル成功はtypecheck、Node運用境界32件、Vitest66files/467件（123.28s）、既存migration5検査。新trialの9件は別途7.53sで成功した。最初のprobe6trial＋3schemaは9件成功8.62s、途中の関連96件は95成功/上記HTTP fixture1失敗36.12sとして保持する。初回候補から最終ローカル検証まで約32分で、7.53sを全作業時間とはしない。CI/push/main/配備/grant発行はまだ0。
+
+前候補f014fdb6の全成功を保存後、HTTP入口のJSON/Content-Type/body cap/UUID/payload待機拒否がArchiveStoreに届く前に終了し、trialのattemptを消費しない不足を発見した。認証済みtrialの前段拒否だけattempt＋2KiBを消費するようrouteを補正した。通常のparse成功はArchiveStoreだけで消費し、double debitしない。invalid tokenはownerを選べず消費しない。ownerRequestLimiterはgeneralのみ、toolTrialはinternalPilot&&!generalのみなので、その一般経路は変更しない。
+
+この追加に対しtypecheck成功、HTTP/decode/payload/rateの既存4files/51件成功、新trial10件成功9.43sを10:06 UTCに確認した。初回5files/61件は60成功/fixture期待エラー名1失敗（既存invalid tokenはunauthorized）で、その期待だけ修正後trial1fileを再検証した。他の前候補成功は不変入力の証拠として保持し、最終全体CIと混同しない。first candidateから追加修正検証まで約41分。実機・実データ・remote mutationは引き続き未実施。
+
+独立レビューでlocal recovery設定/write policy拒否も既知trialの消費より前だったため、trial.admitだけをその確認より先へ寄せた。nontrialは元のrequireRecovery/writePolicy→mutationAdmission順を保つ。10:09 UTCにtypecheck、storage既存42件、新trial11件（8.46s）が成功。停止設定fixtureではexactOptionalPropertyTypesに合わせownerRecoveryを省略し、別途owner_snapshot_requiredを有効化しようとしたfixtureが正規既存D1のcoverage triggerで拒否されたため、元inactive policyのまま停止を検査した。製品保護は変更しない。初回2files/53件は52成功/上記fixture1失敗8.80sとして保持する。
+
+消費の保証範囲は正しいサービス構成で認証済み本人がcanonical record PUTへ到達した試行。trusted ownerを選択できない設定不明・invalid token・不明routeや、全HTTP受信・認証・読取の原価上限とは区別する。前候補の全成功と4files/51件成功は保持し、最終全体CIは主担当へ引き継ぐ。first candidateから最後の追加検証まで約45分。

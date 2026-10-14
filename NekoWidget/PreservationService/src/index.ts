@@ -16,12 +16,14 @@ import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { IntakeControl } from './intake-control';
 import { PilotControl } from './pilot-control';
+import { ToolOwnerTrial, trialPilotAccess, trialOwnerAdmission } from './tool-owner-trial';
 import { RecoveryWriteLease } from './recovery-write-lease';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { OwnerDeletionRequests } from './owner-deletion';
 import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-limiter';
 import { payloadResponse, payloadWork } from './payload-work';
 import { recordResponse } from './record-frame';
+import { recordId } from './documents';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -50,6 +52,7 @@ export interface Env {
   REQUEST_LIMITER?: RateLimit;
 }
 export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: IdentityVerifier;
+  toolTrial?: ToolOwnerTrial;
   ownerRequestLimiter?: OwnerRequestLimiter;
   ownerDeletion?: OwnerDeletionRequests;
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
@@ -180,11 +183,29 @@ export async function route(request: Request, services: Services, context?: Pick
     const revision = record.revision;
     return recordResponse(record, () => services.archive.validateRead(token, id, revision, session.ownerId), signal);
   });
-  if (id && request.method === 'PUT') return payloadWork.run(async () => {
-    // Revalidate after waiting for the payload permit, before receiving a large body.
-    await services.auth.requireSession(token);
-    return response(await services.archive.put(token, id, await readPhotoUploadJSON(request, 29 * 1024 * 1024)));
-  }, request.signal);
+  if (id && request.method === 'PUT') {
+    let archiveEntered = false;
+    try {
+      return await payloadWork.run(async () => {
+        // Revalidate after waiting for the payload permit, before receiving a large body.
+        await services.auth.requireSession(token);
+        const input = await readPhotoUploadJSON(request, 29 * 1024 * 1024);
+        recordId(id);
+        archiveEntered = true;
+        return response(await services.archive.put(token, id, input));
+      }, request.signal);
+    } catch (error) {
+      if (!archiveEntered && services.toolTrial) {
+        // Queue/body/UUID rejection never reaches ArchiveStore's normal debit.
+        // Unknown or expired sessions cannot select an owner's grant.
+        try {
+          const session = await services.auth.requireSession(token);
+          await services.toolTrial.deniedAttempt(session.ownerId);
+        } catch { /* Preserve the original rejection; no provider operation. */ }
+      }
+      throw error;
+    }
+  }
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
@@ -220,6 +241,10 @@ export function configuredServices(env: Env): Services {
   }
   const intakeControl = new IntakeControl(env.DB, now, { requireCostEvidence: general });
   const admission = general ? intakeControl : pilot;
+  const toolTrial = internalPilot && !general ? new ToolOwnerTrial(env.DB, now) : undefined;
+  const pilotAccess = toolTrial ? trialPilotAccess(toolTrial, pilot) : pilot;
+  // Existing owners bypass this branch in DurableAuth; a trial never creates one.
+  const ownerAdmission = toolTrial ? trialOwnerAdmission(toolTrial, admission) : admission;
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   let recovery: RecordRecoveryCopy | undefined;
@@ -235,13 +260,13 @@ export function configuredServices(env: Env): Services {
   const deletionJournal = new OwnerDeletionJournal(env.ARCHIVE);
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now,
     ownerDeletion: deletionJournal,
-    ownerAdmission: admission,
+    ownerAdmission,
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const verifier = new AppleIdentityVerifier({ enabled: true, clientId: credentials.clientId,
     getClientSecret: () => createAppleClientSecret({ ...credentials, now }), takeChallenge: (input) => auth.takeChallenge(input), now });
   const membership = new MembershipLinks({ db: env.DB, auth, authority: boundBillingAuthority(env.MEMBERSHIP_AUTHORITY),
     audience: env.PRESERVATION_LINK_AUDIENCE, now,
-    ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
+    ...(internalPilot ? { pilotStorageAccess: pilotAccess } : {}),
     ...(ownerRecovery ? { ownerRecovery } : {}), requireOwnerRecovery: true });
   const archive = new ArchiveStore({ db: env.DB, bucket: env.ARCHIVE, keys, auth, now,
     ownerWriteLease: new RecoveryWriteLease(env.DB, now, deletionJournal),
@@ -252,12 +277,14 @@ export function configuredServices(env: Env): Services {
     requireGlobalAdmissionLimit: true,
     intakeControl, requireIntakeControl: true,
     mutationAdmission: admission,
-    ...(internalPilot ? { pilotStorageAccess: pilot } : {}),
+    ...(toolTrial ? { toolTrial } : {}),
+    ...(internalPilot ? { pilotStorageAccess: pilotAccess } : {}),
     ...(recovery ? { recovery } : {}), ...(ownerRecovery ? { ownerRecovery } : {}),
     requireRecovery: true, requireOwnerRecovery: true });
   const retention = env.RETENTION_TRACKING_ENABLED === 'YES' && ownerRecovery
     ? new RetentionLedger(env.DB, now, ownerRecovery) : undefined;
   return { auth, archive, verifier, membership,
+    ...(toolTrial ? { toolTrial } : {}),
     ...(general ? { ownerRequestLimiter: new OwnerRequestLimiter(env.DB) } : {}),
     ...(env.OWNER_DELETION_ENABLED === 'YES' ? { ownerDeletion: new OwnerDeletionRequests({
       db: env.DB, journal: deletionJournal, auth, now }) } : {}),
@@ -332,7 +359,18 @@ export default {
       if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);
       if (!env.REQUEST_LIMITER) throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
       const permitted = await env.REQUEST_LIMITER.limit({ key: await sha256(`preservation:${ip}`) });
-      if (!permitted.success) throw new ServiceError('RATE_LIMITED', 429);
+      if (!permitted.success) {
+        if (request.method === 'PUT' && env.PILOT_STORAGE_ACCESS_ENABLED === 'YES' && env.GENERAL_STORAGE_MODE !== 'YES') {
+          // Authenticated trial retries rejected by the IP limiter still consume
+          // lifetime attempt/document allowance. Never parse a rejected upload.
+          try {
+            const services = configuredServices(env);
+            const session = await services.auth.requireSession(bearer(request));
+            await new ToolOwnerTrial(env.DB, () => Date.now()).deniedAttempt(session.ownerId);
+          } catch { /* Preserve the rate-denied response; no provider operation. */ }
+        }
+        throw new ServiceError('RATE_LIMITED', 429);
+      }
       const policy = await env.DB?.prepare(`SELECT delete_intent_required,owner_snapshot_required
         FROM pa_recovery_write_policy WHERE singleton=1`)
         .first<{ delete_intent_required: number; owner_snapshot_required: number }>();

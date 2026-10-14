@@ -4,6 +4,7 @@ import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, 
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
+import type { ToolOwnerTrial } from './tool-owner-trial';
 import { exportPage } from './export-page';
 
 interface Row {
@@ -28,6 +29,7 @@ interface Dependencies {
   intakeControl?: { admit(plannedBytes: number): Promise<void> };
   requireIntakeControl?: boolean;
   mutationAdmission?: { admitMutation(ownerId: string, plannedBytes: number): Promise<void> };
+  toolTrial?: ToolOwnerTrial;
   pilotStorageAccess?: import('./pilot-control').PilotStorageAccess;
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
@@ -355,13 +357,17 @@ export class ArchiveStore {
       throw new ServiceError('ARCHIVE_ACCOUNTING_UNAVAILABLE', 503);
     }
     const allocated = row.used_bytes + row.reserved_bytes;
+    const trial = await this.d.toolTrial?.usage(session.ownerId);
+    const limitBytes = trial ? Math.max(1, Math.min(this.d.quotaBytes, allocated + trial.remainingBytes)) : this.d.quotaBytes;
+    const maximumRecords = trial ? Math.max(1, Math.min(this.d.maximumRecords,
+      row.saved_records + row.pending_records + trial.remainingRecords)) : this.d.maximumRecords;
     return { version: 1, accounting: 'encrypted-records-v1',
-      storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes: this.d.quotaBytes,
-        availableBytes: Math.max(0, this.d.quotaBytes - allocated), overLimit: allocated > this.d.quotaBytes },
-      records: { saved: row.saved_records, pending: row.pending_records, maximumRecords: this.d.maximumRecords,
+      storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes,
+        availableBytes: Math.max(0, limitBytes - allocated), overLimit: allocated > limitBytes },
+      records: { saved: row.saved_records, pending: row.pending_records, maximumRecords,
         // Keep tombstones for replay protection, but do not let lifetime deletions
         // exhaust the number of records a customer may currently keep.
-        creationLimitReached: row.saved_records + row.pending_records >= this.d.maximumRecords } };
+        creationLimitReached: row.saved_records + row.pending_records >= maximumRecords } };
   }
   async list(token: string, after = '', limit = 20) {
     if (after) recordId(after);
@@ -416,8 +422,6 @@ export class ArchiveStore {
   async put(token: string, id: string, input: unknown) {
     recordId(id);
     const session = await this.d.auth.requireSession(token);
-    this.requireRecovery();
-    await this.requireWritePolicy();
     // Bound every PUT before decoding, hashing, key use or backup writes. Even
     // edits carry the photo input, although its unchanged S3 copy is reused.
     const encoded = input && typeof input === 'object'
@@ -425,11 +429,15 @@ export class ArchiveStore {
     const plannedPhoto = typeof encoded === 'string'
       ? Math.min(MAX_PHOTO_BYTES, Math.ceil(encoded.length / 4) * 3) : 0;
     const plannedBytes = plannedPhoto + 512 * 1024 + 8192;
-    await this.d.mutationAdmission?.admitMutation(session.ownerId, plannedBytes);
+    const trial = await this.d.toolTrial?.admit(session.ownerId, id, input);
+    this.requireRecovery();
+    await this.requireWritePolicy();
+    if (!trial) await this.d.mutationAdmission?.admitMutation(session.ownerId, plannedBytes);
     const existing = await this.row(session.ownerId, id);
     if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
-    const pilotAccess = !existing && await this.d.pilotStorageAccess?.allowed(session.ownerId);
-    if (!existing && (this.d.requireIntakeControl || this.d.intakeControl)) {
+    const pilotAccess = trial ? { expiresAt: Math.min(trial.grant.ends_at, trial.grant.valid_until) }
+      : !existing && await this.d.pilotStorageAccess?.allowed(session.ownerId);
+    if (!trial && !existing && (this.d.requireIntakeControl || this.d.intakeControl)) {
       if (!this.d.intakeControl) throw new ServiceError('PRESERVATION_INTAKE_PAUSED', 503);
       // Authenticate membership before spending the shared allowance. Classify
       // by the server-owned row, never by caller-supplied expectedRevision.
@@ -446,10 +454,10 @@ export class ArchiveStore {
     if (Object.keys(request).some((key) => !['document', 'photoBase64', 'expectedRevision', 'consentVersion'].includes(key))) {
       throw new ServiceError('INVALID_RECORD');
     }
-    const document = validateDocument(request.document);
-    const photo = decodePhoto(request.photoBase64);
+    const document = trial?.document ?? validateDocument(request.document);
+    const photo = trial ? trial.photo : decodePhoto(request.photoBase64);
     if ((photo === null) !== (document.photoFile === null)) throw new ServiceError('INVALID_RECORD');
-    const photoSHA256 = photo === null ? null : await sha256(photo);
+    const photoSHA256 = trial ? trial.photoSHA256 : photo === null ? null : await sha256(photo);
     if (document.toolBackup?.kind === 'photo' && document.toolBackup.sha256 !== photoSHA256) throw new ServiceError('INVALID_RECORD');
     if (document.toolBackup && document.toolBackup.kind !== 'photo'
       && await sha256(Uint8Array.from(atob(document.toolBackup.payload), c => c.charCodeAt(0))) !== document.toolBackup.sha256) throw new ServiceError('INVALID_RECORD');
@@ -467,7 +475,7 @@ export class ArchiveStore {
         if (result.results.length !== batch.length) throw new ServiceError('REVISION_CONFLICT', 409);
       }
     }
-    const initialFingerprint = await sha256(JSON.stringify({ document, photoSHA256 }));
+    const initialFingerprint = trial?.fingerprint ?? await sha256(JSON.stringify({ document, photoSHA256 }));
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
@@ -567,7 +575,8 @@ export class ArchiveStore {
     if (metadata.length > 512 * 1024 || (sealedPhoto?.length ?? 0) > 30 * 1024 * 1024) throw new ServiceError('ARCHIVE_TOO_LARGE', 413);
     const size = metadata.length + (sealedPhoto?.length ?? 0);
     await this.d.db.prepare('INSERT OR IGNORE INTO pa_inventory(owner_id) VALUES(?)').bind(session.ownerId).run();
-    const reservationFence = pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
+    const reservationFence = trial ? this.d.toolTrial!.fence(trial)
+      : pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
       AND (? IS NULL OR ((SELECT coalesce(sum(quota_bytes),0) FROM pa_records)
@@ -608,7 +617,8 @@ export class ArchiveStore {
         metadata, photoKey: sealedPhoto === null ? null : key, photoBytes: photo?.length ?? 0,
         quotaBytes: size, deleted: false, photoCiphertext: sealedPhoto }) : null;
       if (!pilotAccess) await this.paid(session.ownerId);
-      const commitFence = pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
+      const commitFence = trial ? this.d.toolTrial!.fence(trial)
+        : pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
       // Commit reference and consume its reservation in one D1 transaction.
       const result = await this.d.db.batch([
         this.d.db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,
@@ -623,6 +633,7 @@ export class ArchiveStore {
           (SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=?)`)
           .bind(operation, session.ownerId, id, operation),
         ...(copied ? [this.recoveryReference(session.ownerId, id, 1, copied)] : []),
+        ...(trial ? this.d.toolTrial!.committed(trial, operation) : []),
       ]);
       if (result[0]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
         await this.d.auth.requireSession(token);
