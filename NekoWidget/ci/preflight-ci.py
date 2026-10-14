@@ -776,8 +776,29 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
             raise ValueError('Fixed internal Release failure differs from retained task history')
         if any(run['id'] != planner.INTERNAL_REPORT_CORRECTION_RUN and run['path'] != DIAGNOSTIC_WORKFLOW for run in failed):
             blockers.append('internal_report_has_unresolved_candidate_failure')
+    tool_correction = (result.get("scope") == planner.TOOL_PRESERVATION_SCOPE and isinstance(correction_evidence, dict)
+        and correction_evidence.get("kind") == "tool-preservation-signed-release-build-recovery-v1"
+        and correction_evidence.get("candidate_sha") == result.get("head")
+        and correction_evidence.get("run_id") == planner.TOOL_BUILD_SOURCE_RUN
+        and correction_evidence.get("sha") == planner.TOOL_BUILD_SOURCE
+        and correction_evidence.get("failed_build_job_id") == planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]
+        and correction_evidence.get("failed_build_log_sha256") == planner.TOOL_LOG_DIGESTS[planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]]
+        and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD]
+        and correction_evidence.get("source_build_success") is False)
+    if result.get("scope") == planner.TOOL_PRESERVATION_SCOPE and correction_evidence is not None and not tool_correction:
+        raise ValueError("Unregistered tool Build recovery proof")
     fixed_owner_failures = ({planner.OWNER_CLOUD_CORRECTION_RUN, planner.OWNER_CLOUD_CORRECTION_BACKEND_RUN}
                             if owner_correction else set())
+    if tool_correction:
+        sources = [run for run in runs if run["id"] == planner.TOOL_BUILD_SOURCE_RUN]
+        if (len(sources) != 1 or sources[0].get("head_sha") != planner.TOOL_BUILD_SOURCE
+                or sources[0].get("head_branch") != planner.TOOL_BUILD_BRANCH or sources[0].get("event") != "push"
+                or sources[0].get("path") != IOS_WORKFLOW or sources[0].get("run_attempt") != 1
+                or (sources[0].get("status"), sources[0].get("conclusion")) != ("completed", "failure")):
+            raise ValueError("Fixed tool source failure missing from task history")
+        fixed_owner_failures.add(planner.TOOL_BUILD_SOURCE_RUN)
+        if any(run["id"] != planner.TOOL_BUILD_SOURCE_RUN and run["path"] != DIAGNOSTIC_WORKFLOW for run in failed):
+            blockers.append("tool_recovery_has_unknown_failure")
     if internal_correction:
         fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
     if runtime_continuation:
@@ -970,6 +991,21 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                              if missing or unsupported else
                              "Reuse active work or revise the measured execution plan" if blockers else "Run required checks")
     return result
+
+
+def tool_recovery_cost(result, proof, include_upload, history):
+    if (result.get("scope") != planner.TOOL_PRESERVATION_SCOPE or not isinstance(proof, dict)
+            or proof.get("kind") != "tool-preservation-signed-release-build-recovery-v1"
+            or proof.get("candidate_sha") != result.get("head") or proof.get("run_id") != planner.TOOL_BUILD_SOURCE_RUN
+            or proof.get("sha") != planner.TOOL_BUILD_SOURCE): return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    return {**result, "full_cost_before_recovery": result["cost"], "required_backend_runs": [proof["backend_evidence"]],
+            "cost_review_required": False, "ready": True,
+            "cost": {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [30 + upload] * 2,
+                     "owning_jobs": [planner.BUILD], "source_build_success": False,
+                     "includes_future_rework": False, "samples": [],
+                     "note": "30 minutes is the existing full Build job timeout reserved for replanning, not an observed duration or queue/completion guarantee. Preserve the first candidate, failed Build and all source native/PR evidence."}}
 
 
 def moderation_ui_recovery_cost(result, proof, include_upload, history):
@@ -1547,6 +1583,10 @@ def main(argv=None):
             runs = (read_task_runs(result["head"], metadata_repair=True) if is_metadata_repair else
                     read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"]))
             correction = None
+            if result["scope"] == planner.TOOL_PRESERVATION_SCOPE:
+                if branch != planner.TOOL_BUILD_BRANCH: raise ValueError("Tool recovery requires its fixed candidate branch")
+                correction = planner.tool_recovery_source(result["head"], REPOSITORY,
+                    lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             metadata_repair = None
             if is_metadata_repair:
                 if branch != planner.INTERNAL_REPORT_METADATA_BRANCH or recovery is not None:
@@ -1581,6 +1621,7 @@ def main(argv=None):
                     result["head"], branch, REPOSITORY, tuple(result["required_jobs"]),
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             result = photo_correction_replay_cost(result, correction, args.include_upload, history)
+            result = tool_recovery_cost(result, correction, args.include_upload, history)
             result = moderation_build_correction_cost(result, correction, args.include_upload, history)
             result = report_reply_readiness_cost(result, correction, args.include_upload, history)
 

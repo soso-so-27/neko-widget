@@ -3940,6 +3940,286 @@ class PreservationRecoveryChunksScopeTests(unittest.TestCase):
                 self.assertIn("does not certify that job's success", summary)
 
 
+class ToolBuildRecoveryInputTests(unittest.TestCase):
+    def verify(self, *, extra=None, mode="100644", registration=True, approved=True, ancestor=True, signed=True, checkline=True, raw=None, inventory=True):
+        p=planner;head="a"*40;approval="b"*40
+        release="NekoWidget/ci/release-testflight.py"
+        rows={release:[":100644",mode,"8cc1d532e0c53346aacdf0c9f634baabcd170fdf",p.TOOL_RESTORED_RELEASE,"M"],
+              "NekoWidget/ci/plan-ios-ci.py":[":100644","100644","c"*40,"d"*40,"M"],
+              "NekoWidget/ci/check-development-flow.py":[":100644","100644","c"*40,"d"*40,"M"]}
+        if extra:rows.update(extra)
+        def git(*args):
+            if args[0]=="merge-base":
+                if not ancestor and "--is-ancestor" in args:raise subprocess.CalledProcessError(1,args)
+                return approval
+            if args[0]=="diff":return raw if raw is not None else "".join(" ".join(fields)+"\0"+path+"\0" for path,fields in rows.items())
+            if args[0]=="ls-tree":
+                ref,path=args[1],args[3]
+                blob=p.TOOL_RESTORED_RELEASE if path==release else "e"*40
+                if not signed and path==release:blob="f"*40
+                if not approved and ref==head:blob="f"*40
+                if not inventory and ref==p.TOOL_BUILD_SOURCE and path.endswith("ios_ci_scope.py"):blob="c"*40
+                return f"100644 blob {blob}\t{path}"
+            if args[0]=="show":
+                if args[1].endswith("plan-ios-ci.py"):return f'TOOL_BUILD_SOURCE = "{p.TOOL_BUILD_SOURCE}"' if registration else "unapproved"
+                before="CHECKS = (\n)\n"
+                if args[1].startswith(p.TOOL_BUILD_SOURCE+":"):return before
+                return before.replace("(\n",'(\n    "test-media-staging-release-config.py",\n') if checkline else before
+            raise AssertionError(args)
+        with patch.object(p,"git",side_effect=git),patch.object(p,"tool_preservation_immutable_inputs",return_value=True):return p.tool_recovery_inputs(head)
+
+    def test_signed_original_and_exact_approved_eight_controls_only(self):
+        self.assertTrue(self.verify())
+        for kwargs in ({"registration":False},{"approved":False},{"ancestor":False},{"signed":False},{"checkline":False},{"inventory":False},
+                       {"mode":"100755"},{"mode":"120000"},{"mode":"160000"},{"raw":"malformed\0"}):
+            self.assertFalse(self.verify(**kwargs),kwargs)
+        for path in ("NekoWidget/ci/moderation-v2-readiness.json","NekoWidget/ci/verify-moderation-readiness.mjs",
+                     "NekoWidget/ci/test-moderation-readiness.mjs",planner.MEMORY_TEST_PATH,
+                     planner.PRESERVATION_WORKFLOW,"NekoWidget/ci/unknown.py","NekoWidget/Shared/unknown.swift"):
+            self.assertFalse(self.verify(extra={path:[":100644","100644","c"*40,"d"*40,"M"]}),path)
+        self.assertTrue(self.verify(extra={"handoffs/result.md":[":000000","100644","0"*40,"d"*40,"A"]}))
+        self.assertFalse(self.verify(extra={"handoffs/result.md":[":100644","120000","c"*40,"d"*40,"M"]}))
+
+    def test_fixed_observation_never_accepts_unknown_repo_or_endpoint_and_captures_escapes(self):
+        response=subprocess.CompletedProcess([],0,stdout='{"sha":"observed"}',stderr="")
+        path=f"repos/soso-so-27/neko-widget/git/commits/{planner.TOOL_PR_MERGE}"
+        with patch.object(planner.subprocess,"run",return_value=response) as command:
+            self.assertEqual(planner.tool_fixed_observation(path),{"sha":"observed"})
+            self.assertTrue(command.call_args.kwargs["capture_output"])
+            self.assertEqual(command.call_args.args[0][:7],["gh","api","--hostname","github.com","--method","GET",path])
+            for bad in ("repos/other/repo/git/commits/"+planner.TOOL_PR_MERGE,"repos/soso-so-27/neko-widget/actions/workflows/ios-build.yml/dispatches",path+"/extra"):
+                with self.assertRaises(ValueError):planner.tool_fixed_observation(bad)
+            self.assertEqual(command.call_count,1)
+
+
+class ToolBuildRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.p = planner
+        self.head, self.main = "a"*40, "b"*40
+        self.now = dt.datetime(2026,10,14,6,tzinfo=dt.timezone.utc)
+        self.repo = "soso-so-27/neko-widget"
+        p=planner
+        self.required = p.required_jobs_from_scope(p.TOOL_PRESERVATION_SCOPE)
+        def run(identifier, sha, workflow="ios-build.yml", event="push", result="success"):
+            return {"id":identifier,"run_number":identifier,"head_sha":sha,"head_branch":p.TOOL_BUILD_BRANCH,
+                    "workflow_id":335014238 if workflow=="ios-build.yml" else 363932714,
+                    "path":".github/workflows/"+workflow,"event":event,"run_attempt":1,"status":"completed","conclusion":result,
+                    "updated_at":"2026-10-14T05:30:00Z","repository":{"full_name":self.repo},"head_repository":{"full_name":self.repo}}
+        def job(identifier,name,owner,steps):
+            return {"id":identifier,"name":name,"run_id":owner["id"],"head_sha":owner["head_sha"],"run_attempt":1,
+                    "status":"completed","conclusion":"success","completed_at":"2026-10-14T05:30:00Z",
+                    "steps":[{"name":step,"status":"completed","conclusion":"success"} for step in steps]}
+        self.source=run(p.TOOL_BUILD_SOURCE_RUN,p.TOOL_BUILD_SOURCE,result="failure")
+        self.pr=run(p.TOOL_PR_RUN,p.TOOL_BUILD_SOURCE,"preservation-service.yml","pull_request")
+        self.pr["head_commit"]={"id":p.TOOL_BUILD_SOURCE,"tree_id":p.TOOL_PR_TREE}
+        self.pr["pull_requests"]=[{"number":289,"id":4853108830,"base":{"sha":p.TOOL_PR_BASE,"ref":"main","repo":{"id":1335079243}},
+                                  "head":{"sha":p.TOOL_BUILD_SOURCE,"ref":p.TOOL_BUILD_BRANCH,"repo":{"id":1335079243}}}]
+        self.candidate=run(1003,self.head)
+        self.current=dict(run(1004,self.main),head_branch="main")
+        workflow=(Path(__file__).parents[2]/".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+        block=workflow.split("  build-without-signing:\n",1)[1].split("  simulator-smoke-test:\n",1)[0]
+        excluded={"Verify packaged icons and capture first launch","Upload icon display evidence","Upload build result bundle"}
+        self.build_steps=tuple(n for n in re.findall(r"^      - name: (.+)$",block,re.M) if n not in excluded)
+        self.source_jobs=[]
+        for name,identifier in p.TOOL_BUILD_SOURCE_JOBS.items():
+            steps=self.build_steps if name==p.BUILD else ("Select checks",) if name==p.PLAN_JOB else ("Run Simulator smoke test",) if name==p.BOOTSTRAP_SMOKE else ("Run sharing runtime matrix",)
+            entry=job(identifier,name,self.source,steps)
+            if name==p.BUILD:
+                entry["conclusion"]="failure"
+                for index,step in enumerate(entry["steps"]):step["conclusion"]="success" if index<2 else "failure" if index==2 else "skipped"
+            self.source_jobs.append(entry)
+        steps=("Typecheck the disabled service","Verify local identity, custody and storage boundaries",
+               "Verify legacy notice evidence migration with synthetic owners","Bundle the private authority without deployment or provisioning",
+               "Bundle the private owner deletion executor without deployment")
+        self.pr_jobs=[job(p.TOOL_PR_JOB,p.PRESERVATION_JOB,self.pr,steps)]
+        self.candidate_jobs=[job(10031,p.PLAN_JOB,self.candidate,("Select checks",)),job(10032,p.BUILD,self.candidate,self.build_steps)]
+        self.current_jobs=[job(10041,p.PLAN_JOB,self.current,("Select checks",))]
+        self.candidate_backend={"total_count":0,"workflow_runs":[]}
+        self.push_backend={"total_count":0,"workflow_runs":[]}
+        self.observations={
+            f"repos/{self.repo}/git/commits/{p.TOOL_PR_MERGE}":{"sha":p.TOOL_PR_MERGE,"tree":{"sha":p.TOOL_PR_TREE},"parents":[{"sha":v} for v in (p.TOOL_PR_BASE,p.TOOL_BUILD_SOURCE)]},
+            f"repos/{self.repo}/git/commits/{p.TOOL_BUILD_SOURCE}":{"sha":p.TOOL_BUILD_SOURCE,"tree":{"sha":p.TOOL_PR_TREE},"parents":[{"sha":v} for v in ("460a732dc0a563e257e1b929a395d992b53f4b1d",p.TOOL_PR_BASE)]},
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_PR_JOB}/logs":f"+{p.TOOL_PR_MERGE}:refs/remotes/pull/289/merge\ncheckout {p.TOOL_PR_MERGE}\n",
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_BUILD_SOURCE_JOBS[p.BUILD]}/logs":"reviewed_code_changed\n# tests 2\n# pass 1\n# fail 1\n"}
+        self.digests={identifier:p.tool_log_digest(self.observations[f"repos/{self.repo}/actions/jobs/{identifier}/logs"]) for identifier in p.TOOL_LOG_DIGESTS}
+
+    def record(self,sha):
+        p=planner
+        record={"schema_version":1,"repository":self.repo,"head_sha":sha,"scope":p.TOOL_PRESERVATION_SCOPE,
+                "required_jobs":list(self.required),"required_backend_runs":p.tool_preservation_requirements(p.TOOL_BUILD_SOURCE),
+                "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
+        if sha==self.head:
+            record["test_correction_evidence"]=self.prove()
+            record["required_backend_runs"]=[record["test_correction_evidence"]["backend_evidence"]]
+        if sha==self.main:record.update(evidence_run_id=1003,evidence_sha=self.head)
+        return record
+
+    def api(self,path):
+        p=planner; endpoint=path.split("/actions/",1)[1]
+        if endpoint=="workflows/preservation-service.yml":return {"id":363932714,"path":p.PRESERVATION_WORKFLOW,"state":"active"}
+        if endpoint=="workflows/ios-build.yml":return {"id":335014238,"path":".github/workflows/ios-build.yml","state":"active"}
+        if endpoint.startswith("workflows/preservation-service.yml/runs?"):
+            if "head_sha="+self.head in endpoint:return self.candidate_backend
+            if "event=push" in endpoint:return self.push_backend
+            return {"total_count":1,"workflow_runs":[self.pr]}
+        if endpoint.startswith("workflows/ios-build.yml/runs?"):
+            if "head_sha="+p.TOOL_BUILD_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.source]}
+            return {"workflow_runs":[self.candidate]}
+        owners=[(self.source,self.source_jobs),(self.pr,self.pr_jobs),(self.candidate,self.candidate_jobs),(self.current,self.current_jobs)]
+        for run,jobs in owners:
+            if endpoint==f"runs/{run['id']}":return run
+            if endpoint==f"runs/{run['id']}/jobs?filter=latest&per_page=100&page=1":return {"total_count":len(jobs),"jobs":jobs}
+            for job in jobs:
+                if endpoint==f"jobs/{job['id']}":return job
+                if endpoint==f"jobs/{job['id']}/logs":return "IOS_CI_PLAN_JSON="+json.dumps(self.record(run["head_sha"]))
+        raise AssertionError(path)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with patch.object(planner,"tool_recovery_inputs",return_value=True),patch.object(planner,"tool_build_steps",return_value=self.build_steps), \
+                patch.object(planner,"tool_fixed_observation",side_effect=self.observations.__getitem__), \
+                patch.object(planner,"TOOL_LOG_DIGESTS",self.digests):yield
+
+    def prove(self):return planner.tool_recovery_source(self.head,self.repo,self.api,self.now)
+
+    def test_fixed_three_native_and_pr_are_required_before_one_complete_build(self):
+        with self.mocks():
+            proof=self.prove()
+            self.assertFalse(proof["source_build_success"])
+            self.assertEqual(len(proof["jobs"]),3)
+            self.assertEqual(proof["backend_evidence"]["event"],"pull_request")
+            self.assertFalse(proof["backend_evidence"]["push_evidence"])
+            self.assertEqual(planner.correction_owning_jobs(planner.TOOL_PRESERVATION_SCOPE,planner.TOOL_BUILD_SOURCE),(planner.BUILD,))
+            self.assertTrue(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+            self.assertFalse(planner.covers_jobs(self.source_jobs,self.required,planner.TOOL_BUILD_SOURCE,self.now))
+            all_success=copy.deepcopy(self.source_jobs)
+            next(j for j in all_success if j["name"]==planner.BUILD)["conclusion"]="success"
+            self.assertFalse(planner.covers_jobs(all_success,self.required,planner.TOOL_BUILD_SOURCE,self.now))
+
+    def test_every_new_build_step_must_execute_no_skips_or_extra_failures(self):
+        with self.mocks():
+            self.assertEqual(len(self.build_steps),39)
+            for step in self.candidate_jobs[1]["steps"]:
+                step["conclusion"]="skipped"
+                self.assertFalse(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs),step["name"])
+                step["conclusion"]="success"
+            self.candidate_jobs.append(dict(self.candidate_jobs[1],id=99999))
+            self.assertFalse(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+
+    def test_source_incomplete_wrong_attempt_extra_native_failure_and_pr_identity_fail(self):
+        with self.mocks():
+            for job in self.source_jobs:
+                if job["name"]==planner.BUILD:continue
+                for field,value in (("status","in_progress"),("conclusion","failure"),("run_attempt",2),("head_sha","f"*40)):
+                    old=job[field];job[field]=value
+                    with self.subTest(job=job["name"],field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                    job[field]=old
+            for field,value in (("event","workflow_dispatch"),("run_attempt",2),("head_branch","codex/other"),("conclusion","failure"),("head_sha","f"*40)):
+                old=self.pr[field];self.pr[field]=value
+                with self.subTest(field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.pr[field]=old
+            for step in self.pr_jobs[0]["steps"]:
+                step["conclusion"]="skipped"
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                step["conclusion"]="success"
+            self.push_backend={"total_count":1,"workflow_runs":[self.pr]}
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+
+    def test_pr_full_tree_parents_checkout_log_and_candidate_failure_are_not_optional(self):
+        with self.mocks():
+            for key,value in self.observations.items():
+                old=copy.deepcopy(value)
+                self.observations[key] = "changed transcript" if isinstance(value,str) else {**value,"tree":{"sha":"f"*40}}
+                with self.subTest(key=key),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.observations[key]=old
+            self.pr["pull_requests"][0]["base"]["sha"]="f"*40
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.pr["pull_requests"][0]["base"]["sha"]=planner.TOOL_PR_BASE
+            self.candidate_backend={"total_count":1,"workflow_runs":[dict(self.pr,head_sha=self.head,status="in_progress",conclusion=None)]}
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+
+    def test_main_reuse_reaches_the_same_graph_and_no_normal_four_job_shortcut(self):
+        env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/main","GITHUB_SHA":self.main,"GITHUB_REPOSITORY":self.repo,"GITHUB_RUN_ID":"1004"}
+        with self.mocks(),patch.object(planner,"git",return_value=self.main),patch.object(planner,"equivalent_inputs",return_value=True):
+            self.assertEqual(planner.find_evidence(env,self.required,self.api,self.now),(1003,self.head))
+            self.candidate_jobs[1]["steps"][2]["conclusion"]="skipped"
+            self.assertIsNone(planner.find_evidence(env,self.required,self.api,self.now))
+
+
+class ToolBackendWaitTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=ToolBuildRecoveryTests();self.fixture.setUp()
+        f=self.fixture;p=planner
+        self.run=copy.deepcopy(f.pr)
+        self.run.update(id=2001,head_sha=f.head,status="in_progress",conclusion=None,
+                        updated_at=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(seconds=1)).isoformat())
+        self.run["head_commit"]={"id":f.head,"tree_id":"c"*40}
+        self.run["pull_requests"][0]["head"]["sha"]=f.head
+        self.run["pull_requests"][0]["base"]["sha"]="d"*40
+        self.seconds=0
+        self.calls=[]
+
+    def wait(self,responses,latency=0):
+        def api(path,*,timeout):
+            self.calls.append(timeout)
+            self.assertLessEqual(timeout,120-self.seconds)
+            self.assertLessEqual(timeout,15)
+            self.seconds+=latency
+            response=responses.pop(0) if len(responses)>1 else responses[0]
+            return copy.deepcopy(response)
+        def sleep(seconds):self.seconds+=seconds
+        def git(*args):return "c"*40 if args[0]=="rev-parse" else "d"*40
+        with patch.object(planner,"tool_recovery_inputs",return_value=True),patch.object(planner,"git",side_effect=git), \
+                patch.object(planner.time,"monotonic",side_effect=lambda:self.seconds),patch.object(planner.time,"sleep",side_effect=sleep):
+            return planner.tool_wait_candidate_backend(self.fixture.head,self.fixture.repo,api)
+
+    def index(self,run=None):return {"total_count":1,"workflow_runs":[self.run if run is None else run]}
+
+    def test_only_same_candidate_active_can_wait_and_success_is_rechecked_by_common_proof(self):
+        done=dict(self.run,status="completed",conclusion="success")
+        result=self.wait([self.index(),self.index(done)],latency=3)
+        self.assertEqual(result["seconds"],16)
+        self.assertEqual(result["run_ids"],[2001])
+        self.assertFalse(result["backend_success_evidence"])
+        self.assertEqual(result["maximum_seconds"],120)
+        f=self.fixture
+        f.candidate_backend=self.index()
+        with f.mocks(),self.assertRaises(planner.CorrectionEvidenceUnavailable):f.prove()
+
+    def test_api_latency_timeout_and_late_success_are_inside_monotonic_deadline(self):
+        with self.assertRaises(ValueError):self.wait([self.index()],latency=4)
+        self.assertLessEqual(self.seconds,120)
+        self.assertLess(self.calls[-1],15)
+        self.seconds=0;self.calls=[]
+        done=dict(self.run,status="completed",conclusion="success")
+        with self.assertRaises(ValueError):self.wait([self.index(done)],latency=121)
+        self.assertEqual(len(self.calls),1)
+
+    def test_failure_unknown_identity_stale_or_incomplete_stops_without_sleep(self):
+        for field,value in (("head_sha","f"*40),("head_branch","codex/other"),("workflow_id",9),
+                            ("event","workflow_dispatch"),("run_attempt",2),("status","unknown"),
+                            ("updated_at","2020-01-01T00:00:00Z")):
+            self.seconds=0;self.calls=[]
+            bad=dict(self.run,**{field:value})
+            with self.subTest(field=field),self.assertRaises(ValueError):self.wait([self.index(bad)])
+            self.assertEqual(self.seconds,0)
+        for conclusion in ("failure","cancelled","skipped"):
+            with self.assertRaises(ValueError):self.wait([self.index(dict(self.run,status="completed",conclusion=conclusion))])
+        for index in ({"total_count":2,"workflow_runs":[self.run]}, {"total_count":2,"workflow_runs":[self.run,self.run]}):
+            with self.assertRaises(ValueError):self.wait([index])
+        bad=copy.deepcopy(self.run);bad["pull_requests"][0]["number"]=290
+        with self.assertRaises(ValueError):self.wait([self.index(bad)])
+
+    def test_observed_active_run_cannot_disappear_or_be_replaced_by_another_success(self):
+        done=dict(self.run,status="completed",conclusion="success")
+        for later in ({"total_count":0,"workflow_runs":[]},self.index(dict(done,id=2002))):
+            self.seconds=0;self.calls=[]
+            with self.assertRaises(ValueError):self.wait([self.index(),later])
+        self.seconds=0;self.calls=[]
+        pair={"total_count":2,"workflow_runs":[self.run,dict(self.run,id=2002)]}
+        with self.assertRaises(ValueError):self.wait([pair,self.index(done)])
+
+
 class ToolPreservationScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
@@ -4053,16 +4333,24 @@ class ToolPreservationScopeTests(unittest.TestCase):
     def test_native_plan_declares_backend_at_actual_tested_sha_without_claiming_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/"event").write_text("{}")
-            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/codex/tools","GITHUB_SHA":self.head,
+            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/"+planner.TOOL_BUILD_BRANCH,"GITHUB_SHA":self.head,
                  "GITHUB_REPOSITORY":"owner/repo","GITHUB_RUN_ID":"7","GITHUB_EVENT_PATH":str(root/"event"),
                  "GITHUB_OUTPUT":str(root/"output"),"GITHUB_STEP_SUMMARY":str(root/"summary")}
             output=io.StringIO()
-            with patch.dict(os.environ,env),contextlib.redirect_stdout(output),patch.object(planner,"changed_paths",return_value=list(self.rows())),patch.object(planner,"runtime_scope",return_value=planner.TOOL_PRESERVATION_SCOPE),patch.object(planner,"find_evidence",return_value=None):
+            proof={"sha":planner.TOOL_BUILD_SOURCE,"run_id":planner.TOOL_BUILD_SOURCE_RUN,"jobs":[],"backend_evidence":{"event":"pull_request","candidate_sha":planner.TOOL_BUILD_SOURCE}}
+            wait={"seconds":10,"maximum_seconds":120,"run_ids":[99],"backend_success_evidence":False}
+            with patch.dict(os.environ,env),contextlib.redirect_stdout(output),patch.object(planner,"changed_paths",return_value=list(self.rows())),patch.object(planner,"runtime_scope",return_value=planner.TOOL_PRESERVATION_SCOPE),patch.object(planner,"find_evidence",return_value=None),patch.object(planner,"find_test_correction_evidence",return_value=proof),patch.object(planner,"tool_wait_candidate_backend",return_value=wait):
                 planner.main()
             record=json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=",1)[1].splitlines()[0])
-            self.assertEqual(record["required_backend_runs"],planner.tool_preservation_requirements(self.head))
+            self.assertEqual(record["required_backend_runs"],[proof["backend_evidence"]])
             self.assertEqual(len(record["required_jobs"]),4)
             self.assertIsNone(record["evidence_run_id"])
+            self.assertEqual(record["backend_wait"],wait)
+            outputs=(root/"output").read_text()
+            self.assertIn("build=true",outputs)
+            self.assertIn("smoke=false",outputs)
+            self.assertIn("sharing=false",outputs)
+            self.assertIn("app_ui=false",outputs)
 
 
 class PreservationPublicRetentionScopeTests(unittest.TestCase):
@@ -8104,11 +8392,8 @@ class PlanTests(unittest.TestCase):
         self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
                       "completed_at": "2026-09-07T11:00:00Z"} for name in required]
         with patch.object(planner, "tool_preservation_backend_evidence", return_value={}) as backend:
-            self.assertEqual(planner.find_evidence(self.env, required, self.api, self.now), (10, self.sha))
-            self.assertEqual(backend.call_args.args[:2], (self.sha, "owner/repo"))
-            self.assertEqual(backend.call_args.kwargs, {"branch": "codex/movie"})
-        with patch.object(planner, "tool_preservation_backend_evidence", side_effect=ValueError("missing")), self.assertRaises(ValueError):
-            planner.find_evidence(self.env, required, self.api, self.now)
+            self.assertIsNone(planner.find_evidence(self.env, required, self.api, self.now))
+            backend.assert_not_called()
         with patch.object(planner, "tool_preservation_backend_evidence", side_effect=AssertionError("unrelated scope")):
             self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
                           "completed_at": "2026-09-07T11:00:00Z"} for name in planner.FULL]
