@@ -3062,14 +3062,22 @@ TOOL_PR_RUN, TOOL_PR_JOB = 38513358211, 115686619818
 TOOL_PR_MERGE = "22efa05feb50d81f5f095196003c78628864fc6b"
 TOOL_PR_BASE = "70192943428fbf6392b6d00a0b2ed6fe3b0b9233"
 TOOL_PR_TREE = "b63b4a6908d2fe05d832f6d172762184ed5b2af7"
+TOOL_PLAN_FAILURE_SOURCE = "a3f68237c32979703f43f41b4a0325320daadb68"
+TOOL_PLAN_FAILURE_RUN, TOOL_PLAN_FAILURE_JOB = 38517737245, 115700231933
+TOOL_PLAN_FAILURE_PLACEHOLDERS = {
+    115700711611: "needs.plan.outputs.smoke_name", 115700712334: "needs.plan.outputs.build_name",
+    115700711905: UNEXPANDED_SHARING_JOB, 115700712155: UNEXPANDED_SHARING_JOB,
+    115700712279: UNEXPANDED_SHARING_JOB, 115700712661: UNEXPANDED_SHARING_JOB,
+}
 TOOL_LOG_DIGESTS = {
     115686804115: "ffe004dd05f28e7ac8b7e0818a23b1d70327adabae61c3dddb0ecc85e29b7165",
     115686619818: "ff654eae740a0b7e877f6aa0a4f2b9259d27079651a3292c029647763e09b86c",
+    115700231933: "5b5524d4b0ecb7e17f375387272b27e20f8642ebac8921fb4b220b371915cfd8",
 }
 
 
 def tool_fixed_observation(path):
-    """Four immutable, read-only endpoints; never render captured log escapes."""
+    """Five immutable, read-only endpoints; never render captured log escapes."""
     prefix = "repos/soso-so-27/neko-widget/"
     allowed = {prefix + "git/commits/" + sha for sha in (TOOL_BUILD_SOURCE, TOOL_PR_MERGE)}
     allowed |= {prefix + f"actions/jobs/{job}/logs" for job in TOOL_LOG_DIGESTS}
@@ -3176,11 +3184,14 @@ def tool_pr_backend_proof(repository, api, now):
     tool_run_identity(run, TOOL_PR_RUN, TOOL_BUILD_SOURCE, "preservation-service.yml", "pull_request", "success", now, workflow_id=363932714)
     expected_pr = {"number": 289, "id": 4853108830}
     prs = run.get("pull_requests")
-    if (not isinstance(prs, list) or len(prs) != 1 or any(prs[0].get(key) != value for key, value in expected_pr.items())
-            or any(prs[0].get(side, {}).get("sha") != sha or prs[0][side].get("ref") != ref
+    # GitHub may update these pointers or clear the array after merge.
+    # Historical bytes remain bound below by head_commit, Git parents/tree and raw log.
+    if not isinstance(prs, list) or len(prs) > 1: raise ValueError("Fixed PR identities differ")
+    if prs and (any(prs[0].get(key) != value for key, value in expected_pr.items())
+            or any(prs[0].get(side, {}).get("ref") != ref
                    or prs[0][side].get("repo", {}).get("id") != 1335079243
-                   for side, sha, ref in (("base", TOOL_PR_BASE, "main"), ("head", TOOL_BUILD_SOURCE, TOOL_BUILD_BRANCH)))
-            or run.get("head_commit", {}).get("id") != TOOL_BUILD_SOURCE or run["head_commit"].get("tree_id") != TOOL_PR_TREE): raise ValueError("Fixed PR identities differ")
+                   for side, ref in (("base", "main"), ("head", TOOL_BUILD_BRANCH)))): raise ValueError("Fixed PR identities differ")
+    if run.get("head_commit", {}).get("id") != TOOL_BUILD_SOURCE or run["head_commit"].get("tree_id") != TOOL_PR_TREE: raise ValueError("Fixed PR identities differ")
     jobs = executed_jobs(run, repository, api)
     if len(jobs) != 1 or jobs[0].get("id") != TOOL_PR_JOB: raise ValueError("Fixed PR job differs")
     tool_job_identity(jobs[0], run)
@@ -3211,6 +3222,44 @@ def tool_run_identity(run, identifier, sha, workflow, event, conclusion, now, *,
 def tool_job_identity(job, run):
     if (type(job.get("id")) is not int or job.get("run_id") != run["id"] or job.get("head_sha") != run["head_sha"]
             or job.get("run_attempt") != 1 or job.get("status") != "completed"): raise ValueError("Tool job identity differs")
+
+
+def tool_plan_failure_record():
+    return {"run_id": TOOL_PLAN_FAILURE_RUN, "sha": TOOL_PLAN_FAILURE_SOURCE, "job_id": TOOL_PLAN_FAILURE_JOB,
+            "log_sha256": TOOL_LOG_DIGESTS[TOOL_PLAN_FAILURE_JOB], "failed_step": "Select checks",
+            "native_jobs_executed": False, "success_evidence": False}
+
+
+def tool_plan_failure_proof(head, repository, api, now):
+    git("merge-base", "--is-ancestor", TOOL_PLAN_FAILURE_SOURCE, head)
+    if not tool_recovery_inputs(TOOL_PLAN_FAILURE_SOURCE): raise ValueError("Failed tool plan inputs differ")
+    prefix = f"/repos/{repository}/actions"
+    run = api(f"{prefix}/runs/{TOOL_PLAN_FAILURE_RUN}")
+    tool_run_identity(run, TOOL_PLAN_FAILURE_RUN, TOOL_PLAN_FAILURE_SOURCE, "ios-build.yml", "push", "failure", now)
+    jobs = executed_jobs(run, repository, api)
+    expected = {TOOL_PLAN_FAILURE_JOB} | set(TOOL_PLAN_FAILURE_PLACEHOLDERS)
+    if len(jobs) != len(expected) or {job.get("id") for job in jobs} != expected: raise ValueError("Failed tool plan job map differs")
+    for job in jobs:
+        tool_job_identity(job, run)
+        if job["id"] == TOOL_PLAN_FAILURE_JOB:
+            steps = (("Set up job", "success"), ("Check out repository", "success"),
+                     ("Test CI selection and evidence boundaries", "success"), ("Select checks", "failure"),
+                     ("Validate public policy pages", "skipped"), ("Prepare operator test runtime", "skipped"),
+                     ("Validate private billing operation boundaries", "skipped"), ("Validate internal Sandbox release preparation", "skipped"),
+                     ("Post Check out repository", "success"), ("Complete job", "success"))
+            if (job.get("name") != PLAN_JOB or job.get("conclusion") != "failure" or not isinstance(job.get("steps"), list)
+                    or [(step.get("name"), step.get("conclusion")) for step in job["steps"]] != list(steps)
+                    or any(step.get("status") != "completed" for step in job["steps"])): raise ValueError("Failed tool plan did not stop solely at Select checks")
+        elif (job.get("name") != TOOL_PLAN_FAILURE_PLACEHOLDERS[job["id"]]
+                or job.get("conclusion") != "skipped" or job.get("steps") != []): raise ValueError("Failed tool plan executed native work")
+    log = tool_fixed_observation(f"repos/{repository}/actions/jobs/{TOOL_PLAN_FAILURE_JOB}/logs")
+    if (tool_log_digest(log) != TOOL_LOG_DIGESTS[TOOL_PLAN_FAILURE_JOB] or "IOS_CI_PLAN_JSON=" in log
+            or '"stage":"lookup_blocked","reason":"evidence_lookup_failed","error":"CorrectionEvidenceUnavailable"' not in log
+            or "Evidence lookup failed; no Mac checks were authorized." not in log): raise ValueError("Failed tool plan transcript differs")
+    query = urllib.parse.urlencode({"head_sha": TOOL_PLAN_FAILURE_SOURCE, "event": "push", "per_page": 100})
+    if api(f"{prefix}/workflows/ios-build.yml/runs?{query}") != {"total_count": 1, "workflow_runs": [run]}:
+        raise ValueError("Failed tool plan execution history differs")
+    return tool_plan_failure_record()
 
 
 def tool_wait_candidate_backend(head, repository, api):
@@ -3306,6 +3355,7 @@ def tool_recovery_source(head, repository, api, now):
         log = tool_fixed_observation(f"repos/{repository}/actions/jobs/{build['id']}/logs")
         if tool_log_digest(log) != TOOL_LOG_DIGESTS[build["id"]] or "reviewed_code_changed" not in log: raise ValueError("Fixed readiness failure transcript differs")
         backend = tool_pr_backend_proof(repository, api, now)
+        plan_failure = tool_plan_failure_proof(head, repository, api, now)
         query = urllib.parse.urlencode({"head_sha": TOOL_BUILD_SOURCE, "event": "push", "per_page": 100})
         source_index = api(f"{prefix}/workflows/ios-build.yml/runs?{query}")
         if source_index != {"total_count": 1, "workflow_runs": [run]}: raise ValueError("Unexpected extra source native execution")
@@ -3332,7 +3382,8 @@ def tool_recovery_source(head, repository, api, now):
                 "run_id": TOOL_BUILD_SOURCE_RUN, "sha": TOOL_BUILD_SOURCE,
                 "jobs": [{"name": name, "job_id": TOOL_BUILD_SOURCE_JOBS[name]} for name in native],
                 "failed_build_job_id": TOOL_BUILD_SOURCE_JOBS[BUILD], "failed_build_log_sha256": TOOL_LOG_DIGESTS[TOOL_BUILD_SOURCE_JOBS[BUILD]],
-                "backend_evidence": backend, "owning_jobs_to_execute": [BUILD], "source_build_success": False}
+                "backend_evidence": backend, "failed_plan_evidence": plan_failure,
+                "owning_jobs_to_execute": [BUILD], "source_build_success": False}
     except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError) as error:
         raise CorrectionEvidenceUnavailable("Fixed tool source/native/backend proof unavailable") from error
 

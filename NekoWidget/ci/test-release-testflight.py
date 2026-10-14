@@ -407,9 +407,11 @@ class ReleaseTests(unittest.TestCase):
             def log(self,run_id,job_id):return fixture.api(f"/repos/{release.REPOSITORY}/actions/jobs/{job_id}/logs")
         gh=ToolGitHub()
         with fixture.mocks(),patch.object(release.planner,"git",return_value=fixture.main),patch.object(release.planner,"equivalent_inputs",return_value=True):
-            result=release.check_ci(gh,fixture.main,1004,fixture.now)
-            self.assertEqual(result["tested_sha"],fixture.head)
-            self.assertEqual(result["tested_run"],1003)
+            for prs in (fixture.pr["pull_requests"],[]):
+                fixture.pr["pull_requests"]=prs
+                result=release.check_ci(gh,fixture.main,1004,fixture.now)
+                self.assertEqual(result["tested_sha"],fixture.head)
+                self.assertEqual(result["tested_run"],1003)
             fixture.candidate_jobs[1]["steps"][2]["conclusion"]="skipped"
             with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
             fixture.candidate_jobs[1]["steps"][2]["conclusion"]="success"
