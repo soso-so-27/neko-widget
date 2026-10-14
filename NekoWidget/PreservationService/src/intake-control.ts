@@ -51,24 +51,30 @@ export class IntakeControl {
     } catch { throw paused(); }
   }
 
-  /** Bounds PUTs including edits and retries before KMS/backup work. This is a
-   * usage counter, not a currency cap; a failed admitted attempt is not refunded.
+  /** Bounds PUTs including edits, malformed input and retries before KMS/backup
+   * work. Planned input bytes are separate from new-record bytes and physical
+   * backup versions. A failed admitted attempt is not refunded; no bill cap.
    */
-  async admitMutation(ownerId: string): Promise<void> {
+  async admitMutation(ownerId: string, plannedBytes: number): Promise<void> {
     const now = this.now();
-    if (!Number.isSafeInteger(now) || now < 0 || now >= 253_402_300_800_000) throw paused();
+    if (!Number.isSafeInteger(now) || now < 0 || now >= 253_402_300_800_000
+      || !Number.isSafeInteger(plannedBytes) || plannedBytes < 1
+      || plannedBytes > 32 * 1024 * 1024) throw paused();
     const day = new Date(now).toISOString().slice(0, 10), month = day.slice(0, 7);
     try {
       const row = await this.db.prepare(`UPDATE pa_intake_control SET mutation_day=?,mutation_month=?,
         daily_mutations=CASE WHEN mutation_day=? THEN daily_mutations+1 ELSE 1 END,
-        monthly_mutations=CASE WHEN mutation_month=? THEN monthly_mutations+1 ELSE 1 END
+        monthly_mutations=CASE WHEN mutation_month=? THEN monthly_mutations+1 ELSE 1 END,
+        monthly_mutation_bytes=CASE WHEN mutation_month=? THEN monthly_mutation_bytes+? ELSE ? END
         WHERE singleton=1 AND enabled=1${this.costFence()} AND reviewed_at<=? AND reviewed_at>?
         AND valid_until>? AND valid_until<=reviewed_at+? AND mutation_day<=? AND mutation_month<=?
         AND (CASE WHEN mutation_day=? THEN daily_mutations ELSE 0 END)<daily_mutation_limit
         AND (CASE WHEN mutation_month=? THEN monthly_mutations ELSE 0 END)<monthly_mutation_limit
+        AND (CASE WHEN mutation_month=? THEN monthly_mutation_bytes ELSE 0 END)<=monthly_mutation_bytes_limit-?
         AND EXISTS(SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0)
-        RETURNING singleton`).bind(day, month, day, month, now, now-dayMs, now, dayMs,
-          day, month, day, month, ownerId).first<{ singleton: number }>();
+        RETURNING singleton`).bind(day, month, day, month, month, plannedBytes, plannedBytes,
+          now, now-dayMs, now, dayMs, day, month, day, month, month, plannedBytes, ownerId)
+          .first<{ singleton: number }>();
       if (row?.singleton !== 1) throw paused();
     } catch { throw paused(); }
   }

@@ -27,7 +27,7 @@ interface Dependencies {
   requireGlobalAdmissionLimit?: boolean;
   intakeControl?: { admit(plannedBytes: number): Promise<void> };
   requireIntakeControl?: boolean;
-  mutationAdmission?: { admitMutation(ownerId: string): Promise<void> };
+  mutationAdmission?: { admitMutation(ownerId: string, plannedBytes: number): Promise<void> };
   pilotStorageAccess?: import('./pilot-control').PilotStorageAccess;
   recovery?: RecordRecoveryCopy;
   ownerRecovery?: OwnerRecoveryCopy;
@@ -418,7 +418,14 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
-    await this.d.mutationAdmission?.admitMutation(session.ownerId);
+    // Bound every PUT before decoding, hashing, key use or backup writes. Even
+    // edits carry the photo input, although its unchanged S3 copy is reused.
+    const encoded = input && typeof input === 'object'
+      ? (input as Record<string, unknown>).photoBase64 : undefined;
+    const plannedPhoto = typeof encoded === 'string'
+      ? Math.min(MAX_PHOTO_BYTES, Math.ceil(encoded.length / 4) * 3) : 0;
+    const plannedBytes = plannedPhoto + 512 * 1024 + 8192;
+    await this.d.mutationAdmission?.admitMutation(session.ownerId, plannedBytes);
     const existing = await this.row(session.ownerId, id);
     if (existing?.deleted) throw new ServiceError('RECORD_DELETED', 409);
     const pilotAccess = !existing && await this.d.pilotStorageAccess?.allowed(session.ownerId);
@@ -427,13 +434,9 @@ export class ArchiveStore {
       // Authenticate membership before spending the shared allowance. Classify
       // by the server-owned row, never by caller-supplied expectedRevision.
       if (!pilotAccess) await this.paid(session.ownerId);
-      const encoded = input && typeof input === 'object'
-        ? (input as Record<string, unknown>).photoBase64 : undefined;
       // O(1) conservative estimate; no base64 decoding or hashing before admission.
       // Malformed input still consumes an attempt, but never exceeds the photo cap.
-      const plannedPhoto = typeof encoded === 'string'
-        ? Math.min(MAX_PHOTO_BYTES, Math.ceil(encoded.length / 4) * 3) : 0;
-      await this.d.intakeControl.admit(plannedPhoto + 512 * 1024 + 8192);
+      await this.d.intakeControl.admit(plannedBytes);
     }
     if (this.d.requireOwnerRecovery) {
       await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
