@@ -20,6 +20,8 @@
 
 現在のrecord復旧はrevision1から最新まで連続してcommitと過去photoを読む。単純な古いS3版本削除は復元を壊し得る。次は全参照・未解決writeを含む読み取り専用観測を接続し、写真と管理情報のどちらが増えているか判断する。圧縮の有効化は全reader互換性とrollback条件を確認してから行い、履歴整理はcheckpointからの復旧・削除intent再生・所属/権限境界を別途設計する。保存品質・容量・保持約束を短縮して費用を合わせない。
 
+もう一つの増加要因はツールの新規snapshot。`ToolPreservation.swift`のcaptureは新しいsnapshotと各部品のUUIDを発行し、現在参照される全ファイルをコピーする。中断した同じsnapshotの再開は既送信分を再利用するが、完成後に新しく作るsnapshotには同じ写真も入る。これはコード上の構造確認であり、複数回保存の実機測定ではない。次の設計候補は同一owner内で変更のない部品を再利用すること。ただし現v1のpartはsnapshotIdに束縛され、snapshot削除はその部品も削除するため、UUID/hashだけの使い回しは不正な復元やデータ消失につながる。新旧reader互換・owner/epochの拘束・参照を持つsnapshotがある間の部品保護・delete replay・中断/並行保存・account全削除を一体で設計する必要がある。今回はnativeとprotocolを変更しない。
+
 ## 検証と本線反映
 
 型検査と新11件＋既存inventory3件が成功（関連14件6.31秒）。全種類・過去版・参照重複・record/pending重なり・欠落・矛盾・unknown・delete-marker・別owner・byte overflow・取得失敗を検査。独立差分レビューはblockerなし。製品は追加2ファイルのみで既存runtime入力は不変。
