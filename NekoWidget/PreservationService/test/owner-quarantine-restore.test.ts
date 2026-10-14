@@ -160,6 +160,13 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .toEqual(photoCiphertext);
   expect(await binding.DB.prepare('SELECT count(*) AS count FROM pa_sessions').first())
     .toMatchObject({ count: 0 });
+  // Offline staging restores data, never trial/repair authority or spendable debt.
+  for (const table of ['pa_tool_owner_trials','pa_tool_trial_records','pa_tool_trial_resume_repairs']) {
+    expect(await binding.DB.prepare(`SELECT count(*) AS count FROM ${table}`).first()).toMatchObject({count:0});
+  }
+  await expect(binding.DB.prepare(`INSERT INTO pa_tool_owner_trials(owner_id,owner_epoch,enabled,starts_at,ends_at,
+    reviewed_at,valid_until,cost_evidence_sha256,byte_limit,attempt_limit,record_limit)
+    VALUES(?,0,1,1,2000,1,2000,?,20971520,400,200)`).bind(ownerId,'a'.repeat(64)).run()).rejects.toThrow();
   await expect(restore.restore(ownerId, 1_002))
     .rejects.toMatchObject({ code: 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
 });

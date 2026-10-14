@@ -4668,6 +4668,304 @@ class PreservationPublicRetentionScopeTests(unittest.TestCase):
             self.assertEqual(self.select(self.rows() | {path: [':100644','100644','c'*40,'d'*40,'M']}), scope.FULL_SCOPE)
 
 
+class PreservationToolTrialRepairScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+    def setUp(self):
+        self.registered_closure = planner.PRESERVATION_TOOL_TRIAL_REPAIR_CLOSURE_SHA256
+        self.common = f"100644 blob {'f' * 40}\tNekoWidget/Shared/unchanged.swift"
+        digest = hashlib.sha256((self.common + "\0").encode()).hexdigest()
+        binding = patch.object(planner, "PRESERVATION_TOOL_TRIAL_REPAIR_CLOSURE_SHA256", digest)
+        binding.start(); self.addCleanup(binding.stop)
+    def rows(self):
+        return {p: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                    "A" if before == "0" * 40 else "M"]
+                for p, (before, after) in planner.PRESERVATION_TOOL_TRIAL_REPAIR_BLOBS.items()}
+    def select(self, rows=None, *, raw=None, paths=None, override=None, event="push", ancestor=True,
+               ref="refs/heads/codex/tool-trial-resume-repair"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if override and args in override: return override[args]
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor: raise subprocess.CalledProcessError(1,args)
+                return self.base
+            if args[0] == "rev-parse": return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return 'PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE = "preservation-tool-trial-repair-v1"'
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(v)+"\0"+p+"\0" for p,v in rows.items())
+            if args[0] == "ls-tree" and "-r" in args: return self.common + "\0"
+            if args[0] == "ls-tree":
+                ref, p = args[1], args[3]
+                if p in planner.PRESERVATION_TOOL_TRIAL_REPAIR_CONTROLS: return f"100644 blob {'e' * 40}\t{p}"
+                pair = planner.PRESERVATION_TOOL_TRIAL_REPAIR_BLOBS[p]
+                blob = pair[0 if ref == self.base else 1]
+                return "" if blob == "0" * 40 else f"100644 blob {blob}\t{p}"
+            raise AssertionError(args)
+        with patch.object(planner,"git",side_effect=git):
+            payload = ({"pull_request": {"base": {"sha": self.base}}}
+                       if event == "pull_request" else {"before": self.base})
+            return planner.runtime_scope(paths,payload, {"GITHUB_SHA":self.head,"GITHUB_EVENT_NAME":event,
+                "GITHUB_REF":ref})
+    def test_exact_backend_requires_real_owning_push_and_cannot_be_release_evidence(self):
+        selected=planner.PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE
+        self.assertEqual(self.select(),selected)
+        self.assertEqual(self.select(ref="refs/heads/main"), selected)
+        self.assertEqual(self.select(event="pull_request", ref="refs/pull/302/merge"), selected)
+        self.assertEqual(planner.required_jobs(list(self.rows()),selected),(planner.PRESERVATION_JOB,))
+        self.assertEqual(planner.preservation_tool_trial_repair_requirements(self.head),[{
+            "workflow":planner.PRESERVATION_WORKFLOW,"job":planner.PRESERVATION_JOB,
+            "head_sha":self.head,"event":"push","success_required":True}])
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(selected)
+    def test_partial_unknown_mode_blob_and_duplicate_rejected(self):
+        original=self.rows()
+        for p, row in original.items():
+            self.assertEqual(self.select({k:v for k,v in original.items() if k!=p}),scope.FULL_SCOPE)
+            for index,value in [(0,":100755"),(1,"120000"),(2,"c"*40),(3,"d"*40),(4,"D"),(4,"R100")]:
+                changed=copy.deepcopy(original);changed[p][index]=value
+                self.assertEqual(self.select(changed),scope.FULL_SCOPE,(p,index,value))
+        for p in [planner.PRESERVATION_WORKFLOW,planner.JPEG_WORKFLOW,"NekoWidget/Shared/MembershipAccessPolicy.swift",
+                  "NekoWidget/PreservationService/package-lock.json",*planner.PRESERVATION_TOOL_TRIAL_REPAIR_CONTROLS]:
+            changed=original|{p:[":100644","100644","c"*40,"d"*40,"M"]}
+            self.assertEqual(self.select(changed),scope.FULL_SCOPE,p)
+        raw="".join(" ".join(v)+"\0"+p+"\0" for p,v in original.items())
+        for bad in ["",raw+raw,raw.rsplit("\0",2)[0]]: self.assertEqual(self.select(raw=bad),scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original)+[next(iter(original))]),scope.FULL_SCOPE)
+    def test_full_input_closure_and_every_approved_control_must_match(self):
+        for ref in [self.base,self.head]:
+            self.assertEqual(self.select(override={("ls-tree","-r","-z",ref):self.common.replace("100644","100755")+"\0"}),scope.FULL_SCOPE)
+            for p in planner.PRESERVATION_TOOL_TRIAL_REPAIR_CONTROLS:
+                for bad in ["",f"100755 blob {'e'*40}\t{p}",f"100644 blob {'c'*40}\t{p}"]:
+                    self.assertEqual(self.select(override={("ls-tree",ref,"--",p):bad}),scope.FULL_SCOPE)
+        self.assertEqual(self.select(override={("show",f"{self.base}:NekoWidget/ci/plan-ios-ci.py"):""}),scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False),scope.FULL_SCOPE)
+        self.assertEqual(self.select(event="workflow_dispatch"),scope.FULL_SCOPE)
+    def test_handoff_only_normal_addition_or_edit_cannot_hide_changed_input(self):
+        original=self.rows();p="handoffs/tool-trial-resume-repair.md"
+        for row in [[":000000","100644","0"*40,"c"*40,"A"],[":100644","100644","c"*40,"d"*40,"M"]]:
+            self.assertEqual(self.select(original|{p:row}),planner.PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE)
+        for row in [[":100644","000000","c"*40,"0"*40,"D"],[":100644","120000","c"*40,"d"*40,"M"]]:
+            self.assertEqual(self.select(original|{p:row}),scope.FULL_SCOPE)
+
+    def test_release_candidate_notes_remain_part_of_input_closure(self):
+        previous=self.common
+        note="NekoWidget/ci/release-candidates/2026-10-14-tool-preservation.md"
+        self.assertTrue(planner.is_handoff(note))
+        self.common=f"100644 blob {'f'*40}\t{note}"
+        digest=hashlib.sha256((self.common+"\0").encode()).hexdigest()
+        with patch.object(planner,"PRESERVATION_TOOL_TRIAL_REPAIR_CLOSURE_SHA256",digest):
+            self.assertEqual(self.select(),planner.PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE)
+            self.assertEqual(self.select(override={("ls-tree","-r","-z",self.head):self.common.replace('f'*40,'c'*40)+"\0"}),scope.FULL_SCOPE)
+        self.common=previous
+
+    def test_invalid_registration_missing_modified_blob_or_malformed_bindings_fail_closed(self):
+        marker = 'PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE = "preservation-tool-trial-repair-v1"'
+        for text in ('', marker + '\n' + marker):
+            self.assertEqual(self.select(override={("show", f"{self.base}:NekoWidget/ci/plan-ios-ci.py"): text}), scope.FULL_SCOPE)
+        for ref in (self.base, self.head):
+            for path in self.rows():
+                invalid = (f"100644 blob {'c'*40}\t{path}" if ref == self.base else "")
+                self.assertEqual(self.select(override={("ls-tree", ref, "--", path): invalid}), scope.FULL_SCOPE)
+        original = self.rows()
+        for pair in (("0"*40, "d"*40), ("c"*40, "0"*40), ("c"*40, "c"*40), ("c"*40, "d"), ("c"*40,)):
+            with patch.object(planner, "PRESERVATION_TOOL_TRIAL_REPAIR_BLOBS", {p: pair for p in original}):
+                self.assertEqual(self.select(original), scope.FULL_SCOPE)
+        for digest in ("", "f"*63, "g"*64):
+            with patch.object(planner, "PRESERVATION_TOOL_TRIAL_REPAIR_CLOSURE_SHA256", digest):
+                self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_registered_closure_matches_actual_main_tree(self):
+        # This is the real frozen ancestor, available under the plan's full checkout.
+        reference = "a39d71a9d8633b98db7309f0ffd7492408e07186"
+        raw = subprocess.check_output(["git", "ls-tree", "-r", "-z", reference],
+                                      cwd=Path(__file__).resolve().parents[2]).decode()
+        rows = [r for r in raw.split("\0") if r]
+        frozen = [r for r in rows if not (r.split("\t",1)[1].startswith("handoffs/") and r.split("\t",1)[1].endswith(".md"))
+                  and r.split("\t",1)[1] not in planner.PRESERVATION_TOOL_TRIAL_REPAIR_PATHS | planner.PRESERVATION_TOOL_TRIAL_REPAIR_CONTROLS]
+        digest = hashlib.sha256(("\0".join(frozen)+"\0").encode()).hexdigest()
+        self.assertEqual(len(frozen), 1183)
+        self.assertEqual(digest, self.registered_closure)
+        self.assertEqual(digest, "3f123afda2b3ecbd4b27d8650c47d59483c8c5079bd81dbc298f5662f0737c9e")
+        tree = {( "ls-tree", "-r", "-z", ref): raw for ref in (self.base, self.head)}
+        with patch.object(planner, "PRESERVATION_TOOL_TRIAL_REPAIR_CLOSURE_SHA256", digest):
+            self.assertEqual(self.select(override=tree), planner.PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE)
+            changed = raw.replace(frozen[0].split("\t",1)[0], "100755 blob " + "d"*40, 1)
+            self.assertEqual(self.select(override=tree | {("ls-tree", "-r", "-z", self.head): changed}), scope.FULL_SCOPE)
+
+    def test_plan_declares_same_sha_owning_push_without_native_or_backend_success_claim(self):
+        for ref in ("refs/heads/codex/tool-trial-resume-repair", "refs/heads/main"):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / "event.json").write_text("{}")
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": ref, "GITHUB_SHA": self.head,
+                       "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7",
+                       "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                       "GITHUB_STEP_SUMMARY": str(root / "summary")}
+                output = io.StringIO()
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend is not native evidence")):
+                    planner.main()
+                flags = dict(line.split("=",1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual([flags[n] for n in ("build", "smoke", "sharing", "app_ui")], ["false"]*4)
+                self.assertTrue(all(flags[n] == "[]" for n in ("lanes", "matrix_lanes", "app_ui_lanes")))
+                record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=",1)[1].splitlines()[0])
+                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB])
+                self.assertEqual(record["required_backend_runs"], planner.preservation_tool_trial_repair_requirements(self.head))
+                self.assertIsNone(record["evidence_run_id"]); self.assertIsNone(record["evidence_sha"])
+                summary = (root / "summary").read_text()
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("does not certify that job's success", summary)
+
+
+class PreservationToolTrialFingerprintScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+    def setUp(self):
+        self.registered_closure = planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256
+        self.common = f"100644 blob {'f' * 40}\tNekoWidget/Shared/unchanged.swift"
+        digest = hashlib.sha256((self.common + "\0").encode()).hexdigest()
+        binding = patch.object(planner, "PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256", digest)
+        binding.start(); self.addCleanup(binding.stop)
+    def rows(self):
+        return {p: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                    "A" if before == "0" * 40 else "M"]
+                for p, (before, after) in planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS.items()}
+    def select(self, rows=None, *, raw=None, paths=None, override=None, event="push", ancestor=True,
+               ref="refs/heads/codex/tool-resume-fingerprint"):
+        rows = self.rows() if rows is None else rows
+        paths = list(rows) if paths is None else paths
+        def git(*args):
+            if override and args in override: return override[args]
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor: raise subprocess.CalledProcessError(1,args)
+                return self.base
+            if args[0] == "rev-parse": return self.head if args[1] == "HEAD" else "0" * 40
+            if args[0] == "show": return 'PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE = "preservation-tool-trial-fingerprint-v1"'
+            if args[0] == "diff":
+                return raw if raw is not None else "".join(" ".join(v)+"\0"+p+"\0" for p,v in rows.items())
+            if args[0] == "ls-tree" and "-r" in args: return self.common + "\0"
+            if args[0] == "ls-tree":
+                ref, p = args[1], args[3]
+                if p in planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS: return f"100644 blob {'e' * 40}\t{p}"
+                pair = planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS[p]
+                blob = pair[0 if ref == self.base else 1]
+                return "" if blob == "0" * 40 else f"100644 blob {blob}\t{p}"
+            raise AssertionError(args)
+        with patch.object(planner,"git",side_effect=git):
+            payload = ({"pull_request": {"base": {"sha": self.base}}}
+                       if event == "pull_request" else {"before": self.base})
+            return planner.runtime_scope(paths,payload, {"GITHUB_SHA":self.head,"GITHUB_EVENT_NAME":event,
+                "GITHUB_REF":ref})
+    def test_exact_backend_requires_real_owning_push_and_cannot_be_release_evidence(self):
+        selected=planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE
+        self.assertEqual(self.select(),selected)
+        self.assertEqual(self.select(ref="refs/heads/main"), selected)
+        self.assertEqual(self.select(event="pull_request", ref="refs/pull/302/merge"), selected)
+        self.assertEqual(planner.required_jobs(list(self.rows()),selected),(planner.PRESERVATION_JOB,))
+        self.assertEqual(planner.preservation_tool_trial_fingerprint_requirements(self.head),[{
+            "workflow":planner.PRESERVATION_WORKFLOW,"job":planner.PRESERVATION_JOB,
+            "head_sha":self.head,"event":"push","success_required":True}])
+        with self.assertRaises(ValueError): planner.required_jobs_from_scope(selected)
+    def test_partial_unknown_mode_blob_and_duplicate_rejected(self):
+        original=self.rows()
+        for p, row in original.items():
+            self.assertEqual(self.select({k:v for k,v in original.items() if k!=p}),scope.FULL_SCOPE)
+            for index,value in [(0,":100755"),(1,"120000"),(2,"c"*40),(3,"d"*40),(4,"D"),(4,"R100")]:
+                changed=copy.deepcopy(original);changed[p][index]=value
+                self.assertEqual(self.select(changed),scope.FULL_SCOPE,(p,index,value))
+        for p in [planner.PRESERVATION_WORKFLOW,planner.JPEG_WORKFLOW,"NekoWidget/Shared/MembershipAccessPolicy.swift",
+                  "NekoWidget/PreservationService/package-lock.json",*planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS]:
+            changed=original|{p:[":100644","100644","c"*40,"d"*40,"M"]}
+            self.assertEqual(self.select(changed),scope.FULL_SCOPE,p)
+        raw="".join(" ".join(v)+"\0"+p+"\0" for p,v in original.items())
+        for bad in ["",raw+raw,raw.rsplit("\0",2)[0]]: self.assertEqual(self.select(raw=bad),scope.FULL_SCOPE)
+        self.assertEqual(self.select(paths=list(original)+[next(iter(original))]),scope.FULL_SCOPE)
+    def test_full_input_closure_and_every_approved_control_must_match(self):
+        for ref in [self.base,self.head]:
+            self.assertEqual(self.select(override={("ls-tree","-r","-z",ref):self.common.replace("100644","100755")+"\0"}),scope.FULL_SCOPE)
+            for p in planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS:
+                for bad in ["",f"100755 blob {'e'*40}\t{p}",f"100644 blob {'c'*40}\t{p}"]:
+                    self.assertEqual(self.select(override={("ls-tree",ref,"--",p):bad}),scope.FULL_SCOPE)
+        self.assertEqual(self.select(override={("show",f"{self.base}:NekoWidget/ci/plan-ios-ci.py"):""}),scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False),scope.FULL_SCOPE)
+        self.assertEqual(self.select(event="workflow_dispatch"),scope.FULL_SCOPE)
+    def test_handoff_only_normal_addition_or_edit_cannot_hide_changed_input(self):
+        original=self.rows();p="handoffs/tool-resume-fingerprint.md"
+        for row in [[":000000","100644","0"*40,"c"*40,"A"],[":100644","100644","c"*40,"d"*40,"M"]]:
+            self.assertEqual(self.select(original|{p:row}),planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE)
+        for row in [[":100644","000000","c"*40,"0"*40,"D"],[":100644","120000","c"*40,"d"*40,"M"]]:
+            self.assertEqual(self.select(original|{p:row}),scope.FULL_SCOPE)
+
+    def test_release_candidate_notes_remain_part_of_input_closure(self):
+        previous=self.common
+        note="NekoWidget/ci/release-candidates/2026-10-14-tool-preservation.md"
+        self.assertTrue(planner.is_handoff(note))
+        self.common=f"100644 blob {'f'*40}\t{note}"
+        digest=hashlib.sha256((self.common+"\0").encode()).hexdigest()
+        with patch.object(planner,"PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256",digest):
+            self.assertEqual(self.select(),planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE)
+            self.assertEqual(self.select(override={("ls-tree","-r","-z",self.head):self.common.replace('f'*40,'c'*40)+"\0"}),scope.FULL_SCOPE)
+        self.common=previous
+
+    def test_invalid_registration_missing_modified_blob_or_malformed_bindings_fail_closed(self):
+        marker = 'PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE = "preservation-tool-trial-fingerprint-v1"'
+        for text in ('', marker + '\n' + marker):
+            self.assertEqual(self.select(override={("show", f"{self.base}:NekoWidget/ci/plan-ios-ci.py"): text}), scope.FULL_SCOPE)
+        for ref in (self.base, self.head):
+            for path in self.rows():
+                invalid = (f"100644 blob {'c'*40}\t{path}" if ref == self.base else "")
+                self.assertEqual(self.select(override={("ls-tree", ref, "--", path): invalid}), scope.FULL_SCOPE)
+        original = self.rows()
+        for pair in (("0"*40, "d"*40), ("c"*40, "0"*40), ("c"*40, "c"*40), ("c"*40, "d"), ("c"*40,)):
+            with patch.object(planner, "PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS", {p: pair for p in original}):
+                self.assertEqual(self.select(original), scope.FULL_SCOPE)
+        for digest in ("", "f"*63, "g"*64):
+            with patch.object(planner, "PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256", digest):
+                self.assertEqual(self.select(), scope.FULL_SCOPE)
+
+    def test_registered_closure_matches_actual_main_tree(self):
+        # This is the real frozen ancestor, available under the plan's full checkout.
+        reference = "3c7e21bf2cc21f7fb99e66562240a4610cf2bef4"
+        raw = subprocess.check_output(["git", "ls-tree", "-r", "-z", reference],
+                                      cwd=Path(__file__).resolve().parents[2]).decode()
+        rows = [r for r in raw.split("\0") if r]
+        frozen = [r for r in rows if not (r.split("\t",1)[1].startswith("handoffs/") and r.split("\t",1)[1].endswith(".md"))
+                  and r.split("\t",1)[1] not in planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_PATHS | planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS]
+        digest = hashlib.sha256(("\0".join(frozen)+"\0").encode()).hexdigest()
+        self.assertEqual(len(frozen), 1185)
+        self.assertEqual(digest, self.registered_closure)
+        self.assertEqual(digest, "365f35310ba5ffa6e3ce505a0c59bcdc71b4ffe55c30a2392a79edc45f2d0479")
+        tree = {( "ls-tree", "-r", "-z", ref): raw for ref in (self.base, self.head)}
+        with patch.object(planner, "PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256", digest):
+            self.assertEqual(self.select(override=tree), planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE)
+            changed = raw.replace(frozen[0].split("\t",1)[0], "100755 blob " + "d"*40, 1)
+            self.assertEqual(self.select(override=tree | {("ls-tree", "-r", "-z", self.head): changed}), scope.FULL_SCOPE)
+
+    def test_plan_declares_same_sha_owning_push_without_native_or_backend_success_claim(self):
+        for ref in ("refs/heads/codex/tool-resume-fingerprint", "refs/heads/main"):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / "event.json").write_text("{}")
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": ref, "GITHUB_SHA": self.head,
+                       "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7",
+                       "GITHUB_EVENT_PATH": str(root / "event.json"), "GITHUB_OUTPUT": str(root / "output"),
+                       "GITHUB_STEP_SUMMARY": str(root / "summary")}
+                output = io.StringIO()
+                with patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                        patch.object(planner, "changed_paths", return_value=list(self.rows())), \
+                        patch.object(planner, "runtime_scope", return_value=planner.PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend is not native evidence")):
+                    planner.main()
+                flags = dict(line.split("=",1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual([flags[n] for n in ("build", "smoke", "sharing", "app_ui")], ["false"]*4)
+                self.assertTrue(all(flags[n] == "[]" for n in ("lanes", "matrix_lanes", "app_ui_lanes")))
+                record = json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=",1)[1].splitlines()[0])
+                self.assertEqual(record["required_jobs"], [planner.PRESERVATION_JOB])
+                self.assertEqual(record["required_backend_runs"], planner.preservation_tool_trial_fingerprint_requirements(self.head))
+                self.assertIsNone(record["evidence_run_id"]); self.assertIsNone(record["evidence_sha"])
+                summary = (root / "summary").read_text()
+                self.assertIn(planner.PRESERVATION_WORKFLOW, summary)
+                self.assertIn("does not certify that job's success", summary)
+
+
 class PreservationStorageUsageScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
     def setUp(self):

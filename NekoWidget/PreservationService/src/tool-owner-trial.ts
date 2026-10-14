@@ -12,6 +12,12 @@ interface Grant {
   snapshot_id: string | null; byte_limit: number; attempt_limit: number; record_limit: number;
   attempts: number; admitted_bytes: number; completed_at: number | null; slot_generation: number;
 }
+interface Repair {
+  owner_id:string; owner_epoch:number; snapshot_id:string; enabled:number; issued_at:number; ends_at:number;
+  original_starts_at:number; original_review_revision:number; original_cost_evidence_sha256:string;
+  original_admitted_bytes:number; original_attempts:number; original_slots:number; evidence_sha256:string;
+  byte_limit:number; attempt_limit:number; record_limit:number; admitted_bytes:number;
+}
 interface Piece {
   record_id: string; snapshot_id: string; kind: string; path: string; part: number; part_count: number;
   payload_sha256: string; input_fingerprint: string; content_bytes: number; committed: number;
@@ -20,15 +26,54 @@ export interface ToolTrialAdmission {
   grant: Grant; recordId: string; document: ArchiveDocument; photo: Uint8Array | null;
   photoSHA256: string | null; fingerprint: string;
   indexSlotGeneration: number | null;
+  repairEvidence: string | null;
 }
 const eligible = `enabled=1 AND starts_at<=? AND ends_at>? AND reviewed_at<=? AND reviewed_at>?
   AND valid_until>? AND EXISTS(SELECT 1 FROM pa_owners o WHERE o.owner_id=pa_tool_owner_trials.owner_id
     AND o.epoch=pa_tool_owner_trials.owner_epoch AND o.disabled=0 AND o.purge_fence_id IS NULL)
   AND NOT EXISTS(SELECT 1 FROM pa_owner_deletion_requests d WHERE d.owner_id=pa_tool_owner_trials.owner_id)
   AND NOT EXISTS(SELECT 1 FROM pa_membership_links l WHERE l.owner_id=pa_tool_owner_trials.owner_id)`;
+// A repair row selects an exclusive lane. Inactive/missing proof cannot fall back.
+const repairMatch = `r.enabled=1 AND r.issued_at<=? AND r.ends_at>?
+  AND r.owner_epoch=pa_tool_owner_trials.owner_epoch AND r.snapshot_id=pa_tool_owner_trials.snapshot_id
+  AND r.original_starts_at=pa_tool_owner_trials.starts_at AND r.ends_at=pa_tool_owner_trials.ends_at
+  AND r.original_review_revision=pa_tool_owner_trials.review_revision
+  AND r.original_cost_evidence_sha256=pa_tool_owner_trials.cost_evidence_sha256
+  AND r.original_admitted_bytes=pa_tool_owner_trials.admitted_bytes
+  AND pa_tool_owner_trials.attempts BETWEEN r.original_attempts AND r.original_attempts+r.attempt_limit
+  AND pa_tool_owner_trials.slot_generation BETWEEN r.original_slots AND r.record_limit`;
+const repairLane = `(NOT EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs WHERE owner_id=pa_tool_owner_trials.owner_id)
+  OR EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs r WHERE r.owner_id=pa_tool_owner_trials.owner_id
+    AND ${repairMatch}))`;
 const length = (value: string) => value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
 const manifests=new Set(['CareHandoff/plan.json','EvacuationPreparation/plan.json','VeterinaryVisits/state.json',
   'ShowcasePhotos/selected.json','LostCatDrafts/drafts.json','CatPreparedness/records.json']);
+const partKeys = ['snapshotId','kind','path','part','count','sha256','payload'] as const;
+function orderedPart(part: ToolBackupPart, keys: readonly (keyof ToolBackupPart)[]): ToolBackupPart {
+  return Object.fromEntries(keys.map(key=>[key,part[key]])) as unknown as ToolBackupPart;
+}
+function* keyOrders(keys: readonly (keyof ToolBackupPart)[]): Generator<(keyof ToolBackupPart)[]> {
+  if (!keys.length) { yield []; return; }
+  for (let n=0;n<keys.length;n++) {
+    for (const tail of keyOrders([...keys.slice(0,n),...keys.slice(n+1)])) yield [keys[n]!,...tail];
+  }
+}
+/** Original slots fingerprinted JSON member order, which JSONEncoder need not
+ * preserve on retry. Match the original digest, never replace immutable debt.
+ * Only photos have an empty payload and a <=2048-byte document envelope; do not
+ * multiply large JSON/index payloads by the 7! legacy orders. */
+async function legacyPhotoFingerprint(old: Piece, document: ArchiveDocument, photoSHA256: string | null,
+  contentBytes: number): Promise<string | null> {
+  const part=document.toolBackup!;
+  if (part.kind!=='photo' || part.payload!=='' || old.snapshot_id!==part.snapshotId
+    || old.kind!==part.kind || old.path!==part.path || old.part!==part.part || old.part_count!==part.count
+    || old.payload_sha256!==part.sha256 || old.content_bytes!==contentBytes) return null;
+  for (const keys of keyOrders(partKeys)) {
+    const candidate=await sha256(JSON.stringify({document:{...document,toolBackup:orderedPart(part,keys)},photoSHA256}));
+    if (candidate===old.input_fingerprint) return candidate;
+  }
+  return null;
+}
 
 /** Empty until a separately reviewed operator grant targets an existing owner.
  * All counters are lifetime debits. No signing, photo or provider call issues a grant. */
@@ -45,10 +90,19 @@ export class ToolOwnerTrial {
   async grant(owner: string): Promise<Grant | null> {
     return this.db.prepare('SELECT * FROM pa_tool_owner_trials WHERE owner_id=?').bind(owner).first<Grant>();
   }
+  async repair(owner:string):Promise<Repair|null> {
+    return this.db.prepare('SELECT * FROM pa_tool_trial_resume_repairs WHERE owner_id=?').bind(owner).first<Repair>();
+  }
   async allowed(owner: string): Promise<{ expiresAt: number } | null> {
+    const now=this.times()[0]!;
     const value = await this.db.prepare(`SELECT ends_at,valid_until FROM pa_tool_owner_trials
-      WHERE owner_id=? AND ${eligible} AND attempts<attempt_limit
-      AND admitted_bytes+?<=byte_limit`).bind(owner, ...this.times(), TRIAL_DOCUMENT_ALLOWANCE)
+      WHERE owner_id=? AND ${eligible} AND attempts<attempt_limit AND (
+        (NOT EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs WHERE owner_id=pa_tool_owner_trials.owner_id)
+          AND admitted_bytes+?<=byte_limit)
+        OR EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs r WHERE r.owner_id=pa_tool_owner_trials.owner_id
+          AND ${repairMatch} AND attempts<r.original_attempts+r.attempt_limit
+          AND r.admitted_bytes+?<=r.byte_limit))`)
+      .bind(owner,...this.times(),TRIAL_DOCUMENT_ALLOWANCE,now,now,TRIAL_DOCUMENT_ALLOWANCE)
       .first<{ ends_at: number; valid_until: number }>();
     return value ? { expiresAt: Math.min(value.ends_at, value.valid_until) } : null;
   }
@@ -57,20 +111,34 @@ export class ToolOwnerTrial {
   async deniedAttempt(owner: string): Promise<void> {
     const grant = await this.debitAttempt(owner);
     if (!grant) return;
-    await this.debitBytes(grant, TRIAL_DOCUMENT_ALLOWANCE);
+    await this.debitBytes(grant, TRIAL_DOCUMENT_ALLOWANCE, await this.repair(owner));
   }
   private async debitAttempt(owner: string): Promise<Grant | null> {
     if (!await this.grant(owner)) return null;
     const value = await this.db.prepare(`UPDATE pa_tool_owner_trials SET attempts=attempts+1
-      WHERE owner_id=? AND ${eligible} AND attempts<attempt_limit RETURNING *`)
-      .bind(owner, ...this.times()).first<Grant>();
+      WHERE owner_id=? AND ${eligible} AND attempts<attempt_limit AND ${repairLane}
+        AND NOT EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs r WHERE r.owner_id=pa_tool_owner_trials.owner_id
+          AND attempts>=r.original_attempts+r.attempt_limit) RETURNING *`)
+      .bind(owner, ...this.times(), this.times()[0]!, this.times()[0]!).first<Grant>();
     if (!value) throw paused();
     return value;
   }
-  private async debitBytes(grant: Grant, amount: number): Promise<Grant> {
+  private async debitBytes(grant: Grant, amount: number, repair:Repair|null): Promise<Grant> {
     if (!Number.isSafeInteger(amount) || amount<1 || amount>20*1024*1024) throw paused();
+    if (repair) {
+      const now=this.times()[0]!;
+      const paid=await this.db.prepare(`UPDATE pa_tool_trial_resume_repairs AS r SET admitted_bytes=admitted_bytes+?
+        WHERE r.owner_id=? AND r.evidence_sha256=? AND r.admitted_bytes<=r.byte_limit-?
+        AND EXISTS(SELECT 1 FROM pa_tool_owner_trials WHERE owner_id=? AND review_revision=?
+          AND ${eligible} AND ${repairMatch}) RETURNING *`)
+        .bind(amount,grant.owner_id,repair.evidence_sha256,amount,grant.owner_id,grant.review_revision,
+          ...this.times(),now,now).first<Repair>();
+      if (!paid) throw paused();
+      return grant;
+    }
     const value = await this.db.prepare(`UPDATE pa_tool_owner_trials SET admitted_bytes=admitted_bytes+?
-      WHERE owner_id=? AND review_revision=? AND ${eligible} AND admitted_bytes<=byte_limit-? RETURNING *`)
+      WHERE owner_id=? AND review_revision=? AND ${eligible} AND admitted_bytes<=byte_limit-?
+        AND NOT EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs WHERE owner_id=pa_tool_owner_trials.owner_id) RETURNING *`)
       .bind(amount, grant.owner_id, grant.review_revision, ...this.times(), amount).first<Grant>();
     if (!value) throw paused();
     return value;
@@ -78,8 +146,9 @@ export class ToolOwnerTrial {
   async admit(owner: string, id: string, input: unknown): Promise<ToolTrialAdmission | null> {
     let grant = await this.debitAttempt(owner);
     if (!grant) return null;
+    const repair=await this.repair(owner);
     // Every attempted body burns at least one document allowance, including malformed input.
-    grant = await this.debitBytes(grant, TRIAL_DOCUMENT_ALLOWANCE);
+    grant = await this.debitBytes(grant, TRIAL_DOCUMENT_ALLOWANCE, repair);
     if (!input || typeof input!=='object' || Array.isArray(input)) throw paused();
     const request=input as Record<string, unknown>;
     if (Object.keys(request).some(k=>!['document','photoBase64','expectedRevision','consentVersion'].includes(k))
@@ -95,16 +164,23 @@ export class ToolOwnerTrial {
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded))) throw paused();
     if (part.kind!=='photo' && encoded!==null) throw paused();
     const contentBytes=part.kind==='photo' ? length(encoded as string) : length(part.payload);
-    grant=await this.debitBytes(grant,contentBytes);
+    grant=await this.debitBytes(grant,contentBytes,repair);
     // Hashes/decoding are local and bounded; all KMS/S3/JPEG work stays after admission.
     const photo=decodePhoto(encoded), photoSHA256=photo===null ? null : await sha256(photo);
     if ((photo===null)!==(document.photoFile===null)) throw paused();
     const payloadSHA=photoSHA256 ?? await sha256(Uint8Array.from(atob(part.payload),c=>c.charCodeAt(0)));
     if (payloadSHA!==part.sha256 || (part.kind==='index' ? id!==part.snapshotId : id===part.snapshotId)) throw paused();
-    const fingerprint=await sha256(JSON.stringify({document,photoSHA256}));
+    // Stable for all newly admitted pieces, independent of JSON object order.
+    let fingerprint=await sha256(JSON.stringify({document:{...document,toolBackup:orderedPart(part,partKeys)},photoSHA256}));
     const old=await this.db.prepare('SELECT * FROM pa_tool_trial_records WHERE owner_id=? AND record_id=?')
       .bind(owner,id).first<Piece>();
-    if (old && old.input_fingerprint!==fingerprint) throw paused();
+    if (old && old.input_fingerprint!==fingerprint) {
+      const original=await sha256(JSON.stringify({document,photoSHA256}));
+      const compatible=old.input_fingerprint===original ? original
+        : await legacyPhotoFingerprint(old,document,photoSHA256,contentBytes);
+      if (!compatible) throw paused();
+      fingerprint=compatible;
+    }
     if (!old && await this.db.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(owner,id).first()) throw paused();
     const indexGeneration=part.kind==='index' ? await this.checkIndex(owner,part) : null;
     if (grant.completed_at!==null && (!old || old.committed!==1)) throw paused();
@@ -113,9 +189,9 @@ export class ToolOwnerTrial {
       this.db.prepare(`UPDATE pa_tool_owner_trials SET snapshot_id=COALESCE(snapshot_id,?)
         WHERE owner_id=? AND review_revision=? AND ${eligible}
         AND (snapshot_id IS NULL OR snapshot_id=?) AND (?=1 OR completed_at IS NULL)
-        AND (? IS NULL OR slot_generation=?) RETURNING *`)
+        AND (? IS NULL OR slot_generation=?) AND ${repairLane} RETURNING *`)
         .bind(part.snapshotId,owner,grant.review_revision,...this.times(),part.snapshotId,old?.committed===1 ? 1 : 0,
-          indexGeneration,indexGeneration),
+          indexGeneration,indexGeneration,this.times()[0]!,this.times()[0]!),
       this.db.prepare(`INSERT INTO pa_tool_trial_records(owner_id,record_id,snapshot_id,kind,path,part,part_count,
         payload_sha256,input_fingerprint,content_bytes)
         SELECT ?,?,?,?,?,?,?,?,?,? WHERE changes()=1 AND NOT EXISTS
@@ -128,7 +204,8 @@ export class ToolOwnerTrial {
       .bind(owner,id).first<{input_fingerprint:string}>();
     if (piece?.input_fingerprint!==fingerprint) throw paused();
     return {grant:bound,recordId:id,document,photo,photoSHA256,fingerprint,
-      indexSlotGeneration:indexGeneration===null ? null : indexGeneration+(old ? 0 : 1)};
+      indexSlotGeneration:indexGeneration===null ? null : indexGeneration+(old ? 0 : 1),
+      repairEvidence:repair?.evidence_sha256??null};
   }
   private async checkIndex(owner: string, part: ToolBackupPart): Promise<number> {
     const ids=toolIndexRecordIDs(part);
@@ -156,12 +233,17 @@ export class ToolOwnerTrial {
     return generation!;
   }
   fence(admission: ToolTrialAdmission): {sql:string;bindings:(string|number)[]} {
+    const lane=admission.repairEvidence===null
+      ? `NOT EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs WHERE owner_id=pa_tool_owner_trials.owner_id)`
+      : `EXISTS(SELECT 1 FROM pa_tool_trial_resume_repairs r WHERE r.owner_id=pa_tool_owner_trials.owner_id
+          AND r.evidence_sha256=? AND ${repairMatch} AND attempts>r.original_attempts)`;
     return {sql:`EXISTS(SELECT 1 FROM pa_tool_owner_trials WHERE owner_id=? AND review_revision=?
       AND snapshot_id=? AND completed_at IS NULL AND ${eligible}
-      AND (?<0 OR slot_generation=?)) AND EXISTS(SELECT 1 FROM pa_tool_trial_records
+      AND (?<0 OR slot_generation=?) AND ${lane}) AND EXISTS(SELECT 1 FROM pa_tool_trial_records
       WHERE owner_id=? AND record_id=? AND input_fingerprint=?)`,
       bindings:[admission.grant.owner_id,admission.grant.review_revision,admission.grant.snapshot_id!,...this.times(),
         admission.indexSlotGeneration??-1,admission.indexSlotGeneration??-1,
+        ...(admission.repairEvidence===null?[]:[admission.repairEvidence,this.times()[0]!,this.times()[0]!]),
         admission.grant.owner_id,admission.recordId,admission.fingerprint]};
   }
   committed(admission: ToolTrialAdmission, operation: string): D1PreparedStatement[] {
@@ -180,9 +262,11 @@ export class ToolOwnerTrial {
     if (!await this.allowed(owner) || grant.completed_at!==null) return {remainingBytes:0,remainingRecords:0};
     const row=await this.db.prepare(`SELECT count(*) AS committed FROM pa_tool_trial_records
       WHERE owner_id=? AND committed=1`).bind(owner).first<{committed:number}>();
-    const remainingRecords=grant.record_limit-(row?.committed??0);
+    const repair=await this.repair(owner);
+    const remainingRecords=(repair?.record_limit??grant.record_limit)-(row?.committed??0);
+    const unspent=repair ? repair.byte_limit-repair.admitted_bytes : grant.byte_limit-grant.admitted_bytes;
     // Current app prechecks source bytes but excludes index/document envelopes.
-    return {remainingBytes:Math.max(0,grant.byte_limit-grant.admitted_bytes
+    return {remainingBytes:Math.max(0,unspent
       -remainingRecords*TRIAL_DOCUMENT_ALLOWANCE-TRIAL_INDEX_ALLOWANCE),remainingRecords};
   }
 }

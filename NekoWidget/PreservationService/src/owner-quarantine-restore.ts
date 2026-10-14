@@ -40,15 +40,20 @@ export class OwnerQuarantineRestore {
       (SELECT count(*) FROM pa_record_recovery_versions) AS record_copies,
       (SELECT count(*) FROM pa_tool_snapshot_references) AS tool_references,
       (SELECT count(*) FROM pa_tool_part_delete_claims) AS tool_delete_claims,
+      (SELECT count(*) FROM pa_tool_owner_trials) AS trial_grants,
+      (SELECT count(*) FROM pa_tool_trial_records) AS trial_slots,
+      (SELECT count(*) FROM pa_tool_trial_resume_repairs) AS trial_repairs,
       (SELECT delete_intent_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS record_policy,
       (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS owner_policy`).first<{ owners: number; records: number; fences: number;
         owner_copies: number; record_copies: number; tool_references: number;
-        tool_delete_claims: number; record_policy: number; owner_policy: number }>();
+        tool_delete_claims: number; trial_grants: number; trial_slots: number;
+        trial_repairs: number; record_policy: number; owner_policy: number }>();
     if (!row || row.owners !== 0 || row.records !== 0 || row.fences !== 0
       || row.owner_copies !== 0 || row.record_copies !== 0
       || row.tool_references !== 0 || row.tool_delete_claims !== 0
+      || row.trial_grants !== 0 || row.trial_slots !== 0 || row.trial_repairs !== 0
       || row.record_policy !== 0 || row.owner_policy !== 0) throw unavailable();
     const listed = await this.bucket.list({ prefix: `personal/${ownerId}/`, limit: 1 });
     if (listed.objects.length !== 0 || listed.truncated) throw unavailable();
