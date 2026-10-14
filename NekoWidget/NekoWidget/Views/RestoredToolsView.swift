@@ -171,7 +171,7 @@ struct ToolBackupFixtureView: View {
                             else { throw ToolBackupError.invalid }
                             editResult = "元の記録を保ち、復元コピーだけを編集しました"
                             try FileManager.default.removeItem(at: source); originalSource = nil
-                        } catch { editResult = "編集後の確認失敗: \(error)" }
+                        } catch { editResult = "編集後の確認に失敗しました" }
                     }
                     Text(editResult)
                 }
@@ -331,7 +331,7 @@ struct ToolBackupFixtureView: View {
             try verifyLargeIndex()
             originalSource = source; originalCareData = careBytes
             saved = restored; result = "保存・再開・欠落拒否・復元・元記録保全を確認"
-        } catch { result = "失敗 (\(phase)): \(error)" }
+        } catch { result = "確認に失敗しました (\(phase))" }
     }
     private func verifyLargeIndex() throws {
         let id = UUID(), owner = UUID().uuidString
