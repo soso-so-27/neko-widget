@@ -1,0 +1,11 @@
+# ツール試用の再送 fingerprint 修正に対応するCI登録
+
+初回の製品候補は2026-10-14 13:43:13 UTC。既存trialの未commit partを同じ内容・異なるJSON property orderで再送するとPILOT_WRITES_PAUSEDになる直接fixtureを、修正前の失敗として保持する。実機requestの順序を直接captureした証拠はなく、実機障害の唯一原因が確定したとは扱わない。製品の型検査と関連15件（8.98秒）、独立レビューは主担当の証拠。
+
+制御はorigin/main `3c7e21bf2cc21f7fb99e66562240a4610cf2bef4`から独立branchへ作成した。新scope `preservation-tool-trial-fingerprint-v1` は製品2本の通常Mを完全blob pairで固定し、既存trial導入scopeを広げない。srcは `3c39843e8e54799615e53ab5ba2ecaaa390d324b` → `5f1530e6ad057e32827778e2600efc0034dfb840`、testは `bc134fabf24fbd4b4b1495fff1b19d2fabf18d65` → `2228af7ccbae9d2df25ec609437dae619998f6e3`。その他の全tracked入力は、control4本と通常handoff Markdownだけを別検証・除外し、実main treeの1,185行、SHA256 `365f35310ba5ffa6e3ce505a0c59bcdc71b4ffe55c30a2392a79edc45f2d0479`で固定する。release-candidate notesは除外しない。
+
+ローカルowning selector8件0.184秒、budget2件0.002秒が成功。実tree閉包一致、部分・未知・mode/type・重複・未承認control・欠落registrationを拒否し、同SHA owning Preservation pushを宣言する。新scopeのbaselineは未計測で、既存成功・失敗・active履歴と初回候補からの時間を保持する。release証拠には使えない。全development checks・push・CI監視は主担当が一度担当する。
+
+直近別scopeのcontrol plan50秒、製品plan48秒、Preservation99秒は計画参考に限る。control先行と並列製品jobの実行時間は約2.5分が参考だが、queue・レビュー・統合・remote readback・修正時間を含まず、今回の実測や完了保証ではない。5分job timeoutを所要時間としない。
+
+独立controlレビューとcontrol CIを先にmainへ反映し、製品へ承認済みcontrolを取込み、clean凍結HEADでcheck-development-flow/preflightを行う。製品同SHA owning Preservation全8step＋iOS plan3stepを実成功確認し、merge commitでmain ancestorを保つ。workflow/JPEG/native/署名・schemaは不変で新TestFlightを必要としない。既存archive Workerのcode-only反映は別のprivate凍結plan・独立receipt・fresh before/module/settings照合で扱い、古いempty35/初回grant配備scriptを再実行しない。既存trial debt・期限・counter、削除Worker/cron、秘密・公開・料金980円を保持する。
