@@ -10,6 +10,7 @@ import type { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import worker, { route, type Services, type Env } from '../src/index';
 import { PilotControl } from '../src/pilot-control';
+import { IntakeControl } from '../src/intake-control';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const photo = new Uint8Array([255, 216, 255, 217]); // Synthetic, injected validator; not a real JPEG test.
@@ -760,6 +761,41 @@ it('pilot mutation stop covers edit and retry without stopping existing read/lis
   expect((await archive.list(f.session.token)).items).toHaveLength(1);
   await archive.remove(f.session.token, id, 1);
   expect(attempts).toBe(3);
+});
+
+it('charges general edit/retry/malformed PUT bytes before work and preserves reads/list/delete at the byte stop', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const amount = Math.ceil(encodePhoto(photo)!.length / 4) * 3 + 512 * 1024 + 8192;
+  const now = f.options.now();
+  await binding.DB.prepare(`UPDATE pa_intake_control SET enabled=1,reviewed_at=?,valid_until=?,
+    forecast_yen=1,pause_forecast_yen=2,daily_mutation_limit=100,monthly_mutation_limit=100,
+    monthly_mutation_bytes_limit=?,mutation_month='1970-01',monthly_mutation_bytes=0`)
+    .bind(now, now + 86_400_000, amount * 3).run();
+  const archive = new ArchiveStore({...f.options,
+    mutationAdmission: new IntakeControl(binding.DB, f.options.now, {requireCostEvidence: true})});
+  await expect(archive.put(f.session.token, id, f.request({document: null})))
+    .rejects.toMatchObject({code: 'INVALID_RECORD'});
+  await archive.put(f.session.token, id, f.request()); // An unchanged retry is still charged.
+  await archive.put(f.session.token, id, f.request({expectedRevision: 1,
+    document: {...document, text: '再送も計数する'}}));
+  expect(await binding.DB.prepare('SELECT monthly_mutations,monthly_mutation_bytes FROM pa_intake_control').first())
+    .toEqual({monthly_mutations: 3, monthly_mutation_bytes: amount * 3});
+  let work = 0; const unavailable = async () => { work++; throw new Error('must not run'); };
+  const stopped = new ArchiveStore({...f.options, requireOwnerRecovery: true,
+    ownerRecovery: {copyCurrent: unavailable} as unknown as OwnerRecoveryCopy,
+    keys: {seal: unavailable, open: unavailable}, photos: {validateJPEG: unavailable},
+    mutationAdmission: new IntakeControl(binding.DB, f.options.now, {requireCostEvidence: true})});
+  for (const nextId of [id, crypto.randomUUID()]) {
+    await expect(stopped.put(f.session.token, nextId, f.request({expectedRevision: 2})))
+      .rejects.toMatchObject({code: 'PRESERVATION_INTAKE_PAUSED'});
+  }
+  expect(work).toBe(0);
+  expect((await archive.read(f.session.token, id)).document.text).toBe('再送も計数する');
+  expect((await archive.list(f.session.token)).items).toHaveLength(1);
+  await archive.remove(f.session.token, id, 2);
+  expect(await binding.DB.prepare('SELECT monthly_mutation_bytes FROM pa_intake_control').first())
+    .toEqual({monthly_mutation_bytes: amount * 3});
 });
 
 it('usage accounts for an in-flight upload exactly once before and after its atomic commit', async () => {

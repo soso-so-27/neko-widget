@@ -65,7 +65,12 @@
   },
   "currentByteCounterCaveat": {
     "coversOnlyNewRecordIds": true,
-    "existingPUTPhotoBytesAtMaximumMonthlyMutationCount": 75497472000,
+    "PUTPhotoInputArithmeticAtMaximumMonthlyMutationCount": 75497472000,
+    "sameRecordPhotoReplacementAllowed": false,
+    "memoEditsReuseExistingS3PhotoVersion": true,
+    "allPUTAdmissionEstimateImplementedLocally": true,
+    "localCandidateDeployed": false,
+    "PUTInputEstimateIsPhysicalHistoricalBytes": false,
     "allPUTByteCounterRequiredBeforePublicActivation": true,
     "allCopyPhysicalDebtFenceRequiredBeforePublicActivation": true,
     "safeHistoricalCopyReconciliationRequiredBeforePublicActivation": true
