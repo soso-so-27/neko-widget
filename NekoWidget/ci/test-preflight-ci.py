@@ -3134,5 +3134,46 @@ class PhotoCorrectionBudgetTests(unittest.TestCase):
                 preflight.photo_correction_replay_cost(plan, evidence, True, {"upload_minutes": 12})
 
 
+class ToolReleaseReadinessBudgetTests(ToolBuildRecoveryBudgetTests):
+    def test_fresh_pair_preserves_original_failure_history_and_measured_build_reference(self):
+        f=self.fixture
+        with f.mocks():proof=f.prove()
+        proof.update(kind=planner.TOOL_RELEASE_KIND,release_base_sha=planner.TOOL_RELEASE_BASE,
+            release_base_run_id=planner.TOOL_RELEASE_BASE_RUN,
+            release_blob_pairs={path:list(pair) for path,pair in planner.TOOL_RELEASE_BLOBS.items()},
+            unchanged_input_count=planner.TOOL_RELEASE_INPUT_COUNT,unchanged_input_sha256=planner.TOOL_RELEASE_INPUT_SHA256,
+            new_build_required=True,current_signed_readiness_required=True)
+        plan={"head":f.head,"scope":planner.TOOL_PRESERVATION_SCOPE,"target_minutes":200,"ready":False,
+              "required_jobs":list(f.required),"cost":{"status":"unmeasured","samples":[]}}
+        measured=preflight.tool_recovery_cost(plan,proof,False,{"upload_minutes":9})
+        self.assertEqual(measured["cost"]["ci_minutes"],[23.9,30])
+        self.assertEqual(measured["cost"]["reference_build_seconds"],1434)
+        self.assertEqual(measured["cost"]["samples"],[])
+        retained=[dict(run,created_at=(f.now-dt.timedelta(minutes=80)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
+                  for run in (f.source,f.failed_plan,f.privacy)]
+        result=preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=proof)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["minutes_since_first_ci"],80)
+        self.assertEqual(set(result["task"]["failed_runs"]),{planner.TOOL_BUILD_SOURCE_RUN,planner.TOOL_PLAN_FAILURE_RUN,planner.TOOL_PRIVACY_FAILED_RUN})
+        for field,value in (("release_base_sha","f"*40),("release_blob_pairs",{}),("unchanged_input_count",0),
+                            ("unchanged_input_sha256","0"*64),("new_build_required",False),("current_signed_readiness_required",False)):
+            with self.subTest(field=field),self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence={**proof,field:value})
+        for status,conclusion in (("in_progress",None),("completed","failure")):
+            unknown=dict(retained[0],id=99,status=status,conclusion=conclusion)
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(measured),retained+[unknown],f.now,correction_evidence=proof)["ready"])
+
+    def test_new_branch_history_queries_original_task_and_diagnostic_refs(self):
+        paths=[]
+        def api(path):
+            paths.append(path)
+            return {"total_count":0,"workflow_runs":[]}
+        with patch.object(planner,"git",return_value=planner.TOOL_RELEASE_BRANCH),patch.object(preflight,"github",side_effect=api):
+            self.assertEqual(preflight.read_task_runs("c"*40),[])
+        for branch in (planner.TOOL_RELEASE_BRANCH,planner.TOOL_BUILD_BRANCH,
+                       planner.TOOL_BUILD_BRANCH.replace("codex/","diagnostic/",1)):
+            self.assertTrue(any(preflight.urllib.parse.urlencode({"branch":branch}) in path for path in paths),branch)
+
+
 if __name__ == "__main__":
     unittest.main()
