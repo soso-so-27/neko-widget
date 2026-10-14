@@ -3236,6 +3236,8 @@ def tool_wait_candidate_backend(head, repository, api):
                 or any(not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] <= 0 for run in runs)
                 or len({run["id"] for run in runs}) != len(runs)):
             raise ValueError("Candidate backend wait index incomplete")
+        if not observed <= {run["id"] for run in runs}:
+            raise ValueError("Previously observed candidate backend disappeared; result is unknown")
         active = []
         for run in runs:
             if (run.get("head_sha") != head or run.get("head_branch") != TOOL_BUILD_BRANCH

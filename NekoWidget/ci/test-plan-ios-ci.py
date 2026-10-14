@@ -4210,6 +4210,15 @@ class ToolBackendWaitTests(unittest.TestCase):
         bad=copy.deepcopy(self.run);bad["pull_requests"][0]["number"]=290
         with self.assertRaises(ValueError):self.wait([self.index(bad)])
 
+    def test_observed_active_run_cannot_disappear_or_be_replaced_by_another_success(self):
+        done=dict(self.run,status="completed",conclusion="success")
+        for later in ({"total_count":0,"workflow_runs":[]},self.index(dict(done,id=2002))):
+            self.seconds=0;self.calls=[]
+            with self.assertRaises(ValueError):self.wait([self.index(),later])
+        self.seconds=0;self.calls=[]
+        pair={"total_count":2,"workflow_runs":[self.run,dict(self.run,id=2002)]}
+        with self.assertRaises(ValueError):self.wait([pair,self.index(done)])
+
 
 class ToolPreservationScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
