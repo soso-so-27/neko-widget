@@ -1714,6 +1714,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 40), app.debugDescription)
         app.buttons["復元したツールを開く"].tap()
         XCTAssertTrue(app.buttons["預けるとき"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["restored-tool-contents-summary"].label, "ツールの入力内容・添付写真3枚")
+        capture("restored-tools-show-attachment-count")
         app.buttons["預けるとき"].tap()
         let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
@@ -2813,9 +2815,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(usage.waitForExistence(timeout: 8))
         XCTAssertTrue(usage.label.contains("使用中"))
         XCTAssertTrue(usage.label.contains("5 GB"), usage.label)
-        let recordUsage = app.staticTexts["preservation-record-usage"]
-        XCTAssertTrue(recordUsage.waitForExistence(timeout: 5))
-        XCTAssertEqual(recordUsage.label, "保管件数 1 / 200件")
+        XCTAssertFalse(app.staticTexts["preservation-record-usage"].exists,
+                       "Internal storage pieces must not be presented as a user's photo or copy count")
         capture("preservation-membership-expired-read-available")
         tap("preservation-export-all", towardBottom: true)
         cancelRecordExportSheet(app, screenshot: "preservation-all-export-system-sheet")

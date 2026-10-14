@@ -366,15 +366,8 @@ struct ManagedPreservationView: View {
     private var usageSection: some View {
         Section {
             if let usage = coordinator.usage {
-                if let limit = usage.records.maximumRecords {
-                    Text("保管件数 \(usage.records.saved) / \(limit)件")
-                        .accessibilityIdentifier("preservation-record-usage")
-                } else {
-                    Text("保管件数 \(usage.records.saved)件")
-                        .accessibilityIdentifier("preservation-record-usage")
-                }
                 if usage.records.pending > 0 {
-                    Text("保管準備中 \(usage.records.pending)件")
+                    Text("保存の準備中です")
                         .font(.subheadline)
                 }
                 Text("使用中 \(Self.capacity(usage.storage.usedBytes)) / \(Self.capacity(usage.storage.limitBytes))")
@@ -569,6 +562,10 @@ struct ManagedPreservationView: View {
                 Section {
                     Button("保管一覧に戻る") { coordinator.closeDetail() }
                     Text("ツールの記録と、そこで使う写真を保存したコピーです。連絡先や健康の情報を含む場合があります。")
+                    if let part = snapshot.document.toolBackup,
+                       let summary = ToolBackupIndex.contentsSummary(for: part) {
+                        Text(summary).accessibilityIdentifier("preservation-tool-contents-summary")
+                    }
                     if let written = snapshot.document.writtenAt { Text(written, format: .dateTime.year().month().day().hour().minute()) }
                     if snapshot.document.toolBackup?.kind == "index" {
                         Button("この端末に復元する") { coordinator.restoreTools(snapshot.record) }

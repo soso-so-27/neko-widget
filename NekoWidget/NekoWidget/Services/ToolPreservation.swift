@@ -45,6 +45,17 @@ enum ToolBackupError: Error, LocalizedError {
     }
 }
 
+enum ToolBackupProgress {
+    static func message(_ operation: String, completed: Int, total: Int) -> String {
+        guard total > 0 else { return "\(operation)の準備中…" }
+        // The last transferred piece still needs validation/local publication.
+        // Only the operation's success message announces completion.
+        if completed >= total { return "\(operation)の結果を確認中…" }
+        let percent = Int(Double(max(0, completed)) / Double(total) * 100)
+        return "\(operation)中 \(percent)%"
+    }
+}
+
 struct ToolBackupIndex: Codable, Equatable, Sendable {
     struct File: Codable, Equatable, Sendable {
         let path: String
@@ -57,6 +68,18 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     let snapshotID: UUID
     let createdAt: Date
     let files: [File]
+    var contentsSummary: String {
+        let photos = files.filter { $0.path.hasSuffix(".jpg") }.count
+        return "ツールの入力内容・添付写真\(photos)枚"
+    }
+    static func contentsSummary(for part: ToolBackupPart) -> String? {
+        guard part.kind == "index", (try? part.validate(photo: false)) != nil,
+              let bytes = Data(base64Encoded: part.payload),
+              let index = try? JSONDecoder().decode(Self.self, from: bytes),
+              index.snapshotID.uuidString.lowercased() == part.snapshotId,
+              (try? index.validate()) != nil else { return nil }
+        return index.contentsSummary
+    }
     static let chunkSize = 48 * 1024
     static let maximumIndexBytes = 256 * 1024
     static let manifests = ["CareHandoff": "plan.json", "EvacuationPreparation": "plan.json",

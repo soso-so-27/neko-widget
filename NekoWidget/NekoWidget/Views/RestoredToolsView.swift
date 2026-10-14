@@ -68,6 +68,8 @@ private struct RestoredToolWorkspace: View {
         List {
             Section {
                 Text(saved.index.createdAt, format: .dateTime.year().month().day().hour().minute())
+                Text(saved.index.contentsSummary)
+                    .accessibilityIdentifier("restored-tool-contents-summary")
                 Text("保存当時の記録です。ここでの編集は、この復元した記録だけに反映されます。")
                     .font(.footnote).foregroundStyle(.secondary)
                 if ManagedPreservationConfiguration.current.isEnabled {

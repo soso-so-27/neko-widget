@@ -632,7 +632,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             try self.check(ticket)
             self.pendingToolBackupDate = saved.index.createdAt
             try await ToolBackupTransfer.upload(saved, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを保管中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("保存", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.statusMessage = "ツールの記録と添付写真を保管しました。保存時点の内容を復元できます。"
@@ -648,7 +648,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             self.toolBackupProgress = "ツールの記録を復元中…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             let saved = try await ToolBackupTransfer.restore(record, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを復元中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("復元", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.restoredToolBackup = saved
@@ -663,7 +663,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             self.toolBackupProgress = "中断したコピーの削除を再開中…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             try await ToolBackupTransfer.delete(saved.index, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "削除を確認中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
             }
             try self.check(ticket)
             self.pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: saved.owner)
@@ -681,7 +681,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(pending, client: self.client)
             try await ToolBackupTransfer.delete(pending.index, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "中断した保管コピーを削除中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             let folder = ToolBackupFiles.directory(pending.id)
@@ -772,7 +772,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 self.toolBackupProgress = "保管コピーを削除中…"
                 defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
                 try await ToolBackupTransfer.delete(index, client: self.client) { completed, total in
-                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "保管コピーを削除中 \(completed) / \(total)" } }
+                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
                 }
             } else { try await self.client.delete(original.record) }
             try self.check(ticket)
