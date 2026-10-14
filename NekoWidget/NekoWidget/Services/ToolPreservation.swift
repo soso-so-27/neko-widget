@@ -258,7 +258,7 @@ enum ToolBackupTransfer {
         if sent.contains(id) { return }
         guard let expected = try ToolBackupFiles.drafts(saved).first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
         do {
-            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
             guard snapshot.record.revision == 1, snapshot.document.toolBackup == expected else { throw ToolBackupError.invalid }
         } catch ManagedPreservationError.notFound {
             // A timed-out PUT can still be executing remotely. A momentary 404
@@ -293,12 +293,12 @@ enum ToolBackupTransfer {
                 try await client.requireSessionCheckpoint(checkpoint)
                 if deleted.contains(id) { completed += 1; await progress(completed, total); continue }
                 do {
-                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
                     guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
                           part.snapshotId == index.snapshotID.uuidString.lowercased(), part.path == file.path,
                           part.part == offset, part.count == file.records.count,
                           part.kind == (file.path.hasSuffix(".jpg") ? "photo" : "json") else { throw ToolBackupError.invalid }
-                    try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record) }
+                    try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record, checkpoint: checkpoint) }
                 } catch ManagedPreservationError.notFound { }
                 try await client.requireSessionCheckpoint(checkpoint)
                 deleted.insert(id)
@@ -308,11 +308,11 @@ enum ToolBackupTransfer {
         }
         try await client.requireSessionCheckpoint(checkpoint)
         if !deleted.contains(index.snapshotID) { do {
-            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(index.snapshotID) }
+            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(index.snapshotID, checkpoint: checkpoint) }
             guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
                   part.kind == "index", let bytes = Data(base64Encoded: part.payload),
                   try JSONDecoder().decode(ToolBackupIndex.self, from: bytes) == index else { throw ToolBackupError.invalid }
-            try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record) }
+            try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record, checkpoint: checkpoint) }
         } catch ManagedPreservationError.notFound { } }
         try await client.requireSessionCheckpoint(checkpoint)
         deleted.insert(index.snapshotID)
@@ -342,7 +342,7 @@ enum ToolBackupTransfer {
                 guard let piece = pieces.first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
                 try await client.requireSessionCheckpoint(checkpoint)
                 if !sent.contains(id) { do {
-                    let existing = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+                    let existing = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
                     guard existing.record.revision == 1, existing.document.toolBackup == piece else { throw ToolBackupError.invalid }
                     sent.insert(id)
                     try await client.requireSessionCheckpoint(checkpoint)
@@ -374,7 +374,7 @@ enum ToolBackupTransfer {
             // Stable IDs make even an uncertain PUT idempotent. No overwrite path.
             try ToolBackupFiles.write(JSONEncoder().encode(item.0), to: attemptURL)
             let revision = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
-                try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true)
+                try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true, checkpoint: checkpoint)
             }
             guard revision == 1 else { throw ToolBackupError.invalid }
             sent.insert(item.0)
@@ -433,7 +433,7 @@ enum ToolBackupTransfer {
                 for (offset, id) in file.records.enumerated() {
                     try Task.checkCancellation()
                     try await client.requireSessionCheckpoint(checkpoint)
-                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
                     try await client.requireSessionCheckpoint(checkpoint)
                     guard snapshot.record.revision == 1, let piece = snapshot.document.toolBackup,
                           piece.snapshotId == part.snapshotId, piece.path == file.path,

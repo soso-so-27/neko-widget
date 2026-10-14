@@ -154,20 +154,34 @@ private extension String {
 struct ToolBackupFixtureView: View {
     @State private var saved: ToolBackupFiles.Saved?
     @State private var result = "確認中"
+    @State private var originalSource: URL?
+    @State private var originalCareData: Data?
+    @State private var editResult = ""
     var body: some View {
         NavigationStack {
             List {
                 Text(result).accessibilityIdentifier("tool-backup-result")
                 if let saved {
                     NavigationLink("復元したツールを開く") { RestoredToolWorkspace(saved: saved) }
+                    Button("編集後の元記録を確認") {
+                        do {
+                            guard let source = originalSource, let before = originalCareData,
+                                  try Data(contentsOf: source.appendingPathComponent("CareHandoff/plan.json")) == before,
+                                  try Data(contentsOf: ToolBackupFiles.directory(saved.id).appendingPathComponent("contents/CareHandoff/plan.json")) != before
+                            else { throw ToolBackupError.invalid }
+                            editResult = "元の記録を保ち、復元コピーだけを編集しました"
+                            try FileManager.default.removeItem(at: source); originalSource = nil
+                        } catch { editResult = "編集後の確認失敗: \(error)" }
+                    }
+                    Text(editResult)
                 }
-            }.task { await verify() }
+            }.task { if saved == nil && result == "確認中" { await verify() } }
         }
     }
     private func verify() async {
+        var phase = "source"
         do {
             let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: source) }
             var care = CareHandoffPlan()
             care.cats = [CareCat(name: "同じ名前", healthStatus: .recorded, healthDetails: "保存当時の薬"), CareCat(name: "同じ名前")]
             care.contact = "保存当時の連絡先"
@@ -189,29 +203,35 @@ struct ToolBackupFixtureView: View {
             try ToolBackupFiles.write(JSONEncoder().encode(["saved-cat": lost]), to: source.appendingPathComponent("LostCatDrafts/drafts.json"))
             try ToolBackupFiles.write(image, to: source.appendingPathComponent("LostCatDrafts/" + name))
             let vet = VeterinaryVisitStore(directory: source.appendingPathComponent("VeterinaryVisits"))
-            var visit = try await vet.current(catID: UUID(), catName: "同じ名前") { try $0() }
+            var visit = try await vet.current(catID: UUID(), catName: "診察の記録") { try $0() }
             visit.observations = "保存当時の診察"; visit.startedOn = "2026-09-30"
             visit.completedAt = Date(timeIntervalSince1970: 1_790_726_400)
             _ = try await vet.save(visit, expectedRevision: visit.revision)
             let owner = UUID().uuidString.lowercased()
+            phase = "capture-and-validate"
             let candidate = try ToolBackupFiles.capture(owner: owner, source: source)
             try await ToolBackupValidation.validate(candidate.index, at: ToolBackupFiles.directory(candidate.id))
             guard candidate.index.files.contains(where: { $0.path == "EvacuationPreparation/" + name }) else { throw ToolBackupError.invalid }
             let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".tool-fixture.invalid")!
             let store = ManagedPreservationSessionStore(origin: origin.absoluteString)
+            // Secure storage uses millisecond ISO dates; make fixture CAS values exact.
+            let expiry = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) + 600)
             let credential = ManagedPreservationSessionStore.Credential(token: String(repeating: "t", count: 43), ownerId: owner,
-                                                                       expiresAt: Date().addingTimeInterval(600))
+                                                                       expiresAt: expiry)
             guard try store.save(credential, replacing: nil) else { throw ToolBackupError.invalid }
+            guard try store.load() == credential else { throw ToolBackupError.invalid }
             defer { if let current = try? store.load() { _ = try? store.clear(ifMatching: current) } }
             let pieces = try ToolBackupFiles.drafts(candidate)
             let server = ToolBackupFixtureServer(maximum: pieces.count)
             let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin, membershipAudience: "tool.fixture")
             let client = ManagedPreservationClient(configuration: configuration,
                 requestOverride: { request, _ in try await server.request(request) })
+            phase = "upload-lost-reply"
             do {
                 try await ToolBackupTransfer.upload(candidate, client: client) { _, _ in }
                 throw ToolBackupError.invalid
             } catch ManagedPreservationError.unavailable { }
+            phase = "uncertain-cancel"
             await server.hide(pieces[0].0)
             do {
                 try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(candidate, client: client)
@@ -219,13 +239,39 @@ struct ToolBackupFixtureView: View {
             } catch ToolBackupError.uncertain { }
             guard try ToolBackupFiles.pending(owner: owner)?.id == candidate.id else { throw ToolBackupError.invalid }
             await server.hide(nil)
+            phase = "upload-resume"
             try await ToolBackupTransfer.upload(candidate, client: client) { _, _ in }
+            phase = "request-owner-binding"
+            let bound = try await client.detail(candidate.id)
+            let checkpoint = try await client.captureSessionCheckpoint()
+            let requestCount = await server.requestCount()
+            let other = ManagedPreservationSessionStore.Credential(token: String(repeating: "b", count: 43),
+                ownerId: UUID().uuidString.lowercased(), expiresAt: expiry)
+            guard try store.save(other, replacing: credential) else { throw ToolBackupError.invalid }
+            try await client.reloadSessionFromSecureStorage()
+            do {
+                _ = try await client.put(.init(recordID: candidate.id, document: bound.document, jpegData: nil), consent: true, checkpoint: checkpoint)
+                throw ToolBackupError.invalid
+            } catch ManagedPreservationError.staleSession { }
+            do {
+                try await client.delete(bound.record, checkpoint: checkpoint)
+                throw ToolBackupError.invalid
+            } catch ManagedPreservationError.staleSession { }
+            do {
+                _ = try await client.detail(candidate.id, checkpoint: checkpoint)
+                throw ToolBackupError.invalid
+            } catch ManagedPreservationError.staleSession { }
+            guard await server.requestCount() == requestCount,
+                  try store.save(credential, replacing: other) else { throw ToolBackupError.invalid }
+            try await client.reloadSessionFromSecureStorage()
+            phase = "parts-only-list-with-rate-limit"
             let coordinator = ManagedPreservationCoordinator(configuration: configuration, client: client)
             coordinator.start()
             for _ in 0..<100 where coordinator.isBusy { try await Task.sleep(for: .milliseconds(100)) }
             guard coordinator.records.map(\.id) == [candidate.id] else { throw ToolBackupError.invalid }
             coordinator.stop()
             let index = try await client.detail(candidate.id)
+            phase = "missing-part-restore"
             let missingID = pieces[pieces.count - 2].0
             await server.hide(missingID)
             do {
@@ -238,16 +284,19 @@ struct ToolBackupFixtureView: View {
             let firstReads = await server.readCount(pieces[0].0)
             // A fresh explicit same-owner authentication may continue verified
             // files without starting a large restore from the beginning.
+            phase = "restore-reauthentication"
             let renewed = ManagedPreservationSessionStore.Credential(token: String(repeating: "r", count: 43), ownerId: owner,
-                                                                     expiresAt: Date().addingTimeInterval(600))
+                                                                     expiresAt: expiry)
             guard try store.save(renewed, replacing: credential) else { throw ToolBackupError.invalid }
             try await client.reloadSessionFromSecureStorage()
+            phase = "restore-resume"
             let restored = try await ToolBackupTransfer.restore(index.record, client: client) { _, _ in }
             guard await server.readCount(pieces[0].0) == firstReads else { throw ToolBackupError.invalid }
             let restoredRoot = ToolBackupFiles.directory(restored.id).appendingPathComponent("contents")
             guard try Data(contentsOf: source.appendingPathComponent("CareHandoff/plan.json")) == careBytes,
                   try Data(contentsOf: restoredRoot.appendingPathComponent("CareHandoff/plan.json")) == careBytes,
                   try Data(contentsOf: restoredRoot.appendingPathComponent("EvacuationPreparation/" + name)) == image else { throw ToolBackupError.invalid }
+            phase = "restored-data-and-rebackup"
             // No name matching, current-health prefill or PhotoKit relinking.
             let restoredCare = CareHandoffStore(directory: restoredRoot.appendingPathComponent("CareHandoff"), allowsCandidateRefresh: false)
             guard restoredCare.plan.cats.count == 2, restoredCare.plan.cats[0].id != restoredCare.plan.cats[1].id,
@@ -262,6 +311,7 @@ struct ToolBackupFixtureView: View {
             defer { try? FileManager.default.removeItem(at: ToolBackupFiles.directory(next.id)) }
             guard try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: restored.id)?.id == next.id,
                   try ToolBackupFiles.pending(owner: owner) == nil else { throw ToolBackupError.invalid }
+            phase = "delete-lost-reply"
             // A lost DELETE reply leaves the index available for explicit retry.
             do {
                 try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
@@ -269,16 +319,19 @@ struct ToolBackupFixtureView: View {
             } catch ManagedPreservationError.unavailable { }
             _ = try await client.detail(candidate.id)
             let deletedFirstReads = await server.readCount(pieces[0].0)
+            phase = "delete-reauthentication-and-resume"
             let deletionRenewed = ManagedPreservationSessionStore.Credential(token: String(repeating: "d", count: 43), ownerId: owner,
-                                                                            expiresAt: Date().addingTimeInterval(600))
+                                                                            expiresAt: expiry)
             guard try store.save(deletionRenewed, replacing: renewed) else { throw ToolBackupError.invalid }
             try await client.reloadSessionFromSecureStorage()
             try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
             guard await server.isEmpty(), await server.readCount(pieces[0].0) == deletedFirstReads,
                   try ToolBackupFiles.saved().contains(where: { $0.id == restored.id }) else { throw ToolBackupError.invalid }
+            phase = "large-index-and-zip"
             try verifyLargeIndex()
+            originalSource = source; originalCareData = careBytes
             saved = restored; result = "保存・再開・欠落拒否・復元・元記録保全を確認"
-        } catch { result = "失敗: \(error)" }
+        } catch { result = "失敗 (\(phase)): \(error)" }
     }
     private func verifyLargeIndex() throws {
         let id = UUID(), owner = UUID().uuidString
@@ -309,6 +362,7 @@ struct ToolBackupFixtureView: View {
 private actor ToolBackupFixtureServer {
     let maximum: Int
     var records: [UUID: [String: Any]] = [:]
+    var totalRequests = 0
     var losesReply = true
     var deleteCount = 0
     var throttlesList = true
@@ -318,7 +372,9 @@ private actor ToolBackupFixtureServer {
     func hide(_ id: UUID?) { hidden = id }
     func readCount(_ id: UUID) -> Int { reads[id, default: 0] }
     func isEmpty() -> Bool { records.isEmpty }
+    func requestCount() -> Int { totalRequests }
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
+        totalRequests += 1
         let url = request.url!
         func response(_ json: [String: Any], status: Int = 200, headers: [String: String]? = nil) throws -> (Data, URLResponse) {
             var fields = headers ?? [:]; fields["Content-Type"] = "application/json"

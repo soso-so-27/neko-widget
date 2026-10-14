@@ -1687,17 +1687,56 @@ final class PhotoPermissionUITests: XCTestCase {
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity() {
+        continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--tool-backup-ui-fixture"]
+        app.launchArguments = ["--tool-backup-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let result = app.staticTexts["保存・再開・欠落拒否・復元・元記録保全を確認"]
         XCTAssertTrue(result.waitForExistence(timeout: 40), app.debugDescription)
         app.buttons["復元したツールを開く"].tap()
         XCTAssertTrue(app.buttons["預けるとき"].waitForExistence(timeout: 5))
+        app.buttons["預けるとき"].tap()
+        let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
+        XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
+        cats.firstMatch.tap()
+        let name = app.textFields["care-cat-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); XCTAssertEqual(name.value as? String, "同じ名前")
+        name.tap(); name.typeText("編集")
+        let edited = name.value as? String
+        XCTAssertTrue(edited?.contains("編集") == true)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        cats.firstMatch.tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); XCTAssertEqual(name.value as? String, edited)
+        capture("restored-care-edit-keeps-same-name-cats-separate")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["病院で見せる"].tap()
+        let previousVisit = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND NOT identifier BEGINSWITH %@", "診察の記録", "vet-cat-")).firstMatch
+        XCTAssertTrue(previousVisit.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !previousVisit.isHittable { app.swipeUp(velocity: .slow) }
+        previousVisit.tap()
+        XCTAssertTrue(app.staticTexts["診察済みの控え"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["保存当時の診察"].exists)
+        capture("restored-veterinary-history-keeps-original-context")
+        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let lost = app.buttons["迷子の控え"]
+        for _ in 0..<5 where !lost.isHittable { app.swipeUp(velocity: .slow) }
+        lost.tap()
+        XCTAssertTrue(app.textFields["lost-cat-name"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["lost-cat-name"].value as? String, "迷子の控え")
+        capture("restored-lost-cat-draft")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        for _ in 0..<5 where !app.buttons["みんなの写真"].isHittable { app.swipeUp(velocity: .slow) }
         app.buttons["みんなの写真"].tap()
         XCTAssertTrue(app.images["保存した写真"].waitForExistence(timeout: 5), app.debugDescription)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "restored-tool-owned-photo"; attachment.lifetime = .keepAlways; add(attachment)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["編集後の元記録を確認"].tap()
+        XCTAssertTrue(app.staticTexts["元の記録を保ち、復元コピーだけを編集しました"].waitForExistence(timeout: 5))
+        app.terminate()
     }
     @MainActor
     private func launchWeightMemo(extra: [String] = []) -> XCUIApplication {

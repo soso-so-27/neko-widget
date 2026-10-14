@@ -771,8 +771,8 @@ actor ManagedPreservationClient {
         return page
     }
 
-    func detail(_ id: UUID) async throws -> ManagedPreservationExportSnapshot {
-        let data = try await authenticated("GET", path: recordPath(id), maximumBytes: 30 * 1024 * 1024)
+    func detail(_ id: UUID, checkpoint: SessionCheckpoint? = nil) async throws -> ManagedPreservationExportSnapshot {
+        let data = try await authenticated("GET", path: recordPath(id), maximumBytes: 30 * 1024 * 1024, checkpoint: checkpoint)
         let snapshot = try decodeExportRecord(data)
         guard snapshot.record.id == id else { throw ManagedPreservationError.invalidResponse }
         return snapshot
@@ -844,7 +844,7 @@ actor ManagedPreservationClient {
 
     /// Existing edits use the current revision and unchanged photo copy. Server enforces both.
     func put(_ draft: ManagedPreservationDraft, expectedRevision: Int? = nil,
-             consent: Bool) async throws -> Int {
+             consent: Bool, checkpoint: SessionCheckpoint? = nil) async throws -> Int {
         if expectedRevision == nil && !consent { throw ManagedPreservationError.consentRequired }
         if let expectedRevision, expectedRevision <= 0 { throw ManagedPreservationError.invalidRecord }
         let document = try draft.document.validated()
@@ -854,7 +854,7 @@ actor ManagedPreservationClient {
                           document: document, photoBase64: draft.jpegData?.base64EncodedString())
         let body = try ManagedPreservationWire.encoder().encode(payload)
         guard body.count <= 30 * 1024 * 1024 else { throw ManagedPreservationError.invalidRecord }
-        let data = try await authenticated("PUT", path: recordPath(draft.recordID), body: body)
+        let data = try await authenticated("PUT", path: recordPath(draft.recordID), body: body, checkpoint: checkpoint)
         let result: Mutation = try decode(data)
         guard result.recordId == draft.recordID, result.revision > 0,
               expectedRevision == nil || result.revision > expectedRevision! else {
@@ -863,9 +863,9 @@ actor ManagedPreservationClient {
         return result.revision
     }
 
-    func delete(_ record: ManagedPreservationRecord) async throws {
+    func delete(_ record: ManagedPreservationRecord, checkpoint: SessionCheckpoint? = nil) async throws {
         try validate(record)
-        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision)
+        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision, checkpoint: checkpoint)
         let result: Mutation = try decode(data)
         guard result.recordId == record.id, result.revision > record.revision else {
             throw ManagedPreservationError.invalidResponse
@@ -887,7 +887,10 @@ actor ManagedPreservationClient {
     private func authenticated(_ method: String, path: String, query: [URLQueryItem] = [],
                                body: Data? = nil, revision: Int? = nil,
                                maximumBytes: Int = 65_536, responseFile: URL? = nil,
-                               expectedMIMEType: String = "application/json") async throws -> Data {
+                               expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil) async throws -> Data {
+        // Validate and capture in one actor turn, before the first suspension.
+        // A caller's earlier check cannot bind a later request after sign-in changes.
+        if let checkpoint { try requireSessionCheckpoint(checkpoint) }
         guard try hasSession(), let captured = credential else { throw ManagedPreservationError.authenticationRequired }
         let capturedEpoch = epoch
         do {
