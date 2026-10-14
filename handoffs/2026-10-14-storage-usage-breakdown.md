@@ -27,3 +27,13 @@
 型検査と新11件＋既存inventory3件が成功（関連14件6.31秒）。全種類・過去版・参照重複・record/pending重なり・欠落・矛盾・unknown・delete-marker・別owner・byte overflow・取得失敗を検査。独立差分レビューはblockerなし。製品は追加2ファイルのみで既存runtime入力は不変。
 
 本線には独立したmain-firstの固定blob/全tracked入力閉包scopeを先行登録し、同一候補SHAの既存Preservation job全stepとiOS planを要求する。新scopeの所要時間は未計測。直前backend実績104秒、既存job上限5分を参考にし、待ち時間と制御登録は別に記録する。通常iOS全件を最初のprobeにしない。今回新契約、AWS Paid、公開、課金、実データ削除、定期task作成/変更/再実行は行わない。
+
+## 本線反映の結果
+
+[制御PR302](https://github.com/soso-so-27/neko-widget/pull/302)を先にmain9c14722へ反映し、製品をそのmainへrebaseした。制御の独立レビューと新10/旧7件、全development15suite（261.9秒）、owning control plan（50秒）が成功。候補d2f96aaea3f61b4b6a9410e7b6d249f6ff0af16aで両追加blob、control4本、他1185tracked入力閉包を再照合し、成功済みchecker入力を保ってcandidate preflightだけを更新した。
+
+[製品PR303](https://github.com/soso-so-27/neko-widget/pull/303)を2026-10-14 12:21:38UTCにmain6f37b4c502f8d023ab664c8b9be6b8297f38403cへ反映。[同SHAのPreservation push](https://github.com/soso-so-27/neko-widget/actions/runs/38562848918)は型・全test・migration5検査・private bundleを含む必要8stepすべて成功（job99秒）、[iOS plan](https://github.com/soso-so-27/neko-widget/actions/runs/38562848711)は必要3step成功（48秒）。自動PR backendも成功、PR planのskipは証拠に数えない。main全tracked treeと候補の一致を確認した。初回候補11:50から製品mergeまで31分38秒で、99秒を全作業時間とはしない。
+
+製品testの失敗はなし。制御test fixtureの2失敗と修正は制御handoffに保持した。rootのCIログ取得はghのescape-sequence保護で1回停止し、ローカルの証拠取得だけ許可flagを付けて再取得した。CI再実行や製品修正はしていない。
+
+残る作業は実owner/全参照の読み取り観測を接続して通常原価を出すこと、全readerとrollbackを確認して管理情報圧縮を有効化すること、同じ写真を再送しないsnapshot設計、実機での保存・別端末復元。既存の保持・通知・整理運用とLP/審査資料の整合も一般提供前に必要。追加有料契約・AWS Paid・一般公開/課金開始の承認はこの反映に含めない。
