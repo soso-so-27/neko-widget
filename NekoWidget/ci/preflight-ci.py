@@ -402,6 +402,8 @@ def diagnostic_source_matches(source, head):
         return False
     if source == head:
         return True
+    if source == planner.TOOL_PRESERVATION_SOURCE:
+        return planner.tool_preservation_diagnostic_inputs(source, head)
     if source in {INTERNAL_REPORT_DIAGNOSTIC_SOURCE, planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_SOURCE}:
         return internal_report_diagnostic_source_matches(source, head)
     if source == planner.MODERATION_UI_RECOVERY_PRODUCT and (planner.moderation_ui_recovery_inputs(head)
@@ -1331,7 +1333,9 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
         and "NekoWidget/ci/run-recorded-command.py" in paths
         and scope.CI_DIAGNOSTIC_MATRIX in paths)
     unmatched = sorted(scope.source_paths(paths) - scope.MAPPED_PATHS)
-    reason = ("Exact moderation hide/release and reporter response batch; preserve build/privacy/migration, Photos bootstrap, both runtime OS, shared5 + WidgetURL3 + moderation3 UI and all five same-SHA owning backend push jobs; no Gallery variants. New UI requires direct Apple feedback before the first normal candidate measurement"
+    reason = ("Exact private tool snapshot/isolated restore and legacy preservation/export paths; preserve Build privacy/migration, Photos bootstrap, both runtime OS, eight owning UI cases and same-SHA Preservation Node all tests/migration/private bundles; unchanged Widget/Sharing/JPEG inputs"
+              if selected == scope.TOOL_PRESERVATION_SCOPE else
+              "Exact moderation hide/release and reporter response batch; preserve build/privacy/migration, Photos bootstrap, both runtime OS, shared5 + WidgetURL3 + moderation3 UI and all five same-SHA owning backend push jobs; no Gallery variants. New UI requires direct Apple feedback before the first normal candidate measurement"
               if selected == planner.MODERATION_RESOLUTION_SCOPE else
               "Native CI execution graph and command/attachment wrapper changed. Verify both Solo shards, other UI and runtime/Gallery execution plus the existing build/privacy/Photos contract; do not reuse the historical seven-job graph as eight-job evidence"
               if runtime_graph_change else
@@ -1411,6 +1415,8 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
     return {"head": head, "base": comparison, "changed_files": paths, "scope": selected,
             "reason": reason, "unmapped_files": unmatched if selected == scope.FULL_SCOPE else [],
             "required_jobs": list(required), "cost": cost, "target_minutes": target_minutes,
+            **({"required_backend_runs": planner.tool_preservation_requirements(head)}
+               if selected == scope.TOOL_PRESERVATION_SCOPE else {}),
             **({"required_backend_runs": (planner.internal_report_requirements if selected == planner.INTERNAL_REPORT_SCOPE else planner.moderation_resolution_requirements)(head)}
                if selected in (planner.MODERATION_RESOLUTION_SCOPE, planner.INTERNAL_REPORT_SCOPE) else {}),
             **({"required_backend_runs": planner.preservation_provider_requirements(head)}
