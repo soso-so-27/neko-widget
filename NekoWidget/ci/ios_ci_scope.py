@@ -674,6 +674,31 @@ INTERNAL_REPORT_METADATA_REPAIR_BLOBS = {
 INTERNAL_REPORT_METADATA_REPAIR_PATHS = frozenset(INTERNAL_REPORT_METADATA_REPAIR_BLOBS)
 # Fixed product 14e1135; focused feedback remains separate from the required graph.
 # The separately reviewed control must land on main before this route is used.
+TOOL_STORAGE_SCOPE = "reviewed-tool-storage-completion-v1"
+TOOL_STORAGE_PATHS = frozenset(('NekoWidget/NekoWidget/App/AppRootView.swift',
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift',
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift',
+ 'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift',
+ 'NekoWidget/NekoWidget/Services/ToolPreservation.swift',
+ 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift',
+ 'NekoWidget/NekoWidget/Views/RestoredToolsView.swift',
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift',
+ 'NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql',
+ 'NekoWidget/PreservationService/src/documents.ts',
+ 'NekoWidget/PreservationService/src/index.ts',
+ 'NekoWidget/PreservationService/src/owner-d1-residue.ts',
+ 'NekoWidget/PreservationService/src/owner-quarantine-restore.ts',
+ 'NekoWidget/PreservationService/src/record-recovery-copy.ts',
+ 'NekoWidget/PreservationService/src/storage.ts',
+ 'NekoWidget/PreservationService/test/owner-deletion.test.ts',
+ 'NekoWidget/PreservationService/test/owner-quarantine-restore.test.ts',
+ 'NekoWidget/PreservationService/test/record-recovery-copy.test.ts',
+ 'NekoWidget/PreservationService/test/storage.integration.test.ts',
+ 'NekoWidget/PreservationService/test/tool-document.test.ts',
+ 'NekoWidget/PreservationService/test/tool-storage.integration.test.ts',
+ 'NekoWidget/PreservationService/test/tool-trial-resume-repair.integration.test.ts'))
+TOOL_STORAGE_READINESS_PATH = "NekoWidget/ci/moderation-v2-readiness.json"
+
 TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"
 TOOL_PRESERVATION_BLOBS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('ec3aa65cd43617a6b6a0e4f255b8f4386cd41b9e',
                                                      'd299764d0cc68f8c0b4af95f23c0ca91bb893007'),
@@ -746,7 +771,11 @@ TOOL_PRESERVATION_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + metho
 ))
 
 
-SCOPES = (TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+TOOL_STORAGE_TESTS = TOOL_PRESERVATION_TESTS + (
+    "NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
+)
+
+SCOPES = (TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -2461,7 +2490,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -3406,6 +3435,9 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == TOOL_STORAGE_SCOPE:
+        return (bool(paths) and len(paths) == len(set(paths))
+                and sources in (TOOL_STORAGE_PATHS, TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH}))
     if scope == TOOL_PRESERVATION_SCOPE:
         return bool(paths) and len(paths) == len(set(paths)) and sources == TOOL_PRESERVATION_PATHS
     if scope == INTERNAL_REPORT_SCOPE:
@@ -3627,6 +3659,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == TOOL_STORAGE_SCOPE:
+        return TOOL_STORAGE_TESTS
     if scope == TOOL_PRESERVATION_SCOPE:
         return TOOL_PRESERVATION_TESTS
     if scope == INTERNAL_REPORT_SCOPE:
@@ -3776,6 +3810,9 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
     if sorted(declarations) != list(actual):
         raise ValueError("Unsupported direct Solo test declaration")
     complete = tuple(sorted(SOLO_TEST_METHODS + tuple(SOLO_ADDITIONAL_TEST_METHODS)))
+    foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
+    if foreground in actual:
+        complete = tuple(sorted(complete + (foreground,)))
     if (len(actual) != len(set(actual))
             or len(complete) != len(set(complete))
             or any(shard not in (0, 1) for shard in SOLO_ADDITIONAL_TEST_METHODS.values())

@@ -1,5 +1,10 @@
 # CI・配布の作業手順
 
+- `reviewed-tool-storage-completion-v1` は保存写真の再利用・immutable source参照・参照中削除拒否・disabled復旧・foreground/count UIの固定22製品入力だけを扱う。main先行承認済み7controlはbase/headで同一、通常`handoffs/*.md`以外の1164入力はmode/type/blob/path閉包を固定する。既存tool回復scopeや旧成功graphを変更しない。fresh Build39・Photos bootstrap・両OS runtime・tool UI 9 methodsと、同じ候補SHAのPreservation owning push全8stepが必要。UI raw logのstarted/passed各1回を照合し、empty/skip/extra/missing/duplicateを拒否する。main再利用とrelease CLIは同じshared graphを使う。
+- 署名の二段freezeは、まずローカルでrelease CLIを最終固定・レビューし、正規2 authority更新後に署名対象外plannerへexact readiness before/afterを登録する。7control＋このartifactだけの導入は専用plan-only判定で全製品beforeと残り入力閉包を照合し、現時計の署名検証を必須にする。fresh artifactをcontrol PRへ同梱してmainへ先行反映し、製品候補はそのmainを取り込む。旧artifactを残したCLI変更だけではmedia自己テストが`reviewed_code_changed`を拒否するため、テストを緩めない。現登録は`f599ffbf`→`8858703e`、purposeはowner-report UI continuation、一般公開承認はfalse。
+- この候補の初回は2026-10-14T12:59:13Z。診断38647679284/b52はManagedPreservationView:37のSwift expression type-check失敗でUI未実行のまま保持する。生log SHA256は`5974ddb47f5638c23a9a6700b04adad447109019766bd94637b51f32821ef8eb`。732候補の3 opaque expression分割後のprivatecopies/membership/foreground-deletion診断は、22製品afterと同一で、main承認control7・exact新artifact・通常handoff以外の差分がない場合だけ既存診断case readerへ流す。3caseすべての実成功が必要で、診断はrelease証拠にならない。新4 graphは未計測であり、旧scopeの時間を新scopeの実測としない。参考は30–40分CI＋uploadで、30分以内を保証しない。
+- 新アプリのtool保存/strict削除はserverの`toolSnapshots.maximumIndexVersion >= 2`と`strictPartDeletion`を必要とする。0037・archive/executorの正規配備とlive互換確認はCIや診断と別の境界として残す。価格980円、公開・課金・契約・cronの権限をこのscopeから拡張しない。
+
 CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱うときに、該当する節だけ読む。
 
 ## CIを起動する前
