@@ -3184,13 +3184,14 @@ def tool_pr_backend_proof(repository, api, now):
     tool_run_identity(run, TOOL_PR_RUN, TOOL_BUILD_SOURCE, "preservation-service.yml", "pull_request", "success", now, workflow_id=363932714)
     expected_pr = {"number": 289, "id": 4853108830}
     prs = run.get("pull_requests")
-    if (not isinstance(prs, list) or len(prs) != 1 or any(prs[0].get(key) != value for key, value in expected_pr.items())
-            # Nested PR pointers describe its current head/base, not this run's checkout.
-            # Historical bytes remain bound below by head_commit, Git parents/tree and raw log.
+    # GitHub may update these pointers or clear the array after merge.
+    # Historical bytes remain bound below by head_commit, Git parents/tree and raw log.
+    if not isinstance(prs, list) or len(prs) > 1: raise ValueError("Fixed PR identities differ")
+    if prs and (any(prs[0].get(key) != value for key, value in expected_pr.items())
             or any(prs[0].get(side, {}).get("ref") != ref
                    or prs[0][side].get("repo", {}).get("id") != 1335079243
-                   for side, ref in (("base", "main"), ("head", TOOL_BUILD_BRANCH)))
-            or run.get("head_commit", {}).get("id") != TOOL_BUILD_SOURCE or run["head_commit"].get("tree_id") != TOOL_PR_TREE): raise ValueError("Fixed PR identities differ")
+                   for side, ref in (("base", "main"), ("head", TOOL_BUILD_BRANCH)))): raise ValueError("Fixed PR identities differ")
+    if run.get("head_commit", {}).get("id") != TOOL_BUILD_SOURCE or run["head_commit"].get("tree_id") != TOOL_PR_TREE: raise ValueError("Fixed PR identities differ")
     jobs = executed_jobs(run, repository, api)
     if len(jobs) != 1 or jobs[0].get("id") != TOOL_PR_JOB: raise ValueError("Fixed PR job differs")
     tool_job_identity(jobs[0], run)

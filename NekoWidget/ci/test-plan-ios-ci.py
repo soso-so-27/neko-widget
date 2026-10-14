@@ -4219,6 +4219,25 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             self.digests[planner.TOOL_PLAN_FAILURE_JOB]=planner.tool_log_digest(self.observations[key])
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
 
+    def test_merged_pr_metadata_may_be_empty_but_immutable_checkout_is_still_required(self):
+        original=copy.deepcopy(self.pr["pull_requests"])
+        self.pr["pull_requests"]=[]
+        with self.mocks():
+            self.assertEqual(self.prove()["backend_evidence"]["checkout_sha"],planner.TOOL_PR_MERGE)
+            self.assertTrue(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/main","GITHUB_SHA":self.main,"GITHUB_REPOSITORY":self.repo,"GITHUB_RUN_ID":"1004"}
+            with patch.object(planner,"git",return_value=self.main),patch.object(planner,"equivalent_inputs",return_value=True):
+                self.assertEqual(planner.find_evidence(env,self.required,self.api,self.now),(1003,self.head))
+            for value in (None,{},"",original*2,[dict(original[0],id=1)],[dict(original[0],number=290)]):
+                self.pr["pull_requests"]=value
+                with self.subTest(value=value),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.pr["pull_requests"]=[]
+            for key,value in self.observations.items():
+                old=copy.deepcopy(value)
+                self.observations[key]="changed transcript" if isinstance(value,str) else {**value,"tree":{"sha":"f"*40}}
+                with self.subTest(key=key),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.observations[key]=old
+
 
 class ToolBackendWaitTests(unittest.TestCase):
     def setUp(self):
