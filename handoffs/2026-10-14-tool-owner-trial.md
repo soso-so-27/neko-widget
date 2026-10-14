@@ -1,4 +1,10 @@
-# 既存本人だけのツール保管試用（ローカル候補・未発行）
+# 既存本人だけのツール保管試用
+
+## 最新：実接続・試用発行済み
+
+2026-10-14 20:23 JSTに、承認済みsource afbee65b7e1153ba01f6f5c4bb2c0452203fd9a8の保管/削除Worker反映後、既存本人だけの有限grantを一度発行。期限は **2026-10-15 20:17 JST**、1 snapshot・入力累計20MiB・400試行/200slot以下。旧pilot/counter・旧記録を変えず、一般受付/契約/980円/定期設定を維持した。内部255のApple uploadも成功したが、今回の実機往復は未確認。[最新結果と使い方](2026-10-14-tool-cloud-connected-internal255.md)を参照する。
+
+## 以下はローカル候補時点の検証履歴
 
 初回候補開始2026-10-14 09:24:48 UTC。基点317a5b927a33be1cbe0f72d7ab3b3927814a4a69、branch codex/tool-owner-trial-20261014。既存内部版255のnative入力、署名対象codePaths、workflow、JPEG provider、依存、価格980円を変更しない。配備・grant発行・実データ送信・別iPhone復元・公開・課金・契約・定期taskはこの候補だけでは実行しない。
 
