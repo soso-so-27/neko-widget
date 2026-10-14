@@ -3981,6 +3981,8 @@ def tool_storage_handoff(path):
 
 
 def tool_storage_paths_only(paths):
+    if not isinstance(paths, (list, tuple)) or not paths or any(not isinstance(path, str) for path in paths):
+        return False
     sources = {path for path in paths if not tool_storage_handoff(path)}
     return (bool(paths) and len(paths) == len(set(paths))
             and sources in (TOOL_STORAGE_PATHS, TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH}))
@@ -4107,6 +4109,8 @@ def tool_storage_readiness(head):
 
 
 def tool_storage_control_paths_only(paths):
+    if not isinstance(paths, (list, tuple)) or not paths or any(not isinstance(path, str) for path in paths):
+        return False
     return (bool(paths) and len(paths) == len(set(paths))
             and {p for p in paths if not tool_storage_handoff(p)}
                 == TOOL_STORAGE_CONTROLS | {TOOL_STORAGE_READINESS_PATH})
@@ -4220,6 +4224,13 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
         raise ValueError("Storage completion candidate is stale")
     required = required_jobs_from_scope(TOOL_STORAGE_SCOPE)
+    extras = [job for job in jobs if job.get("name") not in set(required) | {PLAN_JOB}]
+    # The unchanged workflow has two unused matrix jobs. Only their empty,
+    # skipped, unexpanded placeholders may accompany the fresh owning graph.
+    if (len(extras) != 2 or any(job.get("name") != UNEXPANDED_SHARING_JOB
+            or (job.get("status"), job.get("conclusion")) != ("completed", "skipped")
+            or job.get("steps") != [] for job in extras)):
+        raise ValueError("Storage completion native graph has an unexpected execution")
     if (not covers_jobs(jobs, required, sha, now=now)
             or any(type(job.get("id")) is not int or job["id"] <= 0 or job.get("run_id") != run["id"]
                    or job.get("head_sha") != sha or job.get("run_attempt", 1) != 1 for job in jobs)
@@ -4269,6 +4280,11 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
             or backend_run.get("head_repository", {}).get("full_name") != repo):
         raise ValueError("Storage completion backend changed during verification")
     backend_jobs = executed_jobs(backend_run, repo, api)
+    if (len(backend_jobs) != 1 or backend_jobs[0].get("name") != PRESERVATION_JOB
+            or type(backend_jobs[0].get("id")) is not int or backend_jobs[0]["id"] <= 0
+            or backend_jobs[0].get("run_id") != backend_run["id"] or backend_jobs[0].get("head_sha") != sha
+            or (backend_jobs[0].get("status"), backend_jobs[0].get("conclusion")) != ("completed", "success")):
+        raise ValueError("Storage completion backend must be exactly its one owning job")
     job = next(job for job in backend_jobs if job.get("name") == PRESERVATION_JOB)
     for name in TOOL_STORAGE_BACKEND_STEPS:
         found = [step for step in job["steps"] if step.get("name") == name]

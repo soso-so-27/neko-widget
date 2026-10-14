@@ -10390,6 +10390,10 @@ class ToolStorageCompletionScopeTests(unittest.TestCase):
         if fresh: pairs[planner.TOOL_STORAGE_READINESS_PATH] = (planner.TOOL_STORAGE_READINESS_BEFORE, "d" * 40)
         return {p: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
                     "A" if before == "0" * 40 else "M"] for p, (before, after) in pairs.items()}
+    def test_none_and_unknown_path_inputs_reject_before_iteration(self):
+        for paths in (None, [], (), "path", True, 1, [None], [["path"]], {"path": "blob"}):
+            self.assertFalse(planner.tool_storage_paths_only(paths))
+            self.assertFalse(planner.tool_storage_control_paths_only(paths))
     def select(self, rows=None, *, raw=None, paths=None, override=None, event="push", ref="refs/heads/codex/tool-storage-completion-20261014"):
         rows = self.rows() if rows is None else rows
         paths = list(rows) if paths is None else paths
@@ -10560,6 +10564,7 @@ class ToolStorageCompletionGraphTests(unittest.TestCase):
             planner.lane_job(planner.TOOL_STORAGE_SCOPE,"app-ui"):planner.OWNER_CLOUD_RUNTIME_STEPS,
             planner.PLAN_JOB:("Check out repository","Test CI selection and evidence boundaries","Select checks")}
         self.jobs=[job(n,100+i,self.run,s) for i,(n,s) in enumerate(names.items())]
+        self.jobs += [dict(job(planner.UNEXPANDED_SHARING_JOB,200+i,self.run,()),conclusion="skipped") for i in range(2)]
         self.plan={"schema_version":1,"repository":self.repo,"head_sha":self.sha,"scope":planner.TOOL_STORAGE_SCOPE,
             "required_jobs":list(self.required),"required_backend_runs":planner.tool_storage_requirements(self.sha),
             "evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
@@ -10592,7 +10597,7 @@ class ToolStorageCompletionGraphTests(unittest.TestCase):
             for field,value in (("head_branch","codex/other"),("status","in_progress"),("conclusion","failure"),("run_attempt",2),
                     ("updated_at",(self.now-dt.timedelta(hours=25)).isoformat())):
                 with patch.dict(self.run,{field:value}),self.assertRaises(ValueError):self.prove()
-            for j in self.jobs:
+            for j in [job for job in self.jobs if job["name"] in set(self.required)|{planner.PLAN_JOB}]:
                 for field,value in (("status","in_progress"),("conclusion","skipped"),("head_sha","c"*40)):
                     with patch.dict(j,{field:value}),self.assertRaises(ValueError):self.prove()
                 with patch.dict(j["steps"][0],{"conclusion":"skipped"}),self.assertRaises(ValueError):self.prove()
@@ -10617,6 +10622,31 @@ class ToolStorageCompletionGraphTests(unittest.TestCase):
             self.assertFalse(planner.tool_storage_ui_results(bad))
             def api(path):return bad if path.endswith("/jobs/103/logs") else self.api(path)
             with self.mocks(),self.assertRaises(ValueError):planner.tool_storage_graph(self.run,self.main,api,self.now,self.jobs)
+    def test_only_known_empty_skipped_native_placeholders_can_be_extra(self):
+        extra=self.jobs[-1]
+        extra.update(name="Unexpected job",status="in_progress",conclusion=None,steps=[])
+        with self.mocks():
+            for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success"),("completed","skipped")):
+                extra.update(status=status,conclusion=conclusion)
+                with self.assertRaises(ValueError):self.prove()
+            extra.update(name=planner.UNEXPANDED_SHARING_JOB,status="completed",conclusion="skipped")
+            self.assertTrue(self.prove())
+            extra["steps"]=[{"name":"Unknown step","status":"completed","conclusion":"success"}]
+            with self.assertRaises(ValueError):self.prove()
+            extra["steps"]=[];extra["status"]="in_progress"
+            with self.assertRaises(ValueError):self.prove()
+            extra["status"]="completed"
+            self.jobs.pop()
+            with self.assertRaises(ValueError):self.prove()
+            self.jobs.extend([dict(extra,id=999),dict(extra,id=1000)])
+            with self.assertRaises(ValueError):self.prove()
+    def test_backend_job_set_rejects_every_extra_execution(self):
+        extra=dict(self.backend_jobs[0],id=999,name="Unexpected job",status="in_progress",conclusion=None,steps=[])
+        self.backend_jobs.append(extra)
+        with self.mocks():
+            for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success"),("completed","skipped")):
+                extra.update(status=status,conclusion=conclusion)
+                with self.assertRaises(ValueError):self.prove()
 
 
 if __name__ == "__main__":
