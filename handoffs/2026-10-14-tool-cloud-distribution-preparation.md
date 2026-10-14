@@ -25,7 +25,7 @@ CLI67テスト、署名済みmedia設定28テスト成功。制御planner355／p
 
 ## 保存試用・実機で残ること
 
-1. 本人がAWS既存アカウント `164892691568`へログインし、現在のplan/利用可能credit/サービス利用可否を確認する。本日のCLI照会はidentity exit255で停止、未retry。ブラウザもlogin画面のまま。古い119.41 USDを現在残高や料金保証にしない。
+1. **画面で確認済み**：本人が既存の正しいAWSアカウントへログインし、続けて提示した現在の「コストと使用状況」をrootが読み取った。無料プランの残クレジット・当月利用コスト・期限2027-03-25をローカル証拠へ記録した。月末予測はデータ利用不可。無料プランの費用をクレジットでカバーする表示であり、今すぐPaidへ変更する必要はない。当月途中のAWS全体利用コストで、請求書・CF分・通常1人原価・全保存版の数量ではない。本日のCLIはidentity exit255で未retry、ログイン済み画面は接続側Chromeと別profileで直接操作できなかった。再ログインや数値の手入力を次工程の条件にしない。APIでのaccount statusと全S3版のinventoryは未確認。過去の残高ではなく `aws-current-user-screen-cost.json` の現表示値を使い、口座の具体残高・利用額と画像は公開repoへ新たに載せない。
 2. 実際の端末内ツール目録でJSON部品・JPEG・indexのN/byteを測り、本人と固定snapshot、部品ID、24時間以内、合計20MiB以下、有限試行数と新しい費用証拠を固定するtrial grantを準備する。このgrantは設計のみで未実装・未発行。既存pilot SQLだけでは現owner／1snapshot／byte上限を強制できない。migration34は一般モードのIntakeControl用であり、現在pilot PUTのbyte制限ではない。旧100/day・500/monthと旧1GiB/200件・全体3GiBの内部値は販売人数や通常原価に転用しない。
 3. 費用を具体化して必要な承認を得た後、限定受付と内部TestFlight配布を行い、同じApple Accountの別iPhoneで5ツール・添付写真・日付・元記録保持・復元コピー編集とoffline表示を確認する。実機手順は外部 `owner-tool-check-guide.md`。現record1は新ツールsnapshotではないため、旧GETだけで5ツール復元を成功扱いしない。
 
@@ -41,7 +41,7 @@ pilotと24時間cost reviewは期限切れのまま。新規保存試用・実�
 
 ## 証拠と時間
 
-外部証拠rootは `C:/dev/neko-evidence/tool-cloud-preparation-20261014`。`deployment/completion.json`、`deployment/after.json`、`migration-failure-diagnosis.json`、browser/host診断、AWS失敗、CF集計、`finite-trial-review.json`、`fee-approval-preparation.md`、release各review/preflight/qualification/dry-runを保持。
+外部証拠rootは `C:/dev/neko-evidence/tool-cloud-preparation-20261014`。`deployment/completion.json`、`deployment/after.json`、`migration-failure-diagnosis.json`、browser/host診断、AWS初回失敗、利用者の同アカウントlogin画像と現cost画像を読んだ `aws-user-login-observation.json`／`aws-current-user-screen-cost.json`、CF集計、`finite-trial-review.json`、`fee-approval-preparation.md`、release各review/preflight/qualification/dry-runを保持。
 
 cloud first candidate07:21:07.791491Z→反映完了07:38:47.833654Z、17分40秒。release preparation first07:17:55Z→候補main反映08:45:47Zは1時間27分52秒。dry-runと引き継ぎもこの起点から計上し、Buildだけの22分40秒を全作業時間としない。元tool候補は03:08:47Z以前で、その失敗・診断・全累計を消さない。23分54秒は前のBuild参照、30分はtimeout予約であり今回の完了保証ではない。
 
