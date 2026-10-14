@@ -408,21 +408,6 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             "Required CI jobs are missing, skipped, failed, duplicated, or from another commit.")
     result = {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
               "scope": plan["scope"], "required_jobs": list(required)}
-    if plan["scope"] == planner.TOOL_PRESERVATION_SCOPE:
-        require(not corrected, "Tool preservation requires the complete fresh four-job native graph.")
-        require(plan.get("required_backend_runs") == planner.tool_preservation_requirements(source_sha),
-                "Tool preservation plan must declare the same-candidate owning Preservation job.")
-        def tool_backend_api(path):
-            prefix = f"/repos/{REPOSITORY}/"
-            require(path.startswith(prefix + "actions/"), "Unexpected tool preservation backend API path.")
-            return gh.get(path[len(prefix):])
-        try:
-            owner = current if source_id == run_id else source
-            branch = owner["head_branch"] if owner["head_branch"].startswith("codex/") else None
-            result["backend_evidence"] = planner.tool_preservation_backend_evidence(
-                source_sha, REPOSITORY, tool_backend_api, now, branch=branch)
-        except (OSError, KeyError, AttributeError, TypeError, ValueError):
-            raise Blocked("Same-candidate Preservation all tests/migration/private bundle success is required before release.") from None
     if plan["scope"] == planner.PRESERVATION_EXPORT_SCOPE:
         def backend_api(path: str):
             prefix = f"/repos/{REPOSITORY}/"

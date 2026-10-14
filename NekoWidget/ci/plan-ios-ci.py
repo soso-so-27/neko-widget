@@ -3046,6 +3046,253 @@ PRESERVATION_EXPORT_WORKFLOWS = {
 }
 
 
+TOOL_BUILD_SOURCE = "d566a6d239f563ff1fb9837a95a107c3f1ea1fe6"
+TOOL_BUILD_SOURCE_RUN = 38513344147
+TOOL_BUILD_BRANCH = "codex/tool-preservation-20261014"
+TOOL_BUILD_SOURCE_JOBS = {
+    PLAN_JOB: 115686575756, BUILD: 115686804115, BOOTSTRAP_SMOKE: 115686804171,
+    lane_job(TOOL_PRESERVATION_SCOPE, "runtime"): 115686804268,
+    lane_job(TOOL_PRESERVATION_SCOPE, "app-ui"): 115686804157,
+}
+TOOL_BUILD_FAILED_STEP = "Verify sharing release privacy gates"
+TOOL_RESTORED_RELEASE = "42d085b49a2226b3895c7506ea67facc51acf7f7"
+TOOL_RECOVERY_CONTROLS = TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/check-development-flow.py"}
+TOOL_PR_RUN, TOOL_PR_JOB = 38513358211, 115686619818
+TOOL_PR_MERGE = "22efa05feb50d81f5f095196003c78628864fc6b"
+TOOL_PR_BASE = "70192943428fbf6392b6d00a0b2ed6fe3b0b9233"
+TOOL_PR_TREE = "b63b4a6908d2fe05d832f6d172762184ed5b2af7"
+TOOL_LOG_DIGESTS = {
+    115686804115: "ffe004dd05f28e7ac8b7e0818a23b1d70327adabae61c3dddb0ecc85e29b7165",
+    115686619818: "ff654eae740a0b7e877f6aa0a4f2b9259d27079651a3292c029647763e09b86c",
+}
+
+
+def tool_fixed_observation(path):
+    """Four immutable, read-only endpoints; never render captured log escapes."""
+    prefix = "repos/soso-so-27/neko-widget/"
+    allowed = {prefix + "git/commits/" + sha for sha in (TOOL_BUILD_SOURCE, TOOL_PR_MERGE)}
+    allowed |= {prefix + f"actions/jobs/{job}/logs" for job in TOOL_LOG_DIGESTS}
+    if path not in allowed: raise ValueError("Unregistered tool recovery observation")
+    command = ["gh", "api", "--hostname", "github.com", "--method", "GET"]
+    raw = path.endswith("/logs")
+    if raw: command.append("--allow-escape-sequences")
+    result = subprocess.run(command + [path], capture_output=True, text=True, encoding="utf-8", timeout=45,
+                            env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_DEBUG": ""})
+    # Older gh versions do not filter raw terminal escapes and have no such flag.
+    # Argument rejection occurs before any HTTP request; do not retry other errors.
+    if raw and result.returncode and result.stderr.startswith("unknown flag: --allow-escape-sequences"):
+        result = subprocess.run(command[:-1] + [path], capture_output=True, text=True, encoding="utf-8", timeout=45,
+                                env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_DEBUG": ""})
+    if result.returncode: raise ValueError("Fixed tool recovery observation unavailable")
+    value = result.stdout if raw else json.loads(result.stdout)
+    if not isinstance(value, str if raw else dict): raise ValueError("Invalid fixed recovery response")
+    return value
+
+
+def tool_log_digest(log):
+    if not isinstance(log, str): return None
+    return hashlib.sha256((log.replace("\r\n", "\n").rstrip("\n") + "\n").encode()).hexdigest()
+
+
+def tool_build_steps():
+    workflow = git("show", f"{TOOL_BUILD_SOURCE}:.github/workflows/ios-build.yml")
+    block = workflow.split("  build-without-signing:\n", 1)[1].split("  simulator-smoke-test:\n", 1)[0]
+    excluded = {"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"}
+    names = tuple(name for name in re.findall(r"^      - name: (.+)$", block, re.M) if name not in excluded)
+    if len(names) != 39 or len(set(names)) != 39 or names[2] != TOOL_BUILD_FAILED_STEP:
+        raise ValueError("Frozen tool Build39 graph differs")
+    return names
+
+
+def tool_recovery_inputs(head):
+    """Restore the signed release bytes; permit only approved CI control changes."""
+    try:
+        if not isinstance(head, str) or not SHA.fullmatch(head) or head == TOOL_BUILD_SOURCE: return False
+        git("merge-base", "--is-ancestor", TOOL_BUILD_SOURCE, head)
+        approval = git("merge-base", "refs/remotes/origin/main", head)
+        if git("show", f"{approval}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(f'TOOL_BUILD_SOURCE = "{TOOL_BUILD_SOURCE}"') != 1: return False
+        for path in TOOL_RECOVERY_CONTROLS:
+            approved = git("ls-tree", approval, "--", path)
+            if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), approved)
+                    or git("ls-tree", head, "--", path) != approved): return False
+        inventory = "NekoWidget/ci/ios_ci_scope.py"
+        if git("ls-tree", head, "--", inventory) != git("ls-tree", TOOL_BUILD_SOURCE, "--", inventory): return False
+        release = "NekoWidget/ci/release-testflight.py"
+        if git("ls-tree", head, "--", release) != f"100644 blob {TOOL_RESTORED_RELEASE}\t{release}": return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", TOOL_BUILD_SOURCE, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if not raw or len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (len(fields) != 5 or path in seen or fields[1] != "100644" or fields[4] not in {"A", "M"}
+                    or fields[0] != (":000000" if fields[4] == "A" else ":100644")
+                    or not all(SHA.fullmatch(blob) for blob in fields[2:4])
+                    or (fields[2] == "0" * 40) != (fields[4] == "A") or fields[3] == "0" * 40): return False
+            seen.add(path)
+            if path == release:
+                if fields != [":100644", "100644", "8cc1d532e0c53346aacdf0c9f634baabcd170fdf", TOOL_RESTORED_RELEASE, "M"]: return False
+            elif path in TOOL_RECOVERY_CONTROLS:
+                if fields[4] != "M": return False
+            elif not is_handoff(path): return False
+        if not {release, "NekoWidget/ci/plan-ios-ci.py"} <= seen: return False
+        checks = "NekoWidget/ci/check-development-flow.py"
+        before, after = (git("show", f"{ref}:{checks}") for ref in (TOOL_BUILD_SOURCE, head))
+        line = '    "test-media-staging-release-config.py",\n'
+        if after.count(line) != 1 or after.replace(line, "", 1) != before: return False
+        # Every tracked product, dependency, workflow, signature and test fixture
+        # remains identical to the frozen source outside the explicit control set.
+        return tool_preservation_immutable_inputs(TOOL_BUILD_SOURCE)
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
+def tool_plan_record(log, sha, *, corrected=False):
+    records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+    records = [record for record in records if isinstance(record, dict) and record.get("repository") == "soso-so-27/neko-widget" and record.get("head_sha") == sha]
+    if len(records) != 1: raise ValueError("Unique tool plan unavailable")
+    record = records[0]
+    if (record.get("schema_version") != 1 or record.get("scope") != TOOL_PRESERVATION_SCOPE
+            or record.get("required_jobs") != list(required_jobs_from_scope(TOOL_PRESERVATION_SCOPE))
+            or record.get("evidence_run_id") is not None or record.get("evidence_sha") is not None
+            or (record.get("test_correction_evidence") is not None) != corrected): raise ValueError("Tool source plan differs")
+    if not corrected and record.get("required_backend_runs") != tool_preservation_requirements(TOOL_BUILD_SOURCE): raise ValueError("Source backend declaration differs")
+    return record
+
+
+def tool_pr_backend_proof(repository, api, now):
+    prefix = f"/repos/{repository}/actions"
+    identity = api(f"{prefix}/workflows/preservation-service.yml")
+    if identity.get("id") != 363932714 or identity.get("path") != ".github/workflows/preservation-service.yml" or identity.get("state") != "active": raise ValueError("Preservation workflow identity differs")
+    query = urllib.parse.urlencode({"head_sha": TOOL_BUILD_SOURCE, "event": "push", "per_page": 100})
+    if api(f"{prefix}/workflows/preservation-service.yml/runs?{query}") != {"total_count": 0, "workflow_runs": []}:
+        raise ValueError("A non-absent backend push cannot be replaced by the fixed PR")
+    query = urllib.parse.urlencode({"head_sha": TOOL_BUILD_SOURCE, "event": "pull_request", "per_page": 100})
+    index = api(f"{prefix}/workflows/preservation-service.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if type(index.get("total_count")) is not int or index["total_count"] != 1 or not isinstance(runs, list) or len(runs) != 1: raise ValueError("Fixed PR index differs")
+    run = runs[0]
+    tool_run_identity(run, TOOL_PR_RUN, TOOL_BUILD_SOURCE, "preservation-service.yml", "pull_request", "success", now, workflow_id=363932714)
+    expected_pr = {"number": 289, "id": 4853108830}
+    prs = run.get("pull_requests")
+    if (not isinstance(prs, list) or len(prs) != 1 or any(prs[0].get(key) != value for key, value in expected_pr.items())
+            or any(prs[0].get(side, {}).get("sha") != sha or prs[0][side].get("ref") != ref
+                   or prs[0][side].get("repo", {}).get("id") != 1335079243
+                   for side, sha, ref in (("base", TOOL_PR_BASE, "main"), ("head", TOOL_BUILD_SOURCE, TOOL_BUILD_BRANCH)))
+            or run.get("head_commit", {}).get("id") != TOOL_BUILD_SOURCE or run["head_commit"].get("tree_id") != TOOL_PR_TREE): raise ValueError("Fixed PR identities differ")
+    jobs = executed_jobs(run, repository, api)
+    if len(jobs) != 1 or jobs[0].get("id") != TOOL_PR_JOB: raise ValueError("Fixed PR job differs")
+    tool_job_identity(jobs[0], run)
+    required = ("Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+                "Verify legacy notice evidence migration with synthetic owners", "Bundle the private authority without deployment or provisioning",
+                "Bundle the private owner deletion executor without deployment")
+    if not covers_jobs(jobs, (PRESERVATION_JOB,), TOOL_BUILD_SOURCE, now) or not moderation_steps_succeeded(jobs[0], required): raise ValueError("PR required backend steps did not execute")
+    for sha, parents in ((TOOL_PR_MERGE, [TOOL_PR_BASE, TOOL_BUILD_SOURCE]), (TOOL_BUILD_SOURCE, ["460a732dc0a563e257e1b929a395d992b53f4b1d", TOOL_PR_BASE])):
+        commit = tool_fixed_observation(f"repos/{repository}/git/commits/{sha}")
+        if commit.get("sha") != sha or commit.get("tree", {}).get("sha") != TOOL_PR_TREE or [p.get("sha") for p in commit.get("parents", [])] != parents: raise ValueError("PR checkout full tree/parents differ")
+    log = tool_fixed_observation(f"repos/{repository}/actions/jobs/{TOOL_PR_JOB}/logs")
+    if tool_log_digest(log) != TOOL_LOG_DIGESTS[TOOL_PR_JOB] or f"+{TOOL_PR_MERGE}:refs/remotes/pull/289/merge" not in log: raise ValueError("PR actual checkout transcript differs")
+    return {"run_id": TOOL_PR_RUN, "job_id": TOOL_PR_JOB, "event": "pull_request", "candidate_sha": TOOL_BUILD_SOURCE,
+            "checkout_sha": TOOL_PR_MERGE, "tree": TOOL_PR_TREE, "push_evidence": False}
+
+
+def tool_run_identity(run, identifier, sha, workflow, event, conclusion, now, *, workflow_id=335014238):
+    if (run.get("id") != identifier or run.get("head_sha") != sha or run.get("head_branch") != TOOL_BUILD_BRANCH
+            or run.get("workflow_id") != workflow_id or run.get("path") != ".github/workflows/" + workflow
+            or run.get("event") != event or run.get("run_attempt") != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", conclusion)
+            or run.get("repository", {}).get("full_name") != "soso-so-27/neko-widget"
+            or run.get("head_repository", {}).get("full_name") != "soso-so-27/neko-widget"): raise ValueError("Tool recovery run identity differs")
+    age = now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= age <= dt.timedelta(hours=24): raise ValueError("Tool evidence outside 24 hours")
+
+
+def tool_job_identity(job, run):
+    if (type(job.get("id")) is not int or job.get("run_id") != run["id"] or job.get("head_sha") != run["head_sha"]
+            or job.get("run_attempt") != 1 or job.get("status") != "completed"): raise ValueError("Tool job identity differs")
+
+
+def tool_recovery_source(head, repository, api, now):
+    if repository != "soso-so-27/neko-widget" or not tool_recovery_inputs(head): raise CorrectionEvidenceUnavailable("Unapproved tool recovery inputs")
+    try:
+        prefix = f"/repos/{repository}/actions"
+        run = api(f"{prefix}/runs/{TOOL_BUILD_SOURCE_RUN}")
+        tool_run_identity(run, TOOL_BUILD_SOURCE_RUN, TOOL_BUILD_SOURCE, "ios-build.yml", "push", "failure", now)
+        jobs = executed_jobs(run, repository, api)
+        if len(jobs) != 5 or {job.get("id") for job in jobs} != set(TOOL_BUILD_SOURCE_JOBS.values()): raise ValueError("Tool source job map differs")
+        for job in jobs:
+            tool_job_identity(job, run)
+            if TOOL_BUILD_SOURCE_JOBS.get(job.get("name")) != job["id"]: raise ValueError("Tool source job name differs")
+        by_name = {job["name"]: job for job in jobs}
+        native = tuple(name for name in required_jobs_from_scope(TOOL_PRESERVATION_SCOPE) if name != BUILD)
+        if not covers_jobs(jobs, (PLAN_JOB,) + native, TOOL_BUILD_SOURCE, now): raise ValueError("Source three native jobs are not successful")
+        for name in (PLAN_JOB,) + native:
+            steps = ("Select checks",) if name == PLAN_JOB else ("Run Simulator smoke test",) if name == BOOTSTRAP_SMOKE else ("Run sharing runtime matrix",)
+            if not moderation_steps_succeeded(by_name[name], steps): raise ValueError("Source native required steps unavailable")
+        tool_plan_record(api(f"{prefix}/jobs/{by_name[PLAN_JOB]['id']}/logs"), TOOL_BUILD_SOURCE)
+        build = by_name[BUILD]
+        if build.get("conclusion") != "failure" or not isinstance(build.get("steps"), list): raise ValueError("Fixed Build failure missing")
+        names = tool_build_steps()
+        for index, name in enumerate(names):
+            matched = [step for step in build["steps"] if step.get("name") == name]
+            expected = "success" if index < 2 else "failure" if index == 2 else "skipped"
+            if len(matched) != 1 or matched[0].get("conclusion") != expected or matched[0].get("status") != "completed": raise ValueError("Unexpected fixed Build step failure")
+        if [step.get("name") for step in build["steps"] if step.get("conclusion") in {"failure", "cancelled", "timed_out"}] != [TOOL_BUILD_FAILED_STEP]: raise ValueError("Additional Build failure")
+        log = tool_fixed_observation(f"repos/{repository}/actions/jobs/{build['id']}/logs")
+        if tool_log_digest(log) != TOOL_LOG_DIGESTS[build["id"]] or "reviewed_code_changed" not in log: raise ValueError("Fixed readiness failure transcript differs")
+        backend = tool_pr_backend_proof(repository, api, now)
+        query = urllib.parse.urlencode({"head_sha": TOOL_BUILD_SOURCE, "event": "push", "per_page": 100})
+        source_index = api(f"{prefix}/workflows/ios-build.yml/runs?{query}")
+        if source_index != {"total_count": 1, "workflow_runs": [run]}: raise ValueError("Unexpected extra source native execution")
+        # A new candidate execution, if any, may never hide failure or active work.
+        index = api(f"{prefix}/workflows/preservation-service.yml/runs?" + urllib.parse.urlencode({"head_sha": head, "per_page": 100}))
+        runs = index.get("workflow_runs")
+        if not isinstance(runs, list) or type(index.get("total_count")) is not int or index["total_count"] != len(runs): raise ValueError("Candidate backend history incomplete")
+        for candidate in runs:
+            if (candidate.get("head_sha") != head or candidate.get("workflow_id") != 363932714
+                    or candidate.get("path") != ".github/workflows/preservation-service.yml"
+                    or candidate.get("event") not in {"push", "pull_request"} or candidate.get("run_attempt") != 1
+                    or candidate.get("head_branch") not in {TOOL_BUILD_BRANCH, "main"}
+                    or candidate.get("repository", {}).get("full_name") != repository
+                    or candidate.get("head_repository", {}).get("full_name") != repository
+                    or (candidate.get("status"), candidate.get("conclusion")) != ("completed", "success")):
+                raise ValueError("Candidate backend failed, active or unrelated")
+            candidate_jobs = executed_jobs(candidate, repository, api)
+            if not covers_jobs(candidate_jobs, (PRESERVATION_JOB,), head, now) or not moderation_steps_succeeded(
+                    next(job for job in candidate_jobs if job.get("name") == PRESERVATION_JOB),
+                    ("Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+                     "Verify legacy notice evidence migration with synthetic owners", "Bundle the private authority without deployment or provisioning",
+                     "Bundle the private owner deletion executor without deployment")): raise ValueError("New candidate backend did not execute all required steps")
+        return {"kind": "tool-preservation-signed-release-build-recovery-v1", "candidate_sha": head,
+                "run_id": TOOL_BUILD_SOURCE_RUN, "sha": TOOL_BUILD_SOURCE,
+                "jobs": [{"name": name, "job_id": TOOL_BUILD_SOURCE_JOBS[name]} for name in native],
+                "failed_build_job_id": TOOL_BUILD_SOURCE_JOBS[BUILD], "failed_build_log_sha256": TOOL_LOG_DIGESTS[TOOL_BUILD_SOURCE_JOBS[BUILD]],
+                "backend_evidence": backend, "owning_jobs_to_execute": [BUILD], "source_build_success": False}
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError) as error:
+        raise CorrectionEvidenceUnavailable("Fixed tool source/native/backend proof unavailable") from error
+
+
+def covers_tool_build_recovery(run, validation_head, required, api, now, jobs):
+    try:
+        if required != required_jobs_from_scope(TOOL_PRESERVATION_SCOPE): return False
+        tool_run_identity(run, run["id"], run["head_sha"], "ios-build.yml", "push", "success", now)
+        if not tool_recovery_inputs(validation_head) or not tool_recovery_inputs(run["head_sha"]): return False
+        proof = tool_recovery_source(run["head_sha"], "soso-so-27/neko-widget", api, now)
+        if not covers_jobs(jobs, (PLAN_JOB, BUILD), run["head_sha"], now): return False
+        if len({job.get("id") for job in jobs}) != len(jobs): return False
+        for job in jobs:
+            tool_job_identity(job, run)
+            if job.get("name") not in set(required) | {PLAN_JOB, UNEXPANDED_SHARING_JOB, "needs.plan.outputs.smoke_name"}: return False
+            if job.get("name") not in {PLAN_JOB, BUILD} and ((job.get("status"), job.get("conclusion")) != ("completed", "skipped") or job.get("steps") != []): return False
+        plan = next(job for job in jobs if job["name"] == PLAN_JOB)
+        build = next(job for job in jobs if job["name"] == BUILD)
+        if not moderation_steps_succeeded(plan, ("Select checks",)) or not moderation_steps_succeeded(build, tool_build_steps()): return False
+        record = tool_plan_record(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plan['id']}/logs"), run["head_sha"], corrected=True)
+        return record.get("test_correction_evidence") == proof and record.get("required_backend_runs") == [proof["backend_evidence"]]
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
 def tool_preservation_project_only(before, after):
     before, after = (value.replace("\r\n", "\n") for value in (before, after))
     ids = ("C02610140000000000000001", "C02610140000000000000002",
@@ -3080,6 +3327,14 @@ def tool_preservation_immutable_inputs(ref):
 
 
 def tool_preservation_only(paths, base, head):
+    release = "NekoWidget/ci/release-testflight.py"
+    if git("ls-tree", head, "--", release) == f"100644 blob {TOOL_RESTORED_RELEASE}\t{release}":
+        if not tool_recovery_inputs(head): return False
+        for path in TOOL_RECOVERY_CONTROLS:
+            approved = git("ls-tree", "refs/remotes/origin/main", "--", path)
+            if any(git("ls-tree", ref, "--", path) != approved for ref in (base, head)): return False
+        return tool_preservation_paths_only(paths) and reviewed_hub_only(paths, base, head,
+            product_blobs=TOOL_PRESERVATION_BLOBS, companion_paths=frozenset(), companion_digests={}, companion_name="unused")
     registration = 'TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"'
     if git("show", "refs/remotes/origin/main:NekoWidget/ci/ios_ci_scope.py").splitlines().count(registration) != 1: return False
     if TOOL_PRESERVATION_CONTROLS != {"NekoWidget/ci/" + name for name in (
@@ -4230,6 +4485,8 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == TOOL_PRESERVATION_SCOPE and source == TOOL_BUILD_SOURCE:
+        return (BUILD,)
     if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source in (REPORT_RUNTIME_BUILD_SOURCE,REPORT_RUNTIME_DUPLICATE_HEAD):
         return ()
     if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source == REPLY_READINESS_SOURCE:
@@ -5778,6 +6035,9 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
+    if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+        if branch != TOOL_BUILD_BRANCH: raise CorrectionEvidenceUnavailable("Tool recovery branch differs")
+        return tool_recovery_source(head, repository, api, now)
     if branch==REPORT_RUNTIME_ORDER_BRANCH:
         if required!=required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):raise CorrectionEvidenceUnavailable('Fixed preparation order scope differs; no native/backend retry authorized')
         return report_runtime_order_source(head,repository,api,now)
@@ -5917,6 +6177,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+        return covers_tool_build_recovery(run, validation_head, required, api, now, jobs)
     if required == required_jobs_from_scope(REPORT_REPLY_ENTRY_SCOPE):
         if report_runtime_order_inputs(run.get('head_sha')):
             return covers_report_runtime_order(run,validation_head,required,api,now,jobs)
@@ -6050,6 +6312,10 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
 
 def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
                 now: dt.datetime | None = None, *, audit: bool = False) -> bool:
+    # This fixed scope requires the registered Build39/source-three/PR graph.
+    # Native job labels alone never qualify its backend or signed release gate.
+    if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
+        return False
     def reject(reason, name):
         if audit:
             evidence_log("jobs_rejected", reason=reason, required_job=name)
@@ -6969,7 +7235,8 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
-        **({"required_backend_runs": tool_preservation_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+        **({"required_backend_runs": ([correction["backend_evidence"]] if correction is not None else
+               [tool_pr_backend_proof(env["GITHUB_REPOSITORY"], api, now)] if evidence else tool_preservation_requirements(env["GITHUB_SHA"]))}
            if selected_scope == TOOL_PRESERVATION_SCOPE else {}),
         **({"required_backend_runs": (internal_report_requirements if selected_scope == INTERNAL_REPORT_SCOPE else moderation_resolution_requirements)(evidence[1] if evidence else env["GITHUB_SHA"])}
            if selected_scope in (OWNER_CLOUD_SCOPE, INTERNAL_REPORT_SCOPE) else {}),

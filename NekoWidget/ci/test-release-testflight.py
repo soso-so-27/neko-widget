@@ -254,6 +254,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_every_current_scope_including_movie_only_is_supported(self):
         for scope in (*release.planner.SCOPES, "movie-screen-only"):
+            if scope == release.planner.TOOL_PRESERVATION_SCOPE:
+                continue  # Only the fixed combined recovery graph qualifies this scope.
             with self.subTest(scope=scope):
                 self.plan.update(scope=scope, required_jobs=list(release.planner.required_jobs_from_scope(scope)))
                 if scope in (release.planner.MODERATION_RESOLUTION_SCOPE, release.planner.OWNER_CLOUD_SCOPE,
@@ -389,11 +391,30 @@ class ReleaseTests(unittest.TestCase):
                          required_backend_runs=release.planner.tool_preservation_requirements(self.sha))
         self.set_plan()
         with patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}) as verify:
-            self.assertEqual(self.prepare()["ci"]["backend_evidence"], {"verified": True})
-            self.assertEqual(verify.call_args.args[:2], (self.sha, release.REPOSITORY))
+            with self.assertRaises(release.Blocked): self.prepare()
+            verify.assert_not_called()
         for failure in (ValueError("missing push"), KeyError("incomplete"), OSError("API unavailable")):
             with patch.object(release.planner, "tool_preservation_backend_evidence", side_effect=failure), self.assertRaises(release.Blocked): self.prepare()
         self.assertEqual(self.gh.dispatches, [])
+
+    def test_tool_build_recovery_main_and_signed_release_use_the_identical_graph(self):
+        spec=importlib.util.spec_from_file_location("tool_fixture",Path(__file__).with_name("test-plan-ios-ci.py"))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        module.planner=release.planner
+        fixture=module.ToolBuildRecoveryTests();fixture.setUp()
+        class ToolGitHub:
+            def get(self,path):return fixture.api("/repos/"+release.REPOSITORY+"/"+path)
+            def log(self,run_id,job_id):return fixture.api(f"/repos/{release.REPOSITORY}/actions/jobs/{job_id}/logs")
+        gh=ToolGitHub()
+        with fixture.mocks(),patch.object(release.planner,"git",return_value=fixture.main),patch.object(release.planner,"equivalent_inputs",return_value=True):
+            result=release.check_ci(gh,fixture.main,1004,fixture.now)
+            self.assertEqual(result["tested_sha"],fixture.head)
+            self.assertEqual(result["tested_run"],1003)
+            fixture.candidate_jobs[1]["steps"][2]["conclusion"]="skipped"
+            with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
+            fixture.candidate_jobs[1]["steps"][2]["conclusion"]="success"
+            fixture.pr_jobs[0]["steps"][0]["conclusion"]="skipped"
+            with self.assertRaises(release.Blocked):release.check_ci(gh,fixture.main,1004,fixture.now)
 
     def test_tool_preservation_release_rejects_missing_or_wrong_backend_declaration(self):
         selected = release.planner.TOOL_PRESERVATION_SCOPE
