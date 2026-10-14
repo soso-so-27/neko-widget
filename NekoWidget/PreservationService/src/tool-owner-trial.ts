@@ -29,6 +29,32 @@ const eligible = `enabled=1 AND starts_at<=? AND ends_at>? AND reviewed_at<=? AN
 const length = (value: string) => value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
 const manifests=new Set(['CareHandoff/plan.json','EvacuationPreparation/plan.json','VeterinaryVisits/state.json',
   'ShowcasePhotos/selected.json','LostCatDrafts/drafts.json','CatPreparedness/records.json']);
+const partKeys = ['snapshotId','kind','path','part','count','sha256','payload'] as const;
+function orderedPart(part: ToolBackupPart, keys: readonly (keyof ToolBackupPart)[]): ToolBackupPart {
+  return Object.fromEntries(keys.map(key=>[key,part[key]])) as unknown as ToolBackupPart;
+}
+function* keyOrders(keys: readonly (keyof ToolBackupPart)[]): Generator<(keyof ToolBackupPart)[]> {
+  if (!keys.length) { yield []; return; }
+  for (let n=0;n<keys.length;n++) {
+    for (const tail of keyOrders([...keys.slice(0,n),...keys.slice(n+1)])) yield [keys[n]!,...tail];
+  }
+}
+/** Original slots fingerprinted JSON member order, which JSONEncoder need not
+ * preserve on retry. Match the original digest, never replace immutable debt.
+ * Only photos have an empty payload and a <=2048-byte document envelope; do not
+ * multiply large JSON/index payloads by the 7! legacy orders. */
+async function legacyPhotoFingerprint(old: Piece, document: ArchiveDocument, photoSHA256: string | null,
+  contentBytes: number): Promise<string | null> {
+  const part=document.toolBackup!;
+  if (part.kind!=='photo' || part.payload!=='' || old.snapshot_id!==part.snapshotId
+    || old.kind!==part.kind || old.path!==part.path || old.part!==part.part || old.part_count!==part.count
+    || old.payload_sha256!==part.sha256 || old.content_bytes!==contentBytes) return null;
+  for (const keys of keyOrders(partKeys)) {
+    const candidate=await sha256(JSON.stringify({document:{...document,toolBackup:orderedPart(part,keys)},photoSHA256}));
+    if (candidate===old.input_fingerprint) return candidate;
+  }
+  return null;
+}
 
 /** Empty until a separately reviewed operator grant targets an existing owner.
  * All counters are lifetime debits. No signing, photo or provider call issues a grant. */
@@ -101,10 +127,17 @@ export class ToolOwnerTrial {
     if ((photo===null)!==(document.photoFile===null)) throw paused();
     const payloadSHA=photoSHA256 ?? await sha256(Uint8Array.from(atob(part.payload),c=>c.charCodeAt(0)));
     if (payloadSHA!==part.sha256 || (part.kind==='index' ? id!==part.snapshotId : id===part.snapshotId)) throw paused();
-    const fingerprint=await sha256(JSON.stringify({document,photoSHA256}));
+    // Stable for all newly admitted pieces, independent of JSON object order.
+    let fingerprint=await sha256(JSON.stringify({document:{...document,toolBackup:orderedPart(part,partKeys)},photoSHA256}));
     const old=await this.db.prepare('SELECT * FROM pa_tool_trial_records WHERE owner_id=? AND record_id=?')
       .bind(owner,id).first<Piece>();
-    if (old && old.input_fingerprint!==fingerprint) throw paused();
+    if (old && old.input_fingerprint!==fingerprint) {
+      const original=await sha256(JSON.stringify({document,photoSHA256}));
+      const compatible=old.input_fingerprint===original ? original
+        : await legacyPhotoFingerprint(old,document,photoSHA256,contentBytes);
+      if (!compatible) throw paused();
+      fingerprint=compatible;
+    }
     if (!old && await this.db.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(owner,id).first()) throw paused();
     const indexGeneration=part.kind==='index' ? await this.checkIndex(owner,part) : null;
     if (grant.completed_at!==null && (!old || old.committed!==1)) throw paused();
