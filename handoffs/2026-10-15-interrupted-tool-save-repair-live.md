@@ -19,7 +19,9 @@
 
 ## 利用者への次の操作と未確認
 
-- TestFlight255でサービスに保管を閉じて開き直し、同意をオンにして中断した保管を一度再開。今回は画面を開いたまま。取り消し・元データ削除・再インストールは不要。結果待ち。
+- 利用者から再開と保存完了の報告。10/15 07:16 JST、元のowner/snapshotへ限定したSELECTで30part全commit・30実記録・index1件とcompleted_at=07:15:26を確認。証拠 `device-save-confirmation-20261014T221641Z.json`、remote write0。サーバー保存は完了。
+- 次は同じiPhoneで「保管したコピー」の「ツールの記録」（10/14 22:03）を開き、「この端末に復元する」→完了後「復元したツールを開く」。入力内容と添付写真の確認を依頼済み。255系の復元は元storeを上書きせず専用contents directoryを使い、既に復元して編集済みの同じsnapshotも上書きしない実装を確認。実画面/実復元は利用者の結果待ち。取り消し・元データ削除・再インストールは不要。
 - 利用者はiPhone1台。別iPhoneでの復元は未確認。同じ端末でも元データを削除する確認は要求しない。
 - 保存中の自動ロック抑止、再開近くのエラー表示、応答不明PUTの読取確認、未変更写真のsnapshot間再利用は**未配布の別候補**。ローカル `d9c1d4ea0cf5187286ff2fcbfd2afef10be383d6` に修復0036と写真参照0037を統合済み。関連52件・typecheck成功、native8ファイルとviewEpoch guard5箇所を保全。native compile・描画/UI・配布は未確認で、255に入ったとは説明しない。
 - 一般提供の費用・保持/通知・購入枠・LP/審査資料、通常1人の実測原価、AWS有料継続の承認は引き続き別の残件。今回の6.4MB補正を請求総額の上限や一般販売の人数制限へ読み替えない。
+- 次版の配布前点検: 10/15にcurrent origin/mainをfetch。統合候補のpreflightは未分類backend7入力のためfull-v1、既存実測に基づくupload込み約77〜110分でready=false。全CIは起動せず、変更挙動に対応したscope/検査計画の見直しが必要。`test-media-staging-release-config.py`の28件は20.846秒成功。これはactual signed readinessの更新・native実行・配布成功ではない。
