@@ -730,7 +730,10 @@ final class UnrelatedUITests: XCTestCase {
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
         methods = scope.solo_test_methods(source)
         added = set(methods) & scope.SOLO_ADDITIONAL_TEST_METHODS.keys()
-        self.assertEqual((len(solo1), len(solo2)), (26, 26) if added else (26, 25))
+        foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
+        if foreground in methods:
+            added |= {foreground}
+        self.assertEqual((len(solo1), len(solo2)), (26, len(methods) - 26))
         self.assertFalse(set(solo1) & set(solo2))
         solo = solo1 + solo2
         other = scope.lane_tests(scope.FULL_SCOPE, "app-ui-other")
@@ -751,6 +754,9 @@ final class UnrelatedUITests: XCTestCase {
     def test_solo_explicit_inventory_rejects_added_removed_or_duplicate_methods(self):
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
         complete = tuple(sorted(scope.SOLO_TEST_METHODS + tuple(scope.SOLO_ADDITIONAL_TEST_METHODS)))
+        foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
+        if foreground in scope.solo_test_methods(source):
+            complete = tuple(sorted(complete + (foreground,)))
         self.assertIn(scope.solo_test_methods(source), (scope.SOLO_TEST_METHODS, complete))
         name = scope.SOLO_TEST_METHODS[0]
         for changed in (source + "\nextension SoloMemoriesUITests { func testExtensionAdded() {} }\n",
@@ -771,23 +777,44 @@ final class UnrelatedUITests: XCTestCase {
     def test_tool_backup_addition_is_explicit_and_keeps_all_prior_shard_assignments(self):
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
         method = "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity"
+        foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
         self.assertEqual(scope.SOLO_ADDITIONAL_TEST_METHODS, {method: 1})
         original = [tuple(test for test in scope.lane_tests(scope.FULL_SCOPE, lane)
-                          if test.rsplit("/", 1)[1] != method)
+                          if test.rsplit("/", 1)[1] not in (method, foreground))
                     for lane in ("app-ui-solo-1", "app-ui-solo-2")]
         added = source if method in scope.solo_test_methods(source) else source.replace(
             "final class SoloMemoriesUITests: XCTestCase {",
             "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1)
-        expected = tuple(sorted(scope.SOLO_TEST_METHODS + (method,)))
+        has_foreground = foreground in scope.solo_test_methods(source)
+        extra = (foreground,) if has_foreground else ()
+        expected = tuple(sorted(scope.SOLO_TEST_METHODS + (method,) + extra))
         self.assertEqual(scope.solo_test_methods(added), expected)
         with patch.object(scope.Path, "read_text", return_value=added):
             shards = [scope.lane_tests(scope.FULL_SCOPE, lane)
                       for lane in ("app-ui-solo-1", "app-ui-solo-2")]
         self.assertEqual(shards[0], original[0])
-        self.assertEqual(shards[1], original[1] + ("NekoWidgetUITests/SoloMemoriesUITests/" + method,))
-        self.assertEqual((len(shards[0]), len(shards[1])), (26, 26))
-        self.assertEqual(len(set(shards[0] + shards[1])), 52)
+        self.assertEqual(shards[1], original[1] + tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (method,) + extra))
+        self.assertEqual((len(shards[0]), len(shards[1])), (26, 26 + len(extra)))
+        self.assertEqual(len(set(shards[0] + shards[1])), 52 + len(extra))
         self.assertEqual({test.rsplit("/", 1)[1] for test in shards[0] + shards[1]}, set(expected))
+
+    def test_foreground_deletion_addition_is_exhaustive_and_only_appends_solo2(self):
+        foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
+        prior = scope.SOLO_TEST_METHODS + tuple(scope.SOLO_ADDITIONAL_TEST_METHODS)
+        source = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "    func " + name + "() {}" for name in prior) + "\n}\n"
+        added = source.replace("final class SoloMemoriesUITests: XCTestCase {",
+            "final class SoloMemoriesUITests: XCTestCase {\n    func " + foreground + "() {}", 1)
+        with patch.object(scope.Path, "read_text", return_value=source):
+            before = [scope.lane_tests(scope.FULL_SCOPE, lane) for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+        with patch.object(scope.Path, "read_text", return_value=added):
+            after = [scope.lane_tests(scope.FULL_SCOPE, lane) for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+        self.assertEqual(after[0], before[0])
+        self.assertEqual(after[1], before[1] + ("NekoWidgetUITests/SoloMemoriesUITests/" + foreground,))
+        self.assertFalse(set(after[0]) & set(after[1]))
+        self.assertEqual({test.rsplit("/", 1)[1] for test in after[0] + after[1]}, set(scope.solo_test_methods(added)))
+        self.assertEqual(len(scope.lane_tests(scope.TOOL_STORAGE_SCOPE, "app-ui")), 9)
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/" + foreground, scope.native_tests(scope.TOOL_STORAGE_SCOPE))
 
     def test_tool_backup_transition_only_accepts_frozen_legacy_and_complete_new_inventory(self):
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")

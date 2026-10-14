@@ -51,12 +51,95 @@ from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL
                           WINDOW_SUPPORT_PATHS, WINDOW_SUPPORT_NEW_PATHS, WINDOW_SUPPORT_COMPANION_PATHS,
                           MANAGED_PRESERVATION_PATHS, MANAGED_PRESERVATION_NEW_PATHS, MANAGED_PRESERVATION_COMPANION_PATHS,
                           REVIEWED_MANAGED_PRESERVATION_SCOPE, VET_SAVED_CAT_SCOPE,
+                          TOOL_STORAGE_SCOPE, TOOL_STORAGE_PATHS, TOOL_STORAGE_READINESS_PATH,
                           TOOL_PRESERVATION_SCOPE, TOOL_PRESERVATION_BLOBS, TOOL_PRESERVATION_PATHS,
                           TOOL_PRESERVATION_ADDITIONS, TOOL_PRESERVATION_IMMUTABLE, TOOL_PRESERVATION_PROJECT,
                           TOOL_PRESERVATION_TESTS, TOOL_PRESERVATION_IMMUTABLE_TREES,
                           TOOL_PRESERVATION_SERVICE_TREES, TOOL_PRESERVATION_SOURCE,
                           TOOL_PRESERVATION_CONTROLS, TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256)
 
+
+# Two freezes: publish the final CLI first, then register only the genuine
+# fresh signed readiness pair here. None cannot authorize native/release work.
+TOOL_STORAGE_SOURCE = "732920b0170a837dd670b9a5f24f570ddedf10d1"
+TOOL_STORAGE_BLOBS = {'NekoWidget/NekoWidget/App/AppRootView.swift': ('caa771c602aa87453f397748c352dc65e7c1f543',
+                                                 'f9d8a1bf5994080014806483b3c605558700e9d5'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift': ('9c7b25524d7be8644537c134a17a780c0da2ea3c',
+                                                                    '2badf87e2c13d6d8ce43e17d659de2e4407a39a4'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift': ('70108a39bb5c49e5fb379e3ab9126b11d1aee8f4',
+                                                                         'ace867d2e2aa3dff008f77efba474145a232d979'),
+ 'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift': ('a42303b7b13a4e80e6b8aeb05c4a24c41787f0ab',
+                                                                 '1bd7e21745896dbc7c8e4b97d051efdf732bd6c0'),
+ 'NekoWidget/NekoWidget/Services/ToolPreservation.swift': ('a64ef0a777e4cb447eb3797fd17a3400589c7690',
+                                                           '68fbd5be9aba62bc782ab87835add62474260cf5'),
+ 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('99a19b30543ab06e852f0e8370174f0d5250d0f4',
+                                                               'e255e02200bc73ef3851b70f7772417f683ba42d'),
+ 'NekoWidget/NekoWidget/Views/RestoredToolsView.swift': ('1b322e4dbc41b525fda45f8394d9eca20db67f87',
+                                                         'f8cc2a0284c05d623db70daf7cdb97bf7662fbc1'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('b4cf25fdf60e3314bec5c6164241b1e703138c84',
+                                                               '8c3bd079cf363f4df88993f2df913edb837b2bd9'),
+ 'NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql': ('0000000000000000000000000000000000000000',
+                                                                                 'e55ec4f42d7c9882fb330251622ff88625049655'),
+ 'NekoWidget/PreservationService/src/documents.ts': ('1e3f97e2dd32b19fab2f2837667b23a8a5a6db33',
+                                                     'b04087d1413dfd71c0dbf0f5ebdaa130d8b94df3'),
+ 'NekoWidget/PreservationService/src/index.ts': ('e8aa13c641d04168fe5baeb598d891e158890197',
+                                                 '901c732a0295d395a5e12918d02153b1403f89bc'),
+ 'NekoWidget/PreservationService/src/owner-d1-residue.ts': ('08a6e08ace5d6c7ce4fb697066dcc6d527efd4ac',
+                                                            'b184edd777bc1ecbb05ba8675d1525ceaed9d8bb'),
+ 'NekoWidget/PreservationService/src/owner-quarantine-restore.ts': ('ae603a2018f7c1d161a573984b9e1904782cf42d',
+                                                                    '48fd40cc7f3215d1a066ebe98146866df67d3b42'),
+ 'NekoWidget/PreservationService/src/record-recovery-copy.ts': ('b948cdcd37d891e1a22cf1c9a3e4a61a22333e07',
+                                                                '62514f9fe27d6cad745d00d50d598792a7fb96eb'),
+ 'NekoWidget/PreservationService/src/storage.ts': ('75d388c3b63ff43583c30b613745872c40b58a45',
+                                                   'd57e72cdc28e124b16a2558e1cf957d0db961d2d'),
+ 'NekoWidget/PreservationService/test/owner-deletion.test.ts': ('6f4e234206ec149d1efbbc95e9cfc9a9cd0c52b4',
+                                                                '9a0027eca884a47fb2da9b812f406ab4ff9b451c'),
+ 'NekoWidget/PreservationService/test/owner-quarantine-restore.test.ts': ('8ad8eff68ec9175af8d4f27cb4579bc4cfdde6a3',
+                                                                          'c69ee51b7e26c28b331fa934d2191c77b8a9746a'),
+ 'NekoWidget/PreservationService/test/record-recovery-copy.test.ts': ('8bc02233b3c5cb171a8bd7fbaf021f9f24419053',
+                                                                      '83190e1cc17fddb004adecc721ee8c9cd48dec0d'),
+ 'NekoWidget/PreservationService/test/storage.integration.test.ts': ('febac9ad267449697ac7d9017e09c2e1f5747b59',
+                                                                     '611e5c2cbe28b017fec61163fdd3d1ac5e97d2e8'),
+ 'NekoWidget/PreservationService/test/tool-document.test.ts': ('9ba41668a56387a789e255e2f542a8be9cf97dbf',
+                                                               '16b134a5c90a188f8e393f8bc8f2bb23365fac4a'),
+ 'NekoWidget/PreservationService/test/tool-storage.integration.test.ts': ('c22e65649de4351e78087a544e2b7efb5bed9515',
+                                                                          'ad3e7f23b4f2c08d4c8d104500df69bb5a6598dc'),
+ 'NekoWidget/PreservationService/test/tool-trial-resume-repair.integration.test.ts': ('74f49b6808b3821078e0b0596b80eae83e2baa9a',
+                                                                                      '8a230f2698e66450396b556ebff17fe1525f9fa0')}
+TOOL_STORAGE_CONTROLS = TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/test-ci-lanes.py"}
+TOOL_STORAGE_CONTROL_BEFORE = {'NekoWidget/ci/test-ci-lanes.py': '4d25792636c7c611449eec06535fc76912c57397',
+ 'NekoWidget/ci/ios_ci_scope.py': 'd86467eaf6290d3c4c8bfe54e5c4425e974d5a74',
+ 'NekoWidget/ci/plan-ios-ci.py': '5fd691fefce3680eebed7bc5a28f1530394f12bb',
+ 'NekoWidget/ci/preflight-ci.py': 'cbdceae4fc0d20288d08d734461eee968a4feae6',
+ 'NekoWidget/ci/release-testflight.py': '9b2708fb55175295018c4d49df737c1f217aa139',
+ 'NekoWidget/ci/test-plan-ios-ci.py': 'cce4eec4a341eb35f1b32c0b0fbf6d7a1e120d55',
+ 'NekoWidget/ci/test-preflight-ci.py': 'ecee4ecffb6182b74087aeaeaee5fee64e4414f5',
+ 'NekoWidget/ci/test-release-testflight.py': 'c0a6569bde4f217fda69a0784b31f87a8e0f3363'}
+TOOL_STORAGE_ADDITIONS = frozenset({"NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql"})
+TOOL_STORAGE_CLOSURE_COUNT = 1163
+TOOL_STORAGE_CLOSURE_SHA256 = "9f99d7dfac6012d74eb6ad8d11bc75ff702db772f1c1ed9b233ef6b7ecd28bdc"
+TOOL_STORAGE_READINESS_BEFORE = "f599ffbfebe28bb59c2bf96c5e2d32b076281dbc"
+TOOL_STORAGE_READINESS_PAIR = (TOOL_STORAGE_READINESS_BEFORE, "8858703e587f6b372e084e3e42968c768562282e")
+TOOL_STORAGE_BRANCH = "codex/tool-storage-completion-20261014"
+TOOL_STORAGE_FIRST_CANDIDATE_AT = "2026-10-14T12:59:13Z"
+TOOL_STORAGE_DIAGNOSTIC_TESTS = (
+    "SoloMemoriesUITests/testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity",
+    "SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
+    "SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
+)
+TOOL_STORAGE_COMPILE_FAILURE = {
+    "run_id": 38647679284, "source_sha": "b52b6586937b0be6bbc407eee56ca628bec00823",
+    "raw_log_sha256": "5974ddb47f5638c23a9a6700b04adad447109019766bd94637b51f32821ef8eb",
+    "cause": "ManagedPreservationView.swift:37 expression type-check timeout",
+    "ui_executed": False, "fixed_source_sha": TOOL_STORAGE_SOURCE,
+}
+TOOL_STORAGE_BACKEND_STEPS = (
+    "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
+    "Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
+    "Verify legacy notice evidence migration with synthetic owners",
+    "Bundle the private authority without deployment or provisioning",
+    "Bundle the private owner deletion executor without deployment",
+)
 
 BUILD = "Build disabled app and extensions without signing"
 ICON_BUILD = "Build and display app icons"
@@ -3014,6 +3097,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if runtime_scope == BILLING_OPERATOR_SCOPE and source_paths(paths) and source_paths(paths) <= BILLING_OPERATOR_PATHS:
         return (PLAN_JOB,)
+    if runtime_scope == ORCHESTRATION_SCOPE and tool_storage_control_paths_only(paths):
+        return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
@@ -3097,6 +3182,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == INTERNAL_REPORT_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == OWNER_CLOUD_SCOPE and accepts_paths(runtime_scope, paths):
+        return required_jobs_from_scope(runtime_scope)
+    if runtime_scope == TOOL_STORAGE_SCOPE and tool_storage_paths_only(paths):
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == TOOL_PRESERVATION_SCOPE and (tool_preservation_paths_only(paths)
             or source_paths(paths) == set(TOOL_RELEASE_BLOBS)):
@@ -3887,6 +3974,326 @@ def tool_preservation_project_only(before, after):
 
 def tool_preservation_paths_only(paths):
     return bool(paths) and len(paths) == len(set(paths)) and source_paths(paths) == TOOL_PRESERVATION_PATHS
+
+
+
+def tool_storage_handoff(path):
+    return path.startswith("handoffs/") and path.endswith(".md")
+
+
+def tool_storage_paths_only(paths):
+    if not isinstance(paths, (list, tuple)) or not paths or any(not isinstance(path, str) for path in paths):
+        return False
+    sources = {path for path in paths if not tool_storage_handoff(path)}
+    return (bool(paths) and len(paths) == len(set(paths))
+            and sources in (TOOL_STORAGE_PATHS, TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH}))
+
+
+def tool_storage_registration():
+    if (set(TOOL_STORAGE_BLOBS) != TOOL_STORAGE_PATHS or len(TOOL_STORAGE_BLOBS) != 22
+            or TOOL_STORAGE_CONTROLS != TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/test-ci-lanes.py"}
+            or TOOL_STORAGE_ADDITIONS != {"NekoWidget/PreservationService/migrations/0037_tool_snapshot_references.sql"}
+            or not re.fullmatch(r"[0-9a-f]{64}", TOOL_STORAGE_CLOSURE_SHA256)
+            or type(TOOL_STORAGE_CLOSURE_COUNT) is not int or TOOL_STORAGE_CLOSURE_COUNT <= 0
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[0] != pair[1] and pair[1] != "0" * 40
+                       and (pair[0] == "0" * 40) == (path in TOOL_STORAGE_ADDITIONS)
+                       for path, pair in TOOL_STORAGE_BLOBS.items())):
+        return False
+    pair = TOOL_STORAGE_READINESS_PAIR
+    return pair is None or (isinstance(pair, tuple) and len(pair) == 2
+        and pair[0] == TOOL_STORAGE_READINESS_BEFORE and all(SHA.fullmatch(blob) for blob in pair)
+        and pair[1] not in (pair[0], "0" * 40))
+
+
+def tool_storage_tree(ref):
+    rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+    if not rows or any(not re.fullmatch(r"100644 blob [0-9a-f]{40}\t[^\0]+", row) for row in rows):
+        raise ValueError("Invalid storage completion tree")
+    paths = [row.split("\t", 1)[1] for row in rows]
+    if len(paths) != len(set(paths)):
+        raise ValueError("Duplicate storage completion tree path")
+    frozen = [row for row, path in zip(rows, paths) if not tool_storage_handoff(path)
+              and path not in TOOL_STORAGE_PATHS | TOOL_STORAGE_CONTROLS | {TOOL_STORAGE_READINESS_PATH}]
+    if (len(frozen) != TOOL_STORAGE_CLOSURE_COUNT
+            or hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != TOOL_STORAGE_CLOSURE_SHA256):
+        raise ValueError("Storage completion input closure differs")
+    return dict(zip(paths, rows))
+
+
+def tool_storage_approved(base, head):
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    marker = 'TOOL_STORAGE_SCOPE = "reviewed-tool-storage-completion-v1"'
+    if git("show", f"{approved}:NekoWidget/ci/ios_ci_scope.py").splitlines().count(marker) != 1:
+        return False
+    for path in TOOL_STORAGE_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), trusted)
+                or any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head))):
+            return False
+    return True
+
+
+def tool_storage_only(paths, base, head):
+    """One exact native/storage batch plus one separately registered signed artifact."""
+    if not tool_storage_paths_only(paths) or not tool_storage_registration() or not tool_storage_approved(base, head):
+        return False
+    products = dict(TOOL_STORAGE_BLOBS)
+    if TOOL_STORAGE_READINESS_PATH in paths:
+        if TOOL_STORAGE_READINESS_PAIR is None: return False
+        products[TOOL_STORAGE_READINESS_PATH] = TOOL_STORAGE_READINESS_PAIR
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if raw[-1:] == [""]: raw.pop()
+    if len(raw) != 2 * len(paths): return False
+    seen = set()
+    for index in range(0, len(raw), 2):
+        fields, path = raw[index].split(), raw[index + 1]
+        if path not in paths or path in seen or len(fields) != 5: return False
+        seen.add(path)
+        if path in products:
+            before, after = products[path]
+            expected = [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                        "A" if before == "0" * 40 else "M"]
+            if fields != expected: return False
+        elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+              (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+    if seen != set(paths): return False
+    for ref, position in ((base, 0), (head, 1)):
+        rows = tool_storage_tree(ref)
+        for path, pair in products.items():
+            expected = None if pair[position] == "0" * 40 else f"100644 blob {pair[position]}\t{path}"
+            if rows.get(path) != expected: return False
+        if TOOL_STORAGE_READINESS_PATH not in products:
+            blob = TOOL_STORAGE_READINESS_PAIR[1] if TOOL_STORAGE_READINESS_PAIR else TOOL_STORAGE_READINESS_BEFORE
+            expected = f"100644 blob {blob}\t{TOOL_STORAGE_READINESS_PATH}"
+            if rows.get(TOOL_STORAGE_READINESS_PATH) != expected: return False
+    return True
+
+
+def tool_storage_inputs(head):
+    if (not SHA.fullmatch(head) or not tool_storage_registration()
+            or TOOL_STORAGE_READINESS_PAIR is None or not tool_storage_approved(head, head)):
+        return False
+    rows = tool_storage_tree(head)
+    expected = {path: pair[1] for path, pair in TOOL_STORAGE_BLOBS.items()}
+    expected[TOOL_STORAGE_READINESS_PATH] = TOOL_STORAGE_READINESS_PAIR[1]
+    return all(rows.get(path) == f"100644 blob {blob}\t{path}" for path, blob in expected.items())
+
+
+def tool_storage_signature(head):
+    """Verify the fixed signed blob against the real clock and current CLI/code."""
+    try:
+        pair = TOOL_STORAGE_READINESS_PAIR
+        if (pair is None or not tool_storage_registration() or not SHA.fullmatch(head)
+                or git("rev-parse", "HEAD") != head
+                or git("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none")
+                or git("ls-tree", head, "--", TOOL_STORAGE_READINESS_PATH)
+                    != f"100644 blob {pair[1]}\t{TOOL_STORAGE_READINESS_PATH}"):
+            return False
+        policy = json.loads(git("show", head + ":NekoWidget/ci/moderation-client-rollout-policy.json"))
+        evidence = json.loads(git("show", head + ":" + TOOL_STORAGE_READINESS_PATH))
+        checked = subprocess.run(["node", "NekoWidget/ci/verify-moderation-readiness.mjs"],
+            input=json.dumps({"policy": policy, "evidence": evidence}), capture_output=True,
+            text=True, encoding="utf-8", timeout=20)
+        result = json.loads(checked.stdout)
+        return (checked.returncode == 0 and result.get("verified") is True
+                and result.get("purpose") == "testflight-owner-report-ui-continuation")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_storage_readiness(head):
+    try:
+        return tool_storage_inputs(head) and tool_storage_signature(head)
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_storage_control_paths_only(paths):
+    if not isinstance(paths, (list, tuple)) or not paths or any(not isinstance(path, str) for path in paths):
+        return False
+    return (bool(paths) and len(paths) == len(set(paths))
+            and {p for p in paths if not tool_storage_handoff(p)}
+                == TOOL_STORAGE_CONTROLS | {TOOL_STORAGE_READINESS_PATH})
+
+
+def tool_storage_control_only(paths, base, head):
+    """The exact eight control introduction plus its genuine signed CLI artifact.
+
+    This is plan-only. Every product remains at its before blob; the existing
+    generic orchestration allowance is not extended to arbitrary metadata.
+    """
+    if (not tool_storage_control_paths_only(paths) or not tool_storage_registration()
+            or TOOL_STORAGE_READINESS_PAIR is None or set(TOOL_STORAGE_CONTROL_BEFORE) != TOOL_STORAGE_CONTROLS):
+        return False
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if raw[-1:] == [""]: raw.pop()
+    if len(raw) != 2 * len(paths): return False
+    seen = set()
+    for index in range(0, len(raw), 2):
+        fields, path = raw[index].split(), raw[index + 1]
+        if len(fields) != 5 or path not in paths or path in seen: return False
+        seen.add(path)
+        if path in TOOL_STORAGE_CONTROLS:
+            if (fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                    or fields[2] != TOOL_STORAGE_CONTROL_BEFORE[path]
+                    or not SHA.fullmatch(fields[3]) or fields[3] == "0" * 40): return False
+            if any(git("ls-tree", ref, "--", path) != f"100644 blob {fields[pos]}\t{path}"
+                   for ref, pos in ((base, 2), (head, 3))): return False
+        elif path == TOOL_STORAGE_READINESS_PATH:
+            if fields != [":100644", "100644", *TOOL_STORAGE_READINESS_PAIR, "M"]: return False
+        elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+              (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+    if seen != set(paths): return False
+    for ref, position in ((base, 0), (head, 1)):
+        rows = tool_storage_tree(ref)
+        for path, pair in TOOL_STORAGE_BLOBS.items():
+            expected = None if pair[0] == "0" * 40 else f"100644 blob {pair[0]}\t{path}"
+            if rows.get(path) != expected: return False
+        expected = f"100644 blob {TOOL_STORAGE_READINESS_PAIR[position]}\t{TOOL_STORAGE_READINESS_PATH}"
+        if rows.get(TOOL_STORAGE_READINESS_PATH) != expected: return False
+    return tool_storage_signature(head)
+
+
+def tool_storage_requirements(head):
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True,
+             "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
+def tool_storage_ui_results(log):
+    if not isinstance(log, str): return False
+    expected = {test.removeprefix("NekoWidgetUITests/") for test in native_tests(TOOL_STORAGE_SCOPE)}
+    events = [(owner.removeprefix("NekoWidgetUITests.") + "/" + method, outcome)
+              for owner, method, outcome in re.findall(
+                  r"Test Case '-\[([\w.]+) (test\w+)\]' (started|passed|failed|skipped)", log)]
+    return (len(events) == 2 * len(expected) and {case for case, _ in events} == expected
+            and all([outcome for case, outcome in events if case == name] == ["started", "passed"]
+                    for name in expected))
+
+
+def tool_storage_diagnostic_inputs(source, head):
+    """Retain the actual fixed UI/compile probe across the approved control freeze.
+
+    Diagnostic outcomes still come from the existing raw-log case reader. This
+    input proof cannot certify success or enter the release evidence graph.
+    """
+    try:
+        if source != TOOL_STORAGE_SOURCE or not tool_storage_inputs(head): return False
+        git("merge-base", "--is-ancestor", source, head)
+        before, after = tool_storage_tree(source), tool_storage_tree(head)
+        for path, pair in TOOL_STORAGE_BLOBS.items():
+            if before.get(path) != after.get(path) or before.get(path) != f"100644 blob {pair[1]}\t{path}":
+                return False
+        for path, blob in TOOL_STORAGE_CONTROL_BEFORE.items():
+            if before.get(path) != f"100644 blob {blob}\t{path}": return False
+        if before.get(TOOL_STORAGE_READINESS_PATH) != f"100644 blob {TOOL_STORAGE_READINESS_BEFORE}\t{TOOL_STORAGE_READINESS_PATH}":
+            return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if len(fields) != 5 or path in seen: return False
+            seen.add(path)
+            if path in TOOL_STORAGE_CONTROLS | {TOOL_STORAGE_READINESS_PATH}:
+                if (fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                        or before.get(path) != f"100644 blob {fields[2]}\t{path}"
+                        or after.get(path) != f"100644 blob {fields[3]}\t{path}"): return False
+            elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+                  (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+        return True
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_storage_graph(run, validation_head, api, now, jobs):
+    """Main and release share the exact fresh native graph and all eight backend steps."""
+    sha = run.get("head_sha")
+    repo = "soso-so-27/neko-widget"
+    if (not isinstance(sha, str) or not SHA.fullmatch(sha) or type(run.get("id")) is not int or run["id"] <= 0
+            or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("event") != "push" or run.get("head_branch") != TOOL_STORAGE_BRANCH
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo
+            or not tool_storage_inputs(sha) or not tool_storage_readiness(validation_head)
+            or sha != validation_head and not equivalent_inputs(sha, validation_head)):
+        raise ValueError("Fresh storage completion candidate identity/inputs/readiness differs")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+        raise ValueError("Storage completion candidate is stale")
+    required = required_jobs_from_scope(TOOL_STORAGE_SCOPE)
+    extras = [job for job in jobs if job.get("name") not in set(required) | {PLAN_JOB}]
+    # The unchanged workflow has two unused matrix jobs. Only their empty,
+    # skipped, unexpanded placeholders may accompany the fresh owning graph.
+    if (len(extras) != 2 or any(job.get("name") != UNEXPANDED_SHARING_JOB
+            or (job.get("status"), job.get("conclusion")) != ("completed", "skipped")
+            or job.get("steps") != [] for job in extras)):
+        raise ValueError("Storage completion native graph has an unexpected execution")
+    if (not covers_jobs(jobs, required, sha, now=now)
+            or any(type(job.get("id")) is not int or job["id"] <= 0 or job.get("run_id") != run["id"]
+                   or job.get("head_sha") != sha or job.get("run_attempt", 1) != 1 for job in jobs)
+            or len({job["id"] for job in jobs}) != len(jobs)):
+        raise ValueError("Fresh storage completion native execution is incomplete")
+    # Exact labels and required executable steps; a full/Gallery subset or a
+    # skipped mapped lane never silently substitutes for this candidate graph.
+    steps = {BUILD: tool_build_steps(), BOOTSTRAP_SMOKE: (
+        "Check out repository", "Run Simulator smoke test", "Upload Simulator smoke-test artifacts"),
+        lane_job(TOOL_STORAGE_SCOPE, "runtime"): OWNER_CLOUD_RUNTIME_STEPS,
+        lane_job(TOOL_STORAGE_SCOPE, "app-ui"): OWNER_CLOUD_RUNTIME_STEPS,
+        PLAN_JOB: ("Check out repository", "Test CI selection and evidence boundaries", "Select checks")}
+    for name, names in steps.items():
+        matches = [job for job in jobs if job.get("name") == name]
+        if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+            raise ValueError("Fresh storage completion owning job missing")
+        actual = matches[0].get("steps")
+        if not isinstance(actual, list) or any(not isinstance(step, dict) for step in actual):
+            raise ValueError("Storage completion steps unavailable")
+        for step_name in names:
+            found = [step for step in actual if step.get("name") == step_name]
+            if len(found) != 1 or (found[0].get("status"), found[0].get("conclusion")) != ("completed", "success"):
+                raise ValueError("Storage completion owning step did not execute")
+    plan_job = next(job for job in jobs if job["name"] == PLAN_JOB)
+    log = api(f"/repos/{repo}/actions/jobs/{plan_job['id']}/logs")
+    plans = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+    plans = [plan for plan in plans if isinstance(plan, dict) and plan.get("head_sha") == sha and plan.get("repository") == repo]
+    if (len(plans) != 1 or type(plans[0].get("schema_version")) is not int
+            or plans[0].get("schema_version") != 1 or plans[0].get("scope") != TOOL_STORAGE_SCOPE
+            or plans[0].get("required_jobs") != list(required)
+            or plans[0].get("required_backend_runs") != tool_storage_requirements(sha)
+            or any(plans[0].get(key) is not None for key in ("evidence_run_id", "evidence_sha", "test_correction_evidence"))):
+        raise ValueError("Storage completion source plan is not the fresh owning graph")
+    ui = next(job for job in jobs if job["name"] == lane_job(TOOL_STORAGE_SCOPE, "app-ui"))
+    if not tool_storage_ui_results(api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")):
+        raise ValueError("All nine storage UI cases must start and pass exactly once")
+    backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=TOOL_STORAGE_BRANCH)
+    proof = backends["preservation-service.yml"]
+    backend_run = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
+    if (backend_run.get("id") != proof["run_id"] or backend_run.get("head_sha") != sha
+            or backend_run.get("workflow_id") != 363932714
+            or backend_run.get("path") != PRESERVATION_WORKFLOW or backend_run.get("event") != "push"
+            or backend_run.get("head_branch") != TOOL_STORAGE_BRANCH
+            or type(backend_run.get("run_attempt")) is not int or backend_run["run_attempt"] != 1
+            or (backend_run.get("status"), backend_run.get("conclusion")) != ("completed", "success")
+            or backend_run.get("repository", {}).get("full_name") != repo
+            or backend_run.get("head_repository", {}).get("full_name") != repo):
+        raise ValueError("Storage completion backend changed during verification")
+    backend_jobs = executed_jobs(backend_run, repo, api)
+    if (len(backend_jobs) != 1 or backend_jobs[0].get("name") != PRESERVATION_JOB
+            or type(backend_jobs[0].get("id")) is not int or backend_jobs[0]["id"] <= 0
+            or backend_jobs[0].get("run_id") != backend_run["id"] or backend_jobs[0].get("head_sha") != sha
+            or (backend_jobs[0].get("status"), backend_jobs[0].get("conclusion")) != ("completed", "success")):
+        raise ValueError("Storage completion backend must be exactly its one owning job")
+    job = next(job for job in backend_jobs if job.get("name") == PRESERVATION_JOB)
+    for name in TOOL_STORAGE_BACKEND_STEPS:
+        found = [step for step in job["steps"] if step.get("name") == name]
+        if len(found) != 1 or (found[0].get("status"), found[0].get("conclusion")) != ("completed", "success"):
+            raise ValueError("All eight preservation steps must execute")
+    proof["required_steps"] = list(TOOL_STORAGE_BACKEND_STEPS)
+    return {"backend_evidence": backends, "native_evidence": {"run_id": run["id"], "sha": sha,
+            "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required]}}
 
 
 def tool_preservation_immutable_inputs(ref):
@@ -4847,6 +5254,14 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
             pass
         # Do not let a partial/mutated fixed batch fall through as generic UI.
         return FULL_SCOPE
+    if tool_storage_control_paths_only(paths):
+        try:
+            base = comparison_base(event, env)
+            if base and tool_storage_control_only(paths, base, env["GITHUB_SHA"]):
+                return ORCHESTRATION_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
+        return FULL_SCOPE
     if sources and sources <= ORCHESTRATION_PATHS and not sources <= DEVELOPMENT_PATHS:
         try:
             base = comparison_base(event, env)
@@ -4855,7 +5270,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         return FULL_SCOPE
-    for selected, matches, verify in ((TOOL_PRESERVATION_SCOPE, tool_preservation_paths_only, tool_preservation_only),
+    for selected, matches, verify in ((TOOL_STORAGE_SCOPE, tool_storage_paths_only, tool_storage_only),
+                                       (TOOL_PRESERVATION_SCOPE, tool_preservation_paths_only, tool_preservation_only),
                                        (MODERATION_ENROLLMENT_CEREMONY_SCOPE, moderation_enrollment_ceremony_paths_only, moderation_enrollment_ceremony_backend_only),
                                        (MODERATION_REPORT_BPLIST_SCOPE, moderation_report_bplist_paths_only, moderation_report_bplist_backend_only),
                                        (MODERATION_RETIRED_SCOPE, moderation_retired_paths_only, moderation_retired_backend_only),
@@ -7469,6 +7885,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
                 continue
+            if covered and required == required_jobs_from_scope(TOOL_STORAGE_SCOPE):
+                tool_storage_graph(run, env["GITHUB_SHA"], api, now, jobs)
             if covered and not corrected and required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
                 tool_preservation_backend_evidence(run["head_sha"], repo, api, now, branch=run["head_branch"])
             if covered and not corrected and required == required_jobs_from_scope(PRESERVATION_EXPORT_SCOPE):
@@ -7789,6 +8207,8 @@ def main() -> None:
         now = dt.datetime.now(dt.timezone.utc)
         tool_backend_wait = None
         metadata_repair = None
+        if selected_scope == TOOL_STORAGE_SCOPE and not tool_storage_readiness(env["GITHUB_SHA"]):
+            raise ValueError("Fresh registered current-clock signed readiness is required before native work")
         if selected_scope == INTERNAL_REPORT_SCOPE and internal_report_metadata_repair_inputs(env["GITHUB_SHA"]) is not None:
             if (env["GITHUB_REPOSITORY"] != "soso-so-27/neko-widget" or env["GITHUB_EVENT_NAME"] != "push"
                     or env["GITHUB_REF"] not in {"refs/heads/main", "refs/heads/" + INTERNAL_REPORT_METADATA_BRANCH}):
@@ -7855,6 +8275,8 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
+        **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+           if selected_scope == TOOL_STORAGE_SCOPE else {}),
         **({"required_backend_runs": ([correction["backend_evidence"]] if correction is not None else
                [tool_pr_backend_proof(env["GITHUB_REPOSITORY"], api, now)] if evidence else tool_preservation_requirements(env["GITHUB_SHA"]))}
            if selected_scope == TOOL_PRESERVATION_SCOPE else {}),

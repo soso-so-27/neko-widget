@@ -199,6 +199,33 @@ def check_ci(gh: GitHub, sha: str, run_id: int, now: dt.datetime) -> dict:
             "CI plan identity/version does not match this release.")
     required = planner.required_jobs_from_scope(plan.get("scope"))
     require(plan.get("required_jobs") == list(required), "CI plan does not name the exact required checks.")
+    if plan["scope"] == planner.TOOL_STORAGE_SCOPE:
+        source_id, source_sha = plan.get("evidence_run_id"), plan.get("evidence_sha")
+        if source_id is None:
+            require(source_sha is None, "Malformed fresh storage completion evidence.")
+            source, source_id, source_sha = current, run_id, sha
+        else:
+            require(type(source_id) is int and source_id > 0 and isinstance(source_sha, str),
+                    "Malformed storage completion candidate reference.")
+            source = gh.get(f"actions/runs/{source_id}")
+            require(source.get("id") == source_id and source.get("head_sha") == source_sha
+                    and planner.reusable_run(source, current, REPOSITORY, now),
+                    "Storage completion candidate is stale or has different inputs.")
+        require(plan.get("required_backend_runs") == planner.tool_storage_requirements(source_sha)
+                and plan.get("test_correction_evidence") is None,
+                "Storage completion requires the exact fresh backend declaration.")
+        def storage_api(path):
+            prefix = f"/repos/{REPOSITORY}/"
+            require(path.startswith(prefix + "actions/"), "Unexpected storage completion evidence API path.")
+            if path.endswith("/logs"):
+                return gh.raw_job_log(int(path.split("/")[-2]))
+            return gh.get(path[len(prefix):])
+        try:
+            proof = planner.tool_storage_graph(source, sha, storage_api, now, executed_jobs_for(gh, source))
+        except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+            raise Blocked("Fresh Build, Photos, runtime, tool UI, all eight Preservation steps and current signed readiness are required.") from None
+        return {"main_ci_run": run_id, "tested_run": source_id, "tested_sha": source_sha,
+                "scope": plan["scope"], "required_jobs": list(required), **proof}
     if plan["scope"] == planner.TOOL_PRESERVATION_SCOPE:
         source_id, source_sha = plan.get("evidence_run_id"), plan.get("evidence_sha")
         if source_id is None:
