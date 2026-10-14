@@ -1,5 +1,5 @@
 export interface ArchiveDocument {
-  formatVersion: 1 | 2;
+  formatVersion: 1 | 2 | 3;
   text: string;
   capturedAt: string | null;
   writtenAt: string | null;
@@ -7,6 +7,17 @@ export interface ArchiveDocument {
   catNames: string[];
   photoFile: 'photo.jpg' | null;
   weight?: { grams: number; measuredOn: string | null; catName: string | null };
+  toolBackup?: ToolBackupPart;
+}
+/** Immutable pieces; an index written last names the exact pieces of one backup. */
+export interface ToolBackupPart {
+  snapshotId: string;
+  kind: 'index' | 'json' | 'photo';
+  path: string;
+  part: number;
+  count: number;
+  sha256: string;
+  payload: string;
 }
 export interface VerifiedIdentity { issuer: string; subject: string; refreshToken: string; verifiedEmail?: string; }
 export const contactEmailValid = (email: unknown): email is string => typeof email === 'string'

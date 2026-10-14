@@ -147,6 +147,7 @@ struct ManagedPreservationView: View {
                 // A selected-copy entry must not become a second route for
                 // editing unrelated records. The settings entry retains browsing.
                 if allowsRecordBrowsing {
+                    toolBackupSection
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                     recordsSection
                 }
@@ -521,7 +522,7 @@ struct ManagedPreservationView: View {
     private var recordsSection: some View {
         Section {
             Button { coordinator.refresh() } label: { Label("保管先から読み直す", systemImage: "arrow.clockwise") }
-            ForEach(coordinator.records) { record in
+            ForEach(coordinator.records.filter { $0.document.toolBackup == nil || $0.document.toolBackup?.kind == "index" }) { record in
                 Button { coordinator.open(record) } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(record.document.text.isEmpty ? "写真の記録" : record.document.text)
@@ -552,6 +553,21 @@ struct ManagedPreservationView: View {
 
     @ViewBuilder private var detailSection: some View {
         if let snapshot = coordinator.selected {
+            if snapshot.document.toolBackup != nil {
+                Section {
+                    Button("保管一覧に戻る") { coordinator.closeDetail() }
+                    Text("ツールの記録と、そこで使う写真を保存したコピーです。連絡先や健康の情報を含む場合があります。")
+                    if let written = snapshot.document.writtenAt { Text(written, format: .dateTime.year().month().day().hour().minute()) }
+                    if snapshot.document.toolBackup?.kind == "index" {
+                        Button("この端末に復元する") { coordinator.restoreTools(snapshot.record) }
+                            .accessibilityIdentifier("preservation-restore-tools")
+                    }
+                    NavigationLink("復元したツールを開く") { RestoredToolsView() }
+                    if let progress = coordinator.toolBackupProgress { Text(progress) }
+                    Text("元の記録を上書きせず、保存時点の内容を別に開けるようにします。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else {
             Section {
                 Button("保管一覧に戻る") { coordinator.closeDetail() }
                     .accessibilityIdentifier("preservation-detail-back")
@@ -581,6 +597,21 @@ struct ManagedPreservationView: View {
             } footer: {
                 Text("ここでの編集は保管したコピーだけに反映されます。未送信の編集はこの端末だけに保持し、本人確認が切れた場合は同じ本人で確認し直すまで隠します。")
             }
+            }
+        }
+    }
+
+    private var toolBackupSection: some View {
+        Section("ツールの保存・復元") {
+            Text("うちの子を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
+            Text("連絡先や健康の情報を含みます。共有相手には送られません。端末に保存済みの内容が対象です。")
+                .font(.footnote).foregroundStyle(.secondary)
+            Toggle("内容を確認し、サービスへの保管に同意する", isOn: $coordinator.consentToToolBackup)
+            Button("ツールを保管する・中断した保管を再開") { coordinator.saveTools() }
+                .disabled(!coordinator.consentToToolBackup || coordinator.membership?.canSave != true || coordinator.isBusy)
+                .accessibilityIdentifier("preservation-save-tools")
+            if let progress = coordinator.toolBackupProgress { Text(progress) }
+            NavigationLink("復元したツールを開く") { RestoredToolsView() }
         }
     }
 }

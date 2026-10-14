@@ -450,6 +450,10 @@ export class ArchiveStore {
     const photo = decodePhoto(request.photoBase64);
     if ((photo === null) !== (document.photoFile === null)) throw new ServiceError('INVALID_RECORD');
     const photoSHA256 = photo === null ? null : await sha256(photo);
+    if (document.toolBackup?.kind === 'photo' && document.toolBackup.sha256 !== photoSHA256) throw new ServiceError('INVALID_RECORD');
+    if (document.toolBackup && document.toolBackup.kind !== 'photo'
+      && await sha256(Uint8Array.from(atob(document.toolBackup.payload), c => c.charCodeAt(0))) !== document.toolBackup.sha256) throw new ServiceError('INVALID_RECORD');
+    if (document.toolBackup && request.expectedRevision !== null) throw new ServiceError('REVISION_CONFLICT', 409);
     const initialFingerprint = await sha256(JSON.stringify({ document, photoSHA256 }));
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
@@ -475,6 +479,7 @@ export class ArchiveStore {
       if (!existing || existing.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.ensureCurrentRecovery(existing, session);
       const old = await this.metadata(existing);
+      if (old.document.toolBackup) throw new ServiceError('REVISION_CONFLICT', 409);
       if (old.photoSHA256 !== photoSHA256) throw new ServiceError('PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD', 409);
       // Server update time; captured/written dates are not invented or silently replaced.
       document.updatedAt = new Date(this.d.now()).toISOString();

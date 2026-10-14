@@ -1,4 +1,4 @@
-import { ServiceError, type ArchiveDocument } from './contracts';
+import { ServiceError, type ArchiveDocument, type ToolBackupPart } from './contracts';
 export const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
 const segmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
 const countWithin = (value: string, maximum: number) => {
@@ -24,8 +24,8 @@ function date(value: unknown): string | null {
 export function validateDocument(input: unknown): ArchiveDocument {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return fail();
   const value = input as Record<string, unknown>;
-  const keys = ['formatVersion', 'text', 'capturedAt', 'writtenAt', 'updatedAt', 'catNames', 'photoFile', 'weight'];
-  if (Object.keys(value).some((key) => !keys.includes(key)) || ![1, 2].includes(value.formatVersion as number)
+  const keys = ['formatVersion', 'text', 'capturedAt', 'writtenAt', 'updatedAt', 'catNames', 'photoFile', 'weight', 'toolBackup'];
+  if (Object.keys(value).some((key) => !keys.includes(key)) || ![1, 2, 3].includes(value.formatVersion as number)
     || typeof value.text !== 'string' || !Array.isArray(value.catNames) || value.catNames.length > 100
     || ![null, 'photo.jpg'].includes(value.photoFile as null | string)) return fail();
   const text = value.text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
@@ -47,10 +47,34 @@ export function validateDocument(input: unknown): ArchiveDocument {
     }
     weight = { grams: item.grams as number, measuredOn: item.measuredOn as string | null, catName: item.catName as string | null };
   }
-  if (!text && value.photoFile === null && !weight) return fail();
-  return { formatVersion: value.formatVersion as 1 | 2, text, capturedAt: date(value.capturedAt), writtenAt: date(value.writtenAt),
+  const toolBackup = value.toolBackup === undefined ? undefined : validateToolBackup(value.toolBackup);
+  if ((value.formatVersion === 3) !== !!toolBackup || (toolBackup && (weight !== undefined
+    || (value.photoFile !== null) !== (toolBackup.kind === 'photo')))) return fail();
+  if (!text && value.photoFile === null && !weight && !toolBackup) return fail();
+  return { formatVersion: value.formatVersion as 1 | 2 | 3, text, capturedAt: date(value.capturedAt), writtenAt: date(value.writtenAt),
     updatedAt: date(value.updatedAt), catNames: catNames as string[], photoFile: value.photoFile as 'photo.jpg' | null,
-    ...(weight ? { weight } : {}) };
+    ...(weight ? { weight } : {}), ...(toolBackup ? { toolBackup } : {}) };
+}
+function validateToolBackup(input: unknown): ToolBackupPart {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return fail();
+  const v = input as Record<string, unknown>;
+  if (Object.keys(v).length !== 7 || Object.keys(v).some(k => !['snapshotId', 'kind', 'path', 'part', 'count', 'sha256', 'payload'].includes(k))) return fail();
+  if (typeof v.snapshotId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v.snapshotId)
+    || !['index', 'json', 'photo'].includes(v.kind as string)
+    || !Number.isInteger(v.part) || !Number.isInteger(v.count) || (v.part as number) < 0
+    || (v.count as number) < 1 || (v.count as number) > 256 || (v.part as number) >= (v.count as number)
+    || typeof v.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(v.sha256)
+    || typeof v.payload !== 'string' || v.payload.length > (v.kind === 'index' ? 349528 : 65536) || typeof v.path !== 'string') return fail();
+  if (v.kind === 'index') {
+    if (v.path !== 'index.json' || v.part !== 0 || v.count !== 1 || !v.payload) return fail();
+  } else if (!/^(CareHandoff|EvacuationPreparation|VeterinaryVisits|ShowcasePhotos|LostCatDrafts|CatPreparedness)\/[A-Za-z0-9-]+\.(json|jpg)$/.test(v.path)) return fail();
+  if (v.kind === 'photo') {
+    if (!v.path.endsWith('.jpg') || v.part !== 0 || v.count !== 1 || v.payload !== '') return fail();
+  } else {
+    if (!v.path.endsWith('.json') || !v.payload || v.payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(v.payload)) return fail();
+    try { if (btoa(atob(v.payload)) !== v.payload) return fail(); } catch { return fail(); }
+  }
+  return v as unknown as ToolBackupPart;
 }
 export function decodePhoto(value: unknown): Uint8Array | null {
   if (value === null) return null;

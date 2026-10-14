@@ -166,9 +166,10 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
     var catNames: [String]
     var photoFile: String?
     var weight: PhotoMemoWeightValue? = nil
+    var toolBackup: ToolBackupPart? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight
+        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight, toolBackup
     }
 
     func encode(to encoder: Encoder) throws {
@@ -181,11 +182,13 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
         try values.encode(catNames, forKey: .catNames)
         try values.encode(photoFile, forKey: .photoFile)
         try values.encodeIfPresent(weight, forKey: .weight)
+        try values.encodeIfPresent(toolBackup, forKey: .toolBackup)
     }
 
     func validated() throws -> Self {
         do { try weight?.validate() } catch { throw ManagedPreservationError.invalidRecord }
-        guard (1...2).contains(formatVersion), weight == nil || formatVersion == 2,
+        try toolBackup?.validate(photo: photoFile != nil)
+        guard (1...3).contains(formatVersion), (formatVersion == 3) == (toolBackup != nil), weight == nil || formatVersion == 2,
               text.count <= 500, text.utf8.count <= 65_536,
               catNames.count <= 100,
               catNames.allSatisfy({ !$0.isEmpty && $0.count <= 200 && $0.utf8.count <= 800 }),
@@ -218,6 +221,7 @@ extension ManagedPreservationDocument {
         catNames = try values.decode([String].self, forKey: .catNames)
         photoFile = try values.decode(String?.self, forKey: .photoFile)
         weight = try values.decodeIfPresent(PhotoMemoWeightValue.self, forKey: .weight)
+        toolBackup = try values.decodeIfPresent(ToolBackupPart.self, forKey: .toolBackup)
     }
 }
 
@@ -749,7 +753,8 @@ actor ManagedPreservationClient {
 
     func list(after: String? = nil, forExport: Bool = false) async throws -> ManagedPreservationPage {
         if let after, UUID(uuidString: after) == nil { throw ManagedPreservationError.invalidRecord }
-        let query = [URLQueryItem(name: "limit", value: "20")]
+        // Ten maximum-sized tool indexes fit the existing 4 MiB read bound.
+        let query = [URLQueryItem(name: "limit", value: "10")]
             + (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
         let data: Data
         if forExport {

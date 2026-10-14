@@ -1686,6 +1686,20 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-backup-ui-fixture"]
+        app.launch()
+        let result = app.staticTexts["保存・再開・欠落拒否・復元・元記録保全を確認"]
+        XCTAssertTrue(result.waitForExistence(timeout: 40), app.debugDescription)
+        app.buttons["復元したツールを開く"].tap()
+        XCTAssertTrue(app.buttons["預けるとき"].waitForExistence(timeout: 5))
+        app.buttons["みんなの写真"].tap()
+        XCTAssertTrue(app.images["保存した写真"].waitForExistence(timeout: 5), app.debugDescription)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "restored-tool-owned-photo"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    @MainActor
     private func launchWeightMemo(extra: [String] = []) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()

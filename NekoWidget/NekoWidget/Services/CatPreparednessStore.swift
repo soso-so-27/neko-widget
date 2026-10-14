@@ -153,10 +153,12 @@ final class LostCatDraftStore: ObservableObject {
     private let directory: URL
     private let manifest: URL
     private let legacy: CatPreparednessStore
+    private let allowsCandidateRefresh: Bool
     private var manifestUnreadable: Bool
     private var hasCommittedManifest = false
 
-    init(directory: URL? = nil, legacy: CatPreparednessStore = .shared) {
+    init(directory: URL? = nil, legacy: CatPreparednessStore = .shared, allowsCandidateRefresh: Bool = true) {
+        self.allowsCandidateRefresh = allowsCandidateRefresh
         let base = directory ?? FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         )[0].appendingPathComponent("LostCatDrafts", isDirectory: true)
@@ -295,6 +297,7 @@ final class LostCatDraftStore: ObservableObject {
     func refreshCandidateText(for key: String, information: LostCatSavedInformation) throws -> LostCatDraft {
         try requireReadableManifest()
         guard let before = drafts[key] else { throw CocoaError(.fileReadCorruptFile) }
+        guard allowsCandidateRefresh else { return before }
         guard information.identityKey == key else { return before }
         var next = before
         if next.prefilledFields?.contains("name") == true, information.refreshableFields.contains("name") {

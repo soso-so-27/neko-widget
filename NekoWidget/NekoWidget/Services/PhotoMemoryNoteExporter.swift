@@ -13,6 +13,7 @@ struct PhotoMemoryNoteBulkEntry: Sendable {
     let catNames: [String]
     let jpegData: Data?
     var weight: PhotoMemoWeightValue? = nil
+    var toolBackupJSON: Data? = nil
 }
 
 struct PhotoMemoryNoteExportPayload: Identifiable, Sendable {
@@ -256,13 +257,15 @@ enum PhotoMemoryNoteExporter {
         catNames: [String],
         jpegData: Data?,
         weight: PhotoMemoWeightValue? = nil,
+        toolBackupJSON: Data? = nil,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         fileManager: FileManager = .default
     ) throws -> PhotoMemoryNoteExportPayload {
         try Task.checkCancellation()
         return try createPayload(temporaryDirectory: temporaryDirectory, fileManager: fileManager) {
             try StoredZIP.archive(archiveFiles(text: text, capturedAt: capturedAt,
-                writtenAt: writtenAt, updatedAt: updatedAt, catNames: catNames, jpegData: jpegData, weight: weight))
+                writtenAt: writtenAt, updatedAt: updatedAt, catNames: catNames, jpegData: jpegData, weight: weight,
+                toolBackupJSON: toolBackupJSON))
         }
     }
 
@@ -344,7 +347,7 @@ enum PhotoMemoryNoteExporter {
                 let prefix = "records/" + entry.recordID.uuidString.lowercased() + "/"
                 let files = try archiveFiles(text: entry.text, capturedAt: entry.capturedAt,
                     writtenAt: entry.writtenAt, updatedAt: entry.updatedAt,
-                    catNames: entry.catNames, jpegData: entry.jpegData, weight: entry.weight)
+                    catNames: entry.catNames, jpegData: entry.jpegData, weight: entry.weight, toolBackupJSON: entry.toolBackupJSON)
                 for file in files { try archiveWriter.append(name: prefix + file.name, data: file.data) }
                 let photoHash = entry.jpegData.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
                 manifest.append(.init(recordID: entry.recordID, revision: entry.revision,
@@ -387,7 +390,7 @@ enum PhotoMemoryNoteExporter {
         writtenAt: Date?,
         updatedAt: Date?,
         catNames: [String],
-        jpegData: Data?, weight: PhotoMemoWeightValue?
+        jpegData: Data?, weight: PhotoMemoWeightValue?, toolBackupJSON: Data? = nil
     ) throws -> [(name: String, data: Data)] {
         let maximumJPEGBytes = 20 * 1_024 * 1_024
         let maximumMetadataBytes = 2 * 1_024 * 1_024
@@ -430,6 +433,11 @@ enum PhotoMemoryNoteExporter {
         let txt = Data(readable.utf8)
         guard json.count + txt.count <= maximumMetadataBytes else { throw PhotoMemoryNoteExportError.tooLarge }
         var files = [(name: "memory.json", data: json), (name: "memory.txt", data: txt)]
+        if let toolBackupJSON {
+            guard toolBackupJSON.count <= 384 * 1024,
+                  (try? JSONSerialization.jsonObject(with: toolBackupJSON)) != nil else { throw PhotoMemoryNoteExportError.invalidMetadata }
+            files.append((name: "tool-part.json", data: toolBackupJSON))
+        }
         if let jpegData { files.append((name: "photo.jpg", data: jpegData)) }
         let contentBytes = files.reduce(0) { $0 + $1.data.count }
         guard contentBytes <= maximumJPEGBytes + maximumMetadataBytes else {
