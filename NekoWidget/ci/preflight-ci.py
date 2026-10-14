@@ -783,6 +783,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         and correction_evidence.get("sha") == planner.TOOL_BUILD_SOURCE
         and correction_evidence.get("failed_build_job_id") == planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]
         and correction_evidence.get("failed_build_log_sha256") == planner.TOOL_LOG_DIGESTS[planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]]
+        and correction_evidence.get("failed_plan_evidence") == planner.tool_plan_failure_record()
         and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD]
         and correction_evidence.get("source_build_success") is False)
     if result.get("scope") == planner.TOOL_PRESERVATION_SCOPE and correction_evidence is not None and not tool_correction:
@@ -797,7 +798,14 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                 or (sources[0].get("status"), sources[0].get("conclusion")) != ("completed", "failure")):
             raise ValueError("Fixed tool source failure missing from task history")
         fixed_owner_failures.add(planner.TOOL_BUILD_SOURCE_RUN)
-        if any(run["id"] != planner.TOOL_BUILD_SOURCE_RUN and run["path"] != DIAGNOSTIC_WORKFLOW for run in failed):
+        plans = [run for run in runs if run["id"] == planner.TOOL_PLAN_FAILURE_RUN]
+        if (len(plans) != 1 or plans[0].get("head_sha") != planner.TOOL_PLAN_FAILURE_SOURCE
+                or plans[0].get("head_branch") != planner.TOOL_BUILD_BRANCH or plans[0].get("event") != "push"
+                or plans[0].get("path") != IOS_WORKFLOW or plans[0].get("run_attempt") != 1
+                or (plans[0].get("status"), plans[0].get("conclusion")) != ("completed", "failure")):
+            raise ValueError("Fixed tool plan failure missing from task history")
+        fixed_owner_failures.add(planner.TOOL_PLAN_FAILURE_RUN)
+        if any(run["id"] not in fixed_owner_failures and run["path"] != DIAGNOSTIC_WORKFLOW for run in failed):
             blockers.append("tool_recovery_has_unknown_failure")
     if internal_correction:
         fixed_owner_failures.add(planner.INTERNAL_REPORT_CORRECTION_RUN)
@@ -1005,7 +1013,7 @@ def tool_recovery_cost(result, proof, include_upload, history):
             "cost": {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [30 + upload] * 2,
                      "owning_jobs": [planner.BUILD], "source_build_success": False,
                      "includes_future_rework": False, "samples": [],
-                     "note": "30 minutes is the existing full Build job timeout reserved for replanning, not an observed duration or queue/completion guarantee. Preserve the first candidate, failed Build and all source native/PR evidence."}}
+                     "note": "30 minutes is the existing full Build job timeout reserved for replanning, not an observed duration or queue/completion guarantee. Preserve the first candidate, failed Build, failed plan and all source native/PR evidence."}}
 
 
 def moderation_ui_recovery_cost(result, proof, include_upload, history):

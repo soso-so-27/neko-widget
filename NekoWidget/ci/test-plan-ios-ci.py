@@ -4012,10 +4012,20 @@ class ToolBuildRecoveryTests(unittest.TestCase):
         self.source=run(p.TOOL_BUILD_SOURCE_RUN,p.TOOL_BUILD_SOURCE,result="failure")
         self.pr=run(p.TOOL_PR_RUN,p.TOOL_BUILD_SOURCE,"preservation-service.yml","pull_request")
         self.pr["head_commit"]={"id":p.TOOL_BUILD_SOURCE,"tree_id":p.TOOL_PR_TREE}
-        self.pr["pull_requests"]=[{"number":289,"id":4853108830,"base":{"sha":p.TOOL_PR_BASE,"ref":"main","repo":{"id":1335079243}},
-                                  "head":{"sha":p.TOOL_BUILD_SOURCE,"ref":p.TOOL_BUILD_BRANCH,"repo":{"id":1335079243}}}]
+        # GitHub updates these nested pointers even on an old completed run.
+        self.pr["pull_requests"]=[{"number":289,"id":4853108830,"base":{"sha":"34c7ac04f4e8b42c9e51e182d7be1d01164a070c","ref":"main","repo":{"id":1335079243}},
+                                  "head":{"sha":p.TOOL_PLAN_FAILURE_SOURCE,"ref":p.TOOL_BUILD_BRANCH,"repo":{"id":1335079243}}}]
         self.candidate=run(1003,self.head)
         self.current=dict(run(1004,self.main),head_branch="main")
+        self.failed_plan=run(p.TOOL_PLAN_FAILURE_RUN,p.TOOL_PLAN_FAILURE_SOURCE,result="failure")
+        failed_steps=("Set up job","Check out repository","Test CI selection and evidence boundaries","Select checks",
+                      "Validate public policy pages","Prepare operator test runtime","Validate private billing operation boundaries",
+                      "Validate internal Sandbox release preparation","Post Check out repository","Complete job")
+        failed_job=job(p.TOOL_PLAN_FAILURE_JOB,p.PLAN_JOB,self.failed_plan,failed_steps)
+        failed_job["conclusion"]="failure"
+        for index,step in enumerate(failed_job["steps"]):step["conclusion"]="failure" if index==3 else "skipped" if 4<=index<=7 else "success"
+        self.failed_plan_jobs=[failed_job]+[dict(job(identifier,name,self.failed_plan,()),conclusion="skipped")
+                                         for identifier,name in p.TOOL_PLAN_FAILURE_PLACEHOLDERS.items()]
         workflow=(Path(__file__).parents[2]/".github/workflows/ios-build.yml").read_text(encoding="utf-8")
         block=workflow.split("  build-without-signing:\n",1)[1].split("  simulator-smoke-test:\n",1)[0]
         excluded={"Verify packaged icons and capture first launch","Upload icon display evidence","Upload build result bundle"}
@@ -4042,7 +4052,8 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             f"repos/{self.repo}/git/commits/{p.TOOL_PR_MERGE}":{"sha":p.TOOL_PR_MERGE,"tree":{"sha":p.TOOL_PR_TREE},"parents":[{"sha":v} for v in (p.TOOL_PR_BASE,p.TOOL_BUILD_SOURCE)]},
             f"repos/{self.repo}/git/commits/{p.TOOL_BUILD_SOURCE}":{"sha":p.TOOL_BUILD_SOURCE,"tree":{"sha":p.TOOL_PR_TREE},"parents":[{"sha":v} for v in ("460a732dc0a563e257e1b929a395d992b53f4b1d",p.TOOL_PR_BASE)]},
             f"repos/{self.repo}/actions/jobs/{p.TOOL_PR_JOB}/logs":f"+{p.TOOL_PR_MERGE}:refs/remotes/pull/289/merge\ncheckout {p.TOOL_PR_MERGE}\n",
-            f"repos/{self.repo}/actions/jobs/{p.TOOL_BUILD_SOURCE_JOBS[p.BUILD]}/logs":"reviewed_code_changed\n# tests 2\n# pass 1\n# fail 1\n"}
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_BUILD_SOURCE_JOBS[p.BUILD]}/logs":"reviewed_code_changed\n# tests 2\n# pass 1\n# fail 1\n",
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_PLAN_FAILURE_JOB}/logs":'IOS_CI_EVIDENCE_JSON={"stage":"lookup_blocked","reason":"evidence_lookup_failed","error":"CorrectionEvidenceUnavailable"}\nEvidence lookup failed; no Mac checks were authorized.\n'}
         self.digests={identifier:p.tool_log_digest(self.observations[f"repos/{self.repo}/actions/jobs/{identifier}/logs"]) for identifier in p.TOOL_LOG_DIGESTS}
 
     def record(self,sha):
@@ -4065,9 +4076,10 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             if "event=push" in endpoint:return self.push_backend
             return {"total_count":1,"workflow_runs":[self.pr]}
         if endpoint.startswith("workflows/ios-build.yml/runs?"):
+            if "head_sha="+p.TOOL_PLAN_FAILURE_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.failed_plan]}
             if "head_sha="+p.TOOL_BUILD_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.source]}
             return {"workflow_runs":[self.candidate]}
-        owners=[(self.source,self.source_jobs),(self.pr,self.pr_jobs),(self.candidate,self.candidate_jobs),(self.current,self.current_jobs)]
+        owners=[(self.source,self.source_jobs),(self.failed_plan,self.failed_plan_jobs),(self.pr,self.pr_jobs),(self.candidate,self.candidate_jobs),(self.current,self.current_jobs)]
         for run,jobs in owners:
             if endpoint==f"runs/{run['id']}":return run
             if endpoint==f"runs/{run['id']}/jobs?filter=latest&per_page=100&page=1":return {"total_count":len(jobs),"jobs":jobs}
@@ -4079,6 +4091,7 @@ class ToolBuildRecoveryTests(unittest.TestCase):
     @contextlib.contextmanager
     def mocks(self):
         with patch.object(planner,"tool_recovery_inputs",return_value=True),patch.object(planner,"tool_build_steps",return_value=self.build_steps), \
+                patch.object(planner,"git",return_value=""), \
                 patch.object(planner,"tool_fixed_observation",side_effect=self.observations.__getitem__), \
                 patch.object(planner,"TOOL_LOG_DIGESTS",self.digests):yield
 
@@ -4153,9 +4166,9 @@ class ToolBuildRecoveryTests(unittest.TestCase):
                 self.observations[key] = "changed transcript" if isinstance(value,str) else {**value,"tree":{"sha":"f"*40}}
                 with self.subTest(key=key),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
                 self.observations[key]=old
-            self.pr["pull_requests"][0]["base"]["sha"]="f"*40
+            self.pr["pull_requests"][0]["base"]["ref"]="other"
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
-            self.pr["pull_requests"][0]["base"]["sha"]=planner.TOOL_PR_BASE
+            self.pr["pull_requests"][0]["base"]["ref"]="main"
             self.candidate_backend={"total_count":1,"workflow_runs":[dict(self.pr,head_sha=self.head,status="in_progress",conclusion=None)]}
             with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
 
@@ -4165,6 +4178,65 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             self.assertEqual(planner.find_evidence(env,self.required,self.api,self.now),(1003,self.head))
             self.candidate_jobs[1]["steps"][2]["conclusion"]="skipped"
             self.assertIsNone(planner.find_evidence(env,self.required,self.api,self.now))
+
+    def test_current_pr_sha_pointers_do_not_replace_historical_checkout_identity(self):
+        with self.mocks():
+            for sha in (planner.TOOL_PLAN_FAILURE_SOURCE,"c"*40,None):
+                for side in ("head","base"):self.pr["pull_requests"][0][side]["sha"]=sha
+                self.assertEqual(self.prove()["backend_evidence"]["checkout_sha"],planner.TOOL_PR_MERGE)
+                self.assertTrue(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+            for side,field,value in (("head","ref","codex/other"),("base","ref","other"),("head","repo",{"id":1}),("base","repo",{"id":1})):
+                old=self.pr["pull_requests"][0][side][field];self.pr["pull_requests"][0][side][field]=value
+                with self.subTest(side=side,field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.pr["pull_requests"][0][side][field]=old
+            for field,value in (("id","f"*40),("tree_id","f"*40)):
+                old=self.pr["head_commit"][field];self.pr["head_commit"][field]=value
+                with self.subTest(field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.pr["head_commit"][field]=old
+
+    def test_registered_plan_failure_is_not_native_success_or_an_unknown_failure_exemption(self):
+        original=copy.deepcopy(self.failed_plan_jobs)
+        with self.mocks():
+            self.assertEqual(self.prove()["failed_plan_evidence"],planner.tool_plan_failure_record())
+            for index,job in enumerate(original):
+                for field,value in (("id",1),("run_id",1),("head_sha","f"*40),("run_attempt",2),("status","in_progress"),("name","unknown"),
+                                    ("conclusion","success"),("steps",[] if index==0 else [{"name":"native"}])):
+                    self.failed_plan_jobs=copy.deepcopy(original);self.failed_plan_jobs[index][field]=value
+                    with self.subTest(job=job["id"],field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.failed_plan_jobs=copy.deepcopy(original);self.failed_plan_jobs.pop(index)
+                with self.subTest(missing=job["id"]),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.failed_plan_jobs=copy.deepcopy(original)+[copy.deepcopy(original[-1])]
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.failed_plan_jobs=copy.deepcopy(original)
+            for step in self.failed_plan_jobs[0]["steps"]:
+                old=step["conclusion"];step["conclusion"]="failure" if old!="failure" else "success"
+                with self.subTest(step=step["name"]),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                step["conclusion"]=old
+            with patch.object(planner,"git",side_effect=subprocess.CalledProcessError(1,"not ancestor")),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            with patch.object(planner,"tool_recovery_inputs",side_effect=lambda sha:sha!=planner.TOOL_PLAN_FAILURE_SOURCE),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            key=f"repos/{self.repo}/actions/jobs/{planner.TOOL_PLAN_FAILURE_JOB}/logs"
+            self.observations[key]+="IOS_CI_PLAN_JSON={}\n"
+            self.digests[planner.TOOL_PLAN_FAILURE_JOB]=planner.tool_log_digest(self.observations[key])
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+
+    def test_merged_pr_metadata_may_be_empty_but_immutable_checkout_is_still_required(self):
+        original=copy.deepcopy(self.pr["pull_requests"])
+        self.pr["pull_requests"]=[]
+        with self.mocks():
+            self.assertEqual(self.prove()["backend_evidence"]["checkout_sha"],planner.TOOL_PR_MERGE)
+            self.assertTrue(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs))
+            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/main","GITHUB_SHA":self.main,"GITHUB_REPOSITORY":self.repo,"GITHUB_RUN_ID":"1004"}
+            with patch.object(planner,"git",return_value=self.main),patch.object(planner,"equivalent_inputs",return_value=True):
+                self.assertEqual(planner.find_evidence(env,self.required,self.api,self.now),(1003,self.head))
+            for value in (None,{},"",original*2,[dict(original[0],id=1)],[dict(original[0],number=290)]):
+                self.pr["pull_requests"]=value
+                with self.subTest(value=value),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.pr["pull_requests"]=[]
+            for key,value in self.observations.items():
+                old=copy.deepcopy(value)
+                self.observations[key]="changed transcript" if isinstance(value,str) else {**value,"tree":{"sha":"f"*40}}
+                with self.subTest(key=key),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.observations[key]=old
 
 
 class ToolBackendWaitTests(unittest.TestCase):
